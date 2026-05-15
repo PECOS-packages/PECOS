@@ -34,11 +34,13 @@ from typing import TYPE_CHECKING
 
 from pecos import Guppy, selene_engine, sim
 from pecos.slr import SlrConverter
-from pecos.slr.ast import AllocatorDecl, RegisterDecl, slr_to_ast
+from pecos.slr.ast import slr_to_ast
+from pecos.slr.ast.codegen.entry_wrapper import build_no_arg_entry_wrapper
 
 if TYPE_CHECKING:
     import pecos_rslib
     from pecos.slr import Block
+    from pecos.slr.ast import RegisterDecl
 
 
 _DEFAULT_SHOTS = 100
@@ -65,52 +67,22 @@ def run_ast_guppy_via_selene(
     ast_source = SlrConverter(slr_program).guppy()
     program = slr_to_ast(slr_program)
 
-    allocator_sizes = _allocator_sizes(program)
-    cregs = _result_cregs(program)
-    if not cregs:
+    wrapper, info = build_no_arg_entry_wrapper(program)
+    if not info.result_cregs or info.explicit_return is not None:
         msg = (
-            "Behavioral test requires at least one result CReg. "
+            "Selene behavioral test requires at least one result CReg and no explicit Return. "
             "v1 acceptance Selene tests should declare CRegs and write measurement bits into them."
         )
         raise ValueError(msg)
 
-    wrapper = _build_entry_wrapper(allocator_sizes, cregs)
     full_source = ast_source + wrapper
 
     entry_func = _import_entry_function(full_source)
-    total_qubits = sum(allocator_sizes.values())
+    total_qubits = sum(info.allocator_sizes.values())
 
-    result = (
-        sim(Guppy(entry_func))
-        .classical(selene_engine())
-        .qubits(max(total_qubits, 1))
-        .seed(seed)
-        .run(shots)
-    )
+    result = sim(Guppy(entry_func)).classical(selene_engine()).qubits(max(total_qubits, 1)).seed(seed).run(shots)
 
-    return _shot_records(result, _result_keys(cregs))
-
-
-def _allocator_sizes(program: object) -> dict[str, int]:
-    """Map root allocator name -> capacity. Same iteration order as the emitter."""
-    sizes: dict[str, int] = {}
-    for decl in getattr(program, "declarations", ()):
-        if isinstance(decl, AllocatorDecl) and decl.parent is None:
-            sizes.setdefault(decl.name, decl.capacity)
-    if getattr(program, "allocator", None) is not None:
-        decl = program.allocator
-        if isinstance(decl, AllocatorDecl) and decl.parent is None:
-            sizes.setdefault(decl.name, decl.capacity)
-    return sizes
-
-
-def _result_cregs(program: object) -> list[RegisterDecl]:
-    """Return result-flagged CReg declarations in declaration order."""
-    return [
-        decl
-        for decl in getattr(program, "declarations", ())
-        if isinstance(decl, RegisterDecl) and decl.is_result
-    ]
+    return _shot_records(result, _result_keys(info.result_cregs))
 
 
 def _result_keys(cregs: list[RegisterDecl]) -> list[str]:
@@ -127,46 +99,6 @@ def _result_keys(cregs: list[RegisterDecl]) -> list[str]:
             keys.append(f"measurement_{counter}")
             counter += 1
     return keys
-
-
-def _build_entry_wrapper(
-    allocator_sizes: dict[str, int],
-    cregs: list[RegisterDecl],
-) -> str:
-    """Generate the no-arg `entry()` wrapper that Selene needs.
-
-    Wrapper allocates each root allocator's qubits, calls the AST-
-    emitted `main(...)` with them, and unpacks the returned CReg
-    arrays into a flat tuple of bools.
-    """
-    if not cregs:
-        msg = "Refusing to build wrapper without result CRegs"
-        raise ValueError(msg)
-
-    bool_count = sum(decl.size for decl in cregs)
-    return_ann = "tuple[bool]" if bool_count == 1 else "tuple[" + ", ".join(["bool"] * bool_count) + "]"
-
-    body_lines: list[str] = [
-        f"    {allocator} = array(qubit() for _ in range({size}))" for allocator, size in allocator_sizes.items()
-    ]
-
-    call_args = ", ".join(allocator_sizes.keys())
-    if len(cregs) == 1:
-        body_lines.append(f"    {cregs[0].name} = main({call_args})")
-    else:
-        result_names = ", ".join(decl.name for decl in cregs)
-        body_lines.append(f"    {result_names} = main({call_args})")
-
-    return_parts: list[str] = []
-    for decl in cregs:
-        return_parts.extend(f"{decl.name}[{i}]" for i in range(decl.size))
-    return_expr = ", ".join(return_parts)
-    if len(return_parts) == 1:
-        return_expr += ","
-    body_lines.append(f"    return {return_expr}")
-
-    body = "\n".join(body_lines)
-    return f"\n\n@guppy\ndef entry() -> {return_ann}:\n{body}\n"
 
 
 def _import_entry_function(source: str) -> object:

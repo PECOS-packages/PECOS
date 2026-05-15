@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from pecos.slr import CReg, For, LoopVar, Main, QReg, SlrConverter, While
+from pecos.slr import CReg, For, LoopVar, Main, QReg, Return, SlrConverter, While
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -95,3 +95,47 @@ def test_hugr_returns_no_arg_entrypoint_runnable_via_hugr_adapter() -> None:
 
     raw = result.to_dict() if hasattr(result, "to_dict") else result
     assert raw, "Hugr adapter produced no measurement records from .hugr() output"
+
+
+def test_hugr_supports_explicit_return_of_root_allocator() -> None:
+    """Regression for Codex finding #1.
+
+    A v1 program with an explicit `Return(q)` (no result CRegs) must compile.
+    The wrapper must pass main's return value through, not silently discard it
+    (which produces Guppy `UnnamedExprNotUsedError`).
+    """
+    prog = Main(
+        q := QReg("q", 1),
+        qb.H(q[0]),
+        Return(q),
+    )
+
+    hugr = SlrConverter(prog).hugr()
+
+    assert hugr is not None
+
+
+def test_hugr_inline_measure_creg_round_trips_through_selene() -> None:
+    """Regression for Codex finding #2.
+
+    The AST emitter infers inline `CReg("final", n)` registers from
+    `Measure(q) > CReg(...)` and main returns them. The entry wrapper must
+    capture and flatten those results -- not discard them -- so downstream
+    consumers see measurement records.
+    """
+    from pecos import Hugr, selene_engine, sim
+
+    prog = Main(
+        q := QReg("qi", 2),
+        qb.H(q[0]),
+        qb.CX(q[0], q[1]),
+        Measure(q) > CReg("final", 2),
+    )
+
+    package = SlrConverter(prog).hugr()
+    hugr_bytes = package.to_str().encode("utf-8")
+
+    result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(2).seed(42).run(10)
+
+    raw = result.to_dict() if hasattr(result, "to_dict") else result
+    assert raw, "Inline-CReg .hugr() output produced no measurement records"

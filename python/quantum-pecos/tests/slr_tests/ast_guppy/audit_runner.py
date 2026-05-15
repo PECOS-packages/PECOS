@@ -45,7 +45,18 @@ from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule
 from pecos.slr import Barrier, Block, CReg, If, Main, Parallel, QReg, Repeat, SlrConverter
 from pecos.slr.qeclib import qubit as qb
+from pecos.slr.qeclib.color488 import Color488Patch
+from pecos.slr.qeclib.generic.check import Check
+from pecos.slr.qeclib.generic.check_1flag import Check1Flag
+from pecos.slr.qeclib.generic.transversal import transversal_tq
 from pecos.slr.qeclib.qubit.measures import Measure
+from pecos.slr.qeclib.steane.steane_class import Steane
+from pecos.slr.qeclib.surface import (
+    LatticeType,
+    SurfacePatchBuilder,
+    SurfacePatchOrientation,
+    SurfaceStdGates,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -57,6 +68,17 @@ class AuditCase:
 
     label: str
     factory: Callable[[], Block]
+    expected_failure: ExpectedFailure | None = None
+
+
+@dataclass(frozen=True)
+class ExpectedFailure:
+    """One accepted red-light audit outcome."""
+
+    exception_type: str
+    message_contains: str
+    classification: str
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -65,6 +87,8 @@ class AuditResult:
 
     label: str
     passed: bool
+    expected: bool = False
+    classification: str | None = None
     exception_type: str | None = None
     exception_message: str | None = None
 
@@ -387,18 +411,101 @@ def _examples_measure_register_to_creg() -> Block:
     )
 
 
+def _qeclib_generic_check_xyz() -> Block:
+    """Generic Check over X/Y/Z Paulis with barriers."""
+    return Main(
+        q := QReg("q", 4),
+        c := CReg("c", 1),
+        Check([q[0], q[1], q[2]], "XYZ", q[3], c[0], with_barriers=True),
+    )
+
+
+def _qeclib_generic_check_1flag_ch() -> Block:
+    """Flagged generic Check using the CH branch in Check1Flag."""
+    return Main(
+        q := QReg("q", 5),
+        c := CReg("c", 2),
+        Check1Flag([q[0], q[1], q[2]], "XYZ", q[3], q[4], c[0], c[1], with_barriers=True),
+    )
+
+
+def _qeclib_generic_transversal_cx() -> Block:
+    """Generic transversal CX helper across two registers."""
+    return Main(
+        a := QReg("a", 3),
+        b := QReg("b", 3),
+        c := CReg("c", 6),
+        transversal_tq(qb.CX, a, b),
+        Measure(a) > c[0:3],
+        Measure(b) > c[3:6],
+    )
+
+
+def _qeclib_surface_patch_builder_empty() -> Block:
+    """SLR qeclib SurfacePatchBuilder construct from examples/Surface SLR.ipynb.
+
+    The current surface gate methods are mostly TODOs, so this green
+    case only verifies that a built RotatedSurfacePatch contributes its
+    underlying QReg cleanly to AST -> Guppy -> HUGR.
+    """
+    return Main(
+        SurfacePatchBuilder()
+        .set_name("s")
+        .with_distances(3, 5)
+        .with_lattice(LatticeType.SQUARE)
+        .with_orientation(SurfacePatchOrientation.Z_TOP_BOTTOM)
+        .build(),
+    )
+
+
+def _qeclib_steane_pz_v2_defer() -> Block:
+    """Deliberate red-light: Steane pz() is v2 per stage3-synthesis Q B."""
+    return Main(
+        c := Steane("c"),
+        c.pz(),
+    )
+
+
+def _qeclib_surface_std_pz_preexisting() -> Block:
+    """Deliberate red-light: surface std pz() currently fails during construction."""
+    patch = (
+        SurfacePatchBuilder()
+        .set_name("s")
+        .with_distances(3, 5)
+        .with_lattice(LatticeType.SQUARE)
+        .with_orientation(SurfacePatchOrientation.Z_TOP_BOTTOM)
+        .build()
+    )
+    return Main(
+        patch,
+        *SurfaceStdGates.pz(patch),
+    )
+
+
+def _qeclib_color488_syn_extract_bare_preexisting() -> Block:
+    """Deliberate red-light: color488 bare extraction currently fails during construction."""
+    patch = Color488Patch("c", 5, num_ancillas=4)
+    return Main(
+        patch,
+        syn := CReg("syn", patch.num_data - 1),
+        patch.syn_extract_bare(syn),
+    )
+
+
 def _curated_cases() -> list[AuditCase]:
-    """v1 acceptance baseline + legacy HUGR-test corpus + examples/.
+    """v1 acceptance baseline + legacy HUGR-test corpus + examples/ + qeclib.
 
     The v1.* prefix is the curated acceptance baseline (mirrors
     test_v1_acceptance.py). The legacy.* prefix is the corpus from
     `tests/slr_tests/guppy/test_hugr_compilation.py` -- programs
     that currently pass via the legacy IR generator. The examples.*
     prefix is curated SLR programs lifted from
-    `/home/ciaranra/Repos/PECOS/examples/`. Any failure on the AST
-    path is a real gap candidate (manifest row).
+    `/home/ciaranra/Repos/PECOS/examples/`. The qeclib.* prefix
+    audits programmatic qeclib constructs. Any unexpected failure on
+    the AST path is a real gap candidate (manifest row). Accepted
+    red-light cases are explicit XFAIL rows with classifications.
 
-    As the audit progresses, additional cases come from `qeclib/`.
+    As the audit progresses, additional cases come from docs.
     """
     return [
         # v1 acceptance baseline (all should pass; sanity checks)
@@ -419,7 +526,70 @@ def _curated_cases() -> list[AuditCase]:
         AuditCase("examples.surface_d3_x_1round", _examples_surface_d3_x_1round),
         AuditCase("examples.parallel_bell_pairs", _examples_parallel_bell_pairs),
         AuditCase("examples.measure_register_to_creg", _examples_measure_register_to_creg),
+        # qeclib/ corpus (pass 3)
+        AuditCase("qeclib.generic_check_xyz", _qeclib_generic_check_xyz),
+        AuditCase("qeclib.generic_check_1flag_ch", _qeclib_generic_check_1flag_ch),
+        AuditCase("qeclib.generic_transversal_cx", _qeclib_generic_transversal_cx),
+        AuditCase("qeclib.surface_patch_builder_empty", _qeclib_surface_patch_builder_empty),
+        AuditCase(
+            "qeclib.steane_pz",
+            _qeclib_steane_pz_v2_defer,
+            expected_failure=ExpectedFailure(
+                exception_type="GuppyCodegenError",
+                message_contains="supports only one final root-level Return",
+                classification="v2-defer",
+                reason="Steane pz() requires nested Return / BlockCall semantics",
+            ),
+        ),
+        AuditCase(
+            "qeclib.surface_std_pz",
+            _qeclib_surface_std_pz_preexisting,
+            expected_failure=ExpectedFailure(
+                exception_type="TypeError",
+                message_contains="PrepZ.__init__()",
+                classification="pre-existing",
+                reason="SurfaceStdGates.pz() fails while building the SLR program",
+            ),
+        ),
+        AuditCase(
+            "qeclib.color488_syn_extract_bare",
+            _qeclib_color488_syn_extract_bare_preexisting,
+            expected_failure=ExpectedFailure(
+                exception_type="TypeError",
+                message_contains="'float' object cannot be interpreted as an integer",
+                classification="pre-existing",
+                reason="Color488 bare extraction fails while building the SLR program",
+            ),
+        ),
     ]
+
+
+def _expected_result(case: AuditCase, exc: BaseException) -> AuditResult | None:
+    expected = case.expected_failure
+    if expected is None:
+        return None
+
+    exception_type = type(exc).__name__
+    exception_message = str(exc).splitlines()[0][:200]
+    if exception_type == expected.exception_type and expected.message_contains in str(exc):
+        return AuditResult(
+            label=case.label,
+            passed=True,
+            expected=True,
+            classification=expected.classification,
+            exception_type=exception_type,
+            exception_message=exception_message,
+        )
+
+    return AuditResult(
+        label=case.label,
+        passed=False,
+        exception_type="UnexpectedFailure",
+        exception_message=(
+            f"expected {expected.exception_type} containing {expected.message_contains!r}; "
+            f"got {exception_type}: {exception_message}"
+        ),
+    )
 
 
 def _run_case(case: AuditCase) -> AuditResult:
@@ -427,6 +597,9 @@ def _run_case(case: AuditCase) -> AuditResult:
     try:
         prog = case.factory()
     except BaseException as exc:
+        expected = _expected_result(case, exc)
+        if expected is not None:
+            return expected
         return AuditResult(
             label=case.label,
             passed=False,
@@ -439,6 +612,9 @@ def _run_case(case: AuditCase) -> AuditResult:
         # through the AST path even before cutover. Audit-only.
         SlrConverter(prog).hugr(_force_ast=True)
     except TypeError as exc:
+        expected = _expected_result(case, exc)
+        if expected is not None:
+            return expected
         # _force_ast not yet plumbed -- emit a clear marker so the runner
         # output points at the missing kwarg instead of looking like a
         # real audit failure.
@@ -456,11 +632,22 @@ def _run_case(case: AuditCase) -> AuditResult:
             exception_message=str(exc).splitlines()[0][:200],
         )
     except BaseException as exc:
+        expected = _expected_result(case, exc)
+        if expected is not None:
+            return expected
         return AuditResult(
             label=case.label,
             passed=False,
             exception_type=type(exc).__name__,
             exception_message=str(exc).splitlines()[0][:200],
+        )
+
+    if case.expected_failure is not None:
+        return AuditResult(
+            label=case.label,
+            passed=False,
+            exception_type="UnexpectedPass",
+            exception_message=f"expected {case.expected_failure.classification} failure, but AST path compiled",
         )
 
     return AuditResult(label=case.label, passed=True)
@@ -475,15 +662,18 @@ def main() -> int:
     """CLI entrypoint. Returns 0 if all pass; non-zero if any fail."""
     results = run_audit()
     for r in results:
-        if r.passed:
+        if r.expected:
+            print(f"XFAIL {r.label} {r.classification}: {r.exception_type}: {r.exception_message}")
+        elif r.passed:
             print(f"OK   {r.label}")
         else:
             print(f"FAIL {r.label} {r.exception_type}: {r.exception_message}")
 
     failures = sum(1 for r in results if not r.passed)
+    expected = sum(1 for r in results if r.expected)
     total = len(results)
     print()
-    print(f"Audit summary: {total - failures}/{total} passed; {failures} failed")
+    print(f"Audit summary: {total - failures}/{total} accepted; {expected} expected failures; {failures} failed")
     return 0 if failures == 0 else 1
 
 

@@ -455,7 +455,7 @@ class AstToGuppy:
         return None
 
     def _validate_print_inline_creg_assignment(self, program: Program) -> None:
-        """Reject Print of an inline CReg before any Measure has written to it.
+        """Reject Print of an inline CReg bit before Measure has written to it.
 
         Inline CRegs are those introduced only by `Measure(q) > CReg(...)` --
         they appear in `context.registers` via `_collect_implicit_measure_registers`
@@ -467,21 +467,24 @@ class AstToGuppy:
         Declared CRegs (those in `program.declarations`) are NOT validated --
         users who explicitly declare a CReg are acknowledging the zero-init.
 
-        Granularity: CReg-level (not bit-level). Any Measure into any bit of an
-        inline CReg marks the whole CReg as "assigned" for both `Print(c)` and
-        `Print(c[i])` reads. Bit-level definite-assignment is a v2.1 refinement.
+        Granularity: **bit-level**. The validator tracks `(register, bit_index)`
+        pairs. `Print(c[i])` requires the specific `(c, i)` to be assigned;
+        whole-CReg `Print(c)` requires every bit `0..size-1` (inferred size) to
+        be assigned. Bit-level tracking also acts as a bounds check: a `Print`
+        referencing an index past the inferred size is rejected because that
+        `(reg, index)` cannot have been added by any Measure.
         """
         declared = {d.name for d in program.declarations if isinstance(d, RegisterDecl)}
         inline_cregs = {name for name in self.context.registers if name not in declared}
         if not inline_cregs:
             return
-        assigned: set[str] = set()
+        assigned: set[tuple[str, int]] = set()
         self._check_print_inline_assignment(program.body, assigned, inline_cregs)
 
     def _check_print_inline_assignment(
         self,
         body: tuple[Statement, ...],
-        assigned: set[str],
+        assigned: set[tuple[str, int]],
         inline_cregs: set[str],
     ) -> None:
         """Walk body left-to-right; mutate `assigned` in-place across the path.
@@ -490,8 +493,9 @@ class AstToGuppy:
         - `If(...)`: definite-after = intersection of `then`/`else` post-states.
         - `Repeat(n>=1)` / static `For(count>=1)`: body runs at least once, so
           inner assignments propagate.
-        - `Repeat(0)` / static `For(count<=0)` / unknown `For` / `While`:
-          body may not run, so the outer `assigned` is preserved.
+        - `Repeat(0)` / static `For(count<=0)` / non-static `For` / `While`:
+          body may not run. Walk for validation (catch unreachable invalid
+          Prints), but do NOT propagate inner assignments to the outer scope.
         - `Parallel`: treated as sequential (matches the emitter's flatten
           behavior).
         """
@@ -501,7 +505,7 @@ class AstToGuppy:
             if isinstance(stmt, MeasureOp):
                 for ref in stmt.results:
                     if ref.register in inline_cregs:
-                        assigned.add(ref.register)
+                        assigned.add((ref.register, ref.index))
             elif isinstance(stmt, PrintOp):
                 self._check_print_inline_read(stmt, assigned, inline_cregs)
             elif isinstance(stmt, IfStmt):
@@ -515,7 +519,9 @@ class AstToGuppy:
                     inner_assigned = set(assigned)
                     self._check_print_inline_assignment(stmt.body, inner_assigned, inline_cregs)
                     assigned.update(inner_assigned)
-                # count == 0: body doesn't run; assigned unchanged.
+                else:
+                    # count == 0: body doesn't run. Walk for validation; do not propagate.
+                    self._check_print_inline_assignment(stmt.body, set(assigned), inline_cregs)
             elif isinstance(stmt, ForStmt):
                 trip = self._static_for_trip_count(stmt)
                 if trip is not None and trip >= 1:
@@ -523,32 +529,44 @@ class AstToGuppy:
                     self._check_print_inline_assignment(stmt.body, inner_assigned, inline_cregs)
                     assigned.update(inner_assigned)
                 else:
-                    # Body may not run (trip 0 or unknown). Walk for Print
-                    # validation but do not propagate assignments to outer.
                     self._check_print_inline_assignment(stmt.body, set(assigned), inline_cregs)
             elif isinstance(stmt, WhileStmt):
-                # Body may not run; walk for validation, do not propagate.
                 self._check_print_inline_assignment(stmt.body, set(assigned), inline_cregs)
             elif isinstance(stmt, ParallelBlock):
-                # Sequential flatten semantics.
                 self._check_print_inline_assignment(stmt.body, assigned, inline_cregs)
 
-    def _check_print_inline_read(self, op, assigned: set[str], inline_cregs: set[str]) -> None:
+    def _check_print_inline_read(self, op, assigned: set[tuple[str, int]], inline_cregs: set[str]) -> None:
         if isinstance(op.value, BitRef):
             reg = op.value.register
+            if reg not in inline_cregs:
+                return
+            if (reg, op.value.index) not in assigned:
+                msg = (
+                    f"Print references inline CReg bit {reg}[{op.value.index}] before any "
+                    f"Measure has written to it. Print would emit the auto-initialized False "
+                    f"value (or read past the inferred register bound), not a measurement "
+                    f"result. Move the Print after a Measure(...) > {reg}[{op.value.index}] "
+                    f"that runs on every path, or declare {reg!r} explicitly as a positional "
+                    f"in Main(...) if you intend to print the zero-initialized state."
+                )
+                raise GuppyCodegenError(msg)
         elif isinstance(op.value, str):
             reg = op.value
-        else:
-            return  # unrecognized; emit-time check handles it
-        if reg in inline_cregs and reg not in assigned:
-            msg = (
-                f"Print references inline CReg {reg!r} before any Measure has written to it. "
-                "Print would emit the all-False auto-initialized value, not a measurement result. "
-                f"Move the Print after a `Measure(...) > {reg}` that runs on every path, or "
-                f"declare {reg!r} explicitly as a positional in Main(...) if you intend to "
-                "print the zero-initialized state."
-            )
-            raise GuppyCodegenError(msg)
+            if reg not in inline_cregs:
+                return
+            decl = self.context.registers.get(reg)
+            if decl is None:
+                return  # unknown; emit-time check handles it
+            unassigned = [i for i in range(decl.size) if (reg, i) not in assigned]
+            if unassigned:
+                msg = (
+                    f"Print(whole-CReg) references inline CReg {reg!r} but not all bits have "
+                    f"been written by Measure. Inferred register size is {decl.size}; "
+                    f"unassigned bit indices: {unassigned}. Move the Print after Measures that "
+                    f"cover every bit of {reg!r}, or declare {reg!r} explicitly as a positional "
+                    f"in Main(...)."
+                )
+                raise GuppyCodegenError(msg)
 
     def _emit_stmt(self, stmt: Statement) -> list[str]:
         if isinstance(stmt, GateOp):

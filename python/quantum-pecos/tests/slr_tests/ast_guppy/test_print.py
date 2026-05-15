@@ -476,7 +476,7 @@ class TestInlineCRegDefiniteAssignment:
             Print(inline, tag="before_measure"),
             Measure(q[0]) > inline[0],
         )
-        with pytest.raises(GuppyCodegenError, match=r"references inline CReg .* before any Measure"):
+        with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
 
     def test_print_after_measure_on_inline_creg_accepted(self) -> None:
@@ -512,7 +512,7 @@ class TestInlineCRegDefiniteAssignment:
             Measure(q[0]) > inline[0],
             Measure(q[1]) > inline[1],
         )
-        with pytest.raises(GuppyCodegenError, match=r"references inline CReg .* before any Measure"):
+        with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
 
     def test_inline_creg_assigned_in_both_if_branches_propagates(self) -> None:
@@ -539,7 +539,7 @@ class TestInlineCRegDefiniteAssignment:
             If(c[0]).Then(Measure(q[0]) > inline[0]),
             Print(inline, tag="maybe"),
         )
-        with pytest.raises(GuppyCodegenError, match=r"references inline CReg .* before any Measure"):
+        with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
 
     def test_inline_creg_assigned_in_repeat_body_propagates(self) -> None:
@@ -561,3 +561,114 @@ class TestInlineCRegDefiniteAssignment:
             Print(inline, tag="post_for"),
         )
         SlrConverter(prog).hugr()
+
+    def test_print_inline_bit_with_only_other_bit_measured_rejected(self) -> None:
+        """Codex's exact bit-level soundness gap: Measure(inline[0]); Print(inline[1])
+        should be rejected, not silently emit a runtime out-of-bounds read.
+
+        Before bit-level tracking the validator marked the whole inline CReg as
+        "assigned" after any bit was measured, so Print(inline[1]) compiled and
+        Selene panicked at runtime. Bit-level tracking + the inferred-size
+        bound make this a clean construct-time rejection.
+        """
+        inline = CReg("inline", 2)
+        prog = Main(
+            q := QReg("q", 2),
+            qb.X(q[0]),
+            Measure(q[0]) > inline[0],
+            Print(inline[1], tag="bit1"),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
+            SlrConverter(prog).hugr()
+
+    def test_print_whole_inline_creg_with_all_bits_measured_accepted(self) -> None:
+        """Print(inline) is OK when every inferred bit has been Measure-assigned."""
+        inline = CReg("inline", 2)
+        prog = Main(
+            q := QReg("q", 2),
+            qb.X(q[0]),
+            Measure(q[0]) > inline[0],
+            Measure(q[1]) > inline[1],
+            Print(inline, tag="full"),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_print_whole_inline_creg_with_partial_assignment_rejected(self) -> None:
+        """Print(inline) where one bit was only assigned in If.Then is rejected
+        after the If join (intersection of paths excludes the Then-only bit).
+
+        Error message lists the unassigned indices to point at what's missing.
+        """
+        inline = CReg("inline", 2)
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            qb.Prep(q[0]),
+            Measure(q[0]) > inline[0],  # inline[0] always assigned
+            If(c[0]).Then(qb.Prep(q[0]), Measure(q[0]) > inline[1]).Else(),
+            # inline[1] only assigned on the Then branch -> partial
+            Print(inline, tag="partial"),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"not all bits"):
+            SlrConverter(prog).hugr()
+
+
+# ── Additional path-signature edge cases per Codex's review ─────────────
+
+
+class TestPathSignatureEdgeCases:
+    """Coverage Codex called out as missing in f2ebb32c."""
+
+    def test_while_with_print_rejected(self) -> None:
+        """While body with Print is rejected (v1 also rejects While outright)."""
+        from pecos.slr import While
+
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+            While(c[0] == 0).Do(
+                Print(c, tag="loop"),
+                qb.Prep(q[0]),
+                Measure(q[0]) > c[0],
+            ),
+        )
+        with pytest.raises(GuppyCodegenError):
+            SlrConverter(prog).hugr()
+
+    def test_parallel_block_with_print_compiles(self) -> None:
+        """`Parallel(Print(c[0]), Print(c[1]))` compiles -- Parallel is sequential."""
+        from pecos.slr import Parallel
+
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.X(q[0]),
+            qb.X(q[1]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+            Parallel(
+                Print(c[0], tag="bit0"),
+                Print(c[1], tag="bit1"),
+            ),
+        )
+        SlrConverter(prog).hugr()
+
+    def test_repeat_zero_with_print_walks_body_for_validation(self) -> None:
+        """Repeat(0) body never runs at runtime, but invalid Print constructs
+        inside it are still rejected at validation time. Assignments inside do
+        not propagate to the outer scope.
+        """
+        inline = CReg("inline", 1)
+        prog = Main(
+            q := QReg("q", 1),
+            Repeat(0).block(
+                Print(inline, tag="never_runs"),  # inline never written anywhere
+            ),
+            Measure(q[0]) > inline[0],
+        )
+        with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
+            SlrConverter(prog).hugr()

@@ -193,7 +193,6 @@ class SlrConverter:
         wrapper, _info = build_no_arg_entry_wrapper(program)
         full_source = guppy_code + wrapper
 
-        import importlib.util
         import linecache
         import sys
         import tempfile
@@ -213,23 +212,8 @@ class SlrConverter:
         )
 
         try:
-            spec = importlib.util.spec_from_file_location(module_name, temp_file)
-            if spec is None or spec.loader is None:
-                msg = "Failed to create module spec for AST-generated Guppy source"
-                raise RuntimeError(msg)
-
-            module = importlib.util.module_from_spec(spec)
-            module.__file__ = str(temp_file)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-
-            entry_func = getattr(module, "entry", None)
-            if entry_func is None:
-                msg = "No entry function found in AST-generated Guppy source"
-                raise RuntimeError(msg)
-
             try:
-                return entry_func.compile()
+                return _load_and_compile_entry(temp_file, module_name)
             except Exception as exc:
                 truncated = truncate_source_for_error(full_source)
                 msg = (
@@ -322,3 +306,31 @@ class SlrConverter:
             optimizer = ParallelOptimizer()
             slr_block = optimizer.transform(slr_block)
         return slr_block
+
+
+def _load_and_compile_entry(temp_file, module_name: str):
+    """Import the AST-generated module from `temp_file` and compile its `entry()`.
+
+    Failures here (spec creation, exec_module raising on import/decorator/syntax
+    errors, missing `entry`, Guppy compile errors) propagate to the caller so a
+    single outer except can attach the generated source to the error message.
+    """
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(module_name, temp_file)
+    if spec is None or spec.loader is None:
+        msg = "Failed to create module spec for AST-generated Guppy source"
+        raise RuntimeError(msg)
+
+    module = importlib.util.module_from_spec(spec)
+    module.__file__ = str(temp_file)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+    entry_func = getattr(module, "entry", None)
+    if entry_func is None:
+        msg = "No entry function found in AST-generated Guppy source"
+        raise RuntimeError(msg)
+
+    return entry_func.compile()

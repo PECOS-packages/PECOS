@@ -75,8 +75,9 @@ def flatten_block_calls(program: Program) -> Program:
     """Return a new Program with every BlockCall inlined and no BlockDecls left.
 
     The substitution rule maps each `BlockDecl` input parameter name to the
-    `BlockCall.arg_bindings` outer-scope allocator name throughout the body.
-    Quantum-only in Phase 3a.1.
+    typed `BlockCall.arg_bindings` BlockArg. In Phase 3a.3 iter 5a only
+    `AllocatorArg` is supported; richer BlockArg shapes raise
+    `NotImplementedError`. Quantum-only in Phase 3a.1.
     """
     if not program.block_decls:
         return program
@@ -174,6 +175,19 @@ def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statemen
                 f"Flatten pass does not yet support BlockArg {type(arg).__name__} for "
                 f"input {inp.name!r} of {call.callee!r}; only AllocatorArg is supported "
                 "in Phase 3a.3 iter 5a"
+            )
+            raise NotImplementedError(msg)
+    # Symmetric out_bindings validation: silently allowing a deferred BlockArg
+    # subclass here would yield byte-identical flatten output (since
+    # out_bindings don't affect the inlined body in iter 5a) but would mask the
+    # fact that the caller used an unsupported shape -- a silent-fallback class
+    # of bug (Codex 2026-05-15 review of fix-pass-5).
+    for out in call.out_bindings:
+        if not isinstance(out, AllocatorArg):
+            msg = (
+                f"Flatten pass does not yet support BlockArg {type(out).__name__} in "
+                f"out_bindings of {call.callee!r}; only AllocatorArg is supported in "
+                "Phase 3a.3 iter 5a"
             )
             raise NotImplementedError(msg)
     return tuple(_substitute(stmt, mapping) for stmt in decl.body)

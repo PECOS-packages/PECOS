@@ -642,6 +642,128 @@ class TestAstOptimizationPreservesBlockDecls:
         assert result.program.block_decls == prog.block_decls
 
 
+class TestDeferredBlockArgRejection:
+    """Phase 3a.3 iter 5a scope: only `AllocatorArg` is supported by the
+    emitter / flatten paths. The four deferred BlockArg subclasses
+    (`SingleQubitArg`, `SingleBitArg`, `QubitBundleArg`, `BitBundleArg`) MUST
+    raise cleanly in BOTH the Guppy emitter AND the non-Guppy flatten pass --
+    silently inlining a deferred shape would mask user errors (Codex
+    2026-05-15 fix-pass-5 review caught this on `out_bindings`).
+    """
+
+    def _program_with_deferred_arg(self, *, deferred_in_args: bool, arg_subclass: type) -> Program:
+        from pecos.slr.ast.nodes import (
+            BitBundleArg,
+            BitRef,
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+            SlotRef,
+        )
+
+        # Build a representative instance of the deferred subclass.
+        if arg_subclass is SingleQubitArg:
+            deferred = SingleQubitArg(slot=SlotRef(allocator="outer_q", index=0))
+        elif arg_subclass is SingleBitArg:
+            deferred = SingleBitArg(bit=BitRef(register="c", index=0))
+        elif arg_subclass is QubitBundleArg:
+            deferred = QubitBundleArg(slots=(SlotRef(allocator="outer_q", index=0),))
+        elif arg_subclass is BitBundleArg:
+            deferred = BitBundleArg(bits=(BitRef(register="c", index=0),))
+        else:
+            msg = f"unsupported subclass {arg_subclass}"
+            raise AssertionError(msg)
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(
+                    name="q",
+                    effect=ResourceEffect.LIVE_PRESERVED,
+                    type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=1),
+                ),
+            ),
+            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
+        )
+        if deferred_in_args:
+            call = BlockCall(
+                callee="b",
+                arg_bindings=(deferred,),
+                out_bindings=(AllocatorArg(name="outer_q"),),
+            )
+        else:
+            call = BlockCall(
+                callee="b",
+                arg_bindings=(AllocatorArg(name="outer_q"),),
+                out_bindings=(deferred,),
+            )
+        return Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=1),
+            declarations=(RegisterDecl(name="c", size=1),),
+            block_decls=(decl,),
+            body=(call,),
+        )
+
+    def test_deferred_arg_bindings_raise_in_flatten(self) -> None:
+        from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+        from pecos.slr.ast.nodes import (
+            BitBundleArg,
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+        )
+
+        for subclass in (SingleQubitArg, SingleBitArg, QubitBundleArg, BitBundleArg):
+            prog = self._program_with_deferred_arg(deferred_in_args=True, arg_subclass=subclass)
+            with pytest.raises(NotImplementedError, match=subclass.__name__):
+                flatten_block_calls(prog)
+
+    def test_deferred_out_bindings_raise_in_flatten(self) -> None:
+        """Codex 2026-05-15 fix-pass-5 review caught: out_bindings used to be
+        silently accepted by `_inline_call` even when they were a deferred
+        BlockArg shape, while Guppy correctly rejected them.
+        """
+        from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+        from pecos.slr.ast.nodes import (
+            BitBundleArg,
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+        )
+
+        for subclass in (SingleQubitArg, SingleBitArg, QubitBundleArg, BitBundleArg):
+            prog = self._program_with_deferred_arg(deferred_in_args=False, arg_subclass=subclass)
+            with pytest.raises(NotImplementedError, match=subclass.__name__):
+                flatten_block_calls(prog)
+
+    def test_deferred_arg_bindings_raise_in_guppy(self) -> None:
+        from pecos.slr.ast.nodes import (
+            BitBundleArg,
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+        )
+
+        for subclass in (SingleQubitArg, SingleBitArg, QubitBundleArg, BitBundleArg):
+            prog = self._program_with_deferred_arg(deferred_in_args=True, arg_subclass=subclass)
+            with pytest.raises(GuppyCodegenError, match=subclass.__name__):
+                ast_to_guppy(prog)
+
+    def test_deferred_out_bindings_raise_in_guppy(self) -> None:
+        from pecos.slr.ast.nodes import (
+            BitBundleArg,
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+        )
+
+        for subclass in (SingleQubitArg, SingleBitArg, QubitBundleArg, BitBundleArg):
+            prog = self._program_with_deferred_arg(deferred_in_args=False, arg_subclass=subclass)
+            with pytest.raises(GuppyCodegenError, match=subclass.__name__):
+                ast_to_guppy(prog)
+
+
 class TestDuplicateBlockDeclNameValidation:
     """Shared validate_unique_block_decl_names contract (Codex review #3)."""
 

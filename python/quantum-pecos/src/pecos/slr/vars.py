@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 from pecos.slr.cops import SET, PyCOp
 
 # TODO: Make it a VarDef
@@ -232,16 +230,6 @@ class CReg(Reg, PyCOp):
         """
         super().__init__(sym, size, elem_type=Bit)
         self.result = result
-        if result is False:
-            warnings.warn(
-                "`CReg(..., result=False)` is deprecated and will be removed in "
-                "the SLR v2 breaking transition (Phase 3b). Use explicit "
-                "`Return(...)` and `Print(...)` to control which registers are "
-                "exposed to the runtime. See pecos-docs "
-                "design/slr/v2-breaking-migration.md for migration guidance.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
 
     @property
     def _symbolic_elem_type(self) -> type[SymbolicBit]:

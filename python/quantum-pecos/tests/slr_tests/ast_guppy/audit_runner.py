@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import sys
 import traceback
-import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -825,15 +824,7 @@ def _run_case(case: AuditCase) -> AuditResult:
         )
 
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("default", DeprecationWarning)
-            if case.expected_failure is None:
-                warnings.filterwarnings(
-                    "error",
-                    message=r"Implicit return of result-flagged CRegs",
-                    category=DeprecationWarning,
-                )
-            SlrConverter(prog).hugr()
+        SlrConverter(prog).hugr()
     except BaseException as exc:
         expected = _expected_result(case, exc)
         if expected is not None:

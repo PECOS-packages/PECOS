@@ -254,6 +254,19 @@ class AstToGuppy:
                         "bit is copyable so consumed/produced/dropped do not apply"
                     )
                     raise GuppyCodegenError(msg)
+            elif inp.effect is ResourceEffect.SCRATCH:
+                # Scratch ancilla (design v2-scratch-ancilla-effect): the
+                # block resets+measures it internally. Guppy allocates it
+                # internally (no parameter), so it must be a bare qubit --
+                # array/bundle scratch is out of scope (Check's ancilla is a
+                # bare qubit; Check1Flag's flag is too but is deferred via O1).
+                if not is_qubit:
+                    msg = (
+                        f"BlockDecl {decl.name!r} input {inp.name!r}: SCRATCH is "
+                        f"only supported for a bare qubit ancilla (got "
+                        f"{type(inp.type_expr).__name__})"
+                    )
+                    raise GuppyCodegenError(msg)
             elif inp.effect not in {ResourceEffect.LIVE_PRESERVED, ResourceEffect.CONSUMED}:
                 msg = (
                     f"BlockDecl {decl.name!r} input {inp.name!r}: only LIVE_PRESERVED and "
@@ -288,7 +301,10 @@ class AstToGuppy:
         # qubit-array length (1 for single qubit, unused for bit).
         input_shapes: list[tuple[str, str, int]] = []  # (name, kind, size)
         for inp in decl.inputs:
-            if isinstance(inp.type_expr, BitTypeExpr):
+            if inp.effect is ResourceEffect.SCRATCH:
+                # Bare-qubit ancilla allocated internally (no parameter).
+                input_shapes.append((inp.name, "scratch_qubit", 1))
+            elif isinstance(inp.type_expr, BitTypeExpr):
                 input_shapes.append((inp.name, "single_bit", 1))
             elif isinstance(inp.type_expr, QubitTypeExpr):
                 input_shapes.append((inp.name, "single_qubit", 1))
@@ -301,8 +317,19 @@ class AstToGuppy:
                 # do NOT emit an initializer -- it's a bound parameter.
                 self.context.registers[name] = RegisterDecl(name=name, size=1, is_result=False)
             else:
+                # scratch_qubit is registered too: the body's Prep/gates/Measure
+                # still resolve `Slot(name, i)` through linearity. It just has
+                # no parameter and is seeded CONSUMED below so the first Prep
+                # allocates a fresh internal `qubit()`.
                 self.context.root_allocators[name] = size
         self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
+        # Seed scratch slots CONSUMED so the body's first `Prep(scratch)` takes
+        # the fresh-`qubit()` branch in `_emit_prepare` (no entry binding, no
+        # parameter to alias). `from_allocators` starts every slot LIVE.
+        for name, kind, size in input_shapes:
+            if kind == "scratch_qubit":
+                for index in range(size):
+                    self.context.linearity.consume(Slot(name, index))
 
         live_inputs = tuple(
             (inp, shape)
@@ -322,6 +349,8 @@ class AstToGuppy:
 
         param_parts: list[str] = []
         for name, kind, size in input_shapes:
+            if kind == "scratch_qubit":
+                continue  # allocated internally -- no parameter
             if kind == "qubit_array":
                 param_parts.append(f"{name}: array[qubit, {size}] @ owned")
             elif kind == "single_qubit":
@@ -984,6 +1013,15 @@ class AstToGuppy:
         validated_args: list[tuple[BlockInput, str, tuple]] = []
         live_inputs_out: list[BlockInput] = []
         for inp, arg in zip(decl.inputs, node.arg_bindings, strict=True):
+            if inp.effect is ResourceEffect.SCRATCH:
+                # Scratch is allocated inside the @guppy def: it is neither a
+                # parameter nor a positional call argument, and its outer slot
+                # is NOT consumed by the call (it stays live and is discarded
+                # at end-of-scope, satisfying R1). The S1 converter validator
+                # already proved the body resets+measures it internally and
+                # the cross-input alias guard already rejected a scratch slot
+                # shared with another input, so nothing is checked here.
+                continue
             kind, info = self._validate_block_call_arg(node.callee, inp, arg)
             validated_args.append((inp, kind, info))
             if inp.effect is ResourceEffect.LIVE_PRESERVED:
@@ -998,12 +1036,15 @@ class AstToGuppy:
             raise GuppyCodegenError(msg)
 
         validated_outs: list[tuple[str, tuple]] = []
-        # Build a quick lookup of (validated_args index) for each LIVE_PRESERVED input.
+        # Build a quick lookup of (validated_args index) for each LIVE_PRESERVED
+        # input. NOTE: this indexes `validated_args`, which excludes SCRATCH
+        # inputs -- so it must enumerate `validated_args`, not `decl.inputs`
+        # (a scratch input would otherwise shift every later index).
         live_arg_index: dict[int, int] = {}
         live_count = 0
-        for arg_index, inp in enumerate(decl.inputs):
-            if inp.effect is ResourceEffect.LIVE_PRESERVED:
-                live_arg_index[live_count] = arg_index
+        for va_index, (va_inp, _k, _i) in enumerate(validated_args):
+            if va_inp.effect is ResourceEffect.LIVE_PRESERVED:
+                live_arg_index[live_count] = va_index
                 live_count += 1
         for out_idx, (out, inp) in enumerate(zip(node.out_bindings, live_inputs_out, strict=True)):
             kind, info = self._validate_block_call_arg(node.callee, inp, out, is_out=True)

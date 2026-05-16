@@ -2211,12 +2211,12 @@ class TestScratchEffectS1:
         assert "cx q[2], q[1];" in qasm
         assert "measure q[2] -> c[0];" in qasm
 
-    def test_scratch_rejected_by_guppy_until_s2(self) -> None:
-        """Lock-in: no silent fallback. Guppy must raise a clean
-        not-yet-supported error for SCRATCH until S2 lands.
+    def test_scratch_guppy_internal_alloc_no_param(self) -> None:
+        """S2: a SCRATCH input is allocated INSIDE the @guppy def -- it is
+        neither a function parameter nor a positional call argument; the
+        body's Prep(scratch) lowers to a fresh internal `qubit()`.
         """
         from pecos.slr import CReg, Main, QReg, SlrConverter
-        from pecos.slr.ast.codegen.guppy import GuppyCodegenError
         from pecos.slr.qeclib import qubit as qb
 
         good_check = self._good_check()
@@ -2226,8 +2226,19 @@ class TestScratchEffectS1:
             qb.Prep(q),
             good_check([q[0], q[1]], q[2], c[0]),
         )
-        with pytest.raises(GuppyCodegenError, match=r"only LIVE_PRESERVED and CONSUMED.*got SCRATCH"):
-            SlrConverter(prog).guppy()
+        guppy_src = SlrConverter(prog).guppy()
+        # No `a` parameter on the generated def (scratch is internal).
+        assert re.search(
+            r"def goodcheck_\d+\(d: array\[qubit, 2\] @ owned, "
+            r"out: array\[bool, 1\] @ owned\) -> ",
+            guppy_src,
+        )
+        assert "a: qubit @ owned" not in guppy_src
+        # Body allocates the scratch internally and measures it.
+        assert "a_0 = qubit()" in guppy_src
+        assert "out[0] = measure(a_0)" in guppy_src
+        # The call passes only the non-scratch args (no scratch positional).
+        assert re.search(r"goodcheck_\d+\(array\(q_0, q_1\), array\(c\[0\]\)\)", guppy_src)
 
     def test_scratch_use_before_prep_rejected(self) -> None:
         from pecos.slr import CReg, Main, QReg
@@ -2493,3 +2504,63 @@ class TestScratchEffectS1:
         prog2 = Main(q := QReg("q", 1), c := CReg("c", 1), RetOther(q[0], c[0]))
         with pytest.raises(ValueError, match=r"or any ReturnOp in a scratch-bearing block"):
             slr_to_ast(prog2)
+
+    def test_scratch_reuse_across_calls_compiles_and_runs(self) -> None:
+        """S2 end-to-end: the original blocker. The SAME outer ancilla slot
+        feeds two sequential scratch BlockCalls (the production
+        `SynExtractBare` reuse pattern). Under `a: consumed` this was a
+        Guppy LinearityError; with `a: scratch` each call allocates its
+        ancilla internally, so it compiles and runs through Selene.
+        """
+        from pecos import Hugr, selene_engine, sim
+        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class Chk(Block):
+            block_inputs: ClassVar[dict[str, str]] = {
+                "d": "live_preserved",
+                "a": "scratch",
+                "out": "live_preserved",
+            }
+
+            def __init__(self, d, a, out) -> None:
+                super().__init__()
+                self.d = d
+                self.a = a
+                self.out = out
+                self.extend(
+                    qb.Prep(a),
+                    qb.H(a),
+                    qb.CX(a, d[0]),
+                    qb.CX(a, d[1]),
+                    qb.H(a),
+                    Measure(a) > out,
+                )
+
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 2),
+            qb.Prep(q),
+            Chk([q[0], q[1]], q[2], c[0]),
+            Chk([q[0], q[1]], q[2], c[1]),  # reuses q[2] -- the blocker case
+        )
+        guppy_src = SlrConverter(prog).guppy()
+        # Two separate scratch internal allocs, no LinearityError.
+        assert guppy_src.count("def chk") == 2
+        assert guppy_src.count("a_0 = qubit()") == 2
+
+        package = SlrConverter(prog).hugr()
+        result = (
+            sim(Hugr(package.to_str().encode("utf-8")))
+            .classical(selene_engine())
+            .qubits(4)  # 3 outer + 1 internally-allocated scratch
+            .seed(42)
+            .run(4)
+        )
+        raw = result.to_dict() if hasattr(result, "to_dict") else result
+        # Probe-pinned: both Checks see the same |00> data, same seed.
+        assert raw == {
+            "measurement_0": [1, 0, 0, 1],
+            "measurement_1": [1, 0, 0, 1],
+        }, raw

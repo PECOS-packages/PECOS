@@ -2871,3 +2871,92 @@ class TestScratchCheckS4ProductionLockIn:
             "measurement_4": [0, 0, 1, 0],
             "measurement_5": [0, 0, 1, 0],
         }, raw
+
+
+class TestScratchCheck1FlagS5ProductionLockIn:
+    """S5: `Check1Flag` converted (`a`, `flag`: scratch; the body's
+    `Prep(a, flag)` split into `Prep(a); Prep(flag)` per O1 option (a)).
+    Steane `SynExtractFlagged` reuses ancilla+flag slots across 6
+    Check1Flag calls -- it must route every one through a BlockCall,
+    compile (12 internal allocs, no LinearityError), and run.
+    """
+
+    def test_steane_syn_extract_flagged_routes_and_runs(self) -> None:
+        from pecos import Hugr, selene_engine, sim
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib.steane.syn_extract.flagged import SynExtractFlagged
+
+        checks = [[2, 1, 3, 0], [5, 2, 1, 4], [6, 5, 2, 3]]
+        prog = Main(
+            d := QReg("d", 7),
+            a := QReg("a", 4),
+            sx := CReg("sx", 3),
+            sz := CReg("sz", 3),
+            fx := CReg("fx", 3),
+            fz := CReg("fz", 3),
+            SynExtractFlagged(d, a, checks, sx, sz, fx, fz),
+        )
+        ast = slr_to_ast(prog)
+        assert sum(1 for s in ast.body if isinstance(s, BlockCall)) == 6
+        assert len(ast.block_decls) == 6
+
+        guppy_src = SlrConverter(prog).guppy()
+        assert guppy_src.count("def check1flag") == 6
+        # 2 internal scratch allocs (a + flag) per Check1Flag * 6.
+        assert guppy_src.count("= qubit()") == 12
+        assert "LinearityError" not in guppy_src
+
+        package = SlrConverter(prog).hugr()
+        result = (
+            sim(Hugr(package.to_str().encode("utf-8")))
+            .classical(selene_engine())
+            .qubits(13)  # d(7)+a(4) declared + 2 concurrent internal scratch
+            .seed(42)
+            .run(4)
+        )
+        raw = result.to_dict() if hasattr(result, "to_dict") else result
+        # Empirical probe 2026-05-16 (post-conversion, scratch internal alloc).
+        assert raw == {
+            "measurement_0": [0, 0, 0, 0],
+            "measurement_1": [0, 0, 0, 0],
+            "measurement_2": [0, 0, 0, 0],
+            "measurement_3": [0, 0, 0, 0],
+            "measurement_4": [0, 0, 0, 0],
+            "measurement_5": [0, 0, 0, 0],
+            "measurement_6": [1, 1, 0, 1],
+            "measurement_7": [0, 0, 0, 0],
+            "measurement_8": [0, 0, 1, 0],
+            "measurement_9": [0, 0, 0, 0],
+            "measurement_10": [0, 0, 1, 0],
+            "measurement_11": [0, 0, 0, 0],
+        }, raw
+
+    def test_check1flag_h_branch_compiles_qasm_only(self) -> None:
+        """The CH (`ops="H"`) branch hits a non-Clifford R1XY at runtime
+        (Selene cannot execute it), so lock in compile + QASM parity
+        only: it must still route through a BlockCall and lower cleanly
+        (Codex O1 review -- not a Selene assertion).
+        """
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib.generic.check_1flag import Check1Flag
+
+        prog = Main(
+            q := QReg("q", 5),
+            c := CReg("c", 2),
+            Check1Flag([q[0], q[1], q[2]], "HHH", q[3], q[4], c[0], c[1], with_barriers=True),
+        )
+        ast = slr_to_ast(prog)
+        assert sum(1 for s in ast.body if isinstance(s, BlockCall)) == 1
+
+        guppy_src = SlrConverter(prog).guppy()
+        assert guppy_src.count("def check1flag") == 1
+        assert "LinearityError" not in guppy_src
+        assert "ch(" in guppy_src  # the CH branch is exercised
+
+        qasm = SlrConverter(prog).qasm()  # flatten must inline cleanly
+        assert "reset q[3];" in qasm
+        assert "reset q[4];" in qasm
+        assert "measure q[3] -> c[0];" in qasm
+        assert "measure q[4] -> c[1];" in qasm

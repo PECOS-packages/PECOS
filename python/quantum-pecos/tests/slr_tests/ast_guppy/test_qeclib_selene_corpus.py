@@ -143,16 +143,20 @@ class TestQeclibCheck1Flag:
     def test_check_1flag_xyz_on_zero_state_pinned_records(self) -> None:
         """Check1Flag with a flag qubit + two classical output bits.
 
-        Both ancilla (q[3]) and flag (q[4]) are consumed; data qubits and
-        the two classical bits are live_preserved.
+        `a` (q[3]) and `flag` (q[4]) are now `scratch` (converted 5e.5):
+        Guppy allocates BOTH internally, so the run needs 2 physical
+        qubits beyond the declared 5-qubit QReg (`qubits=7`). Data
+        qubits and the two classical bits are live_preserved. Selene
+        records are byte-identical to the pre-conversion flattened form
+        -- design R2: parity on behavioral records, not resource counts.
         """
         prog = Main(
             q := QReg("q", 5),
             c := CReg("c", 2),
             Check1Flag([q[0], q[1], q[2]], "XYZ", q[3], q[4], c[0], c[1], with_barriers=True),
         )
-        raw = _run_via_selene(prog, shots=4, seed=42, qubits=5)
-        # Empirical probe 2026-05-15:
+        raw = _run_via_selene(prog, shots=4, seed=42, qubits=7)
+        # Empirical probe 2026-05-15: unchanged post-conversion
         # {'measurement_0': [1, 0, 0, 1], 'measurement_1': [0, 0, 0, 0]}
         assert raw == {
             "measurement_0": [1, 0, 0, 1],

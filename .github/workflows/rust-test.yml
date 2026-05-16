@@ -191,10 +191,14 @@ jobs:
           path: ~/.pecos/deps/llvm-14
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
-      - name: Set up Visual Studio environment on Windows
+      - name: Bootstrap MSVC for the Cargo build path (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
+        # Single mechanism: writes the linker + LIB/INCLUDE into
+        # .cargo/config.toml (read by cargo after it spawns). Sets no env pin,
+        # so `just ci-env` and the direct `cargo build` steps below both work,
+        # identically to a local Windows build.
+        run: ./scripts/win-msvc-bootstrap.ps1
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env

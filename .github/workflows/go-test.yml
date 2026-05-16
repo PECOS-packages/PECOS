@@ -58,10 +58,13 @@ jobs:
         prefix-key: v1-rust-no-bin
         workspaces: go/pecos-go-ffi
 
-    - name: Set up Visual Studio environment on Windows
+    - name: Bootstrap MSVC for the Cargo build path (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
-      run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
+      # Single mechanism: writes linker + LIB/INCLUDE into .cargo/config.toml,
+      # which the `cargo build` below (run from go/pecos-go-ffi) picks up via
+      # the parent-dir config search -- same as a local Windows build.
+      run: ./scripts/win-msvc-bootstrap.ps1
 
     - name: Build Rust FFI library (Windows)
       if: runner.os == 'Windows'

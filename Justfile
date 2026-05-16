@@ -54,12 +54,9 @@ setup-ci:
 
 # Ensure CI has a runtime-valid LLVM and export PECOS build env files
 [group('setup')]
-ci-env:
+ci-env: _msvc-bootstrap
     #!/usr/bin/env bash
     set -euo pipefail
-    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset. Shebang
-    # body so the export persists across both pecos invocations.
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     {{pecos}} llvm ensure --managed --no-configure
     {{pecos}} env --github-actions
 
@@ -158,13 +155,9 @@ list-deps:
 
 # Build PECOS (profile: dev/debug, release, native)
 [group('build')]
-build profile="debug": (validate-profile "build" profile) setup-quiet sync-deps (build-selene profile)
+build profile="debug": _msvc-bootstrap (validate-profile "build" profile) setup-quiet sync-deps (build-selene profile)
     #!/usr/bin/env bash
     set -euo pipefail
-    # Put MSVC's link.exe ahead of git's /usr/bin/link so rustc (unpinned)
-    # finds the right linker AND configures LIB/INCLUDE itself. No-op when
-    # PECOS_MSVC_HOST_BIN is unset (non-Windows / local / pinned workflows).
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE"
     if command -v julia >/dev/null 2>&1; then
@@ -176,21 +169,17 @@ build profile="debug": (validate-profile "build" profile) setup-quiet sync-deps 
 
 # Build PECOS without dependency setup or sync (profile: dev/debug, release, native)
 [group('build')]
-build-lite profile="debug": (validate-profile "build-lite" profile) (build-selene profile)
+build-lite profile="debug": _msvc-bootstrap (validate-profile "build-lite" profile) (build-selene profile)
     #!/usr/bin/env bash
     set -euo pipefail
-    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE"
 
 # Build PECOS with CUDA Python extras (profile: dev/debug, release, native)
 [group('build')]
-build-cuda profile="debug": (validate-profile "build-cuda" profile) setup-quiet
+build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet
     #!/usr/bin/env bash
     set -euo pipefail
-    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
 
@@ -214,11 +203,9 @@ pytest *args:
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
 [group('test')]
-rstest mode="release": (validate-test-mode "rstest" mode)
+rstest mode="release": _msvc-bootstrap (validate-test-mode "rstest" mode)
     #!/usr/bin/env bash
     set -euo pipefail
-    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     MODE="{{mode}}"
     {{pecos}} rust test --profile "$MODE"
 
@@ -247,11 +234,9 @@ test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
 
 # Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint mode="fix": (validate-lint-mode mode) python-workspace-check
+lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-check
     #!/usr/bin/env bash
     set -euo pipefail
-    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     MODE="{{mode}}"
     # Detect CUDA: only use --all-features when CUDA toolkit is available
     if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
@@ -297,7 +282,7 @@ lint mode="fix": (validate-lint-mode mode) python-workspace-check
 
 # Run cargo check
 [group('lint')]
-check:
+check: _msvc-bootstrap
     cargo check --workspace --all-targets
 
 # Check Python workspace metadata
@@ -307,7 +292,7 @@ python-workspace-check:
 
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]
-clippy:
+clippy: _msvc-bootstrap
     #!/usr/bin/env bash
     set -euo pipefail
     if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
@@ -325,7 +310,7 @@ fmt:
 
 # Run benchmarks (profile: release/native; features: optional; pattern: filter)
 [group('test')]
-bench profile="release" features="" pattern="": (validate-bench-profile "bench" profile)
+bench profile="release" features="" pattern="": _msvc-bootstrap (validate-bench-profile "bench" profile)
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
@@ -480,7 +465,7 @@ check-cuda:
 
 # Build Julia FFI library (profile: dev/debug, release, native; rustflags: optional)
 [group('julia')]
-julia-build profile="release" rustflags="": (validate-profile "julia-build" profile)
+julia-build profile="release" rustflags="": _msvc-bootstrap (validate-profile "julia-build" profile)
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
@@ -549,7 +534,7 @@ julia-lint: (julia-build "release")
 
 # Build Go FFI library (profile: dev/debug, release, native; rustflags: optional)
 [group('go')]
-go-build profile="release" rustflags="": (validate-profile "go-build" profile)
+go-build profile="release" rustflags="": _msvc-bootstrap (validate-profile "go-build" profile)
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
@@ -774,8 +759,6 @@ validate-port port:
 setup-quiet:
     #!/usr/bin/env bash
     set -euo pipefail
-    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     {{pecos}} setup --quiet
 
 # Sync Python deps (fast if already installed, skips maturin rebuilds)
@@ -783,9 +766,6 @@ setup-quiet:
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset. uv sync
-    # triggers maturin -> cargo to (re)build the rslib crates.
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     # Quick check: ensure the packages used by the default dev/test lane are importable.
     # This catches newly added workspace members that an older .venv may be missing.
     if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null; then
@@ -802,41 +782,27 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
-# Diagnostic: dump the MSVC linker environment as seen *through the exact
-# just -> #!/usr/bin/env bash shebang chain that build-selene uses*. The CI
-# step-level bash sees a correct LIB, but cold build-script links inside this
-# chain were failing to find kernel32.lib -- this pinpoints whether LIB / the
-# resolved link.exe / cargo's env survive the chain. Windows-only; harmless
-# elsewhere.
+# Windows MSVC bootstrap: write the correct linker + LIB/INCLUDE into
+# .cargo/config.toml (read by cargo *after* it spawns, so it bypasses
+# git-bash's link.exe shadowing and LIB mangling). Scoped TOML merge -- it
+# only owns [target.x86_64-pc-windows-msvc] and the MSVC [env] keys, leaving
+# the LLVM/cuQuantum keys the Rust writers own untouched. Prereq of every
+# cargo entrypoint so a fresh checkout / a VS update is picked up. The unix
+# variant is a no-op so the dependency is portable.
 [private]
 [windows]
-_win-msvc-env-debug:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "=== _win-msvc-env-debug (inside just shebang-bash) ==="
-    echo "uname: $(uname -s 2>/dev/null || echo n/a)"
-    echo "BASH: ${BASH:-<unset>}  BASH_VERSION=${BASH_VERSION:-<unset>}"
-    echo "MSYS2_ENV_CONV_EXCL=${MSYS2_ENV_CONV_EXCL:-<unset>}"
-    echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER:-<unset>}"
-    echo "which link: $(command -v link 2>/dev/null || echo '<none>')"
-    echo "LIB=${LIB:-<unset>}"
-    echo "INCLUDE=${INCLUDE:-<unset>}"
-    case "${LIB:-}" in
-        *';'*) echo "LIB-form: Windows (semicolon-separated) -- good for native link.exe" ;;
-        *':'*'/'*) echo "LIB-form: POSIX-mangled (colon/forward-slash) -- native link.exe will choke" ;;
-        "") echo "LIB-form: EMPTY/UNSET -- env lost in the chain" ;;
-        *) echo "LIB-form: single-entry or unknown" ;;
-    esac
-    echo "--- .cargo/config.toml ---"
-    cat .cargo/config.toml 2>/dev/null || echo "<no .cargo/config.toml>"
-    echo "=== end _win-msvc-env-debug ==="
+_msvc-bootstrap:
+    pwsh -NoProfile -File scripts/win-msvc-bootstrap.ps1
+
+[private]
+[unix]
+_msvc-bootstrap:
+    @true
 
 [private]
 build-selene profile="release":
     #!/usr/bin/env bash
     set -euo pipefail
-    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
-    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     PROFILE="{{profile}}"
     case "$PROFILE" in
         native)    CARGO_PROFILE_FLAGS=(--profile native); TARGET_DIR="target/native" ;;
@@ -907,7 +873,7 @@ build-native: (build "native")
 
 # Regenerate all lockfiles from scratch
 [group('setup')]
-updatelocks:
+updatelocks: _msvc-bootstrap
     rm -f uv.lock Cargo.lock
     uv lock --project .
     cargo generate-lockfile

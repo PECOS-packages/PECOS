@@ -9,18 +9,12 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+# Used by the release workflow so nvcc can find cl.exe and the CUDA wheel's
+# cargo build links against the right MSVC toolset. The Cargo build path in
+# python-test.yml / local dev uses scripts/win-msvc-bootstrap.ps1 instead.
 param(
     [string]$Arch = "x64",
-    [string]$HostArch = "x64",
-    # When set: do NOT pin CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER, and
-    # export PECOS_MSVC_HOST_BIN (the dir containing the newest MSVC link.exe)
-    # so just recipes can prepend it to PATH. With no pin, rustc uses its own
-    # vswhere MSVC detection -- which both finds the linker via PATH AND sets
-    # up LIB/INCLUDE itself -- so prepending the MSVC bin ahead of git's
-    # /usr/bin (which shadows link.exe) is sufficient and needs no
-    # .cargo/config.toml linker/LIB/INCLUDE surgery. Only python-test.yml
-    # passes this; other workflows keep the pin.
-    [switch]$NoPinLinker
+    [string]$HostArch = "x64"
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,9 +40,10 @@ if (-not (Test-Path $vswhere)) {
     throw "Could not find vswhere.exe at $vswhere"
 }
 
-$vsPath = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+# -products * so Build Tools-only installs are found (the default omits them).
+$vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $vsPath) {
-    $vsPath = & $vswhere -latest -property installationPath
+    $vsPath = & $vswhere -latest -products * -property installationPath
 }
 if (-not $vsPath) {
     throw "Could not find a Visual Studio installation"
@@ -124,15 +119,7 @@ if (-not (Test-Path $linkPath)) {
     throw "MSVC link.exe not found at $linkPath"
 }
 
-if ($NoPinLinker) {
-    # Don't pin the linker -> rustc auto-detects MSVC (vswhere) and configures
-    # LIB/INCLUDE itself. Export the MSVC host-bin dir so just recipes can
-    # prepend it ahead of git's /usr/bin (which shadows link.exe) -- that is
-    # the only thing rustc's PATH-based linker lookup gets wrong here.
-    Add-GitHubEnv -Name "PECOS_MSVC_HOST_BIN" -Value $msvcHostBin
-} else {
-    Add-GitHubEnv -Name "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -Value $linkPath
-}
+Add-GitHubEnv -Name "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -Value $linkPath
 
 # The Justfile pins `set shell := ["bash", "-cu"]`, so every `just` recipe (and
 # the `cargo` / `link.exe` it spawns) runs under git-bash, whose MSYS2 runtime
@@ -153,9 +140,5 @@ if ($NoPinLinker) {
 Add-GitHubEnv -Name "MSYS2_ENV_CONV_EXCL" -Value "LIB;INCLUDE;LIBPATH"
 
 Write-Host "Configured Visual Studio environment from $vsPath for $Arch"
-if ($NoPinLinker) {
-    Write-Host "Linker NOT pinned; exported PECOS_MSVC_HOST_BIN=$msvcHostBin (recipes prepend it to PATH; rustc auto-detects MSVC + LIB)"
-} else {
-    Write-Host "Configured Cargo MSVC linker: $linkPath"
-}
+Write-Host "Configured Cargo MSVC linker: $linkPath"
 Write-Host "Excluded LIB;INCLUDE;LIBPATH from MSYS2 path conversion"

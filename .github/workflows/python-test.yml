@@ -75,14 +75,12 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Set up Visual Studio environment on Windows
-      if: runner.os == 'Windows'
-      shell: pwsh
-      # -NoPinLinker: don't pin the linker (so rustc auto-detects MSVC and sets
-      # up LIB/INCLUDE itself) and instead export PECOS_MSVC_HOST_BIN, which the
-      # just recipes prepend to PATH ahead of git's /usr/bin so rustc's
-      # PATH-based linker lookup finds MSVC's link.exe, not GNU coreutils' link.
-      run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64 -NoPinLinker
+    # No Windows-special MSVC setup here: the first cargo invocation is
+    # `just ci-env`, whose `_msvc-bootstrap` prerequisite runs
+    # scripts/win-msvc-bootstrap.ps1 and writes the linker + LIB/INCLUDE into
+    # .cargo/config.toml (read by cargo after it spawns, so it survives
+    # git-bash). CI is therefore structurally identical to Linux/macOS, and a
+    # local Windows dev gets the exact same path via the same just prereq.
 
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@v7
@@ -131,51 +129,16 @@ jobs:
         path: ~/.pecos/deps/llvm-14
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
-    # No linker pin, no LIB/INCLUDE in .cargo/config.toml. setup-msvc.ps1
-    # (-NoPinLinker) exported PECOS_MSVC_HOST_BIN; the just recipes prepend it
-    # to PATH so rustc's own vswhere MSVC detection finds the real link.exe
-    # (not git's /usr/bin/link) AND configures LIB/INCLUDE itself -- exactly
-    # like a correctly-configured local Windows build. Only the .cargo dir
-    # needs to exist for the LLVM_SYS_140_PREFIX written next.
-    - name: Prepare .cargo dir (Windows)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: New-Item -ItemType Directory -Force -Path .cargo | Out-Null
-
+    # `just ci-env` is the first cargo invocation. Its `_msvc-bootstrap`
+    # prerequisite writes the MSVC linker + LIB/INCLUDE into
+    # .cargo/config.toml on Windows (no-op elsewhere); LLVM is configured into
+    # the same file by `pecos setup` during the build. Nothing Windows-special
+    # is needed at the workflow level.
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
 
-    # config.toml [env] (no `linker=` -- the PATH-prepend in the just recipes
-    # makes rustc find the correct MSVC link.exe, so the linker pin is gone).
-    # LIB/INCLUDE are still required: rustc finds the *linker* but does NOT
-    # populate its LIB env, and git-bash mangles the ambient LIB at the
-    # bash->native-cargo spawn boundary (proven: LNK1181 on kernel32.lib in
-    # build-selene even with the correct linker). cargo reads [env] from this
-    # file after it starts, bypassing the mangled shell env entirely -- this is
-    # the one irreducible remedy for that MSYS spawn-mangling given `just`
-    # mandates git-bash. LLVM_SYS_140_PREFIX is a single mangling-safe path
-    # inkwell needs. TOML literal (single-quoted) strings for the Windows
-    # paths; guarded so an empty value can't clobber via force = true.
-    - name: Configure LLVM environment (Windows)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        $escapedLLVM = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
-        $libLine = if ($env:LIB) { "LIB = { value = '$($env:LIB)', force = true }`n" } else { "" }
-        $incLine = if ($env:INCLUDE) { "INCLUDE = { value = '$($env:INCLUDE)', force = true }`n" } else { "" }
-        @"
-        [env]
-        LLVM_SYS_140_PREFIX = { value = "$escapedLLVM", force = true }
-        $libLine$incLine
-        "@ | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
-
-    # cargo install runs cargo directly (not via just), so prepend the MSVC
-    # bin here too so its build-script links find the right link.exe.
-    # No-op on non-Windows where PECOS_MSVC_HOST_BIN is unset.
     - name: Install PECOS CLI
-      run: |
-        if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
-        cargo install --path crates/pecos-cli --force
+      run: cargo install --path crates/pecos-cli --force
 
     # macOS: prevent Homebrew library path issues
     - name: Configure macOS environment
@@ -197,26 +160,6 @@ jobs:
         unset LIBRARY_PATH LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH PKG_CONFIG_PATH
         export LIBRARY_PATH=/usr/lib
         just build-debug
-
-    # Two-level diagnostic to localize where the MSVC LIB is lost (the
-    # step-level bash sees a correct LIB, but cold build-script links inside
-    # `just` were failing on kernel32.lib). (1) step-level bash, (2) through the
-    # exact `just -> #!/usr/bin/env bash` chain build-selene uses. Comparing the
-    # two pinpoints whether `just`/the shebang layer drops or mangles LIB.
-    # Non-fatal on the through-just side so we still capture the build failure
-    # context; the step-level side fails fast on a clear regression.
-    - name: Diagnose MSVC LIB across the just chain (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        echo "=== step-level bash ==="
-        echo "MSYS2_ENV_CONV_EXCL=${MSYS2_ENV_CONV_EXCL:-<unset>}"
-        echo "LIB=${LIB:-<unset>}"
-        case "${LIB:-}" in
-          *"Windows Kits"*"um"*) echo "OK: Windows SDK um lib dir present in step-level LIB" ;;
-          *) echo "ERROR: step-level LIB lacks a Windows SDK 'um' lib directory" >&2; exit 1 ;;
-        esac
-        echo "=== through just -> shebang-bash (build-selene's exact chain) ==="
-        just _win-msvc-env-debug || true
 
     - name: Build PECOS
       if: runner.os != 'macOS'
@@ -252,3 +195,39 @@ jobs:
 
     - name: Run linting
       run: just lint check
+
+  # Audience-B contract: a crates.io consumer builds the publishable crates
+  # with plain `cargo` on Windows -- no `just`, no git-bash, no generated
+  # .cargo/config.toml, none of the MSVC bootstrap. This proves the git-bash
+  # remediation is confined to the dev/CI tooling and never leaks into the
+  # crates themselves. Fails closed if a repo config.toml is present.
+  windows-vanilla-cargo:
+    name: Windows vanilla cargo (crates.io consumer contract)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Rust (MSVC)
+        shell: pwsh
+        run: |
+          curl.exe -sSf -o rustup-init.exe https://win.rustup.rs
+          ./rustup-init.exe -y --default-toolchain stable --default-host x86_64-pc-windows-msvc --profile minimal
+          "$HOME\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Assert no generated .cargo/config.toml (fail closed)
+        shell: pwsh
+        run: |
+          if (Test-Path .cargo/config.toml) {
+            Write-Error "repo .cargo/config.toml exists; the crates.io contract must hold WITHOUT it"
+            exit 1
+          }
+
+      # pecos-build (where the toml_edit work lives) and pecos-core are
+      # publishable and need no LLVM/FFI/external toolchain -- the right
+      # minimal canary. LLVM-needing crates additionally require the upstream
+      # llvm-sys LLVM_SYS_140_PREFIX (a universal llvm-sys requirement, not a
+      # PECOS workaround) and are out of scope for this contract lane.
+      - name: Vanilla cargo check (publishable crates, no just/bootstrap)
+        shell: pwsh
+        run: cargo check -p pecos-build -p pecos-core

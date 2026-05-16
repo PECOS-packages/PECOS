@@ -772,6 +772,10 @@ validate-port port:
 
 [private]
 setup-quiet:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     {{pecos}} setup --quiet
 
 # Sync Python deps (fast if already installed, skips maturin rebuilds)
@@ -779,6 +783,9 @@ setup-quiet:
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
+    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset. uv sync
+    # triggers maturin -> cargo to (re)build the rslib crates.
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     # Quick check: ensure the packages used by the default dev/test lane are importable.
     # This catches newly added workspace members that an older .venv may be missing.
     if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null; then

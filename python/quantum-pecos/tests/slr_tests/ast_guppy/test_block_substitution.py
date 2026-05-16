@@ -231,12 +231,25 @@ class TestPermuteAndPrepare:
         assert out.allocator == "p"
         assert out.slots is None
 
-    def test_prepare_slots_remapped(self) -> None:
-        # Prep(q[2], q[5]) under the bundle -> Prep on d[0], d[1].
+    def test_prepare_slots_remapped_preserves_source_order(self) -> None:
+        # Prep(q[2], q[5]) under q[2]->d[0], q[5]->d[1] -> Prep(d, (0, 1)).
+        # Exact order asserted (Codex 5e.1 #3): the lowering preserves source
+        # slot order; sorted() would mask an ordering regression.
         prep = PrepareOp(allocator="q", slots=(2, 5))
         out = substitute_stmt(prep, _bundle_remap())
         assert out.allocator == "d"
-        assert sorted(out.slots) == [0, 1]
+        assert out.slots == (0, 1)
+
+    def test_prepare_slots_reversed_map_preserves_source_order(self) -> None:
+        # Reversed map q[2]->d[1], q[5]->d[0]: source order (2, 5) is kept, so
+        # the emitted slots follow the source iteration -> (1, 0), NOT sorted.
+        remap = BodyRemap()
+        remap.add_slot(("q", 2), ("d", 1))
+        remap.add_slot(("q", 5), ("d", 0))
+        prep = PrepareOp(allocator="q", slots=(2, 5))
+        out = substitute_stmt(prep, remap)
+        assert out.allocator == "d"
+        assert out.slots == (1, 0)
 
     def test_prepare_slots_multi_allocator_rejected(self) -> None:
         remap = BodyRemap()
@@ -245,6 +258,39 @@ class TestPermuteAndPrepare:
         prep = PrepareOp(allocator="q", slots=(0, 1))
         with pytest.raises(BodySubstitutionError, match=r"multiple destination allocators"):
             substitute_stmt(prep, remap)
+
+
+class TestBuilderConflictRejection:
+    """Codex 5e.1 review #2: an outer name bound in conflicting modes
+    (whole + partial, or whole twice) is input aliasing -- reject at
+    construction time, not silently let whole win at lookup. Protects the
+    QASM/flatten path where Guppy's own linearity alias check never runs.
+    """
+
+    def test_whole_then_partial_same_name_rejected(self) -> None:
+        remap = BodyRemap()
+        remap.add_whole_alloc("q", "qp", 3)
+        with pytest.raises(BodySubstitutionError, match=r"already bound whole"):
+            remap.add_slot(("q", 0), ("d", 0))
+
+    def test_partial_then_whole_same_name_rejected(self) -> None:
+        remap = BodyRemap()
+        remap.add_slot(("q", 0), ("d", 0))
+        with pytest.raises(BodySubstitutionError, match=r"already bound partially"):
+            remap.add_whole_alloc("q", "qp", 3)
+
+    def test_whole_bound_twice_rejected(self) -> None:
+        remap = BodyRemap()
+        remap.add_whole_alloc("q", "a", 2)
+        with pytest.raises(BodySubstitutionError, match=r"already bound whole"):
+            remap.add_whole_alloc("q", "b", 2)
+
+    def test_partial_then_bit_same_name_ok_distinct_names_ok(self) -> None:
+        # Distinct outer names binding independently is NOT a conflict.
+        remap = BodyRemap()
+        remap.add_slot(("q", 0), ("d", 0))
+        remap.add_bit(("c", 3), ("out", 0))  # different name -- fine
+        remap.add_whole_alloc("r", "rp", 2)  # different name -- fine
 
 
 class TestRejectOnPartialNameLevel:

@@ -77,6 +77,11 @@ if TYPE_CHECKING:
 
 # A PermuteOp source/target string is either a bare name or `name[idx]`.
 _PERMUTE_REF_RE = re.compile(r"([A-Za-z_]\w*)(?:\[(\d+)\])?$")
+# Leading identifier token of an arbitrary (possibly unparseable) ref, used
+# to decide reject-on-partial WITHOUT a loose substring match -- `"q" in
+# "sq[0:2]"` would otherwise falsely reject an unrelated `sq` ref
+# (Codex 5e.1 review #1).
+_LEADING_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 
 
 class BodySubstitutionError(ValueError):
@@ -104,20 +109,45 @@ class BodyRemap:
         self._partial_names: set[str] = set()
 
     # ---- builders ----
+    #
+    # An outer name may be bound in exactly ONE mode -- whole xor partial --
+    # and a whole binding maps exactly one src. Conflicting builder calls
+    # (same name bound both whole and partial, or whole-bound twice) are an
+    # input-aliasing error: reject at construction time rather than letting
+    # whole silently win at lookup (Codex 5e.1 review #2). This protects the
+    # QASM/flatten path too, where Guppy's own linearity alias check never
+    # runs.
+
+    def _reject_conflict(self, name: str, *, mode: str) -> None:
+        if name in self._whole_alloc:
+            msg = (
+                f"BodyRemap: outer name {name!r} is already bound whole; "
+                f"cannot also bind it {mode} (input aliasing)"
+            )
+            raise BodySubstitutionError(msg)
+        if name in self._partial_names and mode == "whole":
+            msg = (
+                f"BodyRemap: outer name {name!r} is already bound partially; "
+                f"cannot also bind it whole (input aliasing)"
+            )
+            raise BodySubstitutionError(msg)
 
     def add_whole_alloc(self, src: str, dst: str, size: int) -> None:
         """Bind a whole QReg `src` (size N) to `dst`, identity per-slot."""
+        self._reject_conflict(src, mode="whole")
         self._whole_alloc[src] = dst
         for i in range(size):
             self._slot[(src, i)] = (dst, i)
 
     def add_slot(self, src: tuple[str, int], dst: tuple[str, int]) -> None:
         """Bind one outer qubit slot; marks `src` allocator partial."""
+        self._reject_conflict(src[0], mode="partial (per-slot)")
         self._slot[src] = dst
         self._partial_names.add(src[0])
 
     def add_bit(self, src: tuple[str, int], dst: tuple[str, int]) -> None:
         """Bind one outer classical bit; marks `src` register partial."""
+        self._reject_conflict(src[0], mode="partial (per-bit)")
         self._bit[src] = dst
         self._partial_names.add(src[0])
 
@@ -337,13 +367,17 @@ def _sub_permute_ref(ref: str, remap: BodyRemap) -> str:
     """
     match = _PERMUTE_REF_RE.fullmatch(ref)
     if match is None:
-        for name in remap._partial_names:  # noqa: SLF001 -- same module
-            if name in ref:
-                msg = (
-                    f"Cannot substitute PermuteOp ref {ref!r}: unsupported "
-                    f"ref form mentions partially-bound name {name!r}"
-                )
-                raise BodySubstitutionError(msg)
+        # Compare the ref's LEADING identifier token exactly against the
+        # partial-name set (not a substring scan) so `sq[0:2]` is not
+        # falsely rejected when `q` is partially bound.
+        lead = _LEADING_IDENT_RE.match(ref)
+        if lead is not None and lead.group(0) in remap._partial_names:  # noqa: SLF001 -- same module
+            base = lead.group(0)
+            msg = (
+                f"Cannot substitute PermuteOp ref {ref!r}: unsupported "
+                f"ref form whose base name {base!r} is partially bound"
+            )
+            raise BodySubstitutionError(msg)
         return ref
     name, idx = match.group(1), match.group(2)
     if idx is None:

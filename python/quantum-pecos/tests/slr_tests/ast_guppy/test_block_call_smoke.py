@@ -1618,11 +1618,13 @@ class TestBlockBodyStatementSubstitution:
         # add_slot marks `outer` as partially bound.
         remap.add_slot(("outer", 0), ("q", 0))
 
-        with pytest.raises(BodySubstitutionError, match=r"partially-bound name 'outer'"):
+        with pytest.raises(BodySubstitutionError, match=r"base name 'outer' is partially bound"):
             _sub_permute_ref("outer[0:2]", remap)
 
-        # Unrelated unparseable ref (no partial name substring) passes through.
+        # Unrelated unparseable refs whose BASE name is not partial pass
+        # through -- including the substring-trap `souter` (Codex 5e.1 #1).
         assert _sub_permute_ref("other[0:2]", remap) == "other[0:2]"
+        assert _sub_permute_ref("souter[0:2]", remap) == "souter[0:2]"
 
 
 class TestSlrBlockInputsWiring:

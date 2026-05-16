@@ -979,8 +979,9 @@ class AstToGuppy:
         # Phase 1: validate every arg + out binding BEFORE touching linearity state, so
         # a late-raised GuppyCodegenError can't leave the tracker half-consumed (Codex
         # 2026-05-15 review).
-        # Each validated_args entry is tagged with "array" or "single_qubit" so the
-        # Phase-2 emit step knows how to pack the call argument.
+        # Each validated_args entry is tagged with one of "array",
+        # "single_qubit", "single_bit", or "qubit_bundle" so the Phase-2 emit
+        # step knows how to pack the call argument.
         validated_args: list[tuple[BlockInput, str, tuple]] = []
         live_inputs_out: list[BlockInput] = []
         for inp, arg in zip(decl.inputs, node.arg_bindings, strict=True):

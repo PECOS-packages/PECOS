@@ -1056,6 +1056,12 @@ class TestQubitBundleInputSupport:
         the entry wrapper and pins the seeded Selene records (the bundled
         slots a[2] and b[0] form a Bell pair, so the two measurements are
         perfectly correlated per shot).
+
+        Note: this is a *compile + behavior* gate, not an unpack-order gate.
+        Bell measurements are symmetric, so a swapped bundle unpack order
+        would still pass here. `test_qubit_bundle_asymmetric_unpack_order`
+        below pins unpack order with an asymmetric bundle (Codex 2026-05-15
+        iter-5d r2 review #1).
         """
         import importlib.util
         import sys
@@ -1099,6 +1105,88 @@ class TestQubitBundleInputSupport:
         }, raw
         # Bell correlation: bundled slots a[2] and b[0] measure identically.
         assert raw["measurement_0"] == raw["measurement_1"], raw
+
+    def test_qubit_bundle_asymmetric_unpack_order(self) -> None:
+        """Pin bundle unpack ORDER with an asymmetric program.
+
+        Codex 2026-05-15 iter-5d r2 review #1: the Bell-correlation test is
+        symmetric, so a swapped bundle unpack (`b_0, a_2 = ret` instead of
+        `a_2, b_0 = ret`) still passes it. Here the block applies X to q[0]
+        ONLY, so the two bundled slots end in DIFFERENT states: a[2] (<- q[0],
+        X'd) measures 1, b[0] (<- q[1], untouched) measures 0. A swapped
+        unpack would flip both records, failing this test.
+        """
+        import importlib.util
+        import sys
+        import tempfile
+        import warnings
+        from pathlib import Path
+
+        from pecos import Hugr, selene_engine, sim
+        from pecos.slr.ast.codegen.entry_wrapper import build_no_arg_entry_wrapper
+        from pecos.slr.ast.nodes import QubitBundleArg
+
+        decl = BlockDecl(
+            name="asym",
+            inputs=(
+                BlockInput(
+                    name="q",
+                    effect=ResourceEffect.LIVE_PRESERVED,
+                    type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=2),
+                ),
+            ),
+            # X on q[0] ONLY -- breaks the symmetry between the two bundled slots.
+            body=(GateOp(gate=GateKind.X, targets=(SlotRef(allocator="q", index=0),)),),
+        )
+        bundle = QubitBundleArg(
+            slots=(SlotRef(allocator="a", index=2), SlotRef(allocator="b", index=0)),
+        )
+        program = Program(
+            name="main",
+            allocator=AllocatorDecl(name="a", capacity=3),
+            declarations=(AllocatorDecl(name="b", capacity=2), RegisterDecl(name="c", size=2)),
+            block_decls=(decl,),
+            body=(
+                PrepareOp(allocator="a"),
+                PrepareOp(allocator="b"),
+                BlockCall(callee="asym", arg_bindings=(bundle,), out_bindings=(bundle,)),
+                MeasureOp(
+                    targets=(SlotRef(allocator="a", index=2), SlotRef(allocator="b", index=0)),
+                    results=(BitRef(register="c", index=0), BitRef(register="c", index=1)),
+                ),
+            ),
+        )
+        main_source = ast_to_guppy(program)
+        entry_source, _info = build_no_arg_entry_wrapper(program)
+        full_source = main_source + entry_source
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            path = Path(f.name)
+            f.write(full_source)
+
+        spec = importlib.util.spec_from_file_location(f"_bundle_asym_{path.stem}", path)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException as exc:
+            err = f"Generated Guppy failed to import:\n{full_source}\n---\n{exc}"
+            raise AssertionError(err) from exc
+
+        package = module.entry.compile()
+        hugr_bytes = package.to_str().encode("utf-8")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(5).seed(42).run(4)
+        raw = result.to_dict() if hasattr(result, "to_dict") else result
+        # Empirical probe 2026-05-15: a[2] <- X'd q[0] -> 1; b[0] <- untouched
+        # q[1] -> 0. Swapped unpack order would yield the inverse.
+        assert raw == {
+            "measurement_0": [1, 1, 1, 1],
+            "measurement_1": [0, 0, 0, 0],
+        }, raw
 
     def test_qubit_bundle_cross_input_alias_rejected_pre_consume(self) -> None:
         """Codex 2026-05-15 iter-5d review #3: a slot referenced by two distinct

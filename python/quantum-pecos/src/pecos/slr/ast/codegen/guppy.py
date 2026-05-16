@@ -948,16 +948,21 @@ class AstToGuppy:
     def _emit_block_call(self, node: BlockCall) -> list[str]:
         """Lower a BlockCall to a packed-array call + unpack pattern.
 
-        Per-input dispatch (Phase 3a.3 iter 5b scope):
+        Per-input dispatch (Phase 3a.3 iter 5d scope):
         - `array[qubit, N]` input + `AllocatorArg(name=outer)`: pack the
           outer allocator's slots into `array(outer_0, outer_1, ...)`,
           unpack the returned array back into the same slots.
         - bare `qubit` input + `SingleQubitArg(slot=outer[i])`: pass the
           outer slot's local directly (no array wrap), rebind it from the
           returned single qubit value.
+        - bare `bit` input + `SingleBitArg(bit=c[i])`: wrap into an
+          `array[bool, 1]` write-back proxy, write the mutated bit back.
+        - `array[qubit, N]` input + `QubitBundleArg(slots=(...))`: pack N
+          arbitrary (possibly non-contiguous, cross-allocator) outer slots,
+          unpack the returned array back into the same slots.
 
-        Other BlockArg subclasses (`SingleBitArg`, `QubitBundleArg`,
-        `BitBundleArg`) raise -- they land with later iterations.
+        The remaining BlockArg subclass (`BitBundleArg`) raises -- it lands
+        with a later iteration.
         """
         decl = self._block_decls.get(node.callee)
         if decl is None:
@@ -1011,12 +1016,43 @@ class AstToGuppy:
             if (kind, info) != (arg_kind, arg_info):
                 msg = (
                     f"BlockCall {node.callee!r}: LIVE_PRESERVED input {inp.name!r} "
-                    f"must use matching arg_binding and out_binding (same slot for "
-                    f"SingleQubitArg, same allocator name for AllocatorArg); got "
+                    f"must use an identical arg_binding and out_binding (same "
+                    f"allocator name for AllocatorArg; same slot for "
+                    f"SingleQubitArg; same bit for SingleBitArg; same ordered "
+                    f"slot tuple for QubitBundleArg); got "
                     f"arg={arg_kind}{arg_info} vs out={kind}{info}"
                 )
                 raise GuppyCodegenError(msg)
             validated_outs.append((kind, info))
+
+        # Cross-input aliasing check (still Phase 1, pre-consume): two distinct
+        # quantum arg_bindings must not reference the same outer qubit slot.
+        # Without this, the overlap would only surface mid-Phase-2 as a
+        # LinearityError ("slot consumed") with the tracker half-mutated. Raising
+        # here keeps the "all validation before linearity mutation" invariant
+        # strict (Codex 2026-05-15 iter-5d review #3). Bits are copyable so
+        # single_bit args are excluded.
+        seen_slots: dict[tuple[str, int], str] = {}
+        for inp, kind, info in validated_args:
+            if kind == "array":
+                alloc, outer_size = info
+                slots = [(alloc, i) for i in range(outer_size)]
+            elif kind == "single_qubit":
+                slots = [info]
+            elif kind == "qubit_bundle":
+                slots = list(info)
+            else:  # single_bit -- no qubit slots
+                continue
+            for slot in slots:
+                if slot in seen_slots:
+                    msg = (
+                        f"BlockCall {node.callee!r}: qubit slot "
+                        f"{slot[0]}[{slot[1]}] is referenced by more than one "
+                        f"arg_binding (inputs {seen_slots[slot]!r} and "
+                        f"{inp.name!r}); a qubit cannot be passed to two inputs"
+                    )
+                    raise GuppyCodegenError(msg)
+                seen_slots[slot] = inp.name
 
         # Phase 2: now that every check passed, consume slots and emit code.
         linearity = self._linearity()

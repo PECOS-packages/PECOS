@@ -797,7 +797,7 @@ class TestSingleQubitInputSupport:
                 ),
             ),
         )
-        with pytest.raises(GuppyCodegenError, match=r"must use matching arg_binding and out_binding"):
+        with pytest.raises(GuppyCodegenError, match=r"must use an identical arg_binding and out_binding"):
             ast_to_guppy(prog)
 
     def test_allocator_mismatched_arg_out_name_rejected(self) -> None:
@@ -828,7 +828,7 @@ class TestSingleQubitInputSupport:
                 ),
             ),
         )
-        with pytest.raises(GuppyCodegenError, match=r"must use matching arg_binding and out_binding"):
+        with pytest.raises(GuppyCodegenError, match=r"must use an identical arg_binding and out_binding"):
             ast_to_guppy(prog)
 
     def test_single_qubit_slot_index_out_of_bounds_rejected(self) -> None:
@@ -1046,6 +1046,111 @@ class TestQubitBundleInputSupport:
         # Downstream measure sees the rebound slots.
         assert "c[0] = measure(a_2)" in source
         assert "c[1] = measure(b_0)" in source
+
+    def test_qubit_bundle_end_to_end_selene_bell_correlation(self) -> None:
+        """Compile + run the cross-allocator bundle program through Selene.
+
+        Codex 2026-05-15 iter-5d review #1: the support test was string-shape
+        only; the iter-5b r1 blocker proved a string can look right while the
+        Guppy fails its own linearity. This compiles the generated Guppy via
+        the entry wrapper and pins the seeded Selene records (the bundled
+        slots a[2] and b[0] form a Bell pair, so the two measurements are
+        perfectly correlated per shot).
+        """
+        import importlib.util
+        import sys
+        import tempfile
+        import warnings
+        from pathlib import Path
+
+        from pecos import Hugr, selene_engine, sim
+        from pecos.slr.ast.codegen.entry_wrapper import build_no_arg_entry_wrapper
+
+        program = self._build_bundle_program()
+        main_source = ast_to_guppy(program)
+        entry_source, _info = build_no_arg_entry_wrapper(program)
+        full_source = main_source + entry_source
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            path = Path(f.name)
+            f.write(full_source)
+
+        spec = importlib.util.spec_from_file_location(f"_bundle_smoke_{path.stem}", path)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException as exc:
+            err = f"Generated Guppy failed to import:\n{full_source}\n---\n{exc}"
+            raise AssertionError(err) from exc
+
+        package = module.entry.compile()
+        hugr_bytes = package.to_str().encode("utf-8")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(5).seed(42).run(8)
+        raw = result.to_dict() if hasattr(result, "to_dict") else result
+        # Empirical probe 2026-05-15 (matches Codex's independent r1 probe):
+        assert raw == {
+            "measurement_0": [1, 0, 0, 1, 0, 0, 0, 1],
+            "measurement_1": [1, 0, 0, 1, 0, 0, 0, 1],
+        }, raw
+        # Bell correlation: bundled slots a[2] and b[0] measure identically.
+        assert raw["measurement_0"] == raw["measurement_1"], raw
+
+    def test_qubit_bundle_cross_input_alias_rejected_pre_consume(self) -> None:
+        """Codex 2026-05-15 iter-5d review #3: a slot referenced by two distinct
+        quantum arg_bindings must raise a clean GuppyCodegenError in Phase 1
+        (pre-consume), not a mid-Phase-2 LinearityError with the tracker
+        half-mutated.
+        """
+        from pecos.slr.ast.nodes import QubitBundleArg, SingleQubitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="x", effect=ResourceEffect.CONSUMED, type_expr=QubitTypeExpr()),
+                BlockInput(
+                    name="ys",
+                    effect=ResourceEffect.LIVE_PRESERVED,
+                    type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=2),
+                ),
+            ),
+            body=(MeasureOp(targets=(SlotRef(allocator="x", index=0),)),),
+        )
+        # outer_q[0] is bound to BOTH input x (single qubit) and the bundle ys.
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=3),
+            block_decls=(decl,),
+            body=(
+                PrepareOp(allocator="outer_q"),
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(
+                        SingleQubitArg(slot=SlotRef(allocator="outer_q", index=0)),
+                        QubitBundleArg(
+                            slots=(
+                                SlotRef(allocator="outer_q", index=0),
+                                SlotRef(allocator="outer_q", index=1),
+                            ),
+                        ),
+                    ),
+                    out_bindings=(
+                        QubitBundleArg(
+                            slots=(
+                                SlotRef(allocator="outer_q", index=0),
+                                SlotRef(allocator="outer_q", index=1),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"referenced by more than one arg_binding"):
+            ast_to_guppy(prog)
 
     def test_qubit_bundle_size_mismatch_rejected(self) -> None:
         from pecos.slr.ast.nodes import QubitBundleArg

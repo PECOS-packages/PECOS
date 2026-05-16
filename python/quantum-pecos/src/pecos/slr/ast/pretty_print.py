@@ -202,7 +202,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def format_statement(self, stmt: Statement) -> str:
         """Format a statement."""
-        return stmt.accept(self)
+        return self.visit(stmt)
 
     def visit_gate(self, node: GateOp) -> str:
         """Visit gate operation."""
@@ -398,7 +398,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
             return "qubit"
         if isinstance(type_expr, BitTypeExpr):
             return "bit"
-        return type_expr.accept(self)
+        return self.visit(type_expr)
 
     # References
 
@@ -414,7 +414,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def format_expression(self, expr: Expression) -> str:
         """Format an expression."""
-        return expr.accept(self)
+        return self.visit(expr)
 
     def visit_literal(self, node: LiteralExpr) -> str:
         """Visit literal expression."""
@@ -460,7 +460,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_array_type(self, node) -> str:
         """Visit array type."""
-        element = node.element.accept(self)
+        element = self.visit(node.element)
         return f"Array[{element}, {node.size}]"
 
     def visit_allocator_type(self, node) -> str:

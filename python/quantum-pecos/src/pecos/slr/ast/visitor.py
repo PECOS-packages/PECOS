@@ -65,6 +65,51 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 
+# Node-class-name -> BaseVisitor method name. This is the single source of
+# truth for visitor dispatch (replaces the per-node `accept()` double
+# dispatch). Keyed by `type(node).__name__` so no runtime import of the
+# node classes is needed (avoids an import cycle with nodes.py).
+# `test_ast_visitor` asserts every concrete AstNode subclass is registered
+# here, so a new node without an entry fails loudly in tests.
+_DISPATCH: dict[str, str] = {
+    "Program": "visit_program",
+    "AllocatorDecl": "visit_allocator_decl",
+    "RegisterDecl": "visit_register_decl",
+    "GateOp": "visit_gate",
+    "PrepareOp": "visit_prepare",
+    "MeasureOp": "visit_measure",
+    "AssignOp": "visit_assign",
+    "BarrierOp": "visit_barrier",
+    "CommentOp": "visit_comment",
+    "ReturnOp": "visit_return",
+    "PrintOp": "visit_print",
+    "PermuteOp": "visit_permute",
+    "IfStmt": "visit_if",
+    "WhileStmt": "visit_while",
+    "ForStmt": "visit_for",
+    "RepeatStmt": "visit_repeat",
+    "ParallelBlock": "visit_parallel",
+    "BlockInput": "visit_block_input",
+    "BlockDecl": "visit_block_decl",
+    "BlockCall": "visit_block_call",
+    "AllocatorArg": "visit_allocator_arg",
+    "SingleQubitArg": "visit_single_qubit_arg",
+    "SingleBitArg": "visit_single_bit_arg",
+    "QubitBundleArg": "visit_qubit_bundle_arg",
+    "BitBundleArg": "visit_bit_bundle_arg",
+    "SlotRef": "visit_slot_ref",
+    "BitRef": "visit_bit_ref",
+    "LiteralExpr": "visit_literal",
+    "VarExpr": "visit_var",
+    "BitExpr": "visit_bit_expr",
+    "BinaryExpr": "visit_binary",
+    "UnaryExpr": "visit_unary",
+    "QubitTypeExpr": "visit_qubit_type",
+    "BitTypeExpr": "visit_bit_type",
+    "ArrayTypeExpr": "visit_array_type",
+    "AllocatorTypeExpr": "visit_allocator_type",
+}
+
 
 class AstVisitor(Protocol[T_co]):
     """Protocol defining the visitor interface for AST nodes.
@@ -173,8 +218,22 @@ class BaseVisitor(ABC, Generic[T]):
     """
 
     def visit(self, node) -> T:
-        """Dispatch to the appropriate visit method."""
-        return node.accept(self)
+        """Dispatch to the appropriate visit method by node type.
+
+        Centralized dispatch (replaces per-node `accept()` double
+        dispatch): nodes carry no visitor coupling. `_DISPATCH` maps a
+        node class name to its `visit_*` method; the lookup is
+        late-bound via `getattr` so subclass overrides still apply.
+        """
+        method = _DISPATCH.get(type(node).__name__)
+        if method is None:
+            msg = (
+                f"BaseVisitor: no visit method registered for AST node "
+                f"{type(node).__name__!r} (add it to _DISPATCH in "
+                f"pecos.slr.ast.visitor)"
+            )
+            raise TypeError(msg)
+        return getattr(self, method)(node)
 
     def visit_children(self, node) -> list[T]:
         """Visit all children and collect results."""

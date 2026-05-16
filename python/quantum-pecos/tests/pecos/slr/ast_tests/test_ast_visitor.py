@@ -273,3 +273,52 @@ class TestVisitorTraversal:
 
         assert "H" in visitor.visited
         assert "X" in visitor.visited
+
+
+class TestVisitorDispatchCompleteness:
+    """Safety net for the centralized `_DISPATCH` (replaced per-node
+    `accept()`): a new concrete AST node without a dispatch entry must
+    fail loudly here -- this is what catching a missing `accept()`
+    used to do implicitly.
+    """
+
+    @staticmethod
+    def _concrete_node_names() -> set[str]:
+        import pecos.slr.ast.nodes as nodes_mod
+
+        def all_subclasses(cls: type) -> set[type]:
+            out: set[type] = set()
+            for sub in cls.__subclasses__():
+                out.add(sub)
+                out |= all_subclasses(sub)
+            return out
+
+        nodes = all_subclasses(nodes_mod.AstNode)
+        # Intermediate/abstract bases (AstNode, Expression, Statement,
+        # TypeExpr, Declaration, BlockArg) are never instantiated directly
+        # and are correctly absent from _DISPATCH.
+        bases = {
+            base
+            for cls in nodes
+            for base in cls.__bases__
+            if base in nodes or base is nodes_mod.AstNode
+        }
+        return {cls.__name__ for cls in nodes if cls not in bases}
+
+    def test_every_concrete_node_has_a_dispatch_entry(self) -> None:
+        from pecos.slr.ast.visitor import _DISPATCH
+
+        missing = sorted(self._concrete_node_names() - set(_DISPATCH))
+        assert not missing, (
+            f"concrete AST nodes with no _DISPATCH entry: {missing} "
+            "(add them to pecos.slr.ast.visitor._DISPATCH)"
+        )
+
+    def test_no_stale_or_invalid_dispatch_entries(self) -> None:
+        from pecos.slr.ast.visitor import _DISPATCH, BaseVisitor
+
+        concrete = self._concrete_node_names()
+        stale = sorted(set(_DISPATCH) - concrete)
+        assert not stale, f"_DISPATCH keys that are not concrete nodes: {stale}"
+        bad = sorted(v for v in _DISPATCH.values() if not callable(getattr(BaseVisitor, v, None)))
+        assert not bad, f"_DISPATCH values not methods on BaseVisitor: {bad}"

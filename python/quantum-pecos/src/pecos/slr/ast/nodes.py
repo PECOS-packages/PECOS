@@ -24,15 +24,12 @@ All nodes are immutable frozen dataclasses for safety and hashability.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-    from pecos.slr.ast.visitor import AstVisitor, T
 
 
 # =============================================================================
@@ -63,21 +60,16 @@ class SourceLocation:
 
 
 @dataclass(frozen=True, kw_only=True)
-class AstNode(ABC):
+class AstNode:
     """Base class for all AST nodes.
 
     All AST nodes are immutable frozen dataclasses that support:
-    - Visitor pattern via accept()
+    - Visitor traversal via `BaseVisitor` (centralized dispatch)
     - Child traversal via children()
     - Optional source location tracking
     """
 
     location: SourceLocation | None = field(default=None, compare=False, repr=False)
-
-    @abstractmethod
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        """Accept a visitor for traversal."""
-        ...
 
     def children(self) -> Sequence[AstNode]:
         """Return child nodes for traversal. Override in subclasses."""
@@ -249,9 +241,6 @@ class SlotRef(AstNode):
     allocator: str
     index: int
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_slot_ref(self)
-
     def __str__(self) -> str:
         return f"{self.allocator}[{self.index}]"
 
@@ -263,9 +252,6 @@ class BitRef(AstNode):
     register: str
     index: int
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_bit_ref(self)
-
     def __str__(self) -> str:
         return f"{self.register}[{self.index}]"
 
@@ -276,7 +262,7 @@ class BitRef(AstNode):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Expression(AstNode, ABC):
+class Expression(AstNode):
     """Base class for all expressions."""
 
 
@@ -286,9 +272,6 @@ class LiteralExpr(Expression):
 
     value: int | float | bool
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_literal(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class VarExpr(Expression):
@@ -296,18 +279,12 @@ class VarExpr(Expression):
 
     name: str
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_var(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class BitExpr(Expression):
     """Bit reference as expression (for conditions)."""
 
     ref: BitRef
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_bit_expr(self)
 
     def children(self) -> Sequence[AstNode]:
         return (self.ref,)
@@ -321,9 +298,6 @@ class BinaryExpr(Expression):
     left: Expression
     right: Expression
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_binary(self)
-
     def children(self) -> Sequence[AstNode]:
         return (self.left, self.right)
 
@@ -335,9 +309,6 @@ class UnaryExpr(Expression):
     op: UnaryOp
     operand: Expression
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_unary(self)
-
     def children(self) -> Sequence[AstNode]:
         return (self.operand,)
 
@@ -348,7 +319,7 @@ class UnaryExpr(Expression):
 
 
 @dataclass(frozen=True, kw_only=True)
-class TypeExpr(AstNode, ABC):
+class TypeExpr(AstNode):
     """Base class for type expressions."""
 
 
@@ -356,16 +327,10 @@ class TypeExpr(AstNode, ABC):
 class QubitTypeExpr(TypeExpr):
     """Single qubit type."""
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_qubit_type(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class BitTypeExpr(TypeExpr):
     """Single classical bit type."""
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_bit_type(self)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -374,9 +339,6 @@ class ArrayTypeExpr(TypeExpr):
 
     element: TypeExpr
     size: int
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_array_type(self)
 
     def children(self) -> Sequence[AstNode]:
         return (self.element,)
@@ -388,9 +350,6 @@ class AllocatorTypeExpr(TypeExpr):
 
     capacity: int
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_allocator_type(self)
-
 
 # =============================================================================
 # Declarations
@@ -398,7 +357,7 @@ class AllocatorTypeExpr(TypeExpr):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Declaration(AstNode, ABC):
+class Declaration(AstNode):
     """Base class for all declarations."""
 
 
@@ -414,9 +373,6 @@ class AllocatorDecl(Declaration):
     capacity: int
     parent: str | None = None  # Name of parent allocator
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_allocator_decl(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class RegisterDecl(Declaration):
@@ -426,9 +382,6 @@ class RegisterDecl(Declaration):
     size: int
     is_result: bool = True
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_register_decl(self)
-
 
 # =============================================================================
 # Statements
@@ -436,7 +389,7 @@ class RegisterDecl(Declaration):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Statement(AstNode, ABC):
+class Statement(AstNode):
     """Base class for all statements."""
 
 
@@ -447,9 +400,6 @@ class GateOp(Statement):
     gate: GateKind
     targets: tuple[SlotRef, ...]
     params: tuple[Expression, ...] = ()
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_gate(self)
 
     def children(self) -> Sequence[AstNode]:
         return (*self.targets, *self.params)
@@ -466,9 +416,6 @@ class PrepareOp(Statement):
     allocator: str
     slots: tuple[int, ...] | None = None  # None means prepare_all
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_prepare(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class MeasureOp(Statement):
@@ -480,9 +427,6 @@ class MeasureOp(Statement):
     targets: tuple[SlotRef, ...]
     results: tuple[BitRef, ...] = ()
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_measure(self)
-
     def children(self) -> Sequence[AstNode]:
         return (*self.targets, *self.results)
 
@@ -493,9 +437,6 @@ class AssignOp(Statement):
 
     target: BitRef | str  # Variable name or bit reference
     value: Expression
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_assign(self)
 
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = []
@@ -511,9 +452,6 @@ class BarrierOp(Statement):
 
     allocators: tuple[str, ...] = ()
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_barrier(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class CommentOp(Statement):
@@ -521,18 +459,12 @@ class CommentOp(Statement):
 
     text: str
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_comment(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class ReturnOp(Statement):
     """Return statement."""
 
     values: tuple[Expression | str, ...] = ()  # Can be variable names
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_return(self)
 
     def children(self) -> Sequence[AstNode]:
         return tuple(v for v in self.values if isinstance(v, AstNode))
@@ -557,9 +489,6 @@ class PrintOp(Statement):
     tag: str
     namespace: str = "result"
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_print(self)
-
     def children(self) -> Sequence[AstNode]:
         if isinstance(self.value, AstNode):
             return (self.value,)
@@ -581,9 +510,6 @@ class PermuteOp(Statement):
     targets: tuple[str, ...]  # Final register/allocator names
     add_comment: bool = True  # Whether to add a comment in generated code
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_permute(self)
-
 
 # =============================================================================
 # Control Flow
@@ -598,9 +524,6 @@ class IfStmt(Statement):
     then_body: tuple[Statement, ...]
     else_body: tuple[Statement, ...] = ()
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_if(self)
-
     def children(self) -> Sequence[AstNode]:
         return (self.condition, *self.then_body, *self.else_body)
 
@@ -611,9 +534,6 @@ class WhileStmt(Statement):
 
     condition: Expression
     body: tuple[Statement, ...]
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_while(self)
 
     def children(self) -> Sequence[AstNode]:
         return (self.condition, *self.body)
@@ -628,9 +548,6 @@ class ForStmt(Statement):
     stop: Expression
     step: Expression | None = None
     body: tuple[Statement, ...] = ()
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_for(self)
 
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = [self.start, self.stop]
@@ -647,9 +564,6 @@ class RepeatStmt(Statement):
     count: int
     body: tuple[Statement, ...]
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_repeat(self)
-
     def children(self) -> Sequence[AstNode]:
         return self.body
 
@@ -659,9 +573,6 @@ class ParallelBlock(Statement):
     """Parallel execution hint."""
 
     body: tuple[Statement, ...]
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_parallel(self)
 
     def children(self) -> Sequence[AstNode]:
         return self.body
@@ -683,9 +594,6 @@ class BlockInput(AstNode):
     effect: ResourceEffect
     type_expr: TypeExpr
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_block_input(self)
-
     def children(self) -> Sequence[AstNode]:
         return (self.type_expr,)
 
@@ -702,9 +610,6 @@ class BlockDecl(AstNode):
     body: tuple[Statement, ...]
     return_op: ReturnOp | None = None
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_block_decl(self)
-
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = list(self.inputs)
         nodes.extend(self.body)
@@ -717,7 +622,7 @@ class BlockDecl(AstNode):
 
 
 @dataclass(frozen=True, kw_only=True)
-class BlockArg(AstNode, ABC):
+class BlockArg(AstNode):
     """Base class for `BlockCall` argument bindings.
 
     Each BlockInput on the callee is bound to exactly one BlockArg at the
@@ -731,18 +636,12 @@ class AllocatorArg(BlockArg):
 
     name: str
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_allocator_arg(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class SingleQubitArg(BlockArg):
     """Single-qubit slot binding."""
 
     slot: SlotRef
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_single_qubit_arg(self)
 
     def children(self) -> Sequence[AstNode]:
         return (self.slot,)
@@ -754,9 +653,6 @@ class SingleBitArg(BlockArg):
 
     bit: BitRef
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_single_bit_arg(self)
-
     def children(self) -> Sequence[AstNode]:
         return (self.bit,)
 
@@ -767,9 +663,6 @@ class QubitBundleArg(BlockArg):
 
     slots: tuple[SlotRef, ...]
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_qubit_bundle_arg(self)
-
     def children(self) -> Sequence[AstNode]:
         return self.slots
 
@@ -779,9 +672,6 @@ class BitBundleArg(BlockArg):
     """Non-contiguous bundle of classical bits packed into a single array[bool, N]."""
 
     bits: tuple[BitRef, ...]
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_bit_bundle_arg(self)
 
     def children(self) -> Sequence[AstNode]:
         return self.bits
@@ -802,9 +692,6 @@ class BlockCall(Statement):
     callee: str
     arg_bindings: tuple[BlockArg, ...]
     out_bindings: tuple[BlockArg, ...] = ()
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_block_call(self)
 
     def children(self) -> Sequence[AstNode]:
         return (*self.arg_bindings, *self.out_bindings)
@@ -832,9 +719,6 @@ class Program(AstNode):
     returns: tuple[TypeExpr, ...] = ()
     allocator: AllocatorDecl | None = None  # Base allocator
     block_decls: tuple[BlockDecl, ...] = ()
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_program(self)
 
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = []

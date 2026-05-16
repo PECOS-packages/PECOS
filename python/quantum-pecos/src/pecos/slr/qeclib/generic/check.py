@@ -18,7 +18,7 @@ check operations that can be used across different QEC codes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pecos.slr import Barrier, Block, Comment
 from pecos.slr.qeclib.qubit import CX, CY, CZ, H, Measure, Prep
@@ -34,6 +34,18 @@ class Check(Block):
     This class implements a generic stabilizer check operation that applies
     a sequence of Pauli operators to data qubits controlled by an ancilla qubit.
     """
+
+    # Phase 3a.3 (scratch-ancilla effect): emit BlockDecl + BlockCall instead
+    # of inlining. Data qubits pass through unchanged; `a` is a reset-reused
+    # scratch ancilla (prepped + measured inside, allocated internally in
+    # Guppy so callers like SynExtractBare can reuse one physical slot across
+    # sequential Checks); `out` is the live_preserved measurement-result bit.
+    # See ~/Repos/pecos-docs/design/slr/v2-scratch-ancilla-effect.md.
+    block_inputs: ClassVar[dict[str, str]] = {
+        "d": "live_preserved",
+        "a": "scratch",
+        "out": "live_preserved",
+    }
 
     def __init__(
         self,
@@ -61,6 +73,11 @@ class Check(Block):
             Exception: If invalid Pauli operator is specified.
         """
         super().__init__()
+        # SLR -> AST converter reads these to bind block_inputs param names
+        # to outer-scope refs.
+        self.d = d
+        self.a = a
+        self.out = out
 
         n: int = len(d)
 

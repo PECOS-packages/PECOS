@@ -99,14 +99,21 @@ class TestQeclibCheck:
 
         Ancilla is the only measurement target; data qubits are
         live_preserved through the Check. Probe-pinned 4-shot records.
+
+        `Check` is now converted (`a: scratch`): Guppy allocates the
+        ancilla INTERNALLY, so the run needs one physical qubit beyond
+        the declared 4-qubit QReg (`qubits=5`). The Selene records are
+        byte-identical to the pre-conversion flattened form -- design
+        R2: parity is on behavioral records, not resource counts.
         """
         prog = Main(
             q := QReg("q", 4),
             c := CReg("c", 1),
             Check([q[0], q[1], q[2]], "XYZ", q[3], c[0], with_barriers=True),
         )
-        raw = _run_via_selene(prog, shots=4, seed=42, qubits=4)
+        raw = _run_via_selene(prog, shots=4, seed=42, qubits=5)
         # Empirical probe 2026-05-15: {'measurement_0': [1, 0, 0, 1]}
+        # Unchanged post-conversion (scratch internal alloc).
         assert raw == {"measurement_0": [1, 0, 0, 1]}, raw
 
     def test_check_xyz_on_plus_state_pinned_records(self) -> None:
@@ -123,7 +130,9 @@ class TestQeclibCheck:
             qb.H(q[1]),
             Check([q[0], q[1], q[2]], "XYZ", q[3], c[0], with_barriers=True),
         )
-        raw = _run_via_selene(prog, shots=4, seed=42, qubits=4)
+        # qubits=5: converted Check allocates its scratch ancilla
+        # internally (design R2 -- records unchanged, +1 physical qubit).
+        raw = _run_via_selene(prog, shots=4, seed=42, qubits=5)
         # Empirical probe 2026-05-15: {'measurement_0': [1, 0, 0, 1]}
         assert raw == {"measurement_0": [1, 0, 0, 1]}, raw
 

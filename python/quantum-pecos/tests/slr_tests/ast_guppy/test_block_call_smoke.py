@@ -2752,3 +2752,77 @@ class TestScratchEffectS1:
         prog = Main(qq := QReg("qq", 2), c := CReg("c", 1), qb.Prep(qq), Outer(qq, c[0]))
         with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[1\].*meaningful caller state"):
             SlrConverter(prog).guppy()
+
+
+class TestScratchCheckS4ProductionLockIn:
+    """S4: the real qeclib `Check` is converted (`a: scratch`). The
+    production caller `SynExtractBare` reuses one ancilla register slot
+    across sequential Checks -- under `a: consumed` this was a Guppy
+    LinearityError (the original 5e.3 blocker). With the scratch effect
+    it must route every Check through a BlockCall, compile to Guppy, and
+    run through Selene with stable records, while QASM flatten stays
+    byte-identical to the inlined form.
+    """
+
+    def test_steane_syn_extract_bare_routes_check_through_blockcall(self) -> None:
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib.steane.syn_extract.bare import SynExtractBare
+
+        checks = [[2, 1, 3, 0], [5, 2, 1, 4], [6, 5, 2, 3]]
+        prog = Main(
+            d := QReg("d", 7),
+            a := QReg("a", 2),
+            syn := CReg("syn", 6),
+            SynExtractBare(d, a, checks, syn),
+        )
+        ast = slr_to_ast(prog)
+        # 6 Checks (3 Z + 3 X) -> 6 BlockCalls, not silently flattened.
+        assert sum(1 for s in ast.body if isinstance(s, BlockCall)) == 6
+        assert len(ast.block_decls) == 6
+
+        guppy_src = SlrConverter(prog).guppy()
+        # Was the original blocker: `a: consumed` -> LinearityError on the
+        # reused ancilla slot. Now each Check def allocates internally.
+        assert guppy_src.count("def check") == 6
+        assert "LinearityError" not in guppy_src
+
+        # QASM flatten still substitutes the scratch param to the outer
+        # ancilla slot (byte-identical inlined form -- a[0]/a[1] reused).
+        qasm = SlrConverter(prog).qasm()
+        assert "reset a[0];" in qasm
+        assert "reset a[1];" in qasm
+        assert "measure a[0] -> syn[0];" in qasm
+
+    def test_steane_syn_extract_bare_selene_records_pinned(self) -> None:
+        from pecos import Hugr, selene_engine, sim
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.qeclib.steane.syn_extract.bare import SynExtractBare
+
+        checks = [[2, 1, 3, 0], [5, 2, 1, 4], [6, 5, 2, 3]]
+        prog = Main(
+            d := QReg("d", 7),
+            a := QReg("a", 2),
+            syn := CReg("syn", 6),
+            SynExtractBare(d, a, checks, syn),
+        )
+        package = SlrConverter(prog).hugr()
+        # d(7) + a(2) declared + 1 internally-allocated scratch ancilla
+        # (design R2: parity is on behavioral records, not qubit count).
+        result = (
+            sim(Hugr(package.to_str().encode("utf-8")))
+            .classical(selene_engine())
+            .qubits(10)
+            .seed(42)
+            .run(4)
+        )
+        raw = result.to_dict() if hasattr(result, "to_dict") else result
+        # Empirical probe 2026-05-16 (post-conversion, scratch internal alloc).
+        assert raw == {
+            "measurement_0": [0, 0, 0, 0],
+            "measurement_1": [0, 0, 0, 0],
+            "measurement_2": [0, 0, 0, 0],
+            "measurement_3": [1, 1, 0, 1],
+            "measurement_4": [0, 0, 1, 0],
+            "measurement_5": [0, 0, 1, 0],
+        }, raw

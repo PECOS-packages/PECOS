@@ -224,16 +224,23 @@ class BaseVisitor(ABC, Generic[T]):
         dispatch): nodes carry no visitor coupling. `_DISPATCH` maps a
         node class name to its `visit_*` method; the lookup is
         late-bound via `getattr` so subclass overrides still apply.
+
+        Resolution walks `type(node).__mro__` and uses the first
+        registered ancestor. This preserves the old inherited-`accept()`
+        semantics: a user subclass of a concrete node (e.g.
+        `class MyGate(GateOp)`) inherited `GateOp.accept` and dispatched
+        to `visit_gate`; MRO lookup reproduces that exactly.
         """
-        method = _DISPATCH.get(type(node).__name__)
-        if method is None:
-            msg = (
-                f"BaseVisitor: no visit method registered for AST node "
-                f"{type(node).__name__!r} (add it to _DISPATCH in "
-                f"pecos.slr.ast.visitor)"
-            )
-            raise TypeError(msg)
-        return getattr(self, method)(node)
+        for cls in type(node).__mro__:
+            method = _DISPATCH.get(cls.__name__)
+            if method is not None:
+                return getattr(self, method)(node)
+        msg = (
+            f"BaseVisitor: no visit method registered for AST node "
+            f"{type(node).__name__!r} (add it to _DISPATCH in "
+            f"pecos.slr.ast.visitor)"
+        )
+        raise TypeError(msg)
 
     def visit_children(self, node) -> list[T]:
         """Visit all children and collect results."""

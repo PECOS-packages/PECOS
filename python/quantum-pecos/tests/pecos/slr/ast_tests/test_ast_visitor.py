@@ -293,7 +293,13 @@ class TestVisitorDispatchCompleteness:
                 out |= all_subclasses(sub)
             return out
 
-        nodes = all_subclasses(nodes_mod.AstNode)
+        # Only nodes shipped in `pecos.slr.ast.nodes` -- user/test
+        # subclasses (e.g. `MyGate(GateOp)`) are intentionally resolved
+        # by MRO in BaseVisitor.visit and must NOT be required in
+        # _DISPATCH, so scope the enumeration to the nodes module.
+        nodes = {
+            c for c in all_subclasses(nodes_mod.AstNode) if c.__module__ == nodes_mod.__name__
+        }
         # Intermediate/abstract bases (AstNode, Expression, Statement,
         # TypeExpr, Declaration, BlockArg) are never instantiated directly
         # and are correctly absent from _DISPATCH.
@@ -322,3 +328,24 @@ class TestVisitorDispatchCompleteness:
         assert not stale, f"_DISPATCH keys that are not concrete nodes: {stale}"
         bad = sorted(v for v in _DISPATCH.values() if not callable(getattr(BaseVisitor, v, None)))
         assert not bad, f"_DISPATCH values not methods on BaseVisitor: {bad}"
+
+    def test_subclass_of_concrete_node_dispatches_via_mro(self) -> None:
+        """Codex visitor-refactor review: the old `node.accept(self)`
+        double-dispatch was inherited, so a user subclass of a concrete
+        node dispatched to the base node's `visit_*`. MRO lookup in
+        `BaseVisitor.visit` must preserve that (a bare class-name match
+        would wrongly raise).
+        """
+
+        class MyGate(GateOp):
+            pass
+
+        class Recorder(BaseVisitor[str]):
+            def visit_gate(self, node: GateOp) -> str:
+                return f"gate:{node.gate.name}"
+
+            def default_result(self) -> str:
+                return ""
+
+        node = MyGate(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
+        assert Recorder().visit(node) == "gate:H"

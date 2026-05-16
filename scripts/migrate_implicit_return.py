@@ -51,7 +51,13 @@ class _MainReturnTransformer(cst.CSTTransformer):
         return True
 
     def leave_Call(self, original: cst.Call, updated: cst.Call) -> cst.BaseExpression:
-        if not m.matches(updated.func, m.Name("Main")):
+        # Match bare `Main(...)` AND any qualified form (`pecos.slr.Main(...)`,
+        # `slr.Main(...)`) -- the func is then an Attribute whose final attr
+        # is `Main` (Codex S1-approach review: qualified calls were missed).
+        if not m.matches(
+            updated.func,
+            m.Name("Main") | m.Attribute(attr=m.Name("Main")),
+        ):
             return updated
 
         has_return = any(
@@ -80,14 +86,23 @@ class _MainReturnTransformer(cst.CSTTransformer):
                 self.residual.append("Main(*...) / non-walrus CRegs")
             return updated
 
-        self._needs_return_import = True
         self.migrated += 1
+        # Mirror the qualifier of the matched `Main` call: `pecos.slr.Main`
+        # -> `pecos.slr.Return` (no import needed); bare `Main` -> bare
+        # `Return` (+ ensure `from pecos.slr import Return`).
+        if isinstance(updated.func, cst.Attribute):
+            return_func: cst.BaseExpression = updated.func.with_changes(
+                attr=cst.Name("Return"),
+            )
+        else:
+            return_func = cst.Name("Return")
+            self._needs_return_import = True
         # Trailing comma on the appended arg preserves the "magic trailing
         # comma" so the formatter keeps the call's original multi-line vs
         # single-line shape (minimal diff -- no whole-call reflow).
         ret = cst.Arg(
             value=cst.Call(
-                func=cst.Name("Return"),
+                func=return_func,
                 args=[cst.Arg(value=cst.Name(n)) for n in result_cregs],
             ),
             comma=cst.Comma(),

@@ -115,25 +115,30 @@ class SlrConverter:
 
     def _generate_qir(self, *, bytecode: bool = False) -> str | bytes:
         """Generate QIR code using AST-based codegen."""
-        if bytecode:
-            # QIR bytecode requires the old generator
-            from pecos.slr.gen_codes.gen_qir import QIRGenerator
-
-            if QIRGenerator is None:
-                msg = (
-                    "Trying to compile QIR without the appropriate optional dependencies install. "
-                    "Use optional dependency group `qir` or `all`"
-                )
-                raise ImportError(msg)
-
-            generator = QIRGenerator(_internal=True)
-            generator.generate_block(self._block)
-            return generator.get_bc()
-
         from pecos.slr.ast.codegen.qir import ast_to_qir
 
         ast = self._to_ast()
-        return ast_to_qir(ast)
+        ir_text = ast_to_qir(ast)
+        if not bytecode:
+            return ir_text
+
+        try:
+            from pecos_rslib_llvm import binding
+        except ImportError as exc:
+            msg = (
+                "Trying to compile QIR without the appropriate optional dependencies install. "
+                "Use optional dependency group `qir` or `all`"
+            )
+            raise ImportError(msg) from exc
+
+        try:
+            parsed = binding.parse_assembly(ir_text)
+        except RuntimeError as exc:
+            msg = f"Failed to compile QIR to bitcode: {exc}"
+            raise RuntimeError(msg) from exc
+        bc = parsed.as_bitcode()
+        binding.shutdown()
+        return bc
 
     def qasm(self, *, skip_headers: bool = False, add_versions: bool = False) -> str:
         """Generate QASM code.

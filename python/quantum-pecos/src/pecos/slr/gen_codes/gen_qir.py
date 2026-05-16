@@ -299,7 +299,9 @@ class QIRGenerator(Generator):
                 [ir.Constant(ir.IntType(64), creg.size)],
                 f"{creg.sym}",
             ),
-            creg.result,
+            # Phase 3b removed the per-register result flag; all user cregs
+            # are recorded (internal scratch temps still pass False below).
+            True,
         )
 
     def create_qreg(self, qreg: QReg):

@@ -29,7 +29,6 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import pecos as pc
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -226,9 +225,6 @@ class AstToQir:
         self._main_func = llvm_ir.Function(self._module, main_fnty, name="main")
         entry_block = self._main_func.append_basic_block(name="entry")
         self._builder = llvm_ir.IRBuilder(entry_block)
-        self._builder.comment(
-            f"// Generated from AST using: PECOS version {pc.__version__}",
-        )
 
         # Setup operator map
         self._setup_op_map()

@@ -78,7 +78,11 @@ jobs:
     - name: Set up Visual Studio environment on Windows
       if: runner.os == 'Windows'
       shell: pwsh
-      run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
+      # -NoPinLinker: don't pin the linker (so rustc auto-detects MSVC and sets
+      # up LIB/INCLUDE itself) and instead export PECOS_MSVC_HOST_BIN, which the
+      # just recipes prepend to PATH ahead of git's /usr/bin so rustc's
+      # PATH-based linker lookup finds MSVC's link.exe, not GNU coreutils' link.
+      run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64 -NoPinLinker
 
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@v7
@@ -127,95 +131,40 @@ jobs:
         path: ~/.pecos/deps/llvm-14
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
-    # Configure MSVC linker BEFORE any cargo build (Git's link.exe conflicts with MSVC's).
-    # Must pick the NEWEST installed MSVC toolset to match the LIB/INCLUDE env that
-    # VsDevCmd.bat (in setup-msvc.ps1) configured for that newest toolset -- runners
-    # often have 14.29 (VS 2019) and 14.40+ (VS 2022) side-by-side, and a naive
-    # `Select-Object -First 1` lexical sort picks the OLDEST, which then fails to
-    # find kernel32.lib in the newer SDK's LIB paths (LNK1181).
-    - name: Configure MSVC linker (Windows)
+    # No linker pin, no LIB/INCLUDE in .cargo/config.toml. setup-msvc.ps1
+    # (-NoPinLinker) exported PECOS_MSVC_HOST_BIN; the just recipes prepend it
+    # to PATH so rustc's own vswhere MSVC detection finds the real link.exe
+    # (not git's /usr/bin/link) AND configures LIB/INCLUDE itself -- exactly
+    # like a correctly-configured local Windows build. Only the .cargo dir
+    # needs to exist for the LLVM_SYS_140_PREFIX written next.
+    - name: Prepare .cargo dir (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
-      run: |
-        $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-        $vsPath = & $vsWhere -latest -property installationPath
-        $latestMsvcDir = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Directory |
-                         Sort-Object { try { [version]$_.Name } catch { [version]"0.0" } } -Descending |
-                         Select-Object -First 1 -ExpandProperty FullName
-        if (-not $latestMsvcDir) {
-          Write-Error "Could not find any MSVC toolset under $vsPath\VC\Tools\MSVC"
-          exit 1
-        }
-        $linkPath = Join-Path $latestMsvcDir "bin\Hostx64\x64\link.exe"
-        if (-not (Test-Path $linkPath)) {
-          Write-Error "MSVC link.exe not found at $linkPath"
-          exit 1
-        }
-        New-Item -ItemType Directory -Force -Path .cargo | Out-Null
-        $escapedPath = $linkPath.Replace('\', '/')
-        # Also bake MSVC LIB/INCLUDE into cargo's [env] (force = true) so the
-        # linker finds kernel32.lib even when the ambient env doesn't survive
-        # the just/git-bash chain. See the "Configure LLVM environment
-        # (Windows)" step for the full rationale; this writer runs first (before
-        # `just ci-env`), the LLVM step overwrites it later with the same data
-        # plus LLVM_SYS_140_PREFIX. TOML literal strings; guarded against empty.
-        $libLine = if ($env:LIB) { "LIB = { value = '$($env:LIB)', force = true }`n" } else { "" }
-        $incLine = if ($env:INCLUDE) { "INCLUDE = { value = '$($env:INCLUDE)', force = true }`n" } else { "" }
-        @"
-        [target.x86_64-pc-windows-msvc]
-        linker = "$escapedPath"
-
-        [env]
-        $libLine$incLine
-        "@ | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
+      run: New-Item -ItemType Directory -Force -Path .cargo | Out-Null
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
 
+    # Only LLVM_SYS_140_PREFIX -- a single, semicolon-free, mangling-safe path
+    # that inkwell-using crates genuinely require. No linker / LIB / INCLUDE:
+    # rustc handles those itself once PECOS_MSVC_HOST_BIN is on PATH (above).
     - name: Configure LLVM environment (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        # Rewrite .cargo/config.toml with both linker and LLVM config
-        # (`pecos env --github-actions` sets LLVM_SYS_140_PREFIX for following steps.)
-        $env:PECOS_LLVM = $env:LLVM_SYS_140_PREFIX
-
-        # Rewrite .cargo/config.toml with both linker and LLVM config
-        # (pecos install llvm may have already written this, so overwrite cleanly)
-        # Use newest MSVC toolset to match VsDevCmd.bat's LIB/INCLUDE env -- see
-        # the "Configure MSVC linker (Windows)" step above for the rationale.
-        $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-        $vsPath = & $vsWhere -latest -property installationPath
-        $latestMsvcDir = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Directory |
-                         Sort-Object { try { [version]$_.Name } catch { [version]"0.0" } } -Descending |
-                         Select-Object -First 1 -ExpandProperty FullName
-        $linkPath = Join-Path $latestMsvcDir "bin\Hostx64\x64\link.exe"
-        $escapedLinker = $linkPath.Replace('\', '/')
         $escapedLLVM = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
-
-        # Bake the MSVC LIB/INCLUDE into cargo's [env] table (force = true) so
-        # rustc and the link.exe it spawns get them deterministically. The
-        # ambient env reaches this pwsh step intact (GITHUB_ENV from
-        # setup-msvc.ps1), but it does NOT reliably survive the
-        # step-bash -> just -> recipe-bash -> cargo -> rustc -> link.exe chain
-        # that `just build-debug` uses, which is why cold build-script links
-        # were failing with LNK1181 on kernel32.lib. TOML literal (single-quoted)
-        # strings avoid backslash-escaping the Windows paths. Guarded so an
-        # empty value can never clobber LIB/INCLUDE via force = true.
-        $libLine = if ($env:LIB) { "LIB = { value = '$($env:LIB)', force = true }`n" } else { "" }
-        $incLine = if ($env:INCLUDE) { "INCLUDE = { value = '$($env:INCLUDE)', force = true }`n" } else { "" }
         @"
-        [target.x86_64-pc-windows-msvc]
-        linker = "$escapedLinker"
-
         [env]
         LLVM_SYS_140_PREFIX = { value = "$escapedLLVM", force = true }
-        $libLine$incLine
         "@ | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
 
-    # Now install CLI (LLVM env is set, inkwell can find it)
+    # cargo install runs cargo directly (not via just), so prepend the MSVC
+    # bin here too so its build-script links find the right link.exe.
+    # No-op on non-Windows where PECOS_MSVC_HOST_BIN is unset.
     - name: Install PECOS CLI
-      run: cargo install --path crates/pecos-cli --force
+      run: |
+        if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
+        cargo install --path crates/pecos-cli --force
 
     # macOS: prevent Homebrew library path issues
     - name: Configure macOS environment

@@ -55,6 +55,11 @@ setup-ci:
 # Ensure CI has a runtime-valid LLVM and export PECOS build env files
 [group('setup')]
 ci-env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset. Shebang
+    # body so the export persists across both pecos invocations.
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     {{pecos}} llvm ensure --managed --no-configure
     {{pecos}} env --github-actions
 
@@ -156,6 +161,10 @@ list-deps:
 build profile="debug": (validate-profile "build" profile) setup-quiet sync-deps (build-selene profile)
     #!/usr/bin/env bash
     set -euo pipefail
+    # Put MSVC's link.exe ahead of git's /usr/bin/link so rustc (unpinned)
+    # finds the right linker AND configures LIB/INCLUDE itself. No-op when
+    # PECOS_MSVC_HOST_BIN is unset (non-Windows / local / pinned workflows).
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE"
     if command -v julia >/dev/null 2>&1; then
@@ -170,6 +179,8 @@ build profile="debug": (validate-profile "build" profile) setup-quiet sync-deps 
 build-lite profile="debug": (validate-profile "build-lite" profile) (build-selene profile)
     #!/usr/bin/env bash
     set -euo pipefail
+    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE"
 
@@ -178,6 +189,8 @@ build-lite profile="debug": (validate-profile "build-lite" profile) (build-selen
 build-cuda profile="debug": (validate-profile "build-cuda" profile) setup-quiet
     #!/usr/bin/env bash
     set -euo pipefail
+    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
 
@@ -204,6 +217,8 @@ pytest *args:
 rstest mode="release": (validate-test-mode "rstest" mode)
     #!/usr/bin/env bash
     set -euo pipefail
+    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     MODE="{{mode}}"
     {{pecos}} rust test --profile "$MODE"
 
@@ -235,6 +250,8 @@ test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
 lint mode="fix": (validate-lint-mode mode) python-workspace-check
     #!/usr/bin/env bash
     set -euo pipefail
+    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     MODE="{{mode}}"
     # Detect CUDA: only use --all-features when CUDA toolkit is available
     if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
@@ -811,6 +828,8 @@ _win-msvc-env-debug:
 build-selene profile="release":
     #!/usr/bin/env bash
     set -euo pipefail
+    # See `build` for why; no-op when PECOS_MSVC_HOST_BIN is unset.
+    if [ -n "${PECOS_MSVC_HOST_BIN:-}" ]; then export PATH="$(cygpath -u "$PECOS_MSVC_HOST_BIN"):$PATH"; fi
     PROFILE="{{profile}}"
     case "$PROFILE" in
         native)    CARGO_PROFILE_FLAGS=(--profile native); TARGET_DIR="target/native" ;;

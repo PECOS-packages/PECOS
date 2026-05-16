@@ -2126,3 +2126,328 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         prog = Main(c := CReg("c", 2), TwoBit(c[0], c[0]))
         with pytest.raises(ValueError, match=r"bit c\[0\] is also bound by input 'x'"):
             slr_to_ast(prog)
+
+
+class TestScratchEffectS1:
+    """Phase 3a.3 scratch-ancilla effect, stage S1: `ResourceEffect.SCRATCH`
+    + converter detection + the mandatory R4 reset-first validator + O2.
+
+    S1 does NOT lower scratch in Guppy (that is S2); until then Guppy must
+    reject a SCRATCH input loudly (no silent fallback). Flatten/QASM
+    already works because the scratch param substitutes to the outer slot
+    exactly like any per-slot input. Design:
+    ~/Repos/pecos-docs/design/slr/v2-scratch-ancilla-effect.md.
+    """
+
+    @staticmethod
+    def _good_check():
+        from pecos.slr import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class GoodCheck(Block):
+            block_inputs: ClassVar[dict[str, str]] = {
+                "d": "live_preserved",
+                "a": "scratch",
+                "out": "live_preserved",
+            }
+
+            def __init__(self, d, a, out) -> None:
+                super().__init__()
+                self.d = d
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), qb.CX(a, d[0]), qb.CX(a, d[1]), Measure(a) > out)
+
+        return GoodCheck
+
+    def test_scratch_detected_excluded_from_out_bindings(self) -> None:
+        from pecos.slr import CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.ast.nodes import (
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+        )
+        from pecos.slr.qeclib import qubit as qb
+
+        good_check = self._good_check()
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 1),
+            qb.Prep(q),
+            good_check([q[0], q[1]], q[2], c[0]),
+        )
+        ast = slr_to_ast(prog)
+        call = next(s for s in ast.body if isinstance(s, BlockCall))
+        # Scratch `a` is detected as a single-qubit arg and stays in
+        # arg_bindings (O2: the 5e.2 alias guard still applies)...
+        assert any(
+            isinstance(a, SingleQubitArg) for a in call.arg_bindings
+        )
+        # ...but is NOT live-preserved, so it is absent from out_bindings.
+        assert call.out_bindings == (
+            QubitBundleArg(
+                slots=tuple(s for s in call.arg_bindings[0].slots),  # d
+            ),
+            SingleBitArg(bit=call.arg_bindings[2].bit),  # out
+        )
+
+    def test_scratch_flatten_substitutes_to_outer_slot(self) -> None:
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.qeclib import qubit as qb
+
+        good_check = self._good_check()
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 1),
+            qb.Prep(q),
+            good_check([q[0], q[1]], q[2], c[0]),
+        )
+        qasm = SlrConverter(prog).qasm()
+        # Param `a` -> outer slot q[2]; data bundle d[0]/d[1] -> q[0]/q[1].
+        assert "reset q[2];" in qasm
+        assert "cx q[2], q[0];" in qasm
+        assert "cx q[2], q[1];" in qasm
+        assert "measure q[2] -> c[0];" in qasm
+
+    def test_scratch_rejected_by_guppy_until_s2(self) -> None:
+        """Lock-in: no silent fallback. Guppy must raise a clean
+        not-yet-supported error for SCRATCH until S2 lands.
+        """
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast.codegen.guppy import GuppyCodegenError
+        from pecos.slr.qeclib import qubit as qb
+
+        good_check = self._good_check()
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 1),
+            qb.Prep(q),
+            good_check([q[0], q[1]], q[2], c[0]),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"only LIVE_PRESERVED and CONSUMED.*got SCRATCH"):
+            SlrConverter(prog).guppy()
+
+    def test_scratch_use_before_prep_rejected(self) -> None:
+        from pecos.slr import CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class BadFirst(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.H(a), qb.Prep(a), Measure(a) > out)
+
+        prog = Main(q := QReg("q", 1), c := CReg("c", 1), BadFirst(q[0], c[0]))
+        with pytest.raises(ValueError, match=r"first use is USE.*reset \(Prep\) before"):
+            slr_to_ast(prog)
+
+    def test_scratch_use_after_measure_rejected(self) -> None:
+        from pecos.slr import CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class BadAfter(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), Measure(a) > out, qb.H(a))
+
+        prog = Main(q := QReg("q", 1), c := CReg("c", 1), BadAfter(q[0], c[0]))
+        with pytest.raises(ValueError, match=r"used after measurement without re-Prep"):
+            slr_to_ast(prog)
+
+    def test_scratch_unused_rejected(self) -> None:
+        from pecos.slr import Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+
+        class BadUnused(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch"}
+
+            def __init__(self, a) -> None:
+                super().__init__()
+                self.a = a
+
+        prog = Main(q := QReg("q", 1), BadUnused(q[0]))
+        with pytest.raises(ValueError, match=r"declared SCRATCH but never used"):
+            slr_to_ast(prog)
+
+    def test_scratch_inside_control_flow_rejected(self) -> None:
+        """S1 conservative scope: a scratch slot touched inside control
+        flow cannot be linearized for the R4 analysis -> reject loudly.
+        """
+        from pecos.slr import CReg, Main, QReg, Repeat
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class LoopScratch(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(
+                    qb.Prep(a),
+                    Repeat(2).block(qb.H(a)),
+                    Measure(a) > out,
+                )
+
+        prog = Main(q := QReg("q", 1), c := CReg("c", 1), LoopScratch(q[0], c[0]))
+        with pytest.raises(ValueError, match=r"flat Prep -> \.\.\. -> Measure lifecycle"):
+            slr_to_ast(prog)
+
+    def test_scratch_aliased_to_other_input_rejected(self) -> None:
+        """O2: scratch stays in arg_bindings, so the 5e.2 cross-input
+        aliasing guard still rejects a scratch slot aliased to another
+        qubit input.
+        """
+        from pecos.slr import Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class Alias(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "b": "live_preserved"}
+
+            def __init__(self, a, b) -> None:
+                super().__init__()
+                self.a = a
+                self.b = b
+                self.extend(qb.Prep(a), qb.CX(a, b), Measure(a))
+
+        prog = Main(q := QReg("q", 2), Alias(q[0], q[0]))
+        with pytest.raises(ValueError, match=r"qubit q\[0\] is also bound by input 'a'"):
+            slr_to_ast(prog)
+
+    def test_scratch_prep_only_rejected(self) -> None:
+        """Codex S1 review: a Prep with no terminating Measure must be
+        rejected -- S2 allocates the scratch qubit internally, so an
+        unmeasured trailing Prep diverges from the flatten/QASM path.
+        """
+        from pecos.slr import Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+
+        class PrepOnly(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch"}
+
+            def __init__(self, a) -> None:
+                super().__init__()
+                self.a = a
+                self.extend(qb.Prep(a))
+
+        prog = Main(q := QReg("q", 1), PrepOnly(q[0]))
+        with pytest.raises(ValueError, match=r"scratch lifecycle not closed"):
+            slr_to_ast(prog)
+
+    def test_scratch_prep_use_no_measure_rejected(self) -> None:
+        from pecos.slr import Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+
+        class PrepUseNoMeasure(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch"}
+
+            def __init__(self, a) -> None:
+                super().__init__()
+                self.a = a
+                self.extend(qb.Prep(a), qb.H(a))
+
+        prog = Main(q := QReg("q", 1), PrepUseNoMeasure(q[0]))
+        with pytest.raises(ValueError, match=r"scratch lifecycle not closed"):
+            slr_to_ast(prog)
+
+    def test_scratch_prep_measure_prep_unmeasured_rejected(self) -> None:
+        """A second Prep with no closing Measure (trailing open lifecycle)."""
+        from pecos.slr import CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class PrepMeasurePrep(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), Measure(a) > out, qb.Prep(a))
+
+        prog = Main(q := QReg("q", 1), c := CReg("c", 1), PrepMeasurePrep(q[0], c[0]))
+        with pytest.raises(ValueError, match=r"scratch lifecycle not closed"):
+            slr_to_ast(prog)
+
+    def test_scratch_two_prep_no_measure_between_rejected(self) -> None:
+        """Re-Prep before measuring the first lifecycle."""
+        from pecos.slr import Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+
+        class PrepPrep(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch"}
+
+            def __init__(self, a) -> None:
+                super().__init__()
+                self.a = a
+                self.extend(qb.Prep(a), qb.Prep(a))
+
+        prog = Main(q := QReg("q", 1), PrepPrep(q[0]))
+        with pytest.raises(ValueError, match=r"re-Prepped before measuring"):
+            slr_to_ast(prog)
+
+    def test_scratch_prep_measure_prep_measure_accepted(self) -> None:
+        """Two complete Prep -> Measure lifecycles is valid (each closed)."""
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class TwoLifecycles(Block):
+            block_inputs: ClassVar[dict[str, str]] = {
+                "a": "scratch",
+                "out0": "live_preserved",
+                "out1": "live_preserved",
+            }
+
+            def __init__(self, a, out0, out1) -> None:
+                super().__init__()
+                self.a = a
+                self.out0 = out0
+                self.out1 = out1
+                self.extend(
+                    qb.Prep(a),
+                    Measure(a) > out0,
+                    qb.Prep(a),
+                    Measure(a) > out1,
+                )
+
+        prog = Main(q := QReg("q", 1), c := CReg("c", 2), TwoLifecycles(q[0], c[0], c[1]))
+        ast = slr_to_ast(prog)  # must not raise
+        assert any(isinstance(s, BlockCall) for s in ast.body)
+        # Flatten still substitutes the scratch param to the outer slot.
+        qasm = SlrConverter(prog).qasm()
+        assert qasm.count("reset q[0];") >= 2
+        assert "measure q[0] -> c[0];" in qasm
+        assert "measure q[0] -> c[1];" in qasm

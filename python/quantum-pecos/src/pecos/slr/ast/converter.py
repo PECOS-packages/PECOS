@@ -423,6 +423,7 @@ class SlrToAst:
         block_inputs: list[BlockInput] = []
         arg_bindings: list[BlockArg] = []
         out_bindings: list[BlockArg] = []
+        scratch_inputs: list[str] = []
 
         # Cross-input aliasing guard. The same concrete qubit slot (or
         # classical bit) bound to two block-input positions --
@@ -539,8 +540,13 @@ class SlrToAst:
             arg_bindings.append(arg)
             # out_bindings mirror the arg BlockArg for each LIVE_PRESERVED input
             # (the emitter's iter-5b cross-check requires arg == out, by value).
+            # SCRATCH is NOT live-preserved -> never in out_bindings (same as
+            # CONSUMED); it stays in arg_bindings so the 5e.2 cross-input alias
+            # guard still rejects a scratch slot aliased to another input (O2).
             if effect is ResourceEffect.LIVE_PRESERVED:
                 out_bindings.append(arg)
+            if effect is ResourceEffect.SCRATCH:
+                scratch_inputs.append(input_name)
 
         # Build the BlockDecl body by converting block.ops in a NEW sub-converter,
         # then remapping outer -> param via the shared substitute_stmt. Share
@@ -550,6 +556,15 @@ class SlrToAst:
         sub_body = sub._convert_statements(block.ops)  # type: ignore[attr-defined]
         self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
         rewritten_body = tuple(substitute_stmt(stmt, remap) for stmt in sub_body)
+
+        # R4 (scratch design): a SCRATCH input is only sound if the block
+        # resets it before any other use and never touches it after the
+        # terminal measurement without re-Prepping. The Guppy lowering
+        # (S2) allocates the qubit internally on that assumption; validate
+        # it here so a mis-declared scratch input fails loudly at
+        # conversion rather than miscompiling.
+        for scratch_name in scratch_inputs:
+            _validate_scratch_input(rewritten_body, scratch_name, cls_name=cls_name)
 
         # Unique decl name per call site (dedup is a later optimization).
         decl_name = f"{cls_name.lower()}_{self._decl_counter}"
@@ -977,6 +992,7 @@ _EFFECT_NAME_MAP: dict[str, ResourceEffect] = {
     "consumed": ResourceEffect.CONSUMED,
     "produced": ResourceEffect.PRODUCED,
     "dropped": ResourceEffect.DROPPED,
+    "scratch": ResourceEffect.SCRATCH,
 }
 
 
@@ -997,4 +1013,147 @@ def _normalize_effect(value: Any, *, where: str) -> ResourceEffect:
         f"Expected one of: ResourceEffect enum, or strings {sorted(_EFFECT_NAME_MAP)}"
     )
     raise ValueError(msg)
+
+
+def _ref_base_name(ref: str) -> str:
+    """Leading identifier of a PermuteOp ref string (`q[0]`/`q`/`q.x` -> `q`)."""
+    return ref.split("[", 1)[0].split(".", 1)[0]
+
+
+def _scratch_events(stmt: Statement, name: str) -> list[str]:
+    """Ordered scratch-lifecycle events for allocator `name` in `stmt`.
+
+    Returns a list drawn from PREP / MEASURE / USE in execution order.
+    A reference inside control flow / Parallel / a nested BlockCall /
+    PermuteOp cannot be linearized for the R4 reset-first analysis, so
+    it is reported as the sentinel UNSUPPORTED and the validator rejects
+    (S1 scope: scratch inputs must have a flat Prep -> ... -> Measure
+    lifecycle).
+    """
+    if isinstance(stmt, CommentOp):
+        return []
+    if isinstance(stmt, PrepareOp):
+        return ["PREP"] if stmt.allocator == name else []
+    if isinstance(stmt, MeasureOp):
+        return ["MEASURE"] if any(t.allocator == name for t in stmt.targets) else []
+    if isinstance(stmt, GateOp):
+        return ["USE"] if any(t.allocator == name for t in stmt.targets) else []
+    if isinstance(stmt, BarrierOp):
+        return ["USE"] if name in stmt.allocators else []
+    if isinstance(stmt, PermuteOp):
+        refs = (*stmt.sources, *stmt.targets)
+        return ["UNSUPPORTED"] if any(_ref_base_name(r) == name for r in refs) else []
+    if isinstance(stmt, BlockCall):
+        for arg in (*stmt.arg_bindings, *stmt.out_bindings):
+            if _block_arg_mentions_allocator(arg, name):
+                return ["UNSUPPORTED"]
+        return []
+    if isinstance(stmt, (IfStmt, WhileStmt, ForStmt, RepeatStmt, ParallelBlock)):
+        bodies: list[tuple[Statement, ...]] = (
+            [stmt.then_body, stmt.else_body] if isinstance(stmt, IfStmt) else [stmt.body]
+        )
+        for b in bodies:
+            for inner in b:
+                if _scratch_events(inner, name):
+                    return ["UNSUPPORTED"]
+        return []
+    # Anything else carrying no qubit-slot ref (e.g. AssignOp/PrintOp/
+    # ReturnOp on classical values) is irrelevant to a qubit scratch slot.
+    return []
+
+
+def _block_arg_mentions_allocator(arg: BlockArg, name: str) -> bool:
+    """True if a nested BlockCall arg references qubit allocator `name`."""
+    slot = getattr(arg, "slot", None)
+    if slot is not None and getattr(slot, "allocator", None) == name:
+        return True
+    if getattr(arg, "name", None) == name:  # AllocatorArg(name=...)
+        return True
+    slots = getattr(arg, "slots", None)
+    return bool(slots) and any(getattr(s, "allocator", None) == name for s in slots)
+
+
+def _validate_scratch_input(
+    body: tuple[Statement, ...],
+    name: str,
+    *,
+    cls_name: str,
+) -> None:
+    """Enforce R4 for a SCRATCH input (design v2-scratch-ancilla-effect).
+
+    The block must reset `name` before any other use, and every Prep
+    lifecycle must be closed by a Measure before the next Prep and
+    before the body ends (the S2 Guppy lowering allocates the scratch
+    qubit internally, so an unmeasured trailing Prep/use would diverge
+    from the flatten/QASM path). Anything the
+    S1 analysis cannot linearize (control flow / Parallel / nested
+    BlockCall / Permute over the scratch slot) is rejected loudly --
+    silently allowing it would let the Guppy internal-allocation
+    lowering miscompile.
+    """
+    events: list[str] = []
+    for stmt in body:
+        events.extend(_scratch_events(stmt, name))
+
+    where = f"Block {cls_name!r} scratch input {name!r}"
+    if "UNSUPPORTED" in events:
+        msg = (
+            f"{where}: scratch inputs must have a flat Prep -> ... -> "
+            "Measure lifecycle; referencing the scratch slot inside "
+            "control flow, Parallel, a nested BlockCall, or a Permute "
+            "is not supported"
+        )
+        raise ValueError(msg)
+    if not events:
+        msg = (
+            f"{where}: declared SCRATCH but never used in the block body "
+            "(expected Prep(...) then Measure(...))"
+        )
+        raise ValueError(msg)
+    if events[0] != "PREP":
+        msg = (
+            f"{where}: first use is {events[0]}, but a SCRATCH input must "
+            "be reset (Prep) before any other use (reset-first)"
+        )
+        raise ValueError(msg)
+    # Segment state machine: a PREP opens a lifecycle that MUST close with a
+    # MEASURE before the next PREP and before the body ends. The S2 Guppy
+    # lowering allocates the scratch qubit internally; an unmeasured trailing
+    # Prep/use would leave the flatten/QASM path with a live reset outer slot
+    # while Guppy silently drops it -- a semantic divergence (Codex S1
+    # review). So every Prep must be terminated by a Measure.
+    open_prep = False
+    for ev in events:
+        if ev == "PREP":
+            if open_prep:
+                msg = (
+                    f"{where}: re-Prepped before measuring the previous "
+                    "scratch lifecycle (every Prep must be closed by a "
+                    "Measure)"
+                )
+                raise ValueError(msg)
+            open_prep = True
+        elif ev == "MEASURE":
+            if not open_prep:
+                msg = (
+                    f"{where}: measured without an open Prep (measure "
+                    "before Prep, or measured again without an "
+                    "intervening Prep)"
+                )
+                raise ValueError(msg)
+            open_prep = False
+        else:  # USE
+            if not open_prep:
+                msg = (
+                    f"{where}: used after measurement without re-Prep "
+                    "(scratch lifecycle must be Prep -> use -> Measure)"
+                )
+                raise ValueError(msg)
+    if open_prep:
+        msg = (
+            f"{where}: scratch lifecycle not closed -- a Prep has no "
+            "terminating Measure; the block must measure the scratch "
+            "qubit before returning (S2 allocates it internally)"
+        )
+        raise ValueError(msg)
 

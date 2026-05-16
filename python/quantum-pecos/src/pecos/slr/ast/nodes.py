@@ -224,6 +224,13 @@ class ResourceEffect(Enum):
     CONSUMED = auto()  # caller binding is invalidated by the call
     PRODUCED = auto()  # callee writes; caller's binding is rebound from return
     DROPPED = auto()  # callee discards; caller binding is invalidated
+    # Reset-reused scratch ancilla: the block resets the input at entry and
+    # measures it at exit, depending on no incoming state. The caller's slot is
+    # a flatten-path naming vehicle only; in Guppy the block allocates the qubit
+    # internally so the same outer slot can feed a subsequent BlockCall (the
+    # `consumed` model would kill it). See
+    # ~/Repos/pecos-docs/design/slr/v2-scratch-ancilla-effect.md.
+    SCRATCH = auto()
 
 
 # =============================================================================

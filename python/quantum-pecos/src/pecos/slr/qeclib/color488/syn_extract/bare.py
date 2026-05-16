@@ -1,9 +1,9 @@
 """Bare syndrome extraction implementations for Color488 codes."""
 
+import math
 from itertools import chain, cycle, repeat
 from typing import Any
 
-import pecos as pc
 from pecos.slr import Block, Comment, CReg, Parallel, QReg
 from pecos.slr.qeclib.generic.check import Check
 
@@ -89,7 +89,7 @@ class SynExtractBareParallel(Block):
         super().__init__()
 
         annotations = Block()
-        num_parallel_blocks = 2 * pc.ceil(len(checks) / len(ancillas))
+        num_parallel_blocks = 2 * math.ceil(len(checks) / len(ancillas))
         par_blocks = [Parallel() for _ in range(num_parallel_blocks)]
 
         # iterator for parallelizing circuits for one round of ancilla use

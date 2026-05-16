@@ -478,8 +478,8 @@ def _qeclib_steane_pz_v2_defer() -> Block:
     )
 
 
-def _qeclib_surface_std_pz_preexisting() -> Block:
-    """Deliberate red-light: surface std pz() currently fails during construction."""
+def _qeclib_surface_std_pz() -> Block:
+    """SurfaceStdGates.pz(): builds + lowers (PrepProjectZ bug fixed)."""
     patch = (
         SurfacePatchBuilder()
         .set_name("s")
@@ -494,8 +494,8 @@ def _qeclib_surface_std_pz_preexisting() -> Block:
     )
 
 
-def _qeclib_color488_syn_extract_bare_preexisting() -> Block:
-    """Deliberate red-light: color488 bare extraction currently fails during construction."""
+def _qeclib_color488_syn_extract_bare() -> Block:
+    """Color488 bare extraction: builds + lowers (ceil float->int bug fixed)."""
     patch = Color488Patch("c", 5, num_ancillas=4)
     return Main(
         patch,
@@ -705,23 +705,11 @@ def _curated_cases() -> list[AuditCase]:
         ),
         AuditCase(
             "qeclib.surface_std_pz",
-            _qeclib_surface_std_pz_preexisting,
-            expected_failure=ExpectedFailure(
-                exception_type="TypeError",
-                message_contains="PrepZ.__init__()",
-                classification="pre-existing",
-                reason="SurfaceStdGates.pz() fails while building the SLR program",
-            ),
+            _qeclib_surface_std_pz,
         ),
         AuditCase(
             "qeclib.color488_syn_extract_bare",
-            _qeclib_color488_syn_extract_bare_preexisting,
-            expected_failure=ExpectedFailure(
-                exception_type="TypeError",
-                message_contains="'float' object cannot be interpreted as an integer",
-                classification="pre-existing",
-                reason="Color488 bare extraction fails while building the SLR program",
-            ),
+            _qeclib_color488_syn_extract_bare,
         ),
         # docs/ corpus (pass 4)
         AuditCase("docs.for_static_indexing", _docs_for_static_indexing),

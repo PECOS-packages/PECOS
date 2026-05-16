@@ -11,26 +11,8 @@
 
 """Pauli projection preparation blocks for surface code operations."""
 
-from pecos.slr import Block, QReg, Qubit
+from pecos.slr import Block, Qubit
 from pecos.slr.qeclib.qubit.qubit import PhysicalQubit as Q
-
-
-class PrepZ(Block):
-    """Prepare the +Z operator."""
-
-    def __init__(self, q: QReg, data_indices: list[int]) -> None:
-        """Initialize the +Z state preparation block.
-
-        Args:
-            q: Quantum register containing the qubits.
-            data_indices: List of indices for data qubits to prepare in +Z state.
-        """
-        super().__init__()
-
-        for i in data_indices:
-            self.extend(
-                Q.pz(q[i]),
-            )
 
 
 class PrepProjectZ(Block):
@@ -44,7 +26,9 @@ class PrepProjectZ(Block):
         """
         super().__init__()
 
-        self.extend(
-            PrepZ(*qs),
-        )
+        # Prepare each data qubit in |0> with the qubit-level primitive.
+        # (`qs` is a list[Qubit]; the register-indexed PrepZ block this
+        # used to call had a `(QReg, list[int])` API that did not match
+        # the qubit-list shape -- it was dead/broken and was removed.)
+        self.extend(*(Q.pz(q) for q in qs))
         # TODO: Measure the X checks

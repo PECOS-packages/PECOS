@@ -153,7 +153,21 @@ jobs:
         }
         New-Item -ItemType Directory -Force -Path .cargo | Out-Null
         $escapedPath = $linkPath.Replace('\', '/')
-        "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`"" | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
+        # Also bake MSVC LIB/INCLUDE into cargo's [env] (force = true) so the
+        # linker finds kernel32.lib even when the ambient env doesn't survive
+        # the just/git-bash chain. See the "Configure LLVM environment
+        # (Windows)" step for the full rationale; this writer runs first (before
+        # `just ci-env`), the LLVM step overwrites it later with the same data
+        # plus LLVM_SYS_140_PREFIX. TOML literal strings; guarded against empty.
+        $libLine = if ($env:LIB) { "LIB = { value = '$($env:LIB)', force = true }`n" } else { "" }
+        $incLine = if ($env:INCLUDE) { "INCLUDE = { value = '$($env:INCLUDE)', force = true }`n" } else { "" }
+        @"
+        [target.x86_64-pc-windows-msvc]
+        linker = "$escapedPath"
+
+        [env]
+        $libLine$incLine
+        "@ | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -178,12 +192,25 @@ jobs:
         $linkPath = Join-Path $latestMsvcDir "bin\Hostx64\x64\link.exe"
         $escapedLinker = $linkPath.Replace('\', '/')
         $escapedLLVM = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
+
+        # Bake the MSVC LIB/INCLUDE into cargo's [env] table (force = true) so
+        # rustc and the link.exe it spawns get them deterministically. The
+        # ambient env reaches this pwsh step intact (GITHUB_ENV from
+        # setup-msvc.ps1), but it does NOT reliably survive the
+        # step-bash -> just -> recipe-bash -> cargo -> rustc -> link.exe chain
+        # that `just build-debug` uses, which is why cold build-script links
+        # were failing with LNK1181 on kernel32.lib. TOML literal (single-quoted)
+        # strings avoid backslash-escaping the Windows paths. Guarded so an
+        # empty value can never clobber LIB/INCLUDE via force = true.
+        $libLine = if ($env:LIB) { "LIB = { value = '$($env:LIB)', force = true }`n" } else { "" }
+        $incLine = if ($env:INCLUDE) { "INCLUDE = { value = '$($env:INCLUDE)', force = true }`n" } else { "" }
         @"
         [target.x86_64-pc-windows-msvc]
         linker = "$escapedLinker"
 
         [env]
         LLVM_SYS_140_PREFIX = { value = "$escapedLLVM", force = true }
+        $libLine$incLine
         "@ | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
 
     # Now install CLI (LLVM env is set, inkwell can find it)

@@ -507,8 +507,8 @@ def _qeclib_color488_syn_extract_bare_preexisting() -> Block:
 def _docs_for_static_indexing() -> Block:
     """v1-shaped For loop: string iteration variable, integer bounds, fixed-slot body.
 
-    From `test_unified_resource_planner.py` shape per v1-feature-matrix:
-    v1 supports For("i", 0, 3) over fixed slots, no symbolic indexing.
+    Shape per v1-feature-matrix: v1 supports For("i", 0, 3) over fixed
+    slots, no symbolic indexing.
     """
     return Main(
         q := QReg("q", 3),

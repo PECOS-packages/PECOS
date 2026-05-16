@@ -34,6 +34,7 @@ from pecos.slr.ast.nodes import (
     AllocatorArg,
     AllocatorDecl,
     ArrayTypeExpr,
+    BarrierOp,
     BinaryExpr,
     BinaryOp,
     BitExpr,
@@ -67,7 +68,6 @@ if TYPE_CHECKING:
 
     from pecos.slr.ast.nodes import (
         AssignOp,
-        BarrierOp,
         BlockDecl,
         BlockInput,
         CommentOp,
@@ -170,6 +170,7 @@ class AstToGuppy:
         self._block_decls = {decl.name: decl for decl in program.block_decls}
         for decl in program.block_decls:
             self._validate_block_decl(decl)
+        self._validate_scratch_outer_slots(program)
 
         lines = self._imports()
 
@@ -466,6 +467,103 @@ class AstToGuppy:
             names = ", ".join(sorted(self.context.child_allocators))
             msg = f"AST -> Guppy v1 does not support child allocators: {names}"
             raise GuppyCodegenError(msg)
+
+    def _iter_stmts(self, body: tuple[Statement, ...]) -> Iterator[Statement]:
+        """Yield every statement in `body`, recursing into control flow."""
+        for stmt in body:
+            yield stmt
+            if isinstance(stmt, IfStmt):
+                yield from self._iter_stmts(stmt.then_body)
+                yield from self._iter_stmts(stmt.else_body)
+            elif isinstance(stmt, (WhileStmt, ForStmt, RepeatStmt, ParallelBlock)):
+                yield from self._iter_stmts(stmt.body)
+
+    def _validate_scratch_outer_slots(self, program: Program) -> None:
+        """Reject programs where a scratch-bound outer slot is also used as
+        meaningful caller state (Codex S2 review blocker 1).
+
+        A SCRATCH input lowers asymmetrically: flatten substitutes the
+        scratch param to the outer slot (the block resets+measures THAT
+        slot), while Guppy allocates the ancilla internally and leaves the
+        outer slot untouched. The two paths only agree when the outer slot
+        is pure scratch -- never observed by the caller. If the caller
+        gates/measures/barriers it, or hands it to another block, the
+        codegens diverge. Multiple scratch BlockCalls reusing the slot
+        stay allowed (the intended SynExtractBare pattern).
+
+        `PrepareOp` on a scratch outer slot IS allowed: a reset is
+        unobserved and dead under both lowerings (and the qeclib corpus
+        wholesale-preps the ancilla register, e.g. `Prep(q)` covering
+        `q[3]`, before using `q[3]` as a check ancilla).
+        """
+        scratch: dict[tuple[str, int], str] = {}
+        for stmt in self._iter_stmts(program.body):
+            if not isinstance(stmt, BlockCall):
+                continue
+            decl = self._block_decls.get(stmt.callee)
+            if decl is None:
+                continue
+            for inp, arg in zip(decl.inputs, stmt.arg_bindings, strict=False):
+                if inp.effect is ResourceEffect.SCRATCH and isinstance(arg, SingleQubitArg):
+                    scratch[(arg.slot.allocator, arg.slot.index)] = stmt.callee
+        if not scratch:
+            return
+        scratch_allocs = {alloc for alloc, _ in scratch}
+
+        def _reject(where: str, slot: tuple[str, int]) -> None:
+            callee = scratch[slot]
+            msg = (
+                f"Scratch outer slot {slot[0]}[{slot[1]}] (bound as the "
+                f"scratch ancilla of BlockCall {callee!r}) is also used as "
+                f"meaningful caller state by {where}. A scratch-bound slot "
+                "must be pure scratch -- flatten mutates it while Guppy "
+                "allocates the ancilla internally, so any other use "
+                "diverges. (A bare Prep on it is allowed; reusing it across "
+                "scratch BlockCalls is allowed.)"
+            )
+            raise GuppyCodegenError(msg)
+
+        for stmt in self._iter_stmts(program.body):
+            if isinstance(stmt, GateOp):
+                for t in stmt.targets:
+                    if (t.allocator, t.index) in scratch:
+                        _reject(f"a {stmt.gate.name} gate", (t.allocator, t.index))
+            elif isinstance(stmt, MeasureOp):
+                for t in stmt.targets:
+                    if (t.allocator, t.index) in scratch:
+                        _reject("a Measure", (t.allocator, t.index))
+            elif isinstance(stmt, BarrierOp):
+                for alloc in stmt.allocators:
+                    if alloc in scratch_allocs:
+                        # Barrier is name-level; conservatively reject any
+                        # barrier naming a register that hosts a scratch slot.
+                        slot = next(s for s in scratch if s[0] == alloc)
+                        _reject("a Barrier", slot)
+            elif isinstance(stmt, BlockCall):
+                decl = self._block_decls.get(stmt.callee)
+                if decl is None:
+                    continue
+                for inp, arg in zip(decl.inputs, stmt.arg_bindings, strict=False):
+                    if inp.effect is ResourceEffect.SCRATCH:
+                        continue  # the scratch binding itself -- allowed
+                    if isinstance(arg, AllocatorArg) and arg.name in scratch_allocs:
+                        slot = next(s for s in scratch if s[0] == arg.name)
+                        _reject(f"a non-scratch input of BlockCall {stmt.callee!r}", slot)
+                    elif isinstance(arg, SingleQubitArg) and (
+                        arg.slot.allocator,
+                        arg.slot.index,
+                    ) in scratch:
+                        _reject(
+                            f"a non-scratch input of BlockCall {stmt.callee!r}",
+                            (arg.slot.allocator, arg.slot.index),
+                        )
+                    elif isinstance(arg, QubitBundleArg):
+                        for s in arg.slots:
+                            if (s.allocator, s.index) in scratch:
+                                _reject(
+                                    f"a non-scratch input of BlockCall {stmt.callee!r}",
+                                    (s.allocator, s.index),
+                                )
 
     def _imports(self) -> list[str]:
         return [
@@ -809,7 +907,7 @@ class AstToGuppy:
             msg = "AST -> Guppy v1 supports Return only as the final root-level statement"
             raise GuppyCodegenError(msg)
 
-        from pecos.slr.ast.nodes import AssignOp, BarrierOp, CommentOp, PermuteOp, PrintOp  # noqa: PLC0415
+        from pecos.slr.ast.nodes import AssignOp, CommentOp, PermuteOp, PrintOp  # noqa: PLC0415
 
         if isinstance(stmt, AssignOp):
             return self._emit_assign(stmt)
@@ -1012,15 +1110,25 @@ class AstToGuppy:
         # step knows how to pack the call argument.
         validated_args: list[tuple[BlockInput, str, tuple]] = []
         live_inputs_out: list[BlockInput] = []
+        # Scratch slots are still validated (type/presence/bounds) and fed
+        # into the cross-input alias check below, but kept OUT of
+        # `validated_args` so Phase 2 never packs/consumes/returns them and
+        # they are not positional call arguments (the block allocates the
+        # ancilla internally; the outer slot stays live and is discarded at
+        # end-of-scope per R1). Validating-then-excluding -- not skipping
+        # before validation -- so a malformed scratch binding (unknown/OOB
+        # outer slot) still fails loudly (Codex S2 review blocker 2).
+        scratch_slots: list[tuple[str, int]] = []
         for inp, arg in zip(decl.inputs, node.arg_bindings, strict=True):
             if inp.effect is ResourceEffect.SCRATCH:
-                # Scratch is allocated inside the @guppy def: it is neither a
-                # parameter nor a positional call argument, and its outer slot
-                # is NOT consumed by the call (it stays live and is discarded
-                # at end-of-scope, satisfying R1). The S1 converter validator
-                # already proved the body resets+measures it internally and
-                # the cross-input alias guard already rejected a scratch slot
-                # shared with another input, so nothing is checked here.
+                kind, info = self._validate_block_call_arg(node.callee, inp, arg)
+                if kind != "single_qubit":
+                    msg = (
+                        f"BlockCall {node.callee!r}: SCRATCH input {inp.name!r} "
+                        f"must be bound by a SingleQubitArg (got {kind})"
+                    )
+                    raise GuppyCodegenError(msg)
+                scratch_slots.append(info)
                 continue
             kind, info = self._validate_block_call_arg(node.callee, inp, arg)
             validated_args.append((inp, kind, info))
@@ -1092,6 +1200,18 @@ class AstToGuppy:
                     )
                     raise GuppyCodegenError(msg)
                 seen_slots[slot] = inp.name
+        # Scratch slots participate in the alias check too: a scratch slot
+        # shared with another (scratch or non-scratch) input slot is invalid.
+        for scratch_slot in scratch_slots:
+            if scratch_slot in seen_slots:
+                msg = (
+                    f"BlockCall {node.callee!r}: scratch qubit slot "
+                    f"{scratch_slot[0]}[{scratch_slot[1]}] is also bound by "
+                    f"input {seen_slots[scratch_slot]!r}; a scratch ancilla "
+                    "cannot be shared with another input"
+                )
+                raise GuppyCodegenError(msg)
+            seen_slots[scratch_slot] = "<scratch>"
 
         # Phase 2: now that every check passed, consume slots and emit code.
         linearity = self._linearity()

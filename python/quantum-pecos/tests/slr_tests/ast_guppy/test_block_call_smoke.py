@@ -2564,3 +2564,98 @@ class TestScratchEffectS1:
             "measurement_0": [1, 0, 0, 1],
             "measurement_1": [1, 0, 0, 1],
         }, raw
+
+    def test_scratch_outer_slot_misuse_rejected(self) -> None:
+        """Codex S2 r1 blocker 1: a scratch-bound outer slot also used as
+        meaningful caller state (gate + later measure) diverges between
+        flatten (mutates it) and Guppy (allocates internally) -- reject.
+        """
+        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast.codegen.guppy import GuppyCodegenError
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class MS(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), qb.H(a), Measure(a) > out)
+
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 2),
+            qb.Prep(q[0]),
+            qb.X(q[0]),  # meaningful caller state on the scratch slot
+            MS(q[0], c[0]),
+            Measure(q[0]) > c[1],  # ...observed after the scratch call
+        )
+        with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[0\].*meaningful caller state"):
+            SlrConverter(prog).guppy()
+
+    def test_scratch_outer_slot_whole_reg_prep_allowed(self) -> None:
+        """Carve-out: a bare/whole-register Prep covering the scratch slot
+        is allowed (the qeclib corpus does `Prep(q)` then uses `q[i]` as a
+        check ancilla -- a reset is unobserved/dead under both lowerings).
+        """
+        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class Chk(Block):
+            block_inputs: ClassVar[dict[str, str]] = {
+                "d": "live_preserved",
+                "a": "scratch",
+                "out": "live_preserved",
+            }
+
+            def __init__(self, d, a, out) -> None:
+                super().__init__()
+                self.d = d
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), qb.CX(a, d[0]), qb.CX(a, d[1]), Measure(a) > out)
+
+        prog = Main(
+            q := QReg("q", 3),
+            c := CReg("c", 1),
+            qb.Prep(q),  # covers q[2] (the scratch slot) -- must NOT reject
+            Chk([q[0], q[1]], q[2], c[0]),
+        )
+        guppy_src = SlrConverter(prog).guppy()  # must not raise
+        assert "a_0 = qubit()" in guppy_src
+
+    def test_scratch_malformed_arg_rejected_direct_ast(self) -> None:
+        """Codex S2 r1 blocker 2: a scratch BlockArg referencing an
+        out-of-bounds outer slot must fail loudly -- scratch args are now
+        validated (then excluded), not skipped before validation.
+        """
+        from pecos.slr.ast.codegen.guppy import GuppyCodegenError
+        from pecos.slr.ast.nodes import SingleQubitArg
+
+        decl = BlockDecl(
+            name="b",
+            inputs=(
+                BlockInput(name="a", effect=ResourceEffect.SCRATCH, type_expr=QubitTypeExpr()),
+            ),
+            body=(
+                PrepareOp(allocator="a", slots=(0,)),
+                MeasureOp(targets=(SlotRef(allocator="a", index=0),)),
+            ),
+        )
+        prog = Program(
+            name="main",
+            allocator=AllocatorDecl(name="outer_q", capacity=1),
+            block_decls=(decl,),
+            body=(
+                BlockCall(
+                    callee="b",
+                    arg_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=9)),),
+                    out_bindings=(),
+                ),
+            ),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"slot index 9 out of bounds"):
+            ast_to_guppy(prog)

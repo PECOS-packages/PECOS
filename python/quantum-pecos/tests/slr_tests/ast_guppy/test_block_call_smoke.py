@@ -2659,3 +2659,96 @@ class TestScratchEffectS1:
         )
         with pytest.raises(GuppyCodegenError, match=r"slot index 9 out of bounds"):
             ast_to_guppy(prog)
+
+    def test_scratch_outer_slot_permute_rejected(self) -> None:
+        """Codex S2 r2 blocker 1: a Permute touching the scratch register
+        observes/reorders the scratch-bound outer slot -> reject.
+        """
+        from pecos.slr import Block, CReg, Main, Permute, QReg, SlrConverter
+        from pecos.slr.ast.codegen.guppy import GuppyCodegenError
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class MS(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), qb.H(a), Measure(a) > out)
+
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.Prep(q),
+            qb.X(q[0]),
+            MS(q[1], c[0]),
+            Permute([q[0], q[1]], [q[1], q[0]]),
+            Measure(q[0]) > c[1],
+        )
+        with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[1\].*Permute"):
+            SlrConverter(prog).guppy()
+
+    def test_scratch_outer_slot_return_rejected(self) -> None:
+        """Codex S2 r2 blocker 2: returning the register that hosts the
+        scratch-bound slot exposes a slot Guppy left untouched -> reject.
+        """
+        from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
+        from pecos.slr.ast.codegen.guppy import GuppyCodegenError
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class MS(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), qb.H(a), Measure(a) > out)
+
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.Prep(q),
+            MS(q[1], c[0]),
+            Return(q),
+        )
+        with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[1\].*Return"):
+            SlrConverter(prog).guppy()
+
+    def test_scratch_misuse_inside_block_body_rejected(self) -> None:
+        """Codex S2 r2 blocker 3: the purity guard runs per scope -- a
+        nested scratch BlockCall + misuse of that slot inside a BlockDecl
+        body (not just main) must be caught.
+        """
+        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast.codegen.guppy import GuppyCodegenError
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class Inner(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), qb.H(a), Measure(a) > out)
+
+        class Outer(Block):
+            block_inputs: ClassVar[dict[str, str]] = {
+                "q": "live_preserved",
+                "o": "live_preserved",
+            }
+
+            def __init__(self, q, o) -> None:
+                super().__init__()
+                self.q = q
+                self.o = o
+                self.extend(Inner(q[1], o), qb.X(q[1]))  # misuse within this scope
+
+        prog = Main(qq := QReg("qq", 2), c := CReg("c", 1), qb.Prep(qq), Outer(qq, c[0]))
+        with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[1\].*meaningful caller state"):
+            SlrConverter(prog).guppy()

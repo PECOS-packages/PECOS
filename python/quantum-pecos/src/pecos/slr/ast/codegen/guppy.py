@@ -48,6 +48,7 @@ from pecos.slr.ast.nodes import (
     LiteralExpr,
     MeasureOp,
     ParallelBlock,
+    PermuteOp,
     PrepareOp,
     QubitBundleArg,
     QubitTypeExpr,
@@ -72,7 +73,6 @@ if TYPE_CHECKING:
         BlockInput,
         CommentOp,
         Expression,
-        PermuteOp,
         PrintOp,
         Program,
         SlotRef,
@@ -480,24 +480,39 @@ class AstToGuppy:
 
     def _validate_scratch_outer_slots(self, program: Program) -> None:
         """Reject programs where a scratch-bound outer slot is also used as
-        meaningful caller state (Codex S2 review blocker 1).
+        meaningful caller state (Codex S2 review).
 
         A SCRATCH input lowers asymmetrically: flatten substitutes the
         scratch param to the outer slot (the block resets+measures THAT
         slot), while Guppy allocates the ancilla internally and leaves the
         outer slot untouched. The two paths only agree when the outer slot
         is pure scratch -- never observed by the caller. If the caller
-        gates/measures/barriers it, or hands it to another block, the
-        codegens diverge. Multiple scratch BlockCalls reusing the slot
-        stay allowed (the intended SynExtractBare pattern).
+        gates/measures/barriers/permutes/returns it, or hands it to another
+        block, the codegens diverge. Multiple scratch BlockCalls reusing
+        the slot stay allowed (the intended SynExtractBare pattern).
 
         `PrepareOp` on a scratch outer slot IS allowed: a reset is
         unobserved and dead under both lowerings (and the qeclib corpus
         wholesale-preps the ancilla register, e.g. `Prep(q)` covering
         `q[3]`, before using `q[3]` as a check ancilla).
+
+        Runs per scope (Codex S2 r2 blocker 3): `program.body` AND every
+        `BlockDecl.body` -- a nested BlockCall whose scratch arg references
+        the enclosing block's param slot has the same purity requirement
+        within that block's scope.
         """
+        self._validate_scratch_purity_in_scope(program.body)
+        for decl in program.block_decls:
+            self._validate_scratch_purity_in_scope(decl.body)
+
+    @staticmethod
+    def _ref_base(ref: str) -> str:
+        """Leading identifier of a string ref (`q[0]`/`q.x`/`q` -> `q`)."""
+        return ref.split("[", 1)[0].split(".", 1)[0]
+
+    def _validate_scratch_purity_in_scope(self, body: tuple[Statement, ...]) -> None:
         scratch: dict[tuple[str, int], str] = {}
-        for stmt in self._iter_stmts(program.body):
+        for stmt in self._iter_stmts(body):
             if not isinstance(stmt, BlockCall):
                 continue
             decl = self._block_decls.get(stmt.callee)
@@ -523,7 +538,10 @@ class AstToGuppy:
             )
             raise GuppyCodegenError(msg)
 
-        for stmt in self._iter_stmts(program.body):
+        def _reject_alloc(where: str, alloc: str) -> None:
+            _reject(where, next(s for s in scratch if s[0] == alloc))
+
+        for stmt in self._iter_stmts(body):
             if isinstance(stmt, GateOp):
                 for t in stmt.targets:
                     if (t.allocator, t.index) in scratch:
@@ -535,10 +553,23 @@ class AstToGuppy:
             elif isinstance(stmt, BarrierOp):
                 for alloc in stmt.allocators:
                     if alloc in scratch_allocs:
-                        # Barrier is name-level; conservatively reject any
-                        # barrier naming a register that hosts a scratch slot.
-                        slot = next(s for s in scratch if s[0] == alloc)
-                        _reject("a Barrier", slot)
+                        # Name-level: conservatively reject any barrier
+                        # naming a register that hosts a scratch slot.
+                        _reject_alloc("a Barrier", alloc)
+            elif isinstance(stmt, PermuteOp):
+                # sources/targets are string refs (`q`, `q[0]`); a permute
+                # touching the scratch register reorders/observes it.
+                for ref in (*stmt.sources, *stmt.targets):
+                    if self._ref_base(ref) in scratch_allocs:
+                        _reject_alloc("a Permute", self._ref_base(ref))
+            elif isinstance(stmt, ReturnOp):
+                # Returning the scratch slot (or its register) exposes the
+                # outer slot the caller would observe -- flatten mutated it,
+                # Guppy did not.
+                for v in stmt.values:
+                    name = v if isinstance(v, str) else getattr(v, "name", "")
+                    if name and self._ref_base(name) in scratch_allocs:
+                        _reject_alloc("a Return", self._ref_base(name))
             elif isinstance(stmt, BlockCall):
                 decl = self._block_decls.get(stmt.callee)
                 if decl is None:
@@ -547,8 +578,7 @@ class AstToGuppy:
                     if inp.effect is ResourceEffect.SCRATCH:
                         continue  # the scratch binding itself -- allowed
                     if isinstance(arg, AllocatorArg) and arg.name in scratch_allocs:
-                        slot = next(s for s in scratch if s[0] == arg.name)
-                        _reject(f"a non-scratch input of BlockCall {stmt.callee!r}", slot)
+                        _reject_alloc(f"a non-scratch input of BlockCall {stmt.callee!r}", arg.name)
                     elif isinstance(arg, SingleQubitArg) and (
                         arg.slot.allocator,
                         arg.slot.index,
@@ -907,7 +937,7 @@ class AstToGuppy:
             msg = "AST -> Guppy v1 supports Return only as the final root-level statement"
             raise GuppyCodegenError(msg)
 
-        from pecos.slr.ast.nodes import AssignOp, CommentOp, PermuteOp, PrintOp  # noqa: PLC0415
+        from pecos.slr.ast.nodes import AssignOp, CommentOp, PrintOp  # noqa: PLC0415
 
         if isinstance(stmt, AssignOp):
             return self._emit_assign(stmt)

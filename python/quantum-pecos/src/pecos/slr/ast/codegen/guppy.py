@@ -48,6 +48,7 @@ from pecos.slr.ast.nodes import (
     MeasureOp,
     ParallelBlock,
     PrepareOp,
+    QubitBundleArg,
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
@@ -1033,6 +1034,10 @@ class AstToGuppy:
                 # proxy). Bits are copyable, so no linearity consume.
                 register, bit_index = info
                 arg_exprs.append(f"array({register}[{bit_index}])")
+            elif kind == "qubit_bundle":
+                # Pack arbitrary (non-contiguous) outer slots into one array.
+                locals_ = [linearity.consume(Slot(alloc, idx)) for alloc, idx in info]
+                arg_exprs.append(f"array({', '.join(locals_)})")
             else:
                 msg = f"Unsupported validated arg kind {kind!r}"  # pragma: no cover
                 raise GuppyCodegenError(msg)
@@ -1147,9 +1152,57 @@ class AstToGuppy:
                 raise GuppyCodegenError(msg)
             return "single_bit", (bit.register, bit.index)
 
+        if isinstance(arg, QubitBundleArg):
+            if not isinstance(inp.type_expr, ArrayTypeExpr) or not isinstance(
+                inp.type_expr.element, QubitTypeExpr,
+            ):
+                msg = (
+                    f"BlockCall {callee!r} {position} for input {inp.name!r}: "
+                    f"QubitBundleArg requires an array[qubit, N] input (got "
+                    f"{type(inp.type_expr).__name__})"
+                )
+                raise GuppyCodegenError(msg)
+            input_size = inp.type_expr.size
+            if len(arg.slots) != input_size:
+                msg = (
+                    f"BlockCall {callee!r} {position} for input {inp.name!r}: "
+                    f"QubitBundleArg has {len(arg.slots)} slots but input "
+                    f"{inp.name!r} expects {input_size}"
+                )
+                raise GuppyCodegenError(msg)
+            resolved: list[tuple[str, int]] = []
+            seen: set[tuple[str, int]] = set()
+            for slot in arg.slots:
+                if slot.allocator not in self.context.root_allocators:
+                    msg = (
+                        f"BlockCall {callee!r} {position} for input {inp.name!r}: "
+                        f"bundle slot {slot.allocator}[{slot.index}] references an "
+                        "unknown outer allocator"
+                    )
+                    raise GuppyCodegenError(msg)
+                outer_size = self.context.root_allocators[slot.allocator]
+                if not (0 <= slot.index < outer_size):
+                    msg = (
+                        f"BlockCall {callee!r} {position} for input {inp.name!r}: "
+                        f"bundle slot index {slot.index} out of bounds for allocator "
+                        f"{slot.allocator!r} of size {outer_size}"
+                    )
+                    raise GuppyCodegenError(msg)
+                key = (slot.allocator, slot.index)
+                if key in seen:
+                    msg = (
+                        f"BlockCall {callee!r} {position} for input {inp.name!r}: "
+                        f"bundle references slot {slot.allocator}[{slot.index}] more "
+                        "than once (a qubit cannot be passed twice)"
+                    )
+                    raise GuppyCodegenError(msg)
+                seen.add(key)
+                resolved.append(key)
+            return "qubit_bundle", tuple(resolved)
+
         msg = (
             f"BlockCall {callee!r} {position} for input {inp.name!r}: BlockArg "
-            f"{type(arg).__name__} is not yet supported in Phase 3a.3 iter 5c"
+            f"{type(arg).__name__} is not yet supported in Phase 3a.3 iter 5d"
         )
         raise GuppyCodegenError(msg)
 
@@ -1172,6 +1225,17 @@ class AstToGuppy:
             # so there's no linearity rebind -- just a value assignment.
             register, bit_index = info
             return [f"{self.context.indent()}{register}[{bit_index}] = {ret_temp}[0]"]
+        if kind == "qubit_bundle":
+            # Destructure the returned array back into the SAME outer slots the
+            # bundle consumed, rebinding each via the canonical local name.
+            new_locals = [f"{alloc}_{idx}" for alloc, idx in info]
+            if len(new_locals) == 1:
+                line = f"{self.context.indent()}{new_locals[0]}, = {ret_temp}"
+            else:
+                line = f"{self.context.indent()}{', '.join(new_locals)} = {ret_temp}"
+            for (alloc, idx), local in zip(info, new_locals, strict=True):
+                linearity.set_live(Slot(alloc, idx), local)
+            return [line]
         msg = f"Unsupported return kind {kind!r}"  # pragma: no cover
         raise GuppyCodegenError(msg)
 

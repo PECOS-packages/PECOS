@@ -15,6 +15,7 @@ import pytest
 from pecos.slr import CReg, If, Main, QReg, Repeat, Return
 from pecos.slr.ast import AstToGuppy, ast_to_guppy, slr_to_ast
 from pecos.slr.qeclib import qubit as qb
+from pecos.slr.qeclib.steane.preps.encoding_circ import EncodingCircuit
 
 
 class TestAstToGuppyBasic:
@@ -210,6 +211,24 @@ class TestAstToGuppyQEC:
         assert "data_0, ancilla_0 = cx(data_0, ancilla_0)" in code
         assert "data_1, ancilla_0 = cx(data_1, ancilla_0)" in code
         assert "c[0] = measure(ancilla_0)" in code
+
+    def test_qeclib_block_internal_return_does_not_leak_as_main_return(self) -> None:
+        """S5/M2 provenance guard.
+
+        A qeclib composite block's internal `Return` is a flattened
+        block-boundary handoff, NOT the Main return -- it is elided at
+        convert time. `EncodingCircuit` emits a single final root
+        `ReturnOp(values=('q',))`; a position/count detector would wrongly
+        make it `return q`. Post-S5 it must be `main(...) -> None` with no
+        return line.
+        """
+        prog = Main(
+            q := QReg("q", 7),
+            EncodingCircuit(q),
+        )
+        code = ast_to_guppy(slr_to_ast(prog))
+        assert "-> None:" in code
+        assert "\n    return " not in code
 
 
 class TestAstToGuppyGenerator:

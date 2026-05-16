@@ -172,6 +172,13 @@ class SlrToAst:
         self._position = 0  # Track position for source locations
         self._block_decls: list[BlockDecl] = []  # Hoisted BlockDecls accumulated during convert()
         self._decl_counter = 0
+        # S5/M2: True while converting the ops of a legacy-flattened composite
+        # Block. A `Return` inside such a block is a block-boundary qubit
+        # handoff (the qubits are already in linear scope by allocator name),
+        # NOT the root Main return -- elide it. Provenance-based, not
+        # position/count (a single final root ReturnOp can come from a qeclib
+        # block, e.g. `Main(q, EncodingCircuit(q))`).
+        self._in_flattened_block = False
 
     def convert(self, block: Main | Block) -> Program:
         """Convert an SLR Main/Block to an AST Program.
@@ -369,6 +376,9 @@ class SlrToAst:
             return CommentOp(text=op.txt)
 
         if op_class == "Return":
+            if self._in_flattened_block:
+                # S5/M2: elide block-boundary Return from a flattened composite.
+                return None
             return self._convert_return(op)
 
         if op_class == "Permute":
@@ -389,8 +399,18 @@ class SlrToAst:
             if _has_block_inputs(op):
                 return self._convert_block_call(op)
 
-            # Legacy flatten path.
-            return ("__FLATTEN__", self._convert_statements(op.ops))
+            # Legacy flatten path. Returns inside the flattened composite are
+            # block-boundary handoffs, not the root Main return (S5/M2):
+            # elide them via the in_flattened_block provenance flag, including
+            # inside nested If/Repeat/For/While/Parallel. Save/restore so
+            # nested composites and the root scope are handled correctly.
+            prev_in_flattened = self._in_flattened_block
+            self._in_flattened_block = True
+            try:
+                flattened = self._convert_statements(op.ops)
+            finally:
+                self._in_flattened_block = prev_in_flattened
+            return ("__FLATTEN__", flattened)
 
         return None
 

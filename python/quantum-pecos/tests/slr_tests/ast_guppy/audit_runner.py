@@ -470,8 +470,16 @@ def _qeclib_surface_patch_builder_empty() -> Block:
     )
 
 
-def _qeclib_steane_pz_v2_defer() -> Block:
-    """Deliberate red-light: Steane pz() is v2 per stage3-synthesis Q B."""
+def _qeclib_steane_pz() -> Block:
+    """Steane pz(): lowers under S5 (M2 converter-time elision of flattened
+    composite block-boundary Returns); Main has no user Return -> main()->None.
+
+    Audit scope is build+lower (compile) only -- steane_pz genuinely
+    compiles post-S5. Behavioral correctness is a SEPARATE concern: the v1
+    AST->Guppy FT-RUS pz() prepares a non-codeword state (pre-existing,
+    S5-independent). That defect is tracked post-3b and pinned by a strict
+    xfail in test_v1_behavioral.TestS5SteanePzBehavioral -- it is NOT
+    asserted correct here."""
     return Main(
         c := Steane("c"),
         c.pz(),
@@ -706,13 +714,7 @@ def _curated_cases() -> list[AuditCase]:
         AuditCase("qeclib.surface_patch_builder_empty", _qeclib_surface_patch_builder_empty),
         AuditCase(
             "qeclib.steane_pz",
-            _qeclib_steane_pz_v2_defer,
-            expected_failure=ExpectedFailure(
-                exception_type="GuppyCodegenError",
-                message_contains="supports only one final root-level Return",
-                classification="v2-defer",
-                reason="Steane pz() requires nested Return / BlockCall semantics",
-            ),
+            _qeclib_steane_pz,
         ),
         AuditCase(
             "qeclib.surface_std_pz",

@@ -46,9 +46,7 @@ impl CargoConfig {
             .entry(key)
             .or_insert(Item::Table(Table::new()))
             .as_table_mut()
-            .ok_or_else(|| {
-                Error::Config(format!("`{key}` in .cargo/config.toml is not a table"))
-            })
+            .ok_or_else(|| Error::Config(format!("`{key}` in .cargo/config.toml is not a table")))
     }
 
     /// Set `[env].<key>`. With `force`, writes the
@@ -136,7 +134,8 @@ mod tests {
     fn plain_env_is_a_bare_string() {
         let tmp = tempfile::tempdir().unwrap();
         let mut cfg = CargoConfig::open(tmp.path()).unwrap();
-        cfg.set_env("CUQUANTUM_ROOT", "/opt/cuquantum", false).unwrap();
+        cfg.set_env("CUQUANTUM_ROOT", "/opt/cuquantum", false)
+            .unwrap();
         cfg.save().unwrap();
 
         let parsed: toml::Value = toml::from_str(&read(tmp.path())).unwrap();
@@ -162,7 +161,10 @@ mod tests {
         assert_eq!(text.matches("[env]").count(), 1, "duplicate [env]: {text}");
         // Both keys survive and parse.
         let parsed: toml::Value = toml::from_str(&text).unwrap();
-        assert_eq!(parsed["env"]["LLVM_SYS_140_PREFIX"]["value"], "/llvm".into());
+        assert_eq!(
+            parsed["env"]["LLVM_SYS_140_PREFIX"]["value"],
+            "/llvm".into()
+        );
         assert_eq!(parsed["env"]["CUQUANTUM_ROOT"]["value"], "/cq".into());
     }
 
@@ -184,7 +186,10 @@ mod tests {
         let parsed: toml::Value = toml::from_str(&read(tmp.path())).unwrap();
         assert_eq!(parsed["build"]["jobs"].as_integer().unwrap(), 4);
         assert_eq!(parsed["env"]["FOO"].as_str().unwrap(), "bar");
-        assert_eq!(parsed["env"]["LLVM_SYS_140_PREFIX"]["value"], "/llvm".into());
+        assert_eq!(
+            parsed["env"]["LLVM_SYS_140_PREFIX"]["value"],
+            "/llvm".into()
+        );
     }
 
     #[test]

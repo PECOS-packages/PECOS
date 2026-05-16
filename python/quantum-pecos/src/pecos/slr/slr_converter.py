@@ -400,11 +400,17 @@ def _slr_walk_for_inline_measure_target(ops, declared_creg_names: set[str]) -> b
         if type_name == "Measure":
             cout = getattr(op, "cout", None)
             if cout is not None:
-                for bit in cout:
-                    reg = getattr(bit, "reg", None)
-                    reg_name = getattr(reg, "sym", None) if reg is not None else None
+                for target in cout:
+                    # `Measure(q[i]) > c[j]` puts a Bit in cout (its CReg is
+                    # `bit.reg`); whole-register `Measure(q) > CReg("c", n)`
+                    # puts the CReg itself in cout (no `.reg`). Both forms
+                    # define an inline result CReg when `c` is not declared
+                    # in `Main(...)` -- the v1 emitter infers it
+                    # `is_result=True` and implicitly returns it.
+                    reg = getattr(target, "reg", None)
+                    reg_name = getattr(reg, "sym", None) if reg is not None else getattr(target, "sym", None)
                     if reg_name is not None and reg_name not in declared_creg_names:
-                        return True  # Inline target -- inferred is_result=True.
+                        return True
         elif type_name == "If":
             # If has `.ops` (Then-branch) and `.else_block` (an Else Block or None).
             if _slr_walk_for_inline_measure_target(getattr(op, "ops", ()), declared_creg_names):

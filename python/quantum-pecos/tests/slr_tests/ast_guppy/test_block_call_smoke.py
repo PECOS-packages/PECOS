@@ -2826,3 +2826,48 @@ class TestScratchCheckS4ProductionLockIn:
             "measurement_4": [0, 0, 1, 0],
             "measurement_5": [0, 0, 1, 0],
         }, raw
+
+    def test_color488_syn_extract_bare_routes_and_runs(self) -> None:
+        """Design says the S4 production lock-in is Steane + Color488
+        (Codex S4 review). Color488's serial `SynExtractBare` uses the
+        identical generic `Check` call shape -- it must also route every
+        Check through a BlockCall, compile, and run.
+        """
+        from pecos import Hugr, selene_engine, sim
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.qeclib.color488.syn_extract.bare import (
+            SynExtractBare as Color488SynExtractBare,
+        )
+
+        checks = [[2, 1, 3, 0], [5, 2, 1, 4], [6, 5, 2, 3]]
+        prog = Main(
+            d := QReg("d", 7),
+            a := QReg("a", 2),
+            syn := CReg("syn", 6),
+            Color488SynExtractBare(d, a, checks, syn),
+        )
+        ast = slr_to_ast(prog)
+        assert sum(1 for s in ast.body if isinstance(s, BlockCall)) == 6
+        guppy_src = SlrConverter(prog).guppy()
+        assert guppy_src.count("def check") == 6
+        assert "LinearityError" not in guppy_src
+
+        package = SlrConverter(prog).hugr()
+        result = (
+            sim(Hugr(package.to_str().encode("utf-8")))
+            .classical(selene_engine())
+            .qubits(10)
+            .seed(42)
+            .run(4)
+        )
+        raw = result.to_dict() if hasattr(result, "to_dict") else result
+        # Same generic-Check mechanism as Steane -> same seed-42 record shape.
+        assert raw == {
+            "measurement_0": [0, 0, 0, 0],
+            "measurement_1": [0, 0, 0, 0],
+            "measurement_2": [0, 0, 0, 0],
+            "measurement_3": [1, 1, 0, 1],
+            "measurement_4": [0, 0, 1, 0],
+            "measurement_5": [0, 0, 1, 0],
+        }, raw

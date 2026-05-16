@@ -11,14 +11,7 @@
 
 param(
     [string]$Arch = "x64",
-    [string]$HostArch = "x64",
-    # When set, do NOT pin CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER. rustc then
-    # falls back to its own vswhere-based MSVC detection (the same path local
-    # Windows builds use), which sets up the linker AND its LIB/INCLUDE itself,
-    # independent of the bash-mangled ambient env. Used by python-test.yml to
-    # validate whether the linker pin (and the .cargo/config.toml surgery it
-    # forces) is needed at all.
-    [switch]$NoPinLinker
+    [string]$HostArch = "x64"
 )
 
 $ErrorActionPreference = "Stop"
@@ -121,11 +114,7 @@ if (-not (Test-Path $linkPath)) {
     throw "MSVC link.exe not found at $linkPath"
 }
 
-if ($NoPinLinker) {
-    Write-Host "Skipping CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER pin (rustc will auto-detect MSVC)"
-} else {
-    Add-GitHubEnv -Name "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -Value $linkPath
-}
+Add-GitHubEnv -Name "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -Value $linkPath
 
 # The Justfile pins `set shell := ["bash", "-cu"]`, so every `just` recipe (and
 # the `cargo` / `link.exe` it spawns) runs under git-bash, whose MSYS2 runtime
@@ -146,9 +135,5 @@ if ($NoPinLinker) {
 Add-GitHubEnv -Name "MSYS2_ENV_CONV_EXCL" -Value "LIB;INCLUDE;LIBPATH"
 
 Write-Host "Configured Visual Studio environment from $vsPath for $Arch"
-if ($NoPinLinker) {
-    Write-Host "Cargo MSVC linker NOT pinned (rustc auto-detection); newest toolset is $linkPath"
-} else {
-    Write-Host "Configured Cargo MSVC linker: $linkPath"
-}
+Write-Host "Configured Cargo MSVC linker: $linkPath"
 Write-Host "Excluded LIB;INCLUDE;LIBPATH from MSYS2 path conversion"

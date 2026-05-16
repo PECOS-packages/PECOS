@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from pecos.slr import CReg, Main, Permute, QReg, SlrConverter
+from pecos.slr import CReg, Main, Permute, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 
 # Test fixtures
@@ -23,6 +23,7 @@ def create_whole_register_permutation_program() -> tuple:
         ),
         b[2].set(1),  # After permutation, this still refers to b[2]
         a[3].set(0),  # After permutation, this still refers to a[3]
+        Return(a, b),
     )
 
 

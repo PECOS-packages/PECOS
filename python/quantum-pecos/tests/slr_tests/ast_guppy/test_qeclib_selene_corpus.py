@@ -62,7 +62,7 @@ from __future__ import annotations
 import warnings
 
 from pecos import Hugr, selene_engine, sim
-from pecos.slr import CReg, Main, QReg, SlrConverter
+from pecos.slr import CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.generic.check import Check
 from pecos.slr.qeclib.generic.check_1flag import Check1Flag
@@ -110,6 +110,7 @@ class TestQeclibCheck:
             q := QReg("q", 4),
             c := CReg("c", 1),
             Check([q[0], q[1], q[2]], "XYZ", q[3], c[0], with_barriers=True),
+            Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=5)
         # Empirical probe 2026-05-15: {'measurement_0': [1, 0, 0, 1]}
@@ -129,6 +130,7 @@ class TestQeclibCheck:
             qb.H(q[0]),
             qb.H(q[1]),
             Check([q[0], q[1], q[2]], "XYZ", q[3], c[0], with_barriers=True),
+            Return(c),
         )
         # qubits=5: converted Check allocates its scratch ancilla
         # internally (design R2 -- records unchanged, +1 physical qubit).
@@ -154,6 +156,7 @@ class TestQeclibCheck1Flag:
             q := QReg("q", 5),
             c := CReg("c", 2),
             Check1Flag([q[0], q[1], q[2]], "XYZ", q[3], q[4], c[0], c[1], with_barriers=True),
+            Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=7)
         # Empirical probe 2026-05-15: unchanged post-conversion
@@ -184,6 +187,7 @@ class TestQeclibTransversalCX:
             transversal_tq(qb.CX, a, b),
             Measure(a) > c[0:3],
             Measure(b) > c[3:6],
+            Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=6)
         # Empirical probe 2026-05-15: each measurement_N has 4 identical shots
@@ -206,6 +210,7 @@ class TestQeclibTransversalCX:
             transversal_tq(qb.CX, a, b),
             Measure(a) > c[0:3],
             Measure(b) > c[3:6],
+            Return(c),
         )
         raw = _run_via_selene(prog, shots=4, seed=42, qubits=6)
         # Empirical probe 2026-05-15: |000>|000> through CX stays |000>|000>;
@@ -238,6 +243,7 @@ class TestQeclibSteaneTransversalCX:
             gate_class(a, b),
             Measure(a) > c[0:7],
             Measure(b) > c[7:14],
+            Return(c),
         )
 
     def test_steane_cx_all_ones_to_zero_propagates_pinned_records(self) -> None:
@@ -276,6 +282,7 @@ class TestQeclibSteaneLogicalPaulis:
             c := CReg("c", 7),
             gate_class(q),
             Measure(q) > c,
+            Return(c),
         )
 
     def test_steane_logical_x_on_zero_pinned_records(self) -> None:

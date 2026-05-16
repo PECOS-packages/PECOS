@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.slr import Barrier, CReg, If, Main
+from pecos.slr import Barrier, CReg, If, Main, Return
 from pecos.slr.qeclib.steane.steane_class import Steane
 
 
@@ -48,6 +48,7 @@ def telep(prep_basis: str, meas_basis: str) -> Main:
         If(m_bell[0] == 0).Then(sout.z()),
         # Final output stored in `m_out[0]`
         sout.m(meas_basis, m_out[0]),
+        Return(m_bell, m_out),
     )
 
 
@@ -100,6 +101,7 @@ def t_gate(prep_basis: str, meas_basis: str) -> Main:
         If(sin.t_meas == 1).Then(sin.sz()),
         # Final output stored in `m_out[1]`
         sin.m(meas_basis, m_out[1]),
+        Return(m_reject, m_t, m_out),
     )
 
 

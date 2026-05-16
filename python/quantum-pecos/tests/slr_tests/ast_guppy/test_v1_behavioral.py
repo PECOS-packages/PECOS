@@ -26,7 +26,7 @@ Test classes per stage 4 plan (`step4-cutover-plan.md`):
 
 from __future__ import annotations
 
-from pecos.slr import CReg, If, Main, Permute, QReg
+from pecos.slr import CReg, If, Main, Permute, QReg, Return
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -45,6 +45,7 @@ class TestDeterministic:
             c := CReg("c", 1),
             qb.X(q[0]),
             Measure(q[0]) > c[0],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)
@@ -55,6 +56,7 @@ class TestDeterministic:
             q := QReg("q", 1),
             c := CReg("c", 1),
             Measure(q[0]) > c[0],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 0 for r in records)
@@ -67,6 +69,7 @@ class TestDeterministic:
             qb.X(q[0]),
             qb.X(q[0]),
             Measure(q[0]) > c[0],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 0 for r in records)
@@ -80,6 +83,7 @@ class TestDeterministic:
             Measure(q[0]) > c[0],
             qb.Prep(q[0]),
             Measure(q[0]) > c[1],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)
@@ -95,6 +99,7 @@ class TestDeterministic:
             qb.Prep(q[0]),
             qb.X(q[0]),
             Measure(q[0]) > c[1],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)
@@ -109,6 +114,7 @@ class TestDeterministic:
             qb.Z(q[0]),
             qb.H(q[0]),
             Measure(q[0]) > c[0],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)
@@ -122,6 +128,7 @@ class TestDeterministic:
             Permute([q[0], q[1]], [q[1], q[0]]),
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 0 for r in records)
@@ -142,6 +149,7 @@ class TestDeterministic:
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             Measure(q[2]) > c[2],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 0 for r in records)
@@ -161,6 +169,7 @@ class TestDeterministic:
             Measure(a[1]) > c[1],
             Measure(b[0]) > c[2],
             Measure(b[1]) > c[3],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)
@@ -183,6 +192,7 @@ class TestBellGHZ:
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             Measure(q) > c,
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=100)
         assert all(r["measurement_0"] == r["measurement_1"] for r in records)
@@ -196,6 +206,7 @@ class TestBellGHZ:
             qb.CX(q[0], q[1]),
             qb.CX(q[1], q[2]),
             Measure(q) > c,
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=100)
         for r in records:
@@ -216,6 +227,7 @@ class TestMarginalFrequency:
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             Measure(q) > c,
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog, shots=1000, seed=42)
         ones_0 = sum(r["measurement_0"] for r in records)
@@ -245,6 +257,7 @@ class TestConditionalCorrectness:
             Measure(q[0]) > c[0],
             If(c[0]).Then(qb.X(q[1])),
             Measure(q[1]) > c[1],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog_zero, shots=10)
         assert all(r["measurement_0"] == 0 for r in records)
@@ -258,6 +271,7 @@ class TestConditionalCorrectness:
             Measure(q[0]) > c[0],
             If(c[0]).Then(qb.X(q[1])),
             Measure(q[1]) > c[1],
+            Return(c),
         )
         records = run_ast_guppy_via_selene(prog_one, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)
@@ -273,6 +287,7 @@ class TestConditionalCorrectness:
             flag[1].set(0),
             If(flag[1]).Then(qb.X(q[0])),
             Measure(q[0]) > out[0],
+            Return(out),
         )
         records = run_ast_guppy_via_selene(prog_without_permute, shots=10)
         assert all(r["measurement_0"] == 0 for r in records)
@@ -286,6 +301,7 @@ class TestConditionalCorrectness:
             Permute([flag[0], flag[1]], [flag[1], flag[0]]),
             If(flag[1]).Then(qb.X(q[0])),
             Measure(q[0]) > out[0],
+            Return(out),
         )
         records = run_ast_guppy_via_selene(prog_with_permute, shots=10)
         assert all(r["measurement_0"] == 1 for r in records)

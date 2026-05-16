@@ -18,6 +18,7 @@ def create_creg_permutation_program() -> tuple:
         pecos.slr.Permute(a, b),
         a[0].set(1),  # Bit-level operation
         a.set(1),  # Register-level operation
+        pecos.slr.Return(a, b),
     )
 
 

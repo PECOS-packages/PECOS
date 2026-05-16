@@ -10,9 +10,16 @@ sys.path.insert(
 
 import pytest
 from pecos.circuits.quantum_circuit import QuantumCircuit
-from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, SlrConverter
+from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
+
+
+def _return_declared_cregs(prog: Main) -> Main:
+    cregs = [var for var in prog.vars if isinstance(var, CReg)]
+    if cregs:
+        prog.extend(Return(*cregs))
+    return prog
 
 
 class TestQuantumCircuitToSLR:
@@ -25,7 +32,7 @@ class TestQuantumCircuitToSLR:
         qc.append({"X": {0}, "Y": {1}, "Z": {2}})  # Different gates
         qc.append({"S": {0}, "SDG": {1}, "T": {2}})  # Phase gates
 
-        slr_prog = SlrConverter.from_quantum_circuit(qc)
+        slr_prog = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
 
         # Convert to QASM to verify structure
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
@@ -52,7 +59,7 @@ class TestQuantumCircuitToSLR:
         qc.append({"CY": {(1, 2)}})
         qc.append({"CZ": {(0, 3)}})
 
-        slr_prog = SlrConverter.from_quantum_circuit(qc)
+        slr_prog = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         assert "cx q[0],q[1]" in qasm or "cx q[0], q[1]" in qasm
@@ -68,7 +75,7 @@ class TestQuantumCircuitToSLR:
         qc.append({"CX": {(0, 1)}})
         qc.append({"Measure": {0, 1}})
 
-        slr_prog = SlrConverter.from_quantum_circuit(qc)
+        slr_prog = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         assert "reset q[0]" in qasm
@@ -165,6 +172,7 @@ class TestSLRToQuantumCircuit:
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
+            Return(c),
         )
 
         generator = QuantumCircuitGenerator(_internal=True)
@@ -355,6 +363,7 @@ class TestQuantumCircuitRoundTrip:
             qubit.Measure(q[1]) > c[1],
             qubit.Measure(q[2]) > c[2],
             qubit.Measure(q[3]) > c[3],
+            Return(c),
         )
 
         # Convert to QuantumCircuit and back
@@ -362,7 +371,7 @@ class TestQuantumCircuitRoundTrip:
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
-        reconstructed = SlrConverter.from_quantum_circuit(qc)
+        reconstructed = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
 
         # Both should produce similar QASM
         orig_qasm = SlrConverter(prog).qasm(skip_headers=True)

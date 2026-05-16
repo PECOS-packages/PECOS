@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.slr import CReg, QReg
+from pecos.slr import CReg, QReg, Return
 from pecos.slr.qeclib.steane.qec.qec_3parallel import ParallelFlagQECActiveCorrection
 
 
@@ -46,5 +46,19 @@ def test_ParallelFlagQECActiveCorrection(compare_qasm: Callable[..., None]) -> N
         pf[0],
         pf[1],
         scratch,
+    )
+    block.extend(
+        Return(
+            flag_x,
+            flag_z,
+            flags,
+            syn_x,
+            syn_z,
+            last_raw_syn_x,
+            last_raw_syn_z,
+            syndromes,
+            pf,
+            scratch,
+        ),
     )
     compare_qasm(block)

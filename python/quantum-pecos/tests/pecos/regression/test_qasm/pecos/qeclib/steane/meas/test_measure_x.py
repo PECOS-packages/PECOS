@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.slr import CReg, QReg
+from pecos.slr import CReg, QReg, Return
 from pecos.slr.qeclib.steane.meas.measure_x import NoFlagMeasureX
 
 
@@ -24,4 +24,5 @@ def test_MeasureX(compare_qasm: Callable[..., None]) -> None:
     out = CReg("out_test", 1)
 
     block = NoFlagMeasureX(q, a, out)
+    block.extend(Return(out))
     compare_qasm(block)

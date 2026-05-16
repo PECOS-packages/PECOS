@@ -1,20 +1,7 @@
 """Test SLR to physical quantum circuit compilation for various cases."""
 
 import pytest
-from pecos.slr import (
-    Barrier,
-    Bit,
-    Block,
-    Comment,
-    CReg,
-    If,
-    Main,
-    Permute,
-    QReg,
-    Qubit,
-    Repeat,
-    SlrConverter,
-)
+from pecos.slr import Barrier, Bit, Block, Comment, CReg, If, Main, Permute, QReg, Qubit, Repeat, Return, SlrConverter
 from pecos.slr.qeclib import qubit as p
 from pecos.slr.qeclib.steane.steane_class import Steane
 
@@ -62,6 +49,7 @@ def telep(prep_basis: str, meas_basis: str) -> str:
         If(m_bell[0] == 0).Then(sout.z()),
         # Final output stored in `m_out[0]`
         sout.m(meas_basis, m_out[0]),
+        Return(m_bell, m_out),
     )
 
 
@@ -73,6 +61,7 @@ def test_bell() -> None:
         p.H(q[0]),
         p.CX(q[0], q[1]),
         p.Measure(q) > m,
+        Return(m),
     )
 
     qasm = (
@@ -98,6 +87,7 @@ def test_bell_qir() -> None:
         p.H(q[0]),
         p.CX(q[0], q[1]),
         p.Measure(q) > m,
+        Return(m),
     )
 
     qir = SlrConverter(prog).qir()
@@ -113,6 +103,7 @@ def test_bell_qreg_qir() -> None:
         p.H(q),
         p.CX(q[0], q[1]),
         p.Measure(q) > m,
+        Return(m),
     )
 
     qir = SlrConverter(prog).qir()
@@ -139,6 +130,7 @@ def test_if_bell() -> None:
         m := CReg("m", 2),
         c := CReg("c", 4),
         If(c == 1).Then(Bell(q0=q[0], q1=q[1], m0=m[0], m1=m[1])),
+        Return(m, c),
     )
 
     qasm = (
@@ -171,6 +163,7 @@ def test_strange_program() -> None:
         c.set(b & 1),
         Permute([q[0], q[1]], [q[1], q[0]]),
         p.H(q[0]),
+        Return(c, b),
     )
 
     qasm = (
@@ -225,6 +218,7 @@ def test_control_flow_qir() -> None:
         Barrier(q[1], q[0]),
         p.RX[0.3](q[0]),
         p.Measure(q) > m,
+        Return(m),
     )
     qir = SlrConverter(prog).qir()
     assert "__quantum__qis__h__body" in qir
@@ -241,6 +235,7 @@ def test_plus_qir() -> None:
         m.set(2),
         n.set(2),
         o.set(m + n),
+        Return(m, n, o),
     )
     qir = SlrConverter(prog).qir()
     assert "add" in qir
@@ -259,6 +254,7 @@ def test_nested_xor_qir() -> None:
         n.set(2),
         o.set(2),
         p[0].set((m[0] ^ n[0]) ^ o[0]),
+        Return(m, n, o, p),
     )
     qir = SlrConverter(prog).qir()
     assert "xor" in qir
@@ -275,6 +271,7 @@ def test_minus_qir() -> None:
         m.set(2),
         n.set(2),
         o.set(m - n),
+        Return(m, n, o),
     )
     qir = SlrConverter(prog).qir()
     assert "sub" in qir

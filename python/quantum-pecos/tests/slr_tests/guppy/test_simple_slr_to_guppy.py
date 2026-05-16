@@ -8,7 +8,7 @@ Block subclass, which is in v1 scope but not part of the acceptance
 set.
 """
 
-from pecos.slr import Block, CReg, Main, QReg
+from pecos.slr import Block, CReg, Main, QReg, Return
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 from pecos.slr.qeclib.qubit.preps import Prep
@@ -35,6 +35,7 @@ def test_simple_explicit_reset_in_loop() -> None:
         ResetQubit(q, c[0:1]),
         ResetQubit(q, c[1:2]),
         ResetQubit(q, c[2:3]),
+        Return(c),
     )
     assert_ast_guppy_compiles(prog)
 
@@ -57,5 +58,6 @@ def test_simple_measurement_then_reset() -> None:
         c := CReg("c", 1),
         MeasureAndReset(q, c),
         qb.X(q[0]),
+        Return(c),
     )
     assert_ast_guppy_compiles(prog)

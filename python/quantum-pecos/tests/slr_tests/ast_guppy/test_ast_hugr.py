@@ -16,6 +16,7 @@ def test_hugr_compiles_via_ast_guppy_path() -> None:
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
         Measure(q) > c,
+        Return(c),
     )
 
     hugr = SlrConverter(prog).hugr()
@@ -31,6 +32,7 @@ def test_hugr_rejects_while_before_parallel_optimizer_erases_it() -> None:
             qb.H(q[0]),
             Measure(q[0]) > c[0],
         ),
+        Return(c),
     )
 
     with pytest.raises(GuppyCodegenError, match="does not support While loops"):
@@ -59,9 +61,11 @@ def test_hugr_rejects_symbolic_loopvar_indexing_cleanly() -> None:
 
 
 def test_hugr_accepts_inline_measure_creg_result() -> None:
+    final = CReg("final", 2)
     prog = Main(
         q := QReg("q", 2),
-        Measure(q) > CReg("final", 2),
+        Measure(q) > final,
+        Return(final),
     )
 
     hugr = SlrConverter(prog).hugr()
@@ -86,6 +90,7 @@ def test_hugr_returns_no_arg_entrypoint_runnable_via_hugr_adapter() -> None:
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
         Measure(q) > c,
+        Return(c),
     )
 
     package = SlrConverter(prog).hugr()
@@ -125,11 +130,13 @@ def test_hugr_inline_measure_creg_round_trips_through_selene() -> None:
     """
     from pecos import Hugr, selene_engine, sim
 
+    final = CReg("final", 2)
     prog = Main(
         q := QReg("qi", 2),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        Measure(q) > CReg("final", 2),
+        Measure(q) > final,
+        Return(final),
     )
 
     package = SlrConverter(prog).hugr()
@@ -151,13 +158,15 @@ def test_hugr_inline_measure_creg_inside_nested_repeat() -> None:
     """
     from pecos import Hugr, selene_engine, sim
 
+    flag = CReg("flag", 1)
     prog = Main(
         q := QReg("q", 1),
         Repeat(2).block(
             qb.X(q[0]),
-            Measure(q[0]) > CReg("flag", 1),
+            Measure(q[0]) > flag[0],
             qb.Prep(q[0]),
         ),
+        Return(flag),
     )
 
     package = SlrConverter(prog).hugr()

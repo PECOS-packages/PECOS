@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 from pecos import Hugr, selene_engine, sim
-from pecos.slr import CReg, For, If, Main, Print, QReg, Repeat, SlrConverter
+from pecos.slr import CReg, For, If, Main, Print, QReg, Repeat, Return, SlrConverter
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -55,6 +55,7 @@ class TestTagDerivation:
             qb.X(q[0]),
             Measure(q) > c,
             Print(c),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, qubits=2)
         assert "result.c" in raw, f"expected 'result.c' tag in {list(raw.keys())}"
@@ -67,6 +68,7 @@ class TestTagDerivation:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c[0]),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog)
         assert "result.c_0" in raw, f"expected 'result.c_0' tag in {list(raw.keys())}"
@@ -85,6 +87,7 @@ class TestNamespaceAndTag:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, namespace="debug"),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog)
         assert "debug.c" in raw
@@ -96,6 +99,7 @@ class TestNamespaceAndTag:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="step_1"),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog)
         assert "result.step_1" in raw
@@ -107,6 +111,7 @@ class TestNamespaceAndTag:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="r1", namespace="debug"),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog)
         assert "debug.r1" in raw
@@ -136,6 +141,7 @@ class TestPrintInLoops:
                 qb.Prep(q[0]),
                 Print(c, tag="iter"),
             ),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=shots)
         assert "result.iter" in raw, f"expected 'result.iter' in {list(raw.keys())}"
@@ -158,6 +164,7 @@ class TestPrintInLoops:
                 qb.Prep(q[0]),
                 Print(c, tag="loop"),
             ),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=shots)
         assert "result.loop" in raw
@@ -245,6 +252,7 @@ class TestPrintAndSeleneOutput:
             c := CReg("c", 1),
             qb.X(q[0]),
             Measure(q[0]) > c[0],
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=2)
         assert "measurement_0" in raw
@@ -265,6 +273,7 @@ class TestPrintAndSeleneOutput:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="p"),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=2)
         assert "result.p" in raw
@@ -282,6 +291,7 @@ class TestPrintAndSeleneOutput:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="late"),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=2)
         assert "result.early" in raw
@@ -303,6 +313,7 @@ class TestPrintAndSeleneOutput:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="same"),  # same tag, second emission
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=shots)
         assert "result.same" in raw
@@ -333,6 +344,7 @@ class TestPathSignatureValidator:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             If(c[0]).Then(Print(c, tag="only_then")),
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
             SlrConverter(prog).hugr()
@@ -345,6 +357,7 @@ class TestPathSignatureValidator:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             If(c[0]).Then(Print(c, tag="branch_taken")).Else(Print(c, tag="branch_taken")),
+            Return(c),
         )
         SlrConverter(prog).hugr()
 
@@ -356,6 +369,7 @@ class TestPathSignatureValidator:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             If(c[0]).Then(Print(c, tag="branch_a")).Else(Print(c, tag="branch_b")),
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
             SlrConverter(prog).hugr()
@@ -373,6 +387,7 @@ class TestPathSignatureValidator:
                 Print(c, tag="event"),
             )
             .Else(Print(c, tag="event")),
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
             SlrConverter(prog).hugr()
@@ -385,6 +400,7 @@ class TestPathSignatureValidator:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             If(c[0]).Then(Print(c, tag="x")).Else(Print(c, namespace="debug", tag="x")),
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
             SlrConverter(prog).hugr()
@@ -400,6 +416,7 @@ class TestPathSignatureValidator:
                 qb.Prep(q[0]),
                 Print(c, tag="iter"),
             ),
+            Return(c),
         )
         SlrConverter(prog).hugr()
 
@@ -414,6 +431,7 @@ class TestPathSignatureValidator:
                 qb.Prep(q[0]),
                 Print(c, tag="loop"),
             ),
+            Return(c),
         )
         SlrConverter(prog).hugr()
 
@@ -434,6 +452,7 @@ class TestPathSignatureValidator:
                 If(c[1]).Then(Print(c, tag="inner")).Else(Print(c, tag="inner")),
                 Print(c, tag="outer"),
             ),
+            Return(c),
         )
         SlrConverter(prog).hugr()
 
@@ -446,6 +465,7 @@ class TestPathSignatureValidator:
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             If(c[0]).Then(If(c[1]).Then(Print(c, tag="leak"))),  # Else missing on inner
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError, match="path-signature mismatch"):
             SlrConverter(prog).hugr()
@@ -479,6 +499,7 @@ class TestInlineCRegDefiniteAssignment:
             qb.X(q[0]),
             Print(inline[0], tag="before_measure"),
             Measure(q[0]) > inline[0],
+            Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
@@ -491,6 +512,7 @@ class TestInlineCRegDefiniteAssignment:
             qb.X(q[0]),
             Measure(q[0]) > inline[0],
             Print(inline[0], tag="after_measure"),
+            Return(inline),
         )
         SlrConverter(prog).hugr()
 
@@ -503,6 +525,7 @@ class TestInlineCRegDefiniteAssignment:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="after"),
+            Return(c),
         )
         SlrConverter(prog).hugr()
 
@@ -515,6 +538,7 @@ class TestInlineCRegDefiniteAssignment:
             Print(inline[0], tag="early"),
             Measure(q[0]) > inline[0],
             Measure(q[1]) > inline[1],
+            Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
@@ -529,6 +553,7 @@ class TestInlineCRegDefiniteAssignment:
             Measure(q[0]) > c[0],
             If(c[0]).Then(qb.X(q[1]), Measure(q[1]) > inline[0]).Else(Measure(q[1]) > inline[0]),
             Print(inline[0], tag="post_if"),
+            Return(c),
         )
         SlrConverter(prog).hugr()
 
@@ -542,6 +567,7 @@ class TestInlineCRegDefiniteAssignment:
             Measure(q[0]) > c[0],
             If(c[0]).Then(Measure(q[0]) > inline[0]),
             Print(inline[0], tag="maybe"),
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
@@ -553,6 +579,7 @@ class TestInlineCRegDefiniteAssignment:
             q := QReg("q", 1),
             Repeat(3).block(qb.X(q[0]), Measure(q[0]) > inline[0], qb.Prep(q[0])),
             Print(inline[0], tag="post_repeat"),
+            Return(inline),
         )
         SlrConverter(prog).hugr()
 
@@ -563,6 +590,7 @@ class TestInlineCRegDefiniteAssignment:
             q := QReg("q", 1),
             For("i", 0, 2).Do(qb.X(q[0]), Measure(q[0]) > inline[0], qb.Prep(q[0])),
             Print(inline[0], tag="post_for"),
+            Return(inline),
         )
         SlrConverter(prog).hugr()
 
@@ -581,6 +609,7 @@ class TestInlineCRegDefiniteAssignment:
             qb.X(q[0]),
             Measure(q[0]) > inline[0],
             Print(inline[1], tag="bit1"),
+            Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
@@ -602,6 +631,7 @@ class TestInlineCRegDefiniteAssignment:
             Measure(q[0]) > inline[0],
             Measure(q[1]) > inline[1],
             Print(inline, tag="full"),
+            Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"Print\(whole-CReg\) of inline CReg"):
             SlrConverter(prog).hugr()
@@ -621,6 +651,7 @@ class TestInlineCRegDefiniteAssignment:
             qb.X(q[0]),
             Measure(q[0]) > inline[0],
             Print(inline, tag="whole"),
+            Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"Print\(whole-CReg\) of inline CReg"):
             SlrConverter(prog).hugr()
@@ -637,6 +668,7 @@ class TestInlineCRegDefiniteAssignment:
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             Print(c, tag="whole"),
+            Return(c),
         )
         SlrConverter(prog).hugr()
 
@@ -661,6 +693,7 @@ class TestPathSignatureEdgeCases:
                 qb.Prep(q[0]),
                 Measure(q[0]) > c[0],
             ),
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError):
             SlrConverter(prog).hugr()
@@ -680,6 +713,7 @@ class TestPathSignatureEdgeCases:
                 Print(c[0], tag="bit0"),
                 Print(c[1], tag="bit1"),
             ),
+            Return(c),
         )
         SlrConverter(prog).hugr()
 
@@ -695,6 +729,7 @@ class TestPathSignatureEdgeCases:
                 Print(inline[0], tag="never_runs"),  # inline[0] never written anywhere
             ),
             Measure(q[0]) > inline[0],
+            Return(inline),
         )
         with pytest.raises(GuppyCodegenError, match=r"references inline CReg"):
             SlrConverter(prog).hugr()
@@ -766,6 +801,7 @@ class TestCrossCodegenPrintEmission:
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             Measure(q) > c,
+            Return(c),
         )
 
     @staticmethod
@@ -777,6 +813,7 @@ class TestCrossCodegenPrintEmission:
             qb.CX(q[0], q[1]),
             Measure(q) > c,
             Print(c, tag="debug"),
+            Return(c),
         )
 
     def test_qasm_emits_print_as_exactly_one_comment_line(self) -> None:
@@ -842,6 +879,7 @@ class TestSeleneShapeEdgeCases:
                 qb.Prep(q[0]),
                 Print(c, tag="iter"),
             ),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=3, qubits=2)
         assert "result.iter" in raw
@@ -879,6 +917,7 @@ class TestSeleneShapeEdgeCases:
             c := CReg("c", 1),
             Print(c, tag="zero_init"),  # before Measure: bit is the False init
             Measure(q[0]) > c[0],
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=2)
         assert "result.zero_init" in raw
@@ -902,6 +941,7 @@ class TestSeleneShapeEdgeCases:
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             Print(c, tag="pair"),
+            Return(c),
         )
         raw = _run_and_get_result_dict(prog, shots=2, qubits=2)
         assert "result.pair" in raw

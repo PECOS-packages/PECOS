@@ -8,7 +8,7 @@ cover.
 """
 
 import pytest
-from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -44,6 +44,7 @@ class TestPartialConsumption:
             MeasureAncillas(data, ancilla, syndrome),
             qubit.X(data[0]),
             Measure(data) > data_result,
+            Return(syndrome, data_result),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -72,6 +73,7 @@ class TestPartialConsumption:
             Measure(q[3]) > c_second[0],
             Measure(q[4]) > c_second[1],
             Measure(q[5]) > c_second[2],
+            Return(c_first, c_second),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -100,6 +102,7 @@ class TestPartialConsumption:
             StabilizerMeasurement(data, ancilla, syndrome),
             qubit.Z(data[0]),
             Measure(data) > final,
+            Return(syndrome, final),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -119,6 +122,7 @@ class TestPartialConsumption:
             single := QReg("single", 1),
             result := CReg("result", 1),
             MeasureSingle(single, result),
+            Return(result),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -132,6 +136,7 @@ class TestPartialConsumption:
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             Measure(q[2]) > c[2],
+            Return(c),
         )
 
         # This should compile without errors
@@ -159,6 +164,7 @@ class TestEdgeCases:
             c := CReg("c", 2),
             DoNothing(q),
             Measure(q) > c,
+            Return(c),
         )
         assert_ast_guppy_compiles(prog)
 

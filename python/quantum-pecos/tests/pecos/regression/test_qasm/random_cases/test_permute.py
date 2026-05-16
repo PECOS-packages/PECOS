@@ -11,7 +11,7 @@
 
 """Testing SLR->QASM permute cases."""
 
-from pecos.slr import Block, CReg, Main, Permute, SlrConverter
+from pecos.slr import Block, CReg, Main, Permute, Return, SlrConverter
 from pecos.slr.qeclib.steane.steane_class import Steane
 
 
@@ -25,6 +25,7 @@ def test_permute1() -> None:
         Permute(a.a, b.a),
         a.mx(meas[0]),
         b.my(meas[1]),
+        Return(meas),
     )
 
     qasm = SlrConverter(prog).qasm()
@@ -54,6 +55,7 @@ def test_permute2() -> None:
         my_permute(a, b),
         a.mx(meas[0]),
         b.my(meas[1]),
+        Return(meas),
     )
 
     qasm = SlrConverter(prog).qasm()
@@ -74,6 +76,7 @@ def test_permute3() -> None:
         b := Steane("b"),
         meas := CReg("meas", 1),
         a.px(),
+        Return(meas),
     )
     for _i in range(1):
         prog.extend(
@@ -106,6 +109,7 @@ def test_permute4() -> None:
         b := Steane("b"),
         meas := CReg("meas", 1),
         a.px(),
+        Return(meas),
     )
     for _i in range(1):
         prog.extend(

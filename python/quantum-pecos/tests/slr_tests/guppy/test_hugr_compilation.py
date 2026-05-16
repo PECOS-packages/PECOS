@@ -5,7 +5,7 @@ ensuring linearity constraints are satisfied.
 """
 
 import pytest
-from pecos.slr import Block, CReg, If, Main, QReg, SlrConverter
+from pecos.slr import Block, CReg, If, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -22,6 +22,7 @@ class TestHugrCompilation:
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             Measure(q) > c,
+            Return(c),
         )
 
         # Should compile without errors
@@ -52,6 +53,7 @@ class TestHugrCompilation:
             MeasureAncillas(data, ancilla, syndrome),
             qubit.H(data[0]),
             Measure(data) > result,
+            Return(syndrome, result),
         )
 
         hugr = SlrConverter(prog).hugr()
@@ -67,6 +69,7 @@ class TestHugrCompilation:
             Measure(q[1]) > c[1],
             Measure(q[2]) > c[2],
             Measure(q[3]) > c[3],
+            Return(c),
         )
 
         hugr = SlrConverter(prog).hugr()
@@ -90,6 +93,7 @@ class TestHugrCompilation:
             c := CReg("c", 2),
             ProcessQubits(q),
             Measure(q) > c,
+            Return(c),
         )
 
         hugr = SlrConverter(prog).hugr()
@@ -105,6 +109,7 @@ class TestHugrCompilation:
                 qubit.X(q[1]),
             ),
             Measure(q[1]) > c[1],
+            Return(c),
         )
 
         hugr = SlrConverter(prog).hugr()
@@ -138,6 +143,7 @@ class TestHugrCompilation:
             q := QReg("q", 2),
             c := CReg("c", 2),
             OuterBlock(q, c),
+            Return(c),
         )
 
         hugr = SlrConverter(prog).hugr()
@@ -155,6 +161,7 @@ class TestHugrCompilation:
             qubit.CX(q1[0], q2[0]),
             Measure(q1) > c1,
             Measure(q2) > c2,
+            Return(c1, c2),
         )
 
         hugr = SlrConverter(prog).hugr()
@@ -193,6 +200,7 @@ class TestHugrCompilationFailures:
             c := CReg("c", 2),
             Measure(q[0]) > c[0],
             Measure(q[0]) > c[1],  # Error: q[0] already consumed
+            Return(c),
         )
 
         # This should raise an error
@@ -220,6 +228,7 @@ class TestHugrCompilationFailures:
             UseButDontReturn(q),
             # Try to use q after function that didn't return it
             Measure(q[0]) > c[0],
+            Return(c),
         )
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -276,6 +285,7 @@ class TestQECPatternCompilation:
             # For now just measure data
             result := CReg("result", 7),
             Measure(data) > result,
+            Return(syndrome, result),
         )
 
         hugr = SlrConverter(prog).hugr()
@@ -316,6 +326,7 @@ class TestQECPatternCompilation:
             # Final measurement
             result := CReg("result", 3),
             Measure(data) > result,
+            Return(syndrome, syndrome2, result),
         )
 
         hugr = SlrConverter(prog).hugr()

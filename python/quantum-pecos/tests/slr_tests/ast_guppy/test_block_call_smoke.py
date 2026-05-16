@@ -301,52 +301,52 @@ class TestConvertedQeclibBlocksUseBlockCallPath:
         ), f"expected '@guppy def {expected_callee_prefix}...' in source, got:\n{guppy_src}"
 
     def test_steane_cx_uses_block_call(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import Main, QReg
         from pecos.slr.qeclib.steane.gates_tq import transversal_tq as steane_tq
 
-        prog = Main(a := QReg("a", 7), b := QReg("b", 7), CReg("c", 14), steane_tq.CX(a, b))
+        prog = Main(a := QReg("a", 7), b := QReg("b", 7), steane_tq.CX(a, b))
         self._assert_uses_block_call(prog, "cx_")
 
     def test_steane_cy_uses_block_call(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import Main, QReg
         from pecos.slr.qeclib.steane.gates_tq import transversal_tq as steane_tq
 
-        prog = Main(a := QReg("a", 7), b := QReg("b", 7), CReg("c", 14), steane_tq.CY(a, b))
+        prog = Main(a := QReg("a", 7), b := QReg("b", 7), steane_tq.CY(a, b))
         self._assert_uses_block_call(prog, "cy_")
 
     def test_steane_cz_uses_block_call(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import Main, QReg
         from pecos.slr.qeclib.steane.gates_tq import transversal_tq as steane_tq
 
-        prog = Main(a := QReg("a", 7), b := QReg("b", 7), CReg("c", 14), steane_tq.CZ(a, b))
+        prog = Main(a := QReg("a", 7), b := QReg("b", 7), steane_tq.CZ(a, b))
         self._assert_uses_block_call(prog, "cz_")
 
     def test_steane_logical_x_uses_block_call(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import Main, QReg
         from pecos.slr.qeclib.steane.gates_sq import paulis as steane_paulis
 
-        prog = Main(q := QReg("q", 7), CReg("c", 7), steane_paulis.X(q))
+        prog = Main(q := QReg("q", 7), steane_paulis.X(q))
         self._assert_uses_block_call(prog, "x_")
 
     def test_steane_logical_y_uses_block_call(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import Main, QReg
         from pecos.slr.qeclib.steane.gates_sq import paulis as steane_paulis
 
-        prog = Main(q := QReg("q", 7), CReg("c", 7), steane_paulis.Y(q))
+        prog = Main(q := QReg("q", 7), steane_paulis.Y(q))
         self._assert_uses_block_call(prog, "y_")
 
     def test_steane_logical_z_uses_block_call(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import Main, QReg
         from pecos.slr.qeclib.steane.gates_sq import paulis as steane_paulis
 
-        prog = Main(q := QReg("q", 7), CReg("c", 7), steane_paulis.Z(q))
+        prog = Main(q := QReg("q", 7), steane_paulis.Z(q))
         self._assert_uses_block_call(prog, "z_")
 
     def test_steane_logical_h_uses_block_call(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import Main, QReg
         from pecos.slr.qeclib.steane.gates_sq import hadamards as steane_h
 
-        prog = Main(q := QReg("q", 7), CReg("c", 7), steane_h.H(q))
+        prog = Main(q := QReg("q", 7), steane_h.H(q))
         self._assert_uses_block_call(prog, "h_")
 
 
@@ -417,7 +417,7 @@ class TestNestedConvertedBlocks:
     """
 
     def _build_nested_program(self) -> object:
-        from pecos.slr import Block, CReg, Main, QReg
+        from pecos.slr import Block, CReg, Main, QReg, Return
         from pecos.slr.qeclib import qubit as qb
         from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -443,6 +443,7 @@ class TestNestedConvertedBlocks:
             qb.Prep(outer),
             OuterBlock(outer),
             Measure(outer) > c,
+            Return(c),
         )
 
     def test_nested_block_call_arg_bindings_substitute_to_parent_param(self) -> None:
@@ -470,7 +471,7 @@ class TestNestedConvertedBlocks:
 
     def test_top_level_inner_plus_outer_containing_inner_have_unique_names(self) -> None:
         """Same Block class top-level AND nested must not collide."""
-        from pecos.slr import Block, CReg, Main, QReg
+        from pecos.slr import Block, CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.qeclib import qubit as qb
         from pecos.slr.qeclib.qubit.measures import Measure
@@ -498,6 +499,7 @@ class TestNestedConvertedBlocks:
             InnerBlock(outer),
             OuterBlock(outer),
             Measure(outer) > c,
+            Return(c),
         )
         ast = slr_to_ast(prog)
         decl_names = [d.name for d in ast.block_decls]
@@ -570,7 +572,7 @@ class TestConvertedBlocksInsideParallel:
     """
 
     def test_parallel_with_converted_block_preserves_block_call_via_slr_converter(self) -> None:
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.misc import Parallel
         from pecos.slr.qeclib.qubit.measures import Measure
         from pecos.slr.qeclib.steane.gates_sq.hadamards import H as SteaneH
@@ -580,6 +582,7 @@ class TestConvertedBlocksInsideParallel:
             c := CReg("c", 7),
             Parallel(SteaneH(q)),
             Measure(q) > c,
+            Return(c),
         )
         guppy_src = SlrConverter(prog).guppy()
         # Pre-fix, Parallel splatted the Steane H body into 7 individual h() calls
@@ -660,14 +663,10 @@ class TestSingleQubitInputSupport:
             body = (*body, MeasureOp(targets=(SlotRef(allocator="q", index=0),)))
         decl = BlockDecl(
             name="b",
-            inputs=(
-                BlockInput(name="q", effect=effect, type_expr=QubitTypeExpr()),
-            ),
+            inputs=(BlockInput(name="q", effect=effect, type_expr=QubitTypeExpr()),),
             body=body,
         )
-        out_bindings = (
-            () if consumed else (SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),)
-        )
+        out_bindings = () if consumed else (SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),)
         # For LIVE_PRESERVED, measure outer_q[1] after the call (it's still live).
         # For CONSUMED, outer_q[1] is consumed by the call; measure a different
         # slot (outer_q[0]) so the linearity tracker stays sound.
@@ -779,9 +778,7 @@ class TestSingleQubitInputSupport:
 
         decl = BlockDecl(
             name="b",
-            inputs=(
-                BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),
-            ),
+            inputs=(BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),),
             body=(),
         )
         prog = Program(
@@ -835,9 +832,7 @@ class TestSingleQubitInputSupport:
 
         decl = BlockDecl(
             name="b",
-            inputs=(
-                BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),
-            ),
+            inputs=(BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),),
             body=(),
         )
         prog = Program(
@@ -917,9 +912,7 @@ class TestSingleBitInputSupport:
     def test_single_bit_must_be_live_preserved(self) -> None:
         decl = BlockDecl(
             name="b",
-            inputs=(
-                BlockInput(name="out", effect=ResourceEffect.CONSUMED, type_expr=BitTypeExpr()),
-            ),
+            inputs=(BlockInput(name="out", effect=ResourceEffect.CONSUMED, type_expr=BitTypeExpr()),),
             body=(),
         )
         prog = Program(
@@ -966,9 +959,7 @@ class TestSingleBitInputSupport:
 
         decl = BlockDecl(
             name="b",
-            inputs=(
-                BlockInput(name="out", effect=ResourceEffect.LIVE_PRESERVED, type_expr=BitTypeExpr()),
-            ),
+            inputs=(BlockInput(name="out", effect=ResourceEffect.LIVE_PRESERVED, type_expr=BitTypeExpr()),),
             body=(),
         )
         prog = Program(
@@ -1420,9 +1411,7 @@ class TestDeferredBlockArgRejection:
 
         decl = BlockDecl(
             name="b",
-            inputs=(
-                BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),
-            ),
+            inputs=(BlockInput(name="q", effect=ResourceEffect.LIVE_PRESERVED, type_expr=QubitTypeExpr()),),
             body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
         )
         sq = SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1))
@@ -1559,7 +1548,7 @@ class TestBlockBodyStatementSubstitution:
     """
 
     def test_permute_inside_block_inputs_substitutes_in_both_paths(self) -> None:
-        from pecos.slr import Block, CReg, Main, QReg
+        from pecos.slr import Block, CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
         from pecos.slr.ast.nodes import PermuteOp
@@ -1581,6 +1570,7 @@ class TestBlockBodyStatementSubstitution:
             qb.Prep(outer),
             SwapBlock(outer),
             Measure(outer) > c,
+            Return(c),
         )
         ast = slr_to_ast(prog)
 
@@ -1631,7 +1621,7 @@ class TestSlrBlockInputsWiring:
 
     def test_slr_block_with_inputs_emits_block_decl_and_call(self) -> None:
         """slr_to_ast on a Main containing a Block with `block_inputs` produces a BlockDecl + BlockCall."""
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -1651,6 +1641,7 @@ class TestSlrBlockInputsWiring:
             qb.Prep(outer_q),
             BellBlock(outer_q),
             Measure(outer_q) > c,
+            Return(c),
         )
         ast = slr_to_ast(prog)
 
@@ -1676,7 +1667,7 @@ class TestSlrBlockInputsWiring:
         import warnings
 
         from pecos import Hugr, selene_engine, sim
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
         from pecos.slr.qeclib.qubit.measures import Measure
@@ -1695,6 +1686,7 @@ class TestSlrBlockInputsWiring:
             qb.Prep(outer_q),
             BellBlock(outer_q),
             Measure(outer_q) > c,
+            Return(c),
         )
 
         with warnings.catch_warnings():
@@ -1780,7 +1772,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
     """
 
     def test_single_qubit_input_detected_and_inlined(self) -> None:
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.ast.nodes import SingleQubitArg, SlotRef
         from pecos.slr.block import Block
@@ -1801,14 +1793,13 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             qb.Prep(outer_q),
             SqBlock(outer_q[0]),
             Measure(outer_q) > c,
+            Return(c),
         )
 
         ast = slr_to_ast(prog)
         calls = [s for s in ast.body if isinstance(s, BlockCall)]
         assert len(calls) == 1
-        assert calls[0].arg_bindings == (
-            SingleQubitArg(slot=SlotRef(allocator="outer_q", index=0)),
-        )
+        assert calls[0].arg_bindings == (SingleQubitArg(slot=SlotRef(allocator="outer_q", index=0)),)
 
         guppy_src = SlrConverter(prog).guppy()
         assert re.search(r"def sqblock_\d+\(q: qubit @ owned\) -> qubit:", guppy_src)
@@ -1819,7 +1810,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         assert "block" not in qasm_src.lower()
 
     def test_same_qreg_bundle_detected_and_inlined(self) -> None:
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.ast.nodes import QubitBundleArg, SlotRef
         from pecos.slr.block import Block
@@ -1840,6 +1831,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             qb.Prep(outer_q),
             BundleBlock([outer_q[0], outer_q[2]]),
             Measure(outer_q) > c,
+            Return(c),
         )
 
         ast = slr_to_ast(prog)
@@ -1860,7 +1852,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         assert re.search(r"def bundleblock_\d+\(d: array\[qubit, 2\] @ owned\)", SlrConverter(prog).guppy())
 
     def test_cross_qreg_bundle_detected_and_inlined(self) -> None:
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.ast.nodes import QubitBundleArg, SlotRef
         from pecos.slr.block import Block
@@ -1884,6 +1876,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             BundleBlock([qa[0], qb_reg[1]]),
             Measure(qa) > c[0:2],
             Measure(qb_reg) > c[2:4],
+            Return(c),
         )
 
         ast = slr_to_ast(prog)
@@ -1909,7 +1902,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         data bundle (live_preserved), a single ancilla `Qubit` (consumed,
         measured in-body), and a single `Bit` write-back (live_preserved).
         """
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.ast.nodes import BitRef as AstBitRef
         from pecos.slr.ast.nodes import (
@@ -1949,6 +1942,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             CheckLike([outer_q[0], outer_q[1]], outer_q[2], c[0]),
             Measure(outer_q[0]) > c[1],
             Measure(outer_q[1]) > c[2],
+            Return(c),
         )
 
         ast = slr_to_ast(prog)
@@ -2003,7 +1997,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         make_block: str,
         match: str,
     ) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.vars import LoopVar
@@ -2044,13 +2038,26 @@ class TestSlrBlockArgShapeDetectionViaConverter:
                 self.q = q
 
         if make_block == "whole_creg":
-            prog = Main(c := CReg("c", 2), WholeCReg(c))
+            prog = Main(
+                c := CReg("c", 2),
+                WholeCReg(c),
+                Return(c),
+            )
         elif make_block == "list_bit":
-            prog = Main(c := CReg("c", 2), ListBit([c[0], c[1]]))
+            prog = Main(
+                c := CReg("c", 2),
+                ListBit([c[0], c[1]]),
+                Return(c),
+            )
         elif make_block == "empty_bundle":
             prog = Main(QReg("o", 1), Empty([]))
         elif make_block == "mixed_bundle":
-            prog = Main(o := QReg("o", 1), c := CReg("c", 1), Mixed([o[0], c[0]]))
+            prog = Main(
+                o := QReg("o", 1),
+                c := CReg("c", 1),
+                Mixed([o[0], c[0]]),
+                Return(c),
+            )
         else:  # symbolic
             prog = Main(o := QReg("o", 2), Sym(o[LoopVar("i")]))
 
@@ -2062,7 +2069,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         (Guppy rejected on linearity; QASM flatten emitted `cx q[0], q[0];`).
         Must reject at SLR -> AST conversion with a clear message.
         """
-        from pecos.slr import Main, QReg
+        from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2083,7 +2090,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         """Two distinct single-qubit inputs bound to the SAME outer slot is
         the same aliasing bug from the cross-input direction.
         """
-        from pecos.slr import Main, QReg
+        from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2108,7 +2115,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         """Same outer bit backing two single-bit inputs is lossy during
         body substitution -- reject it too.
         """
-        from pecos.slr import CReg, Main
+        from pecos.slr import CReg, Main, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
 
@@ -2123,7 +2130,11 @@ class TestSlrBlockArgShapeDetectionViaConverter:
                 self.x = x
                 self.y = y
 
-        prog = Main(c := CReg("c", 2), TwoBit(c[0], c[0]))
+        prog = Main(
+            c := CReg("c", 2),
+            TwoBit(c[0], c[0]),
+            Return(c),
+        )
         with pytest.raises(ValueError, match=r"bit c\[0\] is also bound by input 'x'"):
             slr_to_ast(prog)
 
@@ -2162,7 +2173,7 @@ class TestScratchEffectS1:
         return GoodCheck
 
     def test_scratch_detected_excluded_from_out_bindings(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.ast.nodes import (
             QubitBundleArg,
@@ -2177,14 +2188,13 @@ class TestScratchEffectS1:
             c := CReg("c", 1),
             qb.Prep(q),
             good_check([q[0], q[1]], q[2], c[0]),
+            Return(c),
         )
         ast = slr_to_ast(prog)
         call = next(s for s in ast.body if isinstance(s, BlockCall))
         # Scratch `a` is detected as a single-qubit arg and stays in
         # arg_bindings (O2: the 5e.2 alias guard still applies)...
-        assert any(
-            isinstance(a, SingleQubitArg) for a in call.arg_bindings
-        )
+        assert any(isinstance(a, SingleQubitArg) for a in call.arg_bindings)
         # ...but is NOT live-preserved, so it is absent from out_bindings.
         assert call.out_bindings == (
             QubitBundleArg(
@@ -2194,7 +2204,7 @@ class TestScratchEffectS1:
         )
 
     def test_scratch_flatten_substitutes_to_outer_slot(self) -> None:
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.qeclib import qubit as qb
 
         good_check = self._good_check()
@@ -2203,6 +2213,7 @@ class TestScratchEffectS1:
             c := CReg("c", 1),
             qb.Prep(q),
             good_check([q[0], q[1]], q[2], c[0]),
+            Return(c),
         )
         qasm = SlrConverter(prog).qasm()
         # Param `a` -> outer slot q[2]; data bundle d[0]/d[1] -> q[0]/q[1].
@@ -2216,7 +2227,7 @@ class TestScratchEffectS1:
         neither a function parameter nor a positional call argument; the
         body's Prep(scratch) lowers to a fresh internal `qubit()`.
         """
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.qeclib import qubit as qb
 
         good_check = self._good_check()
@@ -2225,12 +2236,12 @@ class TestScratchEffectS1:
             c := CReg("c", 1),
             qb.Prep(q),
             good_check([q[0], q[1]], q[2], c[0]),
+            Return(c),
         )
         guppy_src = SlrConverter(prog).guppy()
         # No `a` parameter on the generated def (scratch is internal).
         assert re.search(
-            r"def goodcheck_\d+\(d: array\[qubit, 2\] @ owned, "
-            r"out: array\[bool, 1\] @ owned\) -> ",
+            r"def goodcheck_\d+\(d: array\[qubit, 2\] @ owned, out: array\[bool, 1\] @ owned\) -> ",
             guppy_src,
         )
         assert "a: qubit @ owned" not in guppy_src
@@ -2241,7 +2252,7 @@ class TestScratchEffectS1:
         assert re.search(r"goodcheck_\d+\(array\(q_0, q_1\), array\(c\[0\]\)\)", guppy_src)
 
     def test_scratch_use_before_prep_rejected(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2256,12 +2267,17 @@ class TestScratchEffectS1:
                 self.out = out
                 self.extend(qb.H(a), qb.Prep(a), Measure(a) > out)
 
-        prog = Main(q := QReg("q", 1), c := CReg("c", 1), BadFirst(q[0], c[0]))
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            BadFirst(q[0], c[0]),
+            Return(c),
+        )
         with pytest.raises(ValueError, match=r"first use is USE.*reset \(Prep\) before"):
             slr_to_ast(prog)
 
     def test_scratch_use_after_measure_rejected(self) -> None:
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2276,12 +2292,17 @@ class TestScratchEffectS1:
                 self.out = out
                 self.extend(qb.Prep(a), Measure(a) > out, qb.H(a))
 
-        prog = Main(q := QReg("q", 1), c := CReg("c", 1), BadAfter(q[0], c[0]))
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            BadAfter(q[0], c[0]),
+            Return(c),
+        )
         with pytest.raises(ValueError, match=r"used after measurement without re-Prep"):
             slr_to_ast(prog)
 
     def test_scratch_unused_rejected(self) -> None:
-        from pecos.slr import Main, QReg
+        from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
 
@@ -2300,7 +2321,7 @@ class TestScratchEffectS1:
         """S1 conservative scope: a scratch slot touched inside control
         flow cannot be linearized for the R4 analysis -> reject loudly.
         """
-        from pecos.slr import CReg, Main, QReg, Repeat
+        from pecos.slr import CReg, Main, QReg, Repeat, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2319,7 +2340,12 @@ class TestScratchEffectS1:
                     Measure(a) > out,
                 )
 
-        prog = Main(q := QReg("q", 1), c := CReg("c", 1), LoopScratch(q[0], c[0]))
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            LoopScratch(q[0], c[0]),
+            Return(c),
+        )
         with pytest.raises(ValueError, match=r"flat Prep -> \.\.\. -> Measure lifecycle"):
             slr_to_ast(prog)
 
@@ -2328,7 +2354,7 @@ class TestScratchEffectS1:
         aliasing guard still rejects a scratch slot aliased to another
         qubit input.
         """
-        from pecos.slr import Main, QReg
+        from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2352,7 +2378,7 @@ class TestScratchEffectS1:
         rejected -- S2 allocates the scratch qubit internally, so an
         unmeasured trailing Prep diverges from the flatten/QASM path.
         """
-        from pecos.slr import Main, QReg
+        from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2370,7 +2396,7 @@ class TestScratchEffectS1:
             slr_to_ast(prog)
 
     def test_scratch_prep_use_no_measure_rejected(self) -> None:
-        from pecos.slr import Main, QReg
+        from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2389,7 +2415,7 @@ class TestScratchEffectS1:
 
     def test_scratch_prep_measure_prep_unmeasured_rejected(self) -> None:
         """A second Prep with no closing Measure (trailing open lifecycle)."""
-        from pecos.slr import CReg, Main, QReg
+        from pecos.slr import CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2404,13 +2430,18 @@ class TestScratchEffectS1:
                 self.out = out
                 self.extend(qb.Prep(a), Measure(a) > out, qb.Prep(a))
 
-        prog = Main(q := QReg("q", 1), c := CReg("c", 1), PrepMeasurePrep(q[0], c[0]))
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            PrepMeasurePrep(q[0], c[0]),
+            Return(c),
+        )
         with pytest.raises(ValueError, match=r"scratch lifecycle not closed"):
             slr_to_ast(prog)
 
     def test_scratch_two_prep_no_measure_between_rejected(self) -> None:
         """Re-Prep before measuring the first lifecycle."""
-        from pecos.slr import Main, QReg
+        from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2429,7 +2460,7 @@ class TestScratchEffectS1:
 
     def test_scratch_prep_measure_prep_measure_accepted(self) -> None:
         """Two complete Prep -> Measure lifecycles is valid (each closed)."""
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
         from pecos.slr.qeclib import qubit as qb
@@ -2454,7 +2485,12 @@ class TestScratchEffectS1:
                     Measure(a) > out1,
                 )
 
-        prog = Main(q := QReg("q", 1), c := CReg("c", 2), TwoLifecycles(q[0], c[0], c[1]))
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 2),
+            TwoLifecycles(q[0], c[0], c[1]),
+            Return(c),
+        )
         ast = slr_to_ast(prog)  # must not raise
         assert any(isinstance(s, BlockCall) for s in ast.body)
         # Flatten still substitutes the scratch param to the outer slot.
@@ -2488,7 +2524,12 @@ class TestScratchEffectS1:
                 self.out = out
                 self.extend(qb.Prep(a), Measure(a) > out, Return(a))
 
-        prog = Main(q := QReg("q", 1), c := CReg("c", 1), RetScratch(q[0], c[0]))
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            RetScratch(q[0], c[0]),
+            Return(c),
+        )
         with pytest.raises(ValueError, match=r"or any ReturnOp in a scratch-bearing block"):
             slr_to_ast(prog)
 
@@ -2501,7 +2542,12 @@ class TestScratchEffectS1:
                 self.out = out
                 self.extend(qb.Prep(a), Measure(a) > out, Return(out))
 
-        prog2 = Main(q := QReg("q", 1), c := CReg("c", 1), RetOther(q[0], c[0]))
+        prog2 = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            RetOther(q[0], c[0]),
+            Return(c),
+        )
         with pytest.raises(ValueError, match=r"or any ReturnOp in a scratch-bearing block"):
             slr_to_ast(prog2)
 
@@ -2513,7 +2559,7 @@ class TestScratchEffectS1:
         ancilla internally, so it compiles and runs through Selene.
         """
         from pecos import Hugr, selene_engine, sim
-        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.qeclib import qubit as qb
         from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -2544,6 +2590,7 @@ class TestScratchEffectS1:
             qb.Prep(q),
             Chk([q[0], q[1]], q[2], c[0]),
             Chk([q[0], q[1]], q[2], c[1]),  # reuses q[2] -- the blocker case
+            Return(c),
         )
         guppy_src = SlrConverter(prog).guppy()
         # Two separate scratch internal allocs, no LinearityError.
@@ -2570,7 +2617,7 @@ class TestScratchEffectS1:
         meaningful caller state (gate + later measure) diverges between
         flatten (mutates it) and Guppy (allocates internally) -- reject.
         """
-        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast.codegen.guppy import GuppyCodegenError
         from pecos.slr.qeclib import qubit as qb
         from pecos.slr.qeclib.qubit.measures import Measure
@@ -2591,6 +2638,7 @@ class TestScratchEffectS1:
             qb.X(q[0]),  # meaningful caller state on the scratch slot
             MS(q[0], c[0]),
             Measure(q[0]) > c[1],  # ...observed after the scratch call
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[0\].*meaningful caller state"):
             SlrConverter(prog).guppy()
@@ -2600,7 +2648,7 @@ class TestScratchEffectS1:
         is allowed (the qeclib corpus does `Prep(q)` then uses `q[i]` as a
         check ancilla -- a reset is unobserved/dead under both lowerings).
         """
-        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.qeclib import qubit as qb
         from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -2623,6 +2671,7 @@ class TestScratchEffectS1:
             c := CReg("c", 1),
             qb.Prep(q),  # covers q[2] (the scratch slot) -- must NOT reject
             Chk([q[0], q[1]], q[2], c[0]),
+            Return(c),
         )
         guppy_src = SlrConverter(prog).guppy()  # must not raise
         assert "a_0 = qubit()" in guppy_src
@@ -2637,9 +2686,7 @@ class TestScratchEffectS1:
 
         decl = BlockDecl(
             name="b",
-            inputs=(
-                BlockInput(name="a", effect=ResourceEffect.SCRATCH, type_expr=QubitTypeExpr()),
-            ),
+            inputs=(BlockInput(name="a", effect=ResourceEffect.SCRATCH, type_expr=QubitTypeExpr()),),
             body=(
                 PrepareOp(allocator="a", slots=(0,)),
                 MeasureOp(targets=(SlotRef(allocator="a", index=0),)),
@@ -2664,7 +2711,7 @@ class TestScratchEffectS1:
         """Codex S2 r2 blocker 1: a Permute touching the scratch register
         observes/reorders the scratch-bound outer slot -> reject.
         """
-        from pecos.slr import Block, CReg, Main, Permute, QReg, SlrConverter
+        from pecos.slr import Block, CReg, Main, Permute, QReg, Return, SlrConverter
         from pecos.slr.ast.codegen.guppy import GuppyCodegenError
         from pecos.slr.qeclib import qubit as qb
         from pecos.slr.qeclib.qubit.measures import Measure
@@ -2686,6 +2733,7 @@ class TestScratchEffectS1:
             MS(q[1], c[0]),
             Permute([q[0], q[1]], [q[1], q[0]]),
             Measure(q[0]) > c[1],
+            Return(c),
         )
         with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[1\].*Permute"):
             SlrConverter(prog).guppy()
@@ -2723,7 +2771,7 @@ class TestScratchEffectS1:
         nested scratch BlockCall + misuse of that slot inside a BlockDecl
         body (not just main) must be caught.
         """
-        from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+        from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast.codegen.guppy import GuppyCodegenError
         from pecos.slr.qeclib import qubit as qb
         from pecos.slr.qeclib.qubit.measures import Measure
@@ -2749,7 +2797,13 @@ class TestScratchEffectS1:
                 self.o = o
                 self.extend(Inner(q[1], o), qb.X(q[1]))  # misuse within this scope
 
-        prog = Main(qq := QReg("qq", 2), c := CReg("c", 1), qb.Prep(qq), Outer(qq, c[0]))
+        prog = Main(
+            qq := QReg("qq", 2),
+            c := CReg("c", 1),
+            qb.Prep(qq),
+            Outer(qq, c[0]),
+            Return(c),
+        )
         with pytest.raises(GuppyCodegenError, match=r"Scratch outer slot q\[1\].*meaningful caller state"):
             SlrConverter(prog).guppy()
 
@@ -2765,7 +2819,7 @@ class TestScratchCheckS4ProductionLockIn:
     """
 
     def test_steane_syn_extract_bare_routes_check_through_blockcall(self) -> None:
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.qeclib.steane.syn_extract.bare import SynExtractBare
 
@@ -2775,6 +2829,7 @@ class TestScratchCheckS4ProductionLockIn:
             a := QReg("a", 2),
             syn := CReg("syn", 6),
             SynExtractBare(d, a, checks, syn),
+            Return(syn),
         )
         ast = slr_to_ast(prog)
         # 6 Checks (3 Z + 3 X) -> 6 BlockCalls, not silently flattened.
@@ -2796,7 +2851,7 @@ class TestScratchCheckS4ProductionLockIn:
 
     def test_steane_syn_extract_bare_selene_records_pinned(self) -> None:
         from pecos import Hugr, selene_engine, sim
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.qeclib.steane.syn_extract.bare import SynExtractBare
 
         checks = [[2, 1, 3, 0], [5, 2, 1, 4], [6, 5, 2, 3]]
@@ -2805,17 +2860,12 @@ class TestScratchCheckS4ProductionLockIn:
             a := QReg("a", 2),
             syn := CReg("syn", 6),
             SynExtractBare(d, a, checks, syn),
+            Return(syn),
         )
         package = SlrConverter(prog).hugr()
         # d(7) + a(2) declared + 1 internally-allocated scratch ancilla
         # (design R2: parity is on behavioral records, not qubit count).
-        result = (
-            sim(Hugr(package.to_str().encode("utf-8")))
-            .classical(selene_engine())
-            .qubits(10)
-            .seed(42)
-            .run(4)
-        )
+        result = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(10).seed(42).run(4)
         raw = result.to_dict() if hasattr(result, "to_dict") else result
         # Empirical probe 2026-05-16 (post-conversion, scratch internal alloc).
         assert raw == {
@@ -2834,7 +2884,7 @@ class TestScratchCheckS4ProductionLockIn:
         Check through a BlockCall, compile, and run.
         """
         from pecos import Hugr, selene_engine, sim
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.qeclib.color488.syn_extract.bare import (
             SynExtractBare as Color488SynExtractBare,
@@ -2846,6 +2896,7 @@ class TestScratchCheckS4ProductionLockIn:
             a := QReg("a", 2),
             syn := CReg("syn", 6),
             Color488SynExtractBare(d, a, checks, syn),
+            Return(syn),
         )
         ast = slr_to_ast(prog)
         assert sum(1 for s in ast.body if isinstance(s, BlockCall)) == 6
@@ -2854,13 +2905,7 @@ class TestScratchCheckS4ProductionLockIn:
         assert "LinearityError" not in guppy_src
 
         package = SlrConverter(prog).hugr()
-        result = (
-            sim(Hugr(package.to_str().encode("utf-8")))
-            .classical(selene_engine())
-            .qubits(10)
-            .seed(42)
-            .run(4)
-        )
+        result = sim(Hugr(package.to_str().encode("utf-8"))).classical(selene_engine()).qubits(10).seed(42).run(4)
         raw = result.to_dict() if hasattr(result, "to_dict") else result
         # Same generic-Check mechanism as Steane -> same seed-42 record shape.
         assert raw == {
@@ -2883,7 +2928,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
 
     def test_steane_syn_extract_flagged_routes_and_runs(self) -> None:
         from pecos import Hugr, selene_engine, sim
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.qeclib.steane.syn_extract.flagged import SynExtractFlagged
 
@@ -2896,6 +2941,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
             fx := CReg("fx", 3),
             fz := CReg("fz", 3),
             SynExtractFlagged(d, a, checks, sx, sz, fx, fz),
+            Return(sx, sz, fx, fz),
         )
         ast = slr_to_ast(prog)
         assert sum(1 for s in ast.body if isinstance(s, BlockCall)) == 6
@@ -2938,7 +2984,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
         only: it must still route through a BlockCall and lower cleanly
         (Codex O1 review -- not a Selene assertion).
         """
-        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.qeclib.generic.check_1flag import Check1Flag
 
@@ -2946,6 +2992,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
             q := QReg("q", 5),
             c := CReg("c", 2),
             Check1Flag([q[0], q[1], q[2]], "HHH", q[3], q[4], c[0], c[1], with_barriers=True),
+            Return(c),
         )
         ast = slr_to_ast(prog)
         assert sum(1 for s in ast.body if isinstance(s, BlockCall)) == 1

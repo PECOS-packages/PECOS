@@ -1,6 +1,6 @@
 """Example showing the Pythonic SLR syntax for bitwise operations."""
 
-from pecos.slr import CReg, If, Main, SlrConverter
+from pecos.slr import CReg, If, Main, Return, SlrConverter
 
 
 def test_pythonic_syntax_example() -> None:
@@ -21,6 +21,7 @@ def test_pythonic_syntax_example() -> None:
         # Complex expressions with proper precedence:
         c[5].set((c[0] | c[1]) & (c[2] ^ c[3])),
         c[6].set(~((c[4] & c[5]) ^ (c[0] | c[3]))),
+        Return(c),
     )
 
     guppy_code = SlrConverter(prog).guppy()

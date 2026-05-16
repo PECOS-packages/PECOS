@@ -8,7 +8,7 @@ measurement patterns that v1 supports but that are not part of the v1
 acceptance set in ``tests/slr_tests/ast_guppy/test_v1_acceptance.py``.
 """
 
-from pecos.slr import Block, CReg, Main, QReg
+from pecos.slr import Block, CReg, Main, QReg, Return
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -38,6 +38,7 @@ def test_block_with_partial_measurements() -> None:
         final := CReg("final", 2),
         MeasureAncillas(data, ancilla, syndrome),
         Measure(data) > final,
+        Return(syndrome, final),
     )
     assert_ast_guppy_compiles(prog)
 
@@ -64,6 +65,7 @@ def test_partial_array_operations() -> None:
         SelectEvenQubits(q),
         Measure(q[0]) > result[0],
         Measure(q[2]) > result[1],
+        Return(result),
     )
     assert_ast_guppy_compiles(prog)
 
@@ -89,6 +91,7 @@ def test_multiple_blocks_with_measurements() -> None:
         SplitAndMeasure(a, b, results[0:2]),
         Measure(a[1]) > results[2],
         Measure(b[1]) > results[3],
+        Return(results),
     )
     assert_ast_guppy_compiles(prog)
 
@@ -110,5 +113,6 @@ def test_all_qubits_consumed() -> None:
         q := QReg("q", 2),
         c := CReg("c", 2),
         MeasureAll(q, c),
+        Return(c),
     )
     assert_ast_guppy_compiles(prog)

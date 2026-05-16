@@ -33,7 +33,7 @@ if str(_SLR_TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(_SLR_TESTS_ROOT))
 
 from ast_guppy._harness import assert_ast_guppy_compiles  # noqa: E402
-from pecos.slr import CReg, If, Main, QReg, SlrConverter  # noqa: E402
+from pecos.slr import CReg, If, Main, QReg, Return, SlrConverter  # noqa: E402
 from pecos.slr.qeclib import qubit as qb  # noqa: E402
 
 
@@ -60,6 +60,7 @@ def test_quantum_teleportation() -> None:
         If(c[0]).Then(
             qb.Z(bob[0]),
         ),
+        Return(c),
     )
     assert_ast_guppy_compiles(prog)
 
@@ -81,6 +82,7 @@ def test_complex_boolean_expressions() -> None:
             c[6].set(~(c[0] & c[1]) | (c[2] ^ c[3])),
             c[7].set(~((c[5] & c[6]) ^ (c[0] | c[3]))),
         ),
+        Return(c),
     )
 
     guppy_code = SlrConverter(prog).guppy()
@@ -120,6 +122,7 @@ def test_empty_blocks_and_edge_cases() -> None:
         qb.Measure(q[0]),
         # Apply gate to register
         qb.Prep(q),
+        Return(c),
     )
 
     guppy_code = SlrConverter(prog).guppy()
@@ -158,6 +161,7 @@ def test_grover_decomposition() -> None:
         # Measure
         qb.Measure(q) > [c[0], c[1]],
         qb.Measure(ancilla[0]) > c[2],
+        Return(c),
     )
     assert_ast_guppy_compiles(prog)
 

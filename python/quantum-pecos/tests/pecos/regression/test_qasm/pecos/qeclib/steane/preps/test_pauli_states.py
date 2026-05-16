@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.slr import CReg, QReg
+from pecos.slr import CReg, QReg, Return
 from pecos.slr.qeclib.steane.preps.pauli_states import (
     LogZeroRot,
     PrepEncodingFTZero,
@@ -37,6 +37,7 @@ def test_PrepZeroVerify(compare_qasm: Callable[..., None]) -> None:
     init_bit = CReg("init_bit", 1)
     for reset_ancilla in [True, False]:
         block = PrepZeroVerify(q, a[0], init_bit[0], reset_ancilla=reset_ancilla)
+        block.extend(Return(init_bit))
         compare_qasm(block, reset_ancilla)
 
 
@@ -68,6 +69,7 @@ def test_PrepRUS(compare_qasm: Callable[..., None]) -> None:
                     state,
                     first_round_reset=first_round_reset,
                 )
+                block.extend(Return(init))
                 compare_qasm(block, limit, state, first_round_reset)
 
 

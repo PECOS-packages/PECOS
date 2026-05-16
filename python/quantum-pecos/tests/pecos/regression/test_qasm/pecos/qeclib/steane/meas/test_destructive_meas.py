@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.slr import CReg, QReg
+from pecos.slr import CReg, QReg, Return
 from pecos.slr.qeclib.steane.meas.destructive_meas import (
     MeasDecode,
     Measure,
@@ -32,6 +32,7 @@ def test_MeasureX(compare_qasm: Callable[..., None]) -> None:
 
     for barrier in [True, False]:
         block = MeasureX(q, meas_creg, log_raw, barrier=barrier)
+        block.extend(Return(meas_creg, log_raw))
         compare_qasm(block, barrier)
 
 
@@ -43,6 +44,7 @@ def test_MeasureY(compare_qasm: Callable[..., None]) -> None:
 
     for barrier in [True, False]:
         block = MeasureY(q, meas_creg, log_raw, barrier=barrier)
+        block.extend(Return(meas_creg, log_raw))
         compare_qasm(block, barrier)
 
 
@@ -54,6 +56,7 @@ def test_MeasureZ(compare_qasm: Callable[..., None]) -> None:
 
     for barrier in [True, False]:
         block = MeasureZ(q, meas_creg, log_raw, barrier=barrier)
+        block.extend(Return(meas_creg, log_raw))
         compare_qasm(block, barrier)
 
 
@@ -65,6 +68,7 @@ def test_Measure(compare_qasm: Callable[..., None]) -> None:
 
     for meas_basis in ["X", "Y", "Z"]:
         block = Measure(q, meas_creg, log_raw, meas_basis=meas_basis)
+        block.extend(Return(meas_creg, log_raw))
         compare_qasm(block, meas_basis)
 
 

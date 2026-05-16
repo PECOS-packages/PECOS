@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from pecos.slr import CReg, If, Main, Permute, QReg, SlrConverter
+from pecos.slr import CReg, If, Main, Permute, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 
 # QASM Tests
@@ -103,6 +103,7 @@ def test_permutation_with_conditional_qasm() -> None:
         # After permutation: b[0] -> b[1], a[0] -> a[1]
         # So the condition should be on b[1] and the operation should be on a[1]
         If(b[0] == 1).Then(qubit.X(a[0])),
+        Return(b),
     )
 
     qasm = SlrConverter(prog).qasm()

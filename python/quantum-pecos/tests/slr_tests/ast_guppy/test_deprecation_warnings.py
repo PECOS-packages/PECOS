@@ -146,6 +146,25 @@ class TestImplicitReturnDeprecation:
         with pytest.warns(DeprecationWarning, match=r"Implicit return"):
             SlrConverter(prog).guppy()
 
+    def test_inline_whole_register_measure_triggers_warning(self) -> None:
+        """Whole-register inline CReg targets store the CReg itself in Measure.cout."""
+        prog = Main(
+            q := QReg("q", 2),
+            Measure(q) > CReg("inline", 2),
+        )
+        with pytest.warns(DeprecationWarning, match=r"Implicit return"):
+            SlrConverter(prog).guppy()
+
+    def test_inline_slice_measure_triggers_warning(self) -> None:
+        """Slice targets store a list of Bits inside Measure.cout; recurse into it."""
+        inline = CReg("inline", 2)
+        prog = Main(
+            q := QReg("q", 2),
+            Measure(q) > inline[0:2],
+        )
+        with pytest.warns(DeprecationWarning, match=r"Implicit return"):
+            SlrConverter(prog).guppy()
+
     def test_warning_does_not_block_compilation(self) -> None:
         """The deprecation warning is non-blocking; .guppy() and .hugr() still
         succeed. Only Phase 3b makes the breaking change.

@@ -26,7 +26,7 @@ if str(_SLR_TESTS_ROOT) not in sys.path:
     sys.path.insert(0, str(_SLR_TESTS_ROOT))
 
 from ast_guppy._harness import assert_ast_guppy_compiles  # noqa: E402
-from pecos.slr import CReg, Main, QReg, Repeat  # noqa: E402
+from pecos.slr import CReg, Main, QReg, Repeat, Return  # noqa: E402
 from pecos.slr.misc import Permute  # noqa: E402
 from pecos.slr.qeclib import qubit as qb  # noqa: E402
 
@@ -48,6 +48,7 @@ def test_bitwise_operations() -> None:
         # Test NOT operation
         c[6].set(~c[0]),
         c[7].set((c[0] | c[1]) & ~c[2]),
+        Return(c),
     )
 
     guppy_code = SlrConverter(prog).guppy()
@@ -91,6 +92,7 @@ def test_register_operations() -> None:
         qb.X(q[2]),
         qb.CX(q[0], q[1]),
         qb.CX(q[2], q[3]),
+        Return(_c),
     )
     assert_ast_guppy_compiles(prog)
 
@@ -136,6 +138,7 @@ def test_reset_operations() -> None:
         qb.X(q[0]),
         qb.Y(q[1]),
         qb.Z(q[2]),
+        Return(_c),
     )
     assert_ast_guppy_compiles(prog)
 
@@ -152,5 +155,6 @@ def test_permute_operations() -> None:
         Permute(c, d),
         qb.H(a[0]),
         qb.X(b[1]),
+        Return(c, d),
     )
     assert_ast_guppy_compiles(prog)

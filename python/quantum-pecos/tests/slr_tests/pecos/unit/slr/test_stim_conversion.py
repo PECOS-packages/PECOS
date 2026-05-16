@@ -1,8 +1,16 @@
 """Tests for Stim circuit to/from SLR conversion."""
 
 import pytest
-from pecos.slr import CReg, Main, Parallel, QReg, Repeat, SlrConverter
+from pecos.slr import CReg, Main, Parallel, QReg, Repeat, Return, SlrConverter
 from pecos.slr.qeclib import qubit
+
+
+def _return_declared_cregs(prog: Main) -> Main:
+    cregs = [var for var in prog.vars if isinstance(var, CReg)]
+    if cregs:
+        prog.extend(Return(*cregs))
+    return prog
+
 
 # Check if stim is available
 try:
@@ -31,7 +39,7 @@ class TestStimToSLR:
         """,
         )
 
-        slr_prog = SlrConverter.from_stim(circuit)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
 
         # Convert back to QASM to verify structure
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
@@ -52,7 +60,7 @@ class TestStimToSLR:
         """,
         )
 
-        slr_prog = SlrConverter.from_stim(circuit)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         assert "cx q[0],q[1]" in qasm or "cx q[0], q[1]" in qasm
@@ -70,7 +78,7 @@ class TestStimToSLR:
         """,
         )
 
-        slr_prog = SlrConverter.from_stim(circuit)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         assert "reset q[0]" in qasm
@@ -164,6 +172,7 @@ class TestSLRToStim:
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
+            Return(c),
         )
 
         converter = SlrConverter(prog)
@@ -250,7 +259,7 @@ class TestStimRoundTrip:
         )
 
         # Convert to SLR and back
-        slr_prog = SlrConverter.from_stim(original)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(original))
         converter = SlrConverter(slr_prog)
         reconstructed = converter.stim()
 
@@ -272,12 +281,13 @@ class TestStimRoundTrip:
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
+            Return(c),
         )
 
         # Convert to Stim and back
         converter = SlrConverter(original)
         stim_circuit = converter.stim()
-        reconstructed = SlrConverter.from_stim(stim_circuit)
+        reconstructed = _return_declared_cregs(SlrConverter.from_stim(stim_circuit))
 
         # Convert both to QASM for comparison
         orig_qasm = SlrConverter(original).qasm(skip_headers=True)

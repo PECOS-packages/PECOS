@@ -1,7 +1,7 @@
 """Pytest fixtures for SLR tests."""
 
 import pytest
-from pecos.slr import CReg, Main, Permute, QReg
+from pecos.slr import CReg, Main, Permute, QReg, Return
 from pecos.slr.qeclib import qubit
 
 
@@ -19,6 +19,7 @@ def basic_permutation_program() -> tuple:
             [b[1], a[0]],
         ),
         a[0].set(1),  # Should become b[1] = 1 after permutation
+        Return(a, b),
     )
 
     return prog, a, b
@@ -38,6 +39,7 @@ def same_register_permutation_program() -> tuple:
         a[0].set(1),  # Should become a[2] = 1
         a[1].set(0),  # Should become a[0] = 0
         a[2].set(1),  # Should become a[1] = 1
+        Return(a),
     )
 
     return prog, a
@@ -88,6 +90,7 @@ def measurement_program() -> tuple:
         # Apply quantum operations
         qubit.H(a[0]),
         qubit.CX(a[0], b[0]),
+        Return(m, n),
     )
 
     return prog, a, b, m, n
@@ -121,6 +124,7 @@ def individual_measurement_program() -> tuple:
         # Add individual measurements
         qubit.Measure(a[0]) > m[0],
         qubit.Measure(a[1]) > m[1],
+        Return(m, n),
     )
 
     return prog, a, b, m, n
@@ -153,6 +157,7 @@ def register_measurement_program() -> tuple:
         qubit.CX(a[0], b[0]),
         # Add register-wide measurement
         qubit.Measure(a) > m,
+        Return(m, n),
     )
 
     return prog, a, b, m, n

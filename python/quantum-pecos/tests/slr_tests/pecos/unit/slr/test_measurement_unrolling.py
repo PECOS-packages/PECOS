@@ -1,7 +1,7 @@
 """Tests for measurement unrolling with permutations in both QASM and QIR generation."""
 
 import pytest
-from pecos.slr import CReg, Main, Permute, QReg, SlrConverter
+from pecos.slr import CReg, Main, Permute, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 
 
@@ -35,6 +35,7 @@ def create_measurement_unrolling_program() -> tuple:
         qubit.CX(c[0], b[2]),  # Should be CX(a[0], b[2])
         # Register-wide measurement - should be unrolled correctly
         qubit.Measure(a) > m,
+        Return(m),
     )
 
 
@@ -46,8 +47,8 @@ def test_measurement_unrolling_qasm() -> None:
     print("\nProgram structure:")
     print(f"Operations: {[type(op).__name__ for op in prog.ops]}")
 
-    # Get the last operation (should be the Measure operation)
-    measure_op = prog.ops[-1]
+    # Get the last non-Return operation (should be the Measure operation)
+    measure_op = prog.ops[-2]
     print(f"\nMeasure operation: {type(measure_op).__name__}")
     print(f"qargs: {measure_op.qargs}")
     print(f"cout: {measure_op.cout}")

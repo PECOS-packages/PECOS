@@ -37,25 +37,13 @@ from __future__ import annotations
 
 import sys
 import traceback
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule
-from pecos.slr import (
-    Barrier,
-    Block,
-    CReg,
-    For,
-    If,
-    LoopVar,
-    Main,
-    Parallel,
-    QReg,
-    Repeat,
-    SlrConverter,
-    While,
-)
+from pecos.slr import Barrier, Block, CReg, For, If, LoopVar, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.color488 import Color488Patch
 from pecos.slr.qeclib.generic.check import Check
@@ -112,6 +100,7 @@ def _bell() -> Block:
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -123,6 +112,7 @@ def _ghz_three() -> Block:
         qb.CX(q[0], q[1]),
         qb.CX(q[1], q[2]),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -133,6 +123,7 @@ def _conditional_correction() -> Block:
         Measure(q[0]) > c[0],
         If(c[0]).Then(qb.X(q[1])),
         Measure(q[1]) > c[1],
+        Return(c),
     )
 
 
@@ -153,6 +144,7 @@ def _legacy_individual_measurements() -> Block:
         Measure(q[1]) > c[1],
         Measure(q[2]) > c[2],
         Measure(q[3]) > c[3],
+        Return(c),
     )
 
 
@@ -168,6 +160,7 @@ def _legacy_multiple_qregs() -> Block:
         qb.CX(q1[0], q2[0]),
         Measure(q1) > c1,
         Measure(q2) > c2,
+        Return(c1, c2),
     )
 
 
@@ -213,6 +206,7 @@ def _legacy_partial_consumption_with_block() -> Block:
         MeasureAncillas(data, ancilla, syndrome),
         qb.H(data[0]),
         Measure(data) > result,
+        Return(syndrome, result),
     )
 
 
@@ -238,6 +232,7 @@ def _legacy_function_with_returns() -> Block:
         c := CReg("c", 2),
         ProcessQubits(q),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -274,6 +269,7 @@ def _legacy_nested_blocks() -> Block:
         q := QReg("q", 2),
         c := CReg("c", 2),
         OuterBlock(q, c),
+        Return(c),
     )
 
 
@@ -402,6 +398,7 @@ def _examples_parallel_bell_pairs() -> Block:
             ),
         ),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -420,6 +417,7 @@ def _examples_measure_register_to_creg() -> Block:
         qb.H(q[2]),
         qb.CX(q[2], q[3]),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -429,6 +427,7 @@ def _qeclib_generic_check_xyz() -> Block:
         q := QReg("q", 4),
         c := CReg("c", 1),
         Check([q[0], q[1], q[2]], "XYZ", q[3], c[0], with_barriers=True),
+        Return(c),
     )
 
 
@@ -438,6 +437,7 @@ def _qeclib_generic_check_1flag_ch() -> Block:
         q := QReg("q", 5),
         c := CReg("c", 2),
         Check1Flag([q[0], q[1], q[2]], "XYZ", q[3], q[4], c[0], c[1], with_barriers=True),
+        Return(c),
     )
 
 
@@ -450,6 +450,7 @@ def _qeclib_generic_transversal_cx() -> Block:
         transversal_tq(qb.CX, a, b),
         Measure(a) > c[0:3],
         Measure(b) > c[3:6],
+        Return(c),
     )
 
 
@@ -501,6 +502,7 @@ def _qeclib_color488_syn_extract_bare() -> Block:
         patch,
         syn := CReg("syn", patch.num_data - 1),
         patch.syn_extract_bare(syn),
+        Return(syn),
     )
 
 
@@ -517,6 +519,7 @@ def _docs_for_static_indexing() -> Block:
             qb.H(q[0]),
         ),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -533,6 +536,7 @@ def _docs_flat_parallel_h_gates() -> Block:
             qb.H(q[3]),
         ),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -548,6 +552,7 @@ def _docs_repeat_state_preserving() -> Block:
             qb.H(q[0]),
         ),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -565,6 +570,7 @@ def _docs_while_loop_v2_defer() -> Block:
             qb.H(q[0]),
             Measure(q[0]) > c[0],
         ),
+        Return(c),
     )
 
 
@@ -582,6 +588,7 @@ def _docs_for_loopvar_symbolic_v2_defer() -> Block:
             qb.H(q[i]),
         ),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -596,6 +603,7 @@ def _docs_prep_basis_x_v2_defer() -> Block:
         c := CReg("c", 1),
         qb.Prep(q[0], "X"),
         Measure(q) > c,
+        Return(c),
     )
 
 
@@ -610,14 +618,17 @@ def _docs_rotation_rx_probe() -> Block:
         c := CReg("c", 1),
         qb.RX(q[0], 0.5),
         Measure(q) > c,
+        Return(c),
     )
 
 
 def _docs_inline_measure_creg() -> Block:
     """Inline measurement result CReg without a root declaration."""
+    final = CReg("final", 2)
     return Main(
         q := QReg("q", 2),
-        Measure(q) > CReg("final", 2),
+        Measure(q) > final,
+        Return(final),
     )
 
 
@@ -651,6 +662,7 @@ def _docs_surface_syndrome_block18_probe() -> Block:
             Measure(ancilla[1]) > syn[1],
         ),
         Measure(data) > CReg("final", num_data),
+        Return(syn),
     )
 
 
@@ -813,7 +825,15 @@ def _run_case(case: AuditCase) -> AuditResult:
         )
 
     try:
-        SlrConverter(prog).hugr()
+        with warnings.catch_warnings():
+            warnings.simplefilter("default", DeprecationWarning)
+            if case.expected_failure is None:
+                warnings.filterwarnings(
+                    "error",
+                    message=r"Implicit return of result-flagged CRegs",
+                    category=DeprecationWarning,
+                )
+            SlrConverter(prog).hugr()
     except BaseException as exc:
         expected = _expected_result(case, exc)
         if expected is not None:

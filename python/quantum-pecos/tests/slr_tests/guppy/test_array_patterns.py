@@ -9,7 +9,7 @@ non-Guppy fallthrough behavior on the legacy IR path.
 """
 
 import pytest
-from pecos.slr import Block, CReg, Main, Permute, QReg, SlrConverter
+from pecos.slr import Block, CReg, Main, Permute, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -29,6 +29,7 @@ class TestArrayUnpacking:
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             Measure(q_0[0]) > c[2],
+            Return(c),
         )
 
         guppy_code = SlrConverter(prog).guppy()
@@ -59,6 +60,7 @@ class TestArraySwapPatterns:
             Permute(q1, q2),
             Measure(q1) > c[0:2],
             Measure(q2) > c[2:4],
+            Return(c),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -87,6 +89,7 @@ class TestComplexArrayPatterns:
             ProcessPair(q[4:6]),
             # Measure all
             Measure(q) > c,
+            Return(c),
         )
 
         # Note: Slicing syntax q[0:2] might not be fully supported yet
@@ -110,6 +113,7 @@ class TestComplexArrayPatterns:
             c := CReg("c", 4),
             # All current operations use fixed indices
             Measure(q) > c,
+            Return(c),
         )
 
         guppy_code = SlrConverter(prog).guppy()

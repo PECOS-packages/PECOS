@@ -363,7 +363,7 @@ def _slr_block_relies_on_implicit_return(block) -> bool:
        return tuple:
        a. A declared CReg in `block.vars` with `result=True` (the default) --
           exposed even if never measured (auto-init to all-False).
-       b. A CReg referenced as a `Measure(...) > c[i]` target where `c` is
+       b. A CReg referenced as a `Measure(...) > ...` target where `c` is
           NOT in `block.vars` -- inline CRegs inferred at AST time get
           `is_result=True` automatically.
 
@@ -399,18 +399,8 @@ def _slr_walk_for_inline_measure_target(ops, declared_creg_names: set[str]) -> b
         type_name = type(op).__name__
         if type_name == "Measure":
             cout = getattr(op, "cout", None)
-            if cout is not None:
-                for target in cout:
-                    # `Measure(q[i]) > c[j]` puts a Bit in cout (its CReg is
-                    # `bit.reg`); whole-register `Measure(q) > CReg("c", n)`
-                    # puts the CReg itself in cout (no `.reg`). Both forms
-                    # define an inline result CReg when `c` is not declared
-                    # in `Main(...)` -- the v1 emitter infers it
-                    # `is_result=True` and implicitly returns it.
-                    reg = getattr(target, "reg", None)
-                    reg_name = getattr(reg, "sym", None) if reg is not None else getattr(target, "sym", None)
-                    if reg_name is not None and reg_name not in declared_creg_names:
-                        return True
+            if cout is not None and _slr_measure_target_has_inline_creg(cout, declared_creg_names):
+                return True
         elif type_name == "If":
             # If has `.ops` (Then-branch) and `.else_block` (an Else Block or None).
             if _slr_walk_for_inline_measure_target(getattr(op, "ops", ()), declared_creg_names):
@@ -426,6 +416,25 @@ def _slr_walk_for_inline_measure_target(ops, declared_creg_names: set[str]) -> b
             if _slr_walk_for_inline_measure_target(op.ops, declared_creg_names):
                 return True
     return False
+
+
+def _slr_measure_target_has_inline_creg(target, declared_creg_names: set[str]) -> bool:
+    """True if a Measure cout target tree references an undeclared CReg.
+
+    SLR Measure cout shapes vary by target:
+    - `Measure(q[i]) > c[j]` stores a Bit (`bit.reg` names the CReg).
+    - `Measure(q) > CReg("c", n)` stores the CReg itself.
+    - `Measure(q) > c[i:j]` stores a list of Bit objects inside the cout tuple.
+
+    All three are implicit-return sources when the CReg is not declared in
+    `Main(...)`.
+    """
+    if isinstance(target, (list, tuple)):
+        return any(_slr_measure_target_has_inline_creg(item, declared_creg_names) for item in target)
+
+    reg = getattr(target, "reg", None)
+    reg_name = getattr(reg, "sym", None) if reg is not None else getattr(target, "sym", None)
+    return reg_name is not None and reg_name not in declared_creg_names
 
 
 _IMPLICIT_RETURN_WARNING_MSG = (

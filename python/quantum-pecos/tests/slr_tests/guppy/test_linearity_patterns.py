@@ -9,7 +9,7 @@ patterns that are in v1 scope but not part of the v1 acceptance set in
 """
 
 import pytest
-from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -39,6 +39,7 @@ class TestLinearityPatterns:
             c := CReg("c", 3),
             PrepareGHZ(q),
             Measure(q) > c,
+            Return(c),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -63,6 +64,7 @@ class TestLinearityPatterns:
             ApplyH(q),
             ApplyCNOT(q),
             Measure(q) > c,
+            Return(c),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -86,6 +88,7 @@ class TestLinearityPatterns:
             MeasureHalf(q, partial),
             Measure(q[2]) > rest[0],
             Measure(q[3]) > rest[1],
+            Return(partial, rest),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -133,6 +136,7 @@ class TestLinearityPatterns:
             c := CReg("c", 2),
             Outer(q, c),
             Measure(q[1]) > c[1],
+            Return(c),
         )
         assert_ast_guppy_compiles(prog)
 
@@ -161,5 +165,6 @@ class TestResourceManagement:
             final := CReg("final", 1),
             UseAncilla(data, ancilla, result),
             Measure(data[0]) > final[0],
+            Return(result, final),
         )
         assert_ast_guppy_compiles(prog)

@@ -8,7 +8,7 @@ register-wide measurement, and If-driven Pauli corrections in one
 realistic shape.
 """
 
-from pecos.slr import Block, CReg, If, Main, QReg
+from pecos.slr import Block, CReg, If, Main, QReg, Return
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -52,5 +52,6 @@ class TestComplexPatterns:
             If(syndrome[1]).Then(
                 qubit.X(data[3]),
             ),
+            Return(syndrome),
         )
         assert_ast_guppy_compiles(prog)

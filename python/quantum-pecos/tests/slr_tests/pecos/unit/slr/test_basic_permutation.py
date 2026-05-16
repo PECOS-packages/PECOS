@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from pecos.slr import CReg, Main, Permute, SlrConverter
+from pecos.slr import CReg, Main, Permute, Return, SlrConverter
 
 # Test fixtures
 
@@ -21,6 +21,7 @@ def create_basic_permutation_program() -> tuple:
             [b[1], a[0]],
         ),
         a[0].set(1),  # Should become b[1] = 1 after permutation
+        Return(a, b),
     )
 
     return prog, a, b
@@ -39,6 +40,7 @@ def create_same_register_permutation_program() -> tuple:
         a[0].set(1),  # Should become a[2] = 1
         a[1].set(0),  # Should become a[0] = 0
         a[2].set(1),  # Should become a[1] = 1
+        Return(a),
     )
 
     return prog, a
@@ -57,6 +59,7 @@ def test_permutation_consistency_for_bits_in_qasm() -> None:
             [b[1], a[0]],
         ),
         a[0].set(1),
+        Return(a, b),
     )
 
     qasm1 = SlrConverter(prog).qasm()

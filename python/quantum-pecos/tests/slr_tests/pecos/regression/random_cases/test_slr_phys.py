@@ -114,7 +114,7 @@ def test_control_flow_qir() -> None:
     prog = Main(
         q := QReg("q", 2),
         m := CReg("m", 2),
-        m_hidden := CReg("m_hidden", 2, result=False),
+        m_hidden := CReg("m_hidden", 2),
         Repeat(3).block(
             p.H(q[0]),
         ),

@@ -71,7 +71,6 @@ class TestSlrToAstBasic:
         assert isinstance(decl, RegisterDecl)
         assert decl.name == "c"
         assert decl.size == 3
-        assert decl.is_result is True
 
     def test_program_with_both_regs(self) -> None:
         """Program with QReg and CReg has both declarations."""

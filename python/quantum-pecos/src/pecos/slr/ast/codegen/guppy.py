@@ -214,9 +214,6 @@ class AstToGuppy:
             body_lines.extend(self._emit_explicit_return(explicit_return))
         else:
             body_lines.extend(self._emit_end_cleanup())
-            auto_return = self._auto_return_expr()
-            if auto_return is not None:
-                body_lines.append(f"{self.context.indent()}return {auto_return}")
 
         if body_lines:
             lines.extend(body_lines)
@@ -235,7 +232,8 @@ class AstToGuppy:
             # Later iters add qubit/bit bundles.
             is_qubit = isinstance(inp.type_expr, QubitTypeExpr)
             is_qubit_array = isinstance(inp.type_expr, ArrayTypeExpr) and isinstance(
-                inp.type_expr.element, QubitTypeExpr,
+                inp.type_expr.element,
+                QubitTypeExpr,
             )
             is_bit = isinstance(inp.type_expr, BitTypeExpr)
             if not (is_qubit or is_qubit_array or is_bit):
@@ -316,7 +314,7 @@ class AstToGuppy:
             if kind == "single_bit":
                 # Register the bit-input name so body BitRefs (`name[0]`) render;
                 # do NOT emit an initializer -- it's a bound parameter.
-                self.context.registers[name] = RegisterDecl(name=name, size=1, is_result=False)
+                self.context.registers[name] = RegisterDecl(name=name, size=1)
             else:
                 # scratch_qubit is registered too: the body's Prep/gates/Measure
                 # still resolve `Slot(name, i)` through linearity. It just has
@@ -437,7 +435,7 @@ class AstToGuppy:
 
         for register, max_index in max_indices.items():
             if register not in self.context.registers:
-                self.context.registers[register] = RegisterDecl(name=register, size=max_index + 1, is_result=True)
+                self.context.registers[register] = RegisterDecl(name=register, size=max_index + 1)
 
     def _collect_implicit_measure_register_refs(self, stmt: Statement, max_indices: dict[str, int]) -> None:
         if isinstance(stmt, MeasureOp):
@@ -579,10 +577,14 @@ class AstToGuppy:
                         continue  # the scratch binding itself -- allowed
                     if isinstance(arg, AllocatorArg) and arg.name in scratch_allocs:
                         _reject_alloc(f"a non-scratch input of BlockCall {stmt.callee!r}", arg.name)
-                    elif isinstance(arg, SingleQubitArg) and (
-                        arg.slot.allocator,
-                        arg.slot.index,
-                    ) in scratch:
+                    elif (
+                        isinstance(arg, SingleQubitArg)
+                        and (
+                            arg.slot.allocator,
+                            arg.slot.index,
+                        )
+                        in scratch
+                    ):
                         _reject(
                             f"a non-scratch input of BlockCall {stmt.callee!r}",
                             (arg.slot.allocator, arg.slot.index),
@@ -608,11 +610,9 @@ class AstToGuppy:
         return ", ".join(f"{name}: array[qubit, {size}] @ owned" for name, size in self.context.root_allocators.items())
 
     def _return_type(self, explicit_return: ReturnOp | None) -> str:
-        if explicit_return is not None:
-            types = [self._return_value_type(value) for value in explicit_return.values]
-            return self._tuple_type(types)
-
-        types = [f"array[bool, {decl.size}]" for decl in self.context.registers.values() if decl.is_result]
+        if explicit_return is None:
+            return "None"
+        types = [self._return_value_type(value) for value in explicit_return.values]
         return self._tuple_type(types)
 
     def _return_value_type(self, value: Expression | str) -> str:
@@ -1313,10 +1313,7 @@ class AstToGuppy:
                 raise GuppyCodegenError(msg)
             input_size = inp.type_expr.size
             if arg.name not in self.context.root_allocators:
-                msg = (
-                    f"BlockCall {callee!r} {position} {arg.name!r} must be an outer root "
-                    "allocator name"
-                )
+                msg = f"BlockCall {callee!r} {position} {arg.name!r} must be an outer root allocator name"
                 raise GuppyCodegenError(msg)
             outer_size = self.context.root_allocators[arg.name]
             if outer_size != input_size:
@@ -1379,7 +1376,8 @@ class AstToGuppy:
 
         if isinstance(arg, QubitBundleArg):
             if not isinstance(inp.type_expr, ArrayTypeExpr) or not isinstance(
-                inp.type_expr.element, QubitTypeExpr,
+                inp.type_expr.element,
+                QubitTypeExpr,
             ):
                 msg = (
                     f"BlockCall {callee!r} {position} for input {inp.name!r}: "
@@ -1618,12 +1616,6 @@ class AstToGuppy:
 
     def _emit_end_cleanup(self) -> list[str]:
         return [f"{self.context.indent()}discard({local})" for _slot, local in self._linearity().discard_live()]
-
-    def _auto_return_expr(self) -> str | None:
-        values = [decl.name for decl in self.context.registers.values() if decl.is_result]
-        if not values:
-            return None
-        return ", ".join(values)
 
     def _emit_explicit_return(self, node: ReturnOp) -> list[str]:
         values = [self._return_value_expr(value) for value in node.values]

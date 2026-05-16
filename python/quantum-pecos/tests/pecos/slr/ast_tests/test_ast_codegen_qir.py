@@ -232,7 +232,7 @@ class TestAstToQirClassicalRegisters:
         """Result CReg generates int_record_output call."""
         prog = Main(
             q := QReg("q", 1),
-            c := CReg("c", 1, result=True),
+            c := CReg("c", 1),
             qb.Measure(q[0]) > c[0],
         )
         ast = slr_to_ast(prog)

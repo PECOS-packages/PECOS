@@ -178,25 +178,17 @@ def test_hugr_inline_measure_creg_inside_nested_repeat() -> None:
     assert raw, "Nested inline-CReg .hugr() output produced no measurement records"
 
 
-def test_hugr_explicit_return_of_non_result_creg() -> None:
-    """Pin entry_wrapper / emitter parity on declared non-result CRegs.
+def test_hugr_explicit_return_of_declared_creg() -> None:
+    """Pin entry_wrapper / emitter parity on declared CRegs in `Return(...)`.
 
     The emitter's `_return_value_type` resolves any declared CReg name in
-    `Return(...)` -- `is_result` is not consulted. The wrapper must mirror
-    this exactly so it can't silently diverge. Without this fix the wrapper's
-    `_explicit_return_type` looked up only `info.result_cregs` (filtered to
-    `is_result=True`), so `Return(c)` for `c = CReg(..., result=False)` would
-    raise `ValueError` while the emitter happily compiled.
-
-    Note: the combo `result=False` + `Return(c)` is itself a design quirk
-    (the two flags say opposite things). Whether v1 should reject this in
-    preflight, or whether SLR should adopt a `result()` / explicit-output
-    mechanism instead, is a separate v1-followup question. This test only
-    pins wrapper/emitter parity for the current semantics.
+    `Return(...)`. The no-arg `entry()` wrapper's `_explicit_return_type`
+    must mirror this exactly (resolving via `info.all_creg_sizes`) so the
+    wrapper signature can't silently diverge from `main(...)`.
     """
     prog = Main(
         q := QReg("q", 1),
-        c := CReg("c", 1, result=False),
+        c := CReg("c", 1),
         qb.Prep(q[0]),
         Measure(q[0]) > c[0],
         Return(c),

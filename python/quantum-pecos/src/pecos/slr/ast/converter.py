@@ -310,7 +310,6 @@ class SlrToAst:
             return RegisterDecl(
                 name=var.sym,
                 size=var.size,
-                is_result=getattr(var, "result", True),
             )
 
         if var_class == "QAlloc":
@@ -490,9 +489,7 @@ class SlrToAst:
                     msg = f"{where}: empty {type(var).__name__} bundle is not supported"
                     raise ValueError(msg)
                 if all(isinstance(e, Qubit) for e in var):
-                    slots = tuple(
-                        SlotRef(allocator=e.reg.sym, index=e.index) for e in var
-                    )
+                    slots = tuple(SlotRef(allocator=e.reg.sym, index=e.index) for e in var)
                     type_expr = ArrayTypeExpr(element=QubitTypeExpr(), size=len(var))
                     arg = QubitBundleArg(slots=slots)
                     for k, e in enumerate(var):
@@ -1119,10 +1116,7 @@ def _validate_scratch_input(
         )
         raise ValueError(msg)
     if not events:
-        msg = (
-            f"{where}: declared SCRATCH but never used in the block body "
-            "(expected Prep(...) then Measure(...))"
-        )
+        msg = f"{where}: declared SCRATCH but never used in the block body (expected Prep(...) then Measure(...))"
         raise ValueError(msg)
     if events[0] != "PREP":
         msg = (
@@ -1170,4 +1164,3 @@ def _validate_scratch_input(
             "qubit before returning (S2 allocates it internally)"
         )
         raise ValueError(msg)
-

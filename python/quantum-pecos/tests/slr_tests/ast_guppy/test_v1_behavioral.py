@@ -281,7 +281,7 @@ class TestConditionalCorrectness:
         """CReg Permute must affect a later If condition."""
         prog_without_permute = Main(
             q := QReg("q", 1),
-            flag := CReg("flag", 2, result=False),
+            flag := CReg("flag", 2),
             out := CReg("out", 1),
             flag[0].set(1),
             flag[1].set(0),
@@ -294,7 +294,7 @@ class TestConditionalCorrectness:
 
         prog_with_permute = Main(
             q := QReg("q", 1),
-            flag := CReg("flag", 2, result=False),
+            flag := CReg("flag", 2),
             out := CReg("out", 1),
             flag[0].set(1),
             flag[1].set(0),

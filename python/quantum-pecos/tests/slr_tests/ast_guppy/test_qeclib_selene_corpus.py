@@ -59,8 +59,6 @@ The audit log lives in
 
 from __future__ import annotations
 
-import warnings
-
 from pecos import Hugr, selene_engine, sim
 from pecos.slr import CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit as qb
@@ -76,16 +74,12 @@ from pecos.slr.qeclib.steane.gates_tq import transversal_tq as steane_tq
 def _run_via_selene(prog: Main, *, shots: int = 4, seed: int = 42, qubits: int) -> dict:
     """Compile prog through SlrConverter.hugr() and run through Selene.
 
-    Suppresses Phase 2 implicit-return DeprecationWarning during the
-    roundtrip; the corpus targets the current v1 implicit-return behavior
-    deliberately. When Phase 3b makes the breaking change, this helper
-    plus the assertions below will be updated together.
+    The corpus programs use explicit `Return(...)` (Phase 3b removed the
+    v1 implicit-return path).
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        package = SlrConverter(prog).hugr()
-        hugr_bytes = package.to_str().encode("utf-8")
-        result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(qubits).seed(seed).run(shots)
+    package = SlrConverter(prog).hugr()
+    hugr_bytes = package.to_str().encode("utf-8")
+    result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(qubits).seed(seed).run(shots)
     raw = result.to_dict() if hasattr(result, "to_dict") else result
     assert isinstance(raw, dict)
     return raw

@@ -276,9 +276,7 @@ class HugrToAstConverter:
             )
 
         # Add classical register declarations for measurement results
-        decl_list.extend(
-            RegisterDecl(name=result_var, size=1, is_result=True) for result_var in self.measurement_results.values()
-        )
+        decl_list.extend(RegisterDecl(name=result_var, size=1) for result_var in self.measurement_results.values())
 
         declarations = tuple(decl_list)
 

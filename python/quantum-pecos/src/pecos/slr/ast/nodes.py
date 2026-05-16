@@ -380,7 +380,6 @@ class RegisterDecl(Declaration):
 
     name: str
     size: int
-    is_result: bool = True
 
 
 # =============================================================================

@@ -322,7 +322,7 @@ class QIRGenerator(Generator):
         """Generates the proper results calls at the end of the SLR program,
         according to all the classical registers that were defined."""
         for reg_name, (reg_inst, result) in self._creg_dict.items():
-            if not result:  # ignore non-result cregs
+            if not result:  # skip internal scratch temps (all user cregs are recorded post-3b)
                 continue
             # add global tag for each CReg
             reg_name_bytes = bytearray(reg_name.encode("utf-8"))

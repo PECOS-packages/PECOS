@@ -12,7 +12,7 @@
 """Tests for AST to Guppy code generator."""
 
 import pytest
-from pecos.slr import CReg, If, Main, QReg, Repeat
+from pecos.slr import CReg, If, Main, QReg, Repeat, Return
 from pecos.slr.ast import AstToGuppy, ast_to_guppy, slr_to_ast
 from pecos.slr.qeclib import qubit as qb
 
@@ -110,11 +110,12 @@ class TestAstToGuppyPrepMeasure:
     """Prep and measure code generation tests."""
 
     def test_measure_with_result(self) -> None:
-        """Measure with result generates variable and return."""
+        """Measure with explicit Return generates variable and return."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.Measure(q[0]) > c[0],
+            Return(c),
         )
         ast = slr_to_ast(prog)
 

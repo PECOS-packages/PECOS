@@ -9,63 +9,59 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Post-S2 contracts for the Phase 3b output-model migration.
+"""Phase 3b hard-contract tests for the v2 output model.
 
-S2 removes the Phase-2 deprecation warnings only. It intentionally does not
-remove the `CReg(result=...)` kwarg and does not yet remove the implicit-return
-code path; those hard breaking changes are S3. These tests pin the S2 boundary:
-old warning-producing programs still work, but no Phase-2 DeprecationWarning is
-emitted.
+S3 removed the `CReg(result=...)` kwarg, the `RegisterDecl.is_result`
+field, and the v1 implicit return of result-flagged CRegs. These tests
+pin those removals as hard contracts: the old knobs now raise, and a
+program must use an explicit `Return(...)` to produce any output.
 """
 
 from __future__ import annotations
 
-import warnings
-from typing import TYPE_CHECKING, TypeVar
-
+import pytest
 from pecos.slr import CReg, Main, QReg, Return, SlrConverter
+from pecos.slr.ast.nodes import RegisterDecl
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
 from ._selene_harness import run_ast_guppy_via_selene  # noqa: TID252
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
-T = TypeVar("T")
+class TestCRegResultKwargRemoved:
+    """S3: the `CReg(result=...)` kwarg is gone -> hard `TypeError`."""
 
+    def test_creg_result_false_raises_type_error(self) -> None:
+        with pytest.raises(TypeError):
+            CReg("c", 1, result=False)
 
-def _run_without_deprecation_warning(func: Callable[[], T]) -> T:
-    """Run `func` and fail if any DeprecationWarning is emitted."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", DeprecationWarning)
-        result = func()
+    def test_creg_result_true_raises_type_error(self) -> None:
+        with pytest.raises(TypeError):
+            CReg("c", 1, result=True)
 
-    deprecations = [warning for warning in caught if issubclass(warning.category, DeprecationWarning)]
-    assert deprecations == [], f"expected no DeprecationWarning, got {[str(w.message) for w in deprecations]}"
-    return result
-
-
-class TestCRegResultKwargPostS2:
-    """`result=` is still accepted in S2, but no longer warns."""
-
-    def test_creg_with_result_false_does_not_warn(self) -> None:
-        c = _run_without_deprecation_warning(lambda: CReg("c", 1, result=False))
-        assert c.result is False
-
-    def test_creg_with_explicit_result_true_does_not_warn(self) -> None:
-        c = _run_without_deprecation_warning(lambda: CReg("c", 1, result=True))
-        assert c.result is True
-
-    def test_creg_with_default_result_does_not_warn(self) -> None:
-        c = _run_without_deprecation_warning(lambda: CReg("c", 1))
-        assert c.result is True
+    def test_creg_without_result_still_constructs(self) -> None:
+        c = CReg("c", 1)
+        assert c.sym == "c"
 
 
-class TestImplicitReturnPostS2:
-    """Implicit-return programs still work in S2, but no longer warn."""
+class TestRegisterDeclIsResultRemoved:
+    """S3: the `RegisterDecl.is_result` field is gone -> hard `TypeError`."""
 
-    def test_implicit_return_program_still_compiles_without_warning(self) -> None:
+    def test_register_decl_is_result_raises_type_error(self) -> None:
+        with pytest.raises(TypeError):
+            RegisterDecl(name="scratch", size=2, is_result=False)
+
+    def test_register_decl_without_is_result_still_constructs(self) -> None:
+        decl = RegisterDecl(name="c", size=2)
+        assert decl.name == "c"
+        with pytest.raises(AttributeError):
+            _ = decl.is_result
+
+
+class TestNoImplicitReturn:
+    """S3: no `Return(...)` means no output (the v1 implicit path is gone)."""
+
+    def test_no_return_compiles_to_main_returning_none(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -73,10 +69,12 @@ class TestImplicitReturnPostS2:
             Measure(q[0]) > c[0],
         )
 
-        source = _run_without_deprecation_warning(lambda: SlrConverter(prog).guppy())
-        assert "result.c" not in source
+        source = SlrConverter(prog).guppy()
+        assert "-> None:" in source
+        # No implicit `return <result cregs>` was emitted.
+        assert "\n    return " not in source
 
-    def test_implicit_return_hugr_still_compiles_without_warning(self) -> None:
+    def test_no_return_hugr_compiles(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -84,10 +82,22 @@ class TestImplicitReturnPostS2:
             Measure(q[0]) > c[0],
         )
 
-        package = _run_without_deprecation_warning(lambda: SlrConverter(prog).hugr())
+        package = SlrConverter(prog).hugr()
         assert package is not None
 
-    def test_explicit_return_program_still_runs_through_selene(self) -> None:
+    def test_no_return_selene_fails_fast(self) -> None:
+        """No `Return` -> no measurement record -> harness raises clearly."""
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > c[0],
+        )
+
+        with pytest.raises(ValueError, match="requires an explicit"):
+            run_ast_guppy_via_selene(prog, shots=1)
+
+    def test_explicit_return_runs_through_selene(self) -> None:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
@@ -96,41 +106,5 @@ class TestImplicitReturnPostS2:
             Return(c),
         )
 
-        records = _run_without_deprecation_warning(lambda: run_ast_guppy_via_selene(prog, shots=10))
+        records = run_ast_guppy_via_selene(prog, shots=10)
         assert all(record["measurement_0"] == 1 for record in records)
-
-    def test_inline_whole_register_measure_still_compiles_without_warning(self) -> None:
-        """S1b's whole-register cout shape no longer has a warning detector."""
-        prog = Main(
-            q := QReg("q", 2),
-            Measure(q) > CReg("inline", 2),
-        )
-
-        source = _run_without_deprecation_warning(lambda: SlrConverter(prog).guppy())
-        assert "inline" in source
-
-    def test_inline_slice_measure_still_compiles_without_warning(self) -> None:
-        """S1b's slice cout shape no longer has a warning detector."""
-        inline = CReg("inline", 2)
-        prog = Main(
-            q := QReg("q", 2),
-            Measure(q) > inline[0:2],
-        )
-
-        source = _run_without_deprecation_warning(lambda: SlrConverter(prog).guppy())
-        assert "inline" in source
-
-    def test_result_false_only_measure_still_compiles_without_warning(self) -> None:
-        def build_and_compile() -> str:
-            q = QReg("q", 1)
-            scratch = CReg("scratch", 1, result=False)
-            prog = Main(
-                q,
-                scratch,
-                qb.X(q[0]),
-                Measure(q[0]) > scratch[0],
-            )
-            return SlrConverter(prog).guppy()
-
-        source = _run_without_deprecation_warning(build_and_compile)
-        assert "scratch" in source

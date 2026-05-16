@@ -68,32 +68,33 @@ def run_ast_guppy_via_selene(
 
     wrapper, info = build_no_arg_entry_wrapper(program)
     # The entry tuple's bit order is the source of truth for the
-    # `measurement_N` keys. It comes from EITHER an explicit `Return(...)`
-    # (Phase 3b: the returned CRegs, in listed order) OR -- still
-    # supported until 3b removes it -- the v1 implicit result-CReg set
-    # (declaration order). Returning the same CRegs in the same order is
-    # byte-identical to the implicit path (proven), so migrated and
-    # not-yet-migrated programs both produce identical records.
-    if info.explicit_return is not None:
-        record_cregs: list[RegisterDecl] = []
-        for value in info.explicit_return.values:
-            name = value if isinstance(value, str) else getattr(value, "name", None)
-            if name in info.all_creg_sizes:
-                record_cregs.append(
-                    RegisterDecl(name=name, size=info.all_creg_sizes[name], is_result=True),
-                )
-    else:
-        record_cregs = info.result_cregs
+    # `measurement_N` keys: the CRegs in the explicit `Return(...)`, in
+    # listed order. Phase 3b removed the v1 implicit result-CReg path, so
+    # a program with no `Return` has no measurement record at all.
+    if info.explicit_return is None:
+        msg = (
+            "Selene behavioral test requires an explicit `Return(<creg>...)`. "
+            "Phase 3b removed the implicit result-CReg return; a program with "
+            "no `Return` compiles to `entry() -> None` and has no measurement "
+            "record."
+        )
+        raise ValueError(msg)
+    record_cregs: list[RegisterDecl] = []
+    for value in info.explicit_return.values:
+        name = value if isinstance(value, str) else getattr(value, "name", None)
+        if name in info.all_creg_sizes:
+            record_cregs.append(
+                RegisterDecl(name=name, size=info.all_creg_sizes[name]),
+            )
     if not record_cregs:
         # Strict (Codex S1-approach review): an explicit `Return(...)`
         # with no CRegs (e.g. `Return(q)`) has no measurement record --
         # fail loudly rather than silently mis-shape the result table.
         msg = (
             "Selene behavioral test requires at least one returned CReg "
-            "(explicit `Return(<creg>...)`, or -- pre-3b -- an implicit "
-            "result CReg). Returning only QRegs/values yields no "
-            "measurement record. Declare CRegs and write measurement "
-            "bits into them."
+            "(explicit `Return(<creg>...)`). Returning only QRegs/values "
+            "yields no measurement record. Declare CRegs and write "
+            "measurement bits into them."
         )
         raise ValueError(msg)
 

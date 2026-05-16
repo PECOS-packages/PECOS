@@ -17,11 +17,10 @@ runtime) require a no-arg entrypoint, matching the legacy IR generator's
 shape. This module builds that wrapper by mirroring the same return-shape
 logic the emitter uses, so the wrapper signature matches main's exactly.
 
-Three modes match `AstToGuppy._return_type`:
+Two modes match `AstToGuppy._return_type`:
 - Explicit `Return(...)` -> pass through main's return value unchanged.
-- One or more result CRegs (declared or inline-from-Measure) -> flatten to
-  `tuple[bool, ...]` for Selene's measurement-record model.
-- Neither -> `entry() -> None` and discard.
+- No `Return(...)` -> `entry() -> None` and discard (Phase 3b removed the
+  implicit return of result-flagged CRegs).
 """
 
 from __future__ import annotations
@@ -54,14 +53,13 @@ class EntryWrapperInfo:
     """Metadata extracted from the AST program for building the wrapper.
 
     `all_creg_sizes` mirrors the emitter's `context.registers` lookup view
-    used by `AstToGuppy._return_value_type`: every declared CReg (regardless
-    of `is_result`) plus every inline-Measure-introduced result CReg. Needed
-    so an explicit `Return(...)` referencing a non-result-flagged declared
-    CReg resolves the same way the emitter does (not as `ValueError`).
+    used by `AstToGuppy._return_value_type`: every declared CReg plus every
+    inline-Measure-introduced CReg. Needed so an explicit `Return(...)`
+    referencing a declared or inline CReg resolves the same way the emitter
+    does (not as `ValueError`).
     """
 
     allocator_sizes: dict[str, int]
-    result_cregs: list[RegisterDecl]
     explicit_return: ReturnOp | None
     all_creg_sizes: dict[str, int]
 
@@ -72,8 +70,8 @@ def build_no_arg_entry_wrapper(program: Program) -> tuple[str, EntryWrapperInfo]
     Returns:
         A `(source, info)` tuple. `source` is the Guppy snippet defining
         `entry()`; concatenate it after the main source. `info` exposes the
-        allocator sizes, result CRegs, and explicit Return (if any) that the
-        caller may need (e.g., Selene's measurement-key generation).
+        allocator sizes and explicit Return (if any) that the caller may
+        need (e.g., Selene's measurement-key generation).
     """
     info = _collect_info(program)
     source = _render_wrapper(info)
@@ -98,10 +96,6 @@ def _collect_info(program: Program) -> EntryWrapperInfo:
     inline_max: dict[str, int] = {}
     _walk_for_measure_results(body, declared, inline_max)
 
-    result_cregs: list[RegisterDecl] = [decl for decl in declared.values() if decl.is_result]
-    for name, max_index in inline_max.items():
-        result_cregs.append(RegisterDecl(name=name, size=max_index + 1, is_result=True))
-
     all_creg_sizes: dict[str, int] = {name: decl.size for name, decl in declared.items()}
     for name, max_index in inline_max.items():
         all_creg_sizes[name] = max_index + 1
@@ -110,7 +104,6 @@ def _collect_info(program: Program) -> EntryWrapperInfo:
 
     return EntryWrapperInfo(
         allocator_sizes=allocator_sizes,
-        result_cregs=result_cregs,
         explicit_return=explicit_return,
         all_creg_sizes=all_creg_sizes,
     )
@@ -143,23 +136,6 @@ def _render_wrapper(info: EntryWrapperInfo) -> str:
     if info.explicit_return is not None:
         body_lines.append(f"    return {call_expr}")
         return_ann = _explicit_return_type(info)
-    elif info.result_cregs:
-        if len(info.result_cregs) == 1:
-            body_lines.append(f"    {info.result_cregs[0].name} = {call_expr}")
-        else:
-            names = ", ".join(decl.name for decl in info.result_cregs)
-            body_lines.append(f"    {names} = {call_expr}")
-
-        flat: list[str] = []
-        for decl in info.result_cregs:
-            flat.extend(f"{decl.name}[{i}]" for i in range(decl.size))
-        return_expr = ", ".join(flat)
-        if len(flat) == 1:
-            return_expr += ","
-        body_lines.append(f"    return {return_expr}")
-
-        bool_count = sum(decl.size for decl in info.result_cregs)
-        return_ann = "tuple[bool]" if bool_count == 1 else "tuple[" + ", ".join(["bool"] * bool_count) + "]"
     else:
         body_lines.append(f"    {call_expr}")
         return_ann = "None"

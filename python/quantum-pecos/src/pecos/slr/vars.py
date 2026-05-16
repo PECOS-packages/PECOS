@@ -215,21 +215,14 @@ class SymbolicQubit(SymbolicElem):
 
 
 class CReg(Reg, PyCOp):
-    def __init__(self, sym: str, size: int, *, result: bool = True) -> None:
+    def __init__(self, sym: str, size: int) -> None:
         """Representation for a collection of bits.
 
         Args:
             sym: Register name.
             size: Number of bits.
-            result: **Deprecated.** Whether this register is a result register
-                (default True). Phase 2 of the v2 output-model redesign
-                deprecates this kwarg; Phase 3b removes it. Use explicit
-                `Return(...)` and `Print(...)` to control output instead. See
-                `~/Repos/pecos-docs/design/slr/v2-breaking-migration.md` for
-                the migration path.
         """
         super().__init__(sym, size, elem_type=Bit)
-        self.result = result
 
     @property
     def _symbolic_elem_type(self) -> type[SymbolicBit]:

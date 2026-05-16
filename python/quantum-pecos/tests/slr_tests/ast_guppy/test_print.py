@@ -233,11 +233,11 @@ class TestPrintAndSeleneOutput:
 
     Empirically (verified 2026-05-14):
 
-    - No Print, implicit return: Selene exposes return-tuple positionally as
-      `measurement_N` keys.
-    - Any Print, implicit return still present in Guppy `return ...`: Selene
-      switches to result-tag mode and the `measurement_N` keys are NOT
-      exposed; only `result()` tags appear in `to_dict()`.
+    - No Print, explicit `Return`: Selene exposes the return-tuple
+      positionally as `measurement_N` keys.
+    - Any Print, explicit `Return` still present in Guppy `return ...`:
+      Selene switches to result-tag mode and the `measurement_N` keys are
+      NOT exposed; only `result()` tags appear in `to_dict()`.
 
     So Print is **AST-scope-orthogonal** (no AST/Guppy return shape change)
     but **Selene-runtime-mode-flipping** (presence of any `result()` switches

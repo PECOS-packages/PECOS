@@ -778,6 +778,35 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
+# Diagnostic: dump the MSVC linker environment as seen *through the exact
+# just -> #!/usr/bin/env bash shebang chain that build-selene uses*. The CI
+# step-level bash sees a correct LIB, but cold build-script links inside this
+# chain were failing to find kernel32.lib -- this pinpoints whether LIB / the
+# resolved link.exe / cargo's env survive the chain. Windows-only; harmless
+# elsewhere.
+[private]
+[windows]
+_win-msvc-env-debug:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "=== _win-msvc-env-debug (inside just shebang-bash) ==="
+    echo "uname: $(uname -s 2>/dev/null || echo n/a)"
+    echo "BASH: ${BASH:-<unset>}  BASH_VERSION=${BASH_VERSION:-<unset>}"
+    echo "MSYS2_ENV_CONV_EXCL=${MSYS2_ENV_CONV_EXCL:-<unset>}"
+    echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER:-<unset>}"
+    echo "which link: $(command -v link 2>/dev/null || echo '<none>')"
+    echo "LIB=${LIB:-<unset>}"
+    echo "INCLUDE=${INCLUDE:-<unset>}"
+    case "${LIB:-}" in
+        *';'*) echo "LIB-form: Windows (semicolon-separated) -- good for native link.exe" ;;
+        *':'*'/'*) echo "LIB-form: POSIX-mangled (colon/forward-slash) -- native link.exe will choke" ;;
+        "") echo "LIB-form: EMPTY/UNSET -- env lost in the chain" ;;
+        *) echo "LIB-form: single-entry or unknown" ;;
+    esac
+    echo "--- .cargo/config.toml ---"
+    cat .cargo/config.toml 2>/dev/null || echo "<no .cargo/config.toml>"
+    echo "=== end _win-msvc-env-debug ==="
+
 [private]
 build-selene profile="release":
     #!/usr/bin/env bash

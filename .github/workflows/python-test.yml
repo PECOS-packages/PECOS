@@ -238,19 +238,25 @@ jobs:
         export LIBRARY_PATH=/usr/lib
         just build-debug
 
-    # Sanity-check that the MSVC LIB env survived the GITHUB_ENV -> git-bash
-    # boundary intact (see scripts/ci/setup-msvc.ps1 for the MSYS2_ENV_CONV_EXCL
-    # rationale). Fails fast with a clear message instead of a cryptic LNK1181
-    # deep inside a cold cargo build if the env regresses.
-    - name: Verify MSVC LIB reaches git-bash (Windows)
+    # Two-level diagnostic to localize where the MSVC LIB is lost (the
+    # step-level bash sees a correct LIB, but cold build-script links inside
+    # `just` were failing on kernel32.lib). (1) step-level bash, (2) through the
+    # exact `just -> #!/usr/bin/env bash` chain build-selene uses. Comparing the
+    # two pinpoints whether `just`/the shebang layer drops or mangles LIB.
+    # Non-fatal on the through-just side so we still capture the build failure
+    # context; the step-level side fails fast on a clear regression.
+    - name: Diagnose MSVC LIB across the just chain (Windows)
       if: runner.os == 'Windows'
       run: |
+        echo "=== step-level bash ==="
         echo "MSYS2_ENV_CONV_EXCL=${MSYS2_ENV_CONV_EXCL:-<unset>}"
         echo "LIB=${LIB:-<unset>}"
         case "${LIB:-}" in
-          *"Windows Kits"*"um"*) echo "OK: Windows SDK um lib dir present in LIB" ;;
-          *) echo "ERROR: LIB does not contain a Windows SDK 'um' lib directory; the native linker will not find kernel32.lib" >&2; exit 1 ;;
+          *"Windows Kits"*"um"*) echo "OK: Windows SDK um lib dir present in step-level LIB" ;;
+          *) echo "ERROR: step-level LIB lacks a Windows SDK 'um' lib directory" >&2; exit 1 ;;
         esac
+        echo "=== through just -> shebang-bash (build-selene's exact chain) ==="
+        just _win-msvc-env-debug || true
 
     - name: Build PECOS
       if: runner.os != 'macOS'

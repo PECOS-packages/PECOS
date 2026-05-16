@@ -24,35 +24,22 @@ See `~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`.
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast._block_substitution import BodyRemap, substitute_stmt
 from pecos.slr.ast.nodes import (
     AllocatorArg,
-    BarrierOp,
-    BitBundleArg,
-    BitRef,
     BlockCall,
     ForStmt,
-    GateOp,
     IfStmt,
-    MeasureOp,
     ParallelBlock,
-    PermuteOp,
-    PrepareOp,
     Program,
-    QubitBundleArg,
     RepeatStmt,
-    SingleBitArg,
-    SingleQubitArg,
-    SlotRef,
     WhileStmt,
 )
 
-_PERMUTE_REF_RE = re.compile(r"([A-Za-z_]\w*)(\[\d+\])?$")
-
 if TYPE_CHECKING:
-    from pecos.slr.ast.nodes import BlockArg, BlockDecl, Statement
+    from pecos.slr.ast.nodes import BlockDecl, Statement
 
 
 def validate_unique_block_decl_names(program: Program) -> None:
@@ -162,162 +149,31 @@ def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statemen
             f"BlockDecl declares {len(decl.inputs)} inputs"
         )
         raise ValueError(msg)
-    # Build a name-level mapping from BlockDecl input parameter names to the outer
-    # binding name. Only AllocatorArg is supported in the iter 5a flatten path;
-    # richer args (single qubit/bit, bundles) need full slot-level rewriting
-    # which lands with their respective flatten support iterations.
-    mapping: dict[str, str] = {}
-    for inp, arg in zip(decl.inputs, call.arg_bindings, strict=True):
-        if isinstance(arg, AllocatorArg):
-            mapping[inp.name] = arg.name
-        else:
-            msg = (
-                f"Flatten pass does not yet support BlockArg {type(arg).__name__} for "
-                f"input {inp.name!r} of {call.callee!r}; only AllocatorArg is supported "
-                "in Phase 3a.3 iter 5a"
-            )
-            raise NotImplementedError(msg)
-    # Symmetric out_bindings validation: silently allowing a deferred BlockArg
-    # subclass here would yield byte-identical flatten output (since
-    # out_bindings don't affect the inlined body in iter 5a) but would mask the
-    # fact that the caller used an unsupported shape -- a silent-fallback class
-    # of bug (Codex 2026-05-15 review of fix-pass-5).
-    for out in call.out_bindings:
-        if not isinstance(out, AllocatorArg):
-            msg = (
-                f"Flatten pass does not yet support BlockArg {type(out).__name__} in "
-                f"out_bindings of {call.callee!r}; only AllocatorArg is supported in "
-                "Phase 3a.3 iter 5a"
-            )
-            raise NotImplementedError(msg)
-    return tuple(_substitute(stmt, mapping) for stmt in decl.body)
-
-
-def _substitute(stmt: Statement, mapping: dict[str, str]) -> Statement:
-    """Rewrite every SlotRef.allocator and PrepareOp/BarrierOp allocator name."""
-    if isinstance(stmt, GateOp):
-        return GateOp(
-            gate=stmt.gate,
-            targets=tuple(_sub_slot(t, mapping) for t in stmt.targets),
-            params=stmt.params,
-            location=stmt.location,
-        )
-    if isinstance(stmt, MeasureOp):
-        return MeasureOp(
-            targets=tuple(_sub_slot(t, mapping) for t in stmt.targets),
-            results=stmt.results,
-            location=stmt.location,
-        )
-    if isinstance(stmt, PrepareOp):
-        return PrepareOp(
-            allocator=mapping.get(stmt.allocator, stmt.allocator),
-            slots=stmt.slots,
-            location=stmt.location,
-        )
-    if isinstance(stmt, BarrierOp):
-        return BarrierOp(
-            allocators=tuple(mapping.get(a, a) for a in stmt.allocators),
-            location=stmt.location,
-        )
-    if isinstance(stmt, IfStmt):
-        return IfStmt(
-            condition=stmt.condition,
-            then_body=tuple(_substitute(s, mapping) for s in stmt.then_body),
-            else_body=tuple(_substitute(s, mapping) for s in stmt.else_body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, RepeatStmt):
-        return RepeatStmt(
-            count=stmt.count,
-            body=tuple(_substitute(s, mapping) for s in stmt.body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, ForStmt):
-        return ForStmt(
-            variable=stmt.variable,
-            start=stmt.start,
-            stop=stmt.stop,
-            step=stmt.step,
-            body=tuple(_substitute(s, mapping) for s in stmt.body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, WhileStmt):
-        return WhileStmt(
-            condition=stmt.condition,
-            body=tuple(_substitute(s, mapping) for s in stmt.body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, ParallelBlock):
-        return ParallelBlock(body=tuple(_substitute(s, mapping) for s in stmt.body), location=stmt.location)
-    if isinstance(stmt, PermuteOp):
-        return PermuteOp(
-            sources=tuple(_sub_permute_ref(r, mapping) for r in stmt.sources),
-            targets=tuple(_sub_permute_ref(r, mapping) for r in stmt.targets),
-            add_comment=stmt.add_comment,
-            location=stmt.location,
-        )
-    if isinstance(stmt, BlockCall):
-        # Nested BlockCall: rewrite arg_bindings/out_bindings from outer names to
-        # input parameter names. Codex 2026-05-15 review #1.
-        return BlockCall(
-            callee=stmt.callee,
-            arg_bindings=tuple(_sub_block_arg(a, mapping) for a in stmt.arg_bindings),
-            out_bindings=tuple(_sub_block_arg(a, mapping) for a in stmt.out_bindings),
-            location=stmt.location,
-        )
-    # Pass through statements that don't reference slot allocators directly.
-    return stmt
-
-
-def _sub_block_arg(arg: BlockArg, mapping: dict[str, str]) -> BlockArg:
-    """Rewrite a BlockArg's referenced names per the mapping (for nested calls)."""
-    if isinstance(arg, AllocatorArg):
-        return AllocatorArg(name=mapping.get(arg.name, arg.name), location=arg.location)
-    if isinstance(arg, SingleQubitArg):
-        return SingleQubitArg(slot=_sub_slot(arg.slot, mapping), location=arg.location)
-    if isinstance(arg, SingleBitArg):
-        return SingleBitArg(bit=_sub_bit_ref(arg.bit, mapping), location=arg.location)
-    if isinstance(arg, QubitBundleArg):
-        return QubitBundleArg(
-            slots=tuple(_sub_slot(s, mapping) for s in arg.slots),
-            location=arg.location,
-        )
-    if isinstance(arg, BitBundleArg):
-        return BitBundleArg(
-            bits=tuple(_sub_bit_ref(b, mapping) for b in arg.bits),
-            location=arg.location,
-        )
-    return arg
-
-
-def _sub_bit_ref(ref: BitRef, mapping: dict[str, str]) -> BitRef:
-    if ref.register not in mapping:
-        return ref
-    return BitRef(register=mapping[ref.register], index=ref.index, location=ref.location)
-
-
-def _sub_permute_ref(ref: str, mapping: dict[str, str]) -> str:
-    """Rewrite PermuteOp source/target strings of the form `name` or `name[idx]`.
-
-    If the ref doesn't match, pass through UNLESS the ref textually mentions a
-    mapped allocator -- in that case raise rather than silently leak the outer
-    name into the flattened body (Codex 2026-05-15 review).
-    """
-    match = _PERMUTE_REF_RE.fullmatch(ref)
-    if match is None:
-        for key in mapping:
-            if key in ref:
+    # Flatten still only supports AllocatorArg (whole-QReg). SingleQubitArg /
+    # SingleBitArg / QubitBundleArg flatten support lands in 5e.2; until then
+    # they must raise (the `test_*_arg_rejected_in_flatten_pass` lock-ins
+    # depend on this). Reject in BOTH arg_bindings and out_bindings -- silently
+    # allowing a deferred shape in out_bindings would be a silent-fallback
+    # (Codex fix-pass-5).
+    for position, args in (("arg", call.arg_bindings), ("out", call.out_bindings)):
+        for arg in args:
+            if not isinstance(arg, AllocatorArg):
                 msg = (
-                    f"Cannot substitute PermuteOp ref {ref!r}: unsupported "
-                    f"ref form mentions mapped allocator {key!r}"
+                    f"Flatten pass does not yet support BlockArg "
+                    f"{type(arg).__name__} in {position}_bindings of "
+                    f"{call.callee!r}; only AllocatorArg is supported until "
+                    "Phase 3a.3 iter 5.2"
                 )
-                raise ValueError(msg)
-        return ref
-    name, suffix = match.group(1), match.group(2) or ""
-    return f"{mapping.get(name, name)}{suffix}"
-
-
-def _sub_slot(ref: SlotRef, mapping: dict[str, str]) -> SlotRef:
-    if ref.allocator not in mapping:
-        return ref
-    return SlotRef(allocator=mapping[ref.allocator], index=ref.index, location=ref.location)
+                raise NotImplementedError(msg)
+    # Build the PARAM -> OUTER BodyRemap (flatten inlines a BlockDecl body --
+    # which references param names -- at the call site, which uses the outer
+    # allocator). converter builds the inverse OUTER -> PARAM remap; both use
+    # the shared `substitute_stmt` (5e.1 unification -- one substitution core,
+    # no fix-one-forget-the-mirror drift).
+    remap = BodyRemap()
+    for inp, arg in zip(decl.inputs, call.arg_bindings, strict=True):
+        # AllocatorArg inputs are always array[qubit, N]; the emitter validates
+        # this, so flatten can trust inp.type_expr.size on this path.
+        size = getattr(inp.type_expr, "size", 0)
+        remap.add_whole_alloc(inp.name, arg.name, size)
+    return tuple(substitute_stmt(stmt, remap) for stmt in decl.body)

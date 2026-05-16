@@ -1602,26 +1602,27 @@ class TestBlockBodyStatementSubstitution:
         assert permute_stmts[0].sources == ("outer[0]", "outer[1]")
         assert permute_stmts[0].targets == ("outer[1]", "outer[0]")
 
-    def test_unparseable_permute_ref_mentioning_mapped_key_raises(self) -> None:
-        """Defensive raise (Codex 2026-05-15 review question 3): if a PermuteOp ref
-        cannot be parsed by the bare-name / `name[idx]` regex AND the ref textually
-        mentions a mapped allocator, raise instead of silently leaking outer names.
+    def test_unparseable_permute_ref_mentioning_partial_name_raises(self) -> None:
+        """Defensive raise (Codex review q3, 5e.1 shared substitution): if a
+        PermuteOp ref cannot be parsed by the bare-name / `name[idx]` regex AND
+        the ref textually mentions a partially-bound name, raise instead of
+        silently leaking. Unrelated unparseable refs pass through unchanged.
         """
-        from pecos.slr.ast.codegen._block_flatten import _sub_permute_ref
-        from pecos.slr.ast.converter import _substitute_permute_ref
+        from pecos.slr.ast._block_substitution import (
+            BodyRemap,
+            BodySubstitutionError,
+            _sub_permute_ref,
+        )
 
-        mapping = {"outer": "q"}
-        # Slice-form ref mentioning a mapped allocator -- not produced by SLR today
-        # but if the codegen layer ever sees one, it must raise rather than pass
-        # the unsubstituted string through.
-        with pytest.raises(ValueError, match=r"mapped allocator 'outer'"):
-            _substitute_permute_ref("outer[0:2]", mapping)
-        with pytest.raises(ValueError, match=r"mapped allocator 'outer'"):
-            _sub_permute_ref("outer[0:2]", mapping)
+        remap = BodyRemap()
+        # add_slot marks `outer` as partially bound.
+        remap.add_slot(("outer", 0), ("q", 0))
 
-        # Unrelated unparseable ref (not in mapping) passes through unchanged.
-        assert _substitute_permute_ref("other[0:2]", mapping) == "other[0:2]"
-        assert _sub_permute_ref("other[0:2]", mapping) == "other[0:2]"
+        with pytest.raises(BodySubstitutionError, match=r"partially-bound name 'outer'"):
+            _sub_permute_ref("outer[0:2]", remap)
+
+        # Unrelated unparseable ref (no partial name substring) passes through.
+        assert _sub_permute_ref("other[0:2]", remap) == "other[0:2]"
 
 
 class TestSlrBlockInputsWiring:

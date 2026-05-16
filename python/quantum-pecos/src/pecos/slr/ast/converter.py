@@ -31,9 +31,9 @@ Example:
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
+from pecos.slr.ast._block_substitution import BodyRemap, substitute_stmt
 from pecos.slr.ast.nodes import (
     AllocatorArg,
     AllocatorDecl,
@@ -42,7 +42,6 @@ from pecos.slr.ast.nodes import (
     BarrierOp,
     BinaryExpr,
     BinaryOp,
-    BitBundleArg,
     BitExpr,
     BitRef,
     BitTypeExpr,
@@ -61,14 +60,11 @@ from pecos.slr.ast.nodes import (
     PrepareOp,
     PrintOp,
     Program,
-    QubitBundleArg,
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
     ResourceEffect,
     ReturnOp,
-    SingleBitArg,
-    SingleQubitArg,
     SlotRef,
     UnaryExpr,
     UnaryOp,
@@ -407,7 +403,11 @@ class SlrToAst:
         inputs_spec = type(block).block_inputs  # type: ignore[attr-defined]
         # Map input name -> (resource effect enum, outer-scope binding name, size, kind="qubit"|"bit")
         bindings: list[tuple[str, ResourceEffect, str, int]] = []
-        substitution: dict[str, str] = {}  # outer allocator/register name -> input param name
+        # 5e.1: build a BodyRemap (outer -> param). SLR-side detection still
+        # only handles whole-QReg inputs (AllocatorArg); single-qubit /
+        # single-bit / bundle SLR detection is 5e.2. So only the
+        # whole-allocator (identity per-slot) builder is used here today.
+        remap = BodyRemap()
         for input_name, effect_value in inputs_spec.items():
             if not hasattr(block, input_name):
                 msg = (
@@ -429,7 +429,7 @@ class SlrToAst:
                 raise ValueError(msg)
             effect = _normalize_effect(effect_value, where=f"Block {type(block).__name__!r} input {input_name!r}")
             bindings.append((input_name, effect, outer_name, size))
-            substitution[outer_name] = input_name
+            remap.add_whole_alloc(outer_name, input_name, size)
 
         # Build the BlockDecl body by converting block.ops in a NEW sub-converter, then
         # rewriting allocator names from outer -> input parameter via _substitute.
@@ -440,7 +440,7 @@ class SlrToAst:
         sub._decl_counter = self._decl_counter  # type: ignore[attr-defined]
         sub_body = sub._convert_statements(block.ops)  # type: ignore[attr-defined]
         self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
-        rewritten_body = tuple(_substitute_stmt(stmt, substitution) for stmt in sub_body)
+        rewritten_body = tuple(substitute_stmt(stmt, remap) for stmt in sub_body)
 
         # Inputs are array[qubit, N] (Phase 3a.1 only supports quantum arrays).
         block_inputs: list[BlockInput] = []
@@ -905,148 +905,3 @@ def _normalize_effect(value: Any, *, where: str) -> ResourceEffect:
     )
     raise ValueError(msg)
 
-
-def _substitute_stmt(stmt: Any, mapping: dict[str, str]) -> Any:
-    """Rewrite SlotRef allocator + PrepareOp/BarrierOp allocator names per mapping.
-
-    Used to build a BlockDecl body that references parameter names rather than
-    the outer-scope binding names captured during the instance walk.
-    """
-    if isinstance(stmt, GateOp):
-        return GateOp(
-            gate=stmt.gate,
-            targets=tuple(_substitute_slot(t, mapping) for t in stmt.targets),
-            params=stmt.params,
-            location=stmt.location,
-        )
-    if isinstance(stmt, MeasureOp):
-        return MeasureOp(
-            targets=tuple(_substitute_slot(t, mapping) for t in stmt.targets),
-            results=stmt.results,
-            location=stmt.location,
-        )
-    if isinstance(stmt, PrepareOp):
-        return PrepareOp(
-            allocator=mapping.get(stmt.allocator, stmt.allocator),
-            slots=stmt.slots,
-            location=stmt.location,
-        )
-    if isinstance(stmt, BarrierOp):
-        return BarrierOp(
-            allocators=tuple(mapping.get(a, a) for a in stmt.allocators),
-            location=stmt.location,
-        )
-    if isinstance(stmt, IfStmt):
-        return IfStmt(
-            condition=stmt.condition,
-            then_body=tuple(_substitute_stmt(s, mapping) for s in stmt.then_body),
-            else_body=tuple(_substitute_stmt(s, mapping) for s in stmt.else_body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, RepeatStmt):
-        return RepeatStmt(
-            count=stmt.count,
-            body=tuple(_substitute_stmt(s, mapping) for s in stmt.body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, ForStmt):
-        return ForStmt(
-            variable=stmt.variable,
-            start=stmt.start,
-            stop=stmt.stop,
-            step=stmt.step,
-            body=tuple(_substitute_stmt(s, mapping) for s in stmt.body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, WhileStmt):
-        return WhileStmt(
-            condition=stmt.condition,
-            body=tuple(_substitute_stmt(s, mapping) for s in stmt.body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, ParallelBlock):
-        return ParallelBlock(
-            body=tuple(_substitute_stmt(s, mapping) for s in stmt.body),
-            location=stmt.location,
-        )
-    if isinstance(stmt, PermuteOp):
-        return PermuteOp(
-            sources=tuple(_substitute_permute_ref(r, mapping) for r in stmt.sources),
-            targets=tuple(_substitute_permute_ref(r, mapping) for r in stmt.targets),
-            add_comment=stmt.add_comment,
-            location=stmt.location,
-        )
-    if isinstance(stmt, BlockCall):
-        # Nested BlockCall inside a converted Block: arg_bindings/out_bindings were
-        # captured against the OUTER scope when the sub-converter ran. Rewrite them
-        # to use the parent Block's parameter names (Codex 2026-05-15 review #1).
-        return BlockCall(
-            callee=stmt.callee,
-            arg_bindings=tuple(_substitute_block_arg(a, mapping) for a in stmt.arg_bindings),
-            out_bindings=tuple(_substitute_block_arg(a, mapping) for a in stmt.out_bindings),
-            location=stmt.location,
-        )
-    return stmt
-
-
-def _substitute_slot(ref: SlotRef, mapping: dict[str, str]) -> SlotRef:
-    if ref.allocator not in mapping:
-        return ref
-    return SlotRef(allocator=mapping[ref.allocator], index=ref.index, location=ref.location)
-
-
-def _substitute_bit_ref(ref: BitRef, mapping: dict[str, str]) -> BitRef:
-    if ref.register not in mapping:
-        return ref
-    return BitRef(register=mapping[ref.register], index=ref.index, location=ref.location)
-
-
-def _substitute_block_arg(arg: BlockArg, mapping: dict[str, str]) -> BlockArg:
-    """Rewrite a BlockArg through the outer -> parameter-name mapping.
-
-    Used when a parent converted Block's body contains a nested BlockCall;
-    the nested call's arg_bindings/out_bindings reference outer allocator
-    or register names that must be renamed to parent input parameter names.
-    """
-    if isinstance(arg, AllocatorArg):
-        return AllocatorArg(name=mapping.get(arg.name, arg.name), location=arg.location)
-    if isinstance(arg, SingleQubitArg):
-        return SingleQubitArg(slot=_substitute_slot(arg.slot, mapping), location=arg.location)
-    if isinstance(arg, SingleBitArg):
-        return SingleBitArg(bit=_substitute_bit_ref(arg.bit, mapping), location=arg.location)
-    if isinstance(arg, QubitBundleArg):
-        return QubitBundleArg(
-            slots=tuple(_substitute_slot(s, mapping) for s in arg.slots),
-            location=arg.location,
-        )
-    if isinstance(arg, BitBundleArg):
-        return BitBundleArg(
-            bits=tuple(_substitute_bit_ref(b, mapping) for b in arg.bits),
-            location=arg.location,
-        )
-    return arg
-
-
-_PERMUTE_REF_RE = re.compile(r"([A-Za-z_]\w*)(\[\d+\])?$")
-
-
-def _substitute_permute_ref(ref: str, mapping: dict[str, str]) -> str:
-    """Rewrite PermuteOp source/target strings (`name` or `name[idx]`).
-
-    If the ref doesn't match the bare-name / indexed-name regex, pass it
-    through unchanged UNLESS the ref textually mentions a mapped allocator,
-    in which case raise -- silently leaking the outer name into the BlockDecl
-    body would be a fragile failure mode (Codex 2026-05-15 review).
-    """
-    match = _PERMUTE_REF_RE.fullmatch(ref)
-    if match is None:
-        for key in mapping:
-            if key in ref:
-                msg = (
-                    f"Cannot substitute PermuteOp ref {ref!r}: unsupported "
-                    f"ref form mentions mapped allocator {key!r}"
-                )
-                raise ValueError(msg)
-        return ref
-    name, suffix = match.group(1), match.group(2) or ""
-    return f"{mapping.get(name, name)}{suffix}"

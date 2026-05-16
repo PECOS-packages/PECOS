@@ -2451,3 +2451,45 @@ class TestScratchEffectS1:
         assert qasm.count("reset q[0];") >= 2
         assert "measure q[0] -> c[0];" in qasm
         assert "measure q[0] -> c[1];" in qasm
+
+    def test_scratch_return_rejected(self) -> None:
+        """Codex S1 r2: a scratch-bearing block must contain no ReturnOp.
+
+        Post-substitution a returned scratch slot keeps the OUTER name
+        (a partial VarExpr passes `whole_name` through unchanged), so it
+        is indistinguishable from a returned classical value -- S1
+        conservatively rejects ANY Return in a scratch block (in-scope
+        `Check` has none). Covers both returning the scratch qubit and
+        returning an unrelated value.
+        """
+        from pecos.slr import CReg, Main, QReg, Return
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class RetScratch(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), Measure(a) > out, Return(a))
+
+        prog = Main(q := QReg("q", 1), c := CReg("c", 1), RetScratch(q[0], c[0]))
+        with pytest.raises(ValueError, match=r"or any ReturnOp in a scratch-bearing block"):
+            slr_to_ast(prog)
+
+        class RetOther(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"a": "scratch", "out": "live_preserved"}
+
+            def __init__(self, a, out) -> None:
+                super().__init__()
+                self.a = a
+                self.out = out
+                self.extend(qb.Prep(a), Measure(a) > out, Return(out))
+
+        prog2 = Main(q := QReg("q", 1), c := CReg("c", 1), RetOther(q[0], c[0]))
+        with pytest.raises(ValueError, match=r"or any ReturnOp in a scratch-bearing block"):
+            slr_to_ast(prog2)

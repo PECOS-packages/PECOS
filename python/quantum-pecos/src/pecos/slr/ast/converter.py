@@ -1057,8 +1057,21 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
                 if _scratch_events(inner, name):
                     return ["UNSUPPORTED"]
         return []
-    # Anything else carrying no qubit-slot ref (e.g. AssignOp/PrintOp/
-    # ReturnOp on classical values) is irrelevant to a qubit scratch slot.
+    if isinstance(stmt, ReturnOp):
+        # A scratch input must never be handed back to the caller: S2
+        # allocates it internally and does not thread it through caller
+        # state, so returning it would diverge from the flatten/QASM path
+        # (Codex S1 r2 review). Detection cannot be precise here -- the
+        # substitution leaves Return values as the OUTER name (a partial
+        # VarExpr passes through `whole_name` unchanged), so a returned
+        # scratch slot is indistinguishable from a returned classical
+        # value at this point. Conservatively reject ANY ReturnOp in a
+        # scratch-bearing block (S1 scope: in-scope blocks like `Check`
+        # have no Return; relax deliberately in a later stage if needed).
+        return ["UNSUPPORTED"]
+    # Anything else carries no qubit-slot ref. AssignOp/PrintOp operate on
+    # classical bit/int expressions only -- a qubit scratch slot cannot
+    # appear there -- so they are irrelevant to a qubit scratch lifecycle.
     return []
 
 
@@ -1100,8 +1113,9 @@ def _validate_scratch_input(
         msg = (
             f"{where}: scratch inputs must have a flat Prep -> ... -> "
             "Measure lifecycle; referencing the scratch slot inside "
-            "control flow, Parallel, a nested BlockCall, or a Permute "
-            "is not supported"
+            "control flow, Parallel, a nested BlockCall, or a Permute -- "
+            "or any ReturnOp in a scratch-bearing block -- is not "
+            "supported"
         )
         raise ValueError(msg)
     if not events:

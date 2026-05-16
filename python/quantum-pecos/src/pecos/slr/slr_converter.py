@@ -132,11 +132,10 @@ class SlrConverter:
             raise ImportError(msg) from exc
 
         try:
-            parsed = binding.parse_assembly(ir_text)
+            bc = binding.parse_assembly(ir_text).as_bitcode()
         except RuntimeError as exc:
             msg = f"Failed to compile QIR to bitcode: {exc}"
             raise RuntimeError(msg) from exc
-        bc = parsed.as_bitcode()
         binding.shutdown()
         return bc
 

@@ -145,17 +145,28 @@ jobs:
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
 
-    # Only LLVM_SYS_140_PREFIX -- a single, semicolon-free, mangling-safe path
-    # that inkwell-using crates genuinely require. No linker / LIB / INCLUDE:
-    # rustc handles those itself once PECOS_MSVC_HOST_BIN is on PATH (above).
+    # config.toml [env] (no `linker=` -- the PATH-prepend in the just recipes
+    # makes rustc find the correct MSVC link.exe, so the linker pin is gone).
+    # LIB/INCLUDE are still required: rustc finds the *linker* but does NOT
+    # populate its LIB env, and git-bash mangles the ambient LIB at the
+    # bash->native-cargo spawn boundary (proven: LNK1181 on kernel32.lib in
+    # build-selene even with the correct linker). cargo reads [env] from this
+    # file after it starts, bypassing the mangled shell env entirely -- this is
+    # the one irreducible remedy for that MSYS spawn-mangling given `just`
+    # mandates git-bash. LLVM_SYS_140_PREFIX is a single mangling-safe path
+    # inkwell needs. TOML literal (single-quoted) strings for the Windows
+    # paths; guarded so an empty value can't clobber via force = true.
     - name: Configure LLVM environment (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         $escapedLLVM = $env:LLVM_SYS_140_PREFIX.Replace('\', '/')
+        $libLine = if ($env:LIB) { "LIB = { value = '$($env:LIB)', force = true }`n" } else { "" }
+        $incLine = if ($env:INCLUDE) { "INCLUDE = { value = '$($env:INCLUDE)', force = true }`n" } else { "" }
         @"
         [env]
         LLVM_SYS_140_PREFIX = { value = "$escapedLLVM", force = true }
+        $libLine$incLine
         "@ | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
 
     # cargo install runs cargo directly (not via just), so prepend the MSVC

@@ -16,8 +16,8 @@ This module provides an example implementation of logical teleportation using th
 computation with error correction circuits.
 """
 
-from pecos.qeclib.steane.steane_class import Steane
-from pecos.slr import Barrier, CReg, If, Main
+from pecos.slr import Barrier, CReg, If, Main, Return, SlrConverter
+from pecos.slr.qeclib.steane.steane_class import Steane
 
 # Turn of Black's formatting to allow for newline spacing below:
 # fmt: off
@@ -73,9 +73,12 @@ def telep(prep_basis: str, meas_basis: str) -> str:
 
         # Final output stored in `m_out[0]`
         sout.m(meas_basis, m_out[0]),
+
+        # Expose classical results explicitly (Phase 3b: no implicit return).
+        Return(m_bell, m_out),
     )
 
-    return prog.qasm()  # Convert the program to extended OpenQASM 2.0
+    return SlrConverter(prog).qasm()  # Convert the program to extended OpenQASM 2.0
 
 
 def t_gate(prep_basis: str, meas_basis: str) -> str:
@@ -121,8 +124,11 @@ def t_gate(prep_basis: str, meas_basis: str) -> str:
 
         # Final output stored in `m_out[1]`
         sin.m(meas_basis, m_out[1]),
+
+        # Expose classical results explicitly (Phase 3b: no implicit return).
+        Return(m_reject, m_t, m_out),
     )
 
-    return prog.qasm()
+    return SlrConverter(prog).qasm()
 
 # fmt: on

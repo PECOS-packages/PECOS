@@ -12,8 +12,8 @@
 """Phase 3a.3 iter 5e.1 -- direct unit tests for the shared body substitution.
 
 The 7 already-converted Steane Blocks only exercise the *whole-allocator
-identity* path (`q[i] -> q[i]`). Per Codex's iter-5e plan review, 5e.1 is
-"dead-code-with-tests" without coverage of the NON-identity slot/bit maps
+identity* path (`q[i] -> q[i]`). 5e.1 is "dead-code-with-tests" without
+coverage of the NON-identity slot/bit maps
 (`q[2] -> d[0]`, `c[3] -> out[0]`) and every recursive node kind plus the
 reject-on-partial paths. These tests pin exactly that, asserting the
 rewritten ref (not just "it compiled").
@@ -233,8 +233,8 @@ class TestPermuteAndPrepare:
 
     def test_prepare_slots_remapped_preserves_source_order(self) -> None:
         # Prep(q[2], q[5]) under q[2]->d[0], q[5]->d[1] -> Prep(d, (0, 1)).
-        # Exact order asserted (Codex 5e.1 #3): the lowering preserves source
-        # slot order; sorted() would mask an ordering regression.
+        # Exact order asserted: the lowering preserves source slot order;
+        # sorted() would mask an ordering regression.
         prep = PrepareOp(allocator="q", slots=(2, 5))
         out = substitute_stmt(prep, _bundle_remap())
         assert out.allocator == "d"
@@ -261,7 +261,7 @@ class TestPermuteAndPrepare:
 
 
 class TestBuilderConflictRejection:
-    """Codex 5e.1 review #2: an outer name bound in conflicting modes
+    """An outer name bound in conflicting modes
     (whole + partial, or whole twice) is input aliasing -- reject at
     construction time, not silently let whole win at lookup. Protects the
     QASM/flatten path where Guppy's own linearity alias check never runs.
@@ -291,6 +291,31 @@ class TestBuilderConflictRejection:
         remap.add_slot(("q", 0), ("d", 0))
         remap.add_bit(("c", 3), ("out", 0))  # different name -- fine
         remap.add_whole_alloc("r", "rp", 2)  # different name -- fine
+
+    def test_repeated_exact_slot_source_rejected(self) -> None:
+        """A repeated exact source slot must reject, not
+        silently overwrite (a `[q[0], q[0]]` bundle or two single-qubit
+        inputs aliased to the same outer slot -- corrupts body rewrite;
+        Guppy rejects on linearity while QASM flatten emitted bad code).
+        """
+        remap = BodyRemap()
+        remap.add_slot(("q", 0), ("d", 0))
+        with pytest.raises(BodySubstitutionError, match=r"qubit slot \('q', 0\) is already bound"):
+            remap.add_slot(("q", 0), ("d", 1))
+
+    def test_repeated_exact_bit_source_rejected(self) -> None:
+        remap = BodyRemap()
+        remap.add_bit(("c", 0), ("out", 0))
+        with pytest.raises(BodySubstitutionError, match=r"bit \('c', 0\) is already bound"):
+            remap.add_bit(("c", 0), ("flag", 0))
+
+    def test_distinct_slots_same_dst_register_ok(self) -> None:
+        # Distinct source slots are fine even if they target the same
+        # destination allocator at different indices (the flatten
+        # PARAM->OUTER direction does exactly this for a bundle).
+        remap = BodyRemap()
+        remap.add_slot(("d", 0), ("q", 0))
+        remap.add_slot(("d", 1), ("q", 2))
 
 
 class TestRejectOnPartialNameLevel:

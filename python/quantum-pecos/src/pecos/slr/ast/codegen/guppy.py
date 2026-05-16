@@ -977,8 +977,7 @@ class AstToGuppy:
             raise GuppyCodegenError(msg)
 
         # Phase 1: validate every arg + out binding BEFORE touching linearity state, so
-        # a late-raised GuppyCodegenError can't leave the tracker half-consumed (Codex
-        # 2026-05-15 review).
+        # a late-raised GuppyCodegenError can't leave the tracker half-consumed.
         # Each validated_args entry is tagged with one of "array",
         # "single_qubit", "single_bit", or "qubit_bundle" so the Phase-2 emit
         # step knows how to pack the call argument.
@@ -1011,8 +1010,7 @@ class AstToGuppy:
             # Cross-check: a LIVE_PRESERVED input's out_binding MUST reference the same
             # outer-scope slot/allocator as its arg_binding. Otherwise the emitter would
             # blindly set_live() on a slot that was never consumed, producing invalid
-            # Guppy where the never-consumed slot is overwritten (Codex 2026-05-15
-            # iter-5b review).
+            # Guppy where the never-consumed slot is overwritten.
             arg_kind, arg_info = validated_args[live_arg_index[out_idx]][1:]
             if (kind, info) != (arg_kind, arg_info):
                 msg = (
@@ -1031,8 +1029,7 @@ class AstToGuppy:
         # Without this, the overlap would only surface mid-Phase-2 as a
         # LinearityError ("slot consumed") with the tracker half-mutated. Raising
         # here keeps the "all validation before linearity mutation" invariant
-        # strict (Codex 2026-05-15 iter-5d review #3). Bits are copyable so
-        # single_bit args are excluded.
+        # strict. Bits are copyable so single_bit args are excluded.
         seen_slots: dict[tuple[str, int], str] = {}
         for inp, kind, info in validated_args:
             if kind == "array":

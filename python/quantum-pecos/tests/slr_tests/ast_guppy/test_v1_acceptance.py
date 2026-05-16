@@ -8,7 +8,7 @@ Source matrix:
     ~/Repos/pecos-docs/design/slr/v1-feature-matrix.md
     ~/Repos/pecos-docs/design/slr/stage5-integrity-review.md (findings 5, 6)
 
-Test layout follows Codex's "practical v1 acceptance set" plus the
+Test layout follows the "practical v1 acceptance set" plus the
 coverage gaps surfaced in stage 5 (final-root-return, static For,
 Parallel, Prep-after-measure, mixed Permute, gates beyond CX,
 SZ/SZdg mapping, measurement-without-output, targeted unsupported
@@ -221,7 +221,7 @@ class TestReturn:
 
 
 # Rejection tests for divergent control flow + unsupported gates land
-# in a follow-up PR once Codex's emitter has a specific `LinearityError`
+# in a follow-up PR once the emitter has a specific `LinearityError`
 # (or analogous typed error) to assert against. Asserting `Exception`
 # today would silently pass on the AST path's pre-existing breakage --
 # a fallback the design philosophy explicitly disallows. See:

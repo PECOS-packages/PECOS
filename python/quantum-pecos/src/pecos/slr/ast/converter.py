@@ -60,11 +60,14 @@ from pecos.slr.ast.nodes import (
     PrepareOp,
     PrintOp,
     Program,
+    QubitBundleArg,
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
     ResourceEffect,
     ReturnOp,
+    SingleBitArg,
+    SingleQubitArg,
     SlotRef,
     UnaryExpr,
     UnaryOp,
@@ -400,61 +403,156 @@ class SlrToAst:
         body is the block's `ops` with allocator names rewritten from the
         outer-scope binding name to the input parameter name.
         """
+        # Concrete-isinstance detection (`.sym`/`.size` duck-typing
+        # misclassifies CReg as QReg). Local import keeps the
+        # SLR var classes off the module-import path (circular-safe, matching
+        # the other lazy `from pecos.slr...` imports in this file).
+        from pecos.slr.vars import (  # noqa: PLC0415
+            Bit as SlrBit,
+        )
+        from pecos.slr.vars import (  # noqa: PLC0415
+            CReg,
+            QReg,
+            Qubit,
+            SymbolicElem,
+        )
+
         inputs_spec = type(block).block_inputs  # type: ignore[attr-defined]
-        # Map input name -> (resource effect enum, outer-scope binding name, size, kind="qubit"|"bit")
-        bindings: list[tuple[str, ResourceEffect, str, int]] = []
-        # 5e.1: build a BodyRemap (outer -> param). SLR-side detection still
-        # only handles whole-QReg inputs (AllocatorArg); single-qubit /
-        # single-bit / bundle SLR detection is 5e.2. So only the
-        # whole-allocator (identity per-slot) builder is used here today.
+        cls_name = type(block).__name__
         remap = BodyRemap()
+        block_inputs: list[BlockInput] = []
+        arg_bindings: list[BlockArg] = []
+        out_bindings: list[BlockArg] = []
+
+        # Cross-input aliasing guard. The same concrete qubit slot (or
+        # classical bit) bound to two block-input positions --
+        # e.g. `[q[0], q[0]]` or two single-qubit inputs both `q[0]` --
+        # silently corrupts body substitution: Guppy rejects it on linearity
+        # while the QASM flatten path emits invalid `cx q[0], q[0];`.
+        # BodyRemap.add_slot/add_bit also reject this (defense-in-depth), but
+        # we check here first to give a Block-context error message.
+        seen_qubit: dict[tuple[str, int], str] = {}
+        seen_bit: dict[tuple[str, int], str] = {}
+
+        def _claim_qubit(reg: str, index: int, *, here: str, owner: str) -> None:
+            prior = seen_qubit.get((reg, index))
+            if prior is not None:
+                msg = (
+                    f"{here}: qubit {reg}[{index}] is also bound by input "
+                    f"{prior!r}; a qubit cannot be aliased to two block-input "
+                    "positions (no-cloning)"
+                )
+                raise ValueError(msg)
+            seen_qubit[(reg, index)] = owner
+
+        def _claim_bit(reg: str, index: int, *, here: str, owner: str) -> None:
+            prior = seen_bit.get((reg, index))
+            if prior is not None:
+                msg = (
+                    f"{here}: bit {reg}[{index}] is also bound by input "
+                    f"{prior!r}; the same outer bit cannot back two "
+                    "block-input positions (lossy substitution)"
+                )
+                raise ValueError(msg)
+            seen_bit[(reg, index)] = owner
+
         for input_name, effect_value in inputs_spec.items():
             if not hasattr(block, input_name):
                 msg = (
-                    f"Block {type(block).__name__!r} declares input {input_name!r} but the "
-                    f"instance does not bind self.{input_name} (set it in __init__ after super().__init__())"
+                    f"Block {cls_name!r} declares input {input_name!r} but the "
+                    f"instance does not bind self.{input_name} (set it in __init__ "
+                    "after super().__init__())"
                 )
                 raise ValueError(msg)
             var = getattr(block, input_name)
-            outer_name = getattr(var, "sym", None) or getattr(var, "name", None)
-            if outer_name is None:
-                msg = (
-                    f"Block {type(block).__name__!r} input {input_name!r} bound to "
-                    f"{var!r} which has no .sym/.name attribute"
-                )
-                raise ValueError(msg)
-            size = getattr(var, "size", None) or getattr(var, "capacity", None)
-            if size is None:
-                msg = f"Block {type(block).__name__!r} input {input_name!r}: cannot determine size from {var!r}"
-                raise ValueError(msg)
-            effect = _normalize_effect(effect_value, where=f"Block {type(block).__name__!r} input {input_name!r}")
-            bindings.append((input_name, effect, outer_name, size))
-            remap.add_whole_alloc(outer_name, input_name, size)
+            where = f"Block {cls_name!r} input {input_name!r}"
+            effect = _normalize_effect(effect_value, where=where)
 
-        # Build the BlockDecl body by converting block.ops in a NEW sub-converter, then
-        # rewriting allocator names from outer -> input parameter via _substitute.
-        # Share `_decl_counter` so nested converted Blocks get globally-unique names
-        # (Codex 2026-05-15 review #2: nested same-class Blocks were colliding on
-        # `inner_0` because each sub-converter restarted its counter at 0).
+            type_expr: TypeExpr
+            arg: BlockArg
+            if isinstance(var, QReg):
+                type_expr = ArrayTypeExpr(element=QubitTypeExpr(), size=var.size)
+                arg = AllocatorArg(name=var.sym)
+                remap.add_whole_alloc(var.sym, input_name, var.size)
+            elif isinstance(var, Qubit):
+                type_expr = QubitTypeExpr()
+                _claim_qubit(var.reg.sym, var.index, here=where, owner=input_name)
+                arg = SingleQubitArg(slot=SlotRef(allocator=var.reg.sym, index=var.index))
+                remap.add_slot((var.reg.sym, var.index), (input_name, 0))
+            elif isinstance(var, SlrBit):
+                type_expr = BitTypeExpr()
+                _claim_bit(var.reg.sym, var.index, here=where, owner=input_name)
+                arg = SingleBitArg(bit=BitRef(register=var.reg.sym, index=var.index))
+                remap.add_bit((var.reg.sym, var.index), (input_name, 0))
+            elif isinstance(var, (list, tuple)):
+                if not var:
+                    msg = f"{where}: empty {type(var).__name__} bundle is not supported"
+                    raise ValueError(msg)
+                if all(isinstance(e, Qubit) for e in var):
+                    slots = tuple(
+                        SlotRef(allocator=e.reg.sym, index=e.index) for e in var
+                    )
+                    type_expr = ArrayTypeExpr(element=QubitTypeExpr(), size=len(var))
+                    arg = QubitBundleArg(slots=slots)
+                    for k, e in enumerate(var):
+                        _claim_qubit(e.reg.sym, e.index, here=where, owner=input_name)
+                        remap.add_slot((e.reg.sym, e.index), (input_name, k))
+                elif all(isinstance(e, SlrBit) for e in var):
+                    msg = (
+                        f"{where}: list[Bit] (classical bit bundle / BitBundleArg) "
+                        "is not yet supported in Phase 3a.3"
+                    )
+                    raise ValueError(msg)
+                else:
+                    msg = (
+                        f"{where}: a bundle must be all Qubit (or all Bit, deferred); "
+                        f"got mixed/unsupported element types in {var!r}"
+                    )
+                    raise ValueError(msg)
+            # Every unsupported-input-shape branch raises ValueError uniformly
+            # (the bundle branches above do too): the public rejection surface
+            # is a single exception type so callers catch one thing, and the
+            # rejection tests pin ValueError. TRY004 wants
+            # TypeError for the isinstance-guarded branches, but that would
+            # split the surface across two exception types -- noqa is the
+            # correct call here.
+            elif isinstance(var, SymbolicElem):
+                msg = (
+                    f"{where}: symbolic (loop-variable-indexed) Qubit/Bit is not "
+                    "supported as a block input; pass a concrete element"
+                )
+                raise ValueError(msg)  # noqa: TRY004
+            elif isinstance(var, CReg):
+                msg = (
+                    f"{where}: whole CReg input is not yet supported in Phase 3a.3 "
+                    "(only single Bit via SingleBitArg); pass a single bit `c[i]`"
+                )
+                raise ValueError(msg)  # noqa: TRY004
+            else:
+                msg = (
+                    f"{where}: unsupported binding type {type(var).__name__} "
+                    f"({var!r}); supported: QReg, Qubit, list[Qubit], Bit"
+                )
+                raise ValueError(msg)  # noqa: TRY004
+
+            block_inputs.append(BlockInput(name=input_name, effect=effect, type_expr=type_expr))
+            arg_bindings.append(arg)
+            # out_bindings mirror the arg BlockArg for each LIVE_PRESERVED input
+            # (the emitter's iter-5b cross-check requires arg == out, by value).
+            if effect is ResourceEffect.LIVE_PRESERVED:
+                out_bindings.append(arg)
+
+        # Build the BlockDecl body by converting block.ops in a NEW sub-converter,
+        # then remapping outer -> param via the shared substitute_stmt. Share
+        # `_decl_counter` so nested converted Blocks get globally-unique names.
         sub = SlrToAst()
         sub._decl_counter = self._decl_counter  # type: ignore[attr-defined]
         sub_body = sub._convert_statements(block.ops)  # type: ignore[attr-defined]
         self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
         rewritten_body = tuple(substitute_stmt(stmt, remap) for stmt in sub_body)
 
-        # Inputs are array[qubit, N] (Phase 3a.1 only supports quantum arrays).
-        block_inputs: list[BlockInput] = []
-        for input_name, effect, _outer, size in bindings:
-            block_inputs.append(
-                BlockInput(
-                    name=input_name,
-                    effect=effect,
-                    type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=size),
-                ),
-            )
-
-        # Unique decl name per call site (Phase 3a.1; dedup arrives in Phase 3a.3).
-        decl_name = f"{type(block).__name__.lower()}_{self._decl_counter}"
+        # Unique decl name per call site (dedup is a later optimization).
+        decl_name = f"{cls_name.lower()}_{self._decl_counter}"
         self._decl_counter += 1
 
         decl = BlockDecl(name=decl_name, inputs=tuple(block_inputs), body=rewritten_body)
@@ -462,16 +560,11 @@ class SlrToAst:
         self._block_decls.extend(sub._block_decls)
         self._block_decls.append(decl)
 
-        # Build the BlockCall referencing the outer-scope names. Whole-allocator
-        # binding is the only shape produced by SLR-side wiring today; other
-        # BlockArg shapes (SingleQubitArg, SingleBitArg, QubitBundleArg,
-        # BitBundleArg) are direct-AST constructions only until later iter 5x
-        # SLR-side support lands.
-        arg_bindings: tuple[BlockArg, ...] = tuple(AllocatorArg(name=outer) for _n, _e, outer, _s in bindings)
-        live_out: tuple[BlockArg, ...] = tuple(
-            AllocatorArg(name=outer) for _n, eff, outer, _s in bindings if eff is ResourceEffect.LIVE_PRESERVED
+        return BlockCall(
+            callee=decl_name,
+            arg_bindings=tuple(arg_bindings),
+            out_bindings=tuple(out_bindings),
         )
-        return BlockCall(callee=decl_name, arg_bindings=arg_bindings, out_bindings=live_out)
 
     def _convert_gate(self, gate: Any) -> Statement:
         """Convert an SLR gate to an AST GateOp, PrepareOp, or MeasureOp."""

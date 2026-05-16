@@ -29,12 +29,16 @@ from typing import TYPE_CHECKING
 from pecos.slr.ast._block_substitution import BodyRemap, substitute_stmt
 from pecos.slr.ast.nodes import (
     AllocatorArg,
+    BitBundleArg,
     BlockCall,
     ForStmt,
     IfStmt,
     ParallelBlock,
     Program,
+    QubitBundleArg,
     RepeatStmt,
+    SingleBitArg,
+    SingleQubitArg,
     WhileStmt,
 )
 
@@ -45,8 +49,8 @@ if TYPE_CHECKING:
 def validate_unique_block_decl_names(program: Program) -> None:
     """Raise ValueError if any BlockDecl name appears more than once.
 
-    Shared precondition check (Codex 2026-05-15 review #3): both the Guppy
-    emitter and the non-Guppy flatten pass require globally-unique BlockDecl
+    Shared precondition check: both the Guppy emitter and the non-Guppy
+    flatten pass require globally-unique BlockDecl
     names. Keeping the check in one place ensures the contract stays in sync
     across codegens.
     """
@@ -149,31 +153,45 @@ def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statemen
             f"BlockDecl declares {len(decl.inputs)} inputs"
         )
         raise ValueError(msg)
-    # Flatten still only supports AllocatorArg (whole-QReg). SingleQubitArg /
-    # SingleBitArg / QubitBundleArg flatten support lands in 5e.2; until then
-    # they must raise (the `test_*_arg_rejected_in_flatten_pass` lock-ins
-    # depend on this). Reject in BOTH arg_bindings and out_bindings -- silently
-    # allowing a deferred shape in out_bindings would be a silent-fallback
-    # (Codex fix-pass-5).
+    # 5e.2: AllocatorArg / SingleQubitArg / SingleBitArg / QubitBundleArg all
+    # inline. BitBundleArg is the only still-deferred shape -- reject it (in
+    # BOTH arg and out bindings; silently allowing it in out_bindings would
+    # be a silent-fallback). The `test_bitbundle_*_rejected` lock-ins depend
+    # on this.
     for position, args in (("arg", call.arg_bindings), ("out", call.out_bindings)):
         for arg in args:
-            if not isinstance(arg, AllocatorArg):
+            if isinstance(arg, BitBundleArg):
                 msg = (
                     f"Flatten pass does not yet support BlockArg "
                     f"{type(arg).__name__} in {position}_bindings of "
-                    f"{call.callee!r}; only AllocatorArg is supported until "
-                    "Phase 3a.3 iter 5.2"
+                    f"{call.callee!r} (BitBundleArg is still deferred)"
                 )
                 raise NotImplementedError(msg)
     # Build the PARAM -> OUTER BodyRemap (flatten inlines a BlockDecl body --
     # which references param names -- at the call site, which uses the outer
-    # allocator). converter builds the inverse OUTER -> PARAM remap; both use
+    # binding). converter builds the inverse OUTER -> PARAM remap; both use
     # the shared `substitute_stmt` (5e.1 unification -- one substitution core,
-    # no fix-one-forget-the-mirror drift).
+    # no fix-one-forget-the-mirror drift). Only arg_bindings drive the body
+    # rewrite; out_bindings do not contribute (the inlined body writes the
+    # outer slots directly -- there is no separate return-unpack in flatten).
     remap = BodyRemap()
     for inp, arg in zip(decl.inputs, call.arg_bindings, strict=True):
-        # AllocatorArg inputs are always array[qubit, N]; the emitter validates
-        # this, so flatten can trust inp.type_expr.size on this path.
-        size = getattr(inp.type_expr, "size", 0)
-        remap.add_whole_alloc(inp.name, arg.name, size)
+        if isinstance(arg, AllocatorArg):
+            # AllocatorArg inputs are always array[qubit, N]; the emitter
+            # validates this, so flatten can trust inp.type_expr.size.
+            size = getattr(inp.type_expr, "size", 0)
+            remap.add_whole_alloc(inp.name, arg.name, size)
+        elif isinstance(arg, SingleQubitArg):
+            remap.add_slot((inp.name, 0), (arg.slot.allocator, arg.slot.index))
+        elif isinstance(arg, SingleBitArg):
+            remap.add_bit((inp.name, 0), (arg.bit.register, arg.bit.index))
+        elif isinstance(arg, QubitBundleArg):
+            for k, slot in enumerate(arg.slots):
+                remap.add_slot((inp.name, k), (slot.allocator, slot.index))
+        else:  # BitBundleArg already rejected above; defensive
+            msg = (
+                f"Flatten pass: unexpected BlockArg {type(arg).__name__} for "
+                f"input {inp.name!r} of {call.callee!r}"
+            )
+            raise NotImplementedError(msg)
     return tuple(substitute_stmt(stmt, remap) for stmt in decl.body)

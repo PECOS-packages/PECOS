@@ -98,7 +98,7 @@ class ParallelOptimizer:
             # bound for `block_inputs` lookup) survive the optimization pass.
             # Reconstructing via `Block(*new_ops)` here would erase that state
             # and cause Phase 3a.3 converted Blocks to silently fall back to
-            # the v1 flatten path. (Codex 2026-05-15 review #4.)
+            # the v1 flatten path.
             cls = type(block)
             if cls is Block:
                 new_block = Block(*new_ops)
@@ -169,8 +169,7 @@ class ParallelOptimizer:
         converted Block (a Block subclass with class-level `block_inputs`).
         Splatting a converted Block's body into the surrounding Parallel
         would destroy its scope boundary -- the BlockCall lowering needs the
-        Block to remain a single op in the AST. (Codex 2026-05-15 review #1
-        of fix-pass-3.)
+        Block to remain a single op in the AST.
         """
         for op in parallel.ops:
             if isinstance(op, If | Repeat):

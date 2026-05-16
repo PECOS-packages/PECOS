@@ -468,7 +468,7 @@ class TestInlineCRegDefiniteAssignment:
     """
 
     def test_print_bit_before_measure_on_inline_creg_rejected(self) -> None:
-        """Codex's original tracer-bullet bug case, lifted to bit-level form.
+        """Original tracer-bullet bug case, lifted to bit-level form.
 
         Print(inline[0]) before Measure(...) > inline[0] is rejected because
         bit-level definite-assignment hasn't been established for index 0.
@@ -567,7 +567,7 @@ class TestInlineCRegDefiniteAssignment:
         SlrConverter(prog).hugr()
 
     def test_print_inline_bit_with_only_other_bit_measured_rejected(self) -> None:
-        """Codex's exact bit-level soundness gap: Measure(inline[0]); Print(inline[1])
+        """Bit-level soundness gap: Measure(inline[0]); Print(inline[1])
         should be rejected, not silently emit a runtime out-of-bounds read.
 
         Before bit-level tracking the validator marked the whole inline CReg as
@@ -606,8 +606,8 @@ class TestInlineCRegDefiniteAssignment:
         with pytest.raises(GuppyCodegenError, match=r"Print\(whole-CReg\) of inline CReg"):
             SlrConverter(prog).hugr()
 
-    def test_whole_inline_creg_print_codex_shrink_case_rejected(self) -> None:
-        """Regression for Codex's tracer-bullet review v2: whole-CReg Print of an
+    def test_whole_inline_creg_print_shrink_case_rejected(self) -> None:
+        """Regression for the tracer-bullet shrink case: whole-CReg Print of an
         inline CReg silently emitting a register smaller than the user declared.
 
         Before this fix, `inline = CReg("inline", 2)` with only inline[0]
@@ -641,11 +641,11 @@ class TestInlineCRegDefiniteAssignment:
         SlrConverter(prog).hugr()
 
 
-# ── Additional path-signature edge cases per Codex's review ─────────────
+# ── Additional path-signature edge cases ───────────────────────────────
 
 
 class TestPathSignatureEdgeCases:
-    """Coverage Codex called out as missing in f2ebb32c."""
+    """Coverage called out as missing in f2ebb32c."""
 
     def test_while_with_print_rejected(self) -> None:
         """While body with Print is rejected (v1 also rejects While outright)."""
@@ -738,7 +738,7 @@ class TestPathSignatureEdgeCases:
             emitter.generate(prog)
 
 
-# ── Cross-codegen byte-identity (per Codex review v2-blockcall-resource-effects) ─
+# ── Cross-codegen byte-identity (v2-blockcall-resource-effects) ─────────
 
 
 class TestCrossCodegenPrintEmission:
@@ -782,7 +782,7 @@ class TestCrossCodegenPrintEmission:
     def test_qasm_emits_print_as_exactly_one_comment_line(self) -> None:
         """QASM adds exactly one `// Print result.debug c` line; otherwise identical.
 
-        Per Codex round-3 review: "in `added_lines`" is too loose -- a future
+        "in `added_lines`" is too loose -- a future
         regression could add extra lines silently and the test would still pass.
         Assert the added line is exactly `[expected_comment]` (one line, no more).
         """
@@ -816,7 +816,7 @@ class TestCrossCodegenPrintEmission:
 
 
 class TestSeleneShapeEdgeCases:
-    """Pin non-obvious Selene `to_dict()` shapes that grug guessed wrong about.
+    """Pin non-obvious Selene `to_dict()` shapes that were easy to get wrong.
 
     These tests use empirically-probed reference shapes. If Selene's
     representation changes, the test fails loudly and the doc text in

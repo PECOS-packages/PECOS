@@ -20,8 +20,8 @@ build it in opposite directions but use the identical substitution core:
   inlining a `BlockDecl` body at its call site for non-Guppy codegens.
 
 Unifying both into one `substitute_stmt` eliminates the
-fix-one-forget-the-mirror bug class (Codex caught PermuteOp and BlockCall
-gaps in earlier passes precisely because two parallel copies drifted).
+fix-one-forget-the-mirror bug class: two parallel copies previously
+drifted, leaving PermuteOp and BlockCall substitution gaps.
 
 `substitute_stmt` is **fully recursive** over every node that can carry a
 `SlotRef` / `BitRef` / expression, including the spots the pre-5e
@@ -79,8 +79,7 @@ if TYPE_CHECKING:
 _PERMUTE_REF_RE = re.compile(r"([A-Za-z_]\w*)(?:\[(\d+)\])?$")
 # Leading identifier token of an arbitrary (possibly unparseable) ref, used
 # to decide reject-on-partial WITHOUT a loose substring match -- `"q" in
-# "sq[0:2]"` would otherwise falsely reject an unrelated `sq` ref
-# (Codex 5e.1 review #1).
+# "sq[0:2]"` would otherwise falsely reject an unrelated `sq` ref.
 _LEADING_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 
 
@@ -114,9 +113,8 @@ class BodyRemap:
     # and a whole binding maps exactly one src. Conflicting builder calls
     # (same name bound both whole and partial, or whole-bound twice) are an
     # input-aliasing error: reject at construction time rather than letting
-    # whole silently win at lookup (Codex 5e.1 review #2). This protects the
-    # QASM/flatten path too, where Guppy's own linearity alias check never
-    # runs.
+    # whole silently win at lookup. This protects the QASM/flatten path too,
+    # where Guppy's own linearity alias check never runs.
 
     def _reject_conflict(self, name: str, *, mode: str) -> None:
         if name in self._whole_alloc:
@@ -140,14 +138,40 @@ class BodyRemap:
             self._slot[(src, i)] = (dst, i)
 
     def add_slot(self, src: tuple[str, int], dst: tuple[str, int]) -> None:
-        """Bind one outer qubit slot; marks `src` allocator partial."""
+        """Bind one outer qubit slot; marks `src` allocator partial.
+
+        A repeated exact `src` slot is rejected: silently overwriting it
+        would drop the earlier binding and corrupt the body rewrite -- e.g.
+        a `[q[0], q[0]]` bundle, or two single-qubit inputs aliased to the
+        same outer slot. Qubit aliasing is invalid anyway (no-cloning);
+        fail loudly here so it cannot reach codegen.
+        """
         self._reject_conflict(src[0], mode="partial (per-slot)")
+        if src in self._slot:
+            msg = (
+                f"BodyRemap: outer qubit slot {src!r} is already bound "
+                f"(to {self._slot[src]!r}); a qubit cannot be aliased to "
+                "two block-input positions (no-cloning)"
+            )
+            raise BodySubstitutionError(msg)
         self._slot[src] = dst
         self._partial_names.add(src[0])
 
     def add_bit(self, src: tuple[str, int], dst: tuple[str, int]) -> None:
-        """Bind one outer classical bit; marks `src` register partial."""
+        """Bind one outer classical bit; marks `src` register partial.
+
+        A repeated exact `src` bit is rejected for the same reason as
+        `add_slot`: a second binding would silently overwrite the first
+        and lose body references to it during substitution.
+        """
         self._reject_conflict(src[0], mode="partial (per-bit)")
+        if src in self._bit:
+            msg = (
+                f"BodyRemap: outer bit {src!r} is already bound "
+                f"(to {self._bit[src]!r}); the same outer bit cannot back "
+                "two block-input positions (lossy substitution)"
+            )
+            raise BodySubstitutionError(msg)
         self._bit[src] = dst
         self._partial_names.add(src[0])
 

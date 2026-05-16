@@ -16,7 +16,7 @@ pairs from PECOS examples, qeclib, and existing test fixtures.
 Runs each through `SlrConverter.hugr()` (now AST-routed by default
 post-cutover) and captures any failures.
 
-This is NOT a pytest test file. It's an audit tool grug runs
+This is NOT a pytest test file. It's an audit tool run
 during Workstream B and at cutover. Output is the seed for new
 rows in `~/Repos/pecos-docs/design/slr/v1-audit-manifest.md`.
 

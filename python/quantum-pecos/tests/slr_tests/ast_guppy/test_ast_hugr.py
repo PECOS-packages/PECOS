@@ -98,7 +98,7 @@ def test_hugr_returns_no_arg_entrypoint_runnable_via_hugr_adapter() -> None:
 
 
 def test_hugr_supports_explicit_return_of_root_allocator() -> None:
-    """Regression for Codex finding #1.
+    """Regression: explicit-return wrapper passthrough.
 
     A v1 program with an explicit `Return(q)` (no result CRegs) must compile.
     The wrapper must pass main's return value through, not silently discard it
@@ -116,7 +116,7 @@ def test_hugr_supports_explicit_return_of_root_allocator() -> None:
 
 
 def test_hugr_inline_measure_creg_round_trips_through_selene() -> None:
-    """Regression for Codex finding #2.
+    """Regression: inline-CReg result capture through the entry wrapper.
 
     The AST emitter infers inline `CReg("final", n)` registers from
     `Measure(q) > CReg(...)` and main returns them. The entry wrapper must

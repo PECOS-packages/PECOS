@@ -285,8 +285,7 @@ class TestConvertedQeclibBlocksUseBlockCallPath:
 
     Goes through `SlrConverter(prog).guppy()` end-to-end (not just `slr_to_ast`)
     so this catches regressions in any production transform between SLR and
-    AST (e.g., ParallelOptimizer dropping class identity, Codex 2026-05-15
-    review #4).
+    AST (e.g., ParallelOptimizer dropping class identity).
     """
 
     def _assert_uses_block_call(self, prog: object, expected_callee_prefix: str) -> None:
@@ -352,7 +351,7 @@ class TestConvertedQeclibBlocksUseBlockCallPath:
 
 
 class TestConsumedEffect:
-    """End-to-end coverage for CONSUMED inputs (Codex 2026-05-15 review caught this gap).
+    """End-to-end coverage for CONSUMED inputs.
 
     The Phase 3a.1 validator allows CONSUMED in BlockDecl.inputs, and the
     `_emit_block_call` code path marks the outer slot CONSUMED post-call. But
@@ -410,7 +409,7 @@ class TestConsumedEffect:
 class TestNestedConvertedBlocks:
     """Nested converted Blocks: an Outer Block whose body contains an Inner Block.
 
-    Codex 2026-05-15 review #1+#2 caught two bugs in nested support:
+    Two bugs in nested support were caught:
     - `_substitute_stmt` had no BlockCall branch, so nested calls leaked outer
       allocator names into the parent BlockDecl body.
     - Each sub-converter restarted `_decl_counter` at 0, causing name collisions
@@ -470,7 +469,7 @@ class TestNestedConvertedBlocks:
         assert nested.out_bindings == (AllocatorArg(name="q"),), nested.out_bindings
 
     def test_top_level_inner_plus_outer_containing_inner_have_unique_names(self) -> None:
-        """Codex review #2: same Block class top-level AND nested must not collide."""
+        """Same Block class top-level AND nested must not collide."""
         from pecos.slr import Block, CReg, Main, QReg
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.qeclib import qubit as qb
@@ -522,7 +521,7 @@ class TestNestedConvertedBlocks:
 
 
 class TestPrettyPrintHandlesBlockNodes:
-    """Codex 2026-05-15 fix-pass-4 review: `pretty_print` crashed on any program
+    """`pretty_print` crashed on any program
     containing a BlockCall because the visitor inherited `default_result()` which
     raises NotImplementedError. Lock in that pretty_print emits both BlockDecls
     and BlockCalls cleanly.
@@ -563,7 +562,7 @@ class TestPrettyPrintHandlesBlockNodes:
 
 
 class TestConvertedBlocksInsideParallel:
-    """Codex 2026-05-15 fix-pass-3 review #1: a converted Block inside Parallel(...)
+    """A converted Block inside Parallel(...)
     used to silently flatten because ParallelOptimizer's `_collect_operations`
     splatted the Block's body into the surrounding Parallel, destroying its
     scope boundary. The fix bails out of `_can_optimize_parallel` when any
@@ -591,7 +590,7 @@ class TestConvertedBlocksInsideParallel:
 
 
 class TestAstOptimizationPreservesBlockDecls:
-    """Codex 2026-05-15 fix-pass-3 review #2: AST optimization passes were
+    """AST optimization passes were
     reconstructing Program without `block_decls=`, leaving any contained
     BlockCalls dangling. Lock in `block_decls` survival across each pass.
     """
@@ -771,7 +770,7 @@ class TestSingleQubitInputSupport:
             ast_to_guppy(prog)
 
     def test_single_qubit_mismatched_arg_out_slot_rejected(self) -> None:
-        """Codex 2026-05-15 iter-5b review: a LIVE_PRESERVED single-qubit input
+        """A LIVE_PRESERVED single-qubit input
         whose `arg_binding` and `out_binding` reference DIFFERENT outer slots
         used to produce invalid Guppy (set_live() overwriting a never-consumed
         slot). The emitter must reject this with a clean GuppyCodegenError.
@@ -1050,8 +1049,8 @@ class TestQubitBundleInputSupport:
     def test_qubit_bundle_end_to_end_selene_bell_correlation(self) -> None:
         """Compile + run the cross-allocator bundle program through Selene.
 
-        Codex 2026-05-15 iter-5d review #1: the support test was string-shape
-        only; the iter-5b r1 blocker proved a string can look right while the
+        The earlier support test was string-shape only; the iter-5b r1
+        blocker proved a string can look right while the
         Guppy fails its own linearity. This compiles the generated Guppy via
         the entry wrapper and pins the seeded Selene records (the bundled
         slots a[2] and b[0] form a Bell pair, so the two measurements are
@@ -1060,8 +1059,7 @@ class TestQubitBundleInputSupport:
         Note: this is a *compile + behavior* gate, not an unpack-order gate.
         Bell measurements are symmetric, so a swapped bundle unpack order
         would still pass here. `test_qubit_bundle_asymmetric_unpack_order`
-        below pins unpack order with an asymmetric bundle (Codex 2026-05-15
-        iter-5d r2 review #1).
+        below pins unpack order with an asymmetric bundle.
         """
         import importlib.util
         import sys
@@ -1098,7 +1096,7 @@ class TestQubitBundleInputSupport:
             warnings.simplefilter("ignore", DeprecationWarning)
             result = sim(Hugr(hugr_bytes)).classical(selene_engine()).qubits(5).seed(42).run(8)
         raw = result.to_dict() if hasattr(result, "to_dict") else result
-        # Empirical probe 2026-05-15 (matches Codex's independent r1 probe):
+        # Empirical probe 2026-05-15:
         assert raw == {
             "measurement_0": [1, 0, 0, 1, 0, 0, 0, 1],
             "measurement_1": [1, 0, 0, 1, 0, 0, 0, 1],
@@ -1109,8 +1107,8 @@ class TestQubitBundleInputSupport:
     def test_qubit_bundle_asymmetric_unpack_order(self) -> None:
         """Pin bundle unpack ORDER with an asymmetric program.
 
-        Codex 2026-05-15 iter-5d r2 review #1: the Bell-correlation test is
-        symmetric, so a swapped bundle unpack (`b_0, a_2 = ret` instead of
+        The Bell-correlation test is symmetric, so a swapped bundle unpack
+        (`b_0, a_2 = ret` instead of
         `a_2, b_0 = ret`) still passes it. Here the block applies X to q[0]
         ONLY, so the two bundled slots end in DIFFERENT states: a[2] (<- q[0],
         X'd) measures 1, b[0] (<- q[1], untouched) measures 0. A swapped
@@ -1189,7 +1187,7 @@ class TestQubitBundleInputSupport:
         }, raw
 
     def test_qubit_bundle_cross_input_alias_rejected_pre_consume(self) -> None:
-        """Codex 2026-05-15 iter-5d review #3: a slot referenced by two distinct
+        """A slot referenced by two distinct
         quantum arg_bindings must raise a clean GuppyCodegenError in Phase 1
         (pre-consume), not a mid-Phase-2 LinearityError with the tracker
         half-mutated.
@@ -1321,21 +1319,21 @@ class TestQubitBundleInputSupport:
 
 
 class TestDeferredBlockArgRejection:
-    """Phase 3a.3 iter 5d scope:
-    - `AllocatorArg` is supported in BOTH the Guppy emitter AND the non-Guppy
-      flatten path.
-    - `SingleQubitArg`, `SingleBitArg`, `QubitBundleArg` are supported in the
-      Guppy emitter ONLY; flatten support is deferred (full slot/bit-level
-      body rewriting needed). Each has a dedicated
-      `test_<shape>_arg_rejected_in_flatten_pass` lock-in below.
-    - `BitBundleArg` MUST raise cleanly in BOTH paths -- silently inlining a
-      deferred shape would mask user errors (Codex 2026-05-15 fix-pass-5 +
-      iter-5b reviews caught this family).
+    """Phase 3a.3 iter 5e.2 scope:
+    - `AllocatorArg`, `SingleQubitArg`, `SingleBitArg`, `QubitBundleArg` are
+      now supported in BOTH the Guppy emitter AND the non-Guppy flatten path.
+      The former `test_<shape>_arg_rejected_in_flatten_pass` lock-ins are
+      flipped into `test_<shape>_arg_flatten_inlines` support tests below
+      (they pin that flatten rewrites param refs -> outer refs, no
+      NotImplementedError).
+    - `BitBundleArg` is the ONLY still-deferred shape: it MUST raise cleanly
+      in BOTH paths -- silently inlining a deferred shape would mask user
+      errors (this silent-fallback family was caught repeatedly).
     """
 
-    def test_qubit_bundle_arg_rejected_in_flatten_pass(self) -> None:
-        """QubitBundleArg in flatten path: deferred until non-contiguous
-        slot-level body rewriting lands. Lock-in: clean NotImplementedError.
+    def test_qubit_bundle_arg_flatten_inlines(self) -> None:
+        """5e.2: QubitBundleArg now inlines in flatten -- param `q[0]` rewrites
+        to the bundled outer slot `outer_q[0]`.
         """
         from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
         from pecos.slr.ast.nodes import QubitBundleArg
@@ -1349,50 +1347,46 @@ class TestDeferredBlockArgRejection:
                     type_expr=ArrayTypeExpr(element=QubitTypeExpr(), size=2),
                 ),
             ),
-            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
+            body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=1),)),),
+        )
+        bundle = QubitBundleArg(
+            slots=(
+                SlotRef(allocator="outer_q", index=0),
+                SlotRef(allocator="outer_q", index=2),
+            ),
         )
         prog = Program(
             name="main",
             allocator=AllocatorDecl(name="outer_q", capacity=3),
             block_decls=(decl,),
-            body=(
-                BlockCall(
-                    callee="b",
-                    arg_bindings=(
-                        QubitBundleArg(
-                            slots=(
-                                SlotRef(allocator="outer_q", index=0),
-                                SlotRef(allocator="outer_q", index=2),
-                            ),
-                        ),
-                    ),
-                    out_bindings=(
-                        QubitBundleArg(
-                            slots=(
-                                SlotRef(allocator="outer_q", index=0),
-                                SlotRef(allocator="outer_q", index=2),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
+            body=(BlockCall(callee="b", arg_bindings=(bundle,), out_bindings=(bundle,)),),
         )
-        with pytest.raises(NotImplementedError, match=r"QubitBundleArg"):
-            flatten_block_calls(prog)
+        flat = flatten_block_calls(prog)
+        # q[1] (param) -> bundle slot index 1 -> outer_q[2].
+        gates = [s for s in flat.body if isinstance(s, GateOp)]
+        assert len(gates) == 1
+        assert gates[0].targets == (SlotRef(allocator="outer_q", index=2),)
+        assert flat.block_decls == ()
 
-    def test_single_bit_arg_rejected_in_flatten_pass(self) -> None:
-        """SingleBitArg in flatten path: deferred until bit-level body rewriting
-        lands. Lock-in: clean NotImplementedError, no silent inline.
+    def test_single_bit_arg_flatten_inlines(self) -> None:
+        """5e.2: SingleBitArg now inlines in flatten -- param bit `out[0]`
+        rewrites to the outer CReg bit `c[0]`.
         """
         from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
-        from pecos.slr.ast.nodes import SingleBitArg
+        from pecos.slr.ast.nodes import SingleBitArg, SingleQubitArg
 
         decl = BlockDecl(
             name="b",
             inputs=(
+                BlockInput(name="a", effect=ResourceEffect.CONSUMED, type_expr=QubitTypeExpr()),
                 BlockInput(name="out", effect=ResourceEffect.LIVE_PRESERVED, type_expr=BitTypeExpr()),
             ),
-            body=(),
+            body=(
+                MeasureOp(
+                    targets=(SlotRef(allocator="a", index=0),),
+                    results=(BitRef(register="out", index=0),),
+                ),
+            ),
         )
         prog = Program(
             name="main",
@@ -1402,17 +1396,24 @@ class TestDeferredBlockArgRejection:
             body=(
                 BlockCall(
                     callee="b",
-                    arg_bindings=(SingleBitArg(bit=BitRef(register="c", index=0)),),
+                    arg_bindings=(
+                        SingleQubitArg(slot=SlotRef(allocator="outer_q", index=0)),
+                        SingleBitArg(bit=BitRef(register="c", index=0)),
+                    ),
                     out_bindings=(SingleBitArg(bit=BitRef(register="c", index=0)),),
                 ),
             ),
         )
-        with pytest.raises(NotImplementedError, match=r"SingleBitArg"):
-            flatten_block_calls(prog)
+        flat = flatten_block_calls(prog)
+        meas = [s for s in flat.body if isinstance(s, MeasureOp)]
+        assert len(meas) == 1
+        assert meas[0].targets == (SlotRef(allocator="outer_q", index=0),)
+        assert meas[0].results == (BitRef(register="c", index=0),)
+        assert flat.block_decls == ()
 
-    def test_single_qubit_arg_rejected_in_flatten_pass(self) -> None:
-        """SingleQubitArg in flatten path: deferred until full slot-level body
-        rewriting lands. Lock-in: clean NotImplementedError, no silent inline.
+    def test_single_qubit_arg_flatten_inlines(self) -> None:
+        """5e.2: SingleQubitArg now inlines in flatten -- param `q[0]` rewrites
+        to the outer slot `outer_q[1]`.
         """
         from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
         from pecos.slr.ast.nodes import SingleQubitArg
@@ -1424,20 +1425,18 @@ class TestDeferredBlockArgRejection:
             ),
             body=(GateOp(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),)),),
         )
+        sq = SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1))
         prog = Program(
             name="main",
             allocator=AllocatorDecl(name="outer_q", capacity=3),
             block_decls=(decl,),
-            body=(
-                BlockCall(
-                    callee="b",
-                    arg_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),),
-                    out_bindings=(SingleQubitArg(slot=SlotRef(allocator="outer_q", index=1)),),
-                ),
-            ),
+            body=(BlockCall(callee="b", arg_bindings=(sq,), out_bindings=(sq,)),),
         )
-        with pytest.raises(NotImplementedError, match=r"SingleQubitArg"):
-            flatten_block_calls(prog)
+        flat = flatten_block_calls(prog)
+        gates = [s for s in flat.body if isinstance(s, GateOp)]
+        assert len(gates) == 1
+        assert gates[0].targets == (SlotRef(allocator="outer_q", index=1),)
+        assert flat.block_decls == ()
 
     def _program_with_deferred_arg(self, *, deferred_in_args: bool, arg_subclass: type) -> Program:
         from pecos.slr.ast.nodes import BitBundleArg, BitRef
@@ -1489,7 +1488,7 @@ class TestDeferredBlockArgRejection:
             flatten_block_calls(prog)
 
     def test_deferred_out_bindings_raise_in_flatten(self) -> None:
-        """Codex 2026-05-15 fix-pass-5 review caught: out_bindings used to be
+        """Regression: out_bindings used to be
         silently accepted by `_inline_call` even when they were a deferred
         BlockArg shape, while Guppy correctly rejected them.
         """
@@ -1516,7 +1515,7 @@ class TestDeferredBlockArgRejection:
 
 
 class TestDuplicateBlockDeclNameValidation:
-    """Shared validate_unique_block_decl_names contract (Codex review #3)."""
+    """Shared validate_unique_block_decl_names contract."""
 
     def _duplicate_decl_program(self) -> Program:
         decl = BlockDecl(
@@ -1553,8 +1552,8 @@ class TestDuplicateBlockDeclNameValidation:
 class TestBlockBodyStatementSubstitution:
     """Phase 3a.1 substitution must cover every SLR statement type that names allocators.
 
-    Codex 2026-05-15 review caught that PermuteOp (which carries source/target
-    register names as strings, not SlotRefs) was silently passed through in
+    PermuteOp (which carries source/target register names as strings, not
+    SlotRefs) was silently passed through in
     both `converter._substitute_stmt` and `_block_flatten._substitute`. Lock
     in coverage with a regression test.
     """
@@ -1603,7 +1602,7 @@ class TestBlockBodyStatementSubstitution:
         assert permute_stmts[0].targets == ("outer[1]", "outer[0]")
 
     def test_unparseable_permute_ref_mentioning_partial_name_raises(self) -> None:
-        """Defensive raise (Codex review q3, 5e.1 shared substitution): if a
+        """Defensive raise (5e.1 shared substitution): if a
         PermuteOp ref cannot be parsed by the bare-name / `name[idx]` regex AND
         the ref textually mentions a partially-bound name, raise instead of
         silently leaking. Unrelated unparseable refs pass through unchanged.
@@ -1622,7 +1621,7 @@ class TestBlockBodyStatementSubstitution:
             _sub_permute_ref("outer[0:2]", remap)
 
         # Unrelated unparseable refs whose BASE name is not partial pass
-        # through -- including the substring-trap `souter` (Codex 5e.1 #1).
+        # through -- including the substring-trap `souter`.
         assert _sub_permute_ref("other[0:2]", remap) == "other[0:2]"
         assert _sub_permute_ref("souter[0:2]", remap) == "souter[0:2]"
 
@@ -1762,3 +1761,368 @@ class TestBlockCallSelene:
             assert a == b, f"Bell correlation violated at shot {shot}: m0={a} m1={b}"
         # And there's at least one 0 and one 1 across 8 shots (sanity: not always 0).
         assert set(m0) == {0, 1}, f"expected both outcomes across 8 shots, got {set(m0)}"
+
+
+class TestSlrBlockArgShapeDetectionViaConverter:
+    """Phase 3a.3 iter 5e.2: an SLR `Block` subclass whose `block_inputs`
+    bind a single `Qubit`, a `list[Qubit]` bundle (same- or cross-QReg), or
+    a single `Bit` must drive the full real pipeline:
+
+      SLR Block -> slr_to_ast (`_convert_block_call` shape detection, 5e.2a)
+                -> SlrConverter.guppy()  (emitter)
+                -> SlrConverter.qasm()   (flatten_block_calls inline, 5e.2b)
+
+    These differ from `TestSingleQubitInputSupport` et al. (which build the
+    AST `Program` directly) by exercising the SLR var -> typed BlockArg
+    detection AND the bidirectional shared substitution through the public
+    `SlrConverter` surface -- the iter-3 "silent flatten" bug class would
+    slip past an AST-only test.
+    """
+
+    def test_single_qubit_input_detected_and_inlined(self) -> None:
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.ast.nodes import SingleQubitArg, SlotRef
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class SqBlock(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+            def __init__(self, q) -> None:
+                super().__init__()
+                self.q = q
+                self.extend(qb.H(q))
+
+        prog = Main(
+            outer_q := QReg("outer_q", 1),
+            c := CReg("c", 1),
+            qb.Prep(outer_q),
+            SqBlock(outer_q[0]),
+            Measure(outer_q) > c,
+        )
+
+        ast = slr_to_ast(prog)
+        calls = [s for s in ast.body if isinstance(s, BlockCall)]
+        assert len(calls) == 1
+        assert calls[0].arg_bindings == (
+            SingleQubitArg(slot=SlotRef(allocator="outer_q", index=0)),
+        )
+
+        guppy_src = SlrConverter(prog).guppy()
+        assert re.search(r"def sqblock_\d+\(q: qubit @ owned\) -> qubit:", guppy_src)
+
+        qasm_src = SlrConverter(prog).qasm()
+        # Flatten rewrote the param `q[0]` back to the outer slot.
+        assert "h outer_q[0];" in qasm_src
+        assert "block" not in qasm_src.lower()
+
+    def test_same_qreg_bundle_detected_and_inlined(self) -> None:
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.ast.nodes import QubitBundleArg, SlotRef
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class BundleBlock(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"d": "live_preserved"}
+
+            def __init__(self, d) -> None:
+                super().__init__()
+                self.d = d
+                self.extend(qb.H(d[0]), qb.CX(d[0], d[1]))
+
+        prog = Main(
+            outer_q := QReg("outer_q", 3),
+            c := CReg("c", 3),
+            qb.Prep(outer_q),
+            BundleBlock([outer_q[0], outer_q[2]]),
+            Measure(outer_q) > c,
+        )
+
+        ast = slr_to_ast(prog)
+        calls = [s for s in ast.body if isinstance(s, BlockCall)]
+        assert calls[0].arg_bindings == (
+            QubitBundleArg(
+                slots=(
+                    SlotRef(allocator="outer_q", index=0),
+                    SlotRef(allocator="outer_q", index=2),
+                ),
+            ),
+        )
+
+        qasm_src = SlrConverter(prog).qasm()
+        # Bundle slot 0 -> outer_q[0], slot 1 -> outer_q[2] (non-contiguous).
+        assert "h outer_q[0];" in qasm_src
+        assert "cx outer_q[0], outer_q[2];" in qasm_src
+        assert re.search(r"def bundleblock_\d+\(d: array\[qubit, 2\] @ owned\)", SlrConverter(prog).guppy())
+
+    def test_cross_qreg_bundle_detected_and_inlined(self) -> None:
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.ast.nodes import QubitBundleArg, SlotRef
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class BundleBlock(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"d": "live_preserved"}
+
+            def __init__(self, d) -> None:
+                super().__init__()
+                self.d = d
+                self.extend(qb.H(d[0]), qb.CX(d[0], d[1]))
+
+        prog = Main(
+            qa := QReg("qa", 2),
+            qb_reg := QReg("qb", 2),
+            c := CReg("c", 4),
+            qb.Prep(qa),
+            qb.Prep(qb_reg),
+            BundleBlock([qa[0], qb_reg[1]]),
+            Measure(qa) > c[0:2],
+            Measure(qb_reg) > c[2:4],
+        )
+
+        ast = slr_to_ast(prog)
+        calls = [s for s in ast.body if isinstance(s, BlockCall)]
+        assert calls[0].arg_bindings == (
+            QubitBundleArg(
+                slots=(
+                    SlotRef(allocator="qa", index=0),
+                    SlotRef(allocator="qb", index=1),
+                ),
+            ),
+        )
+
+        qasm_src = SlrConverter(prog).qasm()
+        # Cross-allocator: d[0] -> qa[0], d[1] -> qb[1].
+        assert "h qa[0];" in qasm_src
+        assert "cx qa[0], qb[1];" in qasm_src
+        # Emitter packs the non-contiguous bundle into one array arg.
+        assert "array(qa_0, qb_1)" in SlrConverter(prog).guppy()
+
+    def test_check_shaped_block_all_three_shapes_detected(self) -> None:
+        """The realistic qeclib `Check` shape (5e.3's target): a `list[Qubit]`
+        data bundle (live_preserved), a single ancilla `Qubit` (consumed,
+        measured in-body), and a single `Bit` write-back (live_preserved).
+        """
+        from pecos.slr import CReg, Main, QReg, SlrConverter
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.ast.nodes import BitRef as AstBitRef
+        from pecos.slr.ast.nodes import (
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+            SlotRef,
+        )
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+        from pecos.slr.qeclib.qubit.measures import Measure
+
+        class CheckLike(Block):
+            block_inputs: ClassVar[dict[str, str]] = {
+                "d": "live_preserved",
+                "a": "consumed",
+                "out": "live_preserved",
+            }
+
+            def __init__(self, d, a, out) -> None:
+                super().__init__()
+                self.d = d
+                self.a = a
+                self.out = out
+                self.extend(
+                    qb.H(a),
+                    qb.CX(a, d[0]),
+                    qb.CX(a, d[1]),
+                    qb.H(a),
+                    Measure(a) > out,
+                )
+
+        prog = Main(
+            outer_q := QReg("outer_q", 3),
+            c := CReg("c", 3),
+            qb.Prep(outer_q),
+            CheckLike([outer_q[0], outer_q[1]], outer_q[2], c[0]),
+            Measure(outer_q[0]) > c[1],
+            Measure(outer_q[1]) > c[2],
+        )
+
+        ast = slr_to_ast(prog)
+        call = next(s for s in ast.body if isinstance(s, BlockCall))
+        assert call.arg_bindings == (
+            QubitBundleArg(
+                slots=(
+                    SlotRef(allocator="outer_q", index=0),
+                    SlotRef(allocator="outer_q", index=1),
+                ),
+            ),
+            SingleQubitArg(slot=SlotRef(allocator="outer_q", index=2)),
+            SingleBitArg(bit=AstBitRef(register="c", index=0)),
+        )
+        # CONSUMED `a` must NOT appear in out_bindings (it is gone post-call);
+        # the two LIVE_PRESERVED inputs must.
+        assert call.out_bindings == (
+            QubitBundleArg(
+                slots=(
+                    SlotRef(allocator="outer_q", index=0),
+                    SlotRef(allocator="outer_q", index=1),
+                ),
+            ),
+            SingleBitArg(bit=AstBitRef(register="c", index=0)),
+        )
+
+        qasm_src = SlrConverter(prog).qasm()
+        assert "h outer_q[2];" in qasm_src
+        assert "cx outer_q[2], outer_q[0];" in qasm_src
+        assert "cx outer_q[2], outer_q[1];" in qasm_src
+        assert "measure outer_q[2] -> c[0];" in qasm_src
+
+        guppy_src = SlrConverter(prog).guppy()
+        assert re.search(
+            r"def checklike_\d+\(d: array\[qubit, 2\] @ owned, a: qubit @ owned, "
+            r"out: array\[bool, 1\] @ owned\) -> tuple\[array\[qubit, 2\], array\[bool, 1\]\]:",
+            guppy_src,
+        )
+
+    @pytest.mark.parametrize(
+        ("make_block", "match"),
+        [
+            ("whole_creg", r"whole CReg input is not yet supported"),
+            ("list_bit", r"list\[Bit\] .*is not yet supported"),
+            ("empty_bundle", r"empty list bundle is not supported"),
+            ("mixed_bundle", r"a bundle must be all Qubit"),
+            ("symbolic", r"symbolic .*is not supported as a block input"),
+        ],
+    )
+    def test_unsupported_input_shapes_rejected_via_converter(
+        self,
+        make_block: str,
+        match: str,
+    ) -> None:
+        from pecos.slr import CReg, Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.vars import LoopVar
+
+        class WholeCReg(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"out": "live_preserved"}
+
+            def __init__(self, out) -> None:
+                super().__init__()
+                self.out = out
+
+        class ListBit(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"out": "live_preserved"}
+
+            def __init__(self, out) -> None:
+                super().__init__()
+                self.out = out
+
+        class Empty(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"d": "live_preserved"}
+
+            def __init__(self, d) -> None:
+                super().__init__()
+                self.d = d
+
+        class Mixed(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"d": "live_preserved"}
+
+            def __init__(self, d) -> None:
+                super().__init__()
+                self.d = d
+
+        class Sym(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"q": "live_preserved"}
+
+            def __init__(self, q) -> None:
+                super().__init__()
+                self.q = q
+
+        if make_block == "whole_creg":
+            prog = Main(c := CReg("c", 2), WholeCReg(c))
+        elif make_block == "list_bit":
+            prog = Main(c := CReg("c", 2), ListBit([c[0], c[1]]))
+        elif make_block == "empty_bundle":
+            prog = Main(QReg("o", 1), Empty([]))
+        elif make_block == "mixed_bundle":
+            prog = Main(o := QReg("o", 1), c := CReg("c", 1), Mixed([o[0], c[0]]))
+        else:  # symbolic
+            prog = Main(o := QReg("o", 2), Sym(o[LoopVar("i")]))
+
+        with pytest.raises(ValueError, match=match):
+            slr_to_ast(prog)
+
+    def test_duplicate_qubit_in_bundle_rejected(self) -> None:
+        """Regression: `[q[0], q[0]]` corrupted body substitution
+        (Guppy rejected on linearity; QASM flatten emitted `cx q[0], q[0];`).
+        Must reject at SLR -> AST conversion with a clear message.
+        """
+        from pecos.slr import Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+
+        class DupBundle(Block):
+            block_inputs: ClassVar[dict[str, str]] = {"d": "live_preserved"}
+
+            def __init__(self, d) -> None:
+                super().__init__()
+                self.d = d
+                self.extend(qb.H(d[0]), qb.CX(d[0], d[1]))
+
+        prog = Main(q := QReg("q", 2), DupBundle([q[0], q[0]]))
+        with pytest.raises(ValueError, match=r"qubit q\[0\] is also bound .*no-cloning"):
+            slr_to_ast(prog)
+
+    def test_two_single_qubit_inputs_aliased_rejected(self) -> None:
+        """Two distinct single-qubit inputs bound to the SAME outer slot is
+        the same aliasing bug from the cross-input direction.
+        """
+        from pecos.slr import Main, QReg
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+        from pecos.slr.qeclib import qubit as qb
+
+        class TwoSq(Block):
+            block_inputs: ClassVar[dict[str, str]] = {
+                "a": "live_preserved",
+                "b": "live_preserved",
+            }
+
+            def __init__(self, a, b) -> None:
+                super().__init__()
+                self.a = a
+                self.b = b
+                self.extend(qb.CX(a, b))
+
+        prog = Main(q := QReg("q", 2), TwoSq(q[0], q[0]))
+        with pytest.raises(ValueError, match=r"qubit q\[0\] is also bound by input 'a'"):
+            slr_to_ast(prog)
+
+    def test_two_bit_inputs_aliased_rejected(self) -> None:
+        """Same outer bit backing two single-bit inputs is lossy during
+        body substitution -- reject it too.
+        """
+        from pecos.slr import CReg, Main
+        from pecos.slr.ast import slr_to_ast
+        from pecos.slr.block import Block
+
+        class TwoBit(Block):
+            block_inputs: ClassVar[dict[str, str]] = {
+                "x": "live_preserved",
+                "y": "live_preserved",
+            }
+
+            def __init__(self, x, y) -> None:
+                super().__init__()
+                self.x = x
+                self.y = y
+
+        prog = Main(c := CReg("c", 2), TwoBit(c[0], c[0]))
+        with pytest.raises(ValueError, match=r"bit c\[0\] is also bound by input 'x'"):
+            slr_to_ast(prog)

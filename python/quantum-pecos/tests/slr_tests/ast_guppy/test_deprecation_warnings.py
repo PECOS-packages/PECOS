@@ -165,8 +165,8 @@ class TestImplicitReturnDeprecation:
 
     def test_warning_points_at_user_call_site(self) -> None:
         """Stacklevel must attribute to the user's .guppy()/.hugr()/etc. call site,
-        not to internals of slr_converter.py. Empirically verified post-Codex's
-        review (round 2): stacklevel=3 from `_maybe_warn_implicit_return_deprecation`
+        not to internals of slr_converter.py. Empirically verified:
+        stacklevel=3 from `_maybe_warn_implicit_return_deprecation`
         walks past the warn line, past the helper, past the public method,
         landing on the user.
         """
@@ -223,7 +223,7 @@ class TestImplicitReturnDeprecation:
         """`Measure(q[0])` without a `> c[i]` results tuple writes to no CReg,
         so the implicit-return rule is not engaged. Don't warn.
 
-        Codex tracer-bullet review v3: the original walker treated *any*
+        Tracer-bullet regression: the original walker treated *any*
         MeasureOp as evidence of implicit-return reliance, which was a
         false positive for measure-and-discard patterns.
         """

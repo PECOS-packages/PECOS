@@ -72,10 +72,7 @@ from .audit_runner import _curated_cases  # noqa: TID252
 
 _SHOTS = 8
 _SEED = 42
-_BESPOKE = re.compile(
-    r"create_creg|get_creg_bit|set_creg_bit|get_int_from_creg"
-    r"|set_creg_to_int|mz_to_creg_bit",
-)
+_BESPOKE = re.compile(r"create_creg|get_creg_bit|set_creg_bit|get_int_from_creg|set_creg_to_int|mz_to_creg_bit")
 # Ordered mz/read_result events (slot in g1 for mz, g2 for read_result) so
 # we can pin per-measurement slot correspondence, not just set membership.
 _MZ_RR_EVENT = re.compile(
@@ -181,9 +178,9 @@ def _layer_b_structural(prog: Main, label: str, *, creg_sizes: dict[str, int]) -
 
     for name, size in creg_sizes.items():
         assert f"%{name} = alloca [{size} x i1]" in ir, f"{label}: missing entry-block alloca for CReg {name!r}"
-        assert f"store [{size} x i1] zeroinitializer, [{size} x i1]* %{name}" in ir, (
-            f"{label}: missing zeroinitializer for CReg {name!r} (unset bits must read 0, not undef)"
-        )
+        assert (
+            f"store [{size} x i1] zeroinitializer, [{size} x i1]* %{name}" in ir
+        ), f"{label}: missing zeroinitializer for CReg {name!r} (unset bits must read 0, not undef)"
 
     _assert_mz_rr_pairing(label, ir)
 
@@ -207,9 +204,10 @@ def _assert_set_int_unpack(label: str, ir: str, *, name: str, size: int, value: 
             rf"getelementptr \[{size} x i1\], \[{size} x i1\]\* %{name}, "
             rf"i64 0, i64 {i}\n\s*store i1 {bit}, i1\* %[.\w]+"
         )
-        assert re.search(pat, ir), (
-            f"{label}: c.set({value:#b}) bit {i} not stored as `i1 {bit}` at gep {name}[{i}] (LSB-first)"
-        )
+        assert re.search(
+            pat,
+            ir,
+        ), f"{label}: c.set({value:#b}) bit {i} not stored as `i1 {bit}` at gep {name}[{i}] (LSB-first)"
     # Record pack: per-bit load/zext, `shl i64 _, i` for i>0, or-chain.
     assert ir.count("load i1") >= size, f"{label}: record pack missing per-bit `load i1`"
     assert ir.count("zext i1") >= size, f"{label}: record pack missing per-bit `zext i1`"
@@ -222,12 +220,11 @@ def _assert_zero_init_predicate(label: str, ir: str, *, name: str) -> None:
     """`If(c[i])` before any write must branch on a `load` of the
     zero-initialised buffer (so the predicate is deterministically 0,
     never `undef`)."""
-    assert f"store [1 x i1] zeroinitializer, [1 x i1]* %{name}" in ir, (
-        f"{label}: missing zeroinitializer for the pre-read CReg {name!r}"
-    )
+    assert (
+        f"store [1 x i1] zeroinitializer, [1 x i1]* %{name}" in ir
+    ), f"{label}: missing zeroinitializer for the pre-read CReg {name!r}"
     assert re.search(
-        rf"getelementptr \[1 x i1\], \[1 x i1\]\* %{name}, i64 0, i64 0\n"
-        rf"\s*%[.\w]+ = load i1",
+        rf"getelementptr \[1 x i1\], \[1 x i1\]\* %{name}, i64 0, i64 0\n\s*%[.\w]+ = load i1",
         ir,
     ), f"{label}: If(c[0]) predicate is not a load of the zero-inited buffer"
 

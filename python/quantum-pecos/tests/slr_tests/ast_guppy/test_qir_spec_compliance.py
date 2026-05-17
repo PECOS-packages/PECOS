@@ -213,9 +213,9 @@ def test_audit_corpus_qir_compliance_baseline() -> None:
     build_failed, validate_failed, qis_ok, qis_failed, entry_attrs = _qir_state()
 
     # Sanity: validate_qir actually ran on built QIR (not vacuous).
-    assert qis_ok or qis_failed or validate_failed, (
-        f"validate_qir never ran on built QIR; build_failed={sorted(label for label, _, _ in build_failed)}"
-    )
+    assert (
+        qis_ok or qis_failed or validate_failed
+    ), f"validate_qir never ran on built QIR; build_failed={sorted(label for label, _, _ in build_failed)}"
 
     # Pre-existing build-failure set pinned (Codex Stage-A blocker): a
     # new build regression -- or a fixed one -- must be triaged

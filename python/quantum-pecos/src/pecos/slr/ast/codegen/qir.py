@@ -704,11 +704,7 @@ class AstToQir:
         drop the loop body (the previous `isinstance(int)` guard was
         always false, so EVERY `For` body was silently dropped).
         """
-        if (
-            isinstance(expr, LiteralExpr)
-            and isinstance(expr.value, int)
-            and not isinstance(expr.value, bool)
-        ):
+        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
             return expr.value
         msg = (
             f"QIR codegen: For loop {which} bound is not a static integer "
@@ -723,6 +719,9 @@ class AstToQir:
         start = self._static_int_bound(node.start, "start")
         stop = self._static_int_bound(node.stop, "stop")
         step = 1 if node.step is None else self._static_int_bound(node.step, "step")
+        if step == 0:
+            msg = "QIR codegen: For loop step is 0 (infinite loop); only a non-zero static step is supported."
+            raise NotImplementedError(msg)
         for _ in range(start, stop, step):
             for stmt in node.body:
                 self._process_statement(stmt)

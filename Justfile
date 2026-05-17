@@ -36,7 +36,7 @@ pecos := "cargo run -p pecos-cli --"
 
 # Install or update the PECOS CLI
 [group('setup')]
-install-cli:
+install-cli: _msvc-bootstrap
     @echo "Installing PECOS CLI..."
     cargo install --path crates/pecos-cli --force
     @echo ""
@@ -44,12 +44,12 @@ install-cli:
 
 # Set up build environment (detect and install missing dependencies)
 [group('setup')]
-setup:
+setup: _msvc-bootstrap
     {{pecos}} setup
 
 # Set up build environment, accepting all prompts (for CI)
 [group('setup')]
-setup-ci:
+setup-ci: _msvc-bootstrap
     {{pecos}} setup --yes
 
 # Ensure CI has a runtime-valid LLVM and export PECOS build env files
@@ -62,7 +62,7 @@ ci-env: _msvc-bootstrap
 
 # Check development environment for common problems
 [group('setup')]
-doctor:
+doctor: _msvc-bootstrap
     #!/usr/bin/env bash
     set -euo pipefail
     PROBLEMS=0
@@ -141,12 +141,12 @@ doctor:
 
 # Show system information
 [group('setup')]
-sys-info:
+sys-info: _msvc-bootstrap
     {{pecos}} sys-info
 
 # List installed and cached dependencies
 [group('setup')]
-list-deps:
+list-deps: _msvc-bootstrap
     {{pecos}} list -v
 
 # =============================================================================
@@ -436,27 +436,27 @@ docs-test:
 
 # Install LLVM 14
 [group('deps')]
-install-llvm:
+install-llvm: _msvc-bootstrap
     {{pecos}} install llvm
 
 # Install CUDA Toolkit
 [group('deps')]
-install-cuda:
+install-cuda: _msvc-bootstrap
     {{pecos}} install cuda
 
 # Configure LLVM paths in .cargo/config.toml
 [group('deps')]
-configure-llvm:
+configure-llvm: _msvc-bootstrap
     {{pecos}} llvm configure
 
 # Check LLVM 14 installation status
 [group('deps')]
-check-llvm:
+check-llvm: _msvc-bootstrap
     -{{pecos}} llvm check
 
 # Check CUDA installation status
 [group('deps')]
-check-cuda:
+check-cuda: _msvc-bootstrap
     -{{pecos}} cuda check
 
 # =============================================================================
@@ -788,7 +788,8 @@ sync-deps:
 # only owns [target.x86_64-pc-windows-msvc] and the MSVC [env] keys, leaving
 # the LLVM/cuQuantum keys the Rust writers own untouched. Prereq of every
 # cargo entrypoint so a fresh checkout / a VS update is picked up. The unix
-# variant is a no-op so the dependency is portable.
+# variant is a no-op so the dependency is portable. Requires PowerShell 7
+# (pwsh) on Windows -- the de facto repo requirement; asserted by the script.
 [private]
 [windows]
 _msvc-bootstrap:
@@ -880,12 +881,12 @@ updatelocks: _msvc-bootstrap
 
 # Install CUDA Python packages (requires CUDA toolkit)
 [private]
-install-cuda-python:
+install-cuda-python: _msvc-bootstrap
     {{pecos}} cuda setup-python
 
 # Validate CUDA installation integrity
 [private]
-validate-cuda:
+validate-cuda: _msvc-bootstrap
     {{pecos}} cuda validate
 
 # Run Julia examples

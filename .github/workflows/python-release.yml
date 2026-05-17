@@ -136,51 +136,46 @@ jobs:
           method: 'local'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
-      # On Windows, Git Bash's /usr/bin/link.exe shadows MSVC's link.exe.
-      # Create .cargo/config.toml with the explicit MSVC linker path so cargo
-      # uses the correct linker inside cibuildwheel (which runs on the host).
-      # Must pick the NEWEST installed MSVC toolset to match VsDevCmd.bat's
-      # LIB/INCLUDE env (see scripts/ci/setup-msvc.ps1 for the same rationale);
-      # picking the lexically-first link.exe selects the OLDEST toolset and
-      # produces LNK1181 against the newer SDK's LIB paths.
+      # On Windows, Git Bash's /usr/bin/link.exe shadows MSVC's link.exe, so
+      # pin the linker in .cargo/config.toml for the cargo commands cibuildwheel
+      # runs on the host. Derive it from VCToolsInstallDir -- the toolset the
+      # prior setup-msvc.ps1 step's VsDevCmd actually configured -- so the
+      # linker always matches the LIB/INCLUDE in effect (no lexical toolset
+      # guessing, which could select a mismatched toolset and cause LNK1181).
       - name: Configure MSVC linker for Cargo (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vsWhere -latest -property installationPath
-          $latestMsvcDir = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Directory |
-                           Sort-Object { try { [version]$_.Name } catch { [version]"0.0" } } -Descending |
-                           Select-Object -First 1 -ExpandProperty FullName
-          $linkPath = if ($latestMsvcDir) { Join-Path $latestMsvcDir "bin\Hostx64\x64\link.exe" } else { $null }
-          if ($linkPath -and -not (Test-Path $linkPath)) { $linkPath = $null }
-
-          if ($linkPath) {
-            $escapedPath = $linkPath.Replace('\', '/')
-            $configContent = "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`""
-
-            # Create in repo root (for CIBW_BEFORE_ALL cargo commands)
-            New-Item -ItemType Directory -Force -Path .cargo | Out-Null
-            $configContent | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
-
-            # Create in pecos-rslib directory (for maturin builds)
-            New-Item -ItemType Directory -Force -Path "python\pecos-rslib\.cargo" | Out-Null
-            $configContent | Out-File -FilePath "python\pecos-rslib\.cargo\config.toml" -Encoding UTF8
-
-            # Create in user cargo home (fallback)
-            $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
-            New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null
-            if (Test-Path "$cargoHome\config.toml") {
-              "`n$configContent" | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8 -Append
-            } else {
-              $configContent | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8
-            }
-
-            Write-Host "Configured MSVC linker: $linkPath"
-          } else {
-            Write-Error "Could not find MSVC link.exe"
+          $vcTools = $env:VCToolsInstallDir
+          if (-not $vcTools) {
+            Write-Error "VCToolsInstallDir not set; the setup-msvc.ps1 step must run first"
             exit 1
           }
+          $linkPath = Join-Path ($vcTools.TrimEnd('\', '/')) "bin\Hostx64\x64\link.exe"
+          if (-not (Test-Path $linkPath)) {
+            Write-Error "MSVC link.exe not found at $linkPath"
+            exit 1
+          }
+          $escapedPath = $linkPath.Replace('\', '/')
+          $configContent = "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`""
+
+          # cibuildwheel and maturin run in different working directories;
+          # write the config where each one looks for it.
+          New-Item -ItemType Directory -Force -Path .cargo | Out-Null
+          $configContent | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
+
+          New-Item -ItemType Directory -Force -Path "python\pecos-rslib\.cargo" | Out-Null
+          $configContent | Out-File -FilePath "python\pecos-rslib\.cargo\config.toml" -Encoding UTF8
+
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
+          New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null
+          if (Test-Path "$cargoHome\config.toml") {
+            "`n$configContent" | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8 -Append
+          } else {
+            $configContent | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8
+          }
+
+          Write-Host "Configured MSVC linker: $linkPath"
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.3.1

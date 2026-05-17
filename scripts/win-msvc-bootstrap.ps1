@@ -26,6 +26,12 @@
 # CUQUANTUM_ROOT) or any other table, and never emits a duplicate `[env]`.
 #
 # Inert (exit 0) on non-Windows so it is safe as an unconditional just prereq.
+#
+# PowerShell 7 (pwsh) is a hard requirement -- it is already the de facto repo
+# requirement (every workflow uses `shell: pwsh`). Asserted below rather than
+# papered over with a Windows-PowerShell-5.1 fallback.
+
+#requires -Version 7.0
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -134,6 +140,33 @@ $configPath = Join-Path $cargoDir "config.toml"
 $original = ""
 if (Test-Path -LiteralPath $configPath) {
     $original = Get-Content -LiteralPath $configPath -Raw
+    if ($null -eq $original) { $original = "" }
+    # Strip a leading UTF-8 BOM so the first line parses as a header/comment.
+    if ($original.Length -gt 0 -and $original[0] -eq [char]0xFEFF) {
+        $original = $original.Substring(1)
+    }
+}
+
+# This file is machine-managed (gitignored) and is written only by this script
+# and the Rust toml_edit writer, both of which emit *canonical* tables: a bare
+# `[name]` header alone on its line, no trailing comment, unquoted. The scoped
+# merge below relies on that. Rather than risk a partial merge that yields a
+# duplicate `[env]` or invalid TOML, fail fast if a header is in a form we
+# can't safely round-trip (trailing comment, quoted/dotted `env`, etc.) --
+# the user can delete the generated file and let it be regenerated.
+foreach ($ln in ($original -split "`r?`n")) {
+    if ($ln -notmatch '^\s*\[') { continue }
+    if ($ln -notmatch '^\s*\[([^\]\r\n]+)\]\s*$') {
+        throw "Non-canonical TOML header in ${configPath}: '$ln'. This file is machine-managed; delete it and re-run."
+    }
+    $hn = $Matches[1].Trim()
+    if ($hn -match '["'']') {
+        throw "Quoted TOML header in ${configPath}: '$ln'. This file is machine-managed; delete it and re-run."
+    }
+    if ($hn -eq 'env' -or $hn -eq "target.$Triple") { continue }
+    if ($hn -like 'env.*' -or $hn -like "target.$Triple.*") {
+        throw "Dotted '$hn' table in ${configPath} conflicts with the keys this script owns. This file is machine-managed; delete it and re-run."
+    }
 }
 
 # Parse into ordered sections. A table header is a line `[name]`; the block
@@ -144,7 +177,7 @@ $current = [pscustomobject]@{ Header = ''; Lines = [System.Collections.Generic.L
 $sections.Add($current)
 if ($original.Length -gt 0) {
     foreach ($ln in ($original -split "`r?`n")) {
-        if ($ln -match '^\s*\[(.+?)\]\s*$') {
+        if ($ln -match '^\s*\[([^\]\r\n]+)\]\s*$') {
             $current = [pscustomobject]@{ Header = $Matches[1].Trim(); Lines = [System.Collections.Generic.List[string]]::new() }
             $sections.Add($current)
         }
@@ -154,7 +187,6 @@ if ($original.Length -gt 0) {
     }
 }
 
-$msvcHeaders = @($Triple, "target.`"$Triple`"", "target.'$Triple'")
 $out = [System.Collections.Generic.List[string]]::new()
 $envEmitted = $false
 
@@ -170,7 +202,7 @@ foreach ($sec in $sections) {
         foreach ($l in $sec.Lines) { $out.Add($l) }
         continue
     }
-    if (($msvcHeaders -contains $h) -or ($h -eq "target.$Triple")) {
+    if ($h -eq "target.$Triple") {
         continue  # script-owned: dropped here, re-emitted canonically below
     }
     if ($h -eq 'env') {

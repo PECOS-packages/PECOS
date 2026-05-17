@@ -30,7 +30,19 @@ impl CargoConfig {
         let cargo_dir = project_root.join(".cargo");
         fs::create_dir_all(&cargo_dir)?;
         let path = cargo_dir.join("config.toml");
-        let original = fs::read_to_string(&path).unwrap_or_default();
+        // Only a missing file means "start empty". A permission/UTF-8/other
+        // read error must surface -- silently treating it as empty would let
+        // save() clobber an existing, unreadable user config.
+        let original = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                return Err(Error::Config(format!(
+                    "could not read {}: {e}",
+                    path.display()
+                )));
+            }
+        };
         let doc = original
             .parse::<DocumentMut>()
             .map_err(|e| Error::Config(format!("{} is not valid TOML: {e}", path.display())))?;

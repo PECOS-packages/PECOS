@@ -74,13 +74,37 @@ _BESPOKE = re.compile(
     r"create_creg|get_creg_bit|set_creg_bit|get_int_from_creg"
     r"|set_creg_to_int|mz_to_creg_bit",
 )
-_MZ_SLOT = re.compile(
+# Ordered mz/read_result events (slot in g1 for mz, g2 for read_result) so
+# we can pin per-measurement slot correspondence, not just set membership.
+_MZ_RR_EVENT = re.compile(
     r"@__quantum__qis__mz__body\(%Qubit\* [^,]+, "
-    r"%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)",
+    r"%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)"
+    r"|@__quantum__rt__read_result\(%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)",
 )
-_RR_SLOT = re.compile(
-    r"@__quantum__rt__read_result\(%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)",
-)
+
+
+def _assert_mz_rr_pairing(label: str, ir: str) -> None:
+    """Per-measurement slot correspondence: mz `%Result*` slots are
+    monotonic 0..n-1, and EVERY `read_result` is immediately preceded
+    (in emission order) by the `mz__body` of the SAME slot -- i.e. a
+    read_result reuses *its own* measurement's static slot, not merely
+    some slot in the mz set (stronger than a subset check)."""
+    events: list[tuple[str, int]] = []
+    for m in _MZ_RR_EVENT.finditer(ir):
+        if m.group(1) is not None:
+            events.append(("mz", int(m.group(1))))
+        else:
+            events.append(("rr", int(m.group(2))))
+    mz_slots = [s for kind, s in events if kind == "mz"]
+    assert mz_slots == list(range(len(mz_slots))), f"{label}: mz %Result* slots not monotonic 0..n-1: {mz_slots}"
+    for i, (kind, slot) in enumerate(events):
+        if kind != "rr":
+            continue
+        assert i > 0, f"{label}: read_result(slot {slot}) emitted before any mz; events={events}"
+        assert events[i - 1] == ("mz", slot), (
+            f"{label}: read_result(slot {slot}) is not immediately preceded "
+            f"by its own mz(slot {slot}); event sequence={events}"
+        )
 
 
 def _case(label: str) -> Main:
@@ -159,13 +183,7 @@ def _layer_b_structural(prog: Main, label: str, *, creg_sizes: dict[str, int]) -
             f"{label}: missing zeroinitializer for CReg {name!r} (unset bits must read 0, not undef)"
         )
 
-    mz = [int(m) for m in _MZ_SLOT.findall(ir)]
-    assert mz == list(range(len(mz))), f"{label}: mz %Result* slots not monotonic 0..n-1: {mz}"
-    rr = [int(m) for m in _RR_SLOT.findall(ir)]
-    assert set(rr).issubset(set(mz)), (
-        f"{label}: read_result slots {rr} not a subset of mz slots {mz} "
-        "(read_result must reuse its measurement's own static slot)"
-    )
+    _assert_mz_rr_pairing(label, ir)
 
 
 def _assert_set_int_unpack(label: str, ir: str, *, name: str, size: int, value: int) -> None:
@@ -246,8 +264,7 @@ def run() -> int:
             _layer_a_compiler_accepts(prog, label)
             ir = SlrConverter(prog).qir()
             assert not _BESPOKE.search(ir), f"{label}: bespoke helper emitted"
-            mz = [int(m) for m in _MZ_SLOT.findall(ir)]
-            assert mz == list(range(len(mz))), f"{label}: non-monotonic slots {mz}"
+            _assert_mz_rr_pairing(label, ir)
             if creg_sizes:
                 _layer_b_structural(prog, label, creg_sizes=creg_sizes)
             if label == "extra.set_int":
@@ -297,6 +314,18 @@ def run() -> int:
         return 1
     print("\nTIER-2 SEMANTIC: PASS")
     return 0
+
+
+def test_oversize_creg_raises_loud() -> None:
+    """A >64-bit CReg must FAIL LOUD at QIR codegen, not silently drop
+    its storage/output (Codex B2 post-review blocker). 64 is the cap
+    (single-i64 record pack); 65 must raise a clear error."""
+    ok = Main(q := QReg("q", 1), c := CReg("c", 64), Measure(q[0]) > c[0], Return(c))
+    SlrConverter(ok).qir_bc()  # 64 is allowed (boundary)
+
+    over = Main(q := QReg("q", 1), c := CReg("c", 65), Measure(q[0]) > c[0], Return(c))
+    with pytest.raises(NotImplementedError, match=r"CReg 'c' has 65 bits.*64-bit cap"):
+        SlrConverter(over).qir_bc()
 
 
 @pytest.mark.slow

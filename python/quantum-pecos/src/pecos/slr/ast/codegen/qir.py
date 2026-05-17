@@ -315,14 +315,24 @@ class AstToQir:
                 # M-B2-static: a CReg is a mutable `[N x i1]` buffer in the
                 # entry block (declarations are processed at entry, before
                 # any control flow, so the builder is positioned there),
-                # zero-initialised so unmeasured/unset bits read 0. Pack is
-                # one `i64` for `int_record_output` -> the same <=64 cap as
-                # the old `create_creg` model (intentionally not lifted).
-                if decl.size <= 64:
-                    arr_ty = llvm_ir.ArrayType(self._types["bool"], decl.size)
-                    creg_ptr = self._builder.alloca(arr_ty, decl.name)
-                    self._builder.store(creg_ptr, llvm_ir.Constant(arr_ty))
-                    self._creg_ptrs[decl.name] = creg_ptr
+                # zero-initialised so unmeasured/unset bits read 0. The
+                # record pack is a single `i64` for `int_record_output`, so
+                # the model caps at 64 bits. A >64-bit CReg must fail LOUD
+                # here -- silently dropping its storage/output (the old
+                # `create_creg` `size < 64` behaviour) is a miscompile.
+                if decl.size > 64:
+                    msg = (
+                        f"QIR codegen: CReg {decl.name!r} has {decl.size} bits, "
+                        "but the M-B2-static classical model packs each CReg "
+                        "into a single i64 for "
+                        "`__quantum__rt__int_record_output` (64-bit cap). "
+                        ">64-bit CRegs are not supported by the QIR backend."
+                    )
+                    raise NotImplementedError(msg)
+                arr_ty = llvm_ir.ArrayType(self._types["bool"], decl.size)
+                creg_ptr = self._builder.alloca(arr_ty, decl.name)
+                self._builder.store(creg_ptr, llvm_ir.Constant(arr_ty))
+                self._creg_ptrs[decl.name] = creg_ptr
 
         if program.allocator and program.allocator.parent is None:
             for i in range(program.allocator.capacity):

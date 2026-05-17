@@ -61,6 +61,7 @@ import sys
 
 import pytest
 import qir_qis
+import selene_sim
 from pecos.slr import CReg, For, If, Main, Print, QReg, Return, SlrConverter, While
 from pecos.slr.ast.codegen.qir import AstToQir
 from pecos.slr.ast.nodes import VarExpr
@@ -387,6 +388,90 @@ def test_varexpr_raises_loud() -> None:
     use, so a bare generator suffices."""
     with pytest.raises(NotImplementedError, match=r"classical variable 'x'"):
         AstToQir()._eval_expression(VarExpr(name="x"))  # noqa: SLF001
+
+
+def _qis_exec_records(prog: Main, n_qubits: int, *, shots: int = _SHOTS, seed: int = _SEED) -> list[list[int]]:
+    """#77 Layer D -- the real EXECUTABLE differential.
+
+    `AST QIR -> qir_qis.qir_to_qis` (LLVM-21 QIS bitcode) ->
+    `selene_sim.build` (selene ingests it natively via
+    `selene_helios_qis_plugin`; the long-claimed "blocked on an LLVM
+    14<->21 bridge" was false) -> run on Stim. Returns per-shot lists
+    of the recorded `__quantum__rt__int_record_output` *values*, in
+    call order == CReg *declaration* order (B2 `_generate_results`
+    records every declared CReg; the QIS tag is empty post-qir_to_qis
+    so order is the key). This is the executable proof that the B2
+    QIR, lowered by the real Quantinuum compiler and run, computes
+    the correct classical results -- upgrading A+B+C to A+B+C+D.
+    """
+    qis = qir_qis.qir_to_qis(SlrConverter(prog).qir_bc())
+    inst = selene_sim.build(selene_sim.BitcodeString(qis))
+    shots_out = inst.run_shots(selene_sim.Stim(random_seed=seed), n_qubits=n_qubits, n_shots=shots)
+    return [[value for (_tag, value) in shot] for shot in shots_out]
+
+
+@pytest.mark.slow
+def test_tier2_executable_differential() -> None:
+    """#77: deterministic representative programs must EXECUTE through
+    QIR -> qir_to_qis -> QIS -> selene to the exact known classical
+    record (records are all declared CRegs, declaration order, packed
+    LSB-first -- empirically pinned). Oracle-independent: this is the
+    real executable equivalence the #71/B2 saga substituted A+B+C for.
+    """
+    cases: list[tuple[str, Main, int, list[int]]] = [
+        # c.set(0b1011); Return(c) -> [11] every shot
+        ("extra.set_int", _set_int(), 1, [0b1011]),
+        # decl(c,d); If(c[0]) before any write reads zero-init 0 -> X
+        # not applied; Measure |0> -> d=0. Records [c, d] = [0, 0].
+        ("extra.zero_init_safety", _zero_init_safety(), 1, [0, 0]),
+        # a.set(0b10)=2; X q0 -> b0=1,b1=0 -> b=0b01=1. Decl order
+        # [a, b] -> [2, 1].
+        ("extra.multi_creg", _multi_creg(), 2, [2, 1]),
+        # |0> measured -> c0=0; If(c0) not taken; |0> -> c1=0 -> [0]
+        ("v1.conditional_correction", _case("v1.conditional_correction"), 2, [0]),
+    ]
+    failures: list[str] = []
+    for label, prog, n_qubits, expected in cases:
+        recs = _qis_exec_records(prog, n_qubits)
+        if all(shot == expected for shot in recs):
+            print(f"[D OK]   {label} -> {expected} x{len(recs)}")
+        else:
+            failures.append(f"{label}: QIS-exec {recs} != expected {expected} (all shots)")
+            print(f"[D FAIL] {failures[-1]}")
+
+    # Bell: genuinely quantum -> not a fixed value, but the QIS
+    # execution must preserve the entanglement correlation: every shot
+    # records c[0]==c[1], i.e. packed in {0b00, 0b11}. Verified across
+    # seeds (only 0/3 ever appear -- never 1/2). Property assertion,
+    # not shot-equality (selene-QIS-Stim and the Guppy oracle use
+    # different RNG plumbing; both independently satisfy this).
+    bell = _case("v1.bell")
+    bell_recs = _qis_exec_records(bell, 2)
+    if all(len(s) == 1 and s[0] in (0b00, 0b11) for s in bell_recs):
+        print(f"[D OK]   v1.bell (correlation: all shots in {{0,3}}) {bell_recs}")
+    else:
+        failures.append(f"v1.bell: not Bell-correlated (expect each shot in {{0,3}}): {bell_recs}")
+        print(f"[D FAIL] {failures[-1]}")
+
+    # Cross-path executable differential vs the dual-reviewed
+    # AST->Guppy->Selene oracle. Only `v1.conditional_correction`
+    # qualifies cleanly: single declared CReg that is also the
+    # returned one (QIS-records-all-declared == oracle-records-returned)
+    # AND Guppy-supported. (`set_int`/`multi_creg` use `c.set(int)`,
+    # which the AST->Guppy return wrapper cannot return -- the same
+    # Layer-C limitation; `zero_init` declares != returns. Those are
+    # covered by the exact known-record checks above, which are
+    # themselves the executable proof for those shapes.)
+    cc = _case("v1.conditional_correction")
+    qis_vals = [shot[0] for shot in _qis_exec_records(cc, 2)]
+    oracle_vals = [_creg_int(rec, 2) for rec in run_ast_guppy_via_selene(cc, shots=_SHOTS, seed=_SEED)]
+    if qis_vals == oracle_vals:
+        print(f"[D~oracle OK] v1.conditional_correction: QIS-exec == Guppy-oracle == {qis_vals}")
+    else:
+        failures.append(f"v1.conditional_correction: QIS-exec {qis_vals} != Guppy-oracle {oracle_vals}")
+        print(f"[D~oracle FAIL] {failures[-1]}")
+
+    assert not failures, "#77 executable differential failures:\n" + "\n".join(failures)
 
 
 @pytest.mark.slow

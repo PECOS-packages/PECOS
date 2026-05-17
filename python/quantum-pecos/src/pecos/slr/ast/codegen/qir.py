@@ -220,6 +220,22 @@ class AstToQir:
             ],
         )
 
+        # B2a: declare the standard QIR classical-model functions. Declared
+        # here so B2b can wire the per-op lowering (static %Result slot ->
+        # mz__body -> read_result -> mutable [N x i1] CReg buffer); the
+        # bespoke model above stays the active path until B2b (no behavior
+        # / gate change in B2a). `%Result*` is the existing result_ptr type.
+        self._mz_body = self._declare_function(
+            "__quantum__qis__mz__body",
+            self._types["void"],
+            [self._types["qubit_ptr"], self._types["result_ptr"]],
+        )
+        self._read_result = self._declare_function(
+            "__quantum__rt__read_result",
+            self._types["bool"],
+            [self._types["result_ptr"]],
+        )
+
         # Setup main function
         main_fnty = llvm_ir.FunctionType(self._types["void"], [])
         self._main_func = llvm_ir.Function(self._module, main_fnty, name="main")

@@ -2951,6 +2951,7 @@ test = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
+    { name = "qir-qis" },
     { name = "stim" },
 ]
 
@@ -2987,6 +2988,7 @@ test = [
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-cov", specifier = "==7.1.0" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
+    { name = "qir-qis", specifier = "==0.1.8" },
     { name = "stim", specifier = "==1.15.0" },
 ]
 
@@ -3904,6 +3906,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/b1/179601c6972cea615af936de9ba8225be9d53c2cfd0a2a7ceacf32a22857/pyzstd-0.18.0-pp311-pypy311_pp73-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:571c5f71622943387370f76de8cc0de3d5c6217ab0f38386cb127665e4e09275", size = 338432, upload-time = "2025-10-05T08:19:38.073Z" },
     { url = "https://files.pythonhosted.org/packages/b8/57/067cf55f86a4baf8cd9e91f7e9596038cabc2b296ac3e0f9be14310c435f/pyzstd-0.18.0-pp311-pypy311_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:de0b730f374b583894d58b79cff76569540baf1e84bc493be191d3128b58e559", size = 358419, upload-time = "2025-10-05T08:19:39.34Z" },
     { url = "https://files.pythonhosted.org/packages/49/88/53d1ec8c639305fb96944b3a1e7f60b6e6af80781d970036c3cf2d6d2316/pyzstd-0.18.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:b32184013f33dba2fabcdda89f2a83289f5b717a0c2477cda764e53fdafec7ee", size = 244902, upload-time = "2025-10-05T08:19:40.607Z" },
+]
+
+[[package]]
+name = "qir-qis"
+version = "0.1.8"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/ac/11711f962921cb87044401be994bdf69a0b5cfad7af355f81bbe28d6a56d/qir_qis-0.1.8-cp310-abi3-macosx_10_9_x86_64.whl", hash = "sha256:eb5614319504815b93a551c4a9f9485ff70efd4c05414b4ce8cc933368e0f5e3", size = 21856530, upload-time = "2026-05-04T14:27:04.865Z" },
+    { url = "https://files.pythonhosted.org/packages/97/1e/7d2d1a2d8e2955b3e3c491f67aead4205e7a17dcd2ed18b9d999ba337fbd/qir_qis-0.1.8-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:2baabc01a6538906d4b7be37f5169237419aac2933e193ef82909b82c525dac1", size = 20954363, upload-time = "2026-05-04T14:27:07.301Z" },
+    { url = "https://files.pythonhosted.org/packages/45/61/d70e18facc6c919e01e5ca7dca50b2a0b41a0ee44a0cc18569cf1c7686a6/qir_qis-0.1.8-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:9c27f5e32e0ec26b2cfe61b81022775aa0c7c9ce371c75fdd4d8fdacdc2a59c6", size = 29332077, upload-time = "2026-05-04T14:27:09.795Z" },
+    { url = "https://files.pythonhosted.org/packages/47/0e/3b4de5f64a600f49df99129703b819bbc3b51bd570d06bdbec15305ebfa1/qir_qis-0.1.8-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:8ff56f0f16e5ace37828a3b398017a4915c55fcb0479361281b9ec13628e2be5", size = 30264567, upload-time = "2026-05-04T14:27:12.779Z" },
+    { url = "https://files.pythonhosted.org/packages/24/31/fc4bbe9157a5dcbaa3a28d3cc28ec29711c20f621f00a6302a0cb627a0c1/qir_qis-0.1.8-cp310-abi3-win_amd64.whl", hash = "sha256:f0b132d582fb110a18147eb16db2a5ae6a716b4a014b0618f471011c40a12fc1", size = 4205354, upload-time = "2026-05-04T14:27:15.316Z" },
 ]
 
 [[package]]

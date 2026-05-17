@@ -61,7 +61,9 @@ import sys
 
 import pytest
 import qir_qis
-from pecos.slr import CReg, If, Main, QReg, Return, SlrConverter
+from pecos.slr import CReg, If, Main, Print, QReg, Return, SlrConverter, While
+from pecos.slr.ast.codegen.qir import AstToQir
+from pecos.slr.ast.nodes import VarExpr
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -326,6 +328,45 @@ def test_oversize_creg_raises_loud() -> None:
     over = Main(q := QReg("q", 1), c := CReg("c", 65), Measure(q[0]) > c[0], Return(c))
     with pytest.raises(NotImplementedError, match=r"CReg 'c' has 65 bits.*64-bit cap"):
         SlrConverter(over).qir_bc()
+
+
+def test_while_raises_loud() -> None:
+    """#74: the QIR backend must FAIL LOUD on `While`, not silently
+    emit a one-pass approximation (qir-qis cannot catch that -- one
+    pass is valid QIR, wrong semantics). Aligns with the Guppy path,
+    which already rejects `While` (v1-feature-matrix: real While is
+    out of scope for the sound emitter)."""
+    prog = Main(
+        q := QReg("q", 1),
+        c := CReg("c", 1),
+        While(c[0] == 0).Do(qb.H(q[0]), Measure(q[0]) > c[0]),
+        Return(c),
+    )
+    with pytest.raises(NotImplementedError, match=r"does not support While loops"):
+        SlrConverter(prog).qir_bc()
+
+
+def test_print_raises_loud() -> None:
+    """#74: the QIR backend must FAIL LOUD on `Print`, not silently
+    drop it (silently losing observable program output)."""
+    prog = Main(
+        q := QReg("q", 1),
+        c := CReg("c", 1),
+        Measure(q[0]) > c[0],
+        Print(c),
+        Return(c),
+    )
+    with pytest.raises(NotImplementedError, match=r"does not support Print"):
+        SlrConverter(prog).qir_bc()
+
+
+def test_varexpr_raises_loud() -> None:
+    """#74: a classical `VarExpr` must FAIL LOUD, not silently
+    evaluate to constant 0 (a value miscompile qir-qis cannot catch).
+    Unit-level: the `VarExpr` arm is reached before any `self._types`
+    use, so a bare generator suffices."""
+    with pytest.raises(NotImplementedError, match=r"classical variable 'x'"):
+        AstToQir()._eval_expression(VarExpr(name="x"))  # noqa: SLF001
 
 
 @pytest.mark.slow

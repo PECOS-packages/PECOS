@@ -39,9 +39,11 @@ model (per-CReg entry-block `alloca [N x i1]` + zeroinitializer;
 `mz__body` -> static `%Result*` -> `read_result` -> `store`;
 point-of-use `gep`+`load`/`store`; `zext`/`shl`/`or` pack ->
 `__quantum__rt__int_record_output`). Every validate-passing program
-(`_EXPECTED_QIS_OK`, n=27) now lowers via `qir_to_qis`; `qis_failed`
+(`_EXPECTED_QIS_OK`, n=26) now lowers via `qir_to_qis`; `qis_failed`
 is empty. A NEW qir_to_qis failure -- or a dropped program -- trips
-this deliberately. (`adaptive_profile` is now genuinely exercised:
+this deliberately. (`docs.while_loop` was in this set pre-#74 on a
+silently-wrong single-pass approximation; #74 makes the QIR backend
+fail loud on `While`, moving it to the build-failure set below.) (`adaptive_profile` is now genuinely exercised:
 B2 emits `__quantum__rt__read_result` for measurement feedback.)
 The deeper *semantic* proof for the load-bearing CReg shapes is
 `tier2_semantic.py` (real-compiler acceptance + emitted-QIR
@@ -52,14 +54,23 @@ opaque-pointer QIS bitcode; PECOS's Selene QIS runtime is LLVM-14
 typed-pointer) -- tracked as a separate blocked task; this gate
 stays structural.
 
-**Pre-existing build failures** (2): `qir_bc()` itself raises for
-`docs.for_loopvar_symbolic` / `docs.rotation_rx` -- pre-existing
-AST-QIR feature gaps tracked separately (task #74), NOT a #71
-metadata concern. Identity pinned (`_EXPECTED_BUILD_FAILED`) so a
-NEW build regression trips here. (`qeclib.steane_pz` was a pinned
+**Build failures** (3): `qir_bc()` raises for
+`docs.for_loopvar_symbolic` (symbolic `LoopVar` indexing) /
+`docs.rotation_rx` (`rx` gate) -- pre-existing AST-QIR feature
+gaps -- and `docs.while_loop` (#74: the QIR backend now fails
+LOUD on `While` instead of silently emitting a one-pass
+approximation that qir-qis cannot catch; this aligns the QIR
+path with the Guppy path, which already rejects `While` per
+v1-feature-matrix "real While is out of scope for the sound
+emitter"). Identity pinned (`_EXPECTED_BUILD_FAILED`) so a NEW
+build regression trips here. (`qeclib.steane_pz` was a pinned
 build failure pre-B2 -- the bespoke model emitted invalid bitcode
 for it; B2 produces valid bitcode so it now builds and moves to
 the pinned validate set above. A deliberate, triaged improvement.)
+#74 also fails loud on `VarExpr` (was silently 0) and `Print`
+(was silently dropped); no corpus program exercises those, so
+they add no build-failure pin -- but they are no longer silent
+miscompiles.
 
 `qir-qis` is a `[dependency-groups].test` dep (default-groups
 includes `test`), so this runs in the default sweep.
@@ -79,6 +90,13 @@ from .audit_runner import _curated_cases  # noqa: TID252
 _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     "docs.for_loopvar_symbolic": ("AttributeError", "SymbolicQubit"),
     "docs.rotation_rx": ("RuntimeError", "__quantum__qis__rx__body"),
+    # #74: the QIR backend now fails LOUD on `While` (was a silent
+    # single-pass approximation that qir-qis could not catch -- valid
+    # QIR, wrong semantics). `docs.while_loop` moved QIS_OK -> here
+    # deliberately; this aligns the QIR path with the Guppy path,
+    # which already rejects `While` (v1-feature-matrix: real While is
+    # out of scope for the sound emitter).
+    "docs.while_loop": ("NotImplementedError", "does not support While loops"),
 }
 
 # Tier 1: the non-metadata `validate_qir` failures (label -> stable,
@@ -110,7 +128,6 @@ _EXPECTED_QIS_OK: frozenset[str] = frozenset(
         "docs.prep_basis_x",
         "docs.repeat_state_preserving",
         "docs.surface_syndrome_block18",
-        "docs.while_loop",
         "examples.measure_register_to_creg",
         "examples.parallel_bell_pairs",
         "examples.surface_d3_x_1round",

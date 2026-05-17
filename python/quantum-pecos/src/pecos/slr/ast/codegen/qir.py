@@ -387,9 +387,15 @@ class AstToQir:
         elif isinstance(stmt, PermuteOp):
             self._process_permute(stmt)
         elif isinstance(stmt, PrintOp):
-            # Phase 1: Print is Guppy-only. Other codegens drop the streamed
-            # value silently. Revisit per-codegen if a user need surfaces.
-            return
+            # Classical-output streaming (`Print` -> Guppy `result(...)`)
+            # is unimplemented in the QIR backend. Silently dropping it
+            # loses observable program output -- fail LOUD instead.
+            msg = (
+                "QIR codegen does not support Print (classical output "
+                "streaming is unimplemented; silently dropping it would "
+                "lose observable program output)."
+            )
+            raise NotImplementedError(msg)
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
@@ -626,8 +632,15 @@ class AstToQir:
             return self._builder.zext(bit, self._types["int"])
 
         if isinstance(expr, VarExpr):
-            # Variable lookup - for now just return 0
-            return llvm_ir.Constant(self._types["int"], 0)
+            # Classical scalar-variable lowering is unimplemented in the
+            # QIR backend. Silently evaluating every VarExpr as constant
+            # 0 is a miscompile -- fail LOUD instead.
+            msg = (
+                f"QIR codegen: classical variable {expr.name!r} is not "
+                "supported by the QIR backend (scalar-variable lowering is "
+                "unimplemented; it must not be silently evaluated as 0)."
+            )
+            raise NotImplementedError(msg)
 
         if isinstance(expr, BinaryExpr):
             left = self._eval_expression(expr.left)
@@ -664,11 +677,22 @@ class AstToQir:
                     self._process_statement(stmt)
 
     def _process_while(self, node: WhileStmt) -> None:
-        """Process a while loop."""
-        # QIR supports loops through LLVM branch instructions
-        # For simplicity, we process the body once (approximation)
-        for stmt in node.body:
-            self._process_statement(stmt)
+        """`While` is not supported by the QIR backend.
+
+        Unbounded iteration / fixed-point linear state through an
+        unknown iteration count is out of scope for the sound emitter
+        (v1-feature-matrix); the AST->Guppy path also rejects `While`.
+        Fail LOUD here -- the previous single-pass approximation
+        silently dropped the loop condition and all iterations (a
+        miscompile qir-qis cannot catch, since one pass is valid QIR).
+        """
+        msg = (
+            "QIR codegen does not support While loops (unbounded "
+            "iteration / fixed-point linear state is out of scope for "
+            "the QIR backend; a single-pass approximation would be a "
+            "silent miscompile)."
+        )
+        raise NotImplementedError(msg)
 
     def _process_for(self, node: ForStmt) -> None:
         """Process a for loop by unrolling."""

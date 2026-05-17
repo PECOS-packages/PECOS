@@ -785,12 +785,18 @@ class TestCrossCodegenPrintEmission:
     - **QASM**: emits `// Print result.debug c` as a comment line; output is
       *not* byte-identical (intentional, per the doc's "comment-only across
       non-Guppy" plan).
-    - **QIR**, **Stim**, **QuantumCircuit**: silently skip PrintOp via their
-      isinstance-dispatch fallback (no else clause). Output is byte-identical.
+    - **QIR**: #74 -- the QIR backend now **fails loud** on `Print`
+      (`NotImplementedError`) instead of silently dropping it. Silently
+      losing observable output is a miscompile qir-qis cannot catch; the
+      bounded fix is to raise, not emit. (Real `Print`->record_output is
+      deferred, like real `While`.)
+    - **Stim**, **QuantumCircuit**: still silently skip PrintOp via their
+      isinstance-dispatch fallback. Output is byte-identical. (Sibling
+      silent-drop, out of #74's AST->QIR scope -- a separate task if a
+      user need surfaces.)
 
-    These tests pin both behaviors. If a future change starts emitting in
-    QIR/Stim/QC, this catches it. If QASM stops emitting the comment, this
-    catches it.
+    These tests pin all three behaviors. If QIR stops raising, or Stim/QC
+    start/stop emitting, or QASM stops the comment, this catches it.
     """
 
     @staticmethod
@@ -832,11 +838,16 @@ class TestCrossCodegenPrintEmission:
         added_lines = [line for line in b.splitlines() if line not in a.splitlines()]
         assert added_lines == [expected_added], f"expected exactly [{expected_added!r}] added lines, got {added_lines}"
 
-    def test_qir_byte_identical(self) -> None:
-        """QIR silently drops Print; pre/post output is byte-identical."""
-        a = SlrConverter(self._bell_no_print()).qir()
-        b = SlrConverter(self._bell_with_print()).qir()
-        assert a == b, "QIR Print emission must be a silent skip (Phase 1 policy)"
+    def test_qir_raises_loud_on_print(self) -> None:
+        """#74: QIR must FAIL LOUD on Print, not silently drop it.
+
+        The no-Print program still builds; adding Print makes `.qir()`
+        raise `NotImplementedError` (a silent drop would lose observable
+        output -- a miscompile qir-qis cannot catch).
+        """
+        SlrConverter(self._bell_no_print()).qir()  # no Print: builds fine
+        with pytest.raises(NotImplementedError, match=r"does not support Print"):
+            SlrConverter(self._bell_with_print()).qir()
 
     def test_stim_byte_identical(self) -> None:
         a = str(SlrConverter(self._bell_no_print()).stim())

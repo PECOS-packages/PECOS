@@ -430,18 +430,28 @@ impl PyAnyType {
     }
 }
 
-/// Structural type equality (llvmlite parity: `int_type(1) == int_type(1)`,
-/// `!= int_type(64)`). Non-type `other` -> not-equal (so `==` is `False`,
-/// `!=` is `True`); ordering comparisons are unsupported -> `false`.
-fn lltype_richcmp(a: LLType<'static>, other: &Bound<'_, PyAny>, op: CompareOp) -> bool {
-    let Ok(other) = other.extract::<PyAnyType>() else {
-        return matches!(op, CompareOp::Ne);
-    };
-    let eq = a == other.ll_type();
+/// Type equality by LLVM `LLVMTypeRef` identity within one `Context`
+/// (sufficient for #71 B2: every type check happens inside one module).
+/// `Eq`/`Ne` only; non-type `other` -> not-equal (`==` False, `!=` True).
+/// Ordering ops are unsupported -> `NotImplemented` so Python raises
+/// `TypeError` rather than returning a silently-wrong `False`.
+fn lltype_richcmp(
+    py: Python<'_>,
+    a: LLType<'static>,
+    other: &Bound<'_, PyAny>,
+    op: CompareOp,
+) -> Py<PyAny> {
     match op {
-        CompareOp::Eq => eq,
-        CompareOp::Ne => !eq,
-        _ => false,
+        CompareOp::Eq | CompareOp::Ne => {
+            let eq = other.extract::<PyAnyType>().is_ok_and(|o| a == o.ll_type());
+            let val = if matches!(op, CompareOp::Eq) { eq } else { !eq };
+            val.into_pyobject(py)
+                .expect("bool -> PyBool is infallible")
+                .to_owned()
+                .into_any()
+                .unbind()
+        }
+        _ => py.NotImplemented(),
     }
 }
 
@@ -490,8 +500,8 @@ unsafe impl Sync for PyPointerType {}
 
 #[pymethods]
 impl PyPointerType {
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> bool {
-        lltype_richcmp(self.ll_type, other, op)
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, self.ll_type, other, op)
     }
     fn __hash__(&self) -> u64 {
         lltype_hash(self.ll_type)
@@ -520,8 +530,8 @@ unsafe impl Sync for PyIntType {}
 
 #[pymethods]
 impl PyIntType {
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> bool {
-        lltype_richcmp(self.ll_type, other, op)
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, self.ll_type, other, op)
     }
     fn __hash__(&self) -> u64 {
         lltype_hash(self.ll_type)
@@ -559,8 +569,8 @@ unsafe impl Sync for PyDoubleType {}
 
 #[pymethods]
 impl PyDoubleType {
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> bool {
-        lltype_richcmp(self.ll_type, other, op)
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, self.ll_type, other, op)
     }
     fn __hash__(&self) -> u64 {
         lltype_hash(self.ll_type)
@@ -598,8 +608,8 @@ unsafe impl Sync for PyArrayType {}
 
 #[pymethods]
 impl PyArrayType {
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> bool {
-        lltype_richcmp(self.ll_type, other, op)
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, self.ll_type, other, op)
     }
     fn __hash__(&self) -> u64 {
         lltype_hash(self.ll_type)
@@ -652,8 +662,8 @@ impl PyVoidType {
     // `&self` is mandated by pyo3 `#[pymethods]` dunders; the void type
     // carries no per-instance state, so `self` is unused here by design.
     #[allow(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> bool {
-        lltype_richcmp(LLType::Void, other, op)
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, LLType::Void, other, op)
     }
     #[allow(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
     fn __hash__(&self) -> u64 {

@@ -36,6 +36,7 @@ from pecos.slr.ast.nodes import (
     GateKind,
     GateOp,
     IfStmt,
+    LiteralExpr,
     MeasureOp,
     ParallelBlock,
     PermuteOp,
@@ -254,9 +255,15 @@ class AstToStim:
         elif isinstance(stmt, PermuteOp):
             self._process_permute(stmt)
         elif isinstance(stmt, PrintOp):
-            # Phase 1: Print is Guppy-only. Other codegens drop the streamed
-            # value silently. Revisit per-codegen if a user need surfaces.
-            return
+            # Classical-output streaming is unimplemented in the Stim
+            # backend. Silently dropping it loses observable program
+            # output -- fail LOUD (same decision as the QIR backend, #74).
+            msg = (
+                "Stim codegen does not support Print (classical output "
+                "streaming is unimplemented; silently dropping it would "
+                "lose observable program output)."
+            )
+            raise NotImplementedError(msg)
         # Other statement types (Comment, Assign, Return) don't generate Stim output
 
     def _process_gate(self, node: GateOp) -> None:
@@ -334,22 +341,49 @@ class AstToStim:
                 self._process_statement(stmt)
 
     def _process_while(self, node: WhileStmt) -> None:
-        """Process a while loop."""
-        # Stim doesn't support runtime loops - process body once
-        self.circuit.append("TICK")
-        for stmt in node.body:
-            self._process_statement(stmt)
+        """`While` is not supported by the Stim backend.
+
+        Stim has no runtime loop. The previous "process body once + TICK"
+        silently dropped the loop condition and all iterations -- a
+        miscompile. Fail LOUD instead (same decision as the QIR backend,
+        #74; real While is out of scope per v1-feature-matrix).
+        """
+        _ = node
+        msg = (
+            "Stim codegen does not support While loops (Stim has no "
+            "runtime loop; a single-pass approximation would be a silent "
+            "miscompile)."
+        )
+        raise NotImplementedError(msg)
+
+    def _static_int_bound(self, expr: object, which: str) -> int:
+        """Resolve a static integer `For` bound.
+
+        The AST converter wraps integer range bounds in `LiteralExpr`
+        (`converter.py` `_convert_for`), so the bound is never a raw
+        `int` -- the old `isinstance(int)` guard was always false and
+        silently dropped every `For` body. A non-literal / non-int
+        bound is a symbolic/dynamic `For`: fail LOUD, never drop.
+        """
+        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
+            return expr.value
+        msg = (
+            f"Stim codegen: For loop {which} bound is not a static integer "
+            f"({type(expr).__name__}); only fixed-bound `For(i, <int>, "
+            "<int>)` is supported (symbolic/dynamic For is out of scope -- "
+            "and must not silently drop the loop body)."
+        )
+        raise NotImplementedError(msg)
 
     def _process_for(self, node: ForStmt) -> None:
-        """Process a for loop."""
-        # Try to unroll if bounds are static
-        if isinstance(node.start, int) and isinstance(node.stop, int):
-            step = node.step if isinstance(node.step, int) else 1
-            for _ in range(node.start, node.stop, step):
-                for stmt in node.body:
-                    self._process_statement(stmt)
-        else:
-            # Can't unroll - process body once
+        """Unroll a static fixed-bound `For` (v1-supported)."""
+        start = self._static_int_bound(node.start, "start")
+        stop = self._static_int_bound(node.stop, "stop")
+        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
+        if step == 0:
+            msg = "Stim codegen: For loop step is 0 (infinite loop); only a non-zero static step is supported."
+            raise NotImplementedError(msg)
+        for _ in range(start, stop, step):
             for stmt in node.body:
                 self._process_statement(stmt)
 

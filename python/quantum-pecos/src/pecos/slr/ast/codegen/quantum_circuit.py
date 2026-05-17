@@ -36,6 +36,7 @@ from pecos.slr.ast.nodes import (
     GateKind,
     GateOp,
     IfStmt,
+    LiteralExpr,
     MeasureOp,
     ParallelBlock,
     PermuteOp,
@@ -264,9 +265,19 @@ class AstToQuantumCircuit:
         elif isinstance(stmt, PermuteOp):
             self._process_permute(stmt)
         elif isinstance(stmt, PrintOp):
-            # Phase 1: Print is Guppy-only. Other codegens drop the streamed
-            # value silently. Revisit per-codegen if a user need surfaces.
-            return
+            # Print is not yet implemented for the QuantumCircuit
+            # backend. Fail LOUD rather than silently drop observable
+            # program output (#74 principle). Unlike Stim, PECOS owns
+            # the QuantumCircuit format, so a `Print` representation
+            # could be added later -- this is "not yet", not "cannot".
+            msg = (
+                "QuantumCircuit codegen does not yet support Print "
+                "(classical output streaming is not implemented for this "
+                "backend; it is silently-drop-free by design -- fail "
+                "loud. PECOS controls this format, so Print support may "
+                "be added in future)."
+            )
+            raise NotImplementedError(msg)
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
@@ -357,17 +368,40 @@ class AstToQuantumCircuit:
         )
         raise NotImplementedError(msg)
 
+    def _static_int_bound(self, expr: object, which: str) -> int:
+        """Resolve a static integer `For` bound.
+
+        The AST converter wraps integer range bounds in `LiteralExpr`
+        (`converter.py` `_convert_for`), so the bound is never a raw
+        `int` -- the old `isinstance(int)` guard was always false, so
+        the `else` branch *rejected every* static `For` (even valid
+        `For(i, 0, 3)`). Resolve the literal; a non-literal / non-int
+        bound is a symbolic/dynamic `For`: fail LOUD.
+        """
+        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
+            return expr.value
+        msg = (
+            f"QuantumCircuit codegen: For loop {which} bound is not a "
+            f"static integer ({type(expr).__name__}); only fixed-bound "
+            "`For(i, <int>, <int>)` is supported (symbolic/dynamic For "
+            "is out of scope)."
+        )
+        raise NotImplementedError(msg)
+
     def _process_for(self, node: ForStmt) -> None:
-        """Process a for loop by unrolling."""
-        # Unroll if bounds are static
-        if isinstance(node.start, int) and isinstance(node.stop, int):
-            step = node.step if isinstance(node.step, int) else 1
-            for _ in range(node.start, node.stop, step):
-                for stmt in node.body:
-                    self._process_statement(stmt)
-        else:
-            msg = f"Cannot unroll For loop with non-integer bounds: start={node.start}, stop={node.stop}"
-            raise TypeError(msg)
+        """Unroll a static fixed-bound `For` (v1-supported)."""
+        start = self._static_int_bound(node.start, "start")
+        stop = self._static_int_bound(node.stop, "stop")
+        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
+        if step == 0:
+            msg = (
+                "QuantumCircuit codegen: For loop step is 0 (infinite "
+                "loop); only a non-zero static step is supported."
+            )
+            raise NotImplementedError(msg)
+        for _ in range(start, stop, step):
+            for stmt in node.body:
+                self._process_statement(stmt)
 
     def _process_repeat(self, node: RepeatStmt) -> None:
         """Process a repeat loop by unrolling."""

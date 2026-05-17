@@ -10,9 +10,10 @@ sys.path.insert(
 
 import pytest
 from pecos.circuits.quantum_circuit import QuantumCircuit
-from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter
+from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 
 
 def _return_declared_cregs(prog: Main) -> Main:
@@ -391,6 +392,40 @@ class TestQuantumCircuitRoundTrip:
         for op_nospace, op_space in cx_gates:
             assert op_nospace in orig_qasm.lower() or op_space in orig_qasm.lower()
             assert op_nospace in recon_qasm.lower() or op_space in recon_qasm.lower()
+
+
+class TestQuantumCircuitStaticForAndWhile:
+    """#78: same silent-miscompile class as #74, in the AST
+    QuantumCircuit codegen.
+
+    The AST converter wraps `For` range bounds in `LiteralExpr`, so the
+    old `isinstance(node.start, int)` guard was always false -- the
+    `else` *rejected every* static `For` (even valid `For(i, 0, 3)`)
+    with a `TypeError`. Now: static `For` unrolls; symbolic bound fails
+    loud with a clear message. (`While` already failed loud here.)
+    """
+
+    def test_static_for_unrolls_body_not_dropped(self) -> None:
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            For("i", 0, 3).Do(qubit.X(q[0])),
+            Measure(q[0]) > c[0],
+            Return(c),
+        )
+        qc = SlrConverter(prog).quantum_circuit()
+        # 3 unrolled X on qubit 0 in the QuantumCircuit op list.
+        assert str(qc).count("{'X': {0}}") == 3, f"static For not unrolled 3x: {qc}"
+
+    def test_while_raises_loud(self) -> None:
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            While(c[0] == 0).Do(qubit.X(q[0]), Measure(q[0]) > c[0]),
+            Return(c),
+        )
+        with pytest.raises(NotImplementedError, match=r"While loops cannot be converted"):
+            SlrConverter(prog).quantum_circuit()
 
 
 if __name__ == "__main__":

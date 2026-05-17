@@ -790,13 +790,18 @@ class TestCrossCodegenPrintEmission:
       losing observable output is a miscompile qir-qis cannot catch; the
       bounded fix is to raise, not emit. (Real `Print`->record_output is
       deferred, like real `While`.)
-    - **Stim**, **QuantumCircuit**: still silently skip PrintOp via their
-      isinstance-dispatch fallback. Output is byte-identical. (Sibling
-      silent-drop, out of #74's AST->QIR scope -- a separate task if a
-      user need surfaces.)
+    - **Stim**, **QuantumCircuit**: #78 -- now also **fail loud** on
+      `Print` (`NotImplementedError`), the same silent-drop class as
+      #74's QIR Print, applied per the explicit-over-implicit rule.
+      Stim's is fundamental ("does not support" -- Stim has no
+      classical-output stream); QuantumCircuit's is "does not yet
+      support" (PECOS owns that format, so it may be added later).
+      Was a deliberately-pinned silent skip; flipped here exactly as
+      #74 flipped `test_qir_byte_identical` -> `..._raises_loud`.
 
-    These tests pin all three behaviors. If QIR stops raising, or Stim/QC
-    start/stop emitting, or QASM stops the comment, this catches it.
+    These tests pin all four behaviors. If any backend stops
+    raising / starts emitting, or QASM stops the comment, this catches
+    it.
     """
 
     @staticmethod
@@ -849,15 +854,20 @@ class TestCrossCodegenPrintEmission:
         with pytest.raises(NotImplementedError, match=r"does not support Print"):
             SlrConverter(self._bell_with_print()).qir()
 
-    def test_stim_byte_identical(self) -> None:
-        a = str(SlrConverter(self._bell_no_print()).stim())
-        b = str(SlrConverter(self._bell_with_print()).stim())
-        assert a == b, "Stim Print emission must be a silent skip (Phase 1 policy)"
+    def test_stim_raises_loud_on_print(self) -> None:
+        """#78: Stim must FAIL LOUD on Print (no classical-output
+        stream), not silently drop it. No-Print still converts."""
+        SlrConverter(self._bell_no_print()).stim()  # no Print: fine
+        with pytest.raises(NotImplementedError, match=r"does not support Print"):
+            SlrConverter(self._bell_with_print()).stim()
 
-    def test_quantum_circuit_byte_identical(self) -> None:
-        a = str(SlrConverter(self._bell_no_print()).quantum_circuit())
-        b = str(SlrConverter(self._bell_with_print()).quantum_circuit())
-        assert a == b, "QuantumCircuit Print emission must be a silent skip (Phase 1 policy)"
+    def test_quantum_circuit_raises_loud_on_print(self) -> None:
+        """#78: QuantumCircuit must FAIL LOUD on Print (not yet
+        implemented -- may be added since PECOS owns this format), not
+        silently drop it. No-Print still converts."""
+        SlrConverter(self._bell_no_print()).quantum_circuit()  # no Print: fine
+        with pytest.raises(NotImplementedError, match=r"does not yet support Print"):
+            SlrConverter(self._bell_with_print()).quantum_circuit()
 
 
 # ── Selene shape edge cases (probed 2026-05-14) ──────────────────────────

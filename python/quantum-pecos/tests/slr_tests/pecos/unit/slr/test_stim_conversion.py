@@ -1,8 +1,9 @@
 """Tests for Stim circuit to/from SLR conversion."""
 
 import pytest
-from pecos.slr import CReg, Main, Parallel, QReg, Repeat, Return, SlrConverter
+from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
 
 
 def _return_declared_cregs(prog: Main) -> Main:
@@ -301,6 +302,41 @@ class TestStimRoundTrip:
         # Check CX with flexible formatting
         assert "cx q[0],q[1]" in orig_qasm or "cx q[0], q[1]" in orig_qasm
         assert "cx q[0],q[1]" in recon_qasm or "cx q[0], q[1]" in recon_qasm
+
+
+@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
+class TestStimStaticForAndWhile:
+    """#78: same silent-miscompile class as #74, in the AST Stim codegen.
+
+    The AST converter wraps `For` range bounds in `LiteralExpr`, so the
+    old `isinstance(node.start, int)` guard was always false -- Stim
+    silently dropped every `For` body, and `While` was silently
+    processed once (+ a stray TICK). Both are valid-output / wrong-
+    semantics. Now: static `For` unrolls; `While` fails loud.
+    """
+
+    def test_static_for_unrolls_body_not_dropped(self) -> None:
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            For("i", 0, 3).Do(qubit.X(q[0])),
+            Measure(q[0]) > c[0],
+            Return(c),
+        )
+        circ = SlrConverter(prog).stim()
+        # 3 X applications on qubit 0 (Stim coalesces to `X 0 0 0`);
+        # 0 == the old silent drop.
+        assert "X 0 0 0" in str(circ), f"static For body not unrolled 3x:\n{circ}"
+
+    def test_while_raises_loud(self) -> None:
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            While(c[0] == 0).Do(qubit.X(q[0]), Measure(q[0]) > c[0]),
+            Return(c),
+        )
+        with pytest.raises(NotImplementedError, match=r"does not support While loops"):
+            SlrConverter(prog).stim()
 
 
 if __name__ == "__main__":

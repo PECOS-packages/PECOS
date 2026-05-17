@@ -692,9 +692,25 @@ class AstToQir:
         mod_w_attr = ll_text.replace("@main()", "@main() #0")
 
         mod_w_attr += '\nattributes #0 = { "entry_point"'
-        mod_w_attr += ' "qir_profiles"="custom"'
+        # adaptive_profile: PECOS emits measurement-conditioned `If` ->
+        # adaptive, not base profile (#71 Stage B1, dual-review pinned).
+        mod_w_attr += ' "qir_profiles"="adaptive_profile"'
+        mod_w_attr += ' "output_labeling_schema"="labeled"'
         mod_w_attr += f' "required_num_qubits"="{self.context.qubit_count}"'
         mod_w_attr += f' "required_num_results"="{self.context.measurement_count}" }}'
+
+        # QIR module flags (Adaptive Profile). pecos_rslib_llvm.ir.Module has
+        # no named-metadata API, so append as raw IR text -- same approach as
+        # the entry attributes above. The emitted module carries no `!`
+        # metadata, so !0..!4 are collision-free. Static classical model
+        # (#71 Stage B): dynamic_*/arrays = false (B2 keeps the static
+        # %Result + mutable local-buffer model; flags must match).
+        mod_w_attr += "\n!llvm.module.flags = !{!0, !1, !2, !3, !4}"
+        mod_w_attr += '\n!0 = !{i32 1, !"qir_major_version", i32 1}'
+        mod_w_attr += '\n!1 = !{i32 7, !"qir_minor_version", i32 0}'
+        mod_w_attr += '\n!2 = !{i32 1, !"dynamic_qubit_management", i1 false}'
+        mod_w_attr += '\n!3 = !{i32 1, !"dynamic_result_management", i1 false}'
+        mod_w_attr += '\n!4 = !{i32 1, !"arrays", i1 false}'
         return mod_w_attr
 
     def _fix_internal_consts(self, llvm_ir: str) -> str:

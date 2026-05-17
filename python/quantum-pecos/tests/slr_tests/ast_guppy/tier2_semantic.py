@@ -61,7 +61,7 @@ import sys
 
 import pytest
 import qir_qis
-from pecos.slr import CReg, If, Main, Print, QReg, Return, SlrConverter, While
+from pecos.slr import CReg, For, If, Main, Print, QReg, Return, SlrConverter, While
 from pecos.slr.ast.codegen.qir import AstToQir
 from pecos.slr.ast.nodes import VarExpr
 from pecos.slr.qeclib import qubit as qb
@@ -358,6 +358,29 @@ def test_print_raises_loud() -> None:
     )
     with pytest.raises(NotImplementedError, match=r"does not support Print"):
         SlrConverter(prog).qir_bc()
+
+
+def test_static_for_unrolls_body_not_dropped() -> None:
+    """#74 (Codex): a static `For` must UNROLL its body, not silently
+    drop it. The old `_process_for` guard `isinstance(node.start, int)`
+    was always false (the converter wraps bounds in `LiteralExpr`), so
+    every `For` body was silently dropped -- valid QIR, wrong
+    semantics, qir-qis-uncatchable (the exact bug class #74 targets)."""
+    prog = Main(
+        q := QReg("q", 1),
+        c := CReg("c", 1),
+        For("i", 0, 3).Do(qb.X(q[0])),
+        Measure(q[0]) > c[0],
+        Return(c),
+    )
+    ir = SlrConverter(prog).qir()
+    # Count CALL sites only -- `@__quantum__qis__x__body(` also matches
+    # the one `declare` line. `For("i", 0, 3)` -> range(0, 3) -> 3 (the
+    # canonical exclusive semantics, matching gen_quantum_circuit).
+    n = ir.count("call void @__quantum__qis__x__body(")
+    assert n == 3, f"static For body must unroll 3x; got {n} X call(s) (0 == silently dropped)"
+    # and the unrolled QIR still lowers via the real qir-qis compiler
+    qir_qis.qir_to_qis(SlrConverter(prog).qir_bc())
 
 
 def test_varexpr_raises_loud() -> None:

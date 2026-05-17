@@ -694,13 +694,38 @@ class AstToQir:
         )
         raise NotImplementedError(msg)
 
+    def _static_int_bound(self, expr: Any, which: str) -> int:
+        """Resolve a static integer `For` bound.
+
+        The converter wraps integer range bounds in `LiteralExpr`
+        (`converter.py` `_convert_for`), so the bound is never a raw
+        `int`. A non-literal / non-int bound is a symbolic/dynamic
+        `For`, which is unsupported -- fail LOUD rather than silently
+        drop the loop body (the previous `isinstance(int)` guard was
+        always false, so EVERY `For` body was silently dropped).
+        """
+        if (
+            isinstance(expr, LiteralExpr)
+            and isinstance(expr.value, int)
+            and not isinstance(expr.value, bool)
+        ):
+            return expr.value
+        msg = (
+            f"QIR codegen: For loop {which} bound is not a static integer "
+            f"({type(expr).__name__}); only fixed-bound `For(i, <int>, "
+            "<int>)` is supported (symbolic/dynamic For is out of scope -- "
+            "and must not silently drop the loop body)."
+        )
+        raise NotImplementedError(msg)
+
     def _process_for(self, node: ForStmt) -> None:
-        """Process a for loop by unrolling."""
-        if isinstance(node.start, int) and isinstance(node.stop, int):
-            step = node.step if isinstance(node.step, int) else 1
-            for _ in range(node.start, node.stop, step):
-                for stmt in node.body:
-                    self._process_statement(stmt)
+        """Unroll a static fixed-bound `For` (v1-supported)."""
+        start = self._static_int_bound(node.start, "start")
+        stop = self._static_int_bound(node.stop, "stop")
+        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
+        for _ in range(start, stop, step):
+            for stmt in node.body:
+                self._process_statement(stmt)
 
     def _process_repeat(self, node: RepeatStmt) -> None:
         """Process a repeat loop by unrolling."""

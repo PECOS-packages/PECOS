@@ -51,6 +51,48 @@ if ($pinned) {
     throw "$StaleLinkerEnv is set ($pinned); it overrides the generated .cargo/config.toml linker. Unset it and re-run."
 }
 
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$cargoDir = Join-Path $repoRoot ".cargo"
+$configPath = Join-Path $cargoDir "config.toml"
+
+function Test-LibResolvesKernel32([string]$lib) {
+    foreach ($dir in ($lib -split ';')) {
+        $d = $dir.Trim()
+        if ($d -and (Test-Path -LiteralPath (Join-Path $d "kernel32.lib"))) {
+            return $true
+        }
+    }
+    return $false
+}
+
+# Fast path: this script is a prerequisite of many recipes, so it runs several
+# times per CI job (and per local build). vswhere + VsDevCmd cost ~10s each.
+# If a prior run already wrote a config whose linker still exists and whose
+# LIB still resolves kernel32.lib, the toolchain is unchanged -- skip the
+# expensive discovery entirely. It self-heals: if VS moved or was removed the
+# linker path is gone, so we fall through and regenerate. A fresh checkout
+# (no config) or a stale path also falls through.
+if (Test-Path -LiteralPath $configPath) {
+    $cfg = Get-Content -LiteralPath $configPath -Raw
+    if ($cfg) {
+        $linkerMatch = [regex]::Match($cfg, '(?m)^\s*linker\s*=\s*"([^"]+)"')
+        $libMatch = [regex]::Match($cfg, '(?m)^\s*LIB\s*=\s*(?:\{\s*value\s*=\s*"([^"]+)"|"([^"]+)")')
+        if ($linkerMatch.Success -and $libMatch.Success) {
+            $existingLinker = $linkerMatch.Groups[1].Value
+            $existingLib = if ($libMatch.Groups[1].Success) {
+                $libMatch.Groups[1].Value
+            }
+            else {
+                $libMatch.Groups[2].Value
+            }
+            if ((Test-Path -LiteralPath $existingLinker) -and (Test-LibResolvesKernel32 $existingLib)) {
+                Write-Host "win-msvc-bootstrap: $configPath already valid; skipping VsDevCmd"
+                exit 0
+            }
+        }
+    }
+}
+
 # --- Locate Visual Studio / the newest MSVC toolset -------------------------
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
@@ -108,15 +150,7 @@ if (-not (Test-Path -LiteralPath $linkExe)) {
 # kernel32.lib lives in the Windows SDK um\x64 -- the exact entry LNK1181
 # complains about when LIB is mangled. If it does not resolve here, refuse to
 # write a config that would only fail later at link time.
-$kernel32Found = $false
-foreach ($dir in ($lib -split ';')) {
-    $d = $dir.Trim()
-    if ($d -and (Test-Path -LiteralPath (Join-Path $d "kernel32.lib"))) {
-        $kernel32Found = $true
-        break
-    }
-}
-if (-not $kernel32Found) {
+if (-not (Test-LibResolvesKernel32 $lib)) {
     throw "Captured LIB does not resolve a real kernel32.lib (no Windows SDK um\x64?); refusing to write a config that would fail at link time"
 }
 
@@ -132,10 +166,6 @@ $envValues = [ordered]@{
 if ($libpath) { $envValues["LIBPATH"] = ConvertTo-TomlPath $libpath }
 
 # --- Scoped merge into .cargo/config.toml -----------------------------------
-
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$cargoDir = Join-Path $repoRoot ".cargo"
-$configPath = Join-Path $cargoDir "config.toml"
 
 $original = ""
 if (Test-Path -LiteralPath $configPath) {

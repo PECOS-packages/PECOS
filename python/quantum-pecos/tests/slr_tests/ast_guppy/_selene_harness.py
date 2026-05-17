@@ -173,7 +173,23 @@ def _shot_records(result: pecos_rslib.ShotVec, record_cregs: list[RegisterDecl])
             shot_val = raw[key][shot_idx]
             # Selene shapes a size-1 CReg result tag as a scalar int per
             # shot, and a size>1 CReg as a list of `size` ints per shot.
-            bits = list(shot_val) if isinstance(shot_val, (list, tuple)) else [shot_val]
+            # Be explicit and fail LOUD on any other shape -- a silent
+            # mis-count is the exact bug class #72 fixed (do not let an
+            # unexpected Selene type, e.g. a numpy array/generator, be
+            # silently wrapped as one bit).
+            if isinstance(shot_val, (list, tuple)):
+                bits = list(shot_val)
+            elif isinstance(shot_val, int):  # bool is an int subclass
+                bits = [shot_val]
+            else:
+                msg = (
+                    f"Return tag {key!r} shot {shot_idx}: unexpected Selene "
+                    f"value shape {type(shot_val).__name__} ({shot_val!r}); "
+                    "expected a scalar int (size-1 CReg) or a list of ints "
+                    "(size>1 CReg). Selene's result-tag output shape may "
+                    "have changed -- update _shot_records deliberately."
+                )
+                raise TypeError(msg)
             if len(bits) != decl.size:
                 msg = (
                     f"Return tag {key!r} shot {shot_idx} has {len(bits)} bits, "

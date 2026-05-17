@@ -154,18 +154,30 @@ if (Test-Path -LiteralPath $configPath) {
 # duplicate `[env]` or invalid TOML, fail fast if a header is in a form we
 # can't safely round-trip (trailing comment, quoted/dotted `env`, etc.) --
 # the user can delete the generated file and let it be regenerated.
+$seenHeader = $false
 foreach ($ln in ($original -split "`r?`n")) {
-    if ($ln -notmatch '^\s*\[') { continue }
-    if ($ln -notmatch '^\s*\[([^\]\r\n]+)\]\s*$') {
-        throw "Non-canonical TOML header in ${configPath}: '$ln'. This file is machine-managed; delete it and re-run."
+    if ($ln -match '^\s*\[') {
+        $seenHeader = $true
+        if ($ln -notmatch '^\s*\[([^\]\r\n]+)\]\s*$') {
+            throw "Non-canonical TOML header in ${configPath}: '$ln'. This file is machine-managed; delete it and re-run."
+        }
+        $hn = $Matches[1].Trim()
+        if ($hn -match '["'']') {
+            throw "Quoted TOML header in ${configPath}: '$ln'. This file is machine-managed; delete it and re-run."
+        }
+        if ($hn -eq 'env' -or $hn -eq "target.$Triple") { continue }
+        if ($hn -like 'env.*' -or $hn -like "target.$Triple.*") {
+            throw "Dotted '$hn' table in ${configPath} conflicts with the keys this script owns. This file is machine-managed; delete it and re-run."
+        }
+        continue
     }
-    $hn = $Matches[1].Trim()
-    if ($hn -match '["'']') {
-        throw "Quoted TOML header in ${configPath}: '$ln'. This file is machine-managed; delete it and re-run."
-    }
-    if ($hn -eq 'env' -or $hn -eq "target.$Triple") { continue }
-    if ($hn -like 'env.*' -or $hn -like "target.$Triple.*") {
-        throw "Dotted '$hn' table in ${configPath} conflicts with the keys this script owns. This file is machine-managed; delete it and re-run."
+    # A top-level dotted key like `env.LIB = ...` or
+    # `target.x86_64-pc-windows-msvc.linker = "..."` implicitly defines the
+    # env/target table; our later `[env]` / `[target.<triple>]` header would
+    # then redefine it -- invalid TOML. Only top-level (pre-header) lines can
+    # define those tables, so check until the first header.
+    if (-not $seenHeader -and $ln -match '^\s*("?)(env|target)\1\s*\.[^=\r\n]*=') {
+        throw "Top-level dotted '$($Matches[2]).' key in ${configPath} conflicts with the [env] / [target.$Triple] tables this script writes. This file is machine-managed; delete it and re-run."
     }
 }
 

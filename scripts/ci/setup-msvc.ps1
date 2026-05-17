@@ -100,21 +100,18 @@ if ($after.ContainsKey("Path")) {
     }
 }
 
-# Pick link.exe from the NEWEST installed MSVC toolset. VsDevCmd.bat (above)
-# already configured LIB / INCLUDE / etc. against the newest toolset, and runners
-# can have multiple MSVC versions side-by-side (14.29 from VS 2019 + 14.40+ from
-# VS 2022). Naive `Select-Object -First 1` returns the lexically-first directory,
-# which is the OLDEST -- mismatching it with the newest-MSVC LIB paths makes the
-# linker fail with `LNK1181: cannot open input file 'kernel32.lib'` when
-# anything outside cache (e.g. cold debug-profile build scripts) needs to link.
-$latestMsvcDir = Get-ChildItem -Path (Join-Path $vsPath "VC\Tools\MSVC") -Directory |
-    Sort-Object { try { [version]$_.Name } catch { [version]"0.0" } } -Descending |
-    Select-Object -First 1 -ExpandProperty FullName
-if (-not $latestMsvcDir) {
-    throw "Could not find any MSVC toolset under $vsPath\VC\Tools\MSVC"
+# Derive link.exe from the toolset VsDevCmd actually configured
+# (VCToolsInstallDir), so the pinned linker always matches the LIB / INCLUDE
+# this script exports AND the .cargo/config.toml that python-release.yml
+# derives from the same variable. (Cargo env vars outrank config.toml, so the
+# env pin and any generated config MUST agree on the toolset.) This replaces a
+# lexical MSVC-dir scan that could select a mismatched toolset and fail with
+# `LNK1181: cannot open input file 'kernel32.lib'`.
+$vcTools = $after["VCToolsInstallDir"]
+if (-not $vcTools) {
+    throw "VsDevCmd did not set VCToolsInstallDir"
 }
-$msvcHostBin = Join-Path $latestMsvcDir "bin\Hostx64\x64"
-$linkPath = Join-Path $msvcHostBin "link.exe"
+$linkPath = Join-Path ($vcTools.TrimEnd('\', '/')) "bin\Hostx64\x64\link.exe"
 if (-not (Test-Path $linkPath)) {
     throw "MSVC link.exe not found at $linkPath"
 }

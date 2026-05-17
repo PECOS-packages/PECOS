@@ -39,14 +39,21 @@ deeper *semantic* proof for the load-bearing CReg shapes):
      deterministic sibling lowering (proven structurally in B) of the
      same AST whose classical semantics C executes.
 
-**Why not a direct qir_to_qis->Selene differential:** `qir_to_qis`
-emits **LLVM-21 opaque-pointer** QIS bitcode; PECOS's Selene QIS
-runtime (`crates/pecos-qis`) is **LLVM-14 typed-pointer** with the
-`___`-prefixed Selene QIS intrinsic convention. The two "QIS" forms
-are incompatible LLVM versions/dialects; no LLVM-21 disassembler is
-available and bridging LLVM-21 opaque -> LLVM-14 typed is a separate
-infra project, out of B2 scope (tracked as a blocked task). A+B+C
-together bound B2 correctness without that bridge.
+  D. **Executable differential (#77).** `selene_sim` natively
+     executes `qir_qis.qir_to_qis`'s LLVM-21 opaque-pointer QIS
+     bitcode via the bundled `selene_helios_qis_plugin` (+ Helios
+     QIR runtime) -- `selene_sim.build(BitcodeString(...)) ->
+     run_shots(Stim)`. So the direct `qir_to_qis -> Selene`
+     differential the #71/B2 saga long claimed "blocked" (an
+     alleged LLVM 14<->21 / opaque-vs-typed bridge) is in fact
+     available with zero PECOS LLVM work: PECOS-Rust stays LLVM-14;
+     the LLVM-21 capability lives entirely in the qir-qis +
+     selene_sim *Python* deps. Layer D
+     (`test_tier2_executable_differential`) lands the
+     **representative** executable differential (deterministic
+     programs to exact records; Bell by entanglement-correlation
+     property; one clean cross-path vs the AST->Guppy->Selene
+     oracle) -- not an exhaustive proof, the representative shapes.
 
 Run standalone: `uv run python -m pytest <thisfile> -q` or
 `uv run python .../tier2_semantic.py`. The pytest entry is marked
@@ -439,18 +446,27 @@ def test_tier2_executable_differential() -> None:
             failures.append(f"{label}: QIS-exec {recs} != expected {expected} (all shots)")
             print(f"[D FAIL] {failures[-1]}")
 
-    # Bell: genuinely quantum -> not a fixed value, but the QIS
-    # execution must preserve the entanglement correlation: every shot
-    # records c[0]==c[1], i.e. packed in {0b00, 0b11}. Verified across
-    # seeds (only 0/3 ever appear -- never 1/2). Property assertion,
-    # not shot-equality (selene-QIS-Stim and the Guppy oracle use
-    # different RNG plumbing; both independently satisfy this).
+    # Bell: genuinely quantum -> property check, not a fixed value.
+    # NECESSARY: every shot records c[0]==c[1] (single record, packed
+    # in {0b00, 0b11}, never 1/2) -- a broken/decorrelating CX trips
+    # this. SUFFICIENT (Codex #77 blocker): the aggregate over fixed
+    # seeds must contain BOTH 0b00 AND 0b11 -- a dropped H / dropped
+    # CX / no-op Bell lowering yields all-0, which a subset-only check
+    # (`in {0,3}`) would wrongly pass. Fixed seeds -> deterministic;
+    # 1/2/7/42 were verified to jointly span both outcomes.
     bell = _case("v1.bell")
-    bell_recs = _qis_exec_records(bell, 2)
-    if all(len(s) == 1 and s[0] in (0b00, 0b11) for s in bell_recs):
-        print(f"[D OK]   v1.bell (correlation: all shots in {{0,3}}) {bell_recs}")
+    bell_seeds = (1, 2, 7, 42)
+    bell_recs = {seed: _qis_exec_records(bell, 2, seed=seed) for seed in bell_seeds}
+    well_formed = all(len(shot) == 1 for recs in bell_recs.values() for shot in recs)
+    observed = {shot[0] for recs in bell_recs.values() for shot in recs if len(shot) == 1}
+    if well_formed and observed == {0b00, 0b11}:
+        print(f"[D OK]   v1.bell (c[0]==c[1] always; both 00 & 11 occur over seeds {bell_seeds})")
     else:
-        failures.append(f"v1.bell: not Bell-correlated (expect each shot in {{0,3}}): {bell_recs}")
+        failures.append(
+            f"v1.bell: require each shot a single record in {{0,3}} AND both 0 & 3 "
+            f"to occur across seeds {bell_seeds} (catches dropped H/CX -> all-0); "
+            f"observed={sorted(observed)} well_formed={well_formed} recs={bell_recs}",
+        )
         print(f"[D FAIL] {failures[-1]}")
 
     # Cross-path executable differential vs the dual-reviewed

@@ -228,17 +228,13 @@ def substitute_stmt(stmt: Statement, remap: BodyRemap) -> Statement:
         return _sub_prepare(stmt, remap)
     if isinstance(stmt, BarrierOp):
         return BarrierOp(
-            allocators=tuple(
-                remap.whole_name(a, context="Barrier") for a in stmt.allocators
-            ),
+            allocators=tuple(remap.whole_name(a, context="Barrier") for a in stmt.allocators),
             location=stmt.location,
         )
     if isinstance(stmt, AssignOp):
         target = stmt.target
         new_target = (
-            remap.bit(target)
-            if isinstance(target, BitRef)
-            else remap.whole_name(target, context="assignment target")
+            remap.bit(target) if isinstance(target, BitRef) else remap.whole_name(target, context="assignment target")
         )
         return AssignOp(
             target=new_target,
@@ -248,20 +244,14 @@ def substitute_stmt(stmt: Statement, remap: BodyRemap) -> Statement:
     if isinstance(stmt, ReturnOp):
         return ReturnOp(
             values=tuple(
-                _sub_expr(v, remap)
-                if not isinstance(v, str)
-                else remap.whole_name(v, context="Return value")
+                _sub_expr(v, remap) if not isinstance(v, str) else remap.whole_name(v, context="Return value")
                 for v in stmt.values
             ),
             location=stmt.location,
         )
     if isinstance(stmt, PrintOp):
         value = stmt.value
-        new_value = (
-            remap.bit(value)
-            if isinstance(value, BitRef)
-            else remap.whole_name(value, context="Print value")
-        )
+        new_value = remap.bit(value) if isinstance(value, BitRef) else remap.whole_name(value, context="Print value")
         return PrintOp(
             value=new_value,
             tag=stmt.tag,

@@ -297,28 +297,20 @@ class TestVisitorDispatchCompleteness:
         # subclasses (e.g. `MyGate(GateOp)`) are intentionally resolved
         # by MRO in BaseVisitor.visit and must NOT be required in
         # _DISPATCH, so scope the enumeration to the nodes module.
-        nodes = {
-            c for c in all_subclasses(nodes_mod.AstNode) if c.__module__ == nodes_mod.__name__
-        }
+        nodes = {c for c in all_subclasses(nodes_mod.AstNode) if c.__module__ == nodes_mod.__name__}
         # Intermediate/abstract bases (AstNode, Expression, Statement,
         # TypeExpr, Declaration, BlockArg) are never instantiated directly
         # and are correctly absent from _DISPATCH.
-        bases = {
-            base
-            for cls in nodes
-            for base in cls.__bases__
-            if base in nodes or base is nodes_mod.AstNode
-        }
+        bases = {base for cls in nodes for base in cls.__bases__ if base in nodes or base is nodes_mod.AstNode}
         return {cls.__name__ for cls in nodes if cls not in bases}
 
     def test_every_concrete_node_has_a_dispatch_entry(self) -> None:
         from pecos.slr.ast.visitor import _DISPATCH
 
         missing = sorted(self._concrete_node_names() - set(_DISPATCH))
-        assert not missing, (
-            f"concrete AST nodes with no _DISPATCH entry: {missing} "
-            "(add them to pecos.slr.ast.visitor._DISPATCH)"
-        )
+        assert (
+            not missing
+        ), f"concrete AST nodes with no _DISPATCH entry: {missing} (add them to pecos.slr.ast.visitor._DISPATCH)"
 
     def test_no_stale_or_invalid_dispatch_entries(self) -> None:
         from pecos.slr.ast.visitor import _DISPATCH, BaseVisitor

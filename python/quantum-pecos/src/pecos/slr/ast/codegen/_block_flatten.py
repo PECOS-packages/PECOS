@@ -189,9 +189,6 @@ def _inline_call(call: BlockCall, decls: dict[str, BlockDecl]) -> tuple[Statemen
             for k, slot in enumerate(arg.slots):
                 remap.add_slot((inp.name, k), (slot.allocator, slot.index))
         else:  # BitBundleArg already rejected above; defensive
-            msg = (
-                f"Flatten pass: unexpected BlockArg {type(arg).__name__} for "
-                f"input {inp.name!r} of {call.callee!r}"
-            )
+            msg = f"Flatten pass: unexpected BlockArg {type(arg).__name__} for input {inp.name!r} of {call.callee!r}"
             raise NotImplementedError(msg)
     return tuple(substitute_stmt(stmt, remap) for stmt in decl.body)

@@ -42,15 +42,16 @@ class _MainReturnTransformer(cst.CSTTransformer):
         """A `CReg(...)` call counts as a result CReg unless it explicitly
         passes `result=False`."""
         for arg in call.args:
-            if (
-                arg.keyword is not None
-                and arg.keyword.value == "result"
-                and m.matches(arg.value, m.Name("False"))
-            ):
+            if arg.keyword is not None and arg.keyword.value == "result" and m.matches(arg.value, m.Name("False")):
                 return False
         return True
 
-    def leave_Call(self, original: cst.Call, updated: cst.Call) -> cst.BaseExpression:
+    # libcst dispatches transformer hooks by the exact method name
+    # `leave_<CSTNodeClassName>` and calls them positionally; the
+    # CamelCase name is the libcst API contract, not ours -- renaming
+    # it breaks dispatch (hence the scoped N802 allow). `original` is
+    # unused, so `_original` silences ARG002 without a suppression.
+    def leave_Call(self, _original: cst.Call, updated: cst.Call) -> cst.BaseExpression:  # noqa: N802
         # Match bare `Main(...)` AND any qualified form (`pecos.slr.Main(...)`,
         # `slr.Main(...)`) -- the func is then an Attribute whose final attr
         # is `Main` (Codex S1-approach review: qualified calls were missed).
@@ -60,9 +61,7 @@ class _MainReturnTransformer(cst.CSTTransformer):
         ):
             return updated
 
-        has_return = any(
-            m.matches(a.value, m.Call(func=m.Name("Return"))) for a in updated.args
-        )
+        has_return = any(m.matches(a.value, m.Call(func=m.Name("Return"))) for a in updated.args)
         if has_return:
             self.skipped_existing_return += 1
             return updated
@@ -75,7 +74,8 @@ class _MainReturnTransformer(cst.CSTTransformer):
                 continue
             v = a.value
             if m.matches(v, m.NamedExpr()) and m.matches(
-                v.value, m.Call(func=m.Name("CReg"))
+                v.value,
+                m.Call(func=m.Name("CReg")),
             ):
                 target = v.target
                 if isinstance(target, cst.Name) and self._is_result_creg_call(v.value):
@@ -114,14 +114,16 @@ def _ensure_return_import(module: cst.Module) -> cst.Module:
     """Add `Return` to an existing `from pecos.slr import ...` if absent."""
 
     class _ImportFixer(cst.CSTTransformer):
-        def leave_ImportFrom(
-            self, original: cst.ImportFrom, updated: cst.ImportFrom
+        # See `leave_Call` above: libcst mandates the `leave_<Node>`
+        # name (scoped N802) and positional call; `_original` silences
+        # ARG002 without a suppression.
+        def leave_ImportFrom(  # noqa: N802
+            self,
+            _original: cst.ImportFrom,
+            updated: cst.ImportFrom,
         ) -> cst.ImportFrom:
             mod = updated.module
-            if not (
-                m.matches(mod, m.Attribute())
-                and cst.Module([]).code_for_node(mod) == "pecos.slr"
-            ):
+            if not (m.matches(mod, m.Attribute()) and cst.Module([]).code_for_node(mod) == "pecos.slr"):
                 return updated
             if isinstance(updated.names, cst.ImportStar):
                 return updated
@@ -132,9 +134,7 @@ def _ensure_return_import(module: cst.Module) -> cst.Module:
             names.append(cst.ImportAlias(name=cst.Name("Return")))
             names.sort(key=lambda n: n.name.value if isinstance(n.name, cst.Name) else "")
             # Re-add commas (sort drops them); libcst normalizes.
-            fixed = [
-                a.with_changes(comma=cst.MaybeSentinel.DEFAULT) for a in names
-            ]
+            fixed = [a.with_changes(comma=cst.MaybeSentinel.DEFAULT) for a in names]
             return updated.with_changes(names=fixed)
 
     return module.visit(_ImportFixer())
@@ -157,7 +157,7 @@ def main(paths: list[str]) -> int:
             print(
                 f"{p}: migrated={tx.migrated} "
                 f"skipped_existing_return={tx.skipped_existing_return} "
-                f"residual={len(tx.residual)}"
+                f"residual={len(tx.residual)}",
             )
         total_migrated += tx.migrated
         total_residual += [f"{p}: {r}" for r in tx.residual]

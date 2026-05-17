@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 from pecos import Guppy, selene_engine, sim
 from pecos.slr import SlrConverter
 from pecos.slr.ast import RegisterDecl, slr_to_ast
-from pecos.slr.ast.codegen.entry_wrapper import build_no_arg_entry_wrapper
+from pecos.slr.ast.codegen.entry_wrapper import RETURN_TAG_NAMESPACE, build_no_arg_entry_wrapper
 
 if TYPE_CHECKING:
     import pecos_rslib
@@ -66,11 +66,18 @@ def run_ast_guppy_via_selene(
     ast_source = SlrConverter(slr_program).guppy()
     program = slr_to_ast(slr_program)
 
-    wrapper, info = build_no_arg_entry_wrapper(program)
-    # The entry tuple's bit order is the source of truth for the
-    # `measurement_N` keys: the CRegs in the explicit `Return(...)`, in
-    # listed order. Phase 3b removed the v1 implicit result-CReg path, so
-    # a program with no `Return` has no measurement record at all.
+    # #72: opt-in named return tags. The wrapper emits
+    # `result("__pecos_return.<creg>", <creg>)` per returned CReg, so Selene
+    # keys outputs by CReg NAME -- immune to internal (non-returned)
+    # measurements like the Steane RUS verify. `_shot_records` reads those
+    # tags and re-exports the existing public `measurement_N` shape, so all
+    # `run_ast_guppy_via_selene` consumers stay unchanged. The production
+    # wrapper (default `emit_return_result_tags=False`) is untouched.
+    wrapper, info = build_no_arg_entry_wrapper(program, emit_return_result_tags=True)
+    # The returned CRegs (explicit `Return(...)`, in listed order) are the
+    # source of truth for the public `measurement_N` order. Phase 3b removed
+    # the v1 implicit result-CReg path, so a program with no `Return` has no
+    # measurement record at all.
     if info.explicit_return is None:
         msg = (
             "Selene behavioral test requires an explicit `Return(<creg>...)`. "
@@ -105,23 +112,7 @@ def run_ast_guppy_via_selene(
 
     result = sim(Guppy(entry_func)).classical(selene_engine()).qubits(max(total_qubits, 1)).seed(seed).run(shots)
 
-    return _shot_records(result, _result_keys(record_cregs))
-
-
-def _result_keys(cregs: list[RegisterDecl]) -> list[str]:
-    """Names the Selene runtime uses for each bit in the entry tuple.
-
-    Selene emits "measurement_0", "measurement_1", ... in tuple-position order.
-    The wrapper returns CReg bits in declaration order, so we generate the keys
-    in that same order.
-    """
-    keys: list[str] = []
-    counter = 0
-    for decl in cregs:
-        for _ in range(decl.size):
-            keys.append(f"measurement_{counter}")
-            counter += 1
-    return keys
+    return _shot_records(result, record_cregs)
 
 
 def _import_entry_function(source: str) -> object:
@@ -146,18 +137,51 @@ def _import_entry_function(source: str) -> object:
     return entry
 
 
-def _shot_records(result: pecos_rslib.ShotVec, keys: list[str]) -> list[dict[str, int]]:
-    """Convert ShotVec to a list of per-shot measurement records."""
+def _shot_records(result: pecos_rslib.ShotVec, record_cregs: list[RegisterDecl]) -> list[dict[str, int]]:
+    """Re-export the named `__pecos_return.<creg>` tags as the public shape.
+
+    The wrapper emits `result("__pecos_return.<creg>", <creg>)` per returned
+    CReg (#72), so Selene's `to_dict()` keys outputs by CReg name and each
+    shot value is a list of that CReg's bits in declaration order. We flatten
+    the returned CRegs (in `Return(...)` order) into the historical public
+    shape `{"measurement_0": .., "measurement_1": .., ...}` so existing
+    `run_ast_guppy_via_selene` consumers are unchanged -- but now reading the
+    correct bits (immune to internal, non-returned measurements).
+    """
     raw = result.to_dict() if hasattr(result, "to_dict") else result
     if not isinstance(raw, dict):
         msg = f"Unexpected Selene result shape: {type(raw).__name__}"
         raise TypeError(msg)
 
-    shot_count = len(next(iter(raw.values()))) if raw else 0
+    tag_keys = [f"{RETURN_TAG_NAMESPACE}.{decl.name}" for decl in record_cregs]
+    missing = [k for k in tag_keys if k not in raw]
+    if missing:
+        msg = (
+            f"Selene result is missing return tags {missing}; got keys "
+            f"{sorted(raw)}. Expected the opt-in wrapper to emit "
+            f'`result("{RETURN_TAG_NAMESPACE}.<creg>", <creg>)` per '
+            "returned CReg."
+        )
+        raise KeyError(msg)
+
+    shot_count = len(raw[tag_keys[0]]) if tag_keys else 0
     records: list[dict[str, int]] = []
     for shot_idx in range(shot_count):
         record: dict[str, int] = {}
-        for key in keys:
-            record[key] = int(raw[key][shot_idx])
+        counter = 0
+        for decl, key in zip(record_cregs, tag_keys, strict=True):
+            shot_val = raw[key][shot_idx]
+            # Selene shapes a size-1 CReg result tag as a scalar int per
+            # shot, and a size>1 CReg as a list of `size` ints per shot.
+            bits = list(shot_val) if isinstance(shot_val, (list, tuple)) else [shot_val]
+            if len(bits) != decl.size:
+                msg = (
+                    f"Return tag {key!r} shot {shot_idx} has {len(bits)} bits, "
+                    f"expected {decl.size} (CReg {decl.name!r})."
+                )
+                raise ValueError(msg)
+            for bit in bits:
+                record[f"measurement_{counter}"] = int(bit)
+                counter += 1
         records.append(record)
     return records

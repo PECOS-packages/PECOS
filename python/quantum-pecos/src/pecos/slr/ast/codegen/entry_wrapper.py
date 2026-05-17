@@ -64,8 +64,31 @@ class EntryWrapperInfo:
     all_creg_sizes: dict[str, int]
 
 
-def build_no_arg_entry_wrapper(program: Program) -> tuple[str, EntryWrapperInfo]:
+# Reserved namespace for the opt-in returned-CReg result tags (#72). Private
+# (double-underscore) so it cannot collide with user `Print(..., namespace=
+# "result")` -> `result.<tag>` outputs. Single source of truth shared with
+# `_selene_harness` so the emit/read sides never drift.
+RETURN_TAG_NAMESPACE = "__pecos_return"
+
+
+def build_no_arg_entry_wrapper(
+    program: Program,
+    *,
+    emit_return_result_tags: bool = False,
+) -> tuple[str, EntryWrapperInfo]:
     """Generate the wrapper source and return the metadata used to build it.
+
+    Args:
+        program: The AST program to wrap.
+        emit_return_result_tags: **Opt-in, test-harness only.** When True and
+            the program has an explicit `Return(...)`, the wrapper
+            destructures main's return and emits
+            `result("__pecos_return.<creg>", <creg>)` per returned CReg
+            instead of `return <tuple>`, and is typed `-> None`. This makes
+            Selene key the outputs by CReg name (immune to internal,
+            non-returned measurements -- e.g. RUS verify). Default False
+            keeps the production wrapper byte-identical (the `.hugr()` /
+            raw-`measurement_N` consumers must not change -- #72).
 
     Returns:
         A `(source, info)` tuple. `source` is the Guppy snippet defining
@@ -74,7 +97,7 @@ def build_no_arg_entry_wrapper(program: Program) -> tuple[str, EntryWrapperInfo]
         need (e.g., Selene's measurement-key generation).
     """
     info = _collect_info(program)
-    source = _render_wrapper(info)
+    source = _render_wrapper(info, emit_return_result_tags=emit_return_result_tags)
     return source, info
 
 
@@ -126,14 +149,28 @@ def _walk_for_measure_results(
             _walk_for_measure_results(stmt.body, declared, inline_max)
 
 
-def _render_wrapper(info: EntryWrapperInfo) -> str:
+def _render_wrapper(info: EntryWrapperInfo, *, emit_return_result_tags: bool = False) -> str:
     body_lines: list[str] = [
         f"    {name} = array(qubit() for _ in range({size}))" for name, size in info.allocator_sizes.items()
     ]
     call_args = ", ".join(info.allocator_sizes.keys())
     call_expr = f"main({call_args})"
 
-    if info.explicit_return is not None:
+    if emit_return_result_tags and info.explicit_return is not None:
+        # Opt-in (#72): destructure main's return and tag each returned CReg
+        # by name so Selene keys outputs by name, not positional
+        # measurement_N (which counts internal measurements too).
+        targets = [v if isinstance(v, str) else getattr(v, "name", None) for v in info.explicit_return.values]
+        if any(t is None for t in targets):
+            msg = f"emit_return_result_tags supports only named return values, got {info.explicit_return.values!r}"
+            raise ValueError(msg)
+        lhs = targets[0] if len(targets) == 1 else ", ".join(targets)
+        body_lines.append(f"    {lhs} = {call_expr}")
+        body_lines.extend(
+            f'    result("{RETURN_TAG_NAMESPACE}.{name}", {name})' for name in targets if name in info.all_creg_sizes
+        )
+        return_ann = "None"
+    elif info.explicit_return is not None:
         body_lines.append(f"    return {call_expr}")
         return_ann = _explicit_return_type(info)
     else:

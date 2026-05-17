@@ -26,7 +26,6 @@ Test classes per stage 4 plan (`step4-cutover-plan.md`):
 
 from __future__ import annotations
 
-import pytest
 from pecos.slr import CReg, If, Main, Permute, QReg, Return
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -310,32 +309,26 @@ class TestConditionalCorrectness:
 
 
 class TestS5SteanePzBehavioral:
-    """S5 behavioral lock-in: Steane pz() must prepare a valid logical |0>.
+    """Steane pz() prepares a valid logical |0> (S5 + #72 lock-in).
 
     `Main(c := Steane("c"), c.pz())` has no user Return -> main() -> None;
     the flattened PrepRUS block-boundary Returns are elided at convert time
-    (S5/M2 -- mechanism Codex-verified sound). The companion adds an
-    explicit Measure(c.d)+Return so Selene yields the 7-bit data record;
-    every shot must satisfy the Steane Z-check syndrome == (0, 0, 0)
-    (codespace membership = a real logical-|0> lock-in, not "deterministic
-    bits").
+    (S5/M2). The companion adds an explicit Measure(c.d)+Return so Selene
+    yields the 7-bit data record; every shot must satisfy the Steane Z-check
+    syndrome == (0, 0, 0) (codespace membership = a real logical-|0>
+    lock-in, not "deterministic bits").
 
-    KNOWN DEFECT (strict xfail): the v1 AST->Guppy lowering of the FT-RUS
-    `pz()` (PrepEncodingFTZero / PrepZeroVerify / RUS-reject path) prepares
-    a NON-codeword state (seed-42 shot 0 = [0,1,0,0,1,1,1], syndrome
-    (1,1,0)). Pre-existing and S5-independent: steane_pz was XFAIL before
-    S5 so it never ran; S5 only let it run and this gate exposed the bug.
-    Tracked post-3b -- NOT a Phase 3b cutover concern. `strict=True` so an
-    eventual pz() fix surfaces as XPASS and prompts removing this marker.
+    Previously a strict xfail under a wrong diagnosis ("v1 FT-RUS pz()
+    non-codeword"). #72 re-diagnosed: pz() is correct (stim-verified); the
+    failure was `_selene_harness` mis-mapping `measurement_N` because the
+    Steane RUS performs an internal (non-returned) verify measurement. With
+    #72's named return-tag mapping the harness reads the returned data CReg
+    by name, so this now passes.
     """
 
     # Steane Z-stabilizer check supports (steane_class.py: check_indices).
     _CHECKS = ((2, 1, 3, 0), (5, 2, 1, 4), (6, 5, 2, 3))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="v1 AST->Guppy FT-RUS Steane pz() prepares a non-codeword state; S5-independent, tracked post-3b",
-    )
     def test_steane_pz_prepares_logical_zero(self) -> None:
         prog = Main(
             c := Steane("c"),
@@ -349,3 +342,27 @@ class TestS5SteanePzBehavioral:
             bits = [rec[f"measurement_{i}"] for i in range(7)]
             syndrome = tuple(bits[a] ^ bits[b] ^ bits[c] ^ bits[d] for (a, b, c, d) in self._CHECKS)
             assert syndrome == (0, 0, 0), (rec, syndrome)
+
+
+class TestHarnessInternalMeasurementMapping:
+    """#72 regression: an internal (non-returned) measurement before the
+    returned data must not shift the public `measurement_N` mapping.
+
+    `internal` is measured (q[0], forced to 1) but NOT returned; `out`
+    (q[1], stays 0) IS returned. Pre-#72 the harness counted positionally
+    and read `measurement_0` = the internal measurement (=1) -> wrong.
+    With named return tags it reads `out` by name -> 0 every shot.
+    """
+
+    def test_internal_measurement_does_not_shift_mapping(self) -> None:
+        prog = Main(
+            q := QReg("q", 2),
+            internal := CReg("internal", 1),
+            out := CReg("out", 1),
+            qb.X(q[0]),
+            Measure(q[0]) > internal[0],
+            Measure(q[1]) > out[0],
+            Return(out),
+        )
+        records = run_ast_guppy_via_selene(prog, shots=10)
+        assert all(r["measurement_0"] == 0 for r in records), records

@@ -311,7 +311,6 @@ class AstToQir:
                     for i in range(decl.capacity):
                         self.context.get_qubit_index(decl.name, i)
             elif isinstance(decl, RegisterDecl):
-                self.context.creg_map[decl.name] = decl.size
                 # M-B2-static: a CReg is a mutable `[N x i1]` buffer in the
                 # entry block (declarations are processed at entry, before
                 # any control flow, so the builder is positioned there),
@@ -320,6 +319,7 @@ class AstToQir:
                 # the model caps at 64 bits. A >64-bit CReg must fail LOUD
                 # here -- silently dropping its storage/output (the old
                 # `create_creg` `size < 64` behaviour) is a miscompile.
+                # Fail BEFORE recording any state (no partial creg_map).
                 if decl.size > 64:
                     msg = (
                         f"QIR codegen: CReg {decl.name!r} has {decl.size} bits, "
@@ -329,6 +329,7 @@ class AstToQir:
                         ">64-bit CRegs are not supported by the QIR backend."
                     )
                     raise NotImplementedError(msg)
+                self.context.creg_map[decl.name] = decl.size
                 arr_ty = llvm_ir.ArrayType(self._types["bool"], decl.size)
                 creg_ptr = self._builder.alloca(arr_ty, decl.name)
                 self._builder.store(creg_ptr, llvm_ir.Constant(arr_ty))

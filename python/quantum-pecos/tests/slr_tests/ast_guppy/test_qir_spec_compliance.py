@@ -9,48 +9,57 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""#71 QIR spec-compliance gate over the audit corpus -- post-B1 baseline.
+"""#71 QIR spec-compliance gate over the audit corpus -- post-B2 baseline.
 
 Runs Quantinuum's `qir-qis` over `SlrConverter(prog).qir_bc()` for
 every audit-corpus program and pins the *current* two-tier state as
 an explicit, honest baseline. NOT faked-green: it asserts exactly
-what is and is not compliant, so any regression OR Stage-B progress
+what is and is not compliant, so any regression OR further progress
 trips it deliberately.
 
 **Tier 1 -- `validate_qir` (QIR spec metadata): Stage B1 DONE.**
-27/28 buildable programs now PASS `validate_qir` (B1 added the
-required QIR module metadata: `output_labeling_schema`,
-`qir_profiles=adaptive_profile`, and the `qir_*_version` /
-`dynamic_*` / `arrays` module flags). The single remaining
-`validate_qir` failure is `legacy.empty_main` -- NOT a metadata
-gap: qir-qis structurally requires the entry function to have >=1
-qubit, and that program has none. Pinned (`_EXPECTED_VALIDATE_FAILED`)
-as a known non-metadata structural limitation so a NEW validate
-failure trips this gate. Tier-1b additionally pins the exact entry
-attr *values* (qir-qis only checks presence). `adaptive_profile`
-is a deliberate forward-looking choice for B2 (it introduces
-`__quantum__rt__read_result`); it is NOT yet exercised by the
-corpus (`base_profile` also validates today).
+B1 added the required QIR module metadata (`output_labeling_schema`,
+`qir_profiles=adaptive_profile`, the `qir_*_version` / `dynamic_*` /
+`arrays` module flags). Two `validate_qir` failures are pinned
+(`_EXPECTED_VALIDATE_FAILED`), neither a metadata gap:
+`legacy.empty_main` (qir-qis structurally requires the entry
+function to have >=1 qubit; that program has none) and
+`qeclib.steane_pz` (B2 made it *build* -- see below -- and it now
+reaches the qir-qis call allowlist, which rejects PECOS's
+non-standard `__quantum__qis__barrierN__body`; the barrier-naming
+gap is pre-existing, orthogonal to the CReg model, and intentionally
+out of B2 scope). Tier-1b additionally pins the exact entry attr
+*values* (qir-qis only checks presence).
 
-**Tier 2 -- `qir_to_qis` (ingestible): Stage B2 NOT done.**
-Of the 27 validate-passing programs, 7 already lower via
-`qir_to_qis` (`_EXPECTED_QIS_OK` -- the no-CReg programs); the other
-20 fail uniformly with `Unsupported function: create_creg` -- the
-PECOS-bespoke CReg helpers Stage B2 will replace with the standard
-static `%Result` + mutable-local-buffer model. B1 is **metadata
-compliance only, NOT qir-qis ingestibility** (proven: B1-alone is
-validate_qir-green but qir_to_qis still rejects `create_creg`).
-When B2 lands, the 20 flip to OK -> `_EXPECTED_QIS_OK` trips ->
-update this baseline deliberately (the intended progress signal).
+**Tier 2 -- `qir_to_qis` (ingestible): Stage B2 DONE.**
+Stage B2 replaced the PECOS-bespoke CReg runtime helpers
+(`create_creg`/`get_creg_bit`/`set_creg_bit`/`get_int_from_creg`/
+`set_creg_to_int`/`mz_to_creg_bit`) with the standard M-B2-static
+model (per-CReg entry-block `alloca [N x i1]` + zeroinitializer;
+`mz__body` -> static `%Result*` -> `read_result` -> `store`;
+point-of-use `gep`+`load`/`store`; `zext`/`shl`/`or` pack ->
+`__quantum__rt__int_record_output`). Every validate-passing program
+(`_EXPECTED_QIS_OK`, n=27) now lowers via `qir_to_qis`; `qis_failed`
+is empty. A NEW qir_to_qis failure -- or a dropped program -- trips
+this deliberately. (`adaptive_profile` is now genuinely exercised:
+B2 emits `__quantum__rt__read_result` for measurement feedback.)
+The deeper *semantic* proof for the load-bearing CReg shapes is
+`tier2_semantic.py` (real-compiler acceptance + emitted-QIR
+structural invariants + a deterministic AST->Guppy->Selene
+cross-anchor). A direct `qir_to_qis`->Selene differential is
+blocked by an LLVM-version/dialect gap (qir-qis emits LLVM-21
+opaque-pointer QIS bitcode; PECOS's Selene QIS runtime is LLVM-14
+typed-pointer) -- tracked as a separate blocked task; this gate
+stays structural.
 
-**Pre-existing build failures** (3): `qir_bc()` itself raises for
-`docs.for_loopvar_symbolic` / `docs.rotation_rx` / `qeclib.steane_pz`
--- pre-existing AST-QIR feature gaps tracked separately (audit
-v2-defer XFAILs / `optional_dependency` `*_qir`; the semantic-bug
-split is task #74), NOT a #71 metadata concern. Identity pinned
-(`_EXPECTED_BUILD_FAILED`) so a NEW build regression in a
-currently-buildable program trips here instead of being silently
-absorbed.
+**Pre-existing build failures** (2): `qir_bc()` itself raises for
+`docs.for_loopvar_symbolic` / `docs.rotation_rx` -- pre-existing
+AST-QIR feature gaps tracked separately (task #74), NOT a #71
+metadata concern. Identity pinned (`_EXPECTED_BUILD_FAILED`) so a
+NEW build regression trips here. (`qeclib.steane_pz` was a pinned
+build failure pre-B2 -- the bespoke model emitted invalid bitcode
+for it; B2 produces valid bitcode so it now builds and moves to
+the pinned validate set above. A deliberate, triaged improvement.)
 
 `qir-qis` is a `[dependency-groups].test` dep (default-groups
 includes `test`), so this runs in the default sweep.
@@ -70,33 +79,60 @@ from .audit_runner import _curated_cases  # noqa: TID252
 _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     "docs.for_loopvar_symbolic": ("AttributeError", "SymbolicQubit"),
     "docs.rotation_rx": ("RuntimeError", "__quantum__qis__rx__body"),
-    "qeclib.steane_pz": ("RuntimeError", "Failed to compile QIR to bitcode"),
 }
 
-# Tier 1: the ONLY non-metadata `validate_qir` failure post-B1 --
-# qir-qis requires the entry function to have >=1 qubit; this program
-# has none. Pinned (label -> stable message fragment) so a NEW
-# validate failure (e.g. a B1 metadata regression) trips deliberately.
+# Tier 1: the non-metadata `validate_qir` failures (label -> stable,
+# quote-free message fragment) so a NEW validate failure (e.g. a B1
+# metadata regression) trips deliberately. Neither is a metadata gap:
+#  - legacy.empty_main: qir-qis requires the entry fn to have >=1
+#    qubit; this program has none (structural limitation).
+#  - qeclib.steane_pz: B2 made it *build* (the bespoke model emitted
+#    invalid bitcode pre-B2); it now reaches the qir-qis call
+#    allowlist, which rejects PECOS's non-standard
+#    `__quantum__qis__barrierN__body`. The barrier-naming gap is
+#    pre-existing and orthogonal to the CReg model -- intentionally
+#    out of B2 scope (bounded; barrier lowering is a separate task).
 _EXPECTED_VALIDATE_FAILED: dict[str, str] = {
     "legacy.empty_main": "at least one qubit",
+    "qeclib.steane_pz": "Unsupported QIR QIS function",
 }
 
-# Tier 2: programs that already lower via `qir_to_qis` post-B1 (no
-# bespoke CReg helpers). The remaining validate-passing programs fail
-# uniformly with `_QIS_B2_GAP` until Stage B2. When B2 lands they flip
-# into this set -> this pin trips -> update the baseline deliberately.
+# Tier 2: post-B2, EVERY validate-passing program lowers via
+# `qir_to_qis` (M-B2-static replaced the bespoke CReg helpers).
+# This is the full set (n=27); `qis_failed` must be empty. A new
+# qir_to_qis failure -- or a dropped/added program -- trips the
+# Tier-2 assertions and must be triaged deliberately.
 _EXPECTED_QIS_OK: frozenset[str] = frozenset(
     {
+        "docs.flat_parallel_h_gates",
+        "docs.for_static_indexing",
         "docs.inline_measure_creg",
+        "docs.prep_basis_x",
+        "docs.repeat_state_preserving",
+        "docs.surface_syndrome_block18",
+        "docs.while_loop",
+        "examples.measure_register_to_creg",
+        "examples.parallel_bell_pairs",
         "examples.surface_d3_x_1round",
         "examples.surface_d3_z_1round",
+        "legacy.function_with_returns",
         "legacy.gates_only_no_measurement",
+        "legacy.individual_measurements",
+        "legacy.multiple_qregs",
+        "legacy.nested_blocks",
+        "legacy.partial_consumption_with_block",
+        "qeclib.color488_syn_extract_bare",
+        "qeclib.generic_check_1flag_ch",
+        "qeclib.generic_check_xyz",
+        "qeclib.generic_transversal_cx",
         "qeclib.surface_patch_builder_empty",
         "qeclib.surface_std_pz",
+        "v1.bell",
+        "v1.conditional_correction",
+        "v1.ghz_three",
         "v1.repeat_idle",
     },
 )
-_QIS_B2_GAP = "create_creg"
 
 # Codex B1 post-review blocker: qir-qis validates the PRESENCE of these
 # entry attributes but NOT their values, so a value regression (e.g.
@@ -160,9 +196,9 @@ def test_audit_corpus_qir_compliance_baseline() -> None:
     build_failed, validate_failed, qis_ok, qis_failed, entry_attrs = _qir_state()
 
     # Sanity: validate_qir actually ran on built QIR (not vacuous).
-    assert (
-        qis_ok or qis_failed or validate_failed
-    ), f"validate_qir never ran on built QIR; build_failed={sorted(label for label, _, _ in build_failed)}"
+    assert qis_ok or qis_failed or validate_failed, (
+        f"validate_qir never ran on built QIR; build_failed={sorted(label for label, _, _ in build_failed)}"
+    )
 
     # Pre-existing build-failure set pinned (Codex Stage-A blocker): a
     # new build regression -- or a fixed one -- must be triaged
@@ -202,20 +238,19 @@ def test_audit_corpus_qir_compliance_baseline() -> None:
                 "this pin is the only guard."
             )
 
-    # Tier 2 -- qir_to_qis: B2 NOT done. The already-ingestible set is
-    # pinned; when B2 replaces the bespoke CReg helpers the currently
-    # failing programs flip into it and THIS assertion trips -> update
-    # the baseline deliberately (the intended progress signal).
+    # Tier 2 -- qir_to_qis: Stage B2 DONE. Every validate-passing
+    # program now lowers via qir_to_qis (M-B2-static replaced the
+    # bespoke CReg helpers). The OK set is pinned and `qis_failed`
+    # must be empty -- a new qir_to_qis failure (B2 regression) or a
+    # dropped/added program trips this and must be triaged.
     assert set(qis_ok) == set(_EXPECTED_QIS_OK), (
         f"qir_to_qis-OK set changed: got {sorted(qis_ok)}, expected "
-        f"{sorted(_EXPECTED_QIS_OK)}. If this is Stage B2 progress, update "
-        "this baseline deliberately."
+        f"{sorted(_EXPECTED_QIS_OK)}. Triage (B2 regression vs further "
+        "progress) before updating this baseline."
     )
-    # Every other validate-passing program must still fail qir_to_qis
-    # for the single uniform B2 reason (the bespoke CReg helpers).
-    assert qis_failed, "expected the non-OK validate-passing programs to fail qir_to_qis until B2"
-    non_uniform = [(label, msg[:160]) for label, msg in qis_failed if _QIS_B2_GAP not in msg]
-    assert not non_uniform, (
-        f"qir_to_qis failures not uniformly the {_QIS_B2_GAP!r} (B2) gap: {non_uniform}. "
-        "A new qir_to_qis failure kind must be triaged deliberately."
+    assert not qis_failed, (
+        "unexpected qir_to_qis failure(s) post-B2: "
+        f"{[(label, msg[:160]) for label, msg in qis_failed]}. After "
+        "Stage B2 every validate-passing program must lower via "
+        "qir_to_qis -- triage before re-pinning."
     )

@@ -209,22 +209,11 @@ class AstToQir:
         # Setup creg helper functions
         self._setup_creg_funcs()
 
-        # Setup measurement function
-        self._mz_to_bit = self._declare_function(
-            "mz_to_creg_bit",
-            self._types["void"],
-            [
-                self._types["qubit_ptr"],
-                self._types["bool"].as_pointer(),
-                self._types["int"],
-            ],
-        )
-
-        # B2a: declare the standard QIR classical-model functions. Declared
-        # here so B2b can wire the per-op lowering (static %Result slot ->
-        # mz__body -> read_result -> mutable [N x i1] CReg buffer); the
-        # bespoke model above stays the active path until B2b (no behavior
-        # / gate change in B2a). `%Result*` is the existing result_ptr type.
+        # B2: standard QIR classical model. A measurement lowers to a
+        # static `%Result*` slot -> `__quantum__qis__mz__body` ->
+        # `__quantum__rt__read_result` -> `store` into a per-CReg mutable
+        # `[N x i1]` entry-block `alloca` buffer (M-B2-static). `%Result*`
+        # is the existing `result_ptr` type.
         self._mz_body = self._declare_function(
             "__quantum__qis__mz__body",
             self._types["void"],
@@ -262,38 +251,14 @@ class AstToQir:
         return self._finalize_module()
 
     def _setup_creg_funcs(self) -> None:
-        """Setup classical register helper functions."""
+        """Declare the standard classical-output runtime function.
 
+        B2 (M-B2-static) replaced the bespoke `create_creg`/`get_creg_bit`/
+        `set_creg_bit`/`get_int_from_creg`/`set_creg_to_int`/`mz_to_creg_bit`
+        runtime helpers with native `alloca`/`store`/`load`/`gep`/`zext`,
+        so only the standard `__quantum__rt__int_record_output` remains.
+        """
         self._creg_funcs = {
-            "create_creg": self._declare_function(
-                "create_creg",
-                self._types["bool"].as_pointer(),
-                [self._types["int"]],
-            ),
-            "creg_to_int": self._declare_function(
-                "get_int_from_creg",
-                self._types["int"],
-                [self._types["bool"].as_pointer()],
-            ),
-            "get_creg_bit": self._declare_function(
-                "get_creg_bit",
-                self._types["bool"],
-                [self._types["bool"].as_pointer(), self._types["int"]],
-            ),
-            "set_creg_bit": self._declare_function(
-                "set_creg_bit",
-                self._types["void"],
-                [
-                    self._types["bool"].as_pointer(),
-                    self._types["int"],
-                    self._types["bool"],
-                ],
-            ),
-            "set_creg": self._declare_function(
-                "set_creg_to_int",
-                self._types["void"],
-                [self._types["bool"].as_pointer(), self._types["int"]],
-            ),
             "int_result": self._declare_function(
                 "__quantum__rt__int_record_output",
                 self._types["void"],
@@ -347,13 +312,17 @@ class AstToQir:
                         self.context.get_qubit_index(decl.name, i)
             elif isinstance(decl, RegisterDecl):
                 self.context.creg_map[decl.name] = decl.size
-                # Create classical register
-                if decl.size < 64:
-                    self._creg_ptrs[decl.name] = self._builder.call(
-                        self._creg_funcs["create_creg"],
-                        [llvm_ir.Constant(self._types["int"], decl.size)],
-                        name=decl.name,
-                    )
+                # M-B2-static: a CReg is a mutable `[N x i1]` buffer in the
+                # entry block (declarations are processed at entry, before
+                # any control flow, so the builder is positioned there),
+                # zero-initialised so unmeasured/unset bits read 0. Pack is
+                # one `i64` for `int_record_output` -> the same <=64 cap as
+                # the old `create_creg` model (intentionally not lifted).
+                if decl.size <= 64:
+                    arr_ty = llvm_ir.ArrayType(self._types["bool"], decl.size)
+                    creg_ptr = self._builder.alloca(arr_ty, decl.name)
+                    self._builder.store(creg_ptr, llvm_ir.Constant(arr_ty))
+                    self._creg_ptrs[decl.name] = creg_ptr
 
         if program.allocator and program.allocator.parent is None:
             for i in range(program.allocator.capacity):
@@ -496,21 +465,65 @@ class AstToQir:
             self._types["qubit_ptr"],
         )
 
+    def _creg_bit_ptr(self, reg_name: str, index: int) -> Any:
+        """`getelementptr [N x i1], [N x i1]* %creg, i64 0, i64 index`.
+
+        Emitted at point-of-use (not cached across blocks) so the pointer
+        always dominates its uses under control flow.
+        """
+        return self._builder.gep(
+            self._creg_ptrs[reg_name],
+            [
+                llvm_ir.Constant(self._types["int"], 0),
+                llvm_ir.Constant(self._types["int"], index),
+            ],
+            name="",
+        )
+
+    def _as_i1(self, value: Any) -> Any:
+        """Coerce an evaluated expression to `i1` (bit-store / predicate)."""
+        if value.type == self._types["bool"]:
+            return value
+        return self._builder.icmp_signed(
+            "!=",
+            value,
+            llvm_ir.Constant(self._types["int"], 0),
+        )
+
+    def _as_i64(self, value: Any) -> Any:
+        """Coerce an evaluated expression to `i64` (the canonical width)."""
+        if value.type == self._types["bool"]:
+            return self._builder.zext(value, self._types["int"])
+        return value
+
     def _process_measure(self, node: MeasureOp) -> None:
-        """Process a measurement operation."""
+        """Process a measurement operation.
+
+        Every measured target emits `__quantum__qis__mz__body(q, %Result*)`
+        against a static result slot; `read_result` + `store` into the CReg
+        buffer only when a classical result target exists (qir-qis accepts
+        `mz` without `read_result`, but rejects `read_result` before `mz`).
+        """
         for i, target in enumerate(node.targets):
             self.context.measurement_count += 1
+            slot = self.context.measurement_count - 1
             qubit_ptr = self._get_qubit_ptr(target)
+            result_ptr = llvm_ir.Constant(self._types["int"], slot).inttoptr(
+                self._types["result_ptr"],
+            )
+            self._builder.call(self._mz_body, [qubit_ptr, result_ptr], name="")
 
             if i < len(node.results):
                 result = node.results[i]
                 if result.register in self._creg_ptrs:
-                    creg_ptr = self._creg_ptrs[result.register]
-                    bit_index = llvm_ir.Constant(self._types["int"], result.index)
-                    self._builder.call(
-                        self._mz_to_bit,
-                        [qubit_ptr, creg_ptr, bit_index],
+                    bit = self._builder.call(
+                        self._read_result,
+                        [result_ptr],
                         name="",
+                    )
+                    self._builder.store(
+                        self._creg_bit_ptr(result.register, result.index),
+                        bit,
                     )
 
     def _process_prepare(self, node: PrepareOp) -> None:
@@ -556,24 +569,34 @@ class AstToQir:
             reg_name = node.target.register
             if reg_name not in self._creg_ptrs:
                 return
-
-            creg_ptr = self._creg_ptrs[reg_name]
-            bit_index = llvm_ir.Constant(self._types["int"], node.target.index)
-
-            # Evaluate RHS
-            rhs = self._eval_expression(node.value)
-
-            self._builder.call(
-                self._creg_funcs["set_creg_bit"],
-                [creg_ptr, bit_index, rhs],
-                name="",
+            rhs = self._as_i1(self._eval_expression(node.value))
+            self._builder.store(
+                self._creg_bit_ptr(reg_name, node.target.index),
+                rhs,
             )
+        elif isinstance(node.target, str):
+            # Whole-CReg `c.set(int)` (converter.py:928/930 -> target=str).
+            # Unpack the i64 value bit-by-bit into the buffer.
+            reg_name = node.target
+            if reg_name not in self._creg_ptrs:
+                return
+            size = self.context.creg_map.get(reg_name, 0)
+            val = self._as_i64(self._eval_expression(node.value))
+            for i in range(size):
+                shifted = self._builder.lshr(
+                    val,
+                    llvm_ir.Constant(self._types["int"], i),
+                )
+                self._builder.store(
+                    self._creg_bit_ptr(reg_name, i),
+                    self._builder.trunc(shifted, self._types["bool"]),
+                )
 
     def _eval_expression(self, expr: Expression) -> Any:
         """Evaluate an expression to an LLVM value."""
         if isinstance(expr, LiteralExpr):
             if isinstance(expr.value, bool):
-                return llvm_ir.Constant(self._types["bool"], 1 if expr.value else 0)
+                return llvm_ir.Constant(self._types["int"], 1 if expr.value else 0)
             if isinstance(expr.value, int):
                 return llvm_ir.Constant(self._types["int"], expr.value)
             if isinstance(expr.value, float):
@@ -583,14 +606,13 @@ class AstToQir:
         if isinstance(expr, BitExpr):
             reg_name = expr.ref.register
             if reg_name not in self._creg_ptrs:
-                return llvm_ir.Constant(self._types["bool"], 0)
-            creg_ptr = self._creg_ptrs[reg_name]
-            bit_index = llvm_ir.Constant(self._types["int"], expr.ref.index)
-            return self._builder.call(
-                self._creg_funcs["get_creg_bit"],
-                [creg_ptr, bit_index],
+                return llvm_ir.Constant(self._types["int"], 0)
+            # `load i1, gep c[i]` then `zext -> i64` (canonical width).
+            bit = self._builder.load(
+                self._creg_bit_ptr(reg_name, expr.ref.index),
                 name="",
             )
+            return self._builder.zext(bit, self._types["int"])
 
         if isinstance(expr, VarExpr):
             # Variable lookup - for now just return 0
@@ -615,7 +637,7 @@ class AstToQir:
 
     def _process_if(self, node: IfStmt) -> None:
         """Process an if statement."""
-        pred = self._eval_expression(node.condition)
+        pred = self._as_i1(self._eval_expression(node.condition))
 
         if node.else_body:
             with self._builder.if_else(pred) as (then, otherwise):
@@ -675,7 +697,7 @@ class AstToQir:
 
     def _generate_results(self) -> None:
         """Generate result output calls."""
-        for reg_name, creg_ptr in self._creg_ptrs.items():
+        for reg_name in self._creg_ptrs:
             # Create tag for the register name
             reg_name_bytes = bytearray(reg_name.encode("utf-8"))
             tag_type = llvm_ir.ArrayType(llvm_ir.IntType(8), len(reg_name))
@@ -684,12 +706,21 @@ class AstToQir:
             reg_tag.global_constant = True
             reg_tag.linkage = "private"
 
-            # Convert creg to int and output
-            c_int = self._builder.call(
-                self._creg_funcs["creg_to_int"],
-                [creg_ptr],
-                name="",
-            )
+            # Pack the [N x i1] buffer into one i64: OR_i (zext c[i] << i).
+            c_int = llvm_ir.Constant(self._types["int"], 0)
+            for i in range(self.context.creg_map.get(reg_name, 0)):
+                bit = self._builder.load(
+                    self._creg_bit_ptr(reg_name, i),
+                    name="",
+                )
+                widened = self._builder.zext(bit, self._types["int"])
+                if i:
+                    widened = self._builder.shl(
+                        widened,
+                        llvm_ir.Constant(self._types["int"], i),
+                    )
+                c_int = self._builder.or_(c_int, widened)
+
             reg_tag_gep = reg_tag.gep(
                 (
                     llvm_ir.Constant(llvm_ir.IntType(32), 0),

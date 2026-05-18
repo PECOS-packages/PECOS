@@ -216,12 +216,15 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_prepare(self, node: PrepareOp) -> str:
         """Visit prepare operation."""
+        # Default `PZ` stays byte-identical (no churn for the existing
+        # corpus); a non-PZ basis is shown so the dump is faithful.
+        b = "" if node.basis == "PZ" else f", basis={node.basis!r}"
         if node.slots is None:
-            return f"{node.allocator}.prepare_all()"
+            return f"{node.allocator}.prepare_all({node.basis!r})" if b else f"{node.allocator}.prepare_all()"
         if len(node.slots) == 1:
-            return f"{node.allocator}.prepare({node.slots[0]})"
+            return f"{node.allocator}.prepare({node.slots[0]}{b})"
         slots = ", ".join(str(s) for s in node.slots)
-        return f"{node.allocator}.prepare({slots})"
+        return f"{node.allocator}.prepare({slots}{b})"
 
     def visit_measure(self, node: MeasureOp) -> str:
         """Visit measure operation."""

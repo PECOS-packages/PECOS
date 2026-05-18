@@ -358,6 +358,7 @@ def _sub_prepare(stmt: PrepareOp, remap: BodyRemap) -> PrepareOp:
         return PrepareOp(
             allocator=remap.whole_name(stmt.allocator, context="Prepare-all"),
             slots=None,
+            basis=stmt.basis,
             location=stmt.location,
         )
     remapped = [remap.slot(SlotRef(allocator=stmt.allocator, index=i)) for i in stmt.slots]
@@ -373,6 +374,7 @@ def _sub_prepare(stmt: PrepareOp, remap: BodyRemap) -> PrepareOp:
     return PrepareOp(
         allocator=dst_alloc,
         slots=tuple(r.index for r in remapped),
+        basis=stmt.basis,
         location=stmt.location,
     )
 

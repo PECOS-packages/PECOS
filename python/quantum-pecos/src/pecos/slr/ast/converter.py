@@ -86,6 +86,19 @@ if TYPE_CHECKING:
     from pecos.slr.main import Main
 
 
+# SLR prep-gate symbol -> canonical AST prep basis (#81). The basis
+# is the gate identity, not a string argument. `Prep` is the
+# deprecated |0> alias of `PZ` (hard-replaced repo-wide in Stage C).
+_PREP_BASIS: dict[str, str] = {
+    "Prep": "PZ",
+    "PZ": "PZ",
+    "PNZ": "PNZ",
+    "PX": "PX",
+    "PNX": "PNX",
+    "PY": "PY",
+    "PNY": "PNY",
+}
+
 # Mapping from SLR gate class names to AST GateKind
 GATE_KIND_MAP: dict[str, GateKind] = {
     # Single-qubit Paulis
@@ -602,9 +615,11 @@ class SlrToAst:
         """Convert an SLR gate to an AST GateOp, PrepareOp, or MeasureOp."""
         gate_name = gate.sym
 
-        # Handle special operations
-        if gate_name == "Prep":
-            return self._convert_prep(gate)
+        # Handle special operations. All prep gates route through one
+        # path; the basis is the GATE IDENTITY (#81), not a string
+        # arg. `Prep` is the deprecated |0> alias (== PZ).
+        if gate_name in _PREP_BASIS:
+            return self._convert_prep(gate, basis=_PREP_BASIS[gate_name])
 
         if gate_name == "Measure":
             return self._convert_measure(gate)
@@ -657,26 +672,30 @@ class SlrToAst:
 
         return GateOp(gate=gate_kind, targets=targets, params=params)
 
-    def _convert_prep(self, gate: Any) -> Statement:
-        """Convert an SLR Prep gate to an AST PrepareOp or flattened list."""
+    def _convert_prep(self, gate: Any, basis: str = "PZ") -> Statement:
+        """Convert an SLR prep gate to an AST PrepareOp.
+
+        `basis` is the canonical eigenstate from the gate IDENTITY
+        (#81: `PZ`/`PNZ`/`PX`/`PNX`/`PY`/`PNY`; `Prep` -> `PZ`), NOT
+        a string argument.
+        """
         if not gate.qargs:
             msg = "Prep gate has no qubit arguments"
             raise ValueError(msg)
 
-        # Non-Z Prep basis is silently dropped by `_expand_qubit_args`
-        # (it skips string args), which made every AST codegen
-        # (QIR/Stim/QC/QASM) silently lower `Prep(q, "X")` as a plain
-        # Z-reset -- a miscompile. Fail LOUD at the shared converter
-        # root (the AST->Guppy path already rejects this at preflight
-        # with the same Z/+Z rule; #80 / #79 pre-review). The AST
-        # represents only Z-basis Prep; non-Z basis prep is v2-defer.
+        # A stray STRING qarg on ANY prep gate is rejected loudly.
+        # `_expand_qubit_args` silently drops strings, so a basis
+        # string (`PZ(q, "X")`, the legacy `Prep(q, "X")`, etc.)
+        # would otherwise be silently dropped and the gate lowered as
+        # its plain basis -- a miscompile (#80 recast / #81 Codex sym
+        # rule). The prep basis is the gate identity; pass NO string.
         for arg in gate.qargs:
-            if isinstance(arg, str) and arg.strip().upper() not in {"Z", "+Z"}:
+            if isinstance(arg, str):
                 msg = (
-                    f"AST conversion: non-Z Prep basis {arg!r} is not supported "
-                    "(the AST codegens represent only Z-basis Prep; a non-Z "
-                    "basis would be silently lowered as a Z reset -- a "
-                    "miscompile). Use `Prep(q); H(q)` for X-basis prep."
+                    f"AST conversion: prep gate {gate.sym!r} got a stray "
+                    f"string argument {arg!r}. The prep basis is the gate "
+                    "identity, not an argument -- use PZ/PNZ/PX/PNX/PY/PNY "
+                    "(a string would be silently dropped -- a miscompile)."
                 )
                 raise NotImplementedError(msg)
 
@@ -697,7 +716,7 @@ class SlrToAst:
 
         slots = tuple(q.index for q in expanded_qargs)
 
-        return PrepareOp(allocator=allocator, slots=slots)
+        return PrepareOp(allocator=allocator, slots=slots, basis=basis)
 
     def _convert_measure(self, gate: Any) -> MeasureOp:
         """Convert an SLR Measure gate to an AST MeasureOp."""

@@ -412,21 +412,26 @@ def test_inline_returned_creg_raises_loud() -> None:
         SlrConverter(prog).qir_bc()
 
 
-def test_non_z_prep_basis_raises_loud() -> None:
-    """#80: a non-Z `Prep` basis must FAIL LOUD at AST conversion.
-    `_expand_qubit_args` silently dropped the basis string, so every
-    AST codegen (QIR/Stim/QC/QASM) lowered `Prep(q, "X")` as a plain
-    Z reset -- a miscompile (#79 surfaced `docs.prep_basis_x` /
-    `docs.surface_syndrome_block18` recording a deterministic 0). The
-    AST->Guppy path already rejects this at preflight with the same
-    Z/+Z rule; fix at the shared converter root so all AST codegens
-    agree. Z / +Z (case-insensitive) stays allowed."""
-    ok = Main(q := QReg("q", 1), c := CReg("c", 1), qb.Prep(q[0], "Z"), Measure(q) > c, Return(c))
-    SlrConverter(ok).qir_bc()  # explicit Z is fine (boundary)
+def test_prep_stray_string_arg_raises_loud() -> None:
+    """#80 recast under #81: the prep basis is the GATE IDENTITY
+    (`PZ`/`PNZ`/`PX`/`PNX`/`PY`/`PNY`), not a string argument.
+    `_expand_qubit_args` silently drops a string qarg, so a basis
+    string on ANY prep gate -- the legacy `Prep(q, "X")`, or
+    `PZ(q, "X")`, even `Prep(q, "Z")` -- would be silently dropped
+    and lowered as the plain basis (a miscompile, #80/#79). The
+    converter rejects ANY stray string qarg on EVERY prep gate
+    (Codex #81 sym rule). A bare prep gate (no string) is fine."""
+    # No-string preps build (PZ default; dedicated gate identity).
+    ok = Main(q := QReg("q", 1), c := CReg("c", 1), qb.PZ(q[0]), Measure(q) > c, Return(c))
+    SlrConverter(ok).qir_bc()
+    ok_prep = Main(q := QReg("q", 1), c := CReg("c", 1), qb.Prep(q[0]), Measure(q) > c, Return(c))
+    SlrConverter(ok_prep).qir_bc()
 
-    over = Main(q := QReg("q", 1), c := CReg("c", 1), qb.Prep(q[0], "X"), Measure(q) > c, Return(c))
-    with pytest.raises(NotImplementedError, match=r"non-Z Prep basis 'X' is not supported"):
-        SlrConverter(over).qir_bc()
+    # ANY string qarg on ANY prep gate fails loud (incl. "Z").
+    for prep, s in ((qb.Prep, "X"), (qb.Prep, "Z"), (qb.PZ, "X"), (qb.PX, "ignored")):
+        bad = Main(q := QReg("q", 1), c := CReg("c", 1), prep(q[0], s), Measure(q) > c, Return(c))
+        with pytest.raises(NotImplementedError, match=r"stray string argument"):
+            SlrConverter(bad).qir_bc()
 
 
 def test_return_only_inline_creg_raises_loud() -> None:

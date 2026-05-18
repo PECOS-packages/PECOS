@@ -414,6 +414,14 @@ class PrepareOp(Statement):
 
     allocator: str
     slots: tuple[int, ...] | None = None  # None means prepare_all
+    # Canonical prep basis / target eigenstate, one of
+    # {PZ,PNZ,PX,PNX,PY,PNY} (|0>,|1>,|+>,|->,|+i>,|-i>). Set by
+    # `_convert_prep` from the SLR gate symbol (PZ default). Carried
+    # on the AST so codegens lower the correct reset+Clifford tail;
+    # MUST be preserved through block substitution (else a non-PZ
+    # prep inside a BlockCall body silently reverts to PZ -- the
+    # #81-B1 soundness-critical case).
+    basis: str = "PZ"
 
 
 @dataclass(frozen=True, kw_only=True)

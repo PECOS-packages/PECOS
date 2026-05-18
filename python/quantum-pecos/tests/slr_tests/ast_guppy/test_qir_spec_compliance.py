@@ -123,8 +123,14 @@ _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     #    shared converter root, matching the AST->Guppy path which
     #    already rejects non-Z Prep at preflight.
     "docs.inline_measure_creg": ("NotImplementedError", "was not declared at Main scope"),
-    "docs.prep_basis_x": ("NotImplementedError", "non-Z Prep basis"),
-    "docs.surface_syndrome_block18": ("NotImplementedError", "non-Z Prep basis"),
+    # #81 Stage A recast the guard: the prep basis is the gate
+    # identity, so ANY stray string qarg (incl. these factories'
+    # `Prep(q, "X")`) fails loud. Still BUILD_FAILED; only the
+    # message fragment changed. Stage D rewrites the factories to
+    # dedicated gates -> these move BUILD_FAILED -> QIS_OK (re-pin
+    # then via `_qir_state()`).
+    "docs.prep_basis_x": ("NotImplementedError", "stray string argument"),
+    "docs.surface_syndrome_block18": ("NotImplementedError", "stray string argument"),
 }
 
 # Tier 1: the non-metadata `validate_qir` failures (label -> stable,

@@ -2,7 +2,4 @@ rules:
   unpinned-uses:
     config:
       policies:
-        # Existing workflows use version tags for most actions. Keep this
-        # blocking scan focused on executable workflow risks for now; full
-        # SHA pinning can be promoted separately.
-        "*": ref-pin
+        "*": hash-pin

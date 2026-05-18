@@ -122,8 +122,9 @@ jobs:
             install_cuda: true
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
           submodules: recursive
 
@@ -138,7 +139,7 @@ jobs:
       # See: https://github.com/Jimver/cuda-toolkit/issues/382
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         with:
           cuda: '12.5.1'
           method: 'local'
@@ -186,7 +187,7 @@ jobs:
           Write-Host "Configured MSVC linker: $linkPath"
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.3.1
+        uses: pypa/cibuildwheel@298ed2fb2c105540f5ed055e8a6ad78d82dd3a7e # v3.3.1
         with:
           package-dir: python/pecos-rslib
           output-dir: wheelhouse
@@ -277,14 +278,14 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload pecos-rslib wheels
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-pecos-rslib-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse/*.whl
 
       # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build)
       - name: Build pecos-rslib-llvm wheels
-        uses: pypa/cibuildwheel@v3.3.1
+        uses: pypa/cibuildwheel@298ed2fb2c105540f5ed055e8a6ad78d82dd3a7e # v3.3.1
         with:
           package-dir: python/pecos-rslib-llvm
           output-dir: wheelhouse-llvm
@@ -341,7 +342,7 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload pecos-rslib-llvm wheels
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-pecos-rslib-llvm-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse-llvm/*.whl
@@ -370,17 +371,18 @@ jobs:
             os: macos-15
             architecture: aarch64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Download abi3 wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-wheel
@@ -432,23 +434,24 @@ jobs:
       needs.build_wheelspecos_rslib.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.10'
 
       - name: Download pecos-rslib wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
       - name: Download pecos-rslib-llvm wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
           path: ./pecos-rslib-llvm-wheel
@@ -472,7 +475,7 @@ jobs:
           python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos SDist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sdist-quantum-pecos
           path: python/quantum-pecos/dist/*.tar.gz
@@ -485,23 +488,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.10'
 
       - name: Download pecos-rslib wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
       - name: Download pecos-rslib-llvm wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
           path: ./pecos-rslib-llvm-wheel
@@ -525,7 +529,7 @@ jobs:
           python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos wheel
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-quantum-pecos
           path: python/quantum-pecos/dist/*.whl
@@ -546,7 +550,7 @@ jobs:
 
       # Download artifacts into temp directory first
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: temp-artifacts/
 
@@ -597,7 +601,7 @@ jobs:
 
 
       - name: Upload distribution bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pecos-distribution
           path: dist/

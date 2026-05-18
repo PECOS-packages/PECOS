@@ -273,6 +273,26 @@ else
     echo "No pull_request_target or workflow_run triggers found."
 fi
 
+section "GitHub Actions action pinning"
+unpinned_actions="$(
+    rg -n 'uses:[[:space:]]+[^[:space:]#]+@[^[:space:]#]+' .github/workflows .github/actions |
+        awk -F: '{
+            line = $0
+            sub(/^[^:]+:[0-9]+:/, "", line)
+            if (line ~ /uses:[[:space:]]+[^[:space:]#]+@[0-9a-f]{40}([[:space:]#]|$)/) {
+                next
+            }
+            print
+        }' ||
+        true
+)"
+if [[ -n "$unpinned_actions" ]]; then
+    printf '%s\n' "$unpinned_actions"
+    fail "GitHub Actions uses entries must be pinned to immutable commit SHAs"
+else
+    echo "GitHub Actions uses entries are pinned to commit SHAs."
+fi
+
 section "Remote shell bootstrap posture"
 remote_shell_bootstraps="$(
     rg -n '(curl|wget)[^\n|]*\|[^\n]*(sh|bash)' \
@@ -326,10 +346,20 @@ else
     fi
 fi
 
-if [[ ! -f .github/zizmor.yml && ! -f .github/zizmor.yaml ]]; then
+zizmor_config=""
+if [[ -f .github/zizmor.yml ]]; then
+    zizmor_config=".github/zizmor.yml"
+elif [[ -f .github/zizmor.yaml ]]; then
+    zizmor_config=".github/zizmor.yaml"
+fi
+
+if [[ -z "$zizmor_config" ]]; then
     fail "GitHub Actions security analysis configuration is missing"
 else
     echo "GitHub Actions security analysis configuration is present."
+    if ! rg -q 'hash-pin' "$zizmor_config"; then
+        fail "GitHub Actions security analysis must enforce hash-pinned actions"
+    fi
 fi
 
 if [[ ! -f .github/workflows/codeql.yml && ! -f .github/workflows/codeql.yaml ]]; then
@@ -342,6 +372,18 @@ if [[ ! -f .github/workflows/osv-scanner.yml && ! -f .github/workflows/osv-scann
     fail "OSV dependency vulnerability scanning workflow is missing"
 else
     echo "OSV dependency vulnerability scanning workflow is present."
+fi
+
+if [[ ! -f deny.toml ]]; then
+    fail "cargo-deny policy is missing"
+else
+    echo "cargo-deny policy is present."
+fi
+
+if [[ ! -f .github/workflows/cargo-deny.yml && ! -f .github/workflows/cargo-deny.yaml ]]; then
+    fail "cargo-deny workflow is missing"
+else
+    echo "cargo-deny workflow is present."
 fi
 
 section "GitHub Actions cache write posture"

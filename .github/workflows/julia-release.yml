@@ -104,8 +104,9 @@ jobs:
             architecture: x86_64
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Rust
@@ -237,7 +238,7 @@ jobs:
           ls -la *.tar.gz
 
       - name: Upload binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: julia-binary-${{ matrix.os }}-${{ matrix.architecture }}
           path: pecos_julia-*.tar.gz
@@ -266,17 +267,18 @@ jobs:
             os: macos-latest
             architecture: aarch64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Julia ${{ matrix.julia-version }}
-        uses: julia-actions/setup-julia@v3
+        uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: ${{ matrix.julia-version }}
 
       - name: Download binary
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: julia-binary-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./julia-binary
@@ -344,12 +346,13 @@ jobs:
       needs.test_binaries.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Julia
-        uses: julia-actions/setup-julia@v3
+        uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: '1.10'
 
@@ -360,7 +363,7 @@ jobs:
 
       # Download artifacts into temp directory first
       - name: Download all binaries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: temp-artifacts/
 
@@ -460,7 +463,7 @@ jobs:
           EOF
 
       - name: Upload distribution bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pecos-julia-distribution
           path: dist/
@@ -472,7 +475,7 @@ jobs:
       needs.test_binaries.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
@@ -483,7 +486,7 @@ jobs:
 
       # Download artifacts
       - name: Download all binaries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: temp-artifacts/
 
@@ -613,7 +616,7 @@ jobs:
           ls -lh pecos-julia-release-bundle-*.tar.gz
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pecos-julia-release-bundle
           path: pecos-julia-release-bundle-*.tar.gz
@@ -640,7 +643,7 @@ jobs:
 
       - name: Create GitHub Release and Upload Binaries
         if: startsWith(github.ref, 'refs/tags/jl-')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release-bundle/binaries/*.tar.gz
           body: |

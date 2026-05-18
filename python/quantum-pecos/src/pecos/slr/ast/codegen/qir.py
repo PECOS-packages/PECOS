@@ -464,7 +464,17 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                args.extend(llvm_ir.Constant(self._types["double"], float(p)) for p in node.params)
+                # A bracket param (e.g. `RX[0.5]`) reaches here as a
+                # `LiteralExpr`, not a raw number -- resolve it before
+                # `float()` (was a hard `TypeError` for parallel/
+                # control-flow rotations).
+                args.extend(
+                    llvm_ir.Constant(
+                        self._types["double"],
+                        float(p.value if isinstance(p, LiteralExpr) else p),
+                    )
+                    for p in node.params
+                )
             args.append(qubit_ptr)
 
             self._builder.call(gate_func, args, name="")
@@ -483,7 +493,17 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                args.extend(llvm_ir.Constant(self._types["double"], float(p)) for p in node.params)
+                # A bracket param (e.g. `RX[0.5]`) reaches here as a
+                # `LiteralExpr`, not a raw number -- resolve it before
+                # `float()` (was a hard `TypeError` for parallel/
+                # control-flow rotations).
+                args.extend(
+                    llvm_ir.Constant(
+                        self._types["double"],
+                        float(p.value if isinstance(p, LiteralExpr) else p),
+                    )
+                    for p in node.params
+                )
             args.extend([q0_ptr, q1_ptr])
 
             self._builder.call(gate_func, args, name="")
@@ -828,6 +848,19 @@ class AstToQir:
         QIR doesn't have a permute instruction, so this just updates
         how we map allocator names to qubit indices.
         """
+        # Permutation is realized by remapping allocator offsets (QIR
+        # has no permute instruction). Emit the human-readable comment
+        # mirroring the legacy gen_qir format (rendered here from the
+        # post-substitution sources/targets so it stays correct inside
+        # a flattened BlockCall): whole-register `; Permutation: a <->
+        # b`, else per-element `; Permutation: a[0] -> b[1], ...`.
+        if node.add_comment and node.sources:
+            if node.whole_register and len(node.sources) >= 2:
+                self._builder.comment(f"; Permutation: {node.sources[0]} <-> {node.sources[1]}")
+            else:
+                pairs = ", ".join(f"{s} -> {t}" for s, t in zip(node.sources, node.targets, strict=False))
+                self._builder.comment(f"; Permutation: {pairs}")
+
         # Swap the allocator offsets
         for src, tgt in zip(node.sources, node.targets, strict=False):
             # Get current offsets

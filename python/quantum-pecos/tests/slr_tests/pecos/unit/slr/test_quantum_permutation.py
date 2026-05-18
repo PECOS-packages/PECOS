@@ -169,24 +169,22 @@ def test_permutation_with_bell_circuit_qir() -> None:
     assert len(h_calls) >= 1, "No H gate call found"
     assert len(cx_calls) >= 1, "No CX gate call found"
 
-    # Extract the measurement operations
+    # #76-B2: the M-B2-static classical model removed the bespoke
+    # `@mz_to_creg_bit` and the legacy 1-arg `%Result*`-returning
+    # `mz__body`; measurement now lowers to the standard 2-arg
+    # `call void @__quantum__qis__mz__body(%Qubit*, %Result*)` +
+    # `@__quantum__rt__read_result` + store. Pin the current form.
     mz_calls = re.findall(
-        r"call %Result\* @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    mz_to_creg_calls = re.findall(
-        r"call void @mz_to_creg_bit\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), i1\* %(\w+), i64 (\d+)\)",
+        r"call void @__quantum__qis__mz__body\("
+        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
+        r"%Result\* inttoptr \(i64 \d+ to %Result\*\)\)",
         qir,
     )
 
     print(f"MZ calls found: {mz_calls}")
-    print(f"MZ to creg calls found: {mz_to_creg_calls}")
 
     # We should have at least two measurement calls (one for each qubit)
-    assert len(mz_calls) + len(mz_to_creg_calls) >= 2, (
-        f"Expected at least 2 measurement calls, found {len(mz_calls)} mz calls "
-        f"and {len(mz_to_creg_calls)} mz_to_creg calls"
-    )
+    assert len(mz_calls) >= 2, f"Expected at least 2 measurement calls, found {len(mz_calls)}"
 
 
 @pytest.mark.optional_dependency

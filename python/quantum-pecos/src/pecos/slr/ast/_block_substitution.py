@@ -302,6 +302,7 @@ def substitute_stmt(stmt: Statement, remap: BodyRemap) -> Statement:
             sources=tuple(_sub_permute_ref(r, remap) for r in stmt.sources),
             targets=tuple(_sub_permute_ref(r, remap) for r in stmt.targets),
             add_comment=stmt.add_comment,
+            whole_register=stmt.whole_register,
             location=stmt.location,
         )
     if isinstance(stmt, BlockCall):

@@ -907,6 +907,7 @@ class SlrToAst:
                 sources=(elems_i.sym, elems_f.sym),
                 targets=(elems_f.sym, elems_i.sym),
                 add_comment=add_comment,
+                whole_register=True,
             )
 
         # Extract register/allocator names from sources (elems_i)

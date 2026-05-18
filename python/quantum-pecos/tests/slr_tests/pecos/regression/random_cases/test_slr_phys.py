@@ -99,12 +99,11 @@ def test_qir_creg_size_too_large() -> None:
         Return(m),
     )
 
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "Classical registers are limited to storing 64 bits (requested: 75)",
-        ),
-    ):
+    # #76/#80: the M-B2-static classical model packs each CReg into a
+    # single i64 (`__quantum__rt__int_record_output`), so a >64-bit
+    # CReg fails LOUD with NotImplementedError (was the older
+    # ValueError message; updated to the current #76/#80 guard).
+    with pytest.raises(NotImplementedError, match=re.escape("has 75 bits")):
         SlrConverter(prog).qir()
 
 
@@ -141,8 +140,12 @@ def test_control_flow_qir() -> None:
         p.Measure(q) > m,
         Return(m),
     )
-    qir = SlrConverter(prog).qir()
-    assert "__quantum__qis__h__body" in qir
+    # #74/#80: whole-CReg scalar conditions (`If(m == 0)` /
+    # `If(m < m_hidden)`) are classical-variable lowering, which the
+    # QIR backend deliberately fails LOUD on (unimplemented; must not
+    # be silently evaluated as 0). Correct post-#74/#80 behavior.
+    with pytest.raises(NotImplementedError, match=r"classical variable"):
+        SlrConverter(prog).qir()
 
 
 @pytest.mark.optional_dependency
@@ -158,8 +161,11 @@ def test_plus_qir() -> None:
         o.set(m + n),
         Return(m, n, o),
     )
-    qir = SlrConverter(prog).qir()
-    assert "add" in qir
+    # #74/#80: whole-CReg scalar arithmetic (`o.set(m + n)`) is
+    # classical-variable lowering, deliberately FAIL-LOUD in the QIR
+    # backend (unimplemented; must not be silently evaluated as 0).
+    with pytest.raises(NotImplementedError, match=r"classical variable"):
+        SlrConverter(prog).qir()
 
 
 @pytest.mark.optional_dependency
@@ -194,22 +200,31 @@ def test_minus_qir() -> None:
         o.set(m - n),
         Return(m, n, o),
     )
-    qir = SlrConverter(prog).qir()
-    assert "sub" in qir
+    # #74/#80: whole-CReg scalar arithmetic (`o.set(m - n)`) is
+    # classical-variable lowering, deliberately FAIL-LOUD in the QIR
+    # backend (unimplemented; must not be silently evaluated as 0).
+    with pytest.raises(NotImplementedError, match=r"classical variable"):
+        SlrConverter(prog).qir()
 
 
 @pytest.mark.optional_dependency
 def test_steane_qir() -> None:
     """Test the teleportation program using the Steane code."""
-    qir = SlrConverter(telep("X", "X")).qir()
-    assert "__quantum__qis__h__body" in qir
+    # #74/#80: the Steane teleportation uses a classical scalar var
+    # (`smid_flag_x`), classical-variable lowering -> deliberately
+    # FAIL-LOUD in the QIR backend (unimplemented; not silent-0).
+    with pytest.raises(NotImplementedError, match=r"classical variable"):
+        SlrConverter(telep("X", "X")).qir()
 
 
 @pytest.mark.optional_dependency
 def test_steane_qir_bc() -> None:
     """Test the teleportation program using the Steane code."""
-    qir = SlrConverter(telep("X", "X")).qir_bc()
-    print(qir)
+    # #74/#80: same `smid_flag_x` classical scalar var -> the QIR
+    # bitcode path also fails LOUD (unimplemented classical-variable
+    # lowering; must not be silently evaluated as 0).
+    with pytest.raises(NotImplementedError, match=r"classical variable"):
+        SlrConverter(telep("X", "X")).qir_bc()
 
 
 @pytest.mark.optional_dependency

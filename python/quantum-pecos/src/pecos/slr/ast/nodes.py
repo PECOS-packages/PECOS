@@ -526,6 +526,11 @@ class PermuteOp(Statement):
     sources: tuple[str, ...]  # Initial register/allocator names
     targets: tuple[str, ...]  # Final register/allocator names
     add_comment: bool = True  # Whether to add a comment in generated code
+    # Whole-register swap `Permute(a, b)` -> comment `; Permutation:
+    # a <-> b`; else per-element `; Permutation: a[0] -> b[1], ...`
+    # (the comment is rendered at codegen from the post-substitution
+    # sources/targets, mirroring the legacy gen_qir format).
+    whole_register: bool = False
 
 
 # =============================================================================

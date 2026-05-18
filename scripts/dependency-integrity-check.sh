@@ -166,16 +166,16 @@ while IFS= read -r file; do
 done < <(collect_files -g 'Cargo.toml')
 
 if ((${#cargo_manifests[@]} > 0)); then
-    if rg -n --pcre2 '^\s*(tag|branch)\s*=' "${cargo_manifests[@]}"; then
+    if rg -n '^[[:space:]]*(tag|branch)[[:space:]]*=' "${cargo_manifests[@]}"; then
         fail "Cargo git dependencies must use full immutable rev pins, not tag/branch"
     fi
-    if rg -n --pcre2 '^\s*rev\s*=\s*"[0-9a-f]{1,39}"' "${cargo_manifests[@]}"; then
+    if rg -n '^[[:space:]]*rev[[:space:]]*=[[:space:]]*"[0-9a-f]{1,39}"' "${cargo_manifests[@]}"; then
         fail "Cargo git dependency rev pins must use full 40-character commit SHAs"
     fi
 fi
 
-if rg -n --pcre2 'git\+.*[?&](tag|branch)=' Cargo.lock >/dev/null 2>&1; then
-    rg -n --pcre2 'git\+.*[?&](tag|branch)=' Cargo.lock || true
+if rg -n 'git\+.*[?&](tag|branch)=' Cargo.lock >/dev/null 2>&1; then
+    rg -n 'git\+.*[?&](tag|branch)=' Cargo.lock || true
     fail "Cargo.lock contains git sources resolved from mutable tag/branch refs"
 elif rg -n 'git\+' Cargo.lock >/dev/null 2>&1; then
     echo "Cargo git sources are pinned by commit."
@@ -215,7 +215,7 @@ else
             printf '%s\n' "$root" >>"$actual_unsafe_roots_file"
         fi
     done < <(
-        rg -l --pcre2 '\bunsafe\b' \
+        rg -l '\bunsafe\b' \
             crates python go julia exp \
             --glob '*.rs' \
             --glob '*.c' \
@@ -271,7 +271,7 @@ fi
 
 section "Remote shell bootstrap posture"
 remote_shell_bootstraps="$(
-    rg -n --pcre2 '(curl|wget)[^\n|]*\|[^\n]*(sh|bash)' \
+    rg -n '(curl|wget)[^\n|]*\|[^\n]*(sh|bash)' \
         .github/workflows \
         julia/PECOS.jl/deps/build_tarballs.jl \
         || true
@@ -374,25 +374,49 @@ else
 fi
 
 section "GitHub Actions lock enforcement"
-if rg -n --pcre2 '^\s*(run:\s*)?cargo (build|check|clippy|run|install)(?! --locked)' .github/workflows; then
+cargo_workflow_commands="$(
+    rg -n '^[[:space:]]*(run:[[:space:]]*)?cargo (build|check|clippy|run|install)([[:space:]]|$)' .github/workflows |
+        rg -v '^[^:]+:[0-9]+:[[:space:]]*(run:[[:space:]]*)?cargo (build|check|clippy|run|install)[[:space:]]+--locked([[:space:]]|$)' ||
+        true
+)"
+if [[ -n "$cargo_workflow_commands" ]]; then
+    printf '%s\n' "$cargo_workflow_commands"
     fail "workflow Cargo build/check/run/install commands must use --locked"
 else
     echo "Workflow Cargo build/check/run/install commands use --locked."
 fi
 
-if rg -n --pcre2 '^\s*(run:\s*)?uv sync(?!.*--locked)' .github/workflows; then
+uv_sync_without_lock="$(
+    rg -n '^[[:space:]]*(run:[[:space:]]*)?uv sync([[:space:]]|$)' .github/workflows |
+        rg -v -- '--locked' ||
+        true
+)"
+if [[ -n "$uv_sync_without_lock" ]]; then
+    printf '%s\n' "$uv_sync_without_lock"
     fail "workflow uv sync commands must use --locked"
 else
     echo "Workflow uv sync commands use --locked."
 fi
 
-if rg -n --pcre2 '^\s*(run:\s*)?uv lock(?!.*--check)' .github/workflows; then
+uv_lock_without_check="$(
+    rg -n '^[[:space:]]*(run:[[:space:]]*)?uv lock([[:space:]]|$)' .github/workflows |
+        rg -v -- '--check' ||
+        true
+)"
+if [[ -n "$uv_lock_without_check" ]]; then
+    printf '%s\n' "$uv_lock_without_check"
     fail "workflows must not regenerate uv.lock; use uv lock --check"
 else
     echo "Workflows validate uv.lock instead of regenerating it."
 fi
 
-if rg -n --pcre2 '^\s*(run:\s*)?uv run(?! --frozen)' .github/workflows; then
+uv_run_without_frozen="$(
+    rg -n '^[[:space:]]*(run:[[:space:]]*)?uv run([[:space:]]|$)' .github/workflows |
+        rg -v '^[^:]+:[0-9]+:[[:space:]]*(run:[[:space:]]*)?uv run[[:space:]]+--frozen([[:space:]]|$)' ||
+        true
+)"
+if [[ -n "$uv_run_without_frozen" ]]; then
+    printf '%s\n' "$uv_run_without_frozen"
     fail "workflow uv run commands must use --frozen"
 else
     echo "Workflow uv run commands use --frozen."
@@ -416,7 +440,7 @@ if ((${#missing_top_level_permissions[@]} > 0)); then
     fail "workflow files must declare top-level read-only permissions"
 fi
 
-writable_permissions="$(rg -n '^\s*(contents|packages|id-token|pull-requests|actions|security-events): write\s*$' .github/workflows || true)"
+writable_permissions="$(rg -n '^[[:space:]]*(contents|packages|id-token|pull-requests|actions|security-events): write[[:space:]]*$' .github/workflows | sed 's#\\#/#g' || true)"
 unexpected_writable_permissions="$(
     printf '%s\n' "$writable_permissions" | awk -F: '
         $1 == ".github/workflows/julia-update-hash.yml" &&
@@ -433,7 +457,7 @@ if [[ -n "$unexpected_writable_permissions" ]]; then
     printf '%s\n' "$unexpected_writable_permissions"
     fail "unexpected writable workflow permission found"
 elif [[ -n "$writable_permissions" ]]; then
-    echo "Only expected write permissions found in the tag-only Julia hash updater."
+    echo "Only expected write permissions found."
 else
     echo "No writable workflow permissions found."
 fi

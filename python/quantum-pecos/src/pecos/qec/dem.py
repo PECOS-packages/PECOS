@@ -126,6 +126,43 @@ def _validate_measurement_contract(
     _check("Observable", observables)
 
 
+def _normalize_entry_ids(blob: str, prefix: str) -> str:
+    """Normalize ``"id": "D0"``/``"L0"`` to the integer the pipeline expects.
+
+    ``prefix`` is ``"D"`` for detectors, ``"L"`` for observables. Integer ids
+    and entries without ``"id"`` (e.g. those using ``detector_id`` /
+    ``observable_id``) pass through unchanged. A string id with the wrong
+    prefix or a non-numeric body is a hard error -- silently reinterpreting it
+    would risk a mislabeled DEM.
+    """
+    if not blob:
+        return blob
+    try:
+        entries = json.loads(blob)
+    except json.JSONDecodeError:
+        return blob  # validation downstream reports the parse error
+    if not isinstance(entries, list):
+        return blob
+
+    changed = False
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            continue
+        raw = entry["id"].strip()
+        body = raw[len(prefix):] if raw.startswith(prefix) else None
+        if body is None or not body.isdigit():
+            msg = (
+                f"id {entry['id']!r} is not a valid identifier for this list; "
+                f"expected an integer or {prefix!r}-prefixed form like "
+                f"{prefix}0 (detectors use 'D', observables use 'L')."
+            )
+            raise ValueError(msg)
+        entry["id"] = int(body)
+        changed = True
+
+    return json.dumps(entries, separators=(",", ":")) if changed else blob
+
+
 def _uses_result_tags(detectors_json: str, observables_json: str) -> bool:
     """True if any detector/observable references measurements by result tag."""
     for blob in (detectors_json, observables_json):
@@ -180,7 +217,10 @@ class DetectorErrorModel(_RustDetectorErrorModel):
             num_qubits: Number of qubits to allocate for the trace. QIS/HUGR
                 programs require an explicit qubit count.
             detectors_json: Detector definitions as a JSON list, e.g.
-                ``[{"id": 0, "records": [-1, -5]}, ...]``. ``records`` are
+                ``[{"id": 0, "records": [-1, -5]}, ...]``. ``id`` may be a bare
+                integer or, for convenience, the DEM-label form ``"D0"``
+                (observables likewise accept ``"L0"``); both normalize to the
+                same integer. ``records`` are
                 negative measurement offsets (Stim convention); ``meas_ids``
                 may be used instead. Defined against the *traced* program's own
                 measurement order.
@@ -235,6 +275,12 @@ class DetectorErrorModel(_RustDetectorErrorModel):
             ``docs/proposals/001-from-guppy-tag-referenced-detectors.md``.
         """
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
+
+        # Convenience: allow "id": "D0" / "L0" (matching DEM labels) in
+        # addition to bare integers. Normalized to ints here so the schema,
+        # Rust parser, and surface path are untouched.
+        detectors_json = _normalize_entry_ids(detectors_json, "D")
+        observables_json = _normalize_entry_ids(observables_json, "L")
 
         tc = trace_guppy_into_tick_circuit(guppy, num_qubits, seed=seed)
 

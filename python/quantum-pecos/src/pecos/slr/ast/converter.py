@@ -615,8 +615,8 @@ class SlrToAst:
         gate_name = gate.sym
 
         # Handle special operations. All prep gates route through one
-        # path; the basis is the GATE IDENTITY (#81), not a string
-        # arg. `Prep` is the deprecated |0> alias (== PZ).
+        # path; the basis is the GATE IDENTITY (#81;
+        # PZ/PNZ/PX/PNX/PY/PNY), never a string argument.
         if gate_name in _PREP_BASIS:
             return self._convert_prep(gate, basis=_PREP_BASIS[gate_name])
 
@@ -734,12 +734,13 @@ class SlrToAst:
     def _expand_qubit_args(self, qargs: list) -> list:
         """Expand qubit arguments, converting full registers to individual qubits.
 
-        Filters out non-qubit arguments like strings (e.g., basis state "Z" in Prep).
+        Filters out non-qubit arguments like strings (a stray basis
+        string on a prep gate is rejected upstream in `_convert_prep`).
         """
         expanded = []
         for q in qargs:
             if isinstance(q, str):
-                # Skip string arguments (e.g., basis state in Prep)
+                # Skip non-qubit string arguments
                 continue
             if isinstance(q, list):
                 # This is a slice (list of qubits) - recursively expand

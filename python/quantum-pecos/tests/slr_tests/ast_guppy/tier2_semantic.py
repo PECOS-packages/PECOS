@@ -422,13 +422,21 @@ def test_prep_stray_string_arg_raises_loud() -> None:
     converter rejects ANY stray string qarg on EVERY prep gate
     (Codex #81 sym rule). A bare prep gate (no string) is fine."""
     # No-string preps build (PZ default; dedicated gate identity).
-    ok = Main(q := QReg("q", 1), c := CReg("c", 1), qb.PZ(q[0]), Measure(q) > c, Return(c))
-    SlrConverter(ok).qir_bc()
-    ok_prep = Main(q := QReg("q", 1), c := CReg("c", 1), qb.PZ(q[0]), Measure(q) > c, Return(c))
-    SlrConverter(ok_prep).qir_bc()
+    # No-string prep on every dedicated gate builds (basis = identity).
+    for prep in (qb.PZ, qb.PNZ, qb.PX, qb.PNX, qb.PY, qb.PNY):
+        ok = Main(q := QReg("q", 1), c := CReg("c", 1), prep(q[0]), Measure(q) > c, Return(c))
+        SlrConverter(ok).qir_bc()
 
-    # ANY string qarg on ANY prep gate fails loud (incl. "Z").
-    for prep, s in ((qb.PZ, "X"), (qb.PZ, "Z"), (qb.PZ, "X"), (qb.PX, "ignored")):
+    # ANY string qarg on EVERY prep gate fails loud (incl. "Z" -- the
+    # basis is the gate identity, never an argument).
+    for prep, s in (
+        (qb.PZ, "X"),
+        (qb.PNZ, "Z"),
+        (qb.PX, "ignored"),
+        (qb.PNX, "X"),
+        (qb.PY, "Z"),
+        (qb.PNY, "Y"),
+    ):
         bad = Main(q := QReg("q", 1), c := CReg("c", 1), prep(q[0], s), Measure(q) > c, Return(c))
         with pytest.raises(NotImplementedError, match=r"stray string argument"):
             SlrConverter(bad).qir_bc()

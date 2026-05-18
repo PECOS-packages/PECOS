@@ -91,9 +91,18 @@ def test_prep_gate_selene_guppy(gate: str) -> None:
         ("PZ", {"qir": ["reset"], "qasm": ["reset "]}),
         ("PNZ", {"qir": ["reset", "__quantum__qis__x__body"], "qasm": ["reset ", "x "]}),
         ("PX", {"qir": ["reset", "__quantum__qis__h__body"], "qasm": ["reset ", "h "]}),
-        ("PNX", {"qir": ["__quantum__qis__h__body", "__quantum__qis__z__body"], "qasm": ["h ", "z "]}),
-        ("PY", {"qir": ["__quantum__qis__h__body", "__quantum__qis__s__body"], "qasm": ["h ", "s "]}),
-        ("PNY", {"qir": ["__quantum__qis__h__body", "__quantum__qis__s__adj"], "qasm": ["h ", "sdg "]}),
+        (
+            "PNX",
+            {"qir": ["reset", "__quantum__qis__h__body", "__quantum__qis__z__body"], "qasm": ["reset ", "h ", "z "]},
+        ),
+        (
+            "PY",
+            {"qir": ["reset", "__quantum__qis__h__body", "__quantum__qis__s__body"], "qasm": ["reset ", "h ", "s "]},
+        ),
+        (
+            "PNY",
+            {"qir": ["reset", "__quantum__qis__h__body", "__quantum__qis__s__adj"], "qasm": ["reset ", "h ", "sdg "]},
+        ),
     ],
 )
 def test_prep_gate_emitted_tail(gate: str, needles: dict[str, list[str]]) -> None:
@@ -166,9 +175,17 @@ test_b1_blockcall_preserves_prep_basis = pytest.mark.slow(test_b1_blockcall_pres
 @pytest.mark.parametrize(
     ("entry", "meas", "expected"),
     [
+        # Direct canonical keys (Codex blocker: all 6 must dispatch
+        # directly, not only via aliases).
+        ("PZ", "MZ", 0),
+        ("PNZ", "MZ", 1),
+        ("PX", "MX", 0),
+        ("PNX", "MX", 1),
+        ("PY", "MY", 0),
+        ("PNY", "MY", 1),
+        # Human aliases must still resolve post Pn->PN rename.
         ("Init -Z", "MZ", 1),
         ("init |1>", "MZ", 1),
-        ("PNZ", "MZ", 1),
         ("Init -X", "MX", 1),
         ("init |->", "MX", 1),
         ("Init -Y", "MY", 1),

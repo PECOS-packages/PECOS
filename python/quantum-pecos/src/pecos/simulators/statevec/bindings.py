@@ -154,6 +154,8 @@ def get_bindings(state: StateVec) -> dict:
         "PX": lambda _s, q, **p: sim.run_1q_gate("PX", q, p),
         "PY": lambda _s, q, **p: sim.run_1q_gate("PY", q, p),
         "PNZ": lambda _s, q, **p: sim.run_1q_gate("PNZ", q, p),
+        "PNX": lambda _s, q, **p: sim.run_1q_gate("PNX", q, p),
+        "PNY": lambda _s, q, **p: sim.run_1q_gate("PNY", q, p),
         "Init": lambda _s, q, **p: sim.run_1q_gate("PZ", q, p),
         "Init +Z": lambda _s, q, **p: sim.run_1q_gate("PZ", q, p),
         "Init -Z": lambda _s, q, **p: sim.run_1q_gate("PNZ", q, p),

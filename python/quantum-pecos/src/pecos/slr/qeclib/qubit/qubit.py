@@ -64,7 +64,7 @@ class PhysicalQubit:
 
     @staticmethod
     def pz(*qargs: Qubit) -> preps.PZ:
-        """Measurement gate."""
+        """Prepare/reset to |0> (Z basis)."""
         return preps.PZ(*qargs)
 
     @staticmethod

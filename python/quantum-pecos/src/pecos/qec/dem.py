@@ -231,6 +231,17 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 e.g. ``"+X0 Z2"``); the DEM builder splits them out
                 automatically. There is no separate tracked-Pauli argument --
                 this matches the underlying circuit-metadata contract exactly.
+
+                Limitation: a tracked Pauli references **qubits** (via its
+                ``pauli`` string), not measurements, so the ``result_tags``
+                anchor does not apply to it. Its qubit indices are interpreted
+                in the *traced (post-compilation)* qubit numbering and are
+                therefore **not** source-stable the way tag-referenced
+                detectors/observables are -- Guppy exposes no ``result()``-style
+                identity for a qubit. For a hand-authored general Guppy program
+                the caller must supply tracked-Pauli qubit indices in the
+                traced numbering; geometry-derived paths (e.g. the surface
+                builder) avoid this by construction.
                 Reorder-robust alternative: instead of positional ``records``/
                 ``meas_ids``, an entry may carry ``"result_tags": ["sx0:meas:0",
                 ...]`` to reference measurements by the stable Guppy

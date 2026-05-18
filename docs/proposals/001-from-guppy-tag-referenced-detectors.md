@@ -243,3 +243,21 @@ positional equivalent; surface positional path byte-identical (Z+X, no
 regression); surface LER workflow with distance suppression; unknown-tag
 raises; ruff + cargo + 51 pytest pass. The fingerprint idea was dropped (not a
 substitute) per the decision to implement the real linkage.
+
+## Scope: tracked Paulis are NOT covered
+
+`result_tags` anchors detectors/observables, which are *measurement*-anchored.
+A tracked Pauli (`"kind": "tracked_pauli"` in `observables_json`) references
+**qubits** via its `pauli` string, not measurements -- it is a propagated
+Pauli frame, not a measurement outcome -- so `result()` tags do not apply.
+Its qubit indices are interpreted in the traced (post-compilation) qubit
+numbering and are therefore **not** source-stable the way tag-referenced
+detectors/observables now are. Guppy exposes no `result()`-equivalent identity
+for a qubit, so there is no analogous anchor.
+
+Impact: geometry-derived paths (e.g. the surface builder, which validates
+traced-vs-abstract measurement order and derives logical-operator support from
+geometry) are unaffected. Hand-authored tracked Paulis for a *general*
+`from_guppy` program must use traced qubit numbering and are reorder-fragile.
+Decision: documented as a known limitation (in `from_guppy`'s docstring and
+here); a qubit-identity anchor is possible future work, not in scope now.

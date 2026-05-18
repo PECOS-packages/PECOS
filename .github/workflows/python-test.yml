@@ -205,6 +205,29 @@ jobs:
       if: runner.os == 'Linux' && matrix.python-version == '3.14'
       run: just pytest-slow
 
+    - name: Install integrity check tools
+      run: |
+        if command -v rg >/dev/null 2>&1; then
+          exit 0
+        fi
+
+        case "$RUNNER_OS" in
+          Linux)
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+            ;;
+          macOS)
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install ripgrep
+            ;;
+          Windows)
+            cargo install --locked --version 14.1.1 ripgrep
+            ;;
+          *)
+            echo "Unsupported runner OS for ripgrep install: $RUNNER_OS" >&2
+            exit 1
+            ;;
+        esac
+
     - name: Run linting
       run: just lint check
 

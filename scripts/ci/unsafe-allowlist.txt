@@ -1,0 +1,21 @@
+# Crates that currently contain Rust unsafe code or native FFI boundaries.
+# New entries should be intentional and reviewed as native/FFI boundary changes.
+crates/pecos-chromobius
+crates/pecos-core
+crates/pecos-cppsparsestab
+crates/pecos-cuquantum
+crates/pecos-cuquantum-sys
+crates/pecos-foreign
+crates/pecos-gpu-sims
+crates/pecos-ldpc-decoders
+crates/pecos-llvm
+crates/pecos-pymatching
+crates/pecos-qis
+crates/pecos-qis-ffi
+crates/pecos-simulators
+crates/pecos-tesseract
+exp/pecos-experimental
+go/pecos-go-ffi
+julia/pecos-julia-ffi
+python/pecos-rslib
+python/pecos-rslib-llvm

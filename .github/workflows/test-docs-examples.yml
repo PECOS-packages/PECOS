@@ -45,8 +45,7 @@ jobs:
 
       - name: Set up Rust
         run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup show
 

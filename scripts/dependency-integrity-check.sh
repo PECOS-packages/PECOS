@@ -26,6 +26,18 @@ require_tool() {
     fi
 }
 
+list_contains() {
+    local needle="$1"
+    shift
+    local item
+    for item in "$@"; do
+        if [[ "$item" == "$needle" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 collect_files() {
     rg --files "$@"
 }
@@ -166,6 +178,76 @@ else
     echo "No Cargo git sources found."
 fi
 
+section "Rust unsafe boundary allowlist"
+unsafe_allowlist_file="scripts/ci/unsafe-allowlist.txt"
+if [[ ! -f "$unsafe_allowlist_file" ]]; then
+    fail "$unsafe_allowlist_file is missing"
+else
+    unsafe_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/pecos-unsafe.XXXXXX")"
+    trap 'rm -rf "$unsafe_tmp_dir"' EXIT
+    allowed_unsafe_roots_file="$unsafe_tmp_dir/allowed"
+    actual_unsafe_roots_file="$unsafe_tmp_dir/actual"
+    unsafe_files_without_manifest_file="$unsafe_tmp_dir/no-manifest"
+
+    sed 's/[[:space:]]*#.*$//; /^[[:space:]]*$/d' "$unsafe_allowlist_file" | sort -u >"$allowed_unsafe_roots_file"
+    : >"$actual_unsafe_roots_file"
+    : >"$unsafe_files_without_manifest_file"
+
+    while IFS= read -r unsafe_file; do
+        dir="$(dirname "$unsafe_file")"
+        root=""
+        while [[ "$dir" != "." && "$dir" != "/" ]]; do
+            if [[ -f "$dir/Cargo.toml" ]]; then
+                root="$dir"
+                break
+            fi
+            dir="$(dirname "$dir")"
+        done
+
+        if [[ -z "$root" ]]; then
+            printf '%s\n' "$unsafe_file" >>"$unsafe_files_without_manifest_file"
+        else
+            printf '%s\n' "$root" >>"$actual_unsafe_roots_file"
+        fi
+    done < <(
+        rg -l --pcre2 '\bunsafe\b' \
+            crates python go julia exp \
+            --glob '*.rs' \
+            --glob '*.c' \
+            --glob '*.cpp' \
+            --glob '*.h' \
+            --glob '*.hpp' \
+            --glob '!crates/pecos-pymatching/tests/pymatching/**' \
+            || true
+    )
+
+    sort -u "$actual_unsafe_roots_file" >"$actual_unsafe_roots_file.sorted"
+    mv "$actual_unsafe_roots_file.sorted" "$actual_unsafe_roots_file"
+    sort -u "$unsafe_files_without_manifest_file" >"$unsafe_files_without_manifest_file.sorted"
+    mv "$unsafe_files_without_manifest_file.sorted" "$unsafe_files_without_manifest_file"
+
+    unexpected_unsafe_roots="$(comm -23 "$actual_unsafe_roots_file" "$allowed_unsafe_roots_file" || true)"
+    stale_unsafe_roots="$(comm -13 "$actual_unsafe_roots_file" "$allowed_unsafe_roots_file" || true)"
+
+    if [[ -s "$unsafe_files_without_manifest_file" ]]; then
+        cat "$unsafe_files_without_manifest_file"
+        fail "unsafe usage found outside a Cargo package"
+    fi
+    if [[ -n "$unexpected_unsafe_roots" ]]; then
+        printf '%s\n' "$unexpected_unsafe_roots"
+        fail "new unsafe/FFI crate roots must be added to $unsafe_allowlist_file"
+    fi
+    if [[ -n "$stale_unsafe_roots" ]]; then
+        printf '%s\n' "$stale_unsafe_roots"
+        fail "stale unsafe/FFI allowlist entries should be removed"
+    fi
+    if [[ ! -s "$unsafe_files_without_manifest_file" &&
+        -z "$unexpected_unsafe_roots" &&
+        -z "$stale_unsafe_roots" ]]; then
+        echo "Unsafe/FFI crate roots match the reviewed allowlist."
+    fi
+fi
+
 section "uv lock discipline"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/target/uv-cache}"
 if ! uv lock --check --project .; then
@@ -180,6 +262,20 @@ if rg -n "pull_request_target|workflow_run" .github/workflows >/dev/null 2>&1; t
     fail "privileged workflow trigger found; review before running untrusted code"
 else
     echo "No pull_request_target or workflow_run triggers found."
+fi
+
+section "Remote shell bootstrap posture"
+remote_shell_bootstraps="$(
+    rg -n --pcre2 '(curl|wget)[^\n|]*\|[^\n]*(sh|bash)' \
+        .github/workflows \
+        julia/PECOS.jl/deps/build_tarballs.jl \
+        || true
+)"
+if [[ -n "$remote_shell_bootstraps" ]]; then
+    printf '%s\n' "$remote_shell_bootstraps"
+    fail "workflow and release build scripts must not pipe remote downloads into a shell"
+else
+    echo "Workflow and release build scripts avoid curl-pipe-shell bootstraps."
 fi
 
 section "Dependency review coverage"
@@ -205,10 +301,38 @@ else
     fi
 fi
 
-if [[ ! -f .github/workflows/github-actions-security.yml && ! -f .github/workflows/github-actions-security.yaml ]]; then
+actions_security_workflow=""
+if [[ -f .github/workflows/github-actions-security.yml ]]; then
+    actions_security_workflow=".github/workflows/github-actions-security.yml"
+elif [[ -f .github/workflows/github-actions-security.yaml ]]; then
+    actions_security_workflow=".github/workflows/github-actions-security.yaml"
+fi
+
+if [[ -z "$actions_security_workflow" ]]; then
     fail "GitHub Actions security analysis workflow is missing"
 else
     echo "GitHub Actions security analysis workflow is present."
+    if rg -q 'continue-on-error:\s*true' "$actions_security_workflow"; then
+        fail "GitHub Actions security analysis workflow must be blocking"
+    fi
+fi
+
+if [[ ! -f .github/zizmor.yml && ! -f .github/zizmor.yaml ]]; then
+    fail "GitHub Actions security analysis configuration is missing"
+else
+    echo "GitHub Actions security analysis configuration is present."
+fi
+
+if [[ ! -f .github/workflows/codeql.yml && ! -f .github/workflows/codeql.yaml ]]; then
+    fail "CodeQL code scanning workflow is missing"
+else
+    echo "CodeQL code scanning workflow is present."
+fi
+
+if [[ ! -f .github/workflows/osv-scanner.yml && ! -f .github/workflows/osv-scanner.yaml ]]; then
+    fail "OSV dependency vulnerability scanning workflow is missing"
+else
+    echo "OSV dependency vulnerability scanning workflow is present."
 fi
 
 section "GitHub Actions cache write posture"
@@ -292,6 +416,10 @@ unexpected_writable_permissions="$(
     printf '%s\n' "$writable_permissions" | awk -F: '
         $1 == ".github/workflows/julia-update-hash.yml" &&
             $0 ~ /^[^:]+:[0-9]+:[[:space:]]+(contents|pull-requests): write[[:space:]]*$/ { next }
+        $1 == ".github/workflows/codeql.yml" &&
+            $0 ~ /^[^:]+:[0-9]+:[[:space:]]+security-events: write[[:space:]]*$/ { next }
+        $1 == ".github/workflows/osv-scanner.yml" &&
+            $0 ~ /^[^:]+:[0-9]+:[[:space:]]+security-events: write[[:space:]]*$/ { next }
         NF { print }
     '
 )"

@@ -52,14 +52,12 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           sudo apt-get clean
 
-      - name: Install Rust (for local testing)
-        run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.cargo/bin:$PATH"
-
       - name: Set up Rust
-        run: rustup override set stable && rustup update
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup override set stable
+          rustup show
 
       - name: Install just
         uses: extractions/setup-just@v4
@@ -108,14 +106,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust (for local testing)
-        run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.cargo/bin:$PATH"
-
       - name: Set up Rust
-        run: rustup override set stable && rustup update
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup override set stable
+          rustup show
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -166,23 +162,22 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           sudo apt-get clean
 
-      - name: Install Rust (for local testing)
+      - name: Set up Rust (Windows)
         if: runner.os == 'Windows'
         run: |
-          curl -sSf -o rustup-init.exe https://win.rustup.rs
-          ./rustup-init.exe -y --default-toolchain stable --default-host x86_64-pc-windows-msvc --profile minimal
+          rustup set default-host x86_64-pc-windows-msvc
+          rustup toolchain install stable --profile minimal
+          rustup default stable
           echo "$HOME\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           $env:Path += ";$HOME\.cargo\bin"
+          rustup show
 
-      - name: Install Rust (for local testing)
+      - name: Set up Rust (Unix)
         if: runner.os != 'Windows'
         run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
-
-      - name: Set up Rust
-        run: rustup show
+          rustup show
 
       - name: Install just
         uses: extractions/setup-just@v4

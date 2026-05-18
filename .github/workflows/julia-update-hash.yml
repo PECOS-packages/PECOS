@@ -34,16 +34,20 @@ jobs:
 
     - name: Get commit SHA
       id: get-sha
+      env:
+        REF_NAME: ${{ github.ref_name }}
       run: |
         # Get the commit SHA that the tag points to
-        COMMIT_SHA=$(git rev-list -n 1 ${{ github.ref_name }})
+        COMMIT_SHA=$(git rev-list -n 1 "$REF_NAME")
         echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-        echo "Tag ${{ github.ref_name }} points to commit: $COMMIT_SHA"
+        echo "Tag $REF_NAME points to commit: $COMMIT_SHA"
 
     - name: Update build_tarballs.jl
+      env:
+        COMMIT_SHA: ${{ steps.get-sha.outputs.commit_sha }}
       run: |
         # Update the commit reference in build_tarballs.jl
-        sed -i 's/get(ENV, "PECOS_BUILD_COMMIT", "main")/"${{ steps.get-sha.outputs.commit_sha }}"/' \
+        sed -i -E "s/get\(ENV, \"PECOS_BUILD_COMMIT\", \"[^\"]+\"\)/\"$COMMIT_SHA\"/" \
           julia/PECOS.jl/deps/build_tarballs.jl
 
         # Show the change

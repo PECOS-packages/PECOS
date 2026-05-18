@@ -55,15 +55,20 @@ jobs:
     steps:
       - name: Check if should run on PR push
         id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
           # Always run on tag pushes (py-* tags trigger releases)
-          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/py-* ]]; then
+          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # Always run on pushes to main branches
-          elif [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref_name }}" =~ ^(main|master|dev|development)$ ]]; then
+          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # For PRs, check the TRIGGER_ON_PR_PUSH setting
-          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ env.TRIGGER_ON_PR_PUSH }}" = "true" ]; then
+          elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
             echo "run=true" >> $GITHUB_OUTPUT
           else
             echo "run=false" >> $GITHUB_OUTPUT
@@ -201,8 +206,8 @@ jobs:
             CUDA_PATH=/usr/local/cuda-12.6
             MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_LINUX: |
-            curl -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
+            bash scripts/ci/ensure-rust.sh stable minimal
+            export PATH=$HOME/.cargo/bin:$PATH
             dnf install libffi-devel -y
             # Install CUDA Toolkit for GPU support on x86_64 (compile-time only, no GPU needed)
             if [ "${{ matrix.install_cuda }}" = "true" ]; then
@@ -234,8 +239,8 @@ jobs:
             SDKROOT=$(xcrun --show-sdk-path)
             MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_MACOS: |
-            curl -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
+            bash scripts/ci/ensure-rust.sh stable minimal
+            export PATH=$HOME/.cargo/bin:$PATH
             rustup update
             cargo run --locked --release -p pecos-cli -- install llvm --force
             cargo run --locked --release -p pecos-cli -- install cmake --force
@@ -293,8 +298,8 @@ jobs:
             PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
           CIBW_BEFORE_ALL_LINUX: |
-            curl -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
+            bash scripts/ci/ensure-rust.sh stable minimal
+            export PATH=$HOME/.cargo/bin:$PATH
             dnf install libffi-devel -y
             cargo run --locked --release -p pecos-cli -- install llvm --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
@@ -306,7 +311,10 @@ jobs:
             MACOSX_DEPLOYMENT_TARGET=13.2
             SDKROOT=$(xcrun --show-sdk-path)
           CIBW_BEFORE_ALL_MACOS: |
-            source $HOME/.cargo/env 2>/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env; }
+            if ! command -v cargo >/dev/null 2>&1; then
+              bash scripts/ci/ensure-rust.sh stable minimal
+              export PATH=$HOME/.cargo/bin:$PATH
+            fi
             if [ ! -d "$HOME/.pecos/deps/llvm-14/bin" ]; then
               rustup update
               cargo run --locked --release -p pecos-cli -- install llvm --force

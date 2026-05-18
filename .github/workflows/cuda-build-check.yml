@@ -45,12 +45,13 @@ jobs:
 
       - name: Install Rust
         run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
 
       - name: Set up Rust
-        run: rustup override set stable && rustup update
+        run: |
+          rustup override set stable
+          rustup show
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2

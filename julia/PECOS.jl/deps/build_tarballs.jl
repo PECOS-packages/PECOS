@@ -43,9 +43,9 @@ if [[ "${target}" == *-mingw* ]]; then
     ./rustup-init.exe -y --profile minimal --default-toolchain stable
     export PATH="$HOME/.cargo/bin:$PATH"
 else
-    # Unix-like: Use rustup
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-    source $HOME/.cargo/env
+    # Unix-like: use rustup-init with its SHA-256 sidecar instead of curl-pipe-shell.
+    bash scripts/ci/ensure-rust.sh stable minimal
+    export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
 # Verify Rust installation
@@ -61,7 +61,7 @@ if [[ -n "${CARGO_BUILD_TARGET}" ]]; then
 fi
 
 # BinaryBuilder handles --target automatically with CARGO_BUILD_TARGET
-cargo build --release
+cargo build --locked --release
 
 # Find and install the built library
 cd target/release

@@ -55,9 +55,14 @@ RG_EXCLUDES=(
 )
 
 section "Tooling"
+tooling_failures_before=$failures
 require_tool rg || true
 require_tool cargo || true
 require_tool uv || true
+if ((failures > tooling_failures_before)); then
+    printf '\nDependency integrity check failed: required tooling is missing.\n' >&2
+    exit 1
+fi
 
 section "Known affected package names"
 lockfiles=()

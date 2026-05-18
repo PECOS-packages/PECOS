@@ -140,6 +140,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.x'
+      - name: Install integrity check tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
       - name: Install pre-commit
         run: pip install pre-commit
       - name: Run pre-commit

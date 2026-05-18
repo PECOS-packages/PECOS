@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BarrierOp,
@@ -315,12 +316,18 @@ class AstToStim:
         self.context.measurement_count += len(qubits)
 
     def _process_prepare(self, node: PrepareOp) -> None:
-        """Process a prepare/reset operation."""
+        """Process a prepare/reset operation (Z-reset + #81 basis tail)."""
+        tail = prep_tail(node.basis)
         if node.slots is None:
+            if tail:
+                msg = f"Stim codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
+                raise NotImplementedError(msg)
             return
 
         qubits = [self.context.get_qubit(node.allocator, slot) for slot in node.slots]
         self.circuit.append_operation("R", qubits)
+        for gk in tail:
+            self.circuit.append_operation(GATE_TO_STIM[gk], qubits)
 
     def _process_barrier(self) -> None:
         """Process a barrier as TICK."""

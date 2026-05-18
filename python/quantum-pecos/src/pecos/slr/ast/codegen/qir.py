@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     AssignOp,
@@ -609,17 +610,27 @@ class AstToQir:
                 )
 
     def _process_prepare(self, node: PrepareOp) -> None:
-        """Process a prepare/reset operation."""
+        """Process a prepare/reset operation (Z-reset + #81 basis tail)."""
+        tail = prep_tail(node.basis)
         if node.slots is None:
+            # prepare_all is a pre-existing no-op gap; a NON-PZ
+            # prepare_all silently doing nothing would be a basis
+            # miscompile -- fail loud rather than extend the gap.
+            if tail:
+                msg = f"QIR codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
+                raise NotImplementedError(msg)
             return
 
         reset_func = self._get_or_create_gate("reset", has_params=False, num_qubits=1)
+        tail_funcs = [(self._get_or_create_gate(GATE_TO_QIR[gk], has_params=False, num_qubits=1)) for gk in tail]
 
         for slot in node.slots:
             qubit_ptr = self._get_qubit_ptr(
                 SlotRef(allocator=node.allocator, index=slot),
             )
             self._builder.call(reset_func, [qubit_ptr], name="")
+            for func in tail_funcs:
+                self._builder.call(func, [qubit_ptr], name="")
 
     def _process_barrier(self, node: BarrierOp) -> None:
         """Process a barrier operation."""

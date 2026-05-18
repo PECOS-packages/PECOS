@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from pecos.slr.ast.codegen._block_flatten import validate_unique_block_decl_names
+from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.codegen.guppy_linearity import (
     GuppyLinearityState,
     LinearityError,
@@ -995,6 +996,11 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _emit_prepare(self, node: PrepareOp) -> list[str]:
+        # Z-reset/alloc to |0>, then the #81 canonical Clifford tail
+        # (functional, linearity-preserving -- same FUNCTIONAL_GATES
+        # path as ordinary 1q gates; the qubit primitive yields |0>
+        # so this is exactly `PZ(q); H(q); ...`).
+        tail = prep_tail(node.basis)
         lines: list[str] = []
         slots = range(self.context.root_allocators[node.allocator]) if node.slots is None else node.slots
         linearity = self._linearity()
@@ -1002,12 +1008,13 @@ class AstToGuppy:
             slot = Slot(node.allocator, index)
             local = self._local_name(slot)
             if linearity.status(slot) is SlotState.LIVE:
-                old_local = linearity.live(slot)
-                lines.append(f"{self.context.indent()}{old_local} = reset({old_local})")
-                linearity.set_live(slot, old_local)
+                cur = linearity.live(slot)
+                lines.append(f"{self.context.indent()}{cur} = reset({cur})")
             else:
-                lines.append(f"{self.context.indent()}{local} = qubit()")
-                linearity.set_live(slot, local)
+                cur = local
+                lines.append(f"{self.context.indent()}{cur} = qubit()")
+            lines.extend(f"{self.context.indent()}{cur} = {FUNCTIONAL_GATES[gk]}({cur})" for gk in tail)
+            linearity.set_live(slot, cur)
         return lines
 
     def _emit_measure(self, node: MeasureOp) -> list[str]:

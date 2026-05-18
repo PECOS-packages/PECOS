@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BarrierOp,
@@ -326,13 +327,26 @@ class AstToQuantumCircuit:
             self._add_to_tick("Measure", qubit)
 
     def _process_prepare(self, node: PrepareOp) -> None:
-        """Process a prepare/reset operation."""
+        """Process a prepare/reset operation (Z-reset + #81 basis tail).
+
+        QC ticks are parallel sets; reset and the Clifford tail MUST
+        be sequential, so each is its own flushed tick (PZ has no
+        tail -> byte-identical to the prior behaviour).
+        """
+        tail = prep_tail(node.basis)
         if node.slots is None:
+            if tail:
+                msg = f"QuantumCircuit codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
+                raise NotImplementedError(msg)
             return
 
-        for slot in node.slots:
-            qubit = self.context.get_qubit(node.allocator, slot)
+        qubits = [self.context.get_qubit(node.allocator, slot) for slot in node.slots]
+        for qubit in qubits:
             self._add_to_tick("RESET", qubit)
+        for gk in tail:
+            self._flush_tick()  # sequence reset/prev-tail before this gate
+            for qubit in qubits:
+                self._add_to_tick(GATE_TO_QC[gk], qubit)
 
     def _add_to_tick(self, gate_name: str, target: int | tuple[int, int]) -> None:
         """Add a gate to the current tick."""

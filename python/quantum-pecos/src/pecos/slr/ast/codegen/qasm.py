@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BinaryExpr,
@@ -372,22 +373,25 @@ class AstToQasm(BaseVisitor[list[str]]):
         return lines
 
     def visit_prepare(self, node: PrepareOp) -> list[str]:
-        """Generate reset/prep operation."""
+        """Generate reset/prep operation (Z-reset + #81 basis tail)."""
         lines = []
+        tail = prep_tail(node.basis)
 
         # Get root allocator for this allocator
         root = self.context.get_root_allocator(node.allocator)
 
         if node.slots is None:
-            # Reset all qubits in the allocator
+            if tail:
+                msg = f"QASM codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
+                raise NotImplementedError(msg)
             capacity = self.context.allocators.get(node.allocator, 1)
-            for i in range(capacity):
-                abs_index = self.context.get_absolute_index(node.allocator, i)
-                lines.append(self._maybe_conditional(f"reset {root}[{abs_index}];"))
+            indices = [self.context.get_absolute_index(node.allocator, i) for i in range(capacity)]
         else:
-            for slot in node.slots:
-                abs_index = self.context.get_absolute_index(node.allocator, slot)
-                lines.append(self._maybe_conditional(f"reset {root}[{abs_index}];"))
+            indices = [self.context.get_absolute_index(node.allocator, slot) for slot in node.slots]
+
+        for abs_index in indices:
+            lines.append(self._maybe_conditional(f"reset {root}[{abs_index}];"))
+            lines.extend(self._maybe_conditional(f"{GATE_TO_QASM[gk]} {root}[{abs_index}];") for gk in tail)
 
         return lines
 

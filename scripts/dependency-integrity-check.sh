@@ -26,6 +26,10 @@ require_tool() {
     fi
 }
 
+normalize_path() {
+    printf '%s\n' "${1//\\//}"
+}
+
 list_contains() {
     local needle="$1"
     shift
@@ -210,9 +214,9 @@ else
         done
 
         if [[ -z "$root" ]]; then
-            printf '%s\n' "$unsafe_file" >>"$unsafe_files_without_manifest_file"
+            normalize_path "$unsafe_file" >>"$unsafe_files_without_manifest_file"
         else
-            printf '%s\n' "$root" >>"$actual_unsafe_roots_file"
+            normalize_path "$root" >>"$actual_unsafe_roots_file"
         fi
     done < <(
         rg -l '\bunsafe\b' \

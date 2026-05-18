@@ -726,7 +726,7 @@ impl PyInfluenceBuilder {
 /// # Output in DEM format
 /// print(dem.to_string())
 /// ```
-#[pyclass(name = "DetectorErrorModel", module = "pecos_rslib.qec")]
+#[pyclass(subclass, name = "DetectorErrorModel", module = "pecos_rslib.qec")]
 pub struct PyDetectorErrorModel {
     inner: RustDetectorErrorModel,
 }

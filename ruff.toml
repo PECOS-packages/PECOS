@@ -168,6 +168,10 @@ ignore = [
     "SLF001",   # Private member access - accessing internal decoder APIs
     "ANN401",   # Any types - required for optional dependency types (pymatching, stim)
 ]
+"python/quantum-pecos/src/pecos/qec/dem.py" = [
+    "PLC0415",  # Import inside function - lazy import breaks the qec/__init__ <-> decode cycle
+    "ANN401",   # Any types - duck-typed Guppy program (whatever pecos.sim accepts) and Rust TickCircuit
+]
 "python/quantum-pecos/src/pecos/qec/surface/plot.py" = [
     "PLC0415",  # Import inside function - lazy loading of qec.surface
 ]

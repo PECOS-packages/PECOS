@@ -584,25 +584,53 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
 
     tick_circuit = TickCircuit()
 
+    # Pass 1: build the global, ordered list of result-slot ids that anchor
+    # MeasIds. In the lowered Selene/QIS trace every measured qubit is backed
+    # by exactly one AllocateResult op immediately followed by its Measure op
+    # (the result slot is intrinsic to measure(); array-valued result()
+    # expands to one AllocateResult per measured element). The k-th
+    # measurement therefore maps to the k-th AllocateResult id, independent of
+    # the program-vs-slot qubit-id spaces. This strict 1:1 interleave is an
+    # invariant of the lowered trace; any deviation means the operation stream
+    # is malformed or uses an unsupported construct, so we fail loudly rather
+    # than guess an association and build a silently-wrong DEM.
+    meas_ids_in_order: list[int] = []
+    pending_alloc: int | None = None
     for chunk in chunks:
-        # Extract AllocateResult ID → MZ qubit mapping from the operations stream.
-        # Each AllocateResult(id=N) is followed by Quantum.Measure([qubit, slot]).
-        # This gives us the MeasId to stamp on each MZ gate.
-        meas_id_queue: list[tuple[int, int]] = []  # (qubit, meas_id) pairs
-        last_alloc_id: int | None = None
         for op in chunk.get("operations") or []:
             op_dict = dict(op)
             if "AllocateResult" in op_dict:
-                last_alloc_id = int(op_dict["AllocateResult"]["id"])
-            elif "Quantum" in op_dict:
-                q_op = op_dict["Quantum"]
-                if "Measure" in q_op and last_alloc_id is not None:
-                    qubit = int(q_op["Measure"][0])
-                    meas_id_queue.append((qubit, last_alloc_id))
-                    last_alloc_id = None
+                if pending_alloc is not None:
+                    msg = (
+                        "Malformed traced operation stream: two consecutive "
+                        "AllocateResult ops with no Measure between them. The "
+                        "lowered trace must interleave AllocateResult/Measure "
+                        "1:1; cannot anchor MeasIds deterministically."
+                    )
+                    raise ValueError(msg)
+                pending_alloc = int(op_dict["AllocateResult"]["id"])
+            elif "Quantum" in op_dict and "Measure" in op_dict["Quantum"]:
+                if pending_alloc is None:
+                    msg = (
+                        "Malformed traced operation stream: a Measure op with "
+                        "no preceding AllocateResult. The lowered trace must "
+                        "interleave AllocateResult/Measure 1:1; cannot anchor "
+                        "a stable MeasId for this measurement."
+                    )
+                    raise ValueError(msg)
+                meas_ids_in_order.append(pending_alloc)
+                pending_alloc = None
+    if pending_alloc is not None:
+        msg = (
+            "Malformed traced operation stream: a trailing AllocateResult "
+            "with no following Measure; cannot anchor MeasIds "
+            "deterministically."
+        )
+        raise ValueError(msg)
 
-        meas_id_idx = 0  # next MeasId to assign
-
+    # Pass 2: replay gates, stamping MeasIds on MZ gates in global trace order.
+    meas_cursor = 0
+    for chunk in chunks:
         for gate in chunk.get("lowered_quantum_ops") or []:
             gate_type = str(gate["gate_type"])
             qubits = [int(q) for q in gate.get("qubits", [])]
@@ -628,26 +656,16 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
             elif gate_type == "PZ":
                 tick.pz(qubits)
             elif gate_type == "MZ":
-                # Stamp MeasIds from the AllocateResult stream
-                meas_ids = []
-                for q in qubits:
-                    if meas_id_idx < len(meas_id_queue):
-                        expected_q, mid = meas_id_queue[meas_id_idx]
-                        if expected_q == q:
-                            meas_ids.append(mid)
-                            meas_id_idx += 1
-                        else:
-                            # Qubit mismatch — fall back to auto-assign
-                            meas_ids = []
-                            break
-                    else:
-                        meas_ids = []
-                        break
-
-                if meas_ids:
-                    tick.mz_with_ids(qubits, meas_ids)
-                else:
-                    tick.mz(qubits)
+                end = meas_cursor + len(qubits)
+                if end > len(meas_ids_in_order):
+                    msg = (
+                        "More measured qubits than result(...)-anchored "
+                        "MeasIds in the traced program; a measurement is "
+                        "missing its result(...) call."
+                    )
+                    raise ValueError(msg)
+                tick.mz_with_ids(qubits, meas_ids_in_order[meas_cursor:end])
+                meas_cursor = end
             elif gate_type == "RX":
                 tick.rx(angles[0], qubits)
             elif gate_type == "RY":
@@ -678,28 +696,47 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
                 msg = f"Unsupported lowered traced gate {gate_type!r}"
                 raise ValueError(msg)
 
+    if meas_cursor != len(meas_ids_in_order):
+        msg = (
+            f"Traced program has {len(meas_ids_in_order)} result(...)-anchored "
+            f"measurements but only {meas_cursor} measured qubit(s) in the "
+            "lowered gate stream; result()/measurement mismatch."
+        )
+        raise ValueError(msg)
+
     # Compact: ASAP-schedule gates into minimal ticks
     tick_circuit.compact_ticks()
 
     return tick_circuit
 
 
-def _generate_traced_surface_tick_circuit(
-    patch: SurfacePatch,
-    num_rounds: int,
-    basis: str,
-) -> Any:
-    """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit."""
-    import pecos
-    from pecos.guppy import get_num_qubits, make_surface_code
+def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 0) -> Any:
+    """Trace a Guppy/QIS program's lowered Selene op stream into a ``TickCircuit``.
 
-    program = make_surface_code(distance=patch.distance, num_rounds=num_rounds, basis=basis)
+    Runs ``program`` under the Selene QIS engine with operation tracing enabled
+    and replays the captured (lowered) gate stream into a PECOS ``TickCircuit``.
+    This is the generic core shared by the surface traced-QIS path and the
+    general ``DetectorErrorModel.from_guppy`` entry point.
+
+    Args:
+        program: Anything ``pecos.sim`` accepts -- a ``@guppy`` function, a
+            compiled Guppy program, or a program wrapper.
+        num_qubits: Number of qubits to allocate. QIS/HUGR programs require an
+            explicit qubit count for trace capture.
+        seed: Seed for the (ideal) trace run.
+
+    Returns:
+        A ``TickCircuit`` with no detector/observable metadata attached; the
+        caller is responsible for supplying that.
+    """
+    import pecos
+
     sim_builder = (
         pecos.sim(program)
         .classical(pecos.selene_engine())
         .quantum(pecos.stabilizer())
-        .qubits(get_num_qubits(patch.distance))
-        .seed(0)
+        .qubits(num_qubits)
+        .seed(seed)
     )
     chunks = list(sim_builder.capture_operation_trace())
 
@@ -710,6 +747,18 @@ def _generate_traced_surface_tick_circuit(
     for chunk in chunks:
         operations.extend(list(chunk.get("operations", [])))
     return _replay_qis_trace_into_tick_circuit(operations)
+
+
+def _generate_traced_surface_tick_circuit(
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str,
+) -> Any:
+    """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit."""
+    from pecos.guppy import get_num_qubits, make_surface_code
+
+    program = make_surface_code(distance=patch.distance, num_rounds=num_rounds, basis=basis)
+    return trace_guppy_into_tick_circuit(program, get_num_qubits(patch.distance), seed=0)
 
 
 def _build_surface_tick_circuit_for_native_model(

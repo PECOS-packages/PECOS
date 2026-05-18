@@ -34,7 +34,6 @@ from pecos_rslib.qec import (
     DemBuilder,
     DemSampler,
     DemSamplerBuilder,
-    DetectorErrorModel,
     EquivalenceResult,
     FaultLocation,
     InfluenceBuilder,
@@ -72,6 +71,12 @@ from pecos.qec.color import (
     ColorCodeStabilizer,
     generate_488_layout,
 )
+
+# DetectorErrorModel is re-exported from pecos.qec.dem: a thin Python subclass
+# of the Rust class that adds the from_guppy convenience constructor (the
+# Guppy/Selene trace pipeline is Python-only, so it cannot live in the Rust
+# extension without a dependency cycle).
+from pecos.qec.dem import DetectorErrorModel
 from pecos.qec.generic import (
     CheckSchedule,
     PauliOperator,

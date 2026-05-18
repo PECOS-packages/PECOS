@@ -15,7 +15,7 @@ This directory contains architectural proposals and design explorations for PECO
 
 | Folder/File | Status | Summary |
 |-------------|--------|---------|
-| *None currently* | | |
+| [001-from-guppy-tag-referenced-detectors.md](001-from-guppy-tag-referenced-detectors.md) | Draft | Capture Guppy `result()` tags so `DetectorErrorModel.from_guppy` detectors are reorder-proof |
 
 ## Contributing
 

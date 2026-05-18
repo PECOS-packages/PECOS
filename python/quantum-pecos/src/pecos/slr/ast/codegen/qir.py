@@ -50,6 +50,7 @@ from pecos.slr.ast.nodes import (
     PrintOp,
     RegisterDecl,
     RepeatStmt,
+    ReturnOp,
     SlotRef,
     UnaryExpr,
     UnaryOp,
@@ -386,6 +387,8 @@ class AstToQir:
             self._process_parallel(stmt)
         elif isinstance(stmt, PermuteOp):
             self._process_permute(stmt)
+        elif isinstance(stmt, ReturnOp):
+            self._process_return(stmt)
         elif isinstance(stmt, PrintOp):
             # Classical-output streaming (`Print` -> Guppy `result(...)`)
             # is unimplemented in the QIR backend. Silently dropping it
@@ -396,6 +399,32 @@ class AstToQir:
                 "lose observable program output)."
             )
             raise NotImplementedError(msg)
+
+    def _process_return(self, node: ReturnOp) -> None:
+        """Validate that returned CLASSICAL registers have QIR storage.
+
+        `_generate_results` records every Main-declared CReg, but a
+        CReg surfaced ONLY via `Return(creg)` (never measured /
+        assigned / read) reaches no other `_require_creg` site, so
+        an inline / local-scope returned CReg produced ZERO recorded
+        output for an explicit `Return` -- the build succeeded and
+        validated, the program just silently returned nothing
+        (Codex #80 post-review blocker; same silent-output-loss
+        class as the four point-of-use sites). Qubit returns are
+        intentionally ignored by the QIR backend (it records no
+        classical output for them) -- only classical returns are
+        validated, so a `Return(qreg)` is not false-rejected.
+        """
+        qreg_names = {name for name, _ in self.context.qubit_map}
+        for value in node.values:
+            if isinstance(value, str):
+                if value in qreg_names:
+                    continue
+                self._require_creg(value)
+            elif isinstance(value, BitRef):
+                self._require_creg(value.register)
+            elif isinstance(value, BitExpr):
+                self._require_creg(value.ref.register)
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
@@ -679,7 +708,17 @@ class AstToQir:
                 return self._builder.not_(operand)
             return operand
 
-        return llvm_ir.Constant(self._types["int"], 0)
+        # Any unhandled expression type silently evaluating to constant
+        # 0 is a value miscompile qir-qis cannot catch (the #74 / #80
+        # fail-loud class -- same smell as the VarExpr arm above). Every
+        # currently-reachable type is handled above; a new/unhandled one
+        # must fail LOUD, not lower as 0.
+        msg = (
+            f"QIR codegen: unsupported classical expression "
+            f"{type(expr).__name__} (it must not be silently evaluated "
+            "as 0 -- that would be a value miscompile)."
+        )
+        raise NotImplementedError(msg)
 
     def _process_if(self, node: IfStmt) -> None:
         """Process an if statement."""

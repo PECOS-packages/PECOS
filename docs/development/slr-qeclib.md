@@ -99,8 +99,10 @@ prog = Main(
     Block(
         qb.Prep(q[0], "Z"),
         qb.Prep(q[1], "Z"),
-        qb.Prep(q[2], "X"),
-        qb.Prep(q[3], "X"),
+        qb.Prep(q[2]),
+        qb.H(q[2]),  # |+> (X-basis prep = Prep then H)
+        qb.Prep(q[3]),
+        qb.H(q[3]),  # |+>
     ),
     # Entanglement block
     Block(
@@ -251,7 +253,8 @@ prog = Main(
     # Measurements and preparations
     qb.Measure(q[0]) > c[0],
     qb.Prep(q[0], "Z"),  # Prepare |0>
-    qb.Prep(q[0], "X"),  # Prepare |+>
+    qb.Prep(q[0]),
+    qb.H(q[0]),  # Prepare |+> (X-basis prep = Prep then H)
 )
 ```
 
@@ -432,8 +435,8 @@ def surface_code_syndrome(d: int):
         Block(*[qb.Prep(data[i], "Z") for i in range(num_data)]),
         # X stabilizer measurement (simplified)
         Block(
-            qb.Prep(ancilla[0], "X"),  # Prepare |+>
-            qb.H(ancilla[0]),
+            qb.Prep(ancilla[0]),
+            qb.H(ancilla[0]),  # Prepare |+> (X-basis prep = Prep then H)
             qb.CX(ancilla[0], data[0]),
             qb.CX(ancilla[0], data[1]),
             qb.H(ancilla[0]),

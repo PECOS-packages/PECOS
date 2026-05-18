@@ -429,6 +429,31 @@ def test_non_z_prep_basis_raises_loud() -> None:
         SlrConverter(over).qir_bc()
 
 
+def test_return_only_inline_creg_raises_loud() -> None:
+    """#80 (Codex post-review blocker): a CReg surfaced ONLY via
+    `Return(creg)` -- never measured/assigned/read -- reached no
+    point-of-use `_require_creg` site, so `_generate_results` (which
+    records only Main-declared CRegs) emitted ZERO recorded output
+    for an explicit `Return`. The build succeeded and validated; the
+    program silently returned nothing. `_process_return` now
+    validates returned classical registers too. (The
+    measure-then-return case is `test_inline_returned_creg_raises_loud`;
+    this is the no-other-use bypass it did not cover.) A qubit return
+    must NOT be false-rejected (QIR records no classical output for
+    it)."""
+    ret_only = CReg("ret_only", 1)
+    prog = Main(q := QReg("q", 1), Return(ret_only))
+    with pytest.raises(NotImplementedError, match=r"classical register 'ret_only'.*not.*declared at Main scope"):
+        SlrConverter(prog).qir_bc()
+
+    # A declared CReg returned (no other use) is fine; a bare qubit
+    # return must not trip the classical-storage check.
+    ok = Main(q := QReg("q", 1), c := CReg("c", 1), Return(c))
+    SlrConverter(ok).qir_bc()
+    ok_q = Main(q := QReg("q", 1), Return(q))
+    SlrConverter(ok_q).qir_bc()
+
+
 def _qis_exec_records(prog: Main, n_qubits: int, *, shots: int = _SHOTS, seed: int = _SEED) -> list[list[int]]:
     """#77 Layer D -- the real EXECUTABLE differential.
 

@@ -84,7 +84,7 @@ class TestResourceCounterGates:
         """Single-qubit gates are counted."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
             qb.X(q[0]),
             qb.Z(q[0]),
@@ -93,7 +93,7 @@ class TestResourceCounterGates:
 
         result = count_resources(ast)
 
-        assert result.total_gates == 3  # H, X, Z (Prep is not a gate)
+        assert result.total_gates == 3  # H, X, Z (PZ is not a gate)
         assert result.single_qubit_gates == 3
         assert result.two_qubit_gates == 0
 
@@ -101,8 +101,8 @@ class TestResourceCounterGates:
         """Two-qubit gates are counted."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.CX(q[0], q[1]),
             qb.CZ(q[0], q[1]),
         )
@@ -118,8 +118,8 @@ class TestResourceCounterGates:
         """Mixed single and two-qubit gates are counted correctly."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.X(q[1]),
@@ -136,8 +136,8 @@ class TestResourceCounterGates:
         """Gates are counted by type."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.H(q[0]),
             qb.H(q[1]),
             qb.CX(q[0], q[1]),
@@ -159,8 +159,8 @@ class TestResourceCounterOperations:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.Measure(q[0]) > c[0],
             qb.Measure(q[1]) > c[1],
         )
@@ -174,8 +174,8 @@ class TestResourceCounterOperations:
         """Preparations are counted."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
         )
         ast = slr_to_ast(prog)
 
@@ -191,7 +191,7 @@ class TestResourceCounterControlFlow:
         """Repeat loop multiplies gate counts."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             Repeat(cond=5).block(
                 qb.H(q[0]),
                 qb.X(q[0]),
@@ -215,9 +215,9 @@ class TestResourceCounterQEC:
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
             c := CReg("c", 1),
-            qb.Prep(data[0]),
-            qb.Prep(data[1]),
-            qb.Prep(ancilla[0]),
+            qb.PZ(data[0]),
+            qb.PZ(data[1]),
+            qb.PZ(ancilla[0]),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
             qb.Measure(ancilla[0]) > c[0],
@@ -257,7 +257,7 @@ class TestResourceCounterClass:
         prog = Main(
             q := QReg("q", 2),
             _c := CReg("c", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
         )

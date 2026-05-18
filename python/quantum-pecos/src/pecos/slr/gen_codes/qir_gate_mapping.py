@@ -55,7 +55,7 @@ class QIRGateMetadata(Enum):
     R1XY = QG("u1q")
     RZZ = QG("rzz")
     SZZ = QG("zz")
-    Prep = QG("reset")
+    PZ = QG("reset")
 
     # These dagger/adjoint gates are generated with slightly different names
     Sdg = QG("s__adj")

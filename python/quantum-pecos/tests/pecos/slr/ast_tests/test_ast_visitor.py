@@ -191,8 +191,8 @@ class TestCustomVisitor:
             def visit_prepare(self, node: PrepareOp) -> str:
                 if node.slots:
                     slots = ", ".join(str(s) for s in node.slots)
-                    return f"Prep({node.allocator}[{slots}])"
-                return f"Prep({node.allocator}[*])"
+                    return f"PZ({node.allocator}[{slots}])"
+                return f"PZ({node.allocator}[*])"
 
             def visit_measure(self, node: MeasureOp) -> str:
                 targets = ", ".join(str(t) for t in node.targets)
@@ -209,7 +209,7 @@ class TestCustomVisitor:
         prog = Program(name="test", body=(prep, gate1, gate2, measure))
 
         code = visitor.visit(prog)
-        assert "Prep(q[0, 1])" in code
+        assert "PZ(q[0, 1])" in code
         assert "H(q[0])" in code
         assert "CX(q[0], q[1])" in code
         assert "Measure(q[0])" in code

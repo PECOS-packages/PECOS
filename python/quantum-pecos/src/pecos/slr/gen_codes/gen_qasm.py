@@ -645,7 +645,7 @@ class QASMGenerator(Generator):
                         ],
                     )
 
-                case "Prep":
+                case "PZ":
                     op_str = self.qgate_sq_qasm(op, "reset")
 
                 case "T":

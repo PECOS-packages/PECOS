@@ -19,15 +19,6 @@ other states used in quantum error correction.
 from pecos.slr.qeclib.qubit.qgate_base import QGate
 
 
-class Prep(QGate):
-    """Preparing/resetting a qubit to the zero state.
-
-    Deprecated alias of `PZ` (hard-replaced repo-wide in #81
-    Stage C). The prep basis is the gate identity, not a string
-    argument -- use `PZ`/`PNZ`/`PX`/`PNX`/`PY`/`PNY`.
-    """
-
-
 class PZ(QGate):
     """Prepare/reset a qubit to |0> (+Z eigenstate)."""
 

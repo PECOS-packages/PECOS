@@ -1,7 +1,7 @@
 """Tests for partial array patterns through Block flattening.
 
 The two-round-stabilizer pattern from the legacy file used the same
-ancilla register across two rounds without an intervening ``Prep``.
+ancilla register across two rounds without an intervening ``PZ``.
 The v1 AST emitter rejects use-after-measurement, so that case is
 deleted; the remaining tests cover Block-flattening + partial-
 measurement patterns that v1 supports but that are not part of the v1

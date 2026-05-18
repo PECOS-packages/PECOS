@@ -21,7 +21,7 @@ Example:
 
     prog = Main(
         q := QReg("q", 2),
-        qb.Prep(q[0]),
+        qb.PZ(q[0]),
         qb.H(q[0]),
     )
 
@@ -87,10 +87,9 @@ if TYPE_CHECKING:
 
 
 # SLR prep-gate symbol -> canonical AST prep basis (#81). The basis
-# is the gate identity, not a string argument. `Prep` is the
-# deprecated |0> alias of `PZ` (hard-replaced repo-wide in Stage C).
+# is the gate identity, not a string argument. (`Prep` was removed
+# in Stage C -- hard-replaced repo-wide by `PZ`.)
 _PREP_BASIS: dict[str, str] = {
-    "Prep": "PZ",
     "PZ": "PZ",
     "PNZ": "PNZ",
     "PX": "PX",
@@ -1189,7 +1188,7 @@ def _validate_scratch_input(
         )
         raise ValueError(msg)
     if not events:
-        msg = f"{where}: declared SCRATCH but never used in the block body (expected Prep(...) then Measure(...))"
+        msg = f"{where}: declared SCRATCH but never used in the block body (expected PZ(...) then Measure(...))"
         raise ValueError(msg)
     if events[0] != "PREP":
         msg = (
@@ -1217,9 +1216,9 @@ def _validate_scratch_input(
         elif ev == "MEASURE":
             if not open_prep:
                 msg = (
-                    f"{where}: measured without an open Prep (measure "
-                    "before Prep, or measured again without an "
-                    "intervening Prep)"
+                    f"{where}: measured without an open PZ (measure "
+                    "before PZ, or measured again without an "
+                    "intervening PZ)"
                 )
                 raise ValueError(msg)
             open_prep = False

@@ -440,7 +440,7 @@ class TestNestedConvertedBlocks:
         return Main(
             outer := QReg("outer", 2),
             c := CReg("c", 2),
-            qb.Prep(outer),
+            qb.PZ(outer),
             OuterBlock(outer),
             Measure(outer) > c,
             Return(c),
@@ -495,7 +495,7 @@ class TestNestedConvertedBlocks:
         prog = Main(
             outer := QReg("outer", 2),
             c := CReg("c", 2),
-            qb.Prep(outer),
+            qb.PZ(outer),
             InnerBlock(outer),
             OuterBlock(outer),
             Measure(outer) > c,
@@ -1567,7 +1567,7 @@ class TestBlockBodyStatementSubstitution:
         prog = Main(
             outer := QReg("outer", 2),
             c := CReg("c", 2),
-            qb.Prep(outer),
+            qb.PZ(outer),
             SwapBlock(outer),
             Measure(outer) > c,
             Return(c),
@@ -1638,7 +1638,7 @@ class TestSlrBlockInputsWiring:
         prog = Main(
             outer_q := QReg("outer_q", 2),
             c := CReg("c", 2),
-            qb.Prep(outer_q),
+            qb.PZ(outer_q),
             BellBlock(outer_q),
             Measure(outer_q) > c,
             Return(c),
@@ -1683,7 +1683,7 @@ class TestSlrBlockInputsWiring:
         prog = Main(
             outer_q := QReg("outer_q", 2),
             c := CReg("c", 2),
-            qb.Prep(outer_q),
+            qb.PZ(outer_q),
             BellBlock(outer_q),
             Measure(outer_q) > c,
             Return(c),
@@ -1790,7 +1790,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         prog = Main(
             outer_q := QReg("outer_q", 1),
             c := CReg("c", 1),
-            qb.Prep(outer_q),
+            qb.PZ(outer_q),
             SqBlock(outer_q[0]),
             Measure(outer_q) > c,
             Return(c),
@@ -1828,7 +1828,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         prog = Main(
             outer_q := QReg("outer_q", 3),
             c := CReg("c", 3),
-            qb.Prep(outer_q),
+            qb.PZ(outer_q),
             BundleBlock([outer_q[0], outer_q[2]]),
             Measure(outer_q) > c,
             Return(c),
@@ -1871,8 +1871,8 @@ class TestSlrBlockArgShapeDetectionViaConverter:
             qa := QReg("qa", 2),
             qb_reg := QReg("qb", 2),
             c := CReg("c", 4),
-            qb.Prep(qa),
-            qb.Prep(qb_reg),
+            qb.PZ(qa),
+            qb.PZ(qb_reg),
             BundleBlock([qa[0], qb_reg[1]]),
             Measure(qa) > c[0:2],
             Measure(qb_reg) > c[2:4],
@@ -1938,7 +1938,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
         prog = Main(
             outer_q := QReg("outer_q", 3),
             c := CReg("c", 3),
-            qb.Prep(outer_q),
+            qb.PZ(outer_q),
             CheckLike([outer_q[0], outer_q[1]], outer_q[2], c[0]),
             Measure(outer_q[0]) > c[1],
             Measure(outer_q[1]) > c[2],
@@ -2168,7 +2168,7 @@ class TestScratchEffectS1:
                 self.d = d
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), qb.CX(a, d[0]), qb.CX(a, d[1]), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.CX(a, d[0]), qb.CX(a, d[1]), Measure(a) > out)
 
         return GoodCheck
 
@@ -2186,7 +2186,7 @@ class TestScratchEffectS1:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 1),
-            qb.Prep(q),
+            qb.PZ(q),
             good_check([q[0], q[1]], q[2], c[0]),
             Return(c),
         )
@@ -2211,7 +2211,7 @@ class TestScratchEffectS1:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 1),
-            qb.Prep(q),
+            qb.PZ(q),
             good_check([q[0], q[1]], q[2], c[0]),
             Return(c),
         )
@@ -2225,7 +2225,7 @@ class TestScratchEffectS1:
     def test_scratch_guppy_internal_alloc_no_param(self) -> None:
         """S2: a SCRATCH input is allocated INSIDE the @guppy def -- it is
         neither a function parameter nor a positional call argument; the
-        body's Prep(scratch) lowers to a fresh internal `qubit()`.
+        body's PZ(scratch) lowers to a fresh internal `qubit()`.
         """
         from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.qeclib import qubit as qb
@@ -2234,7 +2234,7 @@ class TestScratchEffectS1:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 1),
-            qb.Prep(q),
+            qb.PZ(q),
             good_check([q[0], q[1]], q[2], c[0]),
             Return(c),
         )
@@ -2265,7 +2265,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.H(a), qb.Prep(a), Measure(a) > out)
+                self.extend(qb.H(a), qb.PZ(a), Measure(a) > out)
 
         prog = Main(
             q := QReg("q", 1),
@@ -2273,7 +2273,7 @@ class TestScratchEffectS1:
             BadFirst(q[0], c[0]),
             Return(c),
         )
-        with pytest.raises(ValueError, match=r"first use is USE.*reset \(Prep\) before"):
+        with pytest.raises(ValueError, match=r"first use is USE.*reset \(PZ\) before"):
             slr_to_ast(prog)
 
     def test_scratch_use_after_measure_rejected(self) -> None:
@@ -2290,7 +2290,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), Measure(a) > out, qb.H(a))
+                self.extend(qb.PZ(a), Measure(a) > out, qb.H(a))
 
         prog = Main(
             q := QReg("q", 1),
@@ -2298,7 +2298,7 @@ class TestScratchEffectS1:
             BadAfter(q[0], c[0]),
             Return(c),
         )
-        with pytest.raises(ValueError, match=r"used after measurement without re-Prep"):
+        with pytest.raises(ValueError, match=r"used after measurement without re-PZ"):
             slr_to_ast(prog)
 
     def test_scratch_unused_rejected(self) -> None:
@@ -2335,7 +2335,7 @@ class TestScratchEffectS1:
                 self.a = a
                 self.out = out
                 self.extend(
-                    qb.Prep(a),
+                    qb.PZ(a),
                     Repeat(2).block(qb.H(a)),
                     Measure(a) > out,
                 )
@@ -2346,7 +2346,7 @@ class TestScratchEffectS1:
             LoopScratch(q[0], c[0]),
             Return(c),
         )
-        with pytest.raises(ValueError, match=r"flat Prep -> \.\.\. -> Measure lifecycle"):
+        with pytest.raises(ValueError, match=r"flat PZ -> \.\.\. -> Measure lifecycle"):
             slr_to_ast(prog)
 
     def test_scratch_aliased_to_other_input_rejected(self) -> None:
@@ -2367,16 +2367,16 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.b = b
-                self.extend(qb.Prep(a), qb.CX(a, b), Measure(a))
+                self.extend(qb.PZ(a), qb.CX(a, b), Measure(a))
 
         prog = Main(q := QReg("q", 2), Alias(q[0], q[0]))
         with pytest.raises(ValueError, match=r"qubit q\[0\] is also bound by input 'a'"):
             slr_to_ast(prog)
 
     def test_scratch_prep_only_rejected(self) -> None:
-        """Codex S1 review: a Prep with no terminating Measure must be
+        """Codex S1 review: a PZ with no terminating Measure must be
         rejected -- S2 allocates the scratch qubit internally, so an
-        unmeasured trailing Prep diverges from the flatten/QASM path.
+        unmeasured trailing PZ diverges from the flatten/QASM path.
         """
         from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
@@ -2389,7 +2389,7 @@ class TestScratchEffectS1:
             def __init__(self, a) -> None:
                 super().__init__()
                 self.a = a
-                self.extend(qb.Prep(a))
+                self.extend(qb.PZ(a))
 
         prog = Main(q := QReg("q", 1), PrepOnly(q[0]))
         with pytest.raises(ValueError, match=r"scratch lifecycle not closed"):
@@ -2407,14 +2407,14 @@ class TestScratchEffectS1:
             def __init__(self, a) -> None:
                 super().__init__()
                 self.a = a
-                self.extend(qb.Prep(a), qb.H(a))
+                self.extend(qb.PZ(a), qb.H(a))
 
         prog = Main(q := QReg("q", 1), PrepUseNoMeasure(q[0]))
         with pytest.raises(ValueError, match=r"scratch lifecycle not closed"):
             slr_to_ast(prog)
 
     def test_scratch_prep_measure_prep_unmeasured_rejected(self) -> None:
-        """A second Prep with no closing Measure (trailing open lifecycle)."""
+        """A second PZ with no closing Measure (trailing open lifecycle)."""
         from pecos.slr import CReg, Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
@@ -2428,7 +2428,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), Measure(a) > out, qb.Prep(a))
+                self.extend(qb.PZ(a), Measure(a) > out, qb.PZ(a))
 
         prog = Main(
             q := QReg("q", 1),
@@ -2440,7 +2440,7 @@ class TestScratchEffectS1:
             slr_to_ast(prog)
 
     def test_scratch_two_prep_no_measure_between_rejected(self) -> None:
-        """Re-Prep before measuring the first lifecycle."""
+        """Re-PZ before measuring the first lifecycle."""
         from pecos.slr import Main, QReg, Return
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
@@ -2452,14 +2452,14 @@ class TestScratchEffectS1:
             def __init__(self, a) -> None:
                 super().__init__()
                 self.a = a
-                self.extend(qb.Prep(a), qb.Prep(a))
+                self.extend(qb.PZ(a), qb.PZ(a))
 
         prog = Main(q := QReg("q", 1), PrepPrep(q[0]))
         with pytest.raises(ValueError, match=r"re-Prepped before measuring"):
             slr_to_ast(prog)
 
     def test_scratch_prep_measure_prep_measure_accepted(self) -> None:
-        """Two complete Prep -> Measure lifecycles is valid (each closed)."""
+        """Two complete PZ -> Measure lifecycles is valid (each closed)."""
         from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast
         from pecos.slr.block import Block
@@ -2479,9 +2479,9 @@ class TestScratchEffectS1:
                 self.out0 = out0
                 self.out1 = out1
                 self.extend(
-                    qb.Prep(a),
+                    qb.PZ(a),
                     Measure(a) > out0,
-                    qb.Prep(a),
+                    qb.PZ(a),
                     Measure(a) > out1,
                 )
 
@@ -2522,7 +2522,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), Measure(a) > out, Return(a))
+                self.extend(qb.PZ(a), Measure(a) > out, Return(a))
 
         prog = Main(
             q := QReg("q", 1),
@@ -2540,7 +2540,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), Measure(a) > out, Return(out))
+                self.extend(qb.PZ(a), Measure(a) > out, Return(out))
 
         prog2 = Main(
             q := QReg("q", 1),
@@ -2576,7 +2576,7 @@ class TestScratchEffectS1:
                 self.a = a
                 self.out = out
                 self.extend(
-                    qb.Prep(a),
+                    qb.PZ(a),
                     qb.H(a),
                     qb.CX(a, d[0]),
                     qb.CX(a, d[1]),
@@ -2587,7 +2587,7 @@ class TestScratchEffectS1:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 2),
-            qb.Prep(q),
+            qb.PZ(q),
             Chk([q[0], q[1]], q[2], c[0]),
             Chk([q[0], q[1]], q[2], c[1]),  # reuses q[2] -- the blocker case
             Return(c),
@@ -2629,12 +2629,12 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), qb.H(a), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.H(a), Measure(a) > out)
 
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.X(q[0]),  # meaningful caller state on the scratch slot
             MS(q[0], c[0]),
             Measure(q[0]) > c[1],  # ...observed after the scratch call
@@ -2644,8 +2644,8 @@ class TestScratchEffectS1:
             SlrConverter(prog).guppy()
 
     def test_scratch_outer_slot_whole_reg_prep_allowed(self) -> None:
-        """Carve-out: a bare/whole-register Prep covering the scratch slot
-        is allowed (the qeclib corpus does `Prep(q)` then uses `q[i]` as a
+        """Carve-out: a bare/whole-register PZ covering the scratch slot
+        is allowed (the qeclib corpus does `PZ(q)` then uses `q[i]` as a
         check ancilla -- a reset is unobserved/dead under both lowerings).
         """
         from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
@@ -2664,12 +2664,12 @@ class TestScratchEffectS1:
                 self.d = d
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), qb.CX(a, d[0]), qb.CX(a, d[1]), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.CX(a, d[0]), qb.CX(a, d[1]), Measure(a) > out)
 
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 1),
-            qb.Prep(q),  # covers q[2] (the scratch slot) -- must NOT reject
+            qb.PZ(q),  # covers q[2] (the scratch slot) -- must NOT reject
             Chk([q[0], q[1]], q[2], c[0]),
             Return(c),
         )
@@ -2723,12 +2723,12 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), qb.H(a), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.H(a), Measure(a) > out)
 
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qb.Prep(q),
+            qb.PZ(q),
             qb.X(q[0]),
             MS(q[1], c[0]),
             Permute([q[0], q[1]], [q[1], q[0]]),
@@ -2754,12 +2754,12 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), qb.H(a), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.H(a), Measure(a) > out)
 
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 1),
-            qb.Prep(q),
+            qb.PZ(q),
             MS(q[1], c[0]),
             Return(q),
         )
@@ -2783,7 +2783,7 @@ class TestScratchEffectS1:
                 super().__init__()
                 self.a = a
                 self.out = out
-                self.extend(qb.Prep(a), qb.H(a), Measure(a) > out)
+                self.extend(qb.PZ(a), qb.H(a), Measure(a) > out)
 
         class Outer(Block):
             block_inputs: ClassVar[dict[str, str]] = {
@@ -2800,7 +2800,7 @@ class TestScratchEffectS1:
         prog = Main(
             qq := QReg("qq", 2),
             c := CReg("c", 1),
-            qb.Prep(qq),
+            qb.PZ(qq),
             Outer(qq, c[0]),
             Return(c),
         )
@@ -2920,7 +2920,7 @@ class TestScratchCheckS4ProductionLockIn:
 
 class TestScratchCheck1FlagS5ProductionLockIn:
     """S5: `Check1Flag` converted (`a`, `flag`: scratch; the body's
-    `Prep(a, flag)` split into `Prep(a); Prep(flag)` per O1 option (a)).
+    `PZ(a, flag)` split into `PZ(a); PZ(flag)` per O1 option (a)).
     Steane `SynExtractFlagged` reuses ancilla+flag slots across 6
     Check1Flag calls -- it must route every one through a BlockCall,
     compile (12 internal allocs, no LinearityError), and run.

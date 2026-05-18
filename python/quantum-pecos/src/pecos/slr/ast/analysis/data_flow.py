@@ -104,7 +104,7 @@ class DataFlowInfo:
             self.consumed_at.append(position)
 
     def add_replacement(self, position: int) -> None:
-        """Mark that this value is replaced at a position (e.g., Prep)."""
+        """Mark that this value is replaced at a position (e.g., PZ)."""
         self.replaced_at.append(position)
 
     def has_use_after_consumption(self) -> bool:

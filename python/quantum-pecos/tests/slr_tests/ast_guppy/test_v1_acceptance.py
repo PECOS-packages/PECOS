@@ -10,7 +10,7 @@ Source matrix:
 
 Test layout follows the "practical v1 acceptance set" plus the
 coverage gaps surfaced in stage 5 (final-root-return, static For,
-Parallel, Prep-after-measure, mixed Permute, gates beyond CX,
+Parallel, PZ-after-measure, mixed Permute, gates beyond CX,
 SZ/SZdg mapping, measurement-without-output, targeted unsupported
 errors).
 """
@@ -132,7 +132,7 @@ class TestClassical:
 
 
 class TestPrep:
-    """Prep as reset (live slot) or fresh allocation (consumed slot)."""
+    """PZ as reset (live slot) or fresh allocation (consumed slot)."""
 
     def test_prep_resets_live_slot(self) -> None:
         prog = Main(
@@ -140,7 +140,7 @@ class TestPrep:
             c := CReg("c", 2),
             qb.H(q[0]),
             Measure(q[0]) > c[0],
-            qb.Prep(q[0]),  # consumed -> fresh qubit()
+            qb.PZ(q[0]),  # consumed -> fresh qubit()
             Measure(q[0]) > c[1],
             Return(c),
         )

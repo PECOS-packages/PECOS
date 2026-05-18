@@ -167,8 +167,8 @@ class TestSLRToQuantumCircuit:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
@@ -182,7 +182,7 @@ class TestSLRToQuantumCircuit:
 
         # Check for reset and measure operations
         circuit_str = str(qc)
-        assert "RESET" in circuit_str or "Prep" in circuit_str
+        assert "RESET" in circuit_str or "PZ" in circuit_str
         assert "Measure" in circuit_str
 
     def test_parallel_block_to_qc(self) -> None:
@@ -350,10 +350,10 @@ class TestQuantumCircuitRoundTrip:
             q := QReg("q", 4),
             c := CReg("c", 4),
             # Initialize
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
-            qubit.Prep(q[2]),
-            qubit.Prep(q[3]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
+            qubit.PZ(q[2]),
+            qubit.PZ(q[3]),
             # Create entanglement
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),

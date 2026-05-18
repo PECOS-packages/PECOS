@@ -117,8 +117,8 @@ def test_if_bell() -> None:
         def __init__(self, q0: Qubit, q1: Qubit, m0: Bit, m1: Bit) -> None:
             super().__init__()
             self.extend(
-                p.Prep(q0),
-                p.Prep(q1),
+                p.PZ(q0),
+                p.PZ(q1),
                 p.H(q0),
                 p.CX(q0, q1),
                 p.Measure(q0) > m0,

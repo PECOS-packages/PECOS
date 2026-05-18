@@ -16,7 +16,7 @@ rotations, measurements, and state preparations.
 # specific language governing permissions and limitations under the License.
 
 from pecos.slr.qeclib.qubit.measures import Measure
-from pecos.slr.qeclib.qubit.preps import PNX, PNY, PNZ, PX, PY, PZ, Prep
+from pecos.slr.qeclib.qubit.preps import PNX, PNY, PNZ, PX, PY, PZ
 from pecos.slr.qeclib.qubit.rots import CRZ, RX, RY, RZ, RZZ
 from pecos.slr.qeclib.qubit.sq_face_rots import F4, F, F4dg, Fdg
 from pecos.slr.qeclib.qubit.sq_hadamards import H
@@ -64,7 +64,6 @@ __all__ = [
     "Fdg",
     "H",
     "Measure",
-    "Prep",
     "SXXdg",
     "SXdg",
     "SYYdg",

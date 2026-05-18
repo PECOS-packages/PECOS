@@ -74,7 +74,7 @@ class TestBasicConversion:
         assert alloc_decls[0].name == "q"
         assert alloc_decls[0].capacity == 1
 
-        # Check body has Prep, H, Measure
+        # Check body has PZ, H, Measure
         assert len(ast.body) == 3
 
         # First should be PrepareOp
@@ -261,7 +261,7 @@ class TestMinimalCircuits:
 
         ast = guppy_to_ast(minimal)
 
-        # Should have Prep and Measure only
+        # Should have PZ and Measure only
         assert len(ast.body) == 2
         assert isinstance(ast.body[0], PrepareOp)
         assert isinstance(ast.body[1], MeasureOp)

@@ -108,7 +108,7 @@ class TestAstToGuppyGates:
 
 
 class TestAstToGuppyPrepMeasure:
-    """Prep and measure code generation tests."""
+    """PZ and measure code generation tests."""
 
     def test_measure_with_result(self) -> None:
         """Measure with explicit Return generates variable and return."""

@@ -42,10 +42,10 @@ def test_hugr_rejects_while_before_parallel_optimizer_erases_it() -> None:
 def test_hugr_rejects_non_z_prep_basis_before_ast_drops_it() -> None:
     prog = Main(
         q := QReg("q", 1),
-        qb.Prep(q[0], "X"),
+        qb.PZ(q[0], "X"),
     )
 
-    with pytest.raises(GuppyCodegenError, match="supports only Z-basis Prep"):
+    with pytest.raises(GuppyCodegenError, match="supports only Z-basis PZ"):
         SlrConverter(prog).hugr()
 
 
@@ -164,7 +164,7 @@ def test_hugr_inline_measure_creg_inside_nested_repeat() -> None:
         Repeat(2).block(
             qb.X(q[0]),
             Measure(q[0]) > flag[0],
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
         ),
         Return(flag),
     )
@@ -189,7 +189,7 @@ def test_hugr_explicit_return_of_declared_creg() -> None:
     prog = Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
-        qb.Prep(q[0]),
+        qb.PZ(q[0]),
         Measure(q[0]) > c[0],
         Return(c),
     )

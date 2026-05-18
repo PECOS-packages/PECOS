@@ -98,7 +98,7 @@ def test_phys_tele_block_telep_block(compare_qasm: Callable[..., None]) -> None:
         qb.CX(q[0], q[1]),
         qb.Measure(q) > c,
         Block(
-            qb.Prep(q),
+            qb.PZ(q),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.Measure(q) > c2,

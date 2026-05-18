@@ -277,7 +277,7 @@ def _examples_surface_d3_z_1round() -> Block:
     examples/surface_code_slr_exploration.ipynb::build_surface_code_slr.
 
     distance=3, num_rounds=1, basis="Z". Pure-v1 gate surface
-    (Prep, H, CX, Measure, Barrier) over multi-QReg. Real-shaped
+    (PZ, H, CX, Measure, Barrier) over multi-QReg. Real-shaped
     program: 9 data + 4 X-anc + 4 Z-anc, 4 CNOT rounds.
     """
     patch = SurfacePatch.create(distance=3)
@@ -291,11 +291,11 @@ def _examples_surface_d3_z_1round() -> Block:
     z_anc = QReg("az", num_z)
 
     ops: list = []
-    ops.extend(qb.Prep(data[i]) for i in range(geom.num_data))
+    ops.extend(qb.PZ(data[i]) for i in range(geom.num_data))
     ops.append(Barrier())
 
-    ops.extend(qb.Prep(x_anc[i]) for i in range(num_x))
-    ops.extend(qb.Prep(z_anc[i]) for i in range(num_z))
+    ops.extend(qb.PZ(x_anc[i]) for i in range(num_x))
+    ops.extend(qb.PZ(z_anc[i]) for i in range(num_z))
     ops.append(Barrier())
 
     ops.extend(qb.H(x_anc[i]) for i in range(num_x))
@@ -339,12 +339,12 @@ def _examples_surface_d3_x_1round() -> Block:
     z_anc = QReg("az", num_z)
 
     ops: list = []
-    ops.extend(qb.Prep(data[i]) for i in range(geom.num_data))
+    ops.extend(qb.PZ(data[i]) for i in range(geom.num_data))
     ops.extend(qb.H(data[i]) for i in range(geom.num_data))
     ops.append(Barrier())
 
-    ops.extend(qb.Prep(x_anc[i]) for i in range(num_x))
-    ops.extend(qb.Prep(z_anc[i]) for i in range(num_z))
+    ops.extend(qb.PZ(x_anc[i]) for i in range(num_x))
+    ops.extend(qb.PZ(z_anc[i]) for i in range(num_z))
     ops.append(Barrier())
 
     ops.extend(qb.H(x_anc[i]) for i in range(num_x))
@@ -600,15 +600,15 @@ def _docs_for_loopvar_symbolic_v2_defer() -> Block:
 
 
 def _docs_prep_basis_x_v2_defer() -> Block:
-    """Deliberate red-light: Prep with explicit "X" basis is v2-defer.
+    """Deliberate red-light: PZ with explicit "X" basis is v2-defer.
 
-    Per v1-feature-matrix: "Current Prep gate is reset-to-zero in the AST.
-    V1 supports Z reset only. Use Prep(q); H(q) for X-basis prep."
+    Per v1-feature-matrix: "Current PZ gate is reset-to-zero in the AST.
+    V1 supports Z reset only. Use PZ(q); H(q) for X-basis prep."
     """
     return Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
-        qb.Prep(q[0], "X"),
+        qb.PZ(q[0], "X"),
         Measure(q) > c,
         Return(c),
     )
@@ -642,8 +642,8 @@ def _docs_inline_measure_creg() -> Block:
 def _docs_surface_syndrome_block18_probe() -> Block:
     """Probe: surface_code_syndrome doc-test shape from test_slr_qeclib_block_18.
 
-    Uses basis-arg Prep("Z") and Prep("X") plus Block-grouped operations.
-    Likely XFAIL on the Prep basis arg (v2-defer); probe to record exact
+    Uses basis-arg PZ("Z") and PZ("X") plus Block-grouped operations.
+    Likely XFAIL on the PZ basis arg (v2-defer); probe to record exact
     failure or surface a real gap.
     """
     d = 2
@@ -653,9 +653,9 @@ def _docs_surface_syndrome_block18_probe() -> Block:
         data := QReg("data", num_data),
         ancilla := QReg("anc", num_ancilla),
         syn := CReg("syn", num_ancilla),
-        Block(*[qb.Prep(data[i], "Z") for i in range(num_data)]),
+        Block(*[qb.PZ(data[i], "Z") for i in range(num_data)]),
         Block(
-            qb.Prep(ancilla[0], "X"),
+            qb.PZ(ancilla[0], "X"),
             qb.H(ancilla[0]),
             qb.CX(ancilla[0], data[0]),
             qb.CX(ancilla[0], data[1]),
@@ -663,7 +663,7 @@ def _docs_surface_syndrome_block18_probe() -> Block:
             Measure(ancilla[0]) > syn[0],
         ),
         Block(
-            qb.Prep(ancilla[1], "Z"),
+            qb.PZ(ancilla[1], "Z"),
             qb.CX(data[0], ancilla[1]),
             qb.CX(data[3], ancilla[1]),
             Measure(ancilla[1]) > syn[1],
@@ -754,9 +754,9 @@ def _curated_cases() -> list[AuditCase]:
             _docs_prep_basis_x_v2_defer,
             expected_failure=ExpectedFailure(
                 exception_type="GuppyCodegenError",
-                message_contains="supports only Z-basis Prep",
+                message_contains="supports only Z-basis PZ",
                 classification="v2-defer",
-                reason="Non-Z Prep basis semantics are not represented in the v1 AST",
+                reason="Non-Z PZ basis semantics are not represented in the v1 AST",
             ),
         ),
         AuditCase(
@@ -774,9 +774,9 @@ def _curated_cases() -> list[AuditCase]:
             _docs_surface_syndrome_block18_probe,
             expected_failure=ExpectedFailure(
                 exception_type="GuppyCodegenError",
-                message_contains="supports only Z-basis Prep",
+                message_contains="supports only Z-basis PZ",
                 classification="v2-defer",
-                reason="Doc-test includes Prep('X'); inline result CReg shape is covered separately",
+                reason="Doc-test includes PZ('X'); inline result CReg shape is covered separately",
             ),
         ),
     ]

@@ -5,7 +5,7 @@ v1 scope but not part of the v1 acceptance set. The legacy file also
 contained:
 
 - A syndrome-extraction pattern that reused an ancilla after measure
-  without an intervening ``Prep`` (use-after-measurement, v1 rejects).
+  without an intervening ``PZ`` (use-after-measurement, v1 rejects).
 - A parameterized circuit with branches consuming different qubits
   (divergent post-state, v1 rejects).
 - Complex permutation cycles that are not bijective over the same slot
@@ -121,7 +121,7 @@ def test_empty_blocks_and_edge_cases() -> None:
         qb.H(q[0]),
         qb.Measure(q[0]),
         # Apply gate to register
-        qb.Prep(q),
+        qb.PZ(q),
         Return(c),
     )
 

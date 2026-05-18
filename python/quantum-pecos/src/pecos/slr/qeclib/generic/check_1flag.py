@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from pecos.slr import Barrier, Block, Comment
-from pecos.slr.qeclib.qubit import CH, CX, CY, CZ, H, Measure, Prep
+from pecos.slr.qeclib.qubit import CH, CX, CY, CZ, PZ, H, Measure
 
 if TYPE_CHECKING:
     from pecos.slr import Bit, Qubit
@@ -40,7 +40,7 @@ class Check1Flag(Block):
     # measured inside, allocated internally in Guppy so callers can reuse
     # physical slots across sequential checks); data passes through; the two
     # out bits are live_preserved measurement-result write-backs. The body's
-    # single `Prep(a, flag)` is split into `Prep(a), Prep(flag)` (O1 option
+    # single `PZ(a, flag)` is split into `PZ(a), PZ(flag)` (O1 option
     # (a) -- byte-identical in QASM/Guppy/Selene, confirmed Codex 2026-05-16;
     # one PrepareOp per scratch input avoids multi-destination substitution).
     # See ~/Repos/pecos-docs/design/slr/v2-scratch-ancilla-effect.md.
@@ -109,8 +109,8 @@ class Check1Flag(Block):
 
         self.extend(
             Comment(f"Measure check {ops}"),
-            Prep(a),
-            Prep(flag),
+            PZ(a),
+            PZ(flag),
             H(a),
         )
         if with_barriers:

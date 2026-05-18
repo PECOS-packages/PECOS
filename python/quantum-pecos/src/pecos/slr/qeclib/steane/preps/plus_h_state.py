@@ -81,7 +81,7 @@ class PrepHStateFT(Block):
         # non-fault-tolerantly encode logical |+H>
         # ----------------------------------------
         self.extend(
-            qubit.Prep(d[6]),
+            qubit.PZ(d[6]),
             qubit.RY[pc.f64.frac_pi_4](d[6]),
             EncodingCircuit(d),
         )

@@ -138,7 +138,7 @@ class TestPrintInLoops:
             Repeat(n_iters).block(
                 qb.X(q[0]),
                 Measure(q[0]) > c[0],
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
                 Print(c, tag="iter"),
             ),
             Return(c),
@@ -161,7 +161,7 @@ class TestPrintInLoops:
             For("i", 0, n_iters).Do(
                 qb.X(q[0]),
                 Measure(q[0]) > c[0],
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
                 Print(c, tag="loop"),
             ),
             Return(c),
@@ -287,7 +287,7 @@ class TestPrintAndSeleneOutput:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="early"),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="late"),
@@ -309,7 +309,7 @@ class TestPrintAndSeleneOutput:
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="same"),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.X(q[0]),
             Measure(q[0]) > c[0],
             Print(c, tag="same"),  # same tag, second emission
@@ -413,7 +413,7 @@ class TestPathSignatureValidator:
             Repeat(3).block(
                 qb.X(q[0]),
                 Measure(q[0]) > c[0],
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
                 Print(c, tag="iter"),
             ),
             Return(c),
@@ -428,7 +428,7 @@ class TestPathSignatureValidator:
             For("i", 0, 3).Do(
                 qb.X(q[0]),
                 Measure(q[0]) > c[0],
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
                 Print(c, tag="loop"),
             ),
             Return(c),
@@ -577,7 +577,7 @@ class TestInlineCRegDefiniteAssignment:
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
-            Repeat(3).block(qb.X(q[0]), Measure(q[0]) > inline[0], qb.Prep(q[0])),
+            Repeat(3).block(qb.X(q[0]), Measure(q[0]) > inline[0], qb.PZ(q[0])),
             Print(inline[0], tag="post_repeat"),
             Return(inline),
         )
@@ -588,7 +588,7 @@ class TestInlineCRegDefiniteAssignment:
         inline = CReg("inline", 1)
         prog = Main(
             q := QReg("q", 1),
-            For("i", 0, 2).Do(qb.X(q[0]), Measure(q[0]) > inline[0], qb.Prep(q[0])),
+            For("i", 0, 2).Do(qb.X(q[0]), Measure(q[0]) > inline[0], qb.PZ(q[0])),
             Print(inline[0], tag="post_for"),
             Return(inline),
         )
@@ -690,7 +690,7 @@ class TestPathSignatureEdgeCases:
             Measure(q[0]) > c[0],
             While(c[0] == 0).Do(
                 Print(c, tag="loop"),
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
                 Measure(q[0]) > c[0],
             ),
             Return(c),
@@ -897,7 +897,7 @@ class TestSeleneShapeEdgeCases:
             Repeat(2).block(
                 qb.X(q[0]),
                 Measure(q[0]) > c[0],
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
                 Print(c, tag="iter"),
             ),
             Return(c),

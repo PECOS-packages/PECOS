@@ -39,8 +39,8 @@ class TestConversionConsistency:
         slr_prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
@@ -246,9 +246,9 @@ class TestConversionConsistency:
             q := QReg("q", 3),
             c := CReg("c", 3),
             # Prepare a GHZ state
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
-            qubit.Prep(q[2]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
+            qubit.PZ(q[2]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.CX(q[1], q[2]),

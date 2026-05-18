@@ -221,7 +221,7 @@ class TestNoEffectLocationsIncluded:
         fault = prep_locs[0].faults[0]
         assert fault.kind == "prep_flip"
         assert fault.pauli is None
-        # Prep X through H becomes Z which doesn't flip MZ → empty
+        # PZ X through H becomes Z which doesn't flip MZ → empty
         assert fault.measurements == []
 
 

@@ -50,7 +50,7 @@ class SixUnflaggedSyn(Block):
             syn_x.set(0),
             syn_z.set(0),
             Comment(),
-            gq.Prep(
+            gq.PZ(
                 q[0],
                 q[8],
                 q[9],
@@ -102,7 +102,7 @@ class SixUnflaggedSyn(Block):
             Comment(),
             Comment("// Z check 1, X check 2, X check 3"),
             Comment(),
-            gq.Prep(
+            gq.PZ(
                 q[0],
                 q[8],
                 q[9],

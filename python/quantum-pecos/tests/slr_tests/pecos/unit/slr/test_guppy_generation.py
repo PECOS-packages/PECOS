@@ -4,7 +4,7 @@ The basic-circuit / conditional / repeat / measurement / various-gate
 coverage is in the v1 acceptance corpus
 (``tests/slr_tests/ast_guppy/test_v1_acceptance.py``). What survives
 here are larger end-to-end SLR patterns (Steane-style multi-pair CX,
-Prep across multiple qubits, mixed quantum/classical Permute) that the
+PZ across multiple qubits, mixed quantum/classical Permute) that the
 acceptance set does not exercise but that v1 supports.
 
 The Steane(...) prep tests and the conditional X-after-measure tests
@@ -98,10 +98,10 @@ def test_register_operations() -> None:
 
 
 def test_steane_encoding_circuit_pattern() -> None:
-    """Multi-pair CX pattern from the Steane encoding circuit + Prep set."""
+    """Multi-pair CX pattern from the Steane encoding circuit + PZ set."""
     prog = Main(
         q := QReg("q", 7),
-        qb.Prep(q[0], q[1], q[2], q[3], q[4], q[5]),
+        qb.PZ(q[0], q[1], q[2], q[3], q[4], q[5]),
         qb.CX(q[6], q[5]),
         qb.H(q[1]),
         qb.CX(q[1], q[0]),
@@ -127,14 +127,14 @@ def test_steane_encoding_circuit_pattern() -> None:
 
 
 def test_reset_operations() -> None:
-    """Prep across single and multi-qubit forms compiles."""
+    """PZ across single and multi-qubit forms compiles."""
     prog = Main(
         q := QReg("q", 3),
         _c := CReg("c", 3),
-        qb.Prep(q[0]),
+        qb.PZ(q[0]),
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
-        qb.Prep(q[1], q[2]),
+        qb.PZ(q[1], q[2]),
         qb.X(q[0]),
         qb.Y(q[1]),
         qb.Z(q[2]),

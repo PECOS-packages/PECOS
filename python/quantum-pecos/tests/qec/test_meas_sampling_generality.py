@@ -92,12 +92,12 @@ class TestMeasurementFaultIndependence:
 
 
 class TestPrepFaultAbsorption:
-    """Prep faults propagate forward but get absorbed at PZ/MZ."""
+    """PZ faults propagate forward but get absorbed at PZ/MZ."""
 
     def test_prep_fault_reaches_next_measurement(self):
         """A prep fault on PZ(ancilla) should flip the next ancilla MZ."""
         tc = build_two_round_x_check()
-        # Prep-only noise
+        # PZ-only noise
         depol = depolarizing().p1(0).p2(0).p_meas(0).p_prep(0.01)
         shots = 50000
 
@@ -110,11 +110,11 @@ class TestPrepFaultAbsorption:
         meas_rate = det_rate(meas_r)
         stab_rate = det_rate(stab_r)
 
-        # Prep faults fire the detector (X error → detected at MZ)
+        # PZ faults fire the detector (X error → detected at MZ)
         assert stab_rate > 0.005, f"Stabilizer should see prep faults: {stab_rate}"
         assert (
             abs(meas_rate - stab_rate) / stab_rate < 0.15
-        ), f"Prep fault rate mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
+        ), f"PZ fault rate mismatch: dem={meas_rate:.4f} stab={stab_rate:.4f}"
 
     def test_prep_fault_does_not_cross_reset(self):
         """A prep fault should NOT propagate past a subsequent PZ on the same qubit."""

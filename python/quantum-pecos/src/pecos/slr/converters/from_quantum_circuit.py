@@ -277,18 +277,18 @@ def _convert_gate_set(gate_symbol, locations, q, c, measurement_offset):
     elif gate_upper in ["R", "RZ", "RESET"]:
         for loc in locations:
             if isinstance(loc, int):
-                ops.append(qubit.Prep(q[loc]))
+                ops.append(qubit.PZ(q[loc]))
             elif isinstance(loc, tuple) and len(loc) == 1:
-                ops.append(qubit.Prep(q[loc[0]]))
+                ops.append(qubit.PZ(q[loc[0]]))
     elif gate_upper == "RX":
         for loc in locations:
             if isinstance(loc, int):
-                ops.append(qubit.Prep(q[loc]))
+                ops.append(qubit.PZ(q[loc]))
                 ops.append(qubit.H(q[loc]))
     elif gate_upper == "RY":
         for loc in locations:
             if isinstance(loc, int):
-                ops.append(qubit.Prep(q[loc]))
+                ops.append(qubit.PZ(q[loc]))
                 ops.append(qubit.H(q[loc]))
                 ops.append(qubit.SZ(q[loc]))
     else:

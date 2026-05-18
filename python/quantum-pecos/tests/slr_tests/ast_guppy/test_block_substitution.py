@@ -232,7 +232,7 @@ class TestPermuteAndPrepare:
         assert out.slots is None
 
     def test_prepare_slots_remapped_preserves_source_order(self) -> None:
-        # Prep(q[2], q[5]) under q[2]->d[0], q[5]->d[1] -> Prep(d, (0, 1)).
+        # PZ(q[2], q[5]) under q[2]->d[0], q[5]->d[1] -> PZ(d, (0, 1)).
         # Exact order asserted: the lowering preserves source slot order;
         # sorted() would mask an ordering regression.
         prep = PrepareOp(allocator="q", slots=(2, 5))

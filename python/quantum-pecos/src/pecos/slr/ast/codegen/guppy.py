@@ -1800,13 +1800,10 @@ def _validate_slr_gate_for_guppy_v1(gate: object) -> None:
         msg = "AST -> Guppy v1 does not support symbolic LoopVar indexing"
         raise GuppyCodegenError(msg)
 
-    if getattr(gate, "sym", None) != "Prep":
-        return
-
-    for basis in _string_args(qargs):
-        if basis.strip().upper() not in {"Z", "+Z"}:
-            msg = "AST -> Guppy v1 supports only Z-basis Prep; use Prep(q); H(q) for X-basis prep"
-            raise GuppyCodegenError(msg)
+    # (#81: the non-Z `Prep` string-basis preflight reject was
+    # removed -- prep basis is the gate identity now; the dedicated
+    # gates carry it through `PrepareOp.basis` and the converter
+    # already fails loud on any stray prep string arg.)
 
 
 def _contains_symbolic_index(value: object) -> bool:
@@ -1814,10 +1811,6 @@ def _contains_symbolic_index(value: object) -> bool:
         if hasattr(item, "index_var") or type(item).__name__.startswith("Symbolic"):
             return True
     return False
-
-
-def _string_args(value: object) -> list[str]:
-    return [item for item in _nested_items(value) if isinstance(item, str)]
 
 
 def _nested_items(value: object) -> Iterator[object]:

@@ -167,8 +167,8 @@ class TestSLRToStim:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],

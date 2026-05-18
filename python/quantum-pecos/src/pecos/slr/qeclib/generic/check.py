@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from pecos.slr import Barrier, Block, Comment
-from pecos.slr.qeclib.qubit import CX, CY, CZ, H, Measure, Prep
+from pecos.slr.qeclib.qubit import CX, CY, CZ, PZ, H, Measure
 
 if TYPE_CHECKING:
     from pecos.slr import Bit, Qubit
@@ -100,7 +100,7 @@ class Check(Block):
 
         self.extend(
             Comment(f"Measure check {ps}"),
-            Prep(a),
+            PZ(a),
             H(a),
         )
 

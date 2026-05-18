@@ -68,7 +68,7 @@ class ThreeParallelFlaggingXZZ(Block):
             Comment("X check 1, Z check 2, Z check 3"),
             Comment("==============================="),
             Comment(),
-            gq.Prep(
+            gq.PZ(
                 q[0],
                 q[8],
                 q[9],
@@ -175,7 +175,7 @@ class ThreeParallelFlaggingZXX(Block):
             Comment("Z check 1, X check 2, X check 3"),
             Comment("==============================="),
             Comment(),
-            gq.Prep(
+            gq.PZ(
                 q[0],
                 q[8],
                 q[9],

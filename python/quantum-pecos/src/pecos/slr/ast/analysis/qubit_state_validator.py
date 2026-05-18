@@ -78,7 +78,7 @@ class StateViolation:
         """Human-readable error message."""
         return (
             f"Gate '{self.gate.name}' applied to unprepared qubit "
-            f"{self.allocator}[{self.index}]. Call Prep() before applying gates."
+            f"{self.allocator}[{self.index}]. Call PZ() before applying gates."
         )
 
     def __str__(self) -> str:
@@ -106,7 +106,7 @@ class QubitStateTracker:
         return self.slot_states.get((allocator, index), ValidationSlotState.UNPREPARED)
 
     def mark_prepared(self, allocator: str, index: int) -> None:
-        """Mark a slot as prepared (after Prep operation)."""
+        """Mark a slot as prepared (after PZ operation)."""
         self.slot_states[(allocator, index)] = ValidationSlotState.PREPARED
 
     def mark_unprepared(self, allocator: str, index: int) -> None:

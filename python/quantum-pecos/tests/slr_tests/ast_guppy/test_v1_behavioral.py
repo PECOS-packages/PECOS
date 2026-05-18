@@ -76,13 +76,13 @@ class TestDeterministic:
         assert all(r["measurement_0"] == 0 for r in records)
 
     def test_measure_prep_remeasure_is_zero(self) -> None:
-        """Prep after measurement resets the slot to |0>."""
+        """PZ after measurement resets the slot to |0>."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
             qb.X(q[0]),
             Measure(q[0]) > c[0],
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             Measure(q[0]) > c[1],
             Return(c),
         )
@@ -91,13 +91,13 @@ class TestDeterministic:
         assert all(r["measurement_1"] == 0 for r in records)
 
     def test_measure_prep_x_remeasure_is_one(self) -> None:
-        """Prep after measurement produces a fresh |0> that can be inverted."""
+        """PZ after measurement produces a fresh |0> that can be inverted."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 2),
             qb.X(q[0]),
             Measure(q[0]) > c[0],
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.X(q[0]),
             Measure(q[0]) > c[1],
             Return(c),

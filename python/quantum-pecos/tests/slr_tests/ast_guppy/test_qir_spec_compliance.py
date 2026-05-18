@@ -68,7 +68,7 @@ emitter"); and `docs.inline_measure_creg` /
 `docs.prep_basis_x` / `docs.surface_syndrome_block18` (#80:
 the two QIR silent-miscompile defects #79's dual pre-review
 surfaced -- an inline/`Return`-only CReg that got no storage
-so its value vanished from the records, and a non-Z `Prep`
+so its value vanished from the records, and a non-Z `PZ`
 basis the converter silently dropped so it lowered as a plain
 Z reset -- are now FAIL-LOUD, mirroring #74/#78). Identity
 pinned (`_EXPECTED_BUILD_FAILED`) so a NEW build regression
@@ -118,14 +118,14 @@ _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     #    measure-store was silently skipped and the explicit returned
     #    value vanished from the QIS records (QIS recorded `[]`).
     #  - prep_basis_x / surface_syndrome_block18: contain
-    #    `Prep(q, "X")`; the converter dropped the basis string and
+    #    `PZ(q, "X")`; the converter dropped the basis string and
     #    every AST codegen lowered it as a plain Z reset. Fixed at the
     #    shared converter root, matching the AST->Guppy path which
-    #    already rejects non-Z Prep at preflight.
+    #    already rejects non-Z PZ at preflight.
     "docs.inline_measure_creg": ("NotImplementedError", "was not declared at Main scope"),
     # #81 Stage A recast the guard: the prep basis is the gate
     # identity, so ANY stray string qarg (incl. these factories'
-    # `Prep(q, "X")`) fails loud. Still BUILD_FAILED; only the
+    # `PZ(q, "X")`) fails loud. Still BUILD_FAILED; only the
     # message fragment changed. Stage D rewrites the factories to
     # dedicated gates -> these move BUILD_FAILED -> QIS_OK (re-pin
     # then via `_qir_state()`).

@@ -141,7 +141,7 @@ class TestAstToQasmGates:
 
 
 class TestAstToQasmPrepMeasure:
-    """Prep and measure code generation tests."""
+    """PZ and measure code generation tests."""
 
     def test_measure_with_result(self) -> None:
         """Measure with result generates arrow syntax."""
@@ -157,10 +157,10 @@ class TestAstToQasmPrepMeasure:
         assert "measure q[0] -> c[0];" in code
 
     def test_prep_reset(self) -> None:
-        """Prep generates reset operation."""
+        """PZ generates reset operation."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
         )
         ast = slr_to_ast(prog)
 

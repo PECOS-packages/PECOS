@@ -492,9 +492,9 @@ class TestSZTeleportation:
         sim = SparseStab(3)
         # Qubit 0: data (|+>), Qubit 1: ancilla 1 (|+Y>), Qubit 2: ancilla 2 (|+Y>)
 
-        # Prep |+>
+        # PZ |+>
         sim.run_gate("H", {0})
-        # Prep |+Y> = S|+>
+        # PZ |+Y> = S|+>
         sim.run_gate("H", {1})
         sim.run_gate("SZ", {1})
         sim.run_gate("H", {2})

@@ -250,7 +250,7 @@ class StimGenerator(Generator):
         elif op_class == "Measure":
             self.circuit.append_operation("M", qubits)
             self.measurement_count += len(qubits)
-        elif op_class == "Prep":
+        elif op_class == "PZ":
             self.circuit.append_operation("R", qubits)
         elif op_class in ["RX", "RY", "RZ"]:
             # Rotation gates - add as parameterized gates if supported

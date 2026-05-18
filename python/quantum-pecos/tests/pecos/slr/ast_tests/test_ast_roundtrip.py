@@ -137,7 +137,7 @@ class TestRoundTripQASM:
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
             c := CReg("c", 1),
-            qb.Prep(ancilla[0]),
+            qb.PZ(ancilla[0]),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
             qb.Measure(ancilla[0]) > c[0],

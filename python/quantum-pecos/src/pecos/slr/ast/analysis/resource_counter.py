@@ -183,7 +183,7 @@ class ResourceCounter:
         if node.slots is not None:
             self.result.preparation_count += len(node.slots)
         else:
-            # Prep all - would need allocator info to count exactly
+            # PZ all - would need allocator info to count exactly
             self.result.preparation_count += 1
 
     def _count_if(self, node: IfStmt) -> None:

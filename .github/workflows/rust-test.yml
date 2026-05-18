@@ -69,7 +69,7 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
@@ -82,13 +82,20 @@ jobs:
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ~/.pecos/deps/llvm-14
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env
+
+      - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -115,7 +122,7 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -185,11 +192,11 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ~/.pecos/deps/llvm-14
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
@@ -205,6 +212,13 @@ jobs:
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env
+
+      - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
       - name: Install CUDA Toolkit (Linux)
         if: matrix.os == 'ubuntu-latest'

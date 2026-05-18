@@ -37,6 +37,7 @@ jobs:
         with:
           version: "0.11.14"
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Set up Rust
         run: rustup show

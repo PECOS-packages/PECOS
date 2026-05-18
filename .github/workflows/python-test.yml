@@ -90,6 +90,7 @@ jobs:
       with:
         version: "0.11.14"
         enable-cache: true
+        save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
     - name: Set up Rust (Windows)
       if: runner.os == 'Windows'
@@ -120,6 +121,7 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
         workspaces: |
           python/pecos-rslib
           python/pecos-rslib-llvm
@@ -127,7 +129,7 @@ jobs:
     # Cache LLVM installation (fixed version, only varies by OS)
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
-      uses: actions/cache@v5
+      uses: actions/cache/restore@v5
       with:
         path: ~/.pecos/deps/llvm-14
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
@@ -139,6 +141,13 @@ jobs:
     # is needed at the workflow level.
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
+
+    - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+      uses: actions/cache/save@v5
+      with:
+        path: ~/.pecos/deps/llvm-14
+        key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Install PECOS CLI
       run: cargo install --locked --path crates/pecos-cli --force

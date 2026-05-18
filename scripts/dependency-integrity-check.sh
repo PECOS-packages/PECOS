@@ -205,6 +205,45 @@ else
     fi
 fi
 
+if [[ ! -f .github/workflows/github-actions-security.yml && ! -f .github/workflows/github-actions-security.yaml ]]; then
+    fail "GitHub Actions security analysis workflow is missing"
+else
+    echo "GitHub Actions security analysis workflow is present."
+fi
+
+section "GitHub Actions cache write posture"
+cache_policy_failures=()
+while IFS=: read -r file line _; do
+    if ! sed -n "${line},$((line + 16))p" "$file" | rg -q "save-if:.*github\.event_name == 'push'.*github\.ref_name == 'main'"; then
+        cache_policy_failures+=("$file:$line rust-cache save-if must be restricted to trusted branch pushes")
+    fi
+done < <(rg -n 'uses:\s+Swatinem/rust-cache@' .github/workflows || true)
+
+while IFS=: read -r file line _; do
+    setup_uv_block="$(sed -n "${line},$((line + 16))p" "$file")"
+    if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true' &&
+        ! printf '%s\n' "$setup_uv_block" | rg -q "save-cache:.*github\.event_name == 'push'.*github\.ref_name == 'main'"; then
+        cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
+    fi
+done < <(rg -n 'uses:\s+astral-sh/setup-uv@' .github/workflows || true)
+
+while IFS=: read -r file line _; do
+    cache_policy_failures+=("$file:$line use actions/cache/restore plus an explicitly gated actions/cache/save step")
+done < <(rg -n 'uses:\s+actions/cache@' .github/workflows || true)
+
+while IFS=: read -r file line _; do
+    if ! sed -n "$((line - 2)),$((line + 2))p" "$file" | rg -q "if:.*github\.event_name == 'push'.*github\.ref_name == 'main'"; then
+        cache_policy_failures+=("$file:$line actions/cache/save must be restricted to trusted branch pushes")
+    fi
+done < <(rg -n 'uses:\s+actions/cache/save@' .github/workflows || true)
+
+if ((${#cache_policy_failures[@]} > 0)); then
+    printf '%s\n' "${cache_policy_failures[@]}"
+    fail "cache writers must not save reusable caches from PR or untrusted branch runs"
+else
+    echo "Cache saves are restricted to trusted branch pushes."
+fi
+
 section "GitHub Actions lock enforcement"
 if rg -n --pcre2 '^\s*(run:\s*)?cargo (build|check|clippy|run|install)(?! --locked)' .github/workflows; then
     fail "workflow Cargo build/check/run/install commands must use --locked"

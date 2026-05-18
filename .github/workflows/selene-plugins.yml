@@ -57,6 +57,7 @@ jobs:
         with:
           version: "0.11.14"
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Set up Rust
         run: rustup show
@@ -67,7 +68,7 @@ jobs:
           cache-bin: false
           key: ${{ matrix.os }}
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
@@ -151,6 +152,7 @@ jobs:
         with:
           version: "0.11.14"
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Set up Rust
         run: rustup show
@@ -161,7 +163,7 @@ jobs:
           cache-bin: false
           key: ${{ matrix.os }}-${{ matrix.plugin.name }}
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Build Rust library (Unix)
         if: runner.os != 'Windows'

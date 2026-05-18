@@ -59,6 +59,7 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
         workspaces: go/pecos-go-ffi
 
     - name: Bootstrap MSVC for the Cargo build path (Windows)

@@ -4,6 +4,9 @@
 
 name: CUDA Build Check
 
+permissions:
+  contents: read
+
 env:
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
@@ -68,28 +71,28 @@ jobs:
       - name: Check pecos-cuquantum-sys compiles (stub mode)
         run: |
           echo "Building pecos-cuquantum-sys (will use stubs since cuQuantum SDK is not installed)..."
-          cargo check -p pecos-cuquantum-sys
+          cargo check --locked -p pecos-cuquantum-sys
 
       - name: Check pecos-cuquantum compiles (stub mode)
         run: |
           echo "Building pecos-cuquantum (will use stubs since cuQuantum SDK is not installed)..."
-          cargo check -p pecos-cuquantum
+          cargo check --locked -p pecos-cuquantum
 
       - name: Check pecos-rslib-cuda compiles (stub mode)
         run: |
           echo "Building pecos-rslib-cuda Python bindings..."
-          cargo check -p pecos-rslib-cuda
+          cargo check --locked -p pecos-rslib-cuda
 
       - name: Run clippy on CUDA crates
         run: |
           echo "Running clippy on CUDA crates..."
-          cargo clippy -p pecos-cuquantum-sys -p pecos-cuquantum -p pecos-rslib-cuda -- -D warnings
+          cargo clippy --locked -p pecos-cuquantum-sys -p pecos-cuquantum -p pecos-rslib-cuda -- -D warnings
 
       - name: Verify stub mode detection
         run: |
           echo "Verifying that build correctly detects stub mode..."
           # The crates should compile but is_cuquantum_available() should return false
-          cargo build -p pecos-cuquantum --release
+          cargo build --locked -p pecos-cuquantum --release
           # Note: We can't actually run the binary to test is_cuquantum_available()
           # because it requires the cuQuantum runtime, but the build succeeding
           # in stub mode means the detection is working

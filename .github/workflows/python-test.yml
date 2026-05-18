@@ -1,5 +1,8 @@
 name: Python test / linting
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
@@ -138,7 +141,7 @@ jobs:
       run: just ci-env
 
     - name: Install PECOS CLI
-      run: cargo install --path crates/pecos-cli --force
+      run: cargo install --locked --path crates/pecos-cli --force
 
     # macOS: prevent Homebrew library path issues
     - name: Configure macOS environment
@@ -230,4 +233,4 @@ jobs:
       # PECOS workaround) and are out of scope for this contract lane.
       - name: Vanilla cargo check (publishable crates, no just/bootstrap)
         shell: pwsh
-        run: cargo check -p pecos-build -p pecos-core
+        run: cargo check --locked -p pecos-build -p pecos-core

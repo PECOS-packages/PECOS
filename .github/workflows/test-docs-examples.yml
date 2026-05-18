@@ -1,5 +1,8 @@
 name: Documentation Tests & Build
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ main, master, development, dev ]
@@ -70,14 +73,14 @@ jobs:
 
       - name: Install dependencies and build
         run: |
-          uv lock --project .
-          uv sync --project . --all-packages
-          cargo install --path crates/pecos-cli --force
+          uv lock --check --project .
+          uv sync --locked --project . --all-packages
+          cargo install --locked --path crates/pecos-cli --force
           pecos python build --profile debug
 
       - name: Test working documentation examples
-        run: uv run python scripts/docs/test_working_examples.py
+        run: uv run --frozen python scripts/docs/test_working_examples.py
 
       - name: Build documentation
         if: success()
-        run: uv run mkdocs build
+        run: uv run --frozen mkdocs build

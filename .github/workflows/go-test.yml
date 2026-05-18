@@ -11,6 +11,9 @@
 
 name: Go test
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
@@ -71,7 +74,7 @@ jobs:
       shell: pwsh
       run: |
         cd go/pecos-go-ffi
-        cargo build --release
+        cargo build --locked --release
 
     - name: Build Rust FFI library (Unix)
       if: runner.os != 'Windows'
@@ -93,7 +96,7 @@ jobs:
         fi
 
         cd go/pecos-go-ffi
-        cargo build --release
+        cargo build --locked --release
 
     - name: Run Go tests (Unix)
       if: runner.os != 'Windows'

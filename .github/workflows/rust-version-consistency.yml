@@ -1,5 +1,8 @@
 name: Rust Version Consistency Check
 
+permissions:
+  contents: read
+
 # bump
 
 on:

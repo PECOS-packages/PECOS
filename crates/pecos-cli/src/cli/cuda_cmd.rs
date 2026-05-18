@@ -218,7 +218,7 @@ fn run_validate(path: Option<String>) -> Result<()> {
 }
 
 /// CLI entry point for `pecos cuda setup-python`. Validates the toolkit is
-/// present, then runs `uv sync --group cuda` and prints next-step hints.
+/// present, then runs `uv sync --locked --group cuda` and prints next-step hints.
 fn run_setup_python() -> Result<()> {
     if find_cuda().is_none() {
         eprintln!("Error: CUDA toolkit not found.");
@@ -239,7 +239,7 @@ fn run_setup_python() -> Result<()> {
     Ok(())
 }
 
-/// Run `uv sync --group cuda` to install Python CUDA packages.
+/// Run `uv sync --locked --group cuda` to install Python CUDA packages.
 ///
 /// Reusable from other CLI commands (e.g. `pecos setup`) once they've already
 /// confirmed the user wants this. Does NOT validate toolkit presence -- caller
@@ -249,7 +249,7 @@ pub(super) fn install_cuda_python_packages() -> Result<()> {
     println!();
 
     let status = Command::new("uv")
-        .args(["sync", "--group", "cuda"])
+        .args(["sync", "--locked", "--group", "cuda"])
         .status();
 
     match status {
@@ -263,7 +263,7 @@ pub(super) fn install_cuda_python_packages() -> Result<()> {
             eprintln!("Failed to install CUDA Python packages.");
             eprintln!();
             eprintln!("You may need to install manually:");
-            eprintln!("  uv sync --group cuda");
+            eprintln!("  uv sync --locked --group cuda");
             Err(Error::Cuda(
                 "Failed to install CUDA Python packages".to_string(),
             ))

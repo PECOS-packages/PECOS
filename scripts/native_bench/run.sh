@@ -167,7 +167,7 @@ echo ""
 
 echo "--- Building PECOS standalone benchmark (Rust, Release, -C target-cpu=native) ---"
 PECOS_BENCH_DIR="$SCRIPT_DIR/bench_pecos"
-(cd "$PECOS_BENCH_DIR" && RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" cargo build --release 2>&1 | tail -3)
+(cd "$PECOS_BENCH_DIR" && RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" cargo build --locked --release 2>&1 | tail -3)
 PECOS_BIN="$PECOS_BENCH_DIR/target/release/bench_pecos"
 echo "PECOS benchmark built."
 echo ""

@@ -1,5 +1,8 @@
 name: Rust test / linting
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
@@ -91,7 +94,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   rust-lint-no-llvm:
     runs-on: ubuntu-latest
@@ -121,10 +124,10 @@ jobs:
         run: |
           for crate in pecos-core pecos-engines pecos-simulators pecos-programs pecos-random pecos-qasm pecos-phir-json pecos-qis-ffi-types; do
             echo "Testing $crate..."
-            cd "crates/$crate" && cargo clippy --all-targets -- -D warnings && cd ../..
+            cd "crates/$crate" && cargo clippy --locked --all-targets -- -D warnings && cd ../..
           done
           echo "Testing pecos without default features..."
-          cd crates/pecos && cargo clippy --all-targets --no-default-features -- -D warnings && cd ../..
+          cd crates/pecos && cargo clippy --locked --all-targets --no-default-features -- -D warnings && cd ../..
 
   pre-commit:
     runs-on: ubuntu-latest
@@ -215,18 +218,18 @@ jobs:
 
       - name: Compile tests (macOS)
         if: matrix.os == 'macos-latest'
-        run: cargo build -p pecos-cli --release
+        run: cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           # Use `pecos rust test` for runtime hardware detection (cuQuantum, GPU)
           # Dry-run: just compile, the run step below does the actual test
-          cargo build -p pecos-cli --release
+          cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Windows)
         if: runner.os == 'Windows'
-        run: cargo build -p pecos-cli --release
+        run: cargo build --locked -p pecos-cli --release
 
       - name: Run tests (macOS)
         if: matrix.os == 'macos-latest'
@@ -235,13 +238,13 @@ jobs:
           LIBRARY_PATH: /usr/lib
         run: |
           unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH PKG_CONFIG_PATH
-          cargo run -p pecos-cli --release -- rust test
+          cargo run --locked -p pecos-cli --release -- rust test
 
       - name: Run tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo run -p pecos-cli --release -- rust test
+          cargo run --locked -p pecos-cli --release -- rust test
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
-        run: cargo run -p pecos-cli --release -- rust test
+        run: cargo run --locked -p pecos-cli --release -- rust test

@@ -11,6 +11,9 @@
 
 name: Go version consistency
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ "main", "master", "development", "dev" ]

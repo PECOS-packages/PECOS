@@ -60,12 +60,12 @@ optional = true
 
 [dependencies.selene-simple-runtime]
 git = "https://github.com/Quantinuum/selene.git"
-rev = "01300ee"
+rev = "01300ee5d4825e2dfc6500941d0540c3ff06988a"
 optional = true
 
 [dependencies.selene-soft-rz-runtime]
 git = "https://github.com/Quantinuum/selene.git"
-rev = "01300ee"
+rev = "01300ee5d4825e2dfc6500941d0540c3ff06988a"
 optional = true
 
 [build-dependencies]

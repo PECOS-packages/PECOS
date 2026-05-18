@@ -11,6 +11,9 @@
 
 name: Julia test
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
@@ -107,7 +110,7 @@ jobs:
       shell: pwsh
       run: |
         cd julia/pecos-julia-ffi
-        cargo build --release
+        cargo build --locked --release
 
     - name: Build Rust FFI library (Unix)
       if: runner.os != 'Windows'
@@ -129,7 +132,7 @@ jobs:
         fi
 
         cd julia/pecos-julia-ffi
-        cargo build --release
+        cargo build --locked --release
 
     - name: Run Julia tests
       run: |

@@ -99,7 +99,7 @@ test_marker_creation() {
     cd "$PROJECT_ROOT"
     # Force a rebuild by cleaning first
     cargo clean -p pecos-llvm-runtime --quiet
-    cargo build -p pecos-llvm-runtime --quiet
+    cargo build --locked -p pecos-llvm-runtime --quiet
 
     if check_file "$MARKER_FILE"; then
         log_info "Marker created for missing library"
@@ -120,7 +120,7 @@ test_marker_creation() {
     # Case 2: Up-to-date library
     rm -f "$MARKER_FILE"
     log_info "Running cargo build with up-to-date library..."
-    cargo build -p pecos-llvm-runtime --quiet
+    cargo build --locked -p pecos-llvm-runtime --quiet
 
     if [[ -f "$MARKER_FILE" ]]; then
         log_error "Marker created when library is up-to-date"
@@ -242,7 +242,7 @@ test_source_change_flow() {
     # Run cargo build
     log_info "Running cargo build after source change..."
     cd "$PROJECT_ROOT"
-    cargo build -p pecos-llvm-runtime --quiet
+    cargo build --locked -p pecos-llvm-runtime --quiet
 
     if check_file "$MARKER_FILE"; then
         log_info "Marker created after source change"
@@ -290,7 +290,7 @@ main() {
     # Build the CLI first
     log_info "Building PECOS CLI..."
     cd "$PROJECT_ROOT"
-    cargo build -p pecos-cli --quiet || {
+    cargo build --locked -p pecos-cli --quiet || {
         log_error "Failed to build PECOS CLI"
         exit 1
     }

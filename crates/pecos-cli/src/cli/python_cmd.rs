@@ -190,7 +190,7 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
 
         let maturin = venv_bin.join("maturin");
         let mut cmd = Command::new(&maturin);
-        cmd.args(["develop", "--uv"]);
+        cmd.args(["develop", "--uv", "--locked"]);
         cmd.args(cargo_profile_flag);
         // Maturin's CLI --features REPLACES (not merges with) the features list
         // in pyproject.toml's [tool.maturin], so any time we pass extra features

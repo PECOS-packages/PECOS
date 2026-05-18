@@ -16,6 +16,9 @@ on:
     tags:
       - 'jl-*'
 
+permissions:
+  contents: read
+
 jobs:
   update-build-hash:
     runs-on: ubuntu-latest

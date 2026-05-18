@@ -1,5 +1,8 @@
 name: Python Artifacts
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   # Must match pecos_build::cmake::CMAKE_VERSION. The MWPF decoder feature
@@ -196,7 +199,7 @@ jobs:
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
             CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin/cmake
             CUDA_PATH=/usr/local/cuda-12.6
-            MATURIN_PEP517_ARGS=--features=extension-module,mwpf
+            MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_LINUX: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
@@ -217,8 +220,8 @@ jobs:
             else
               echo "Skipping CUDA installation (GPU support not enabled for this build)"
             fi
-            cargo run --release -p pecos-cli -- install llvm --force
-            cargo run --release -p pecos-cli -- install cmake --force
+            cargo run --locked --release -p pecos-cli -- install llvm --force
+            cargo run --locked --release -p pecos-cli -- install cmake --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
@@ -229,13 +232,13 @@ jobs:
             CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/CMake.app/Contents/bin/cmake
             MACOSX_DEPLOYMENT_TARGET=13.2
             SDKROOT=$(xcrun --show-sdk-path)
-            MATURIN_PEP517_ARGS=--features=extension-module,mwpf
+            MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_MACOS: |
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             rustup update
-            cargo run --release -p pecos-cli -- install llvm --force
-            cargo run --release -p pecos-cli -- install cmake --force
+            cargo run --locked --release -p pecos-cli -- install llvm --force
+            cargo run --locked --release -p pecos-cli -- install cmake --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
             # crashes on macOS 15 when bundled libc++ conflicts with system libc++
             mkdir -p $HOME/.pecos/bin
@@ -249,12 +252,12 @@ jobs:
             PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin;C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin;$PATH"
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
             CMAKE="C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin\\cmake.exe"
-            MATURIN_PEP517_ARGS=--features=extension-module,mwpf
+            MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_WINDOWS: >
             echo "=== Installing LLVM using pecos ===" &&
             rustup update &&
-            cargo run --release -p pecos-cli -- install llvm --force &&
-            cargo run --release -p pecos-cli -- install cmake --force &&
+            cargo run --locked --release -p pecos-cli -- install llvm --force &&
+            cargo run --locked --release -p pecos-cli -- install cmake --force &&
             echo "=== Checking LLVM installation ===" &&
             (test -d "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14" && echo "LLVM directory exists") || (echo "ERROR: LLVM directory not found!" && exit 1)
           # Install delvewheel and patch it to ignore ext-ms-win-* API sets
@@ -293,7 +296,7 @@ jobs:
             curl -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
             dnf install libffi-devel -y
-            cargo run --release -p pecos-cli -- install llvm --force
+            cargo run --locked --release -p pecos-cli -- install llvm --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
@@ -306,7 +309,7 @@ jobs:
             source $HOME/.cargo/env 2>/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env; }
             if [ ! -d "$HOME/.pecos/deps/llvm-14/bin" ]; then
               rustup update
-              cargo run --release -p pecos-cli -- install llvm --force
+              cargo run --locked --release -p pecos-cli -- install llvm --force
             else
               echo "LLVM already installed from pecos-rslib build, skipping"
             fi
@@ -321,7 +324,7 @@ jobs:
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
           CIBW_BEFORE_ALL_WINDOWS: >
             rustup update &&
-            if not exist "C:\Users\runneradmin\.pecos\deps\llvm-14\bin" (cargo run --release -p pecos-cli -- install llvm --force) else (echo LLVM already installed from pecos-rslib build)
+            if not exist "C:\Users\runneradmin\.pecos\deps\llvm-14\bin" (cargo run --locked --release -p pecos-cli -- install llvm --force) else (echo LLVM already installed from pecos-rslib build)
           CIBW_BEFORE_BUILD_WINDOWS: >
             pip install delvewheel &&
             python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"

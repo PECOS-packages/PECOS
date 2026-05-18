@@ -1,5 +1,8 @@
 name: Selene Plugins
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -C debuginfo=0
@@ -81,7 +84,7 @@ jobs:
             PLUGIN=$(basename "$DIR")
             CARGO_ARGS="$CARGO_ARGS -p $PLUGIN"
           done
-          cargo build --release $CARGO_ARGS
+          cargo build --locked --release $CARGO_ARGS
 
           for DIR in python/selene-plugins/pecos-selene-*/; do
             PLUGIN=$(basename "$DIR")
@@ -98,7 +101,7 @@ jobs:
         run: |
           $plugins = Get-ChildItem -Directory python/selene-plugins/pecos-selene-* | Select-Object -ExpandProperty Name
           $cargoArgs = $plugins | ForEach-Object { "-p"; $_ }
-          cargo build --release @cargoArgs
+          cargo build --locked --release @cargoArgs
 
           foreach ($plugin in $plugins) {
             $libName = $plugin -replace '-', '_'
@@ -163,13 +166,13 @@ jobs:
       - name: Build Rust library (Unix)
         if: runner.os != 'Windows'
         run: |
-          cargo build --release -p ${{ matrix.plugin.name }}
+          cargo build --locked --release -p ${{ matrix.plugin.name }}
 
       - name: Build Rust library (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo build --release -p ${{ matrix.plugin.name }}
+          cargo build --locked --release -p ${{ matrix.plugin.name }}
 
       - name: Copy library to Python package (Unix)
         if: runner.os != 'Windows'

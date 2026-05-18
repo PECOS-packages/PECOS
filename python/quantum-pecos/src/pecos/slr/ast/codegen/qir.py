@@ -482,6 +482,31 @@ class AstToQir:
             self._types["qubit_ptr"],
         )
 
+    def _require_creg(self, reg_name: str) -> None:
+        """Fail LOUD if `reg_name` has no entry-block CReg storage.
+
+        Only CRegs declared at Main scope (`program.declarations`)
+        get an `alloca [N x i1]` in `_process_declarations`. An
+        inline / local-scope CReg -- e.g. one created in a block and
+        only surfaced via `Return(creg)` -- has no storage, so every
+        measure/assign/read against it used to be SILENTLY skipped
+        (the store dropped, a read folded to constant 0) and the
+        explicit returned value vanished from the QIS records (the
+        `docs.inline_measure_creg` defect #79 surfaced). Mirror the
+        #74/#78 doctrine: a silent miscompile must become a loud
+        `NotImplementedError`, not a buried wrong answer.
+        """
+        if reg_name not in self._creg_ptrs:
+            msg = (
+                f"QIR codegen: classical register {reg_name!r} is "
+                "used/measured/returned but was not declared at Main "
+                "scope, so it has no QIR storage. Inline / local-scope "
+                "CRegs are not supported by the QIR backend (their "
+                "values would be silently dropped from the recorded "
+                f"output). Declare {reg_name!r} in Main(...)."
+            )
+            raise NotImplementedError(msg)
+
     def _creg_bit_ptr(self, reg_name: str, index: int) -> Any:
         """`getelementptr [N x i1], [N x i1]* %creg, i64 0, i64 index`.
 
@@ -532,16 +557,16 @@ class AstToQir:
 
             if i < len(node.results):
                 result = node.results[i]
-                if result.register in self._creg_ptrs:
-                    bit = self._builder.call(
-                        self._read_result,
-                        [result_ptr],
-                        name="",
-                    )
-                    self._builder.store(
-                        self._creg_bit_ptr(result.register, result.index),
-                        bit,
-                    )
+                self._require_creg(result.register)
+                bit = self._builder.call(
+                    self._read_result,
+                    [result_ptr],
+                    name="",
+                )
+                self._builder.store(
+                    self._creg_bit_ptr(result.register, result.index),
+                    bit,
+                )
 
     def _process_prepare(self, node: PrepareOp) -> None:
         """Process a prepare/reset operation."""
@@ -584,8 +609,7 @@ class AstToQir:
         """Process an assignment operation."""
         if isinstance(node.target, BitRef):
             reg_name = node.target.register
-            if reg_name not in self._creg_ptrs:
-                return
+            self._require_creg(reg_name)
             rhs = self._as_i1(self._eval_expression(node.value))
             self._builder.store(
                 self._creg_bit_ptr(reg_name, node.target.index),
@@ -595,8 +619,7 @@ class AstToQir:
             # Whole-CReg `c.set(int)` (converter.py:928/930 -> target=str).
             # Unpack the i64 value bit-by-bit into the buffer.
             reg_name = node.target
-            if reg_name not in self._creg_ptrs:
-                return
+            self._require_creg(reg_name)
             size = self.context.creg_map.get(reg_name, 0)
             val = self._as_i64(self._eval_expression(node.value))
             for i in range(size):
@@ -622,8 +645,7 @@ class AstToQir:
 
         if isinstance(expr, BitExpr):
             reg_name = expr.ref.register
-            if reg_name not in self._creg_ptrs:
-                return llvm_ir.Constant(self._types["int"], 0)
+            self._require_creg(reg_name)
             # `load i1, gep c[i]` then `zext -> i64` (canonical width).
             bit = self._builder.load(
                 self._creg_bit_ptr(reg_name, expr.ref.index),

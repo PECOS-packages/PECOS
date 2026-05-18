@@ -663,6 +663,23 @@ class SlrToAst:
             msg = "Prep gate has no qubit arguments"
             raise ValueError(msg)
 
+        # Non-Z Prep basis is silently dropped by `_expand_qubit_args`
+        # (it skips string args), which made every AST codegen
+        # (QIR/Stim/QC/QASM) silently lower `Prep(q, "X")` as a plain
+        # Z-reset -- a miscompile. Fail LOUD at the shared converter
+        # root (the AST->Guppy path already rejects this at preflight
+        # with the same Z/+Z rule; #80 / #79 pre-review). The AST
+        # represents only Z-basis Prep; non-Z basis prep is v2-defer.
+        for arg in gate.qargs:
+            if isinstance(arg, str) and arg.strip().upper() not in {"Z", "+Z"}:
+                msg = (
+                    f"AST conversion: non-Z Prep basis {arg!r} is not supported "
+                    "(the AST codegens represent only Z-basis Prep; a non-Z "
+                    "basis would be silently lowered as a Z reset -- a "
+                    "miscompile). Use `Prep(q); H(q)` for X-basis prep."
+                )
+                raise NotImplementedError(msg)
+
         # Expand full registers into individual qubits
         expanded_qargs = self._expand_qubit_args(gate.qargs)
 

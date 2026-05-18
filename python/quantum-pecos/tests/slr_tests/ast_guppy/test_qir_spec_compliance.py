@@ -39,7 +39,7 @@ model (per-CReg entry-block `alloca [N x i1]` + zeroinitializer;
 `mz__body` -> static `%Result*` -> `read_result` -> `store`;
 point-of-use `gep`+`load`/`store`; `zext`/`shl`/`or` pack ->
 `__quantum__rt__int_record_output`). Every validate-passing program
-(`_EXPECTED_QIS_OK`, n=26) now lowers via `qir_to_qis`; `qis_failed`
+(`_EXPECTED_QIS_OK`, n=23) now lowers via `qir_to_qis`; `qis_failed`
 is empty. A NEW qir_to_qis failure -- or a dropped program -- trips
 this deliberately. (`docs.while_loop` was in this set pre-#74 on a
 silently-wrong single-pass approximation; #74 makes the QIR backend
@@ -48,22 +48,31 @@ B2 emits `__quantum__rt__read_result` for measurement feedback.)
 The deeper *semantic* proof for the load-bearing CReg shapes is
 `tier2_semantic.py` (real-compiler acceptance + emitted-QIR
 structural invariants + a deterministic AST->Guppy->Selene
-cross-anchor). A direct `qir_to_qis`->Selene differential is
-blocked by an LLVM-version/dialect gap (qir-qis emits LLVM-21
-opaque-pointer QIS bitcode; PECOS's Selene QIS runtime is LLVM-14
-typed-pointer) -- tracked as a separate blocked task; this gate
-stays structural.
+cross-anchor). The direct `qir_to_qis`->Selene EXECUTABLE
+differential is delivered (#77 Layer D `_qis_exec_records` in
+`tier2_semantic.py`): `selene_sim` natively runs the LLVM-21
+opaque-pointer QIS bitcode `qir_to_qis` emits, via
+`selene_helios_qis_plugin` -- there is no LLVM-version blocker.
+#79 generalises it corpus-wide; this structural gate provides
+that suite's authoritative QIS_OK set.
 
-**Build failures** (3): `qir_bc()` raises for
+**Build failures** (6): `qir_bc()` raises for
 `docs.for_loopvar_symbolic` (symbolic `LoopVar` indexing) /
 `docs.rotation_rx` (`rx` gate) -- pre-existing AST-QIR feature
-gaps -- and `docs.while_loop` (#74: the QIR backend now fails
-LOUD on `While` instead of silently emitting a one-pass
+gaps; `docs.while_loop` (#74: the QIR backend now fails LOUD
+on `While` instead of silently emitting a one-pass
 approximation that qir-qis cannot catch; this aligns the QIR
 path with the Guppy path, which already rejects `While` per
 v1-feature-matrix "real While is out of scope for the sound
-emitter"). Identity pinned (`_EXPECTED_BUILD_FAILED`) so a NEW
-build regression trips here. (`qeclib.steane_pz` was a pinned
+emitter"); and `docs.inline_measure_creg` /
+`docs.prep_basis_x` / `docs.surface_syndrome_block18` (#80:
+the two QIR silent-miscompile defects #79's dual pre-review
+surfaced -- an inline/`Return`-only CReg that got no storage
+so its value vanished from the records, and a non-Z `Prep`
+basis the converter silently dropped so it lowered as a plain
+Z reset -- are now FAIL-LOUD, mirroring #74/#78). Identity
+pinned (`_EXPECTED_BUILD_FAILED`) so a NEW build regression
+trips here. (`qeclib.steane_pz` was a pinned
 build failure pre-B2 -- the bespoke model emitted invalid bitcode
 for it; B2 produces valid bitcode so it now builds and moves to
 the pinned validate set above. A deliberate, triaged improvement.)
@@ -97,6 +106,25 @@ _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     # which already rejects `While` (v1-feature-matrix: real While is
     # out of scope for the sound emitter).
     "docs.while_loop": ("NotImplementedError", "does not support While loops"),
+    # #80: the two QIR silent-miscompile defects #79's dual pre-review
+    # surfaced are now FAIL-LOUD; the 3 affected corpus programs moved
+    # QIS_OK -> here DELIBERATELY (the #74/#78 doctrine: a silent
+    # miscompile qir-qis cannot catch must raise, not bury a wrong
+    # answer). Was previously "QIS_OK" but the emitted QIS was a
+    # miscompile, not a validation -- exactly what #79 must not call
+    # validated.
+    #  - inline_measure_creg: `final` is only `Return`ed, never
+    #    declared at Main scope, so it got no `alloca [N x i1]`; the
+    #    measure-store was silently skipped and the explicit returned
+    #    value vanished from the QIS records (QIS recorded `[]`).
+    #  - prep_basis_x / surface_syndrome_block18: contain
+    #    `Prep(q, "X")`; the converter dropped the basis string and
+    #    every AST codegen lowered it as a plain Z reset. Fixed at the
+    #    shared converter root, matching the AST->Guppy path which
+    #    already rejects non-Z Prep at preflight.
+    "docs.inline_measure_creg": ("NotImplementedError", "was not declared at Main scope"),
+    "docs.prep_basis_x": ("NotImplementedError", "non-Z Prep basis"),
+    "docs.surface_syndrome_block18": ("NotImplementedError", "non-Z Prep basis"),
 }
 
 # Tier 1: the non-metadata `validate_qir` failures (label -> stable,
@@ -117,17 +145,14 @@ _EXPECTED_VALIDATE_FAILED: dict[str, str] = {
 
 # Tier 2: post-B2, EVERY validate-passing program lowers via
 # `qir_to_qis` (M-B2-static replaced the bespoke CReg helpers).
-# This is the full set (n=27); `qis_failed` must be empty. A new
+# This is the full set (n=23); `qis_failed` must be empty. A new
 # qir_to_qis failure -- or a dropped/added program -- trips the
 # Tier-2 assertions and must be triaged deliberately.
 _EXPECTED_QIS_OK: frozenset[str] = frozenset(
     {
         "docs.flat_parallel_h_gates",
         "docs.for_static_indexing",
-        "docs.inline_measure_creg",
-        "docs.prep_basis_x",
         "docs.repeat_state_preserving",
-        "docs.surface_syndrome_block18",
         "examples.measure_register_to_creg",
         "examples.parallel_bell_pairs",
         "examples.surface_d3_x_1round",

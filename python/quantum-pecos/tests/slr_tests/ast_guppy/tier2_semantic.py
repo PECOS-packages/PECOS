@@ -453,6 +453,16 @@ def test_return_only_inline_creg_raises_loud() -> None:
     ok_q = Main(q := QReg("q", 1), Return(q))
     SlrConverter(ok_q).qir_bc()
 
+    # #80 Codex RE-CONFIRM blocker: an inline CReg whose name
+    # collides with a declared QReg was misclassified as a qubit
+    # return by the old name-membership skip and silently dropped
+    # (same silent-output-loss class, reachable via public SLR).
+    # Provenance from `_convert_return` (real QReg/CReg object) now
+    # disambiguates -> the inline CReg still fails loud.
+    collide = Main(q := QReg("q", 1), Return(CReg("q", 1)))
+    with pytest.raises(NotImplementedError, match=r"classical register 'q'.*not.*declared at Main scope"):
+        SlrConverter(collide).qir_bc()
+
 
 def _qis_exec_records(prog: Main, n_qubits: int, *, shots: int = _SHOTS, seed: int = _SEED) -> list[list[int]]:
     """#77 Layer D -- the real EXECUTABLE differential.

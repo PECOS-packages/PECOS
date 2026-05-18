@@ -242,11 +242,17 @@ def substitute_stmt(stmt: Statement, remap: BodyRemap) -> Statement:
             location=stmt.location,
         )
     if isinstance(stmt, ReturnOp):
+        # Substitution remaps names in place (1:1, order/count
+        # preserved), so the parallel `value_kinds` provenance still
+        # aligns and MUST be carried (dropping it would re-introduce
+        # the #80 CReg/QReg name-collision miscompile inside a
+        # substituted BlockCall body).
         return ReturnOp(
             values=tuple(
                 _sub_expr(v, remap) if not isinstance(v, str) else remap.whole_name(v, context="Return value")
                 for v in stmt.values
             ),
+            value_kinds=stmt.value_kinds,
             location=stmt.location,
         )
     if isinstance(stmt, PrintOp):

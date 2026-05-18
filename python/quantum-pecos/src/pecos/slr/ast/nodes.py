@@ -464,6 +464,16 @@ class ReturnOp(Statement):
     """Return statement."""
 
     values: tuple[Expression | str, ...] = ()  # Can be variable names
+    # Per-value provenance, parallel to `values`: "quantum" (a QReg --
+    # no classical record), "classical" (a CReg -- must be recorded),
+    # or "expr". Set by `_convert_return` from the SLR object type;
+    # `()` means unknown (e.g. a directly-constructed ReturnOp), in
+    # which case a backend treats a bare-name value as classical
+    # (the fail-loud-safe default). A bare `values` string cannot be
+    # disambiguated CReg-vs-QReg by name alone (a returned inline
+    # CReg can collide with a declared QReg name -- the #80
+    # re-confirm bug), so provenance is carried here, not guessed.
+    value_kinds: tuple[str, ...] = ()
 
     def children(self) -> Sequence[AstNode]:
         return tuple(v for v in self.values if isinstance(v, AstNode))

@@ -838,18 +838,35 @@ class SlrToAst:
         return BarrierOp(allocators=allocators)
 
     def _convert_return(self, op: Any) -> ReturnOp:
-        """Convert an SLR Return to an AST ReturnOp."""
+        """Convert an SLR Return to an AST ReturnOp.
+
+        Carries per-value provenance (`value_kinds`) derived from the
+        SLR object's type. A whole-register return flattens to its
+        bare `sym` name; a returned inline CReg can collide with a
+        declared QReg of the same name, which is undecidable
+        downstream by name alone (the #80 re-confirm bug). The
+        QReg/CReg distinction is known HERE (the real object), so it
+        is preserved instead of guessed in codegen.
+        """
+        from pecos.slr.vars import QReg  # noqa: PLC0415
+
         values: list = []
+        kinds: list[str] = []
         for var in op.return_vars:
             if isinstance(var, str):
+                # Raw user-supplied name (provenance unknown); the
+                # fail-loud-safe default is "classical" so a backend
+                # validates it as a declared classical register.
                 values.append(var)
+                kinds.append("classical")
             elif hasattr(var, "sym"):
                 values.append(var.sym)
+                kinds.append("quantum" if isinstance(var, QReg) else "classical")
             else:
-                # Try to convert as expression
                 values.append(self._convert_expression(var))
+                kinds.append("expr")
 
-        return ReturnOp(values=tuple(values))
+        return ReturnOp(values=tuple(values), value_kinds=tuple(kinds))
 
     def _convert_permute(self, op: Any) -> PermuteOp:
         """Convert an SLR Permute to an AST PermuteOp."""

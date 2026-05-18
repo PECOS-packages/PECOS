@@ -8,7 +8,6 @@ IY = "IY"
 IZ = "IZ"
 iz = "iz"
 anc = "anc"
-Pn = "Pn"
 emiss = "emiss"
 fo = "fo"
 # HUGR JSON format uses "typ" as a field name for type information

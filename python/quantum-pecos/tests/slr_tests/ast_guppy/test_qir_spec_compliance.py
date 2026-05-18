@@ -39,7 +39,7 @@ model (per-CReg entry-block `alloca [N x i1]` + zeroinitializer;
 `mz__body` -> static `%Result*` -> `read_result` -> `store`;
 point-of-use `gep`+`load`/`store`; `zext`/`shl`/`or` pack ->
 `__quantum__rt__int_record_output`). Every validate-passing program
-(`_EXPECTED_QIS_OK`, n=23) now lowers via `qir_to_qis`; `qis_failed`
+(`_EXPECTED_QIS_OK`, n=24) now lowers via `qir_to_qis`; `qis_failed`
 is empty. A NEW qir_to_qis failure -- or a dropped program -- trips
 this deliberately. (`docs.while_loop` was in this set pre-#74 on a
 silently-wrong single-pass approximation; #74 makes the QIR backend
@@ -56,7 +56,7 @@ opaque-pointer QIS bitcode `qir_to_qis` emits, via
 #79 generalises it corpus-wide; this structural gate provides
 that suite's authoritative QIS_OK set.
 
-**Build failures** (6): `qir_bc()` raises for
+**Build failures** (5): `qir_bc()` raises for
 `docs.for_loopvar_symbolic` (symbolic `LoopVar` indexing) /
 `docs.rotation_rx` (`rx` gate) -- pre-existing AST-QIR feature
 gaps; `docs.while_loop` (#74: the QIR backend now fails LOUD
@@ -65,14 +65,18 @@ approximation that qir-qis cannot catch; this aligns the QIR
 path with the Guppy path, which already rejects `While` per
 v1-feature-matrix "real While is out of scope for the sound
 emitter"); and `docs.inline_measure_creg` /
-`docs.prep_basis_x` / `docs.surface_syndrome_block18` (#80:
-the two QIR silent-miscompile defects #79's dual pre-review
-surfaced -- an inline/`Return`-only CReg that got no storage
-so its value vanished from the records, and a non-Z `PZ`
-basis the converter silently dropped so it lowered as a plain
-Z reset -- are now FAIL-LOUD, mirroring #74/#78). Identity
-pinned (`_EXPECTED_BUILD_FAILED`) so a NEW build regression
-trips here. (`qeclib.steane_pz` was a pinned
+`docs.surface_syndrome_block18` (#80: an inline/`Return`-only
+CReg gets no storage, so #80 fails loud instead of silently
+dropping its value -- the silent-output-loss defect #79's
+dual pre-review surfaced; `surface_syndrome_block18`'s
+`Measure(data) > CReg("final", ...)` is exactly that inline
+CReg, so it still build-fails post-#81 -- pinned honestly on
+the inline-CReg reason, NOT masked by restructuring the
+factory). `docs.prep_basis_x` MOVED here -> QIS_OK in #81
+(it is now a clean dedicated-gate `PX` program; the old
+non-Z-`Prep` string form is gone -- the prep basis is the
+gate identity). Identity pinned (`_EXPECTED_BUILD_FAILED`)
+so a NEW build regression trips here. (`qeclib.steane_pz` was a pinned
 build failure pre-B2 -- the bespoke model emitted invalid bitcode
 for it; B2 produces valid bitcode so it now builds and moves to
 the pinned validate set above. A deliberate, triaged improvement.)
@@ -106,31 +110,22 @@ _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     # which already rejects `While` (v1-feature-matrix: real While is
     # out of scope for the sound emitter).
     "docs.while_loop": ("NotImplementedError", "does not support While loops"),
-    # #80: the two QIR silent-miscompile defects #79's dual pre-review
-    # surfaced are now FAIL-LOUD; the 3 affected corpus programs moved
-    # QIS_OK -> here DELIBERATELY (the #74/#78 doctrine: a silent
-    # miscompile qir-qis cannot catch must raise, not bury a wrong
-    # answer). Was previously "QIS_OK" but the emitted QIS was a
-    # miscompile, not a validation -- exactly what #79 must not call
-    # validated.
-    #  - inline_measure_creg: `final` is only `Return`ed, never
-    #    declared at Main scope, so it got no `alloca [N x i1]`; the
-    #    measure-store was silently skipped and the explicit returned
-    #    value vanished from the QIS records (QIS recorded `[]`).
-    #  - prep_basis_x / surface_syndrome_block18: contain
-    #    `PZ(q, "X")`; the converter dropped the basis string and
-    #    every AST codegen lowered it as a plain Z reset. Fixed at the
-    #    shared converter root, matching the AST->Guppy path which
-    #    already rejects non-Z PZ at preflight.
+    # #80 inline/Return-only CReg fail-loud (the silent-output-loss
+    # defect #79's dual pre-review surfaced). A CReg used/measured/
+    # returned but never declared at Main scope gets no
+    # `alloca [N x i1]`; #80 raises instead of silently dropping it.
+    #  - inline_measure_creg: `final` only `Return`ed, never declared.
+    #  - surface_syndrome_block18: #81 Stage D made it a valid
+    #    dedicated-gate (`PX`/`PZ`) program (was non-Z-Prep-fail),
+    #    but it still build-fails -- for a DIFFERENT, correct reason:
+    #    its `Measure(data) > CReg("final", num_data)` is an inline
+    #    CReg, caught by the SAME #80 guard. Pinned honestly on the
+    #    inline-CReg reason (NOT masked by restructuring the factory
+    #    -- that would defeat #80). `docs.prep_basis_x` moved
+    #    BUILD_FAILED -> QIS_OK (now a clean `PX` program; re-pinned
+    #    from the actual `_qir_state()`, never guessed).
     "docs.inline_measure_creg": ("NotImplementedError", "was not declared at Main scope"),
-    # #81 Stage A recast the guard: the prep basis is the gate
-    # identity, so ANY stray string qarg (incl. these factories'
-    # `PZ(q, "X")`) fails loud. Still BUILD_FAILED; only the
-    # message fragment changed. Stage D rewrites the factories to
-    # dedicated gates -> these move BUILD_FAILED -> QIS_OK (re-pin
-    # then via `_qir_state()`).
-    "docs.prep_basis_x": ("NotImplementedError", "stray string argument"),
-    "docs.surface_syndrome_block18": ("NotImplementedError", "stray string argument"),
+    "docs.surface_syndrome_block18": ("NotImplementedError", "was not declared at Main scope"),
 }
 
 # Tier 1: the non-metadata `validate_qir` failures (label -> stable,
@@ -151,13 +146,16 @@ _EXPECTED_VALIDATE_FAILED: dict[str, str] = {
 
 # Tier 2: post-B2, EVERY validate-passing program lowers via
 # `qir_to_qis` (M-B2-static replaced the bespoke CReg helpers).
-# This is the full set (n=23); `qis_failed` must be empty. A new
+# This is the full set (n=24); `qis_failed` must be empty. A new
 # qir_to_qis failure -- or a dropped/added program -- trips the
 # Tier-2 assertions and must be triaged deliberately.
 _EXPECTED_QIS_OK: frozenset[str] = frozenset(
     {
         "docs.flat_parallel_h_gates",
         "docs.for_static_indexing",
+        # #81: now a clean dedicated-gate `PX` program (was the
+        # non-Z-Prep BUILD_FAILED pin; re-pinned from actual _qir_state).
+        "docs.prep_basis_x",
         "docs.repeat_state_preserving",
         "examples.measure_register_to_creg",
         "examples.parallel_bell_pairs",

@@ -1180,7 +1180,7 @@ def _validate_scratch_input(
     where = f"Block {cls_name!r} scratch input {name!r}"
     if "UNSUPPORTED" in events:
         msg = (
-            f"{where}: scratch inputs must have a flat Prep -> ... -> "
+            f"{where}: scratch inputs must have a flat PZ -> ... -> "
             "Measure lifecycle; referencing the scratch slot inside "
             "control flow, Parallel, a nested BlockCall, or a Permute -- "
             "or any ReturnOp in a scratch-bearing block -- is not "
@@ -1193,7 +1193,7 @@ def _validate_scratch_input(
     if events[0] != "PREP":
         msg = (
             f"{where}: first use is {events[0]}, but a SCRATCH input must "
-            "be reset (Prep) before any other use (reset-first)"
+            "be reset (PZ) before any other use (reset-first)"
         )
         raise ValueError(msg)
     # Segment state machine: a PREP opens a lifecycle that MUST close with a
@@ -1208,7 +1208,7 @@ def _validate_scratch_input(
             if open_prep:
                 msg = (
                     f"{where}: re-Prepped before measuring the previous "
-                    "scratch lifecycle (every Prep must be closed by a "
+                    "scratch lifecycle (every PZ must be closed by a "
                     "Measure)"
                 )
                 raise ValueError(msg)
@@ -1224,10 +1224,7 @@ def _validate_scratch_input(
             open_prep = False
         else:  # USE
             if not open_prep:
-                msg = (
-                    f"{where}: used after measurement without re-Prep "
-                    "(scratch lifecycle must be Prep -> use -> Measure)"
-                )
+                msg = f"{where}: used after measurement without re-PZ (scratch lifecycle must be PZ -> use -> Measure)"
                 raise ValueError(msg)
     if open_prep:
         msg = (

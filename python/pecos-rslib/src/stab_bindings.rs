@@ -242,7 +242,7 @@ impl PyStabilizer {
                 self.inner.pz(q);
                 Ok(None)
             }
-            "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" | "PnZ" => {
+            "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" | "PNZ" => {
                 self.inner.pnz(q);
                 Ok(None)
             }
@@ -250,7 +250,7 @@ impl PyStabilizer {
                 self.inner.px(q);
                 Ok(None)
             }
-            "Init -X" | "init |->" | "PnX" => {
+            "Init -X" | "init |->" | "PNX" => {
                 self.inner.pnx(q);
                 Ok(None)
             }
@@ -258,7 +258,7 @@ impl PyStabilizer {
                 self.inner.py(q);
                 Ok(None)
             }
-            "Init -Y" | "init |-i>" | "PnY" => {
+            "Init -Y" | "init |-i>" | "PNY" => {
                 self.inner.pny(q);
                 Ok(None)
             }

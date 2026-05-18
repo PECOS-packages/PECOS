@@ -39,13 +39,19 @@ def test_hugr_rejects_while_before_parallel_optimizer_erases_it() -> None:
         SlrConverter(prog).hugr()
 
 
-def test_hugr_rejects_non_z_prep_basis_before_ast_drops_it() -> None:
+def test_hugr_rejects_stray_prep_basis_string() -> None:
+    # #81: the prep basis is the gate IDENTITY (PZ/PNZ/PX/PNX/PY/PNY),
+    # not a string argument. A stray string qarg on any prep gate is
+    # rejected loudly at the shared converter root (NotImplementedError),
+    # so it never silently reaches the codegen -- superseding the old
+    # Guppy-preflight non-Z-Prep reject (removed in #81 Stage C along
+    # with the `Prep` alias).
     prog = Main(
         q := QReg("q", 1),
         qb.PZ(q[0], "X"),
     )
 
-    with pytest.raises(GuppyCodegenError, match="supports only Z-basis PZ"):
+    with pytest.raises(NotImplementedError, match="stray string argument"):
         SlrConverter(prog).hugr()
 
 

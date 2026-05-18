@@ -385,7 +385,7 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
             sim.pz(&collect_single_qubits(locations)?);
             return Ok(Some(PyDict::new(py).into()));
         }
-        "PnZ" | "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" => {
+        "PNZ" | "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" => {
             sim.pnz(&collect_single_qubits(locations)?);
             return Ok(Some(PyDict::new(py).into()));
         }
@@ -393,7 +393,7 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
             sim.px(&collect_single_qubits(locations)?);
             return Ok(Some(PyDict::new(py).into()));
         }
-        "PnX" | "Init -X" | "init |->" => {
+        "PNX" | "Init -X" | "init |->" => {
             sim.pnx(&collect_single_qubits(locations)?);
             return Ok(Some(PyDict::new(py).into()));
         }
@@ -401,7 +401,7 @@ pub fn try_clifford_batch_dispatch<S: CliffordGateable>(
             sim.py(&collect_single_qubits(locations)?);
             return Ok(Some(PyDict::new(py).into()));
         }
-        "PnY" | "Init -Y" | "init |-i>" => {
+        "PNY" | "Init -Y" | "init |-i>" => {
             sim.pny(&collect_single_qubits(locations)?);
             return Ok(Some(PyDict::new(py).into()));
         }

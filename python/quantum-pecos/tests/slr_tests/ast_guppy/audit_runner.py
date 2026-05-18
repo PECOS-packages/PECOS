@@ -599,16 +599,13 @@ def _docs_for_loopvar_symbolic_v2_defer() -> Block:
     )
 
 
-def _docs_prep_basis_x_v2_defer() -> Block:
-    """Deliberate red-light: PZ with explicit "X" basis is v2-defer.
-
-    Per v1-feature-matrix: "Current PZ gate is reset-to-zero in the AST.
-    V1 supports Z reset only. Use PZ(q); H(q) for X-basis prep."
-    """
+def _docs_prep_basis_x() -> Block:
+    """X-basis prep via the dedicated `PX` gate (#81 -- was v2-defer;
+    the basis is the gate identity, not a string argument)."""
     return Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
-        qb.PZ(q[0], "X"),
+        qb.PX(q[0]),
         Measure(q) > c,
         Return(c),
     )
@@ -639,13 +636,10 @@ def _docs_inline_measure_creg() -> Block:
     )
 
 
-def _docs_surface_syndrome_block18_probe() -> Block:
-    """Probe: surface_code_syndrome doc-test shape from test_slr_qeclib_block_18.
-
-    Uses basis-arg PZ("Z") and PZ("X") plus Block-grouped operations.
-    Likely XFAIL on the PZ basis arg (v2-defer); probe to record exact
-    failure or surface a real gap.
-    """
+def _docs_surface_syndrome_block18() -> Block:
+    """surface_code_syndrome doc-test shape from test_slr_qeclib_block_18,
+    using the dedicated prep gates (#81 -- was v2-defer on the PZ
+    basis-string arg; X-syndrome ancilla = `PX` (|+>) directly)."""
     d = 2
     num_data = d * d
     num_ancilla = 2
@@ -653,17 +647,16 @@ def _docs_surface_syndrome_block18_probe() -> Block:
         data := QReg("data", num_data),
         ancilla := QReg("anc", num_ancilla),
         syn := CReg("syn", num_ancilla),
-        Block(*[qb.PZ(data[i], "Z") for i in range(num_data)]),
+        Block(*[qb.PZ(data[i]) for i in range(num_data)]),
         Block(
-            qb.PZ(ancilla[0], "X"),
-            qb.H(ancilla[0]),
+            qb.PX(ancilla[0]),
             qb.CX(ancilla[0], data[0]),
             qb.CX(ancilla[0], data[1]),
             qb.H(ancilla[0]),
             Measure(ancilla[0]) > syn[0],
         ),
         Block(
-            qb.PZ(ancilla[1], "Z"),
+            qb.PZ(ancilla[1]),
             qb.CX(data[0], ancilla[1]),
             qb.CX(data[3], ancilla[1]),
             Measure(ancilla[1]) > syn[1],
@@ -751,13 +744,7 @@ def _curated_cases() -> list[AuditCase]:
         ),
         AuditCase(
             "docs.prep_basis_x",
-            _docs_prep_basis_x_v2_defer,
-            expected_failure=ExpectedFailure(
-                exception_type="GuppyCodegenError",
-                message_contains="supports only Z-basis PZ",
-                classification="v2-defer",
-                reason="Non-Z PZ basis semantics are not represented in the v1 AST",
-            ),
+            _docs_prep_basis_x,
         ),
         AuditCase(
             "docs.rotation_rx",
@@ -771,13 +758,7 @@ def _curated_cases() -> list[AuditCase]:
         ),
         AuditCase(
             "docs.surface_syndrome_block18",
-            _docs_surface_syndrome_block18_probe,
-            expected_failure=ExpectedFailure(
-                exception_type="GuppyCodegenError",
-                message_contains="supports only Z-basis PZ",
-                classification="v2-defer",
-                reason="Doc-test includes PZ('X'); inline result CReg shape is covered separately",
-            ),
+            _docs_surface_syndrome_block18,
         ),
     ]
 

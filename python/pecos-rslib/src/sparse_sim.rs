@@ -158,15 +158,15 @@ impl SparseSim {
                 self.inner.py(q);
                 Ok(None)
             }
-            "PnZ" => {
+            "PNZ" => {
                 self.inner.pnz(q);
                 Ok(None)
             }
-            "PnX" => {
+            "PNX" => {
                 self.inner.pnx(q);
                 Ok(None)
             }
-            "PnY" => {
+            "PNY" => {
                 self.inner.pny(q);
                 Ok(None)
             }

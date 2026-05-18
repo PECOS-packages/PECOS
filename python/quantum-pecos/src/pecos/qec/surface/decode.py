@@ -726,9 +726,14 @@ def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 
         seed: Seed for the (ideal) trace run.
 
     Returns:
-        A ``TickCircuit`` with no detector/observable metadata attached; the
-        caller is responsible for supplying that.
+        A ``TickCircuit``. No detector/observable metadata is attached (the
+        caller supplies that), but if the program used Guppy ``result(tag,
+        ...)`` calls, a ``meas_tags`` metadata entry maps each tag to the
+        MeasIds it recorded -- a source-stable measurement identity that
+        survives Guppy/Selene compilation reordering.
     """
+    import json
+
     import pecos
 
     sim_builder = (
@@ -741,12 +746,28 @@ def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 
     chunks = list(sim_builder.capture_operation_trace())
 
     if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
-        return _replay_lowered_qis_trace_into_tick_circuit(chunks)
+        tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    else:
+        operations: list[dict[str, Any]] = []
+        for chunk in chunks:
+            operations.extend(list(chunk.get("operations", [])))
+        tc = _replay_qis_trace_into_tick_circuit(operations)
 
-    operations: list[dict[str, Any]] = []
+    # Attach the source-stable result()-tag -> MeasId linkage. The QIS
+    # result_id is the same integer stamped as the MeasId during replay, so
+    # the tag -> [result_id] map captured by the ExecutionContext is directly
+    # a tag -> [MeasId] map. ``named_result_ids`` is a cumulative snapshot, so
+    # the last chunk carrying a tag holds its complete id list.
+    meas_tags: dict[str, list[int]] = {}
     for chunk in chunks:
-        operations.extend(list(chunk.get("operations", [])))
-    return _replay_qis_trace_into_tick_circuit(operations)
+        nri = chunk.get("named_result_ids")
+        if nri:
+            for tag, ids in nri.items():
+                meas_tags[tag] = [int(i) for i in ids]
+    if meas_tags:
+        tc.set_meta("meas_tags", json.dumps(meas_tags, separators=(",", ":")))
+
+    return tc
 
 
 def _generate_traced_surface_tick_circuit(

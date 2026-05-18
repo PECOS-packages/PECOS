@@ -454,6 +454,53 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         debug!("HeliosSyncHandle: Got {} named results", result.len());
         Ok(result)
     }
+
+    fn get_named_result_ids(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, Vec<usize>>, InterfaceError> {
+        let lib = Self::get_lib()?;
+
+        let get_fn: Symbol<GetNamedResultsJsonFn> = unsafe {
+            lib.get(b"pecos_get_named_result_ids_json\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_get_named_result_ids_json: {e}"
+                ))
+            })?
+        };
+
+        let ptr = unsafe { get_fn() };
+        if ptr.is_null() {
+            return Ok(std::collections::BTreeMap::new());
+        }
+
+        let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
+        let json_str = c_str.to_str().map_err(|e| {
+            InterfaceError::ExecutionError(format!("Invalid UTF-8 in named result ids JSON: {e}"))
+        })?;
+
+        let result: std::collections::BTreeMap<String, Vec<usize>> = serde_json::from_str(json_str)
+            .map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to parse named result ids JSON: {e}"
+                ))
+            })?;
+
+        // Allocated by the same CString path; freed by the shared free symbol.
+        let free_fn: Symbol<FreeNamedResultsJsonFn> = unsafe {
+            lib.get(b"pecos_free_named_results_json\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_free_named_results_json: {e}"
+                ))
+            })?
+        };
+        unsafe { free_fn(ptr) };
+
+        debug!(
+            "HeliosSyncHandle: Got {} named result-id entries",
+            result.len()
+        );
+        Ok(result)
+    }
 }
 
 /// Derive the project target directory from the compile-time embedded Helios path.

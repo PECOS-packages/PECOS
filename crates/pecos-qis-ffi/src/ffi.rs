@@ -468,6 +468,14 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
     log::debug!("___read_future_bool called with future_id={future_id}");
     let result_id = i64_to_usize(future_id);
 
+    // Record the read so the next named-result store can attribute this
+    // measurement's result_id to its Guppy result(...) tag. This is what
+    // makes tag -> MeasId source-stable across compilation reordering.
+    if let Some(ctx) = crate::get_execution_context() {
+        // SAFETY: context is valid for the duration of execution.
+        unsafe { &*ctx }.note_read_result_id(result_id);
+    }
+
     // Check if result is already available in thread-local storage
     let existing_result = with_interface(|interface| interface.get_result(result_id));
     log::debug!("___read_future_bool: existing_result={existing_result:?}");

@@ -67,8 +67,8 @@ v1-feature-matrix "real While is out of scope for the sound
 emitter"); and `docs.inline_measure_creg` /
 `docs.surface_syndrome_block18` (#80: an inline/`Return`-only
 CReg gets no storage, so #80 fails loud instead of silently
-dropping its value -- the silent-output-loss defect #79's
-dual pre-review surfaced; `surface_syndrome_block18`'s
+dropping its value -- the silent-output-loss defect #79
+surfaced; `surface_syndrome_block18`'s
 `Measure(data) > CReg("final", ...)` is exactly that inline
 CReg, so it still build-fails post-#81 -- pinned honestly on
 the inline-CReg reason, NOT masked by restructuring the
@@ -116,7 +116,7 @@ _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     # out of scope for the sound emitter).
     "docs.while_loop": ("NotImplementedError", "does not support While loops"),
     # #80 inline/Return-only CReg fail-loud (the silent-output-loss
-    # defect #79's dual pre-review surfaced). A CReg used/measured/
+    # defect #79 surfaced). A CReg used/measured/
     # returned but never declared at Main scope gets no
     # `alloca [N x i1]`; #80 raises instead of silently dropping it.
     #  - inline_measure_creg: `final` only `Return`ed, never declared.
@@ -195,7 +195,7 @@ _EXPECTED_QIS_OK: frozenset[str] = frozenset(
     },
 )
 
-# Codex B1 post-review blocker: qir-qis validates the PRESENCE of these
+# #71 B1: qir-qis validates the PRESENCE of these
 # entry attributes but NOT their values, so a value regression (e.g.
 # silently reverting `qir_profiles` to "custom"/"base_profile", or
 # `output_labeling_schema` to something else) would pass both qir-qis
@@ -261,7 +261,7 @@ def test_audit_corpus_qir_compliance_baseline() -> None:
         qis_ok or qis_failed or validate_failed
     ), f"validate_qir never ran on built QIR; build_failed={sorted(label for label, _, _ in build_failed)}"
 
-    # Pre-existing build-failure set pinned (Codex Stage-A blocker): a
+    # Pre-existing build-failure set pinned (#71 Stage-A): a
     # new build regression -- or a fixed one -- must be triaged
     # deliberately, not silently scoped out.
     got_bf = {label: (etype, emsg) for label, etype, emsg in build_failed}
@@ -287,7 +287,7 @@ def test_audit_corpus_qir_compliance_baseline() -> None:
     for label, frag in _EXPECTED_VALIDATE_FAILED.items():
         assert frag in got_vf[label], f"{label}: validate msg lacks {frag!r}: {got_vf[label][:200]}"
 
-    # Tier 1b -- pin the exact entry-attr VALUES (Codex B1 blocker).
+    # Tier 1b -- pin the exact entry-attr VALUES (#71 B1).
     # qir-qis only enforces presence, so a value regression would pass
     # both qir-qis and the presence-only tier-1 check above.
     assert entry_attrs, "no validate-passing cases to check entry-attr values"

@@ -264,11 +264,11 @@ def test_whole_register_qreg_permutation_realized_qir() -> None:
 def test_non_bijective_permute_fails_loud() -> None:
     """A non-bijective Permute must fail loud, not silently miscompile.
 
-    #87 post-review (Codex blocker): the bijectivity guard must
-    validate the EXPANDED source/target lists BEFORE building the
-    map -- a dict would collapse a duplicate expanded source, so a
-    genuinely non-bijective Permute would compile (silent
-    miscompile). Both Codex repro shapes must raise.
+    #87: the bijectivity guard must validate the EXPANDED
+    source/target lists BEFORE building the map -- a dict would
+    collapse a duplicate expanded source, so a genuinely
+    non-bijective Permute would compile (silent miscompile). All
+    malformed shapes must raise.
     """
     # Distinct refs, src set != tgt set.
     a = QReg("a", 2)
@@ -283,4 +283,12 @@ def test_non_bijective_permute_fails_loud() -> None:
     b = QReg("b", 1)
     prog = Main(a, b, Permute([a[0], a[0]], [b[0], a[0]]), qubit.H(a[0]))
     with pytest.raises(NotImplementedError, match=r"duplicate source ref"):
+        SlrConverter(prog).qir()
+
+    # Duplicate target ref (symmetry: the duplicate-target guard must
+    # also be live, not just duplicate-source).
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    prog = Main(a, b, Permute([a[0], b[0]], [a[0], a[0]]), qubit.H(a[0]))
+    with pytest.raises(NotImplementedError, match=r"duplicate target ref"):
         SlrConverter(prog).qir()

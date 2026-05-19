@@ -425,20 +425,19 @@ class AstToQir:
         an inline / local-scope returned CReg produced ZERO recorded
         output for an explicit `Return` -- the build succeeded and
         validated, the program just silently returned nothing
-        (Codex #80 post-review blocker; same silent-output-loss
-        class as the four point-of-use sites). Qubit returns record
-        no classical output and are skipped via per-value provenance
+        (#80; same silent-output-loss class as the four
+        point-of-use sites). Qubit returns record no classical
+        output and are skipped via per-value provenance
         (`ReturnOp.value_kinds` from `_convert_return`), so a
         `Return(qreg)` is not false-rejected AND a returned inline
         CReg whose name collides with a declared QReg is still
-        validated (the Codex #80 re-confirm blocker -- a
-        name-membership skip was unsound).
+        validated (#80: a name-membership skip was unsound).
         """
         # Provenance comes from `_convert_return` (it knows the real
         # QReg/CReg object), NOT from a name-membership guess: a
         # returned inline CReg can share a declared QReg's name, which
         # a `qubit_map`-name skip silently mistook for a qubit return
-        # and dropped (Codex #80 re-confirm blocker). Unknown kind
+        # and dropped (#80). Unknown kind
         # ("" -- e.g. a directly-constructed ReturnOp) falls back to
         # "classical", the fail-loud-safe default.
         kinds = node.value_kinds

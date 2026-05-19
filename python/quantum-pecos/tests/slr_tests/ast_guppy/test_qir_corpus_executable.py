@@ -21,7 +21,7 @@ proof of the B2 M-B2-static lowering + #74/#78/#87(Permute)/#88A
 fail-loud line, at corpus scale.
 
 THE HARD PART IS THE ORACLE (per the scoped plan + dual
-pre-review `reviews/{codex,pickle}-79-...`). Every QIS_OK program
+#79 design + dual review). Every QIS_OK program
 is assigned a validation CLASS in `_MANIFEST`, derived from first
 principles (reading the circuit) and CONFIRMED -- never
 reverse-fitted -- by execution:
@@ -39,26 +39,26 @@ reverse-fitted -- by execution:
   CReg), or a single unconstrained random bit / fully
   unconstrained register / no sound first-principles invariant.
   Documented per program; X with output still gets the
-  record-shape contract (Codex pre-review blocker 1).
+  record-shape contract (#79 design blocker 1).
 
-Drift safety (Codex pre-review blocker / design item 4): the
+Drift safety (#79 design item 4): the
 candidate set is taken LIVE from `_qir_state()` QIS_OK, and every
 QIS_OK label MUST be in `_MANIFEST` -- a new/changed corpus
 program forces a classification decision (no silent gap), and the
 executable set cannot drift from the #71 structural gate.
 
-n_qubits derivation (Codex pre-review blocker 3): from the QIR
+n_qubits derivation (#79 design blocker 3): from the QIR
 `required_num_qubits` entry attribute -- NOT a max-operand-
 reference count (that is 0 for no-op QReg programs and panics
 selene with "No more qubits available to allocate").
 
-Pre-review blockers 1 (inline/Return-only CReg output loss) and 2
+#79 design blockers 1 (inline/Return-only CReg output loss) and 2
 (non-Z `Prep` silently Z-reset) were RESOLVED upstream by #80
 (inline CReg fails loud -> BUILD_FAILED, out of QIS_OK) and #81
 (dedicated `PX`/etc with correct reset+Clifford-tail lowering);
 the prep cases are reclassified here from first principles under
 the CORRECT #81 semantics (`docs.prep_basis_x` is `PX`=|+>, a
-single uniform Z-measure bit -> **X**, NOT the pre-review's
+single uniform Z-measure bit -> **X**, NOT an earlier
 deterministic `[0]` which assumed the old broken Z-reset).
 
 `@pytest.mark.slow` (one selene build per QIS_OK program; selene
@@ -92,7 +92,7 @@ _SHOTS = 16
 def _required_num_qubits(prog: Main) -> int:
     """n_qubits from the QIR `required_num_qubits` entry attr.
 
-    Codex #79 pre-review blocker 3: a max-operand-reference count
+    #79 design blocker 3: a max-operand-reference count
     is 0 for no-op QReg programs (e.g. surface_patch_builder_empty)
     and panics selene. The entry attr is the AST root-allocator
     capacity the backend pins, which is correct for every program.
@@ -166,7 +166,7 @@ def _multiple_qregs(obs: set[tuple[int, ...]]) -> None:
     is provably 0 -- only qubit 0 of each QReg is measured into bit
     0, bit 1 is never written (zeroinitializer). So each record is
     in {0,1}. Execution CONFIRMED c1 and c2 are NOT correlated (all
-    of (0,0)/(0,1)/(1,0)/(1,1) occur -- the pre-review's `c1==c2`
+    of (0,0)/(0,1)/(1,0)/(1,1) occur -- an earlier `c1==c2`
     first-principles guess was disproven by running it); we assert
     ONLY the sound bit-1==0 invariant, NOT a cross-register
     correlation, and require both bits exercised.
@@ -228,14 +228,14 @@ _MANIFEST: dict[str, tuple[str, _Spec]] = {
         "X",
         "Repeat(3) H on q[0] = H (odd) -> |+>; Z-measure is ONE uniform "
         "random bit -- no deterministic value or hard invariant "
-        "(pre-review's [0] assumed the result was discarded; it is recorded)",
+        "(an earlier [0] guess assumed the result was discarded; it is recorded)",
     ),
     "docs.prep_basis_x": (
         "X",
         "#81 PX = reset+H = |+>; Z-measure is ONE uniform random bit -- "
         "no hard invariant. PX correctness is validated behaviorally by "
         "test_prep_gates (Stim peek_bloch + Selene), not here. "
-        "(Pre-review's deterministic [0] assumed the OLD broken "
+        "(An earlier deterministic [0] guess assumed the OLD broken "
         "Prep('X')=Z-reset, fixed by #81.)",
     ),
     "qeclib.color488_syn_extract_bare": (
@@ -283,8 +283,8 @@ def test_qir_corpus_executable(label: str) -> None:
     D: exact record == spec, every shot, every seed.
     P: the hard invariant holds AND is exercised over the fixed
        seed set.
-    X: documented exclusion. Record-shape contract (Codex
-       pre-review blocker 1): a program with an explicit
+    X: documented exclusion. Record-shape contract (#79
+       design blocker 1): a program with an explicit
        `Return(CReg)` and a Main-scope CReg `alloca` MUST emit >=1
        executed record -- an explicit-return program that produces
        no record is an output-loss miscompile, NOT a silent X.

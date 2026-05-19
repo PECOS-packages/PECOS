@@ -435,11 +435,29 @@ impl<'a> DemBuilder<'a> {
         self
     }
 
-    fn meas_id_to_record_offset(&self, meas_id: usize) -> Option<i32> {
-        if meas_id >= self.num_measurements {
-            return None;
+    /// Resolves a JSON `meas_id` to a circuit measurement-record index.
+    ///
+    /// When the circuit carries stable `MeasId`s (the traced
+    /// `from_guppy`/`from_circuit` path), `meas_id` is interpreted as that
+    /// **stable stamped id** and looked up in `influence_map.meas_ids` -- so a
+    /// non-sequential traced id (e.g. the QIS result slot) resolves correctly
+    /// regardless of compilation reordering. When no stable ids are present
+    /// (the decoupled/raw builder with an empty influence map), `meas_id` is a
+    /// positional measurement index (the legacy escape hatch). Returns the
+    /// `0..num_measurements` record index, or `None` if the id is absent.
+    fn resolve_meas_id_to_tc_index(&self, meas_id: usize) -> Option<usize> {
+        if self.influence_map.meas_ids.is_empty() {
+            return (meas_id < self.num_measurements).then_some(meas_id);
         }
-        let measurement = i64::try_from(meas_id).ok()?;
+        self.influence_map
+            .meas_ids
+            .iter()
+            .position(|mid| mid.0 == meas_id)
+    }
+
+    fn meas_id_to_record_offset(&self, meas_id: usize) -> Option<i32> {
+        let index = self.resolve_meas_id_to_tc_index(meas_id)?;
+        let measurement = i64::try_from(index).ok()?;
         let total = i64::try_from(self.num_measurements).ok()?;
         i32::try_from(measurement - total).ok()
     }
@@ -462,10 +480,10 @@ impl<'a> DemBuilder<'a> {
         let check = |kind: &str, id: u32, records: &[i32], meas_ids: &[usize]| {
             if records.is_empty() {
                 for &mid in meas_ids {
-                    if mid >= self.num_measurements {
+                    if self.resolve_meas_id_to_tc_index(mid).is_none() {
                         return Err(DemBuilderError::ParseError(format!(
-                            "{kind} {id} references meas_id {mid}, but the \
-                             circuit has only {} measurement(s)",
+                            "{kind} {id} references meas_id {mid}, which is \
+                             not present in the circuit's {} measurement(s)",
                             self.num_measurements
                         )));
                     }
@@ -536,6 +554,19 @@ impl<'a> DemBuilder<'a> {
                  detector/observable record offsets resolve correctly",
                 self.num_measurements
             )));
+        }
+        // Internal-consistency guard: stable MeasIds must be unique. A
+        // duplicate would make stamped-id resolution bind to the wrong
+        // measurement; it indicates a trace/replay bug, not bad caller input.
+        let mut seen = std::collections::HashSet::with_capacity(self.influence_map.meas_ids.len());
+        for mid in &self.influence_map.meas_ids {
+            if !seen.insert(mid.0) {
+                return Err(DemBuilderError::ParseError(format!(
+                    "duplicate stable MeasId {} in the traced circuit; each \
+                     measurement must have a unique stamped id",
+                    mid.0
+                )));
+            }
         }
         Ok(())
     }
@@ -1062,7 +1093,9 @@ impl<'a> DemBuilder<'a> {
         for det in &self.detectors {
             if det.records.is_empty() {
                 for &meas_id in &det.meas_ids {
-                    if let Some(&influence_idx) = tc_to_influence.get(&meas_id) {
+                    if let Some(tc_idx) = self.resolve_meas_id_to_tc_index(meas_id)
+                        && let Some(&influence_idx) = tc_to_influence.get(&tc_idx)
+                    {
                         meas_to_detectors
                             .entry(influence_idx)
                             .or_default()
@@ -1090,7 +1123,9 @@ impl<'a> DemBuilder<'a> {
             }
             if obs.records.is_empty() {
                 for &meas_id in &obs.meas_ids {
-                    if let Some(&influence_idx) = tc_to_influence.get(&meas_id) {
+                    if let Some(tc_idx) = self.resolve_meas_id_to_tc_index(meas_id)
+                        && let Some(&influence_idx) = tc_to_influence.get(&tc_idx)
+                    {
                         meas_to_observables
                             .entry(influence_idx)
                             .or_default()
@@ -1301,7 +1336,7 @@ fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderErr
     })?;
     let array = parsed
         .as_array()
-        .ok_or_else(|| DemBuilderError::ParseError("detectors JSON must be an array".into()))?;
+        .ok_or_else(|| DemBuilderError::ParseError("detectors_json must be a JSON list".into()))?;
     array.iter().map(parse_single_detector).collect()
 }
 
@@ -1310,9 +1345,11 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
     let object = value
         .as_object()
         .ok_or_else(|| DemBuilderError::ParseError("detector entry must be an object".into()))?;
+    reject_tracked_pauli(object, "detector")?;
     let id = extract_u32(
         object,
         &["id", "detector_id"],
+        'D',
         "missing detector id",
         "detector id out of range",
     )?;
@@ -1338,9 +1375,9 @@ fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilde
     let parsed: serde_json::Value = serde_json::from_str(json).map_err(|err| {
         DemBuilderError::ParseError(format!("observables JSON is malformed: {err}"))
     })?;
-    let array = parsed
-        .as_array()
-        .ok_or_else(|| DemBuilderError::ParseError("observables JSON must be an array".into()))?;
+    let array = parsed.as_array().ok_or_else(|| {
+        DemBuilderError::ParseError("observables_json must be a JSON list".into())
+    })?;
     array.iter().map(parse_single_observable).collect()
 }
 
@@ -1349,9 +1386,11 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     let object = value
         .as_object()
         .ok_or_else(|| DemBuilderError::ParseError("observable entry must be an object".into()))?;
+    reject_tracked_pauli(object, "observable")?;
     let id = extract_u32(
         object,
         &["id", "observable_id"],
+        'L',
         "missing observable id",
         "observable id out of range",
     )?;
@@ -1365,9 +1404,35 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     })
 }
 
+/// Rejects a JSON entry that declares `kind: "tracked_pauli"`.
+///
+/// Tracked Paulis reference qubits via `pauli`, not measurements, and are
+/// only produced from circuit annotations -- never from `detectors_json` /
+/// `observables_json`. The JSON parser reads only `id`/`records`, so a
+/// tracked-Pauli entry here would be silently mis-ingested.
+fn reject_tracked_pauli(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kind: &str,
+) -> Result<(), DemBuilderError> {
+    if object.get("kind").and_then(serde_json::Value::as_str) == Some("tracked_pauli") {
+        return Err(DemBuilderError::ParseError(format!(
+            "{kind} entry uses kind=\"tracked_pauli\", which is not supported \
+             in detectors_json/observables_json (tracked Paulis come only \
+             from circuit annotations)"
+        )));
+    }
+    Ok(())
+}
+
+/// Reads an entry id as either an unsigned integer or the DEM-label string
+/// form (`prefix` is `'D'` for detectors, `'L'` for observables, e.g.
+/// `"D0"`/`"L0"`); both normalize to the same integer. A string id with the
+/// wrong prefix or a non-numeric body is a hard error -- silently
+/// reinterpreting it would risk a mislabeled DEM.
 fn extract_u32(
     object: &serde_json::Map<String, serde_json::Value>,
     keys: &[&str],
+    prefix: char,
     missing_message: &str,
     range_message: &str,
 ) -> Result<u32, DemBuilderError> {
@@ -1375,10 +1440,27 @@ fn extract_u32(
         .iter()
         .find_map(|key| object.get(*key))
         .ok_or_else(|| DemBuilderError::ParseError(missing_message.into()))?;
-    let raw = value.as_u64().ok_or_else(|| {
-        DemBuilderError::ParseError(format!("{missing_message}: expected unsigned integer"))
-    })?;
-    u32::try_from(raw).map_err(|_| DemBuilderError::ParseError(range_message.into()))
+    if let Some(raw) = value.as_u64() {
+        return u32::try_from(raw).map_err(|_| DemBuilderError::ParseError(range_message.into()));
+    }
+    if let Some(s) = value.as_str() {
+        let body = s.strip_prefix(prefix);
+        if let Some(digits) = body
+            && !digits.is_empty()
+            && digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return digits
+                .parse::<u32>()
+                .map_err(|_| DemBuilderError::ParseError(range_message.into()));
+        }
+        return Err(DemBuilderError::ParseError(format!(
+            "id {s:?} is not a valid identifier; expected an integer or the \
+             {prefix:?}-prefixed form like {prefix}0"
+        )));
+    }
+    Err(DemBuilderError::ParseError(format!(
+        "{missing_message}: expected an integer or {prefix:?}-prefixed string id"
+    )))
 }
 
 /// Extracts coordinates array [x, y, t].
@@ -1447,6 +1529,13 @@ fn extract_measurement_refs(
     } else {
         Vec::new()
     };
+
+    if records.is_empty() && meas_ids.is_empty() {
+        return Err(DemBuilderError::ParseError(format!(
+            "{kind} entry has neither 'records' nor 'meas_ids'; it would \
+             contribute nothing and silently weaken the DEM"
+        )));
+    }
 
     Ok((records, meas_ids))
 }
@@ -2191,6 +2280,48 @@ mod tests {
                 .try_build()
                 .is_ok(),
             "empty influence map must keep the declarative-count escape hatch"
+        );
+    }
+
+    #[test]
+    fn test_parse_accepts_dem_label_id_form() {
+        let det = parse_detectors_json(r#"[{"id": "D0", "records": [-1]}]"#).unwrap();
+        assert_eq!(det[0].id, 0);
+        let obs = parse_observables_json(r#"[{"id": "L7", "records": [-1]}]"#).unwrap();
+        assert_eq!(obs[0].id, 7);
+        // Wrong prefix / non-numeric body is a hard error, not a guess.
+        assert!(parse_detectors_json(r#"[{"id": "L0", "records": [-1]}]"#).is_err());
+        assert!(parse_detectors_json(r#"[{"id": "X0", "records": [-1]}]"#).is_err());
+        assert!(parse_observables_json(r#"[{"id": "Lx", "records": [-1]}]"#).is_err());
+    }
+
+    #[test]
+    fn test_parse_rejects_tracked_pauli_and_refless_entries() {
+        assert!(
+            parse_observables_json(r#"[{"kind": "tracked_pauli", "pauli": "X0"}]"#).is_err(),
+            "tracked_pauli must be rejected in observables_json",
+        );
+        assert!(
+            parse_detectors_json(r#"[{"id": 0, "kind": "tracked_pauli"}]"#).is_err(),
+            "tracked_pauli must be rejected in detectors_json too",
+        );
+        assert!(
+            parse_detectors_json(r#"[{"id": 0}]"#).is_err(),
+            "an entry with neither records nor meas_ids must be rejected",
+        );
+    }
+
+    #[test]
+    fn test_validate_measurement_count_rejects_duplicate_stamped_meas_id() {
+        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
+        influence_map.meas_ids = vec![pecos_core::MeasId(5), pecos_core::MeasId(5)];
+        let result = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [5]}]"#)
+            .unwrap()
+            .try_build();
+        assert!(
+            result.is_err(),
+            "a duplicate stable MeasId must fail loud, not bind to the first",
         );
     }
 

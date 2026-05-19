@@ -196,3 +196,29 @@ def test_from_guppy_out_of_range_record_fails_loud() -> None:
 def test_from_guppy_out_of_range_meas_id_fails_loud() -> None:
     with pytest.raises(ValueError, match=r"meas_id|not present"):
         _dem_text(detectors_json='[{"id":0,"meas_ids":[999]}]')
+
+
+def test_from_guppy_accepts_dem_label_id_forms() -> None:
+    """The "D0"/"L0" id convenience form is now normalized in the Rust
+    builder (single source of truth), equivalent to the bare integer."""
+    assert _dem_text(detectors_json='[{"id":"D0","records":[-1]}]') == _dem_text(
+        detectors_json='[{"id":0,"records":[-1]}]',
+    )
+    assert _dem_text(observables_json='[{"id":"L0","records":[-1]}]') == _dem_text(
+        observables_json='[{"id":0,"records":[-1]}]',
+    )
+
+
+def test_from_guppy_rejects_bad_string_id() -> None:
+    with pytest.raises(ValueError, match=r"not a valid identifier"):
+        _dem_text(detectors_json='[{"id":"X0","records":[-1]}]')
+
+
+def test_from_guppy_rejects_detector_tracked_pauli() -> None:
+    with pytest.raises(ValueError, match="tracked_pauli"):
+        _dem_text(detectors_json='[{"kind":"tracked_pauli","label":"x","pauli":"X0"}]')
+
+
+def test_from_guppy_rejects_entry_without_records_or_meas_ids() -> None:
+    with pytest.raises(ValueError, match=r"records|meas_ids|neither"):
+        _dem_text(detectors_json='[{"id":0}]')

@@ -9,227 +9,22 @@ Rust extension import the high-level Python package (a dependency cycle), this
 module defines a thin Python subclass that adds :meth:`from_guppy` and is
 re-exported as the public ``pecos.qec.DetectorErrorModel``.
 
-The subclass is behaviorally identical to the Rust class for every other
-operation; all existing methods (``from_circuit``, ``from_pecos_metadata_json``,
-``to_string``, ``to_sampler``, ...) are inherited unchanged.
+This wrapper is intentionally thin: it only traces the Guppy program into a
+``TickCircuit`` and hands the caller's detector/observable JSON to the Rust
+DEM builder verbatim. All metadata validation -- JSON shape, ``D0``/``L0`` id
+forms, tracked-Pauli rejection, ``num_measurements`` consistency, out-of-range
+records, and ``meas_id`` resolution against the circuit's stable stamped
+``MeasId``s -- is the single responsibility of the Rust builder
+(``pecos_qec::fault_tolerance::dem_builder``), so the same rules apply
+identically whether a DEM is built via ``from_guppy``, ``from_circuit``,
+``DemSampler.from_circuit``, or the public ``DemBuilder``.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
-
-
-class _MetadataError(ValueError):
-    """Malformed ``from_guppy`` detector/observable metadata.
-
-    A ``ValueError`` subclass deliberately raised for type/shape violations
-    too (where ``TypeError`` would be the Pythonic default), so that *every*
-    way the caller's metadata can be wrong -- wrong type, wrong shape,
-    out-of-range ref -- surfaces as one consistent failure type matching
-    ``from_guppy``'s documented contract. Existing ``except ValueError`` /
-    ``pytest.raises(ValueError)`` callers keep working.
-    """
-
-
-def _collect_measurement_info(tc: Any) -> tuple[int, dict[int, int]]:
-    """Return (measurement count, MeasId -> measurement index) for the traced circuit.
-
-    Counts measured qubits across all MZ gates and gathers the stable MeasIds
-    stamped on them.
-    """
-    dag = tc.to_dag_circuit()
-    count = 0
-    meas_id_to_index: dict[int, int] = {}
-    for node_id in dag.nodes():
-        gate = dag.gate(node_id)
-        if gate is None or gate.gate_type.name != "MZ":
-            continue
-        qubits = list(gate.qubits)
-        ids = list(gate.meas_ids)
-        if len(ids) != len(qubits):
-            msg = (
-                "Traced Guppy circuit has an MZ gate without a stable MeasId "
-                f"(qubits={qubits}, meas_ids={ids}) after replay and "
-                "assign_missing_meas_ids(); this indicates an internal "
-                "inconsistency in the traced-circuit pipeline, not a problem "
-                "with the caller's inputs."
-            )
-            raise ValueError(msg)
-        for local_idx, mid in enumerate(ids):
-            stable_id = int(mid)
-            if stable_id in meas_id_to_index:
-                msg = f"Duplicate measurement id {stable_id} in TickCircuit"
-                raise ValueError(msg)
-            meas_id_to_index[stable_id] = count + local_idx
-        count += len(qubits)
-    return count, meas_id_to_index
-
-
-def _validate_measurement_contract(
-    tc: Any,
-    *,
-    detectors_json: str,
-    observables_json: str,
-    num_measurements: int | None,
-) -> tuple[str, str]:
-    """Fail loudly if the caller's detector/observable JSON is inconsistent.
-
-    Catches the common ``from_guppy`` misuse where detector ``records``/
-    ``meas_ids`` do not line up with the measurements the traced program
-    actually emits, instead of silently building a wrong DEM. ``meas_ids`` are
-    normalized to negative ``records`` offsets because the Rust DEM metadata
-    parser consumes positional records.
-    """
-    measured, meas_id_to_index = _collect_measurement_info(tc)
-
-    if num_measurements is not None and num_measurements != measured:
-        msg = (
-            f"num_measurements={num_measurements} does not match the "
-            f"{measured} measurement(s) the traced Guppy program emits. The "
-            "detector/observable record offsets are defined against the "
-            "traced measurement order; a mismatch means the DEM would be "
-            "silently wrong."
-        )
-        raise ValueError(msg)
-    effective = num_measurements if num_measurements is not None else measured
-
-    def _require_int(value: Any, label: str) -> int:
-        if not isinstance(value, int) or isinstance(value, bool):
-            msg = f"{label} must be an integer"
-            raise _MetadataError(msg)
-        return value
-
-    def _require_list(value: Any, label: str) -> list[Any]:
-        if not isinstance(value, list):
-            msg = f"{label} must be a list"
-            raise _MetadataError(msg)
-        return value
-
-    def _check(kind: str, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        alt_id = "detector_id" if kind == "Detector" else "observable_id"
-        normalized_entries: list[dict[str, Any]] = []
-        for entry in entries:
-            if not isinstance(entry, dict):
-                msg = f"{kind} entry is not a JSON object: {entry!r}"
-                raise _MetadataError(msg)
-            # Tracked Paulis reference qubits via "pauli", not measurements.
-            if entry.get("kind") == "tracked_pauli":
-                msg = (
-                    f"{kind} entry {entry!r} uses kind='tracked_pauli', "
-                    "which is not supported by from_guppy JSON metadata."
-                )
-                raise ValueError(msg)
-            # Schema: the Rust DEM-builder JSON parser requires an integer id
-            # and records; on a parse failure it silently builds an empty DEM.
-            # Validate here so malformed input fails loud instead.
-            raw_id = entry.get("id", entry.get(alt_id))
-            try:
-                _require_int(raw_id, f"{kind} id")
-            except ValueError as exc:
-                msg = (
-                    f"{kind} entry {entry!r} is missing a valid integer "
-                    f"'id' (or '{alt_id}'); the DEM builder would silently "
-                    "drop it and produce an empty DEM."
-                )
-                raise ValueError(msg) from exc
-
-            records = _require_list(entry.get("records", []), f"{kind} {raw_id} records")
-            meas_ids = _require_list(entry.get("meas_ids", []), f"{kind} {raw_id} meas_ids")
-            if not (records or meas_ids):
-                msg = (
-                    f"{kind} {raw_id} has no 'records' or 'meas_ids'; it "
-                    "would contribute nothing and silently weaken the DEM."
-                )
-                raise ValueError(msg)
-            normalized_records: list[int] = []
-            for rec in records:
-                rec_int = _require_int(rec, f"{kind} {raw_id} record offset")
-                idx = effective + rec_int
-                if not 0 <= idx < effective:
-                    msg = (
-                        f"{kind} {entry.get('id', entry)} references record "
-                        f"{rec_int}, which is out of range for a circuit with "
-                        f"{effective} measurement(s)."
-                    )
-                    raise ValueError(msg)
-                normalized_records.append(rec_int)
-            for mid in meas_ids:
-                stable_id = _require_int(mid, f"{kind} {raw_id} meas_id")
-                if stable_id not in meas_id_to_index:
-                    msg = (
-                        f"{kind} {entry.get('id', entry)} references "
-                        f"meas_id {stable_id}, which is not present in the traced "
-                        "circuit. meas_ids must match the stable MeasIds the "
-                        "traced program assigns (one per measured qubit, in "
-                        "trace order)."
-                    )
-                    raise ValueError(msg)
-                normalized_records.append(meas_id_to_index[stable_id] - effective)
-
-            normalized = dict(entry)
-            normalized.pop("meas_ids", None)
-            normalized["records"] = normalized_records
-            normalized_entries.append(normalized)
-
-        return normalized_entries
-
-    try:
-        detectors = json.loads(detectors_json) if detectors_json else []
-        observables = json.loads(observables_json) if observables_json else []
-    except json.JSONDecodeError as exc:
-        msg = f"detectors_json/observables_json is not valid JSON: {exc}"
-        raise ValueError(msg) from exc
-
-    if not isinstance(detectors, list) or not isinstance(observables, list):
-        msg = "detectors_json and observables_json must each be a JSON list"
-        raise _MetadataError(msg)
-
-    normalized_detectors = _check("Detector", detectors)
-    normalized_observables = _check("Observable", observables)
-    return (
-        json.dumps(normalized_detectors, separators=(",", ":")),
-        json.dumps(normalized_observables, separators=(",", ":")),
-    )
-
-
-def _normalize_entry_ids(blob: str, prefix: str) -> str:
-    """Normalize ``"id": "D0"``/``"L0"`` to the integer the pipeline expects.
-
-    ``prefix`` is ``"D"`` for detectors, ``"L"`` for observables. Integer ids
-    and entries without ``"id"`` (e.g. those using ``detector_id`` /
-    ``observable_id``) pass through unchanged. A string id with the wrong
-    prefix or a non-numeric body is a hard error -- silently reinterpreting it
-    would risk a mislabeled DEM.
-    """
-    if not blob:
-        return blob
-    try:
-        entries = json.loads(blob)
-    except json.JSONDecodeError:
-        return blob  # validation downstream reports the parse error
-    if not isinstance(entries, list):
-        return blob
-
-    changed = False
-    for entry in entries:
-        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
-            continue
-        raw = entry["id"].strip()
-        body = raw[len(prefix) :] if raw.startswith(prefix) else None
-        if body is None or not body.isdigit():
-            msg = (
-                f"id {entry['id']!r} is not a valid identifier for this list; "
-                f"expected an integer or {prefix!r}-prefixed form like "
-                f"{prefix}0 (detectors use 'D', observables use 'L')."
-            )
-            raise ValueError(msg)
-        entry["id"] = int(body)
-        changed = True
-
-    return json.dumps(entries, separators=(",", ":")) if changed else blob
 
 
 class DetectorErrorModel(_RustDetectorErrorModel):
@@ -271,7 +66,8 @@ class DetectorErrorModel(_RustDetectorErrorModel):
         Runs ``guppy`` under the Selene QIS engine with operation tracing,
         replays the captured gate stream into a ``TickCircuit``, attaches the
         caller-supplied detector/observable definitions, and builds the DEM via
-        native PECOS fault propagation.
+        native PECOS fault propagation. All metadata validation happens in the
+        Rust DEM builder (single source of truth).
 
         Args:
             guppy: Anything ``pecos.sim`` accepts -- a ``@guppy``-decorated
@@ -285,24 +81,24 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 ``[{"id": 0, "records": [-1, -5]}, ...]``. ``id`` may be a bare
                 integer or, for convenience, the DEM-label form ``"D0"``
                 (observables likewise accept ``"L0"``); both normalize to the
-                same integer. ``records`` are
-                negative measurement offsets (Stim convention); ``meas_ids``
-                may be used instead. Defined against the *traced* program's own
-                measurement order.
+                same integer. ``records`` are negative measurement offsets
+                (Stim convention), positional in the traced measurement record.
+                ``meas_ids`` may be used instead and reference the *stable
+                stamped* ``MeasId``s -- resolved in Rust against the circuit's
+                actual ids, so they are robust to any measurement reordering
+                introduced by Guppy/Selene compilation.
             observables_json: Observable definitions as a JSON list, e.g.
                 ``[{"id": 0, "records": [-1]}]`` (same id/records rules as
                 detectors).
 
                 Tracked Paulis: **hand-authored JSON tracked Paulis are NOT
-                supported** by this path. The DEM builder's JSON observable
-                parser reads only ``id``/``records``; it ignores ``kind`` /
-                ``label`` / ``pauli``. Tracked Paulis are only produced from
+                supported** by this path. Tracked Paulis are only produced from
                 circuit *annotations* (e.g. the surface builder), not from
-                ``observables_json``. A ``{"kind": "tracked_pauli", ...}``
-                entry here is rejected.
+                ``observables_json``; a ``{"kind": "tracked_pauli", ...}``
+                entry here is rejected by the builder.
             num_measurements: Total measurement count, used to resolve negative
                 ``records`` offsets. If omitted, it is inferred from the traced
-                circuit.
+                circuit; if given, it must match the traced count.
             p1: Single-qubit gate depolarizing rate.
             p2: Two-qubit gate depolarizing rate.
             p_meas: Measurement flip rate.
@@ -336,9 +132,6 @@ class DetectorErrorModel(_RustDetectorErrorModel):
             ``measure()`` itself allocates the result slot in the trace (a
             ``result(...)`` call is not required for MeasId assignment).
 
-            Detector/observable ``records``/``meas_ids`` reference measurements
-            by *traced (post-compilation)* order and are therefore sensitive to
-            any measurement reordering introduced by Guppy/Selene compilation.
             Source-anchored tag-referenced detectors are **not exposed here**:
             the sound HUGR-based binding
             (``pecos_hugr_qis::extract_result_tag_measurements``) only covers
@@ -349,27 +142,19 @@ class DetectorErrorModel(_RustDetectorErrorModel):
         """
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
 
-        # Convenience: allow "id": "D0" / "L0" (matching DEM labels) in
-        # addition to bare integers. Normalized to ints here so the schema,
-        # Rust parser, and surface path are untouched.
-        detectors_json = _normalize_entry_ids(detectors_json, "D")
-        observables_json = _normalize_entry_ids(observables_json, "L")
-
         tc = trace_guppy_into_tick_circuit(guppy, num_qubits, seed=seed)
 
         # Compilation passes required for traced QIS circuits before fault
         # analysis: normalize parameterized Clifford rotations to named gates
-        # and stamp stable MeasIds onto measurement gates.
+        # and stamp stable MeasIds onto measurement gates. After this every
+        # MZ carries the stable id the Rust builder resolves meas_ids against.
         tc.lower_clifford_rotations()
         tc.assign_missing_meas_ids()
 
-        detectors_json, observables_json = _validate_measurement_contract(
-            tc,
-            detectors_json=detectors_json,
-            observables_json=observables_json,
-            num_measurements=num_measurements,
-        )
-
+        # Hand the caller's metadata to the Rust builder verbatim; it owns all
+        # schema/ref validation (including D0/L0 id forms, tracked-Pauli
+        # rejection, num_measurements consistency, and stamped-MeasId
+        # resolution).
         tc.set_meta("detectors", detectors_json)
         tc.set_meta("observables", observables_json)
         if num_measurements is not None:

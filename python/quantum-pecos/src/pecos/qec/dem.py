@@ -22,6 +22,18 @@ from typing import Any
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
 
+class _MetadataError(ValueError):
+    """Malformed ``from_guppy`` detector/observable metadata.
+
+    A ``ValueError`` subclass deliberately raised for type/shape violations
+    too (where ``TypeError`` would be the Pythonic default), so that *every*
+    way the caller's metadata can be wrong -- wrong type, wrong shape,
+    out-of-range ref -- surfaces as one consistent failure type matching
+    ``from_guppy``'s documented contract. Existing ``except ValueError`` /
+    ``pytest.raises(ValueError)`` callers keep working.
+    """
+
+
 def _collect_measurement_info(tc: Any) -> tuple[int, dict[int, int]]:
     """Return (measurement count, MeasId -> measurement index) for the traced circuit.
 
@@ -87,25 +99,22 @@ def _validate_measurement_contract(
     def _require_int(value: Any, label: str) -> int:
         if not isinstance(value, int) or isinstance(value, bool):
             msg = f"{label} must be an integer"
-            raise ValueError(msg)  # noqa: TRY004
+            raise _MetadataError(msg)
         return value
 
     def _require_list(value: Any, label: str) -> list[Any]:
         if not isinstance(value, list):
             msg = f"{label} must be a list"
-            raise ValueError(msg)  # noqa: TRY004
+            raise _MetadataError(msg)
         return value
 
     def _check(kind: str, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         alt_id = "detector_id" if kind == "Detector" else "observable_id"
         normalized_entries: list[dict[str, Any]] = []
-        # NB: malformed input raises ValueError (not TypeError) to keep one
-        # consistent failure type across from_guppy's documented contract and
-        # the sibling record/meas_id checks below -- hence the TRY004 noqas.
         for entry in entries:
             if not isinstance(entry, dict):
                 msg = f"{kind} entry is not a JSON object: {entry!r}"
-                raise ValueError(msg)  # noqa: TRY004
+                raise _MetadataError(msg)
             # Tracked Paulis reference qubits via "pauli", not measurements.
             if entry.get("kind") == "tracked_pauli":
                 msg = (
@@ -176,7 +185,7 @@ def _validate_measurement_contract(
 
     if not isinstance(detectors, list) or not isinstance(observables, list):
         msg = "detectors_json and observables_json must each be a JSON list"
-        raise ValueError(msg)  # noqa: TRY004
+        raise _MetadataError(msg)
 
     normalized_detectors = _check("Detector", detectors)
     normalized_observables = _check("Observable", observables)

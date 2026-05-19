@@ -1235,7 +1235,6 @@ impl ClassicalEngine for QisEngine {
             self.measurement_results.len(),
             has_named_results
         );
-
         Ok(shot)
     }
 

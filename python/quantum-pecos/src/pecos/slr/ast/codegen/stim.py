@@ -114,6 +114,12 @@ class StimCodeGenContext:
     measurement_count: int = 0
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
+    qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
+    # Static logical permutation (same model as the QIR codegen #87 /
+    # the Guppy linearity tracker -- Stim has no permute instruction).
+    # Maps a logical (reg, index) ref to the (reg, index) whose qubit
+    # it resolves to. Consulted at every qubit-ref lowering.
+    permutation_map: dict[tuple[str, int], tuple[str, int]] = field(default_factory=dict)
 
     def get_root_allocator(self, name: str) -> str:
         """Get the root allocator for a given allocator name."""
@@ -132,6 +138,11 @@ class StimCodeGenContext:
 
         For child allocators, translates to root allocator with computed offset.
         """
+        # Resolve any active logical permutation first (identity until
+        # a Permute runs; decl-time pre-population sees the empty map,
+        # so real qubits are still allocated 1:1).
+        allocator, index = self.permutation_map.get((allocator, index), (allocator, index))
+
         # Translate to root allocator and absolute index
         root = self.get_root_allocator(allocator)
         abs_index = self.get_absolute_index(allocator, index)
@@ -199,6 +210,7 @@ class AstToStim:
         # Allocate qubits only for root allocators
         for decl in program.declarations:
             if isinstance(decl, AllocatorDecl):
+                self.context.qreg_sizes[decl.name] = decl.capacity
                 # Only allocate for root allocators (those without parents)
                 if decl.parent is None:
                     for i in range(decl.capacity):
@@ -206,6 +218,8 @@ class AstToStim:
             elif isinstance(decl, RegisterDecl):
                 pass  # Classical registers don't need qubit allocation
 
+        if program.allocator:
+            self.context.qreg_sizes[program.allocator.name] = program.allocator.capacity
         if program.allocator and program.allocator.parent is None:
             for i in range(program.allocator.capacity):
                 self.context.get_qubit(program.allocator.name, i)
@@ -421,21 +435,68 @@ class AstToStim:
         for stmt in node.body:
             self._process_statement(stmt)
 
-    def _process_permute(self, node: PermuteOp) -> None:
-        """Process a permutation operation.
+    def _expand_permute_ref(self, ref: str) -> list[tuple[str, int]]:
+        """Expand a Permute ref string to logical (reg, index) pairs.
 
-        Updates the internal allocator mapping to swap qubit references.
-        Stim doesn't have a permute instruction, so this just updates
-        how we map allocator names to qubit indices.
+        `name[idx]` -> a single element; bare `name` -> every element
+        of the qubit register. Stim has no classical-register model,
+        so a bare CReg permute is not realizable -> fail loud (never
+        a silent no-op). Mirrors the QIR codegen's #87 helper.
         """
-        # Swap the allocator mappings
-        for src, tgt in zip(node.sources, node.targets, strict=False):
-            # Get current offsets
-            src_offset = self.context.allocator_offsets.get(src, 0)
-            tgt_offset = self.context.allocator_offsets.get(tgt, 0)
-            # Swap them
-            self.context.allocator_offsets[src] = tgt_offset
-            self.context.allocator_offsets[tgt] = src_offset
+        if ref.endswith("]") and "[" in ref:
+            name, idx = ref[:-1].split("[", 1)
+            return [(name, int(idx))]
+        if ref in self.context.qreg_sizes:
+            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
+        msg = (
+            f"Stim codegen: whole-register Permute of {ref!r} is not "
+            "supported (no classical-register model in Stim); a "
+            "qubit-register or element-wise Permute is realizable."
+        )
+        raise NotImplementedError(msg)
+
+    def _process_permute(self, node: PermuteOp) -> None:
+        """Realize a Permute as a static logical relabel.
+
+        Stim has no permute instruction, so -- exactly like the QIR
+        codegen (#87) and the Guppy linearity tracker -- a Permute is
+        realized at compile time by relabelling which qubit each
+        logical (reg, index) ref resolves to (consulted in
+        `get_qubit`). The old `allocator_offsets` swap was a no-op
+        for element-wise refs and self-cancelling for a whole-register
+        (a,b)/(b,a) pair -- a silent miscompile.
+        """
+        if len(node.sources) != len(node.targets):
+            msg = "Stim codegen: Permute source/target length mismatch"
+            raise NotImplementedError(msg)
+
+        # Validate the expanded ref lists BEFORE building the dict (a
+        # dict would silently collapse a duplicate source).
+        src_all: list[tuple[str, int]] = []
+        tgt_all: list[tuple[str, int]] = []
+        for source, target in zip(node.sources, node.targets, strict=True):
+            src_refs = self._expand_permute_ref(source)
+            tgt_refs = self._expand_permute_ref(target)
+            if len(src_refs) != len(tgt_refs):
+                msg = f"Stim codegen: Permute element count mismatch for {source!r} -> {target!r}"
+                raise NotImplementedError(msg)
+            src_all.extend(src_refs)
+            tgt_all.extend(tgt_refs)
+
+        if len(src_all) != len(set(src_all)):
+            msg = "Stim codegen: Permute has a duplicate source ref (not a permutation)"
+            raise NotImplementedError(msg)
+        if len(tgt_all) != len(set(tgt_all)):
+            msg = "Stim codegen: Permute has a duplicate target ref (not a permutation)"
+            raise NotImplementedError(msg)
+        if set(src_all) != set(tgt_all):
+            msg = "Stim codegen: Permute must be bijective over the same ref set"
+            raise NotImplementedError(msg)
+
+        # Compose ATOMICALLY (snapshot old, then map[s] = old.get(t, t))
+        # so a whole-register (a,b)/(b,a) pair applies once.
+        old = dict(self.context.permutation_map)
+        self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
 
 
 def ast_to_stim(program: Program) -> stim.Circuit:

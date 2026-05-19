@@ -292,3 +292,49 @@ def test_non_bijective_permute_fails_loud() -> None:
     prog = Main(a, b, Permute([a[0], b[0]], [a[0], a[0]]), qubit.H(a[0]))
     with pytest.raises(NotImplementedError, match=r"duplicate target ref"):
         SlrConverter(prog).qir()
+
+
+def test_permute_realized_quantum_circuit() -> None:
+    """A2: element-wise + whole-register Permute is realized in the
+    QuantumCircuit codegen (was a silent no-op -- same class as the
+    QIR #87 bug; the allocator_offsets swap never reached gate
+    qubit-index resolution / self-cancelled for a whole-reg pair).
+    """
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+    elem = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute([a[0], b[0]], [b[0], a[0]]), qubit.Y(a[0]), qubit.Z(b[0]))
+    # a=0,1 b=2,3. After a[0]<->b[0]: Y(a[0])->q2, Z(b[0])->q0.
+    assert str(SlrConverter(elem).quantum_circuit()) == "QuantumCircuit([{'H': {0}}, {'X': {2}}, {'Y': {2}}, {'Z': {0}}])"
+
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+    whole = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute(a, b), qubit.Y(a[0]), qubit.Z(b[0]))
+    assert str(SlrConverter(whole).quantum_circuit()) == "QuantumCircuit([{'H': {0}}, {'X': {2}}, {'Y': {2}}, {'Z': {0}}])"
+
+    # Non-bijective must fail loud, not silently mis-resolve.
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    with pytest.raises(NotImplementedError, match=r"duplicate source ref"):
+        SlrConverter(Main(a, b, Permute([a[0], a[0]], [b[0], a[0]]), qubit.H(a[0]))).quantum_circuit()
+
+
+@pytest.mark.optional_dependency
+def test_permute_realized_stim() -> None:
+    """A2: element-wise + whole-register Permute is realized in the
+    Stim codegen (was a silent no-op -- same class as QIR #87).
+    """
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+    elem = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute([a[0], b[0]], [b[0], a[0]]), qubit.Y(a[0]), qubit.Z(b[0]))
+    # a=0,1 b=2,3. After a[0]<->b[0]: Y(a[0])->q2, Z(b[0])->q0.
+    assert str(SlrConverter(elem).stim()).split() == ["H", "0", "X", "2", "Y", "2", "Z", "0"]
+
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+    whole = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute(a, b), qubit.Y(a[0]), qubit.Z(b[0]))
+    assert str(SlrConverter(whole).stim()).split() == ["H", "0", "X", "2", "Y", "2", "Z", "0"]
+
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    with pytest.raises(NotImplementedError, match=r"bijective over the same ref set"):
+        SlrConverter(Main(a, b, Permute([a[0], a[1]], [a[1], b[0]]), qubit.H(a[0]))).stim()

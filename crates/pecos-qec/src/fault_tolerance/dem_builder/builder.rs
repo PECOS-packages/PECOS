@@ -590,8 +590,10 @@ impl<'a> DemBuilder<'a> {
     /// # Errors
     ///
     /// Returns [`DemBuilderError::ParseError`] if `num_measurements` disagrees
-    /// with a non-empty influence map, a used record offset is out of range
-    /// for `num_measurements`, or a used `meas_id` is `>= num_measurements`.
+    /// with a non-empty influence map, a used record offset is out of range,
+    /// a used `meas_id` is not present in the circuit (resolved against the
+    /// stable stamped ids when available, else positionally), or a
+    /// both-present entry's `records` and `meas_ids` are not redundant.
     pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         self.validate_measurement_count()?;
         self.validate_metadata_refs()?;

@@ -423,14 +423,18 @@ Resolution:
   public-API caveat only).
 - Rust/Python schema duplication/divergence: **now closed.** All
   detector/observable validation (JSON shape, `D0`/`L0` id forms,
-  tracked-Pauli rejection, "exactly one of records/meas_ids",
+  tracked-Pauli rejection, at-least-one of records/meas_ids,
   `num_measurements` consistency, out-of-range records, and `meas_id`
   resolution against the circuit's stable stamped `MeasId`s) lives solely in
   the Rust DEM builder; `from_guppy` is a thin wrapper that traces and
   forwards metadata verbatim. `meas_ids` is an alternative to `records` (not
-  additive); an entry carrying both is rejected fail-loud rather than
-  silently collapsing to `records` (a regression a fourth review caught in
-  the intermediate consolidation).
+  additive). Co-presence of both is *allowed but must be redundant*: the
+  surface `logical_circuit` path legitimately emits both (records = legacy
+  Stim offsets, meas_ids = the same measurements as stable ids), so
+  `validate_metadata_refs` resolves `meas_ids` and requires the resolved
+  offset set to equal `records`; a non-redundant pair is rejected fail-loud
+  rather than silently collapsing to `records` (a regression the fourth and
+  sixth reviews caught in the intermediate consolidation).
 
 So the previous "proven sound for straight-line / surface byte-identical"
 statement is accurate again *only after the guard revert*; it was false in the

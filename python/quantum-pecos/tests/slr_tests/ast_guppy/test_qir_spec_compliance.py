@@ -39,7 +39,7 @@ model (per-CReg entry-block `alloca [N x i1]` + zeroinitializer;
 `mz__body` -> static `%Result*` -> `read_result` -> `store`;
 point-of-use `gep`+`load`/`store`; `zext`/`shl`/`or` pack ->
 `__quantum__rt__int_record_output`). Every validate-passing program
-(`_EXPECTED_QIS_OK`, n=24) now lowers via `qir_to_qis`; `qis_failed`
+(`_EXPECTED_QIS_OK`, n=22) now lowers via `qir_to_qis`; `qis_failed`
 is empty. A NEW qir_to_qis failure -- or a dropped program -- trips
 this deliberately. (`docs.while_loop` was in this set pre-#74 on a
 silently-wrong single-pass approximation; #74 makes the QIR backend
@@ -56,7 +56,7 @@ opaque-pointer QIS bitcode `qir_to_qis` emits, via
 #79 generalises it corpus-wide; this structural gate provides
 that suite's authoritative QIS_OK set.
 
-**Build failures** (5): `qir_bc()` raises for
+**Build failures** (7): `qir_bc()` raises for
 `docs.for_loopvar_symbolic` (symbolic `LoopVar` indexing) /
 `docs.rotation_rx` (`rx` gate) -- pre-existing AST-QIR feature
 gaps; `docs.while_loop` (#74: the QIR backend now fails LOUD
@@ -83,7 +83,12 @@ the pinned validate set above. A deliberate, triaged improvement.)
 #74 also fails loud on `VarExpr` (was silently 0) and `Print`
 (was silently dropped); no corpus program exercises those, so
 they add no build-failure pin -- but they are no longer silent
-miscompiles.
+miscompiles. #88A (the broad unsupported-gate class #78
+deferred) makes `_process_gate` fail loud on any gate with no
+`GATE_TO_QIR` entry (was a silent drop). The two generic-check
+factories use the "XYZ" Check whose Y branch emits `CY` (no
+QIR lowering); they moved QIS_OK -> here (24 -> 22), re-pinned
+from the actual `_qir_state()`.
 
 `qir-qis` is a `[dependency-groups].test` dep (default-groups
 includes `test`), so this runs in the default sweep.
@@ -126,6 +131,16 @@ _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     #    from the actual `_qir_state()`, never guessed).
     "docs.inline_measure_creg": ("NotImplementedError", "was not declared at Main scope"),
     "docs.surface_syndrome_block18": ("NotImplementedError", "was not declared at Main scope"),
+    # #88A: the broad unsupported-gate-silent-drop class #78 deferred.
+    # A gate with no GATE_TO_QIR entry was SILENTLY DROPPED (#74-class
+    # silent miscompile -- valid QIR, wrong semantics, qir-qis-
+    # uncatchable). `_process_gate` now fails LOUD. Both generic-check
+    # factories use the "XYZ" Pauli-basis Check, whose Y branch emits
+    # `CY` (controlled-Y, no QIR lowering); they were dishonestly
+    # QIS_OK on the silent-drop miscompile and are re-pinned here from
+    # the ACTUAL `_qir_state()` (never guessed), QIS_OK 24 -> 22.
+    "qeclib.generic_check_xyz": ("NotImplementedError", "has no QIR lowering"),
+    "qeclib.generic_check_1flag_ch": ("NotImplementedError", "has no QIR lowering"),
 }
 
 # Tier 1: the non-metadata `validate_qir` failures (label -> stable,
@@ -146,7 +161,7 @@ _EXPECTED_VALIDATE_FAILED: dict[str, str] = {
 
 # Tier 2: post-B2, EVERY validate-passing program lowers via
 # `qir_to_qis` (M-B2-static replaced the bespoke CReg helpers).
-# This is the full set (n=24); `qis_failed` must be empty. A new
+# This is the full set (n=22); `qis_failed` must be empty. A new
 # qir_to_qis failure -- or a dropped/added program -- trips the
 # Tier-2 assertions and must be triaged deliberately.
 _EXPECTED_QIS_OK: frozenset[str] = frozenset(
@@ -168,8 +183,8 @@ _EXPECTED_QIS_OK: frozenset[str] = frozenset(
         "legacy.nested_blocks",
         "legacy.partial_consumption_with_block",
         "qeclib.color488_syn_extract_bare",
-        "qeclib.generic_check_1flag_ch",
-        "qeclib.generic_check_xyz",
+        # #88A: qeclib.generic_check_1flag_ch / generic_check_xyz moved
+        # QIS_OK -> _EXPECTED_BUILD_FAILED (silent `CY` drop now loud).
         "qeclib.generic_transversal_cx",
         "qeclib.surface_patch_builder_empty",
         "qeclib.surface_std_pz",

@@ -457,8 +457,21 @@ class AstToQir:
         """Process a gate operation."""
         qir_name = GATE_TO_QIR.get(node.gate)
         if qir_name is None:
-            # Skip unsupported gates
-            return
+            # #88A (the broad class #78 deferred): a gate with no
+            # GATE_TO_QIR entry was SILENTLY DROPPED -- valid QIR,
+            # wrong semantics, qir-qis-uncatchable (#74-class). Fail
+            # loud instead of miscompiling. Gates with a real QIR
+            # lowering should be added to GATE_TO_QIR (a feature);
+            # until then a program using one must not be silently
+            # mis-emitted.
+            gate_name = getattr(node.gate, "name", node.gate)
+            msg = (
+                f"QIR codegen: gate {gate_name!r} has no QIR lowering "
+                "(not in GATE_TO_QIR). Emitting QIR without it would be "
+                "a silent miscompile; it is not supported by the QIR "
+                "backend."
+            )
+            raise NotImplementedError(msg)
 
         if node.gate in TWO_QUBIT_GATES:
             self._process_two_qubit_gate(node, qir_name)
@@ -904,8 +917,7 @@ class AstToQir:
             if len(src_refs) != len(tgt_refs):
                 msg = f"QIR codegen: Permute element count mismatch for {source!r} -> {target!r}"
                 raise NotImplementedError(msg)
-            for s_ref, t_ref in zip(src_refs, tgt_refs, strict=True):
-                mapping[s_ref] = t_ref
+            mapping.update(zip(src_refs, tgt_refs, strict=True))
 
         if set(mapping) != set(mapping.values()):
             msg = "QIR codegen: Permute must be bijective over the same ref set"

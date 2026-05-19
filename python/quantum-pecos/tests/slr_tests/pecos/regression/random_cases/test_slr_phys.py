@@ -229,7 +229,15 @@ def test_steane_qir_bc() -> None:
 
 @pytest.mark.optional_dependency
 def test_sx_sxdg() -> None:
-    """Test that a simple Bell prep and measure circuit can be created."""
+    """SX/SXdg have no QIR lowering -> fail loud (M-B2-static).
+
+    #88A: the legacy gen_qir never lowered SX->rx either; SX/SXdg are
+    absent from GATE_TO_QIR. They used to be SILENTLY DROPPED (#74-class
+    silent miscompile -- valid QIR, wrong semantics). #88A makes
+    `_process_gate` fail LOUD on any gate with no QIR lowering instead
+    of mis-emitting. (Adding an SX/SXdg->QIR decomposition would be a
+    feature, not pre-PR hygiene.)
+    """
     prog: Main = Main(
         q := QReg("q", 2),
         m := CReg("m", 2),
@@ -240,8 +248,8 @@ def test_sx_sxdg() -> None:
         Return(m),
     )
 
-    qir = SlrConverter(prog).qir()
-    assert "__quantum__qis__rx__body" in qir
+    with pytest.raises(NotImplementedError, match=r"has no QIR lowering"):
+        SlrConverter(prog).qir()
 
 
 @pytest.mark.optional_dependency

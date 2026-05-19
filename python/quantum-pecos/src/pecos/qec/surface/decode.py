@@ -583,8 +583,9 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
     tick, then compact (ASAP schedule) so that gates on disjoint qubits share
     a tick --- matching the parallel structure of the abstract circuit.
 
-    MeasIds flow from Guppy result() objects: AllocateResult IDs from the
-    operations stream are stamped on MZ gates via mz_with_ids().
+    MeasIds flow from the QIS measurement result slot: Quantum.Measure carries
+    ``[qubit, result_id]``, and those IDs are stamped on MZ gates via
+    mz_with_ids().
     """
     from pecos_rslib.quantum import TickCircuit
 
@@ -694,6 +695,13 @@ def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 
     and replays the captured (lowered) gate stream into a PECOS ``TickCircuit``.
     This is the generic core shared by the surface traced-QIS path and the
     general ``DetectorErrorModel.from_guppy`` entry point.
+
+    Note: this traces ONE ideal execution. Measurement-dependent (dynamic)
+    control flow is therefore *unsupported / undefined* for DEM construction --
+    a single sampled branch is not a static circuit. No reliable runtime-trace
+    heuristic distinguishes that from statically-scheduled post-measurement
+    gates (the surface code legitimately has those), so no guard is attempted;
+    callers must pass straight-line programs (see proposal 001).
 
     Args:
         program: Anything ``pecos.sim`` accepts -- a ``@guppy`` function, a

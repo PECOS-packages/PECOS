@@ -57,6 +57,8 @@ pub enum DetectorValidationError {
     /// Raw measurement mode requires all gates to be in the supported Clifford
     /// subset (`H`, `X`, `Y`, `Z`, `SZ`, `SZdg`, `CX`, `CZ`, `SWAP`, `MZ`, `PZ`, `I`).
     UnsupportedGateForDeterminismAnalysis { gate_type: String },
+    /// Circuit detector/observable metadata is malformed.
+    InvalidMetadata { message: String },
 }
 
 impl std::fmt::Display for DetectorValidationError {
@@ -90,6 +92,9 @@ impl std::fmt::Display for DetectorValidationError {
                      raw measurement determinism analysis. Supported Clifford gates: \
                      H, X, Y, Z, SZ, SZdg, CX, CZ, SWAP, MZ, PZ/QAlloc, I/Idle."
                 )
+            }
+            Self::InvalidMetadata { message } => {
+                write!(f, "Invalid detector/observable metadata: {message}")
             }
         }
     }
@@ -459,17 +464,21 @@ impl DemSampler {
         let builder = DemBuilder::new(&influence_map).with_noise_config(noise.clone());
 
         let builder = if let Some(ref dj) = det_json {
-            builder.with_detectors_json(dj).unwrap_or_else(|_| {
-                DemBuilder::new(&influence_map).with_noise_config(noise.clone())
-            })
+            builder.with_detectors_json(dj).map_err(|err| {
+                DetectorValidationError::InvalidMetadata {
+                    message: err.to_string(),
+                }
+            })?
         } else {
             builder
         };
 
         let builder = if let Some(ref oj) = observables_json {
-            builder.with_observables_json(oj).unwrap_or_else(|_| {
-                DemBuilder::new(&influence_map).with_noise_config(noise.clone())
-            })
+            builder.with_observables_json(oj).map_err(|err| {
+                DetectorValidationError::InvalidMetadata {
+                    message: err.to_string(),
+                }
+            })?
         } else {
             builder
         };

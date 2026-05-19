@@ -22,22 +22,21 @@ from typing import Any
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
 
-def _collect_measurement_info(tc: Any) -> tuple[int, set[int]]:
-    """Return (measurement count, set of MeasIds) for the traced circuit.
+def _collect_measurement_info(tc: Any) -> tuple[int, dict[int, int]]:
+    """Return (measurement count, MeasId -> measurement index) for the traced circuit.
 
     Counts measured qubits across all MZ gates and gathers the stable MeasIds
     stamped on them.
     """
     dag = tc.to_dag_circuit()
     count = 0
-    meas_ids: set[int] = set()
+    meas_id_to_index: dict[int, int] = {}
     for node_id in dag.nodes():
         gate = dag.gate(node_id)
         if gate is None or gate.gate_type.name != "MZ":
             continue
         qubits = list(gate.qubits)
         ids = list(gate.meas_ids)
-        count += len(qubits)
         if len(ids) != len(qubits):
             msg = (
                 "Traced Guppy circuit has an MZ gate without a stable MeasId "
@@ -47,8 +46,14 @@ def _collect_measurement_info(tc: Any) -> tuple[int, set[int]]:
                 "with the caller's inputs."
             )
             raise ValueError(msg)
-        meas_ids.update(int(i) for i in ids)
-    return count, meas_ids
+        for local_idx, mid in enumerate(ids):
+            stable_id = int(mid)
+            if stable_id in meas_id_to_index:
+                msg = f"Duplicate measurement id {stable_id} in TickCircuit"
+                raise ValueError(msg)
+            meas_id_to_index[stable_id] = count + local_idx
+        count += len(qubits)
+    return count, meas_id_to_index
 
 
 def _validate_measurement_contract(
@@ -57,14 +62,16 @@ def _validate_measurement_contract(
     detectors_json: str,
     observables_json: str,
     num_measurements: int | None,
-) -> None:
+) -> tuple[str, str]:
     """Fail loudly if the caller's detector/observable JSON is inconsistent.
 
     Catches the common ``from_guppy`` misuse where detector ``records``/
     ``meas_ids`` do not line up with the measurements the traced program
-    actually emits, instead of silently building a wrong DEM.
+    actually emits, instead of silently building a wrong DEM. ``meas_ids`` are
+    normalized to negative ``records`` offsets because the Rust DEM metadata
+    parser consumes positional records.
     """
-    measured, present_ids = _collect_measurement_info(tc)
+    measured, meas_id_to_index = _collect_measurement_info(tc)
 
     if num_measurements is not None and num_measurements != measured:
         msg = (
@@ -77,8 +84,21 @@ def _validate_measurement_contract(
         raise ValueError(msg)
     effective = num_measurements if num_measurements is not None else measured
 
-    def _check(kind: str, entries: list[dict[str, Any]]) -> None:
+    def _require_int(value: Any, label: str) -> int:
+        if not isinstance(value, int) or isinstance(value, bool):
+            msg = f"{label} must be an integer"
+            raise ValueError(msg)  # noqa: TRY004
+        return value
+
+    def _require_list(value: Any, label: str) -> list[Any]:
+        if not isinstance(value, list):
+            msg = f"{label} must be a list"
+            raise ValueError(msg)  # noqa: TRY004
+        return value
+
+    def _check(kind: str, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         alt_id = "detector_id" if kind == "Detector" else "observable_id"
+        normalized_entries: list[dict[str, Any]] = []
         # NB: malformed input raises ValueError (not TypeError) to keep one
         # consistent failure type across from_guppy's documented contract and
         # the sibling record/meas_id checks below -- hence the TRY004 noqas.
@@ -88,43 +108,64 @@ def _validate_measurement_contract(
                 raise ValueError(msg)  # noqa: TRY004
             # Tracked Paulis reference qubits via "pauli", not measurements.
             if entry.get("kind") == "tracked_pauli":
-                continue
+                msg = (
+                    f"{kind} entry {entry!r} uses kind='tracked_pauli', "
+                    "which is not supported by from_guppy JSON metadata."
+                )
+                raise ValueError(msg)
             # Schema: the Rust DEM-builder JSON parser requires an integer id
             # and records; on a parse failure it silently builds an empty DEM.
             # Validate here so malformed input fails loud instead.
             raw_id = entry.get("id", entry.get(alt_id))
-            if not isinstance(raw_id, int) or isinstance(raw_id, bool):
+            try:
+                _require_int(raw_id, f"{kind} id")
+            except ValueError as exc:
                 msg = (
                     f"{kind} entry {entry!r} is missing a valid integer "
                     f"'id' (or '{alt_id}'); the DEM builder would silently "
                     "drop it and produce an empty DEM."
                 )
-                raise ValueError(msg)  # noqa: TRY004
-            if not (entry.get("records") or entry.get("meas_ids")):
+                raise ValueError(msg) from exc
+
+            records = _require_list(entry.get("records", []), f"{kind} {raw_id} records")
+            meas_ids = _require_list(entry.get("meas_ids", []), f"{kind} {raw_id} meas_ids")
+            if not (records or meas_ids):
                 msg = (
                     f"{kind} {raw_id} has no 'records' or 'meas_ids'; it "
                     "would contribute nothing and silently weaken the DEM."
                 )
                 raise ValueError(msg)
-            for rec in entry.get("records", []) or []:
-                idx = effective + int(rec)
+            normalized_records: list[int] = []
+            for rec in records:
+                rec_int = _require_int(rec, f"{kind} {raw_id} record offset")
+                idx = effective + rec_int
                 if not 0 <= idx < effective:
                     msg = (
                         f"{kind} {entry.get('id', entry)} references record "
-                        f"{rec}, which is out of range for a circuit with "
+                        f"{rec_int}, which is out of range for a circuit with "
                         f"{effective} measurement(s)."
                     )
                     raise ValueError(msg)
-            for mid in entry.get("meas_ids", []) or []:
-                if int(mid) not in present_ids:
+                normalized_records.append(rec_int)
+            for mid in meas_ids:
+                stable_id = _require_int(mid, f"{kind} {raw_id} meas_id")
+                if stable_id not in meas_id_to_index:
                     msg = (
                         f"{kind} {entry.get('id', entry)} references "
-                        f"meas_id {mid}, which is not present in the traced "
+                        f"meas_id {stable_id}, which is not present in the traced "
                         "circuit. meas_ids must match the stable MeasIds the "
                         "traced program assigns (one per measured qubit, in "
                         "trace order)."
                     )
                     raise ValueError(msg)
+                normalized_records.append(meas_id_to_index[stable_id] - effective)
+
+            normalized = dict(entry)
+            normalized.pop("meas_ids", None)
+            normalized["records"] = normalized_records
+            normalized_entries.append(normalized)
+
+        return normalized_entries
 
     try:
         detectors = json.loads(detectors_json) if detectors_json else []
@@ -133,8 +174,16 @@ def _validate_measurement_contract(
         msg = f"detectors_json/observables_json is not valid JSON: {exc}"
         raise ValueError(msg) from exc
 
-    _check("Detector", detectors)
-    _check("Observable", observables)
+    if not isinstance(detectors, list) or not isinstance(observables, list):
+        msg = "detectors_json and observables_json must each be a JSON list"
+        raise ValueError(msg)  # noqa: TRY004
+
+    normalized_detectors = _check("Detector", detectors)
+    normalized_observables = _check("Observable", observables)
+    return (
+        json.dumps(normalized_detectors, separators=(",", ":")),
+        json.dumps(normalized_observables, separators=(",", ":")),
+    )
 
 
 def _normalize_entry_ids(blob: str, prefix: str) -> str:
@@ -179,6 +228,16 @@ class DetectorErrorModel(_RustDetectorErrorModel):
 
     Identical to :class:`pecos_rslib.qec.DetectorErrorModel` except for the
     added :meth:`from_guppy` classmethod.
+
+    Identity caveat: the inherited Rust factory classmethods
+    (``from_circuit``, ``from_pecos_metadata_json``, and ``from_guppy``, which
+    delegates to ``from_circuit``) construct and return the *Rust base* class
+    ``pecos_rslib.qec.DetectorErrorModel`` -- they do not return instances of
+    this Python subclass. Consequently ``isinstance(obj, DetectorErrorModel)``
+    is ``False`` for objects produced by those constructors even though every
+    method works identically. Do not use ``isinstance`` against this public
+    subclass to recognize DEMs; check the Rust base type instead. (No PECOS
+    code relies on such an ``isinstance``; this is a public-API caveat only.)
     """
 
     __slots__ = ()
@@ -231,8 +290,7 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 ``label`` / ``pauli``. Tracked Paulis are only produced from
                 circuit *annotations* (e.g. the surface builder), not from
                 ``observables_json``. A ``{"kind": "tracked_pauli", ...}``
-                entry here is silently treated as a (malformed) observable --
-                do not use it.
+                entry here is rejected.
             num_measurements: Total measurement count, used to resolve negative
                 ``records`` offsets. If omitted, it is inferred from the traced
                 circuit.
@@ -253,6 +311,18 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 replayed.
 
         Note:
+            **Measurement-dependent (dynamic) control flow is unsupported.**
+            ``from_guppy`` traces one ideal execution; a Guppy program whose
+            quantum operations depend on a measurement *outcome* (e.g.
+            ``if measure(q): x(other)``) would yield a DEM built from a single
+            sampled branch, silently wrong and seed-dependent. No reliable
+            runtime-trace heuristic distinguishes that from the
+            statically-scheduled post-measurement gates a normal QEC circuit
+            has (the surface code has these every round), so no guard is
+            attempted -- pass straight-line programs only. Sound detection
+            would require HUGR conditional-on-measurement analysis (deferred;
+            see proposal 001).
+
             Every measurement is anchored to a stable MeasId automatically:
             ``measure()`` itself allocates the result slot in the trace (a
             ``result(...)`` call is not required for MeasId assignment).
@@ -284,7 +354,7 @@ class DetectorErrorModel(_RustDetectorErrorModel):
         tc.lower_clifford_rotations()
         tc.assign_missing_meas_ids()
 
-        _validate_measurement_contract(
+        detectors_json, observables_json = _validate_measurement_contract(
             tc,
             detectors_json=detectors_json,
             observables_json=observables_json,

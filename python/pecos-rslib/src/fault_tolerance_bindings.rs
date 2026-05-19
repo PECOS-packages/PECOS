@@ -965,15 +965,15 @@ impl PyDetectorErrorModel {
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
         {
-            Ok(Self {
-                inner: DemBuilder::from_circuit(&dag.inner, p1, p2, p_meas, p_prep),
-            })
+            let inner = DemBuilder::try_from_circuit(&dag.inner, p1, p2, p_meas, p_prep)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+            Ok(Self { inner })
         } else if let Ok(tc) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyTickCircuit>>()
         {
-            Ok(Self {
-                inner: DemBuilder::from_tick_circuit(&tc.inner, p1, p2, p_meas, p_prep),
-            })
+            let inner = DemBuilder::try_from_tick_circuit(&tc.inner, p1, p2, p_meas, p_prep)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+            Ok(Self { inner })
         } else {
             Err(pyo3::exceptions::PyTypeError::new_err(
                 "from_circuit() expects a DagCircuit or TickCircuit",

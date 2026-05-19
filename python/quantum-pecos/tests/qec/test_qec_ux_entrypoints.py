@@ -87,6 +87,23 @@ def test_tick_circuit_metadata_helpers_build_detector_and_observable_json() -> N
     assert int(tc.get_meta("num_observables")) == 3
 
 
+def test_malformed_dem_metadata_fails_loud_from_circuit_entrypoints() -> None:
+    from pecos.qec import DemSampler, DetectorErrorModel
+    from pecos.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().mz([0])
+    tc.set_meta("num_measurements", "1")
+    tc.set_meta("detectors", '[{"id":0,"records":["-1"]}]')
+    tc.set_meta("observables", "[]")
+
+    with pytest.raises(ValueError, match="record offsets must be integers"):
+        DetectorErrorModel.from_circuit(tc, p1=0.0, p2=0.0, p_meas=0.1, p_prep=0.0)
+
+    with pytest.raises(ValueError, match="Invalid detector/observable metadata"):
+        DemSampler.from_circuit(tc, p1=0.0, p2=0.0, p_meas=0.1, p_prep=0.0)
+
+
 def test_tracked_pauli_public_api_uses_current_names_only() -> None:
     from pecos.quantum import DagCircuit, GateRegistry, GateType, TickCircuit, X
 

@@ -376,3 +376,37 @@ fail-loud, `D0`/`L0`), the corrected strict/non-lowered replay (#5/#6), and a
 sound-but-narrow standalone HUGR extractor with tests. Tag-referenced
 detectors are NOT exposed to users; the loop case remains deferred (CFG-
 interpreter-class machinery or upstream `tket-qsystem` provenance).
+
+## Second external review + outcome (AUTHORITATIVE)
+
+A second independent review (re-verified by a third) found the prior fix round
+shipped a **critical regression**: a `reject_dynamic_control` guard added to
+`trace_guppy_into_tick_circuit` false-positived on the *standard surface code*
+(it has statically-scheduled gates after ancilla measurements every round, in
+`pending_continue` chunks), so `from_guppy(make_surface_code(...))` raised
+before DEM construction. The same heuristic also missed genuinely
+measurement-dependent programs on some seeds.
+
+Resolution:
+
+- **Guard reverted.** A runtime-trace heuristic cannot distinguish
+  statically-scheduled post-measurement gates from true data-dependent
+  branching. Measurement-dependent (dynamic) control flow is now documented as
+  **unsupported / undefined** for `from_guppy` (one sampled branch is not a
+  static DEM); sound detection needs HUGR conditional-on-measurement analysis
+  (deferred). With the guard gone, surface `from_guppy` is byte-identical to
+  the `traced_qis` reference again (independently confirmed) -- so the
+  ~425-line `builder.rs` serde rewrite did **not** change DEM output.
+- Confirmed-fixed by the prior round and retained: `meas_ids` end-to-end (now
+  normalized to records), malformed-JSON fail-loud in `from_guppy`, JSON
+  `tracked_pauli` rejection, direct `from_circuit`/`DemSampler` fail-loud on
+  missing-id / malformed metadata.
+- Residual (addressed here): out-of-range / unresolved `records`/`meas_ids`
+  still silently weakened the DEM in the Rust metadata path; the Rust/Python
+  schema duplicated and diverged; clippy `-D warnings` failed (missing
+  `# Panics` docs); the public subclass-identity hazard (#6) is documented
+  (no internal `isinstance` use; public-API caveat only).
+
+So the previous "proven sound for straight-line / surface byte-identical"
+statement is accurate again *only after the guard revert*; it was false in the
+intermediate broken tree.

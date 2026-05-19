@@ -35,6 +35,7 @@ struct ParsedDetector {
     id: u32,
     coords: Option<[f64; 3]>,
     records: Vec<i32>,
+    meas_ids: Vec<usize>,
 }
 
 /// Parsed observable from JSON metadata.
@@ -42,6 +43,7 @@ struct ParsedDetector {
 struct ParsedObservable {
     id: u32,
     records: Vec<i32>,
+    meas_ids: Vec<usize>,
 }
 
 // ============================================================================
@@ -129,6 +131,11 @@ impl<'a> DemBuilder<'a> {
     ///
     /// One-liner for the common case. Reads detector/DEM output definitions
     /// from circuit metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit's detector/observable metadata is malformed (use
+    /// [`Self::try_from_circuit`] to handle that as an error instead).
     #[must_use]
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
@@ -137,12 +144,36 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> DetectorErrorModel {
+        Self::try_from_circuit(circuit, p1, p2, p_meas, p_prep)
+            .unwrap_or_else(|err| panic!("invalid DEM metadata on circuit: {err}"))
+    }
+
+    /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
+    ///
+    /// Reads detector/DEM output definitions from circuit metadata and returns
+    /// parser errors instead of dropping malformed metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector or observable metadata is malformed.
+    pub fn try_from_circuit(
+        circuit: &pecos_quantum::DagCircuit,
+        p1: f64,
+        p2: f64,
+        p_meas: f64,
+        p_prep: f64,
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
         build_dem_from_circuit(circuit, p1, p2, p_meas, p_prep)
     }
 
     /// Build a `DetectorErrorModel` from a `TickCircuit` and noise.
     ///
     /// Converts to `DagCircuit` internally.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit's detector/observable metadata is malformed (use
+    /// [`Self::try_from_tick_circuit`] to handle that as an error instead).
     #[must_use]
     pub fn from_tick_circuit(
         circuit: &pecos_quantum::TickCircuit,
@@ -151,6 +182,25 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> DetectorErrorModel {
+        Self::try_from_tick_circuit(circuit, p1, p2, p_meas, p_prep)
+            .unwrap_or_else(|err| panic!("invalid DEM metadata on circuit: {err}"))
+    }
+
+    /// Try to build a `DetectorErrorModel` from a `TickCircuit` and noise.
+    ///
+    /// Converts to `DagCircuit` internally and returns parser errors instead
+    /// of dropping malformed metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector or observable metadata is malformed.
+    pub fn try_from_tick_circuit(
+        circuit: &pecos_quantum::TickCircuit,
+        p1: f64,
+        p2: f64,
+        p_meas: f64,
+        p_prep: f64,
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
         let dag = pecos_quantum::DagCircuit::from(circuit);
         build_dem_from_circuit(&dag, p1, p2, p_meas, p_prep)
     }
@@ -379,9 +429,78 @@ impl<'a> DemBuilder<'a> {
                 #[allow(clippy::cast_possible_truncation)] // observable count fits in u32
                 id: id as u32,
                 records,
+                meas_ids: Vec::new(),
             })
             .collect();
         self
+    }
+
+    fn meas_id_to_record_offset(&self, meas_id: usize) -> Option<i32> {
+        if meas_id >= self.num_measurements {
+            return None;
+        }
+        let measurement = i64::try_from(meas_id).ok()?;
+        let total = i64::try_from(self.num_measurements).ok()?;
+        i32::try_from(measurement - total).ok()
+    }
+
+    /// Fail loud if any detector/observable references a measurement that does
+    /// not exist, instead of silently dropping it and weakening the DEM.
+    ///
+    /// Checks only the references that are actually consumed: when `records`
+    /// is non-empty it is used (and `meas_ids` ignored, so `meas_ids` is not
+    /// checked here -- consistent with [`Self::effective_record_offsets`]);
+    /// otherwise `meas_ids` is used. `records`+`meas_ids` may legitimately
+    /// both be present and redundant (surface metadata does this), so their
+    /// co-presence is *not* an error.
+    ///
+    /// # Errors
+    /// Returns [`DemBuilderError::ParseError`] if a used record offset is out
+    /// of range for `num_measurements`, or a used `meas_id` is `>=
+    /// num_measurements`.
+    fn validate_metadata_refs(&self) -> Result<(), DemBuilderError> {
+        let check = |kind: &str, id: u32, records: &[i32], meas_ids: &[usize]| {
+            if records.is_empty() {
+                for &mid in meas_ids {
+                    if mid >= self.num_measurements {
+                        return Err(DemBuilderError::ParseError(format!(
+                            "{kind} {id} references meas_id {mid}, but the \
+                             circuit has only {} measurement(s)",
+                            self.num_measurements
+                        )));
+                    }
+                }
+            } else {
+                for &rec in records {
+                    if record_offset_to_absolute_index(self.num_measurements, rec).is_none() {
+                        return Err(DemBuilderError::ParseError(format!(
+                            "{kind} {id} references record offset {rec}, which \
+                             is out of range for a circuit with {} \
+                             measurement(s)",
+                            self.num_measurements
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        };
+        for d in &self.detectors {
+            check("Detector", d.id, &d.records, &d.meas_ids)?;
+        }
+        for o in &self.observables {
+            check("Observable", o.id, &o.records, &o.meas_ids)?;
+        }
+        Ok(())
+    }
+
+    fn effective_record_offsets(&self, records: &[i32], meas_ids: &[usize]) -> Vec<i32> {
+        if !records.is_empty() {
+            return records.to_vec();
+        }
+        meas_ids
+            .iter()
+            .filter_map(|&meas_id| self.meas_id_to_record_offset(meas_id))
+            .collect()
     }
 
     /// Builds the Detector Error Model with source tracking.
@@ -404,7 +523,8 @@ impl<'a> DemBuilder<'a> {
             if let Some(coords) = det.coords {
                 def = def.with_coords(coords);
             }
-            def = def.with_records(det.records.iter().copied());
+            let records = self.effective_record_offsets(&det.records, &det.meas_ids);
+            def = def.with_records(records.iter().copied());
             dem.add_detector(def);
         }
 
@@ -439,7 +559,8 @@ impl<'a> DemBuilder<'a> {
         // Add observable definitions in the standard `L<n>` namespace.
         // Observable IDs are not shifted by tracked Paulis.
         for obs in &self.observables {
-            let def = DemOutput::new(obs.id).with_records(obs.records.iter().copied());
+            let records = self.effective_record_offsets(&obs.records, &obs.meas_ids);
+            let def = DemOutput::new(obs.id).with_records(records.iter().copied());
             dem.add_observable(def);
         }
 
@@ -888,15 +1009,26 @@ impl<'a> DemBuilder<'a> {
             };
 
         for det in &self.detectors {
-            for &rec in &det.records {
-                if let Some(tc_meas_idx) =
-                    record_offset_to_absolute_index(self.num_measurements, rec)
-                    && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
-                {
-                    meas_to_detectors
-                        .entry(influence_idx)
-                        .or_default()
-                        .push(det.id);
+            if det.records.is_empty() {
+                for &meas_id in &det.meas_ids {
+                    if let Some(&influence_idx) = tc_to_influence.get(&meas_id) {
+                        meas_to_detectors
+                            .entry(influence_idx)
+                            .or_default()
+                            .push(det.id);
+                    }
+                }
+            } else {
+                for &rec in &det.records {
+                    if let Some(tc_meas_idx) =
+                        record_offset_to_absolute_index(self.num_measurements, rec)
+                        && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                    {
+                        meas_to_detectors
+                            .entry(influence_idx)
+                            .or_default()
+                            .push(det.id);
+                    }
                 }
             }
         }
@@ -905,15 +1037,26 @@ impl<'a> DemBuilder<'a> {
             if influence_observable_ids.contains(&obs.id) {
                 continue;
             }
-            for &rec in &obs.records {
-                if let Some(tc_meas_idx) =
-                    record_offset_to_absolute_index(self.num_measurements, rec)
-                    && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
-                {
-                    meas_to_observables
-                        .entry(influence_idx)
-                        .or_default()
-                        .push(obs.id);
+            if obs.records.is_empty() {
+                for &meas_id in &obs.meas_ids {
+                    if let Some(&influence_idx) = tc_to_influence.get(&meas_id) {
+                        meas_to_observables
+                            .entry(influence_idx)
+                            .or_default()
+                            .push(obs.id);
+                    }
+                }
+            } else {
+                for &rec in &obs.records {
+                    if let Some(tc_meas_idx) =
+                        record_offset_to_absolute_index(self.num_measurements, rec)
+                        && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                    {
+                        meas_to_observables
+                            .entry(influence_idx)
+                            .or_default()
+                            .push(obs.id);
+                    }
                 }
             }
         }
@@ -1097,63 +1240,40 @@ fn get_y_decomposition(p1: u8, p2: u8) -> Option<(u8, u8, u8, u8)> {
 
 /// Parses detector definitions from JSON.
 fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderError> {
-    // Simple JSON parsing without serde dependency
-    // Expected format: [{"id": 0, "coords": [0.0, 0.0, 0.0], "records": [-1, -5]}, ...]
-
     let json = json.trim();
     if json.is_empty() || json == "[]" {
         return Ok(Vec::new());
     }
 
-    let mut detectors = Vec::new();
-
-    // Find all objects in the array
-    let mut depth = 0;
-    let mut obj_start = None;
-
-    for (i, c) in json.char_indices() {
-        match c {
-            '[' if depth == 0 => depth = 1,
-            '{' if depth == 1 => {
-                depth = 2;
-                obj_start = Some(i);
-            }
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 1 {
-                    if let Some(start) = obj_start {
-                        // i is the byte index of '}', we want to include it
-                        let obj_str = &json[start..i + c.len_utf8()];
-                        let det = parse_single_detector(obj_str)?;
-                        detectors.push(det);
-                    }
-                    obj_start = None;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(detectors)
+    let parsed: serde_json::Value = serde_json::from_str(json).map_err(|err| {
+        DemBuilderError::ParseError(format!("detectors JSON is malformed: {err}"))
+    })?;
+    let array = parsed
+        .as_array()
+        .ok_or_else(|| DemBuilderError::ParseError("detectors JSON must be an array".into()))?;
+    array.iter().map(parse_single_detector).collect()
 }
 
 /// Parses a single detector object.
-fn parse_single_detector(json: &str) -> Result<ParsedDetector, DemBuilderError> {
+fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, DemBuilderError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| DemBuilderError::ParseError("detector entry must be an object".into()))?;
     let id = extract_u32(
-        json,
-        &["\"id\"", "\"detector_id\""],
+        object,
+        &["id", "detector_id"],
         "missing detector id",
         "detector id out of range",
     )?;
 
-    let coords = extract_coords(json);
-    let records = extract_records(json);
+    let coords = extract_coords(object)?;
+    let (records, meas_ids) = extract_measurement_refs(object, "detector")?;
 
     Ok(ParsedDetector {
         id,
         coords,
         records,
+        meas_ids,
     })
 }
 
@@ -1164,111 +1284,120 @@ fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilde
         return Ok(Vec::new());
     }
 
-    let mut observables = Vec::new();
-
-    let mut depth = 0;
-    let mut obj_start = None;
-
-    for (i, c) in json.char_indices() {
-        match c {
-            '[' if depth == 0 => depth = 1,
-            '{' if depth == 1 => {
-                depth = 2;
-                obj_start = Some(i);
-            }
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 1 {
-                    if let Some(start) = obj_start {
-                        // i is the byte index of '}', we want to include it
-                        let obj_str = &json[start..i + c.len_utf8()];
-                        let obs = parse_single_observable(obj_str)?;
-                        observables.push(obs);
-                    }
-                    obj_start = None;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(observables)
+    let parsed: serde_json::Value = serde_json::from_str(json).map_err(|err| {
+        DemBuilderError::ParseError(format!("observables JSON is malformed: {err}"))
+    })?;
+    let array = parsed
+        .as_array()
+        .ok_or_else(|| DemBuilderError::ParseError("observables JSON must be an array".into()))?;
+    array.iter().map(parse_single_observable).collect()
 }
 
 /// Parses a single observable object.
-fn parse_single_observable(json: &str) -> Result<ParsedObservable, DemBuilderError> {
+fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable, DemBuilderError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| DemBuilderError::ParseError("observable entry must be an object".into()))?;
     let id = extract_u32(
-        json,
-        &["\"id\"", "\"observable_id\""],
+        object,
+        &["id", "observable_id"],
         "missing observable id",
         "observable id out of range",
     )?;
 
-    let records = extract_records(json);
+    let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
 
-    Ok(ParsedObservable { id, records })
-}
-
-/// Extracts a number after a key.
-fn extract_number(json: &str, key: &str) -> Option<i64> {
-    let pos = json.find(key)?;
-    let rest = &json[pos + key.len()..];
-    let rest = rest.trim_start_matches(|c: char| c == ':' || c.is_whitespace());
-
-    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-' && c != '.')?;
-    let num_str = &rest[..end];
-    num_str.parse().ok()
+    Ok(ParsedObservable {
+        id,
+        records,
+        meas_ids,
+    })
 }
 
 fn extract_u32(
-    json: &str,
+    object: &serde_json::Map<String, serde_json::Value>,
     keys: &[&str],
     missing_message: &str,
     range_message: &str,
 ) -> Result<u32, DemBuilderError> {
     let value = keys
         .iter()
-        .find_map(|key| extract_number(json, key))
+        .find_map(|key| object.get(*key))
         .ok_or_else(|| DemBuilderError::ParseError(missing_message.into()))?;
-    u32::try_from(value).map_err(|_| DemBuilderError::ParseError(range_message.into()))
+    let raw = value.as_u64().ok_or_else(|| {
+        DemBuilderError::ParseError(format!("{missing_message}: expected unsigned integer"))
+    })?;
+    u32::try_from(raw).map_err(|_| DemBuilderError::ParseError(range_message.into()))
 }
 
 /// Extracts coordinates array [x, y, t].
-fn extract_coords(json: &str) -> Option<[f64; 3]> {
-    let pos = json.find("\"coords\"")?;
-    let rest = &json[pos..];
-    let bracket_start = rest.find('[')?;
-    let bracket_end = rest.find(']')?;
-    let array_str = &rest[bracket_start + 1..bracket_end];
-
-    let nums: Vec<f64> = array_str
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
-
-    if nums.len() == 3 {
-        Some([nums[0], nums[1], nums[2]])
-    } else {
-        None
+fn extract_coords(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<[f64; 3]>, DemBuilderError> {
+    let Some(coords) = object.get("coords") else {
+        return Ok(None);
+    };
+    let array = coords
+        .as_array()
+        .ok_or_else(|| DemBuilderError::ParseError("detector coords must be an array".into()))?;
+    if array.len() != 3 {
+        return Err(DemBuilderError::ParseError(
+            "detector coords must contain exactly three numbers".into(),
+        ));
     }
+    let mut values = [0.0; 3];
+    for (idx, coord) in array.iter().enumerate() {
+        values[idx] = coord
+            .as_f64()
+            .ok_or_else(|| DemBuilderError::ParseError("detector coords must be numeric".into()))?;
+    }
+    Ok(Some(values))
 }
 
-/// Extracts records array.
-fn extract_records(json: &str) -> Vec<i32> {
-    if let Some(pos) = json.find("\"records\"") {
-        let rest = &json[pos..];
-        if let Some(bracket_start) = rest.find('[')
-            && let Some(bracket_end) = rest.find(']')
-        {
-            let array_str = &rest[bracket_start + 1..bracket_end];
-            return array_str
-                .split(',')
-                .filter_map(|s| s.trim().parse().ok())
-                .collect();
-        }
-    }
-    Vec::new()
+/// Extracts `records`/`meas_ids` arrays.
+fn extract_measurement_refs(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kind: &str,
+) -> Result<(Vec<i32>, Vec<usize>), DemBuilderError> {
+    let records = if let Some(records) = object.get("records") {
+        let array = records.as_array().ok_or_else(|| {
+            DemBuilderError::ParseError(format!("{kind} records must be an array"))
+        })?;
+        array
+            .iter()
+            .map(|record| {
+                let raw = record.as_i64().ok_or_else(|| {
+                    DemBuilderError::ParseError(format!("{kind} record offsets must be integers"))
+                })?;
+                i32::try_from(raw).map_err(|_| {
+                    DemBuilderError::ParseError(format!("{kind} record offset out of range"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+
+    let meas_ids = if let Some(meas_ids) = object.get("meas_ids") {
+        let array = meas_ids.as_array().ok_or_else(|| {
+            DemBuilderError::ParseError(format!("{kind} meas_ids must be an array"))
+        })?;
+        array
+            .iter()
+            .map(|meas_id| {
+                let raw = meas_id.as_i64().ok_or_else(|| {
+                    DemBuilderError::ParseError(format!("{kind} meas_ids must be integers"))
+                })?;
+                usize::try_from(raw).map_err(|_| {
+                    DemBuilderError::ParseError(format!("{kind} meas_id out of range"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+
+    Ok((records, meas_ids))
 }
 
 // ============================================================================
@@ -1284,7 +1413,7 @@ fn build_dem_from_circuit(
     p2: f64,
     p_meas: f64,
     p_prep: f64,
-) -> DetectorErrorModel {
+) -> Result<DetectorErrorModel, DemBuilderError> {
     use crate::fault_tolerance::influence_builder::InfluenceBuilder;
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
     use pecos_num::graph::Attribute;
@@ -1322,17 +1451,13 @@ fn build_dem_from_circuit(
     let builder = DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep);
 
     let builder = if let Some(ref dj) = det_json {
-        builder
-            .with_detectors_json(dj)
-            .unwrap_or_else(|_| DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep))
+        builder.with_detectors_json(dj)?
     } else {
         builder
     };
 
     let builder = if let Some(ref oj) = obs_json {
-        builder
-            .with_observables_json(oj)
-            .unwrap_or_else(|_| DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep))
+        builder.with_observables_json(oj)?
     } else if !annotated_observable_records.is_empty() {
         builder.with_observable_records(annotated_observable_records)
     } else {
@@ -1345,7 +1470,8 @@ fn build_dem_from_circuit(
         builder
     };
 
-    builder.build()
+    builder.validate_metadata_refs()?;
+    Ok(builder.build())
 }
 
 fn observable_records_from_annotations(
@@ -1914,6 +2040,7 @@ mod tests {
         assert_eq!(detectors[0].id, 0);
         assert_eq!(detectors[0].coords, Some([0.0, 0.0, 0.0]));
         assert_eq!(detectors[0].records, vec![-1, -5]);
+        assert!(detectors[0].meas_ids.is_empty());
         assert_eq!(detectors[1].id, 1);
         assert_eq!(detectors[1].records, vec![-2]);
     }
@@ -1927,6 +2054,19 @@ mod tests {
         assert_eq!(observables.len(), 1);
         assert_eq!(observables[0].id, 0);
         assert_eq!(observables[0].records, vec![-1, -3, -5]);
+        assert!(observables[0].meas_ids.is_empty());
+    }
+
+    #[test]
+    fn test_parse_json_accepts_meas_ids() {
+        let detectors = parse_detectors_json(r#"[{"id": 0, "meas_ids": [0, 2]}]"#).unwrap();
+        assert_eq!(detectors[0].records, Vec::<i32>::new());
+        assert_eq!(detectors[0].meas_ids, vec![0, 2]);
+
+        let observables =
+            parse_observables_json(r#"[{"observable_id": 1, "meas_ids": [3]}]"#).unwrap();
+        assert_eq!(observables[0].records, Vec::<i32>::new());
+        assert_eq!(observables[0].meas_ids, vec![3]);
     }
 
     #[test]
@@ -1944,10 +2084,61 @@ mod tests {
     }
 
     #[test]
+    fn test_dem_builder_resolves_meas_ids_when_records_are_absent() {
+        let influence_map = DagFaultInfluenceMap::with_capacity(0);
+        let dem = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [0, 2]}]"#)
+            .unwrap()
+            .with_observables_json(r#"[{"id": 0, "meas_ids": [1]}]"#)
+            .unwrap()
+            .with_num_measurements(3)
+            .build();
+
+        assert_eq!(dem.detectors[0].records.as_slice(), &[-3, -1]);
+        assert_eq!(dem.dem_outputs()[0].records.as_slice(), &[-2]);
+    }
+
+    #[test]
     fn test_parse_empty_json() {
         assert!(parse_detectors_json("").unwrap().is_empty());
         assert!(parse_detectors_json("[]").unwrap().is_empty());
         assert!(parse_observables_json("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_detector_json_rejects_malformed_shapes() {
+        for json in [
+            "{}",
+            r#"[{"id":0,"records":["-1"]}]"#,
+            r#"[{"id":0,"records":[-1.2]}]"#,
+            r#"[{"id":0,"meas_ids":["0"]}]"#,
+            r#"[{"id":0,"meas_ids":[-1]}]"#,
+            r#"[{"id":0,"meas_ids":[1.2]}]"#,
+            r#"[{"id":true,"records":[-1]}]"#,
+        ] {
+            assert!(
+                parse_detectors_json(json).is_err(),
+                "detectors JSON should fail loud: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_observable_json_rejects_malformed_shapes() {
+        for json in [
+            "{}",
+            r#"[{"id":0,"records":["-1"]}]"#,
+            r#"[{"id":0,"records":[-1.2]}]"#,
+            r#"[{"id":0,"meas_ids":["0"]}]"#,
+            r#"[{"id":0,"meas_ids":[-1]}]"#,
+            r#"[{"id":0,"meas_ids":[1.2]}]"#,
+            r#"[{"observable_id":false,"records":[-1]}]"#,
+        ] {
+            assert!(
+                parse_observables_json(json).is_err(),
+                "observables JSON should fail loud: {json}"
+            );
+        }
     }
 
     #[test]

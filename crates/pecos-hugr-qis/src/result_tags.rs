@@ -39,6 +39,19 @@ fn is_measurement(op: &OpType) -> bool {
     )
 }
 
+/// Number of *static* measurement ops in the HUGR.
+///
+/// For a straight-line program this equals the runtime measurement count; for
+/// a program with a runtime loop it is strictly smaller (the loop body's
+/// measure op is counted once). Callers use the mismatch to detect that
+/// per-occurrence tag binding is not statically available.
+#[must_use]
+pub fn measurement_op_count<H: HugrView<Node = Node>>(hugr: &H) -> usize {
+    hugr.nodes()
+        .filter(|&n| is_measurement(hugr.get_optype(n)))
+        .count()
+}
+
 /// Map each `result(tag, ...)` to the measurement ordinals whose values it
 /// recorded, in measurement-ordinal order.
 ///

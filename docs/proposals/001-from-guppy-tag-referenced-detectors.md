@@ -305,3 +305,30 @@ recompilation. Reorder-robust tag-referenced detectors are **deferred**; the
 sound HUGR building block (#2) is committed for the eventual straight-line
 wiring, and the loop case needs CFG-interpreter-class machinery or upstream
 `tket-qsystem` provenance.
+
+## Update (gap-4): sound result_tags wired into from_guppy (Rust-centric)
+
+The committed HUGR extractor is now wired into `from_guppy` for the
+**straight-line** case, with all logic in Rust and a thin Python pass-through
+(per architectural review):
+
+- `pecos_qec::fault_tolerance::dem_builder::resolve_result_tags` (Rust): runtime-
+  loop guard (static vs traced measurement count), `result_tags`->record
+  resolution, unknown-tag validation -- all fail-loud (`Result`/`ValueError`).
+- `pecos_rslib.resolve_result_tags_for_guppy` (thin pyo3): HUGR-bytes +
+  detectors/observables JSON + traced count -> resolved JSON, or raises.
+  Internally calls `pecos_hugr_qis::extract_result_tag_measurements` +
+  `measurement_op_count`.
+- `from_guppy` (thin Python): if `result_tags` present, ferry
+  `guppy_to_hugr(guppy)` + the traced measurement count to the Rust call. No
+  tag logic in Python.
+
+Verified: straight-line `result_tags` DEM is byte-identical to the positional
+equivalent (proves the Rust chain and that the HUGR measurement ordinal equals
+the traced MeasId order for the supported case); unknown tags fail loud;
+runtime-loop programs (incl. surface) **fail loud** rather than silently
+misbind; surface positional path byte-identical + LER unaffected.
+
+Remaining deferred: per-occurrence tag binding for runtime-loop programs
+(needs CFG-interpreter-class machinery or upstream `tket-qsystem`
+provenance). `from_guppy` now hard-errors that case instead of being silent.

@@ -150,6 +150,17 @@ def _normalize_entry_ids(blob: str, prefix: str) -> str:
     return json.dumps(entries, separators=(",", ":")) if changed else blob
 
 
+def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
+    """Cheap gate: does any entry use ``result_tags``? (substring check).
+
+    Only decides whether to compile the Guppy program to HUGR; the actual
+    extraction, loop-guard, resolution and validation are all done in Rust.
+    """
+    return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (
+        observables_json or ""
+    )
+
+
 class DetectorErrorModel(_RustDetectorErrorModel):
     """Detector error model with a Guppy/QIS-trace convenience constructor.
 
@@ -197,6 +208,17 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 negative measurement offsets (Stim convention); ``meas_ids``
                 may be used instead. Defined against the *traced* program's own
                 measurement order.
+
+                Reorder-robust alternative: an entry may instead carry
+                ``"result_tags": ["m_a", ...]`` to reference measurements by
+                the stable Guppy ``result(tag, ...)`` tag. The tag->measurement
+                binding is recovered structurally from the compiled HUGR (in
+                Rust), so it is immune to Guppy/Selene measurement reordering.
+                Supported for straight-line programs; for programs with runtime
+                loops it **fails loudly** (the loop is not unrolled in the
+                HUGR, so per-occurrence binding is not statically available --
+                use positional records there). ``result_tags`` and ``records``
+                may be combined on one entry.
             observables_json: Observable / tracked-Pauli definitions as a JSON
                 list. Plain observables look like ``[{"id": 0, "records":
                 [-1]}]``. Tracked Paulis are entries in this same list carrying
@@ -226,23 +248,25 @@ class DetectorErrorModel(_RustDetectorErrorModel):
 
         Raises:
             ValueError: If ``num_measurements`` disagrees with the traced
-                measurement count, if a detector/observable references an
-                out-of-range ``record`` or an absent ``meas_id``, or if the
-                traced operation stream is malformed (the strict
-                ``AllocateResult``/``Measure`` pairing in the replay fails).
+                measurement count; if a detector/observable references an
+                out-of-range ``record``, an absent ``meas_id``, or a
+                ``result_tag`` the Guppy program never records; if
+                ``result_tags`` are used with a program containing runtime
+                loops (not statically resolvable); or if the traced operation
+                stream is malformed (the strict ``AllocateResult``/``Measure``
+                pairing in the replay fails).
 
         Note:
             Every measurement is anchored to a stable MeasId automatically:
             ``measure()`` itself allocates the result slot in the trace (a
             ``result(...)`` call is not required for MeasId assignment).
 
-            Detector/observable ``records``/``meas_ids`` reference measurements
-            by *traced (post-compilation)* order and are therefore sensitive to
-            any measurement reordering introduced by Guppy/Selene compilation.
-            Stable, source-anchored tag-referenced detectors are not yet
-            available (the runtime linkage was proven unsound; the sound
-            HUGR-based binding works for straight-line programs but loops are
-            not unrolled in the HUGR) -- see
+            Positional ``records``/``meas_ids`` reference measurements by
+            *traced (post-compilation)* order and are sensitive to any
+            measurement reordering introduced by Guppy/Selene compilation.
+            ``result_tags`` (above) avoid this for straight-line programs via
+            the sound HUGR-derived binding; the runtime-loop case remains
+            deferred -- see
             ``docs/proposals/001-from-guppy-tag-referenced-detectors.md``.
         """
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
@@ -260,6 +284,25 @@ class DetectorErrorModel(_RustDetectorErrorModel):
         # and stamp stable MeasIds onto measurement gates.
         tc.lower_clifford_rotations()
         tc.assign_missing_meas_ids()
+
+        # Tag-referenced detectors: ferry the compiled HUGR + traced
+        # measurement count to Rust, which does the sound HUGR extraction,
+        # runtime-loop guard, and result_tags->records resolution (fail-loud).
+        # This Python side is a thin pass-through; no tag logic lives here.
+        if _result_tags_present(detectors_json, observables_json):
+            from pecos_rslib import resolve_result_tags_for_guppy
+
+            from pecos._compilation.guppy import guppy_to_hugr
+
+            measured, _ = _collect_measurement_info(tc)
+            detectors_json, observables_json = resolve_result_tags_for_guppy(
+                detectors_json,
+                observables_json,
+                guppy_to_hugr(guppy),
+                measured,
+            )
+            if num_measurements is None:
+                num_measurements = measured
 
         _validate_measurement_contract(
             tc,

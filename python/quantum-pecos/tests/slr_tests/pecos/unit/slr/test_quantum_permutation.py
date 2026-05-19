@@ -258,3 +258,29 @@ def test_whole_register_qreg_permutation_realized_qir() -> None:
     assert _q("z", qir) == [0], qir  # Z(b[0]) after swap -> q0
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
+
+
+@pytest.mark.optional_dependency
+def test_non_bijective_permute_fails_loud() -> None:
+    """A non-bijective Permute must fail loud, not silently miscompile.
+
+    #87 post-review (Codex blocker): the bijectivity guard must
+    validate the EXPANDED source/target lists BEFORE building the
+    map -- a dict would collapse a duplicate expanded source, so a
+    genuinely non-bijective Permute would compile (silent
+    miscompile). Both Codex repro shapes must raise.
+    """
+    # Distinct refs, src set != tgt set.
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    prog = Main(a, b, Permute([a[0], a[1]], [a[1], b[0]]), qubit.H(a[0]))
+    with pytest.raises(NotImplementedError, match=r"bijective over the same ref set"):
+        SlrConverter(prog).qir()
+
+    # Duplicate source ref: would collapse in a dict and bypass the
+    # set-equality check -- must be rejected on the duplicate.
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    prog = Main(a, b, Permute([a[0], a[0]], [b[0], a[0]]), qubit.H(a[0]))
+    with pytest.raises(NotImplementedError, match=r"duplicate source ref"):
+        SlrConverter(prog).qir()

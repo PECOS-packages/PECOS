@@ -910,18 +910,33 @@ class AstToQir:
             msg = "QIR codegen: Permute source/target length mismatch"
             raise NotImplementedError(msg)
 
-        mapping: dict[tuple[str, int], tuple[str, int]] = {}
+        # Accumulate the expanded refs as LISTS first and validate
+        # BEFORE building the dict: a dict would silently collapse a
+        # duplicate expanded source (e.g.
+        # `Permute([a[0], a[0]], [b[0], a[0]])`) so a genuinely
+        # non-bijective Permute would compile -- a silent miscompile.
+        src_all: list[tuple[str, int]] = []
+        tgt_all: list[tuple[str, int]] = []
         for source, target in zip(node.sources, node.targets, strict=True):
             src_refs = self._expand_permute_ref(source)
             tgt_refs = self._expand_permute_ref(target)
             if len(src_refs) != len(tgt_refs):
                 msg = f"QIR codegen: Permute element count mismatch for {source!r} -> {target!r}"
                 raise NotImplementedError(msg)
-            mapping.update(zip(src_refs, tgt_refs, strict=True))
+            src_all.extend(src_refs)
+            tgt_all.extend(tgt_refs)
 
-        if set(mapping) != set(mapping.values()):
+        if len(src_all) != len(set(src_all)):
+            msg = "QIR codegen: Permute has a duplicate source ref (not a permutation)"
+            raise NotImplementedError(msg)
+        if len(tgt_all) != len(set(tgt_all)):
+            msg = "QIR codegen: Permute has a duplicate target ref (not a permutation)"
+            raise NotImplementedError(msg)
+        if set(src_all) != set(tgt_all):
             msg = "QIR codegen: Permute must be bijective over the same ref set"
             raise NotImplementedError(msg)
+
+        mapping: dict[tuple[str, int], tuple[str, int]] = dict(zip(src_all, tgt_all, strict=True))
 
         # Human-readable comment mirroring the legacy gen_qir format
         # (rendered from the post-substitution sources so it stays

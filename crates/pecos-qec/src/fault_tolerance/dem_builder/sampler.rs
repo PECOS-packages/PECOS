@@ -483,18 +483,9 @@ impl DemSampler {
             builder
         };
 
+        // `try_build` enforces num_measurements == influence-map count, so a
+        // metadata override that disagrees with the circuit is rejected there.
         let builder = if let Some(n) = num_meas {
-            let actual = influence_map.measurements.len();
-            if n != actual {
-                return Err(DetectorValidationError::InvalidMetadata {
-                    message: format!(
-                        "circuit declares num_measurements={n} but the circuit \
-                         performs {actual} measurement(s); the declared count \
-                         must match so detector/observable record offsets \
-                         resolve correctly"
-                    ),
-                });
-            }
             builder.with_num_measurements(n)
         } else {
             builder

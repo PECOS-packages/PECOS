@@ -406,13 +406,18 @@ Resolution:
   `DemSampler.from_circuit` and the public `DemBuilder.build` still
   silently-weakening, and a declared `num_measurements` that disagreed with
   the circuit bypassed the range check entirely). **Now fully addressed:** a
-  single fallible `DemBuilder::try_build` runs `validate_metadata_refs` and
-  every circuit-ingest / public path (`from_circuit`, `DemSampler::from_circuit`,
-  `PyDemBuilder::build`) routes through it; a metadata `num_measurements` that
-  does not match the circuit's actual measurement count is rejected at ingest.
-  The infallible `build` stays lax only for the decoupled/raw construction
-  case (empty influence map, opaque pass-through record offsets) so existing
-  callers are unaffected.
+  single fallible `DemBuilder::try_build` runs both
+  `validate_measurement_count` and `validate_metadata_refs`, and every
+  circuit-ingest / public path (`from_circuit`, `DemSampler::from_circuit`,
+  `PyDemBuilder::build`) routes through it. A fourth review then found the
+  count check was duplicated only in the two circuit-ingest paths, so the
+  public `DemBuilder` with a non-empty influence map plus an inconsistent
+  `with_num_measurements` still bypassed it; the check now lives in
+  `try_build` itself (single source of truth) and rejects any
+  `num_measurements` that disagrees with a non-empty influence map. The
+  infallible `build` stays lax only for the decoupled/raw construction case
+  (empty influence map, opaque pass-through record offsets — the declarative
+  escape hatch) so existing callers are unaffected.
 - Also addressed: clippy `-D warnings` (missing `# Panics` docs); the public
   subclass-identity hazard (#6) is documented (no internal `isinstance` use;
   public-API caveat only). The Rust/Python schema duplication/divergence

@@ -120,3 +120,27 @@ def test_dem_sampler_inconsistent_num_measurements_fails_loud() -> None:
     dag.set_attr("detectors", '[{"id": 0, "records": [-2]}]')
     with pytest.raises(ValueError, match="num_measurements"):
         DemSampler.from_circuit(dag, **_NOISE)
+
+
+def test_public_dem_builder_inconsistent_num_measurements_fails_loud() -> None:
+    """Public builder with a real (non-empty) influence map must reject a
+    with_num_measurements() that disagrees with the circuit; otherwise an
+    out-of-range record (e.g. -2 against 1 measurement) silently misbinds."""
+    im = DagFaultAnalyzer(_one_measurement_dag()).build_influence_map()
+    builder = DemBuilder(im)
+    builder.with_noise(**_NOISE)
+    builder.with_num_measurements(2)  # circuit performs only 1 measurement
+    builder.with_detectors_json('[{"id": 0, "records": [-2]}]')
+    with pytest.raises(ValueError, match="num_measurements"):
+        builder.build()
+
+
+def test_public_dem_builder_consistent_num_measurements_still_builds() -> None:
+    """The matching-count case (and the empty-influence-map escape hatch)
+    must keep working -- the count check only fires on a genuine mismatch."""
+    im = DagFaultAnalyzer(_one_measurement_dag()).build_influence_map()
+    builder = DemBuilder(im)
+    builder.with_noise(**_NOISE)
+    builder.with_num_measurements(1)
+    builder.with_detectors_json('[{"id": 0, "records": [-1]}]')
+    assert builder.build().num_detectors == 1

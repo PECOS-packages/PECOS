@@ -516,12 +516,37 @@ impl<'a> DemBuilder<'a> {
     /// offsets are opaque DEM coordinates) and so existing callers do not
     /// change behavior.
     ///
+    /// Rejects a `num_measurements` that disagrees with a non-empty influence
+    /// map.
+    ///
+    /// When the builder is fed a real circuit (the influence map has
+    /// measurements), record offsets and `meas_id`s are defined against that
+    /// circuit's actual measurement record. A caller-supplied
+    /// `with_num_measurements` that differs would let out-of-range refs pass
+    /// [`Self::validate_metadata_refs`] and silently misbind, so it is an
+    /// error. An empty influence map keeps the escape hatch: the count is then
+    /// purely declarative and record offsets are opaque pass-through DEM
+    /// coordinates.
+    fn validate_measurement_count(&self) -> Result<(), DemBuilderError> {
+        let actual = self.influence_map.measurements.len();
+        if actual != 0 && self.num_measurements != actual {
+            return Err(DemBuilderError::ParseError(format!(
+                "num_measurements={} disagrees with the {actual} measurement(s) \
+                 the circuit performs; the declared count must match so \
+                 detector/observable record offsets resolve correctly",
+                self.num_measurements
+            )));
+        }
+        Ok(())
+    }
+
     /// # Errors
     ///
-    /// Returns [`DemBuilderError::ParseError`] if a used record offset is out
-    /// of range for `num_measurements`, or a used `meas_id` is
-    /// `>= num_measurements`.
+    /// Returns [`DemBuilderError::ParseError`] if `num_measurements` disagrees
+    /// with a non-empty influence map, a used record offset is out of range
+    /// for `num_measurements`, or a used `meas_id` is `>= num_measurements`.
     pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
+        self.validate_measurement_count()?;
         self.validate_metadata_refs()?;
         Ok(self.build())
     }
@@ -1490,15 +1515,9 @@ fn build_dem_from_circuit(
         builder
     };
 
+    // `try_build` enforces num_measurements == influence-map count, so a
+    // metadata override that disagrees with the circuit is rejected there.
     let builder = if let Some(n) = num_meas {
-        let actual = influence_map.measurements.len();
-        if n != actual {
-            return Err(DemBuilderError::ParseError(format!(
-                "circuit declares num_measurements={n} but the circuit \
-                 performs {actual} measurement(s); the declared count must \
-                 match so detector/observable record offsets resolve correctly"
-            )));
-        }
         builder.with_num_measurements(n)
     } else {
         builder
@@ -2161,6 +2180,18 @@ mod tests {
             .with_observables_json(r#"[{"id": 0, "records": [-1, -3]}]"#)
             .unwrap()
             .build();
+
+        // Empty influence map keeps the escape hatch: a declared count with
+        // no real measurements is allowed (opaque pass-through coordinates).
+        assert!(
+            DemBuilder::new(&influence_map)
+                .with_detectors_json(r#"[{"id": 0, "meas_ids": [0, 2]}]"#)
+                .unwrap()
+                .with_num_measurements(3)
+                .try_build()
+                .is_ok(),
+            "empty influence map must keep the declarative-count escape hatch"
+        );
     }
 
     #[test]

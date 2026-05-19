@@ -90,7 +90,6 @@ pest_derive = "2"
 regex = "1"
 
 # --- Numerical computing ---
-levenberg-marquardt = "0.15"
 nalgebra = "0.34"
 num = "0.4"
 num-complex = "0.4"

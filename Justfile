@@ -15,6 +15,7 @@ default:
     @echo "  just test           # Run all tests"
     @echo "  just dev            # Build + test (daily workflow)"
     @echo "  just lint           # Check formatting and linting"
+    @echo "  just security-check # Check dependency/security policy"
     @echo "  just doctor         # Diagnose environment problems"
     @echo ""
     @echo "All commands:"
@@ -148,6 +149,24 @@ sys-info: _msvc-bootstrap
 [group('security')]
 dependency-integrity-check:
     ./scripts/dependency-integrity-check.sh
+
+# Run all local dependency/security policy checks
+[group('security')]
+security-check: dependency-integrity-check cargo-deny
+
+# Run cargo-deny against every Rust lockfile covered by CI
+[group('security')]
+cargo-deny: cargo-deny-workspace cargo-deny-native-bench
+
+# Check the root Rust workspace with cargo-deny
+[group('security')]
+cargo-deny-workspace:
+    cargo deny --locked --all-features check advisories bans sources
+
+# Check the standalone native benchmark crate with cargo-deny
+[group('security')]
+cargo-deny-native-bench:
+    cargo deny --manifest-path scripts/native_bench/bench_pecos/Cargo.toml --locked --all-features check advisories bans sources
 
 # List installed and cached dependencies
 [group('setup')]
@@ -382,9 +401,9 @@ dev lang="all": (validate-dev-lang lang)
             ;;
     esac
 
-# Pre-PR gate: clean build + test + lint + dependency integrity
+# Pre-PR gate: clean build + test + lint + dependency/security checks
 [group('dev')]
-check-all: clean (build "release") (test "release") (lint "check")
+check-all: clean (build "release") (test "release") (lint "check") security-check
 
 # Clean build artifacts (or: just clean cache/deps/selene/all/dry-run; multiple OK, e.g. just clean selene deps)
 [group('clean')]

@@ -222,3 +222,14 @@ def test_from_guppy_rejects_detector_tracked_pauli() -> None:
 def test_from_guppy_rejects_entry_without_records_or_meas_ids() -> None:
     with pytest.raises(ValueError, match=r"records|meas_ids|neither"):
         _dem_text(detectors_json='[{"id":0}]')
+
+
+def test_from_guppy_redundant_records_and_meas_ids_are_accepted() -> None:
+    """Co-present records + meas_ids that name the SAME measurement are
+    tolerated (the surface logical_circuit path emits both redundantly) and
+    produce the same DEM as either form alone. (Non-redundant co-presence is
+    rejected fail-loud; that precise semantics is pinned by the deterministic
+    Rust unit test ``test_try_build_mixed_records_meas_ids_must_be_redundant``,
+    since stamped MeasId values are not predictable from Python here.)"""
+    both = _dem_text(detectors_json='[{"id":0,"records":[-1],"meas_ids":[0]}]')
+    assert both == _dem_text(detectors_json='[{"id":0,"records":[-1]}]')

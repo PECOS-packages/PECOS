@@ -465,39 +465,55 @@ impl<'a> DemBuilder<'a> {
     /// Fail loud if any detector/observable references a measurement that does
     /// not exist, instead of silently dropping it and weakening the DEM.
     ///
-    /// Checks only the references that are actually consumed: when `records`
-    /// is non-empty it is used (and `meas_ids` ignored, so `meas_ids` is not
-    /// checked here -- consistent with [`Self::effective_record_offsets`]);
-    /// otherwise `meas_ids` is used. `records`+`meas_ids` may legitimately
-    /// both be present and redundant (surface metadata does this), so their
-    /// co-presence is *not* an error.
+    /// `records` and `meas_ids` are alternative ways to name the *same*
+    /// measurements (the parser allows neither both-empty). Each used
+    /// reference must resolve in range. When an entry carries **both**, they
+    /// must be redundant -- `meas_ids` must resolve to exactly the `records`
+    /// set -- otherwise the DEM the builder produces (which consumes
+    /// `records`) would silently differ from what `meas_ids` asked for. The
+    /// surface `logical_circuit` path emits both redundantly; a non-redundant
+    /// pair is a caller error and fails loud here.
     ///
     /// # Errors
     /// Returns [`DemBuilderError::ParseError`] if a used record offset is out
-    /// of range for `num_measurements`, or a used `meas_id` is `>=
-    /// num_measurements`.
+    /// of range, a used `meas_id` is absent, or a both-present entry's
+    /// `records` and `meas_ids` disagree.
     fn validate_metadata_refs(&self) -> Result<(), DemBuilderError> {
         let check = |kind: &str, id: u32, records: &[i32], meas_ids: &[usize]| {
-            if records.is_empty() {
-                for &mid in meas_ids {
-                    if self.resolve_meas_id_to_tc_index(mid).is_none() {
-                        return Err(DemBuilderError::ParseError(format!(
-                            "{kind} {id} references meas_id {mid}, which is \
-                             not present in the circuit's {} measurement(s)",
-                            self.num_measurements
-                        )));
-                    }
+            for &rec in records {
+                if record_offset_to_absolute_index(self.num_measurements, rec).is_none() {
+                    return Err(DemBuilderError::ParseError(format!(
+                        "{kind} {id} references record offset {rec}, which \
+                         is out of range for a circuit with {} \
+                         measurement(s)",
+                        self.num_measurements
+                    )));
                 }
-            } else {
-                for &rec in records {
-                    if record_offset_to_absolute_index(self.num_measurements, rec).is_none() {
-                        return Err(DemBuilderError::ParseError(format!(
-                            "{kind} {id} references record offset {rec}, which \
-                             is out of range for a circuit with {} \
-                             measurement(s)",
-                            self.num_measurements
-                        )));
-                    }
+            }
+            let mut resolved_offsets = Vec::with_capacity(meas_ids.len());
+            for &mid in meas_ids {
+                let offset = self.meas_id_to_record_offset(mid).ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} {id} references meas_id {mid}, which is not \
+                         present in the circuit's {} measurement(s)",
+                        self.num_measurements
+                    ))
+                })?;
+                resolved_offsets.push(offset);
+            }
+            if !records.is_empty() && !meas_ids.is_empty() {
+                let mut a = records.to_vec();
+                let mut b = resolved_offsets;
+                a.sort_unstable();
+                b.sort_unstable();
+                if a != b {
+                    return Err(DemBuilderError::ParseError(format!(
+                        "{kind} {id} has both 'records' and 'meas_ids' but \
+                         they reference different measurements (records map \
+                         to offsets {a:?}, meas_ids resolve to {b:?}); they \
+                         are alternatives, not additive -- the builder would \
+                         consume only 'records' and silently drop the rest"
+                    )));
                 }
             }
             Ok(())
@@ -1537,6 +1553,13 @@ fn extract_measurement_refs(
         )));
     }
 
+    // `records` and `meas_ids` are alternative ways to reference the *same*
+    // measurements, not additive. Co-presence is allowed but must be
+    // redundant; that equality is enforced fail-loud in
+    // `validate_metadata_refs` (which has the circuit context needed to
+    // resolve `meas_ids`), not here at the pure-parse stage. The surface
+    // `logical_circuit` path legitimately emits both (records = legacy Stim
+    // offsets, meas_ids = the same measurements as stable ids).
     Ok((records, meas_ids))
 }
 
@@ -2308,6 +2331,43 @@ mod tests {
         assert!(
             parse_detectors_json(r#"[{"id": 0}]"#).is_err(),
             "an entry with neither records nor meas_ids must be rejected",
+        );
+        // Both-present is allowed at parse time (surface logical_circuit
+        // legitimately emits redundant records+meas_ids); the
+        // redundancy/fail-loud decision is made later in try_build.
+        assert!(
+            parse_detectors_json(r#"[{"id": 0, "records": [-1], "meas_ids": [0]}]"#).is_ok(),
+            "both records and meas_ids must parse; redundancy is checked in try_build",
+        );
+    }
+
+    #[test]
+    fn test_try_build_mixed_records_meas_ids_must_be_redundant() {
+        // Empty influence map => positional meas_id resolution (deterministic):
+        // num_measurements=3, meas_id k resolves to record offset k-3.
+        let influence_map = DagFaultInfluenceMap::with_capacity(0);
+
+        // Redundant: records [-3] and meas_ids [0] both name measurement 0.
+        let redundant = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "records": [-3], "meas_ids": [0]}]"#)
+            .unwrap()
+            .with_num_measurements(3)
+            .try_build();
+        assert!(
+            redundant.is_ok(),
+            "redundant records+meas_ids must be accepted: {redundant:?}",
+        );
+
+        // Non-redundant: records [-3] (measurement 0) vs meas_ids [1]
+        // (measurement 1) -> fail loud, not silently records-only.
+        let conflicting = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "records": [-3], "meas_ids": [1]}]"#)
+            .unwrap()
+            .with_num_measurements(3)
+            .try_build();
+        assert!(
+            conflicting.is_err(),
+            "non-redundant records+meas_ids must fail loud, not collapse to records",
         );
     }
 

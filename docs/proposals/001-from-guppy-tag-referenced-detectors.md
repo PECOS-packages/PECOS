@@ -420,9 +420,17 @@ Resolution:
   escape hatch) so existing callers are unaffected.
 - Also addressed: clippy `-D warnings` (missing `# Panics` docs); the public
   subclass-identity hazard (#6) is documented (no internal `isinstance` use;
-  public-API caveat only). The Rust/Python schema duplication/divergence
-  remains a known follow-up (not a correctness defect now that all ingest
-  paths fail loud).
+  public-API caveat only).
+- Rust/Python schema duplication/divergence: **now closed.** All
+  detector/observable validation (JSON shape, `D0`/`L0` id forms,
+  tracked-Pauli rejection, "exactly one of records/meas_ids",
+  `num_measurements` consistency, out-of-range records, and `meas_id`
+  resolution against the circuit's stable stamped `MeasId`s) lives solely in
+  the Rust DEM builder; `from_guppy` is a thin wrapper that traces and
+  forwards metadata verbatim. `meas_ids` is an alternative to `records` (not
+  additive); an entry carrying both is rejected fail-loud rather than
+  silently collapsing to `records` (a regression a fourth review caught in
+  the intermediate consolidation).
 
 So the previous "proven sound for straight-line / surface byte-identical"
 statement is accurate again *only after the guard revert*; it was false in the

@@ -285,8 +285,23 @@ class AstToStim:
         """Process a gate operation."""
         stim_gate = GATE_TO_STIM.get(node.gate)
         if stim_gate is None:
-            # Skip unsupported gates
-            return
+            # #88A-class (the #78 surfaced-not-changed Stim analogue):
+            # a gate with no GATE_TO_STIM entry was SILENTLY DROPPED
+            # -- the emitted Stim circuit ran but with wrong
+            # semantics (a #74-class silent miscompile,
+            # uncatchable downstream). Fail loud instead. Stim is
+            # Clifford-only, so non-Clifford rotations
+            # (RX/RY/RZ/RZZ/CR*) are fundamentally unrepresentable
+            # here; F-family/CH have no Stim primitive. A program
+            # using one must not be silently mis-emitted.
+            gate_name = getattr(node.gate, "name", node.gate)
+            msg = (
+                f"Stim codegen: gate {gate_name!r} has no Stim lowering "
+                "(not in GATE_TO_STIM). Emitting the circuit without it "
+                "would be a silent miscompile; it is not supported by "
+                "the Stim backend."
+            )
+            raise NotImplementedError(msg)
 
         if node.gate in TWO_QUBIT_GATES:
             self._process_two_qubit_gate(node, stim_gate)

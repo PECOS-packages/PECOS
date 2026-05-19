@@ -339,5 +339,19 @@ class TestStimStaticForAndWhile:
             SlrConverter(prog).stim()
 
 
+def test_unsupported_gate_fails_loud() -> None:
+    """#88A-class (the #78 surfaced-not-changed Stim analogue): a
+    gate with no GATE_TO_STIM entry must FAIL LOUD, not be silently
+    dropped (a silent drop produced a runnable circuit with wrong
+    semantics -- a #74-class miscompile). Stim is Clifford-only, so
+    a non-Clifford rotation is fundamentally unrepresentable;
+    emitting the circuit without it is the bug.
+    """
+    q = QReg("q", 1)
+    prog = Main(q, qubit.RX[0.5](q[0]))
+    with pytest.raises(NotImplementedError, match=r"has no Stim lowering"):
+        SlrConverter(prog).stim()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

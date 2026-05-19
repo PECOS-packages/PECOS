@@ -717,11 +717,7 @@ def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 
     import pecos
 
     sim_builder = (
-        pecos.sim(program)
-        .classical(pecos.selene_engine())
-        .quantum(pecos.stabilizer())
-        .qubits(num_qubits)
-        .seed(seed)
+        pecos.sim(program).classical(pecos.selene_engine()).quantum(pecos.stabilizer()).qubits(num_qubits).seed(seed)
     )
     chunks = list(sim_builder.capture_operation_trace())
 

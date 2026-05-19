@@ -209,7 +209,7 @@ def _normalize_entry_ids(blob: str, prefix: str) -> str:
         if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
             continue
         raw = entry["id"].strip()
-        body = raw[len(prefix):] if raw.startswith(prefix) else None
+        body = raw[len(prefix) :] if raw.startswith(prefix) else None
         if body is None or not body.isdigit():
             msg = (
                 f"id {entry['id']!r} is not a valid identifier for this list; "

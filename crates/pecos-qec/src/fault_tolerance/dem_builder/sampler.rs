@@ -484,12 +484,27 @@ impl DemSampler {
         };
 
         let builder = if let Some(n) = num_meas {
+            let actual = influence_map.measurements.len();
+            if n != actual {
+                return Err(DetectorValidationError::InvalidMetadata {
+                    message: format!(
+                        "circuit declares num_measurements={n} but the circuit \
+                         performs {actual} measurement(s); the declared count \
+                         must match so detector/observable record offsets \
+                         resolve correctly"
+                    ),
+                });
+            }
             builder.with_num_measurements(n)
         } else {
             builder
         };
 
-        let dem = builder.build();
+        let dem = builder
+            .try_build()
+            .map_err(|err| DetectorValidationError::InvalidMetadata {
+                message: err.to_string(),
+            })?;
         Ok(Self::from_detector_error_model(&dem))
     }
 

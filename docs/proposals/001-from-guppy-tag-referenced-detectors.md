@@ -401,11 +401,23 @@ Resolution:
   normalized to records), malformed-JSON fail-loud in `from_guppy`, JSON
   `tracked_pauli` rejection, direct `from_circuit`/`DemSampler` fail-loud on
   missing-id / malformed metadata.
-- Residual (addressed here): out-of-range / unresolved `records`/`meas_ids`
-  still silently weakened the DEM in the Rust metadata path; the Rust/Python
-  schema duplicated and diverged; clippy `-D warnings` failed (missing
-  `# Panics` docs); the public subclass-identity hazard (#6) is documented
-  (no internal `isinstance` use; public-API caveat only).
+- Residual out-of-range / unresolved `records`/`meas_ids` (a third review
+  found the first fix only covered `DetectorErrorModel.from_circuit`, leaving
+  `DemSampler.from_circuit` and the public `DemBuilder.build` still
+  silently-weakening, and a declared `num_measurements` that disagreed with
+  the circuit bypassed the range check entirely). **Now fully addressed:** a
+  single fallible `DemBuilder::try_build` runs `validate_metadata_refs` and
+  every circuit-ingest / public path (`from_circuit`, `DemSampler::from_circuit`,
+  `PyDemBuilder::build`) routes through it; a metadata `num_measurements` that
+  does not match the circuit's actual measurement count is rejected at ingest.
+  The infallible `build` stays lax only for the decoupled/raw construction
+  case (empty influence map, opaque pass-through record offsets) so existing
+  callers are unaffected.
+- Also addressed: clippy `-D warnings` (missing `# Panics` docs); the public
+  subclass-identity hazard (#6) is documented (no internal `isinstance` use;
+  public-API caveat only). The Rust/Python schema duplication/divergence
+  remains a known follow-up (not a correctness defect now that all ingest
+  paths fail loud).
 
 So the previous "proven sound for straight-line / surface byte-identical"
 statement is accurate again *only after the guard revert*; it was false in the

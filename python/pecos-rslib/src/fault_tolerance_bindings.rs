@@ -1357,7 +1357,9 @@ impl PyDemBuilder {
     ///     A `DetectorErrorModel` that can be converted to string format.
     ///
     /// Raises:
-    ///     `ValueError`: If the detector or observable JSON is malformed.
+    ///     `ValueError`: If the detector or observable JSON is malformed, or
+    ///         a used record offset / `meas_id` is out of range for the
+    ///         configured measurement count.
     fn build(&self) -> PyResult<PyDetectorErrorModel> {
         let mut builder =
             RustDemBuilder::new(&self.influence_map).with_noise_config(self.noise.clone());
@@ -1382,7 +1384,9 @@ impl PyDemBuilder {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         }
 
-        let inner = builder.build();
+        let inner = builder
+            .try_build()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(PyDetectorErrorModel { inner })
     }
 

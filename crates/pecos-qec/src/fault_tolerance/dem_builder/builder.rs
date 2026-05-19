@@ -503,12 +503,38 @@ impl<'a> DemBuilder<'a> {
             .collect()
     }
 
+    /// Validates metadata refs, then builds the Detector Error Model.
+    ///
+    /// This is the fail-loud entry point. Every path that ingests
+    /// detector/observable metadata derived from a circuit (the
+    /// `from_circuit` family, [`DemSampler::from_circuit`], and the public
+    /// Python `DemBuilder.build`) must go through here so an out-of-range
+    /// record offset or `meas_id` is rejected rather than silently dropped.
+    ///
+    /// [`Self::build`] is the infallible counterpart, kept for the raw,
+    /// decoupled construction case (e.g. an empty influence map where record
+    /// offsets are opaque DEM coordinates) and so existing callers do not
+    /// change behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DemBuilderError::ParseError`] if a used record offset is out
+    /// of range for `num_measurements`, or a used `meas_id` is
+    /// `>= num_measurements`.
+    pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
+        self.validate_metadata_refs()?;
+        Ok(self.build())
+    }
+
     /// Builds the Detector Error Model with source tracking.
     ///
     /// This performs fault propagation analysis and tracks error sources (X/Z vs Y)
     /// through the pipeline, enabling accurate direct/decomposed form splitting.
     ///
     /// Use `dem.to_string()` or `dem.to_string_decomposed()` for output.
+    ///
+    /// This does **not** validate metadata refs; callers ingesting
+    /// circuit-derived metadata must use [`Self::try_build`] instead.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
         let num_influence_dem_outputs = self
@@ -1465,13 +1491,20 @@ fn build_dem_from_circuit(
     };
 
     let builder = if let Some(n) = num_meas {
+        let actual = influence_map.measurements.len();
+        if n != actual {
+            return Err(DemBuilderError::ParseError(format!(
+                "circuit declares num_measurements={n} but the circuit \
+                 performs {actual} measurement(s); the declared count must \
+                 match so detector/observable record offsets resolve correctly"
+            )));
+        }
         builder.with_num_measurements(n)
     } else {
         builder
     };
 
-    builder.validate_metadata_refs()?;
-    Ok(builder.build())
+    builder.try_build()
 }
 
 fn observable_records_from_annotations(
@@ -2096,6 +2129,38 @@ mod tests {
 
         assert_eq!(dem.detectors[0].records.as_slice(), &[-3, -1]);
         assert_eq!(dem.dem_outputs()[0].records.as_slice(), &[-2]);
+    }
+
+    #[test]
+    fn test_try_build_rejects_out_of_range_record_and_meas_id() {
+        let influence_map = DagFaultInfluenceMap::with_capacity(0);
+
+        let bad_record = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "records": [-2]}]"#)
+            .unwrap()
+            .with_num_measurements(1)
+            .try_build();
+        assert!(
+            bad_record.is_err(),
+            "out-of-range record must fail try_build"
+        );
+
+        let bad_meas_id = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [999]}]"#)
+            .unwrap()
+            .with_num_measurements(1)
+            .try_build();
+        assert!(
+            bad_meas_id.is_err(),
+            "out-of-range meas_id must fail try_build"
+        );
+
+        // The infallible `build` stays lax for the decoupled/raw case so
+        // existing pass-through callers are unaffected.
+        let _ = DemBuilder::new(&influence_map)
+            .with_observables_json(r#"[{"id": 0, "records": [-1, -3]}]"#)
+            .unwrap()
+            .build();
     }
 
     #[test]

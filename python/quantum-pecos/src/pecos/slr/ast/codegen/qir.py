@@ -26,7 +26,7 @@ Example:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
@@ -100,6 +100,26 @@ GATE_TO_QIR: dict[GateKind, str] = {
     GateKind.CZ: "cz",
     GateKind.RZZ: "rzz",
     GateKind.SZZ: "zz",
+}
+
+# Single-qubit Clifford sqrt-gates with no direct QIR primitive,
+# lowered to an EXECUTABLE-Clifford sequence (h/s/s__adj/x/z only --
+# NOT rx/ry/rz: `__quantum__qis__rx__body` is a pinned build/exec
+# failure (`docs.rotation_rx`), and selene's Stim backend silently
+# no-ops an rx, so a rotation lowering would be a silent miscompile).
+# Each sequence was found by searching the executable Clifford set
+# and VERIFIED equal (up to a global phase, unobservable for
+# measurement-terminated circuits) to the PECOS `StateVec`
+# simulator's authoritative unitary, AND verified end-to-end via the
+# #79 executable path (qir_to_qis -> selene): SX;SX == X,
+# SXdg;SX == I, SY;SY == Y, SYdg;SY == I. (#93: only this verified
+# subset; F-family/CY/CH/CR*/sqrt-2q gates stay fail-loud pending
+# the scoped verification-first workstream.)
+_GATE_DECOMP: dict[GateKind, tuple[GateKind, ...]] = {
+    GateKind.SX: (GateKind.H, GateKind.S, GateKind.H),
+    GateKind.SXdg: (GateKind.H, GateKind.Sdg, GateKind.H),
+    GateKind.SY: (GateKind.H, GateKind.X),
+    GateKind.SYdg: (GateKind.H, GateKind.Z),
 }
 
 # Gates with rotation parameters
@@ -455,6 +475,16 @@ class AstToQir:
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
         qir_name = GATE_TO_QIR.get(node.gate)
+        if qir_name is None and node.gate in _GATE_DECOMP:
+            # #93: a single-qubit Clifford sqrt-gate with no direct
+            # QIR primitive -- emit its verified executable-Clifford
+            # sequence (same target), each primitive in order.
+            for prim_kind in _GATE_DECOMP[node.gate]:
+                self._process_single_qubit_gate(
+                    replace(node, gate=prim_kind, params=()),
+                    GATE_TO_QIR[prim_kind],
+                )
+            return
         if qir_name is None:
             # #88A (the broad class #78 deferred): a gate with no
             # GATE_TO_QIR entry was SILENTLY DROPPED -- valid QIR,

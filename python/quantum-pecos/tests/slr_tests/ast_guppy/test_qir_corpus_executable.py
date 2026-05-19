@@ -70,16 +70,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 import pytest
-from pecos.slr import SlrConverter
+from pecos.slr import CReg, Main, QReg, Return, SlrConverter
+from pecos.slr.qeclib import qubit as qb
+from pecos.slr.qeclib.qubit.measures import Measure
 
 from .audit_runner import _curated_cases  # noqa: TID252
 from .test_qir_spec_compliance import _qir_state  # noqa: TID252
-
-if TYPE_CHECKING:
-    from pecos.slr import Main
 from .tier2_semantic import _qis_exec_records  # noqa: TID252
 
 # Fixed seed set for P invariants: chosen so a hard invariant must
@@ -318,3 +316,37 @@ def test_qir_corpus_executable(label: str) -> None:
     else:  # P
         assert callable(spec)
         spec(obs)
+
+
+@pytest.mark.slow
+@pytest.mark.optional_dependency
+def test_sqrt_clifford_gates_executable() -> None:
+    """#93: the SX/SXdg/SY/SYdg QIR lowering EXECUTES correctly.
+
+    These have no direct QIR primitive; #93 lowers them to a
+    verified executable-Clifford sequence (H;S;H / H;Sdg;H / H;X /
+    H;Z -- NOT rx, which silently no-ops on the Stim backend). Pin
+    the end-to-end behavioral proof through
+    QIR -> qir_to_qis -> selene with deterministic, global-phase-
+    and runtime-convention-immune identities: SX;SX == X,
+    SXdg;SX == I, SY;SY == Y, SYdg;SY == I; and the single-gate
+    cases must be genuinely Z-random (a dropped/no-op lowering
+    would collapse to one value -- the silent-miscompile signature).
+    """
+
+    def _run(build):
+        q = QReg("q", 1)
+        c = CReg("c", 1)
+        prog = Main(q, c, *build(q), Measure(q[0]) > c[0], Return(c))
+        obs: set[tuple[int, ...]] = set()
+        for seed in _SEEDS:
+            for rec in _qis_exec_records(prog, 1, shots=_SHOTS, seed=seed):
+                obs.add(tuple(rec))
+        return obs
+
+    assert _run(lambda q: [qb.SX(q[0]), qb.SX(q[0])]) == {(1,)}, "SX;SX must be X (|0>->|1>)"
+    assert _run(lambda q: [qb.SXdg(q[0]), qb.SX(q[0])]) == {(0,)}, "SXdg;SX must be identity"
+    assert _run(lambda q: [qb.SY(q[0]), qb.SY(q[0])]) == {(1,)}, "SY;SY must be Y (|0>->~|1>)"
+    assert _run(lambda q: [qb.SYdg(q[0]), qb.SY(q[0])]) == {(0,)}, "SYdg;SY must be identity"
+    assert _run(lambda q: [qb.SX(q[0])]) == {(0,), (1,)}, "SX|0> must be Z-random (not a no-op)"
+    assert _run(lambda q: [qb.SY(q[0])]) == {(0,), (1,)}, "SY|0> must be Z-random (not a no-op)"

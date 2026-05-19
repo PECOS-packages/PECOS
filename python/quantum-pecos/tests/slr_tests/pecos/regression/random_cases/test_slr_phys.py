@@ -229,14 +229,16 @@ def test_steane_qir_bc() -> None:
 
 @pytest.mark.optional_dependency
 def test_sx_sxdg() -> None:
-    """SX/SXdg have no QIR lowering -> fail loud (M-B2-static).
+    """SX/SXdg lower to a verified executable-Clifford sequence.
 
-    #88A: the legacy gen_qir never lowered SX->rx either; SX/SXdg are
-    absent from GATE_TO_QIR. They used to be SILENTLY DROPPED (#74-class
-    silent miscompile -- valid QIR, wrong semantics). #88A makes
-    `_process_gate` fail LOUD on any gate with no QIR lowering instead
-    of mis-emitting. (Adding an SX/SXdg->QIR decomposition would be a
-    feature, not pre-PR hygiene.)
+    #93: SX/SXdg have no direct QIR primitive but ARE Clifford
+    sqrt-X gates. They lower to `H;S;H` / `H;Sdg;H` (executable
+    Clifford only -- NOT rx, which is a pinned build/exec failure
+    and would silently no-op on the Stim backend). The sequence was
+    verified equal up to a global phase to the PECOS `StateVec`
+    simulator's unitary AND end-to-end via the #79 executable path
+    (SX;SX == X, SXdg;SX == I). (#88A's earlier fail-loud was the
+    correct interim until this verified lowering landed.)
     """
     prog: Main = Main(
         q := QReg("q", 2),
@@ -248,8 +250,14 @@ def test_sx_sxdg() -> None:
         Return(m),
     )
 
-    with pytest.raises(NotImplementedError, match=r"has no QIR lowering"):
-        SlrConverter(prog).qir()
+    qir = SlrConverter(prog).qir()
+    # SX(q0) -> h;s;h ; SXdg(q1) -> h;s__adj;h. No rotation, no
+    # NotImplementedError, deterministic.
+    assert "__quantum__qis__h__body" in qir
+    assert "__quantum__qis__s__body" in qir
+    assert "__quantum__qis__s__adj" in qir
+    assert "__quantum__qis__rx__body" not in qir, "SX must NOT lower to rx (not executable)"
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
 @pytest.mark.optional_dependency

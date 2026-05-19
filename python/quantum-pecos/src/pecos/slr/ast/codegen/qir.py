@@ -116,10 +116,21 @@ GATE_TO_QIR: dict[GateKind, str] = {
 # subset; F-family/CY/CH/CR*/sqrt-2q gates stay fail-loud pending
 # the scoped verification-first workstream.)
 _GATE_DECOMP: dict[GateKind, tuple[GateKind, ...]] = {
-    GateKind.SX: (GateKind.H, GateKind.S, GateKind.H),
-    GateKind.SXdg: (GateKind.H, GateKind.Sdg, GateKind.H),
+    GateKind.SX: (GateKind.H, GateKind.SZ, GateKind.H),
+    GateKind.SXdg: (GateKind.H, GateKind.SZdg, GateKind.H),
     GateKind.SY: (GateKind.H, GateKind.X),
     GateKind.SYdg: (GateKind.H, GateKind.Z),
+    # #93: the single-qubit Clifford "face" rotations. Same method
+    # as the sqrt-gates above -- searched the executable Clifford
+    # set, verified equal up to a global phase to the PECOS
+    # `StateVec` unitary AND end-to-end via the #79 path
+    # (F;F == F-cubed-is-Fdg identities; F is order-3:
+    # F;F;F == I). Sequences are in circuit order (first applied
+    # first).
+    GateKind.F: (GateKind.SZdg, GateKind.H),
+    GateKind.Fdg: (GateKind.H, GateKind.SZ),
+    GateKind.F4: (GateKind.H, GateKind.SZdg),
+    GateKind.F4dg: (GateKind.SZ, GateKind.H),
 }
 
 # Gates with rotation parameters

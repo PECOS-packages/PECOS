@@ -350,3 +350,41 @@ def test_sqrt_clifford_gates_executable() -> None:
     assert _run(lambda q: [qb.SYdg(q[0]), qb.SY(q[0])]) == {(0,)}, "SYdg;SY must be identity"
     assert _run(lambda q: [qb.SX(q[0])]) == {(0,), (1,)}, "SX|0> must be Z-random (not a no-op)"
     assert _run(lambda q: [qb.SY(q[0])]) == {(0,), (1,)}, "SY|0> must be Z-random (not a no-op)"
+
+
+@pytest.mark.slow
+@pytest.mark.optional_dependency
+def test_face_clifford_gates_executable() -> None:
+    """#93: the F/Fdg/F4/F4dg QIR lowering EXECUTES correctly.
+
+    The single-qubit Clifford "face" rotations have no direct QIR
+    primitive; #93 lowers them to executable-Clifford sequences
+    (F=Sdg;H, Fdg=H;S, F4=H;Sdg, F4dg=S;H -- circuit order),
+    verified equal up to a global phase to the PECOS StateVec
+    unitary. Pin the end-to-end behavioral proof through
+    QIR -> qir_to_qis -> selene with deterministic, global-phase-
+    immune identities: the inverse pairs collapse to identity, the
+    F|0>=|+> discriminator (a no-op lowering would be Z-random),
+    and F is order-3 (F;F;F == I).
+    """
+
+    def _run(build):
+        q = QReg("q", 1)
+        c = CReg("c", 1)
+        prog = Main(q, c, *build(q), Measure(q[0]) > c[0], Return(c))
+        obs: set[tuple[int, ...]] = set()
+        for seed in _SEEDS:
+            for rec in _qis_exec_records(prog, 1, shots=_SHOTS, seed=seed):
+                obs.add(tuple(rec))
+        return obs
+
+    assert _run(lambda q: [qb.F(q[0]), qb.Fdg(q[0])]) == {(0,)}, "F;Fdg must be identity"
+    assert _run(lambda q: [qb.Fdg(q[0]), qb.F(q[0])]) == {(0,)}, "Fdg;F must be identity"
+    assert _run(lambda q: [qb.F4(q[0]), qb.F4dg(q[0])]) == {(0,)}, "F4;F4dg must be identity"
+    assert _run(lambda q: [qb.F4dg(q[0]), qb.F4(q[0])]) == {(0,)}, "F4dg;F4 must be identity"
+    # F|0> = |+> ; H|+> = |0> -> deterministic 0. A no-op F would
+    # leave H|0> = |+> -> Z-random (the silent-miscompile signature).
+    assert _run(lambda q: [qb.F(q[0]), qb.H(q[0])]) == {(0,)}, "F|0>=|+>, H|+>=|0> -> 0 (F not a no-op)"
+    assert _run(lambda q: [qb.F(q[0])]) == {(0,), (1,)}, "F|0> must be Z-random (not a no-op)"
+    # PECOS F is the order-3 face Clifford: F;F;F == I.
+    assert _run(lambda q: [qb.F(q[0]), qb.F(q[0]), qb.F(q[0])]) == {(0,)}, "F;F;F must be identity (order 3)"

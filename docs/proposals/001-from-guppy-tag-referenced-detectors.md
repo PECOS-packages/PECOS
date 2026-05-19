@@ -332,3 +332,47 @@ misbind; surface positional path byte-identical + LER unaffected.
 Remaining deferred: per-occurrence tag binding for runtime-loop programs
 (needs CFG-interpreter-class machinery or upstream `tket-qsystem`
 provenance). `from_guppy` now hard-errors that case instead of being silent.
+
+## External review response (AUTHORITATIVE — supersedes "Update (gap-4)")
+
+An external review found real defects. Resolution:
+
+- **#1 (critical, fixed):** the HUGR extractor over-collected — `result("x",
+  m0==m1)` (lowers through `tket.bool:eq`) gave `records:[-2,-1]` and
+  `result("x", True)` gave `records:[]`, both silently wrong.
+  `pecos_hugr_qis::extract_result_tag_measurements` is now **sound by
+  construction**: it accepts ONLY `result_bool <- tket.bool:read <-
+  Measure/MeasureFree` (canonical scalar raw measurement). Computed values,
+  constants, and array-valued `result()` (`collections.borrow_arr` machinery)
+  are deliberately excluded, with regression tests.
+- **#2 (fixed):** `from_guppy` now validates detector/observable schema
+  (integer id + records/meas_ids) and **fails loud**, instead of letting the
+  DEM builder swallow the parse error and return an empty DEM.
+- **#3 (doc fixed):** corrected the docstring — hand-authored JSON tracked
+  Paulis are **not** supported by the `observables_json` path (the JSON
+  observable parser ignores `kind`/`label`/`pauli`; tracked Paulis come only
+  from circuit annotations).
+- **#4 (moot):** the gap-4 user-facing `result_tags` wiring is **reverted**
+  (dem.py thin block, `pecos_rslib.resolve_result_tags_for_guppy`,
+  `pecos_qec::resolve_result_tags`). With no `guppy_to_hugr` call in
+  `from_guppy`, the wrapper-input regression no longer exists.
+- **#5 (fixed, broader than gap-4):** the lowered-replay no longer assumes a
+  strict AllocateResult/Measure 1:1 interleave. `Quantum.Measure` carries
+  `[qubit, result_id]`; the replay now reads that `result_id` directly (== the
+  MeasId), so batched allocate-allocate-measure-measure is handled and the
+  overstated invariant is gone.
+- **#6 (fixed):** the non-lowered replay now stamps the real `result_id` via
+  `mz_with_ids` instead of discarding it and relying on
+  `assign_missing_meas_ids()` to invent sequential ids.
+- **#7 / overstatements (corrected):** "proven sound for straight-line" and
+  "tag DEM == positional-equivalent" claims are withdrawn. The only retained,
+  tested guarantee is the narrow `extract_result_tag_measurements` contract
+  above; it is a building block, **not wired into `from_guppy`**. Whether HUGR
+  traversal order equals trace MeasId order in general remains unproven and is
+  no longer relied upon by any shipped path.
+
+Net shipped: sound positional `from_guppy` (records/meas_ids, schema-validated
+fail-loud, `D0`/`L0`), the corrected strict/non-lowered replay (#5/#6), and a
+sound-but-narrow standalone HUGR extractor with tests. Tag-referenced
+detectors are NOT exposed to users; the loop case remains deferred (CFG-
+interpreter-class machinery or upstream `tket-qsystem` provenance).

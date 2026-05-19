@@ -17,7 +17,7 @@
 //! `tag -> static-measure-op`; expanding that to per-iteration runtime `MeasIds`
 //! requires a separate static-op -> runtime-measurement correspondence.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 use tket::hugr::ops::OpType;
 use tket::hugr::types::Term;
@@ -52,12 +52,25 @@ pub fn measurement_op_count<H: HugrView<Node = Node>>(hugr: &H) -> usize {
         .count()
 }
 
-/// Map each `result(tag, ...)` to the measurement ordinals whose values it
-/// recorded, in measurement-ordinal order.
+/// Map each `result(tag, <measurement>)` to the measurement ordinal it records.
 ///
-/// A repeated tag (e.g. `result("synx", ...)` in a loop) accumulates each
-/// occurrence's measurement ordinals in the order the `result` ops are
-/// traversed; callers can disambiguate occurrences as needed.
+/// **Sound by construction, narrow by design.** Only the canonical pattern
+/// `result(tag, <a single raw measurement bit>)` is recognized: a
+/// `tket.result:result_bool` op whose value input is *exactly*
+/// `tket.bool:read` of a measurement op. The compiled chain is verified to be
+/// precisely `result_bool <- tket.bool:read <- Measure/MeasureFree`.
+///
+/// Any other shape is **deliberately excluded** (the tag is omitted from the
+/// returned map) rather than guessed at -- e.g. computed values
+/// (`result("x", m0 == m1)` lowers through `tket.bool:eq`), constants
+/// (`result("x", True)` lowers through a `Const`), and array-valued
+/// `result(...)` (`result_array_bool` lowers through `collections.borrow_arr`
+/// machinery that does not cleanly expose per-element measurement provenance).
+/// Resolving those structurally would silently misbind (equality is not
+/// parity; an empty record set is not a detector), so they are not returned.
+///
+/// A tag repeated across the program accumulates its ordinals in traversal
+/// order; callers handle occurrence disambiguation / loop guarding.
 #[must_use]
 pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
     hugr: &H,
@@ -71,16 +84,21 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
         }
     }
 
-    // Pass 2: per tket.result op, reverse-DFS over value wires to the
-    // measurement ancestors feeding it.
+    // single_linked_output source op, if any.
+    let src_op = |node: Node, port: usize| -> Option<Node> {
+        hugr.single_linked_output(node, IncomingPort::from(port))
+            .map(|(s, _)| s)
+    };
+
+    // Pass 2: accept only result_bool <- tket.bool:read <- measurement.
     let mut out: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for node in hugr.nodes() {
         let op = hugr.get_optype(node);
         let Some((ext, name)) = extension_ids(op) else {
             continue;
         };
-        if ext != "tket.result" || !name.starts_with("result") {
-            continue;
+        if ext != "tket.result" || name != "result_bool" {
+            continue; // arrays / non-bool result ops: not soundly resolvable
         }
         let Some(ext_op) = op.as_extension_op() else {
             continue;
@@ -92,36 +110,22 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
             continue;
         };
 
-        // Seed ONLY from input port 0 -- the recorded value. Port 1 of a
-        // result op is the linear state/order token threading result ops to
-        // each other and to measurement side-effects; following it conflates
-        // every measurement. From the value port, a reverse walk reaches the
-        // measurement(s) via classical value ops (tket.bool:read, array
-        // constructors, ...); measurements are leaves (we never descend into
-        // their qubit inputs), so qubit wires are never traversed.
-        let mut found: Vec<usize> = Vec::new();
-        let mut seen: HashSet<Node> = HashSet::new();
-        let mut stack: Vec<Node> = Vec::new();
-        if let Some((src, _)) = hugr.single_linked_output(node, IncomingPort::from(0)) {
-            stack.push(src);
+        // result_bool value input (port 0) must be exactly `tket.bool:read`.
+        let Some(read) = src_op(node, 0) else {
+            continue;
+        };
+        match extension_ids(hugr.get_optype(read)) {
+            Some((e, ref n)) if e == "tket.bool" && n == "read" => {}
+            _ => continue, // e.g. tket.bool:eq (computed) -> exclude
         }
-        while let Some(n) = stack.pop() {
-            if !seen.insert(n) {
-                continue;
-            }
-            if let Some(&ord) = meas_ordinal.get(&n) {
-                found.push(ord);
-                continue; // a measurement is a leaf for value provenance
-            }
-            for p in 0..hugr.num_inputs(n) {
-                if let Some((src, _)) = hugr.single_linked_output(n, IncomingPort::from(p)) {
-                    stack.push(src);
-                }
-            }
-        }
-        found.sort_unstable();
-        found.dedup();
-        out.entry(tag).or_default().extend(found);
+        // ... whose input (port 0) must be a measurement op.
+        let Some(meas) = src_op(read, 0) else {
+            continue;
+        };
+        let Some(&ord) = meas_ordinal.get(&meas) else {
+            continue; // e.g. a Const -> exclude
+        };
+        out.entry(tag).or_default().push(ord);
     }
     out
 }
@@ -131,10 +135,16 @@ mod tests {
     use super::*;
     use crate::read_hugr_envelope;
 
-    // Fixtures generated from Guppy via /tmp/gen_hugr_fixtures.py (committed so
-    // the regression does not depend on a Python toolchain at test time).
+    // Fixtures compiled from Guppy (committed so the regression does not
+    // depend on a Python toolchain at test time):
+    //   scrambled: result() declared c,a,b over measures a,b,c (raw scalars)
+    //   looped:    for _ in range(comptime(3)): result("synx", measure(q))
+    //   computed:  result("eq", m0==m1) ; result("const", True)
+    //   arr:       result("pair", measure_array(qs))   (array-valued)
     const SCRAMBLED: &[u8] = include_bytes!("../tests/fixtures/scrambled.hugr");
     const LOOPED: &[u8] = include_bytes!("../tests/fixtures/looped.hugr");
+    const COMPUTED: &[u8] = include_bytes!("../tests/fixtures/computed.hugr");
+    const ARR: &[u8] = include_bytes!("../tests/fixtures/arr.hugr");
 
     /// Foundation: `result()` declared in scrambled order (c, a, b) over
     /// measurements made in order (a, b, c) must still bind each tag to ITS
@@ -168,6 +178,33 @@ mod tests {
             map.get("synx").map(Vec::as_slice),
             Some([0].as_slice()),
             "runtime loop is not unrolled in HUGR: one static measure op",
+        );
+    }
+
+    /// Soundness: a computed `result("eq", m0 == m1)` (lowers through
+    /// `tket.bool:eq`) and a constant `result("const", True)` (lowers through
+    /// a `Const`) must NOT be returned -- resolving them would silently
+    /// misbind (equality is not parity; no measurement at all).
+    #[test]
+    fn computed_and_constant_tags_are_excluded() {
+        let hugr = read_hugr_envelope(COMPUTED).unwrap();
+        let map = extract_result_tag_measurements(&hugr);
+        assert!(
+            !map.contains_key("eq") && !map.contains_key("const"),
+            "computed/constant tags must be excluded, got {map:?}",
+        );
+    }
+
+    /// Soundness: an array-valued `result("pair", measure_array(qs))` lowers
+    /// through `collections.borrow_arr` machinery with no clean per-element
+    /// measurement provenance, so it must NOT be returned.
+    #[test]
+    fn array_valued_tag_is_excluded() {
+        let hugr = read_hugr_envelope(ARR).unwrap();
+        let map = extract_result_tag_measurements(&hugr);
+        assert!(
+            !map.contains_key("pair"),
+            "array-valued result tag must be excluded, got {map:?}",
         );
     }
 }

@@ -78,10 +78,34 @@ def _validate_measurement_contract(
     effective = num_measurements if num_measurements is not None else measured
 
     def _check(kind: str, entries: list[dict[str, Any]]) -> None:
+        alt_id = "detector_id" if kind == "Detector" else "observable_id"
+        # NB: malformed input raises ValueError (not TypeError) to keep one
+        # consistent failure type across from_guppy's documented contract and
+        # the sibling record/meas_id checks below -- hence the TRY004 noqas.
         for entry in entries:
+            if not isinstance(entry, dict):
+                msg = f"{kind} entry is not a JSON object: {entry!r}"
+                raise ValueError(msg)  # noqa: TRY004
             # Tracked Paulis reference qubits via "pauli", not measurements.
             if entry.get("kind") == "tracked_pauli":
                 continue
+            # Schema: the Rust DEM-builder JSON parser requires an integer id
+            # and records; on a parse failure it silently builds an empty DEM.
+            # Validate here so malformed input fails loud instead.
+            raw_id = entry.get("id", entry.get(alt_id))
+            if not isinstance(raw_id, int) or isinstance(raw_id, bool):
+                msg = (
+                    f"{kind} entry {entry!r} is missing a valid integer "
+                    f"'id' (or '{alt_id}'); the DEM builder would silently "
+                    "drop it and produce an empty DEM."
+                )
+                raise ValueError(msg)  # noqa: TRY004
+            if not (entry.get("records") or entry.get("meas_ids")):
+                msg = (
+                    f"{kind} {raw_id} has no 'records' or 'meas_ids'; it "
+                    "would contribute nothing and silently weaken the DEM."
+                )
+                raise ValueError(msg)
             for rec in entry.get("records", []) or []:
                 idx = effective + int(rec)
                 if not 0 <= idx < effective:
@@ -150,17 +174,6 @@ def _normalize_entry_ids(blob: str, prefix: str) -> str:
     return json.dumps(entries, separators=(",", ":")) if changed else blob
 
 
-def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
-    """Cheap gate: does any entry use ``result_tags``? (substring check).
-
-    Only decides whether to compile the Guppy program to HUGR; the actual
-    extraction, loop-guard, resolution and validation are all done in Rust.
-    """
-    return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (
-        observables_json or ""
-    )
-
-
 class DetectorErrorModel(_RustDetectorErrorModel):
     """Detector error model with a Guppy/QIS-trace convenience constructor.
 
@@ -208,32 +221,18 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 negative measurement offsets (Stim convention); ``meas_ids``
                 may be used instead. Defined against the *traced* program's own
                 measurement order.
+            observables_json: Observable definitions as a JSON list, e.g.
+                ``[{"id": 0, "records": [-1]}]`` (same id/records rules as
+                detectors).
 
-                Reorder-robust alternative: an entry may instead carry
-                ``"result_tags": ["m_a", ...]`` to reference measurements by
-                the stable Guppy ``result(tag, ...)`` tag. The tag->measurement
-                binding is recovered structurally from the compiled HUGR (in
-                Rust), so it is immune to Guppy/Selene measurement reordering.
-                Supported for straight-line programs; for programs with runtime
-                loops it **fails loudly** (the loop is not unrolled in the
-                HUGR, so per-occurrence binding is not statically available --
-                use positional records there). ``result_tags`` and ``records``
-                may be combined on one entry.
-            observables_json: Observable / tracked-Pauli definitions as a JSON
-                list. Plain observables look like ``[{"id": 0, "records":
-                [-1]}]``. Tracked Paulis are entries in this same list carrying
-                ``"kind": "tracked_pauli"`` (plus ``"label"`` and ``"pauli"``,
-                e.g. ``"+X0 Z2"``); the DEM builder splits them out
-                automatically. There is no separate tracked-Pauli argument --
-                this matches the underlying circuit-metadata contract exactly.
-
-                Limitation: a tracked Pauli references **qubits** (via its
-                ``pauli`` string), not measurements. Its qubit indices are
-                interpreted in the *traced (post-compilation)* qubit numbering
-                and are not source-stable -- for a hand-authored general Guppy
-                program the caller must supply them in the traced numbering;
-                geometry-derived paths (e.g. the surface builder) avoid this by
-                construction.
+                Tracked Paulis: **hand-authored JSON tracked Paulis are NOT
+                supported** by this path. The DEM builder's JSON observable
+                parser reads only ``id``/``records``; it ignores ``kind`` /
+                ``label`` / ``pauli``. Tracked Paulis are only produced from
+                circuit *annotations* (e.g. the surface builder), not from
+                ``observables_json``. A ``{"kind": "tracked_pauli", ...}``
+                entry here is silently treated as a (malformed) observable --
+                do not use it.
             num_measurements: Total measurement count, used to resolve negative
                 ``records`` offsets. If omitted, it is inferred from the traced
                 circuit.
@@ -248,25 +247,25 @@ class DetectorErrorModel(_RustDetectorErrorModel):
 
         Raises:
             ValueError: If ``num_measurements`` disagrees with the traced
-                measurement count; if a detector/observable references an
-                out-of-range ``record``, an absent ``meas_id``, or a
-                ``result_tag`` the Guppy program never records; if
-                ``result_tags`` are used with a program containing runtime
-                loops (not statically resolvable); or if the traced operation
-                stream is malformed (the strict ``AllocateResult``/``Measure``
-                pairing in the replay fails).
+                measurement count, if a detector/observable is malformed or
+                references an out-of-range ``record`` or an absent
+                ``meas_id``, or if the traced operation stream cannot be
+                replayed.
 
         Note:
             Every measurement is anchored to a stable MeasId automatically:
             ``measure()`` itself allocates the result slot in the trace (a
             ``result(...)`` call is not required for MeasId assignment).
 
-            Positional ``records``/``meas_ids`` reference measurements by
-            *traced (post-compilation)* order and are sensitive to any
-            measurement reordering introduced by Guppy/Selene compilation.
-            ``result_tags`` (above) avoid this for straight-line programs via
-            the sound HUGR-derived binding; the runtime-loop case remains
-            deferred -- see
+            Detector/observable ``records``/``meas_ids`` reference measurements
+            by *traced (post-compilation)* order and are therefore sensitive to
+            any measurement reordering introduced by Guppy/Selene compilation.
+            Source-anchored tag-referenced detectors are **not exposed here**:
+            the sound HUGR-based binding
+            (``pecos_hugr_qis::extract_result_tag_measurements``) only covers
+            the canonical scalar ``result(tag, measure(q))`` pattern and is not
+            yet wired into ``from_guppy``; runtime-loop programs remain
+            unsupported. See
             ``docs/proposals/001-from-guppy-tag-referenced-detectors.md``.
         """
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
@@ -284,25 +283,6 @@ class DetectorErrorModel(_RustDetectorErrorModel):
         # and stamp stable MeasIds onto measurement gates.
         tc.lower_clifford_rotations()
         tc.assign_missing_meas_ids()
-
-        # Tag-referenced detectors: ferry the compiled HUGR + traced
-        # measurement count to Rust, which does the sound HUGR extraction,
-        # runtime-loop guard, and result_tags->records resolution (fail-loud).
-        # This Python side is a thin pass-through; no tag logic lives here.
-        if _result_tags_present(detectors_json, observables_json):
-            from pecos_rslib import resolve_result_tags_for_guppy
-
-            from pecos._compilation.guppy import guppy_to_hugr
-
-            measured, _ = _collect_measurement_info(tc)
-            detectors_json, observables_json = resolve_result_tags_for_guppy(
-                detectors_json,
-                observables_json,
-                guppy_to_hugr(guppy),
-                measured,
-            )
-            if num_measurements is None:
-                num_measurements = measured
 
         _validate_measurement_contract(
             tc,

@@ -540,8 +540,14 @@ def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any
                 [(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))],
             )
         elif op_name == "Measure":
-            program_id, _result_id = tuple_args(payload, op_name, 2)
-            tick.mz([mapped_slot(int(program_id), op_name)])
+            program_id, result_id = tuple_args(payload, op_name, 2)
+            # Stamp the QIS-provided result_id as the MeasId rather than
+            # discarding it and letting assign_missing_meas_ids() invent
+            # sequential ids (which would be wrong for non-sequential ids).
+            tick.mz_with_ids(
+                [mapped_slot(int(program_id), op_name)],
+                [int(result_id)],
+            )
         elif op_name == "Reset":
             tick.pz([mapped_slot(scalar_arg(payload, op_name), op_name)])
         else:
@@ -584,49 +590,20 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
 
     tick_circuit = TickCircuit()
 
-    # Pass 1: build the global, ordered list of result-slot ids that anchor
-    # MeasIds. In the lowered Selene/QIS trace every measured qubit is backed
-    # by exactly one AllocateResult op immediately followed by its Measure op
-    # (the result slot is intrinsic to measure(); array-valued result()
-    # expands to one AllocateResult per measured element). The k-th
-    # measurement therefore maps to the k-th AllocateResult id, independent of
-    # the program-vs-slot qubit-id spaces. This strict 1:1 interleave is an
-    # invariant of the lowered trace; any deviation means the operation stream
-    # is malformed or uses an unsupported construct, so we fail loudly rather
-    # than guess an association and build a silently-wrong DEM.
+    # Pass 1: the ordered MeasIds, read directly from each Measure op. A
+    # ``Quantum.Measure`` op carries ``[qubit, result_id]`` where ``result_id``
+    # is the QIS result slot the runtime allocated for it (== the MeasId we
+    # stamp). Using it directly needs no AllocateResult/Measure pairing
+    # heuristic and no interleave assumption -- batched
+    # allocate-allocate-measure-measure (a valid QIS pattern) works the same
+    # as interleaved. (The order of Measure ops here matches the order of MZ
+    # gates in ``lowered_quantum_ops``, consumed in pass 2.)
     meas_ids_in_order: list[int] = []
-    pending_alloc: int | None = None
     for chunk in chunks:
         for op in chunk.get("operations") or []:
-            op_dict = dict(op)
-            if "AllocateResult" in op_dict:
-                if pending_alloc is not None:
-                    msg = (
-                        "Malformed traced operation stream: two consecutive "
-                        "AllocateResult ops with no Measure between them. The "
-                        "lowered trace must interleave AllocateResult/Measure "
-                        "1:1; cannot anchor MeasIds deterministically."
-                    )
-                    raise ValueError(msg)
-                pending_alloc = int(op_dict["AllocateResult"]["id"])
-            elif "Quantum" in op_dict and "Measure" in op_dict["Quantum"]:
-                if pending_alloc is None:
-                    msg = (
-                        "Malformed traced operation stream: a Measure op with "
-                        "no preceding AllocateResult. The lowered trace must "
-                        "interleave AllocateResult/Measure 1:1; cannot anchor "
-                        "a stable MeasId for this measurement."
-                    )
-                    raise ValueError(msg)
-                meas_ids_in_order.append(pending_alloc)
-                pending_alloc = None
-    if pending_alloc is not None:
-        msg = (
-            "Malformed traced operation stream: a trailing AllocateResult "
-            "with no following Measure; cannot anchor MeasIds "
-            "deterministically."
-        )
-        raise ValueError(msg)
+            quantum = dict(op).get("Quantum")
+            if isinstance(quantum, dict) and "Measure" in quantum:
+                meas_ids_in_order.append(int(quantum["Measure"][1]))
 
     # Pass 2: replay gates, stamping MeasIds on MZ gates in global trace order.
     meas_cursor = 0

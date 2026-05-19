@@ -15,9 +15,6 @@ description = "Numerical computing support for PECOS"
 # Linear algebra (for polynomial fitting, curve fitting, matrix operations)
 nalgebra.workspace = true
 
-# Non-linear curve fitting (Levenberg-Marquardt algorithm)
-levenberg-marquardt.workspace = true
-
 # Array interface (for API compatibility and return types)
 ndarray.workspace = true
 

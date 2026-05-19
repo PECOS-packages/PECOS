@@ -16,6 +16,12 @@ from selene_sim import SeleneInstance
 from selene_sim.result_handling import ResultStream, TCPStream
 
 
+def _unused_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 class TestSeleneTCPStream:
     """Test Selene's TCP stream functionality."""
 
@@ -123,10 +129,10 @@ class TestSeleneTCPStream:
     def test_tcp_stream_configuration_options(self) -> None:
         """Test different configuration options for TCPStream."""
         # Test with specific port
-        specific_port = 55555
+        specific_port = _unused_tcp_port()
         try:
             with TCPStream(
-                host="localhost",
+                host="127.0.0.1",
                 port=specific_port,
                 logfile=None,
                 shot_offset=10,
@@ -141,7 +147,7 @@ class TestSeleneTCPStream:
                 assert hasattr(stream, "shot_increment") or True, "Stream tracks shot increment"
 
         except OSError as e:
-            # Port might be in use
+            # The selected port can still be claimed between discovery and bind.
             if "address already in use" in str(e).lower():
                 pytest.skip(f"Port {specific_port} already in use")
             raise

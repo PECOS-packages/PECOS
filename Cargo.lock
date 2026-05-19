@@ -532,7 +532,7 @@ checksum = "38c99613cb3cd7429889a08dfcf651721ca971c86afa30798461f8eee994de47"
 [[package]]
 name = "bp"
 version = "0.1.0"
-source = "git+https://github.com/yuewuo/mwpf?tag=v0.2.12#b8444428f999457208c4b0956f3f1c745a0ec2d5"
+source = "git+https://github.com/yuewuo/mwpf?rev=b8444428f999457208c4b0956f3f1c745a0ec2d5#b8444428f999457208c4b0956f3f1c745a0ec2d5"
 dependencies = [
  "float-cmp",
  "rand 0.8.6",
@@ -2273,7 +2273,7 @@ dependencies = [
 [[package]]
 name = "heapz"
 version = "1.1.4"
-source = "git+https://github.com/yuewuo/mwpf?tag=v0.2.12#b8444428f999457208c4b0956f3f1c745a0ec2d5"
+source = "git+https://github.com/yuewuo/mwpf?rev=b8444428f999457208c4b0956f3f1c745a0ec2d5#b8444428f999457208c4b0956f3f1c745a0ec2d5"
 
 [[package]]
 name = "heck"
@@ -2326,7 +2326,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 [[package]]
 name = "highs"
 version = "1.6.1"
-source = "git+https://github.com/yuewuo/mwpf?tag=v0.2.12#b8444428f999457208c4b0956f3f1c745a0ec2d5"
+source = "git+https://github.com/yuewuo/mwpf?rev=b8444428f999457208c4b0956f3f1c745a0ec2d5#b8444428f999457208c4b0956f3f1c745a0ec2d5"
 dependencies = [
  "highs-sys",
  "log",
@@ -3020,18 +3020,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
-name = "levenberg-marquardt"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be7a65739a815308eef33a6d8c78e435a7317305d5b0af0c8c465a2d7ac6fc6"
-dependencies = [
- "cfg-if",
- "nalgebra",
- "num-traits",
- "rustc_version",
-]
-
-[[package]]
 name = "libbz2-rs-sys"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3270,7 +3258,7 @@ checksum = "1fafa6961cabd9c63bcd77a45d7e3b7f3b552b70417831fb0f56db717e72407e"
 [[package]]
 name = "mwpf"
 version = "0.2.12"
-source = "git+https://github.com/yuewuo/mwpf?tag=v0.2.12#b8444428f999457208c4b0956f3f1c745a0ec2d5"
+source = "git+https://github.com/yuewuo/mwpf?rev=b8444428f999457208c4b0956f3f1c745a0ec2d5#b8444428f999457208c4b0956f3f1c745a0ec2d5"
 dependencies = [
  "base64",
  "bp",
@@ -4178,7 +4166,6 @@ dependencies = [
 name = "pecos-num"
 version = "0.2.0-dev.0"
 dependencies = [
- "levenberg-marquardt",
  "log",
  "nalgebra",
  "ndarray 0.17.2",
@@ -4676,7 +4663,7 @@ dependencies = [
 [[package]]
 name = "pheap"
 version = "0.3.0"
-source = "git+https://github.com/yuewuo/mwpf?tag=v0.2.12#b8444428f999457208c4b0956f3f1c745a0ec2d5"
+source = "git+https://github.com/yuewuo/mwpf?rev=b8444428f999457208c4b0956f3f1c745a0ec2d5#b8444428f999457208c4b0956f3f1c745a0ec2d5"
 dependencies = [
  "num-traits",
 ]
@@ -5964,7 +5951,7 @@ dependencies = [
 [[package]]
 name = "selene-core"
 version = "0.2.2"
-source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee#01300ee5d4825e2dfc6500941d0540c3ff06988a"
+source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
 dependencies = [
  "anyhow",
  "delegate",
@@ -5977,7 +5964,7 @@ dependencies = [
 [[package]]
 name = "selene-simple-runtime"
 version = "0.2.6"
-source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee#01300ee5d4825e2dfc6500941d0540c3ff06988a"
+source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
 dependencies = [
  "anyhow",
  "selene-core 0.2.2",
@@ -5986,7 +5973,7 @@ dependencies = [
 [[package]]
 name = "selene-soft-rz-runtime"
 version = "0.2.6"
-source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee#01300ee5d4825e2dfc6500941d0540c3ff06988a"
+source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
 dependencies = [
  "anyhow",
  "selene-core 0.2.2",
@@ -6237,7 +6224,7 @@ dependencies = [
 [[package]]
 name = "slp"
 version = "0.2.0"
-source = "git+https://github.com/yuewuo/mwpf?tag=v0.2.12#b8444428f999457208c4b0956f3f1c745a0ec2d5"
+source = "git+https://github.com/yuewuo/mwpf?rev=b8444428f999457208c4b0956f3f1c745a0ec2d5#b8444428f999457208c4b0956f3f1c745a0ec2d5"
 dependencies = [
  "num-bigint",
  "num-rational",

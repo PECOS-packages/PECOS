@@ -15,6 +15,7 @@ default:
     @echo "  just test           # Run all tests"
     @echo "  just dev            # Build + test (daily workflow)"
     @echo "  just lint           # Check formatting and linting"
+    @echo "  just security-check # Check dependency/security policy"
     @echo "  just doctor         # Diagnose environment problems"
     @echo ""
     @echo "All commands:"
@@ -28,7 +29,7 @@ default:
 set shell := ["bash", "-cu"]
 
 # PECOS CLI - must be installed (run 'just install-cli' first)
-pecos := "cargo run -p pecos-cli --"
+pecos := "cargo run --locked -p pecos-cli --"
 
 # =============================================================================
 # Getting Started
@@ -38,7 +39,7 @@ pecos := "cargo run -p pecos-cli --"
 [group('setup')]
 install-cli: _msvc-bootstrap
     @echo "Installing PECOS CLI..."
-    cargo install --path crates/pecos-cli --force
+    cargo install --locked --path crates/pecos-cli --force
     @echo ""
     @echo "Done! You can now run: just build"
 
@@ -89,10 +90,10 @@ doctor: _msvc-bootstrap
     else
         fail "uv" "not found (see: https://docs.astral.sh/uv/)"
     fi
-    PECOS_VER=$(uv run python -c "import pecos; print(pecos.__version__)" 2>/dev/null) \
+    PECOS_VER=$(uv run --frozen python -c "import pecos; print(pecos.__version__)" 2>/dev/null) \
         && ok "import pecos" "v$PECOS_VER" \
         || fail "import pecos" "failed (run: just build)"
-    RSLIB_VER=$(uv run python -c "import pecos_rslib; print(pecos_rslib.__version__)" 2>/dev/null) \
+    RSLIB_VER=$(uv run --frozen python -c "import pecos_rslib; print(pecos_rslib.__version__)" 2>/dev/null) \
         && ok "pecos_rslib" "v$RSLIB_VER" \
         || fail "pecos_rslib" "native library failed to load (run: just build)"
     echo ""
@@ -144,6 +145,29 @@ doctor: _msvc-bootstrap
 sys-info: _msvc-bootstrap
     {{pecos}} sys-info
 
+# Check lockfiles, CI posture, and current package-worm indicators
+[group('security')]
+dependency-integrity-check:
+    ./scripts/dependency-integrity-check.sh
+
+# Run all local dependency/security policy checks
+[group('security')]
+security-check: dependency-integrity-check cargo-deny
+
+# Run cargo-deny against every Rust lockfile covered by CI
+[group('security')]
+cargo-deny: cargo-deny-workspace cargo-deny-native-bench
+
+# Check the root Rust workspace with cargo-deny
+[group('security')]
+cargo-deny-workspace:
+    cargo deny --locked --all-features check advisories bans sources
+
+# Check the standalone native benchmark crate with cargo-deny
+[group('security')]
+cargo-deny-native-bench:
+    cargo deny --manifest-path scripts/native_bench/bench_pecos/Cargo.toml --locked --all-features check advisories bans sources
+
 # List installed and cached dependencies
 [group('setup')]
 list-deps: _msvc-bootstrap
@@ -193,12 +217,12 @@ pytest *args:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -n "{{args}}" ]; then
-        uv run pytest {{args}}
+        uv run --frozen pytest {{args}}
     else
-        uv run pytest python/pecos-rslib/tests -m "not performance"
-        uv run --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
-        uv run pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
-        uv run pytest python/selene-plugins
+        uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
+        uv run --frozen pytest python/selene-plugins
     fi
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
@@ -251,9 +275,9 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-chec
         echo "==> Checking Rust formatting..."
         cargo fmt --all -- --check
         echo "==> Running clippy..."
-        cargo clippy --workspace --all-targets $CLIPPY_FEATURES -- -D warnings
+        cargo clippy --locked --workspace --all-targets $CLIPPY_FEATURES -- -D warnings
         echo "==> Running pre-commit..."
-        uv run pre-commit run --all-files
+        uv run --frozen pre-commit run --all-files
         if command -v julia >/dev/null 2>&1; then
             echo "==> Checking Julia formatting..."
             just julia-fmt-check
@@ -267,9 +291,9 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-chec
     else
         echo "==> Fixing Rust formatting and clippy..."
         cargo fmt --all
-        cargo clippy --workspace --all-targets $CLIPPY_FEATURES --fix --allow-staged --allow-dirty -- -D warnings
+        cargo clippy --locked --workspace --all-targets $CLIPPY_FEATURES --fix --allow-staged --allow-dirty -- -D warnings
         echo "==> Running pre-commit..."
-        uv run pre-commit run --all-files || true
+        uv run --frozen pre-commit run --all-files || true
         if command -v julia >/dev/null 2>&1; then
             echo "==> Fixing Julia formatting..."
             just julia-fmt
@@ -283,12 +307,12 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-chec
 # Run cargo check
 [group('lint')]
 check: _msvc-bootstrap
-    cargo check --workspace --all-targets
+    cargo check --locked --workspace --all-targets
 
 # Check Python workspace metadata
 [group('lint')]
 python-workspace-check:
-    @uv run python scripts/check_python_workspace.py
+    @uv run --frozen python scripts/check_python_workspace.py
 
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]
@@ -297,10 +321,10 @@ clippy: _msvc-bootstrap
     set -euo pipefail
     if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
         echo "(CUDA detected -- clippy with all features)"
-        cargo clippy --workspace --all-targets --all-features -- -D warnings
+        cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     else
         echo "(No CUDA -- clippy with default features)"
-        cargo clippy --workspace --all-targets -- -D warnings
+        cargo clippy --locked --workspace --all-targets -- -D warnings
     fi
 
 # Check Rust formatting
@@ -345,7 +369,7 @@ bench profile="release" features="" pattern="": _msvc-bootstrap (validate-bench-
 # Dev Workflows
 # =============================================================================
 
-# Dev cycle: build + test (lang: all, rust, python, julia, go)
+# Fast dev cycle: build + test only (lang: all, rust, python, julia, go)
 [group('dev')]
 dev lang="all": (validate-dev-lang lang)
     #!/usr/bin/env bash
@@ -377,9 +401,9 @@ dev lang="all": (validate-dev-lang lang)
             ;;
     esac
 
-# Clean build + test + lint check (run before opening a PR)
+# Pre-PR gate: clean build + test + lint + dependency/security checks
 [group('dev')]
-check-all: clean (build "release") (test "release") (lint "check")
+check-all: clean (build "release") (test "release") (lint "check") security-check
 
 # Clean build artifacts (or: just clean cache/deps/selene/all/dry-run; multiple OK, e.g. just clean selene deps)
 [group('clean')]
@@ -408,7 +432,7 @@ clean *target:
     fi
     # macOS bash 3.2: ${arr[@]+"${arr[@]}"} expands to nothing when arr is empty/unset
     # under `set -u` (which otherwise trips on empty @-expansion).
-    uv run python scripts/clean.py ${ARGS[@]+"${ARGS[@]}"}
+    uv run --frozen python scripts/clean.py ${ARGS[@]+"${ARGS[@]}"}
 
 # =============================================================================
 # Documentation
@@ -417,18 +441,18 @@ clean *target:
 # Serve documentation locally (port: default 8000)
 [group('docs')]
 docs port="8000": (validate-port port)
-    uv run mkdocs serve -a "127.0.0.1:{{port}}"
+    uv run --frozen mkdocs serve -a "127.0.0.1:{{port}}"
 
 # Build documentation
 [group('docs')]
 docs-build:
-    uv run mkdocs build --clean
+    uv run --frozen mkdocs build --clean
 
 # Test Python code examples in documentation
 [group('docs')]
 docs-test:
-    uv run python scripts/docs/generate_doc_tests.py
-    uv run pytest python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
+    uv run --frozen python scripts/docs/generate_doc_tests.py
+    uv run --frozen pytest python/quantum-pecos/tests/docs/generated -v -k "not rust" -m "not slow"
 
 # =============================================================================
 # Deps Management (prefer `just setup` or `pecos install <target>`)
@@ -487,9 +511,9 @@ julia-build profile="release" rustflags="": _msvc-bootstrap (validate-profile "j
         export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
     fi
     case "$PROFILE" in
-        native)  cargo build --profile native -p pecos-julia-ffi ;;
-        release) cargo build --release -p pecos-julia-ffi ;;
-        dev|debug) cargo build -p pecos-julia-ffi ;;
+        native)  cargo build --locked --profile native -p pecos-julia-ffi ;;
+        release) cargo build --locked --release -p pecos-julia-ffi ;;
+        dev|debug) cargo build --locked -p pecos-julia-ffi ;;
         *) echo "Unknown profile: $PROFILE"; exit 1 ;;
     esac
 
@@ -555,9 +579,9 @@ go-build profile="release" rustflags="": _msvc-bootstrap (validate-profile "go-b
         export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
     fi
     case "$PROFILE" in
-        native)  cargo build --profile native -p pecos-go-ffi ;;
-        release) cargo build --release -p pecos-go-ffi ;;
-        dev|debug) cargo build -p pecos-go-ffi ;;
+        native)  cargo build --locked --profile native -p pecos-go-ffi ;;
+        release) cargo build --locked --release -p pecos-go-ffi ;;
+        dev|debug) cargo build --locked -p pecos-go-ffi ;;
         *) echo "Unknown profile: $PROFILE"; exit 1 ;;
     esac
 
@@ -612,18 +636,18 @@ go-lint profile="release": (validate-profile "go-lint" profile) (go-build profil
 # Run performance tests with release build
 [group('test')]
 pytest-perf: build-release
-    uv run --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
+    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
 
 # Run tests for optional dependencies
 [group('test')]
 pytest-dep:
-    uv run pytest python/pecos-rslib/tests -m "optional_dependency"
-    uv run pytest python/quantum-pecos/tests -m "optional_dependency"
+    uv run --frozen pytest python/pecos-rslib/tests -m "optional_dependency"
+    uv run --frozen pytest python/quantum-pecos/tests -m "optional_dependency"
 
 # Run the slower integration lane (excluded from the default fast lane)
 [group('test')]
 pytest-slow:
-    uv run pytest python/quantum-pecos/tests -m "slow and not optional_dependency"
+    uv run --frozen pytest python/quantum-pecos/tests -m "slow and not optional_dependency"
 
 
 
@@ -772,7 +796,7 @@ sync-deps:
         exit 0
     fi
     echo "Python deps incomplete, running uv sync..."
-    SYNC_ARGS=(--project . --all-packages)
+    SYNC_ARGS=(--project . --all-packages --locked)
     # Include CUDA Python packages (cupy, cuquantum, pytket-cutensornet) when
     # the toolkit is installed AND an NVIDIA GPU is present. Pure Rust users
     # and machines without a GPU skip this -- mirrors `pecos python build`.
@@ -854,7 +878,7 @@ build-selene profile="release":
             CARGO_PKG_ARGS+=(-p "$(basename "$DIR")")
         done
         if [ ${#CARGO_PKG_ARGS[@]} -gt 0 ]; then
-            cargo build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} "${CARGO_PKG_ARGS[@]}"
+            cargo build --locked ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} "${CARGO_PKG_ARGS[@]}"
         fi
     else
         echo "Selene plugins: cargo output up to date ($PROFILE)"

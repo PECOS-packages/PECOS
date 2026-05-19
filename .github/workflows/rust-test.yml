@@ -1,5 +1,8 @@
 name: Rust test / linting
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
@@ -42,34 +45,34 @@ jobs:
   rust-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           sudo apt-get clean
 
-      - name: Install Rust (for local testing)
-        run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.cargo/bin:$PATH"
-
       - name: Set up Rust
-        run: rustup override set stable && rustup update
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup override set stable
+          rustup show
 
       - name: Install just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         id: cuda-toolkit
         with:
           cuda: '12.6.3'
@@ -79,7 +82,7 @@ jobs:
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v5
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-14
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
@@ -87,32 +90,39 @@ jobs:
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env
 
+      - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   rust-lint-no-llvm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust (for local testing)
-        run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.cargo/bin:$PATH"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Rust
-        run: rustup override set stable && rustup update
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup override set stable
+          rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -121,19 +131,29 @@ jobs:
         run: |
           for crate in pecos-core pecos-engines pecos-simulators pecos-programs pecos-random pecos-qasm pecos-phir-json pecos-qis-ffi-types; do
             echo "Testing $crate..."
-            cd "crates/$crate" && cargo clippy --all-targets -- -D warnings && cd ../..
+            cd "crates/$crate" && cargo clippy --locked --all-targets -- -D warnings && cd ../..
           done
           echo "Testing pecos without default features..."
-          cd crates/pecos && cargo clippy --all-targets --no-default-features -- -D warnings && cd ../..
+          cd crates/pecos && cargo clippy --locked --all-targets --no-default-features -- -D warnings && cd ../..
 
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.x'
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.14"
+      - name: Install integrity check tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
       - name: Install pre-commit
         run: pip install pre-commit
       - name: Run pre-commit
@@ -148,7 +168,9 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-2022]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Free disk space (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -156,37 +178,36 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           sudo apt-get clean
 
-      - name: Install Rust (for local testing)
+      - name: Set up Rust (Windows)
         if: runner.os == 'Windows'
         run: |
-          curl -sSf -o rustup-init.exe https://win.rustup.rs
-          ./rustup-init.exe -y --default-toolchain stable --default-host x86_64-pc-windows-msvc --profile minimal
+          rustup set default-host x86_64-pc-windows-msvc
+          rustup toolchain install stable --profile minimal
+          rustup default stable
           echo "$HOME\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           $env:Path += ";$HOME\.cargo\bin"
+          rustup show
 
-      - name: Install Rust (for local testing)
+      - name: Set up Rust (Unix)
         if: runner.os != 'Windows'
         run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
-
-      - name: Set up Rust
-        run: rustup show
+          rustup show
 
       - name: Install just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v5
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-14
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
@@ -203,9 +224,16 @@ jobs:
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env
 
+      - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
+
       - name: Install CUDA Toolkit (Linux)
         if: matrix.os == 'ubuntu-latest'
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         id: cuda-toolkit-test
         with:
           cuda: '12.6.3'
@@ -215,18 +243,18 @@ jobs:
 
       - name: Compile tests (macOS)
         if: matrix.os == 'macos-latest'
-        run: cargo build -p pecos-cli --release
+        run: cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           # Use `pecos rust test` for runtime hardware detection (cuQuantum, GPU)
           # Dry-run: just compile, the run step below does the actual test
-          cargo build -p pecos-cli --release
+          cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Windows)
         if: runner.os == 'Windows'
-        run: cargo build -p pecos-cli --release
+        run: cargo build --locked -p pecos-cli --release
 
       - name: Run tests (macOS)
         if: matrix.os == 'macos-latest'
@@ -235,13 +263,13 @@ jobs:
           LIBRARY_PATH: /usr/lib
         run: |
           unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH PKG_CONFIG_PATH
-          cargo run -p pecos-cli --release -- rust test
+          cargo run --locked -p pecos-cli --release -- rust test
 
       - name: Run tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          cargo run -p pecos-cli --release -- rust test
+          cargo run --locked -p pecos-cli --release -- rust test
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
-        run: cargo run -p pecos-cli --release -- rust test
+        run: cargo run --locked -p pecos-cli --release -- rust test

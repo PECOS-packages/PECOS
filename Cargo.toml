@@ -90,7 +90,6 @@ pest_derive = "2"
 regex = "1"
 
 # --- Numerical computing ---
-levenberg-marquardt = "0.15"
 nalgebra = "0.34"
 num = "0.4"
 num-complex = "0.4"
@@ -165,7 +164,7 @@ quizx = "0.3"
 
 # --- Decoder libraries ---
 fusion-blossom = "0.2"
-mwpf = { git = "https://github.com/yuewuo/mwpf", tag = "v0.2.12", default-features = false, features = [
+mwpf = { git = "https://github.com/yuewuo/mwpf", rev = "b8444428f999457208c4b0956f3f1c745a0ec2d5", default-features = false, features = [
   "f64_weight",
 ] }
 relay-bp = "0.2"

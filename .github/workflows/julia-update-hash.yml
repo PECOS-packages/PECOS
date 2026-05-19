@@ -16,6 +16,9 @@ on:
     tags:
       - 'jl-*'
 
+permissions:
+  contents: read
+
 jobs:
   update-build-hash:
     runs-on: ubuntu-latest
@@ -24,23 +27,28 @@ jobs:
       pull-requests: write
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       with:
+        persist-credentials: false
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Get commit SHA
       id: get-sha
+      env:
+        REF_NAME: ${{ github.ref_name }}
       run: |
         # Get the commit SHA that the tag points to
-        COMMIT_SHA=$(git rev-list -n 1 ${{ github.ref_name }})
+        COMMIT_SHA=$(git rev-list -n 1 "$REF_NAME")
         echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-        echo "Tag ${{ github.ref_name }} points to commit: $COMMIT_SHA"
+        echo "Tag $REF_NAME points to commit: $COMMIT_SHA"
 
     - name: Update build_tarballs.jl
+      env:
+        COMMIT_SHA: ${{ steps.get-sha.outputs.commit_sha }}
       run: |
         # Update the commit reference in build_tarballs.jl
-        sed -i 's/get(ENV, "PECOS_BUILD_COMMIT", "main")/"${{ steps.get-sha.outputs.commit_sha }}"/' \
+        sed -i -E "s/get\(ENV, \"PECOS_BUILD_COMMIT\", \"[^\"]+\"\)/\"$COMMIT_SHA\"/" \
           julia/PECOS.jl/deps/build_tarballs.jl
 
         # Show the change
@@ -48,7 +56,7 @@ jobs:
         grep -n "GitSource" julia/PECOS.jl/deps/build_tarballs.jl
 
     - name: Create Pull Request
-      uses: peter-evans/create-pull-request@v8
+      uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         commit-message: "Update Julia build hash for ${{ github.ref_name }}"

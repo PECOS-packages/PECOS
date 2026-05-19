@@ -9,7 +9,7 @@ Provides numerical computing functionality including scipy/numpy-like operations
 ## Features
 
 - Root finding (Brent's method, Newton-Raphson)
-- Curve fitting (Levenberg-Marquardt)
+- Curve fitting (damped least-squares)
 - Polynomial fitting and evaluation
 - Statistical functions (mean, std)
 - Mathematical functions (cos, sin, exp, sqrt)

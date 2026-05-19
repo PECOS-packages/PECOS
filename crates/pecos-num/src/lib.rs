@@ -22,7 +22,7 @@
 //! - Array operations (diag, linspace)
 //! - Random number generation (numpy.random drop-in replacements)
 //! - Root finding algorithms (Brent's method, Newton-Raphson)
-//! - Curve fitting (Levenberg-Marquardt, polynomial fitting)
+//! - Curve fitting (damped least-squares, polynomial fitting)
 //! - Graph data structures ([`Graph`](graph::Graph), [`DiGraph`](digraph::DiGraph), [`DAG`](dag::DAG))
 //! - Graph algorithms (MWPM matching, shortest paths, topological sort)
 //! - Performance improvements over scipy/numpy

@@ -1,0 +1,23 @@
+[advisories]
+yanked = "deny"
+unmaintained = "none"
+unsound = "none"
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+allow-wildcard-paths = true
+highlight = "simplest-path"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+required-git-spec = "rev"
+allow-registry = [
+    "https://github.com/rust-lang/crates.io-index",
+]
+allow-git = [
+    "https://github.com/Quantinuum/selene",
+    "https://github.com/yuewuo/mwpf",
+]
+unused-allowed-source = "allow"

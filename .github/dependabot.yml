@@ -19,6 +19,22 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
 
+  # Rust (Cargo) - native benchmark security updates only
+  - package-ecosystem: "cargo"
+    directory: "/scripts/native_bench/bench_pecos"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      native-bench-rust-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    allow:
+      - dependency-type: "all"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+
   # Python (pip) - security updates only
   - package-ecosystem: "pip"
     directory: "/"

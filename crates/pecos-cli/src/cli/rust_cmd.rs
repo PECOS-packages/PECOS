@@ -213,7 +213,19 @@ fn run_cargo_command(args: &[&str]) -> bool {
 /// `run_test` to inject `-C target-cpu=native` for the native profile.
 fn run_cargo_command_with_rustflags(args: &[&str], rustflags: Option<&str>) -> bool {
     let mut cmd = Command::new("cargo");
-    cmd.args(args);
+    let mut locked_args = Vec::with_capacity(args.len() + 1);
+    if let Some((subcommand, rest)) = args.split_first() {
+        locked_args.push(*subcommand);
+        if matches!(*subcommand, "build" | "check" | "clippy" | "run" | "test")
+            && !args
+                .iter()
+                .any(|arg| matches!(*arg, "--locked" | "--frozen" | "--offline"))
+        {
+            locked_args.push("--locked");
+        }
+        locked_args.extend(rest.iter().copied());
+    }
+    cmd.args(&locked_args);
     for (key, value) in super::env_cmd::collect_env() {
         cmd.env(key, value);
     }

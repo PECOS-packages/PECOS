@@ -11,6 +11,9 @@
 
 name: Julia test
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
@@ -41,10 +44,12 @@ jobs:
         julia-version: ["1"]  # Latest stable (experimental bindings)
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
 
     - name: Set up Julia ${{ matrix.julia-version }}
-      uses: julia-actions/setup-julia@v3
+      uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
       with:
         version: ${{ matrix.julia-version }}
 
@@ -88,10 +93,11 @@ jobs:
     #     cargo run -p pecos-cli --release -- llvm check
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
         workspaces: julia/pecos-julia-ffi
 
     - name: Bootstrap MSVC for the Cargo build path (Windows)
@@ -107,7 +113,7 @@ jobs:
       shell: pwsh
       run: |
         cd julia/pecos-julia-ffi
-        cargo build --release
+        cargo build --locked --release
 
     - name: Build Rust FFI library (Unix)
       if: runner.os != 'Windows'
@@ -129,7 +135,7 @@ jobs:
         fi
 
         cd julia/pecos-julia-ffi
-        cargo build --release
+        cargo build --locked --release
 
     - name: Run Julia tests
       run: |

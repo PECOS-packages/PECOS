@@ -218,7 +218,7 @@ echo ""
 echo "--- Building PECOS GPU benchmark (Rust, wgpu + cuQuantum) ---"
 PECOS_BENCH_DIR="$SCRIPT_DIR/bench_pecos"
 (cd "$PECOS_BENCH_DIR" && RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native" \
-    cargo build --release --features gpu,cuquantum 2>&1 | tail -5)
+    cargo build --locked --release --features gpu,cuquantum 2>&1 | tail -5)
 PECOS_BIN="$PECOS_BENCH_DIR/target/release/bench_pecos"
 echo "PECOS GPU benchmark built."
 echo ""

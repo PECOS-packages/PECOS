@@ -85,6 +85,10 @@ just fmt                       # Check Rust formatting
 just fmt-fix                   # Fix Rust formatting
 just clippy                    # Run clippy
 
+# Dependency and security policy
+just security-check            # Dependency integrity + cargo-deny checks
+just cargo-deny                # Rust dependency policy checks
+
 # Cleaning
 just clean                     # Clean build artifacts
 ```
@@ -152,6 +156,32 @@ pecos deps sync
 ```
 
 Syncs crate-level `pecos.toml` manifests from the workspace-level manifest.
+
+## Dependency and Security Policy
+
+Run these recipes when changing dependencies, lockfiles, CI workflows, action references, cache behavior, or security policy:
+
+```bash
+just security-check            # Full local dependency/security policy check
+just dependency-integrity-check # Lock discipline, CI posture, action pins, cache posture
+just cargo-deny                # Both Rust cargo-deny checks covered by CI
+just cargo-deny-workspace      # Root Rust workspace only
+just cargo-deny-native-bench   # Standalone native benchmark crate only
+```
+
+`cargo-deny` checks the resolved Rust dependency graph against `deny.toml`. In this repo it checks:
+
+- `advisories`: known Rust security advisories
+- `bans`: disallowed crates or dependency patterns
+- `sources`: approved registries and git sources
+
+Install the same `cargo-deny` version used by CI before running these locally:
+
+```bash
+cargo install --locked --version 0.19.6 cargo-deny
+```
+
+Use `just check-all` before a broad PR; it runs the build, tests, lint gate, and `just security-check`.
 
 ## Environment Variables
 

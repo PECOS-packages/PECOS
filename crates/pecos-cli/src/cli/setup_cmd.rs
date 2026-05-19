@@ -131,7 +131,7 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
         if super::cuda_cmd::cuda_python_packages_installed() {
             println!("  cupy:       installed (CUDA Python packages synced)");
         } else {
-            println!("  cupy:       not installed (~500 MB via `uv sync --group cuda`)");
+            println!("  cupy:       not installed (~500 MB via `uv sync --locked --group cuda`)");
         }
     }
 
@@ -353,7 +353,7 @@ fn setup_cuda_python(mode: PromptMode) -> Result<()> {
     }
 
     if confirm(
-        "Install CUDA Python packages? (cupy, cuquantum, pytket-cutensornet via `uv sync --group cuda`)",
+        "Install CUDA Python packages? (cupy, cuquantum, pytket-cutensornet via `uv sync --locked --group cuda`)",
         true, // default yes when CUDA toolkit + NVIDIA GPU are present
         mode,
     ) {

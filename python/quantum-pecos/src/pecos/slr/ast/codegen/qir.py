@@ -116,9 +116,16 @@ class QirCodeGenContext:
     qubit_map: dict[tuple[str, int], int] = field(default_factory=dict)
     qubit_count: int = 0
     creg_map: dict[str, int] = field(default_factory=dict)  # name -> size
+    qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
     measurement_count: int = 0
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
+    # Static logical permutation, mirroring the Guppy linearity
+    # tracker's `.permute()` (compile-time relabel; QIR/Selene have no
+    # runtime permute intrinsic). Maps a logical (reg, index) ref to
+    # the (reg, index) whose storage it should resolve to. Consulted
+    # at every qubit-ref and classical-bit-ref lowering.
+    permutation_map: dict[tuple[str, int], tuple[str, int]] = field(default_factory=dict)
 
     def get_root_allocator(self, name: str) -> str:
         """Get the root allocator for a given allocator name."""
@@ -137,6 +144,11 @@ class QirCodeGenContext:
 
         For child allocators, translates to root allocator with computed offset.
         """
+        # Resolve any active logical permutation first (identity until
+        # a Permute runs; decl-time pre-population sees the empty map,
+        # so real qubits are still allocated 1:1).
+        allocator, index = self.permutation_map.get((allocator, index), (allocator, index))
+
         # Translate to root allocator and absolute index
         root = self.get_root_allocator(allocator)
         abs_index = self.get_absolute_index(allocator, index)
@@ -309,6 +321,7 @@ class AstToQir:
         # Process allocator declarations - only allocate for root allocators
         for decl in program.declarations:
             if isinstance(decl, AllocatorDecl):
+                self.context.qreg_sizes[decl.name] = decl.capacity
                 if decl.parent is None:
                     for i in range(decl.capacity):
                         self.context.get_qubit_index(decl.name, i)
@@ -337,6 +350,8 @@ class AstToQir:
                 self._builder.store(creg_ptr, llvm_ir.Constant(arr_ty))
                 self._creg_ptrs[decl.name] = creg_ptr
 
+        if program.allocator:
+            self.context.qreg_sizes[program.allocator.name] = program.allocator.capacity
         if program.allocator and program.allocator.parent is None:
             for i in range(program.allocator.capacity):
                 self.context.get_qubit_index(program.allocator.name, i)
@@ -574,6 +589,10 @@ class AstToQir:
         Emitted at point-of-use (not cached across blocks) so the pointer
         always dominates its uses under control flow.
         """
+        # Resolve any active logical permutation (classical bits, like
+        # qubits, are relabelled by a Permute -- mirrors Guppy's
+        # mem_swap-based classical permute).
+        reg_name, index = self.context.permutation_map.get((reg_name, index), (reg_name, index))
         return self._builder.gep(
             self._creg_ptrs[reg_name],
             [
@@ -841,34 +860,74 @@ class AstToQir:
         for stmt in node.body:
             self._process_statement(stmt)
 
-    def _process_permute(self, node: PermuteOp) -> None:
-        """Process a permutation operation.
+    def _expand_permute_ref(self, ref: str) -> list[tuple[str, int]]:
+        """Expand a Permute ref string to logical (reg, index) pairs.
 
-        Updates the internal allocator mapping to swap qubit references.
-        QIR doesn't have a permute instruction, so this just updates
-        how we map allocator names to qubit indices.
+        `name[idx]` -> a single element; bare `name` -> every element
+        of the register (QReg capacity or CReg size). Mirrors the
+        Guppy codegen's `_expand_permute_ref`.
         """
-        # Permutation is realized by remapping allocator offsets (QIR
-        # has no permute instruction). Emit the human-readable comment
-        # mirroring the legacy gen_qir format (rendered here from the
-        # post-substitution sources/targets so it stays correct inside
-        # a flattened BlockCall): whole-register `; Permutation: a <->
-        # b`, else per-element `; Permutation: a[0] -> b[1], ...`.
+        if ref.endswith("]") and "[" in ref:
+            name, idx = ref[:-1].split("[", 1)
+            return [(name, int(idx))]
+        if ref in self.context.qreg_sizes:
+            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
+        if ref in self.context.creg_map:
+            return [(ref, i) for i in range(self.context.creg_map[ref])]
+        msg = f"QIR codegen: unknown Permute ref {ref!r}"
+        raise NotImplementedError(msg)
+
+    def _process_permute(self, node: PermuteOp) -> None:
+        """Realize a Permute as a static logical relabel.
+
+        QIR (and the Selene runtime) have no permute intrinsic, so --
+        exactly like the legacy gen_qir permutation_map and the Guppy
+        linearity tracker's `.permute()` -- a permutation is realized
+        at compile time by relabelling which storage each logical
+        (reg, index) ref resolves to. Build the source->target logical
+        mapping, require it bijective over the same ref set, then
+        compose it ATOMICALLY into the standing permutation_map
+        (snapshot old, then `map[s] = old.get(t, t)`). Every
+        qubit-ref and classical-bit-ref lowering consults
+        permutation_map, so subsequent refs hit the permuted storage.
+        Works uniformly for whole-register and element-wise, QReg and
+        CReg.
+        """
+        if len(node.sources) != len(node.targets):
+            msg = "QIR codegen: Permute source/target length mismatch"
+            raise NotImplementedError(msg)
+
+        mapping: dict[tuple[str, int], tuple[str, int]] = {}
+        for source, target in zip(node.sources, node.targets, strict=True):
+            src_refs = self._expand_permute_ref(source)
+            tgt_refs = self._expand_permute_ref(target)
+            if len(src_refs) != len(tgt_refs):
+                msg = f"QIR codegen: Permute element count mismatch for {source!r} -> {target!r}"
+                raise NotImplementedError(msg)
+            for s_ref, t_ref in zip(src_refs, tgt_refs, strict=True):
+                mapping[s_ref] = t_ref
+
+        if set(mapping) != set(mapping.values()):
+            msg = "QIR codegen: Permute must be bijective over the same ref set"
+            raise NotImplementedError(msg)
+
+        # Human-readable comment mirroring the legacy gen_qir format
+        # (rendered from the post-substitution sources so it stays
+        # correct inside a flattened BlockCall).
         if node.add_comment and node.sources:
             if node.whole_register and len(node.sources) >= 2:
                 self._builder.comment(f"; Permutation: {node.sources[0]} <-> {node.sources[1]}")
             else:
-                pairs = ", ".join(f"{s} -> {t}" for s, t in zip(node.sources, node.targets, strict=False))
+                pairs = ", ".join(f"{s} -> {t}" for s, t in zip(node.sources, node.targets, strict=True))
                 self._builder.comment(f"; Permutation: {pairs}")
 
-        # Swap the allocator offsets
-        for src, tgt in zip(node.sources, node.targets, strict=False):
-            # Get current offsets
-            src_offset = self.context.allocator_offsets.get(src, 0)
-            tgt_offset = self.context.allocator_offsets.get(tgt, 0)
-            # Swap them
-            self.context.allocator_offsets[src] = tgt_offset
-            self.context.allocator_offsets[tgt] = src_offset
+        # Compose ATOMICALLY (Guppy `.permute` semantics): a whole
+        # register swap arrives as sources=(a,b)/targets=(b,a), so a
+        # sequential apply would cancel to a no-op; snapshotting the
+        # old map first applies the relabel exactly once.
+        old = dict(self.context.permutation_map)
+        for s_ref, t_ref in mapping.items():
+            self.context.permutation_map[s_ref] = old.get(t_ref, t_ref)
 
     def _generate_results(self) -> None:
         """Generate result output calls."""

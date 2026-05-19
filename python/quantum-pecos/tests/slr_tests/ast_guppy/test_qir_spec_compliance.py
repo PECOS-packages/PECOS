@@ -46,11 +46,11 @@ silently-wrong single-pass approximation; #74 makes the QIR backend
 fail loud on `While`, moving it to the build-failure set below.) (`adaptive_profile` is now genuinely exercised:
 B2 emits `__quantum__rt__read_result` for measurement feedback.)
 The deeper *semantic* proof for the load-bearing CReg shapes is
-`tier2_semantic.py` (real-compiler acceptance + emitted-QIR
+`test_tier2_semantic.py` (real-compiler acceptance + emitted-QIR
 structural invariants + a deterministic AST->Guppy->Selene
 cross-anchor). The direct `qir_to_qis`->Selene EXECUTABLE
 differential is delivered (#77 Layer D `_qis_exec_records` in
-`tier2_semantic.py`): `selene_sim` natively runs the LLVM-21
+`test_tier2_semantic.py`): `selene_sim` natively runs the LLVM-21
 opaque-pointer QIS bitcode `qir_to_qis` emits, via
 `selene_helios_qis_plugin` -- there is no LLVM-version blocker.
 #79 generalises it corpus-wide; this structural gate provides

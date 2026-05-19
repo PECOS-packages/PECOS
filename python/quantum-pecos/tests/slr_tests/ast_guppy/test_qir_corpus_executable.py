@@ -78,7 +78,7 @@ from pecos.slr.qeclib.qubit.measures import Measure
 
 from .audit_runner import _curated_cases  # noqa: TID252
 from .test_qir_spec_compliance import _qir_state  # noqa: TID252
-from .tier2_semantic import _qis_exec_records  # noqa: TID252
+from .test_tier2_semantic import _qis_exec_records  # noqa: TID252
 
 # Fixed seed set for P invariants: chosen so a hard invariant must
 # both HOLD and be EXERCISED (e.g. both Bell outcomes appear). NOT a

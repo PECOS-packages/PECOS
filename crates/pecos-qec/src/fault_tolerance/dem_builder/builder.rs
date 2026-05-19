@@ -1271,79 +1271,6 @@ fn extract_records(json: &str) -> Vec<i32> {
     Vec::new()
 }
 
-/// Rewrite tag-referenced detector/observable JSON into record offsets.
-///
-/// Entries may reference measurements by a stable Guppy `result(...)` tag via
-/// a `"result_tags": ["sx0:meas:0", ...]` field instead of positional
-/// `records`. Each tag is resolved through the circuit's `meas_tags` map
-/// (`tag -> [MeasId]`) to record offsets (`meas_id - num_measurements`), since
-/// a MeasId is the measurement's absolute trace-order index. Resolved offsets
-/// are merged into the entry's `records` and `result_tags` is removed, so the
-/// downstream parser is unchanged. Tag references are immune to Guppy/Selene
-/// measurement reordering because the tag identity is fixed in the source.
-fn resolve_result_tags_in_json(
-    json: &str,
-    meas_tags: &std::collections::BTreeMap<String, Vec<i64>>,
-    num_meas: Option<usize>,
-) -> Result<String, DemBuilderError> {
-    let mut value: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| DemBuilderError::ParseError(format!("invalid detector/observable JSON: {e}")))?;
-    let Some(entries) = value.as_array_mut() else {
-        return Ok(json.to_string());
-    };
-
-    let mut changed = false;
-    for entry in entries.iter_mut() {
-        let Some(obj) = entry.as_object_mut() else {
-            continue;
-        };
-        let Some(tags) = obj.remove("result_tags") else {
-            continue;
-        };
-        changed = true;
-        let Some(num_meas) = num_meas else {
-            return Err(DemBuilderError::ParseError(
-                "result_tags used but circuit has no num_measurements".to_string(),
-            ));
-        };
-        let num_meas = num_meas as i64;
-
-        let mut records: Vec<i64> = obj
-            .get("records")
-            .and_then(|r| r.as_array())
-            .map(|a| a.iter().filter_map(serde_json::Value::as_i64).collect())
-            .unwrap_or_default();
-
-        let tag_list = tags.as_array().ok_or_else(|| {
-            DemBuilderError::ParseError("result_tags must be a JSON array of strings".to_string())
-        })?;
-        for tag in tag_list {
-            let tag = tag.as_str().ok_or_else(|| {
-                DemBuilderError::ParseError("result_tags entries must be strings".to_string())
-            })?;
-            let meas_ids = meas_tags.get(tag).ok_or_else(|| {
-                DemBuilderError::ParseError(format!(
-                    "result_tag {tag:?} not found in circuit meas_tags"
-                ))
-            })?;
-            for &mid in meas_ids {
-                records.push(mid - num_meas);
-            }
-        }
-
-        obj.insert(
-            "records".to_string(),
-            serde_json::Value::Array(records.into_iter().map(serde_json::Value::from).collect()),
-        );
-    }
-
-    if !changed {
-        return Ok(json.to_string());
-    }
-    serde_json::to_string(&value)
-        .map_err(|e| DemBuilderError::ParseError(format!("failed to re-serialize JSON: {e}")))
-}
-
 // ============================================================================
 // Convenience: build DEM from circuit (free function to handle lifetimes)
 // ============================================================================
@@ -1391,24 +1318,6 @@ fn build_dem_from_circuit(
             None
         }
     });
-
-    // Stable Guppy result()-tag -> [MeasId] linkage, if the circuit was traced
-    // from a Guppy program. Used to resolve tag-referenced detectors into
-    // record offsets that survive compilation measurement reordering.
-    let meas_tags: std::collections::BTreeMap<String, Vec<i64>> = circuit
-        .get_attr("meas_tags")
-        .and_then(|a| {
-            if let Attribute::String(s) = a {
-                serde_json::from_str(s).ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-    let det_json = det_json
-        .map(|s| resolve_result_tags_in_json(&s, &meas_tags, num_meas).unwrap_or(s));
-    let obs_json = obs_json
-        .map(|s| resolve_result_tags_in_json(&s, &meas_tags, num_meas).unwrap_or(s));
 
     let builder = DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep);
 

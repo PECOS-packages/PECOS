@@ -143,6 +143,38 @@ mod tests {
         );
     }
 
+    /// Diagnostic: dump the looped HUGR's control-flow / region structure so
+    /// the unrolled-order reconstruction can be designed against the real
+    /// loop representation (TailLoop vs CFG, where the comptime bound lives,
+    /// which region the measure/result ops sit in).
+    #[test]
+    fn dump_looped_control_flow() {
+        let hugr = read_hugr_envelope(LOOPED).unwrap();
+        for node in hugr.nodes() {
+            let op = hugr.get_optype(node);
+            let parent = hugr.get_parent(node);
+            let tag = match extension_ids(op) {
+                Some((e, n)) => format!("EXT {e}:{n}"),
+                None => format!("{op:?}")
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("?")
+                    .to_string(),
+            };
+            let interesting = matches!(tag.as_str(), t if t.contains("CFG")
+                || t.contains("DataflowBlock") || t.contains("TailLoop")
+                || t.contains("Conditional") || t.contains("Case")
+                || t.contains("ExitBlock") || t.contains("Const")
+                || t.contains("FuncDefn"))
+                || tag.contains("Measure")
+                || tag.contains("tket.result")
+                || tag.contains("LoadConstant");
+            if interesting {
+                eprintln!("{node:?} parent={parent:?} {tag}");
+            }
+        }
+    }
+
     /// Documents the known limitation: a runtime `for _ in range(comptime(n))`
     /// loop is NOT unrolled in the HUGR, so a tag emitted once per iteration
     /// has a single static measure op. Per-iteration expansion needs a

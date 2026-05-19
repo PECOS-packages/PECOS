@@ -77,24 +77,11 @@ def _validate_measurement_contract(
         raise ValueError(msg)
     effective = num_measurements if num_measurements is not None else measured
 
-    meas_tags_meta = tc.get_meta("meas_tags")
-    meas_tags: dict[str, list[int]] = json.loads(meas_tags_meta) if meas_tags_meta else {}
-
     def _check(kind: str, entries: list[dict[str, Any]]) -> None:
         for entry in entries:
             # Tracked Paulis reference qubits via "pauli", not measurements.
             if entry.get("kind") == "tracked_pauli":
                 continue
-            for tag in entry.get("result_tags", []) or []:
-                if tag not in meas_tags:
-                    known = ", ".join(sorted(meas_tags)[:8]) or "<none>"
-                    msg = (
-                        f"{kind} {entry.get('id', entry)} references "
-                        f"result_tag {tag!r}, which the traced program never "
-                        f"recorded via result(...). Known tags: {known}"
-                        f"{' ...' if len(meas_tags) > 8 else ''}."
-                    )
-                    raise ValueError(msg)
             for rec in entry.get("records", []) or []:
                 idx = effective + int(rec)
                 if not 0 <= idx < effective:
@@ -163,20 +150,6 @@ def _normalize_entry_ids(blob: str, prefix: str) -> str:
     return json.dumps(entries, separators=(",", ":")) if changed else blob
 
 
-def _uses_result_tags(detectors_json: str, observables_json: str) -> bool:
-    """True if any detector/observable references measurements by result tag."""
-    for blob in (detectors_json, observables_json):
-        if not blob:
-            continue
-        try:
-            entries = json.loads(blob)
-        except json.JSONDecodeError:
-            continue
-        if any(e.get("result_tags") for e in entries if isinstance(e, dict)):
-            return True
-    return False
-
-
 class DetectorErrorModel(_RustDetectorErrorModel):
     """Detector error model with a Guppy/QIS-trace convenience constructor.
 
@@ -233,27 +206,15 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 this matches the underlying circuit-metadata contract exactly.
 
                 Limitation: a tracked Pauli references **qubits** (via its
-                ``pauli`` string), not measurements, so the ``result_tags``
-                anchor does not apply to it. Its qubit indices are interpreted
-                in the *traced (post-compilation)* qubit numbering and are
-                therefore **not** source-stable the way tag-referenced
-                detectors/observables are -- Guppy exposes no ``result()``-style
-                identity for a qubit. For a hand-authored general Guppy program
-                the caller must supply tracked-Pauli qubit indices in the
-                traced numbering; geometry-derived paths (e.g. the surface
-                builder) avoid this by construction.
-                Reorder-robust alternative: instead of positional ``records``/
-                ``meas_ids``, an entry may carry ``"result_tags": ["sx0:meas:0",
-                ...]`` to reference measurements by the stable Guppy
-                ``result(tag, ...)`` tag they were recorded under. Tags are
-                fixed in the Guppy source, so they survive any measurement
-                reordering introduced by Guppy/Selene compilation. The DEM
-                builder resolves tags via the trace's ``meas_tags`` linkage;
-                ``result_tags`` and ``records`` may be combined on one entry.
+                ``pauli`` string), not measurements. Its qubit indices are
+                interpreted in the *traced (post-compilation)* qubit numbering
+                and are not source-stable -- for a hand-authored general Guppy
+                program the caller must supply them in the traced numbering;
+                geometry-derived paths (e.g. the surface builder) avoid this by
+                construction.
             num_measurements: Total measurement count, used to resolve negative
                 ``records`` offsets. If omitted, it is inferred from the traced
-                circuit (and is always set automatically when ``result_tags``
-                are used).
+                circuit.
             p1: Single-qubit gate depolarizing rate.
             p2: Two-qubit gate depolarizing rate.
             p_meas: Measurement flip rate.
@@ -266,23 +227,22 @@ class DetectorErrorModel(_RustDetectorErrorModel):
         Raises:
             ValueError: If ``num_measurements`` disagrees with the traced
                 measurement count, if a detector/observable references an
-                out-of-range ``record``, an absent ``meas_id``, or a
-                ``result_tag`` the traced program never recorded, or if the
+                out-of-range ``record`` or an absent ``meas_id``, or if the
                 traced operation stream is malformed (the strict
                 ``AllocateResult``/``Measure`` pairing in the replay fails).
 
         Note:
             Every measurement is anchored to a stable MeasId automatically:
-            ``measure()`` itself allocates the result slot in the trace. A
-            ``result(...)`` call is not required for MeasId assignment, but it
-            *is* what enables reorder-robust ``result_tags`` references: the
-            trace records, per tag, exactly which MeasIds it captured
-            (``meas_tags`` metadata), an identity fixed in the Guppy source.
+            ``measure()`` itself allocates the result slot in the trace (a
+            ``result(...)`` call is not required for MeasId assignment).
 
-            Positional ``records``/``meas_ids`` reference measurements by
-            *traced (post-compilation)* order and are therefore sensitive to
-            measurement reordering by Guppy/Selene compilation; ``result_tags``
-            are not. See
+            Detector/observable ``records``/``meas_ids`` reference measurements
+            by *traced (post-compilation)* order and are therefore sensitive to
+            any measurement reordering introduced by Guppy/Selene compilation.
+            Stable, source-anchored tag-referenced detectors are not yet
+            available (the runtime linkage was proven unsound; the sound
+            HUGR-based binding works for straight-line programs but loops are
+            not unrolled in the HUGR) -- see
             ``docs/proposals/001-from-guppy-tag-referenced-detectors.md``.
         """
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
@@ -310,10 +270,6 @@ class DetectorErrorModel(_RustDetectorErrorModel):
 
         tc.set_meta("detectors", detectors_json)
         tc.set_meta("observables", observables_json)
-        if num_measurements is None and _uses_result_tags(detectors_json, observables_json):
-            # The DEM builder resolves result_tags -> record offsets as
-            # meas_id - num_measurements, so num_measurements must be present.
-            num_measurements, _ = _collect_measurement_info(tc)
         if num_measurements is not None:
             tc.set_meta("num_measurements", str(num_measurements))
 

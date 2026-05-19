@@ -1,6 +1,9 @@
 # 001 - Tag-referenced detectors for `DetectorErrorModel.from_guppy`
 
-**Status:** Implemented
+**Status:** Partially delivered — see "Final outcome (dem-polish)" at the
+bottom. The sections between here and there record the investigation history
+(including a runtime approach that was implemented then **proven unsound and
+removed**); the final section is authoritative.
 
 **Author:** (dem-polish working notes)
 
@@ -261,3 +264,44 @@ geometry) are unaffected. Hand-authored tracked Paulis for a *general*
 `from_guppy` program must use traced qubit numbering and are reorder-fragile.
 Decision: documented as a known limitation (in `from_guppy`'s docstring and
 here); a qubit-identity anchor is possible future work, not in scope now.
+
+## Final outcome (dem-polish) -- AUTHORITATIVE
+
+This section supersedes the "Implemented" and "CORRECTION" sections above.
+
+What was tried and what landed:
+
+1. **Runtime read->store linkage (ExecutionContext) -- REMOVED.** Implemented,
+   then disproved by a foundation test: a program doing all `measure()`s then
+   all `result()`s yields `{tag_c: [0,1,2]}` instead of the correct per-tag
+   binding, because measurement-future reads are batched before the stores.
+   The mechanism (pending_read_result_ids / named_result_ids /
+   note_read_result_id / pecos_get_named_result_ids_json / OperationTraceChunk
+   field + end-of-shot emission / DemBuilder `resolve_result_tags_in_json` /
+   decode.py `meas_tags` / dem.py `result_tags`) was fully excised as unsound.
+
+2. **Sound HUGR extraction -- KEPT (committed).**
+   `pecos_hugr_qis::extract_result_tag_measurements` recovers
+   `tag -> measurement` from the compiled HUGR by structural wire-tracing
+   (proper `ext_op.args()` tag read; value-port-0 reverse walk). Proven sound
+   and reorder-immune for straight-line programs by the `scrambled` fixture
+   test (the exact case the runtime heuristic failed). It is a self-contained
+   building block; it is **not** wired into `from_guppy`.
+
+3. **Loops are the unsolved gap.** A `for _ in range(comptime(n))` loop (the
+   surface-code round structure) is **not unrolled in the HUGR** -- it is a
+   CFG with one static measure/result op. Static extraction therefore yields
+   `tag -> static-measure-op`, not per-round MeasIds. Bridging that to runtime
+   per-occurrence MeasIds requires one of:
+   - a HUGR CFG abstract interpreter (~= the excluded `HugrEngine`), or
+   - `tket-qsystem` lowering carrying measurement provenance (upstream), or
+   - reconstructing the deterministic unrolling from the comptime-bounded CFG
+     (still requires CFG interpretation).
+
+Net delivered in `from_guppy`: **sound positional `records`/`meas_ids`
+detectors only.** These are byte-identical to the reference and LER-correct
+for the surface code (verified), but are *order-sensitive* to Guppy/Selene
+recompilation. Reorder-robust tag-referenced detectors are **deferred**; the
+sound HUGR building block (#2) is committed for the eventual straight-line
+wiring, and the loop case needs CFG-interpreter-class machinery or upstream
+`tket-qsystem` provenance.

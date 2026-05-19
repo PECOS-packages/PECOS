@@ -273,22 +273,6 @@ pub trait DynamicSyncHandle: Send + Sync {
     fn get_named_results(
         &self,
     ) -> Result<std::collections::BTreeMap<String, Vec<bool>>, InterfaceError>;
-
-    /// Get the `tag -> [result_id, ...]` linkage from the execution context.
-    ///
-    /// Each result_id is the QIS measurement identity (== MeasId in the
-    /// replayed TickCircuit). Maps every Guppy `result(tag, ...)` to the
-    /// measurement(s) it recorded, source-stable across compilation
-    /// reordering. Default implementation returns an empty map for handles
-    /// that do not track this.
-    ///
-    /// # Errors
-    /// Returns an error if the FFI call fails or JSON parsing fails.
-    fn get_named_result_ids(
-        &self,
-    ) -> Result<std::collections::BTreeMap<String, Vec<usize>>, InterfaceError> {
-        Ok(std::collections::BTreeMap::new())
-    }
 }
 
 /// Box type for interface implementations

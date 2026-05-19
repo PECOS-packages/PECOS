@@ -58,11 +58,6 @@ pub struct OperationTraceChunk {
     pub num_operations: usize,
     pub operations: Vec<Operation>,
     pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
-    /// Guppy `result(tag, ...)` -> QIS result IDs (== MeasIds) it recorded.
-    /// Snapshot at the time this chunk was emitted; the final chunk of a shot
-    /// carries the complete linkage. Empty when no named results were tagged.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub named_result_ids: std::collections::BTreeMap<String, Vec<usize>>,
 }
 
 /// Shared in-memory store for traced QIS operation batches.
@@ -865,10 +860,6 @@ impl QisEngine {
             num_operations: ops.len(),
             operations: ops.to_vec(),
             lowered_quantum_ops: lowered_trace,
-            // Populated only on the authoritative end-of-shot chunk emitted
-            // from get_results(); per-op-chunk snapshots would miss tail
-            // result(...) stores.
-            named_result_ids: std::collections::BTreeMap::new(),
         };
 
         if let Some(ref collector) = self.operation_trace_collector {
@@ -1244,36 +1235,6 @@ impl ClassicalEngine for QisEngine {
             self.measurement_results.len(),
             has_named_results
         );
-
-        // Emit a final trace chunk carrying the complete result()-tag ->
-        // [result_id] linkage. Per-chunk snapshots can miss stores that
-        // happen after the last operation chunk (e.g. the final result(...)
-        // before program exit); this end-of-shot capture is authoritative.
-        if let Some(collector) = &self.operation_trace_collector
-            && let Some(state) = &self.dynamic_state
-            && let Some(handle) = &state.sync_handle
-            && let Ok(named_result_ids) = handle.get_named_result_ids()
-            && !named_result_ids.is_empty()
-        {
-            let chunk = OperationTraceChunk {
-                format: "pecos_qis_operation_trace_v1",
-                engine_trace_id: self.trace_engine_id,
-                shot_index: self.trace_shot_index,
-                chunk_index: self.trace_chunk_index,
-                stage: "named_result_ids_final".to_string(),
-                waiting_for_result_id: None,
-                current_shot_seed: self.current_shot_seed,
-                simulated_op_count: self.simulated_op_count,
-                num_operations: 0,
-                operations: Vec::new(),
-                lowered_quantum_ops: Vec::new(),
-                named_result_ids,
-            };
-            match collector.lock() {
-                Ok(mut guard) => guard.push(chunk),
-                Err(err) => warn!("Failed to store final named_result_ids chunk: {err}"),
-            }
-        }
 
         Ok(shot)
     }

@@ -66,15 +66,6 @@ pub struct ExecutionContext {
     pub measurement_results: Mutex<Vec<Option<bool>>>,
     /// Storage for named results from `print_bool`/`print_bool_arr` (e.g., "synx", "final")
     pub named_results: Mutex<BTreeMap<String, Vec<bool>>>,
-    /// Result IDs read via `___read_future_bool` since the last named-result
-    /// store. Drained into `named_result_ids` when a `result(tag, ...)` is
-    /// recorded, giving a robust `tag -> result_id` linkage.
-    pub pending_read_result_ids: Mutex<Vec<usize>>,
-    /// Maps each Guppy `result(tag, ...)` tag to the QIS result IDs
-    /// (== MeasIds) whose values it recorded, in read order. This is the
-    /// source-stable measurement identity that survives compilation
-    /// reordering.
-    pub named_result_ids: Mutex<BTreeMap<String, Vec<usize>>>,
 }
 
 impl ExecutionContext {
@@ -89,8 +80,6 @@ impl ExecutionContext {
             pending_ops: Mutex::new(Vec::new()),
             measurement_results: Mutex::new(Vec::new()),
             named_results: Mutex::new(BTreeMap::new()),
-            pending_read_result_ids: Mutex::new(Vec::new()),
-            named_result_ids: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -112,55 +101,11 @@ impl ExecutionContext {
         if let Ok(mut named) = self.named_results.lock() {
             named.clear();
         }
-        if let Ok(mut pending) = self.pending_read_result_ids.lock() {
-            pending.clear();
-        }
-        if let Ok(mut named_ids) = self.named_result_ids.lock() {
-            named_ids.clear();
-        }
-    }
-
-    /// Record that `result_id` was just read via `___read_future_bool`.
-    ///
-    /// Buffered until the next named-result store, which attributes these IDs
-    /// to its tag. This is what links a Guppy `result(tag, ...)` to the
-    /// specific measurement(s) it recorded.
-    pub fn note_read_result_id(&self, result_id: usize) {
-        if let Ok(mut pending) = self.pending_read_result_ids.lock() {
-            pending.push(result_id);
-        }
-    }
-
-    /// Drain the pending read result IDs and attribute them to `name`.
-    fn attribute_pending_result_ids(&self, name: &str) {
-        let drained = match self.pending_read_result_ids.lock() {
-            Ok(mut pending) => std::mem::take(&mut *pending),
-            Err(_) => return,
-        };
-        if drained.is_empty() {
-            return;
-        }
-        if let Ok(mut named_ids) = self.named_result_ids.lock() {
-            named_ids
-                .entry(name.to_string())
-                .or_default()
-                .extend(drained);
-        }
-    }
-
-    /// Get the `tag -> [result_id, ...]` linkage (returns a clone).
-    #[must_use]
-    pub fn get_named_result_ids(&self) -> BTreeMap<String, Vec<usize>> {
-        self.named_result_ids
-            .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default()
     }
 
     /// Store a named result (single bool value)
     pub fn store_named_bool(&self, name: &str, value: bool) {
         let thread_id = std::thread::current().id();
-        self.attribute_pending_result_ids(name);
         if let Ok(mut named) = self.named_results.lock() {
             let entry = named.entry(name.to_string()).or_default();
             entry.push(value);
@@ -181,7 +126,6 @@ impl ExecutionContext {
 
     /// Store a named result array (multiple bool values)
     pub fn store_named_array(&self, name: &str, values: &[bool]) {
-        self.attribute_pending_result_ids(name);
         if let Ok(mut named) = self.named_results.lock() {
             let entry = named.entry(name.to_string()).or_default();
             entry.extend_from_slice(values);
@@ -796,45 +740,6 @@ pub extern "C" fn pecos_get_named_results_json() -> *mut std::ffi::c_char {
         Ok(cstr) => cstr.into_raw(),
         Err(e) => {
             log::error!("pecos_get_named_results_json: CString error: {e}");
-            std::ptr::null_mut()
-        }
-    }
-}
-
-/// Get the `tag -> [result_id, ...]` linkage as a JSON string.
-///
-/// Format: `{"sx0:meas:0": [3], "final": [10, 11, 12], ...}`. Each result_id
-/// is the QIS measurement identity (== MeasId in the replayed TickCircuit), so
-/// this maps every Guppy `result(tag, ...)` to the measurement(s) it recorded,
-/// source-stable across compilation reordering.
-///
-/// The caller must free the returned string using
-/// `pecos_free_named_results_json`. Returns null if no context is registered
-/// or the linkage is empty.
-///
-/// # Safety
-/// This function is safe to call from any thread. The returned pointer must be freed.
-#[unsafe(no_mangle)]
-pub extern "C" fn pecos_get_named_result_ids_json() -> *mut std::ffi::c_char {
-    let Some(ctx) = get_execution_context() else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: context is valid for the duration of execution.
-    let named_result_ids = unsafe { &*ctx }.get_named_result_ids();
-    if named_result_ids.is_empty() {
-        return std::ptr::null_mut();
-    }
-    let json = match serde_json::to_string(&named_result_ids) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("pecos_get_named_result_ids_json: serialization error: {e}");
-            return std::ptr::null_mut();
-        }
-    };
-    match std::ffi::CString::new(json) {
-        Ok(cstr) => cstr.into_raw(),
-        Err(e) => {
-            log::error!("pecos_get_named_result_ids_json: CString error: {e}");
             std::ptr::null_mut()
         }
     }

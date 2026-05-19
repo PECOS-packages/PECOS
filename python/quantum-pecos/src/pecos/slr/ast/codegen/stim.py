@@ -65,8 +65,6 @@ GATE_TO_STIM: dict[GateKind, str] = {
     # Hadamard
     GateKind.H: "H",
     # Phase gates
-    GateKind.S: "S",
-    GateKind.Sdg: "S_DAG",
     GateKind.T: "T",
     GateKind.Tdg: "T_DAG",
     # Square root gates (mapped to S variants)

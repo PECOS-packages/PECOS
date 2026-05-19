@@ -107,8 +107,8 @@ GATE_KIND_MAP: dict[str, GateKind] = {
     # Hadamard
     "H": GateKind.H,
     # Phase gates
-    "S": GateKind.S,
-    "Sdg": GateKind.Sdg,
+    "S": GateKind.SZ,
+    "Sdg": GateKind.SZdg,
     "T": GateKind.T,
     "Tdg": GateKind.Tdg,
     # Square root gates

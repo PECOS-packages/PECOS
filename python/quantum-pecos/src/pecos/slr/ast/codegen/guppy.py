@@ -86,8 +86,6 @@ FUNCTIONAL_GATES: dict[GateKind, str] = {
     GateKind.Y: "y",
     GateKind.Z: "z",
     GateKind.H: "h",
-    GateKind.S: "s",
-    GateKind.Sdg: "sdg",
     GateKind.T: "t",
     GateKind.Tdg: "tdg",
     GateKind.SZ: "s",

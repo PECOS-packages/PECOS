@@ -97,11 +97,20 @@ def test_prep_gate_selene_guppy(gate: str) -> None:
         ),
         (
             "PY",
-            {"qir": ["reset", "__quantum__qis__h__body", "__quantum__qis__s__body"], "qasm": ["reset ", "h ", "s "]},
+            # GateKind canonicalised to SZ/SZdg (S/Sdg removed): QIR
+            # SZ->"s" (unchanged); QASM SZ->"rz(pi/2)" (the chosen
+            # phase-gate QASM lowering -- s == rz(pi/2) up to phase).
+            {
+                "qir": ["reset", "__quantum__qis__h__body", "__quantum__qis__s__body"],
+                "qasm": ["reset ", "h ", "rz(pi/2)"],
+            },
         ),
         (
             "PNY",
-            {"qir": ["reset", "__quantum__qis__h__body", "__quantum__qis__s__adj"], "qasm": ["reset ", "h ", "sdg "]},
+            {
+                "qir": ["reset", "__quantum__qis__h__body", "__quantum__qis__s__adj"],
+                "qasm": ["reset ", "h ", "rz(-pi/2)"],
+            },
         ),
     ],
 )

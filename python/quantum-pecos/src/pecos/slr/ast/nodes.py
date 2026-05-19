@@ -93,8 +93,6 @@ class GateKind(Enum):
     H = auto()
 
     # Phase gates
-    S = auto()
-    Sdg = auto()
     T = auto()
     Tdg = auto()
 

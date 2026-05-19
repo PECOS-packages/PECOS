@@ -73,8 +73,6 @@ GATE_ARITY: dict[GateKind, int] = {
     GateKind.Y: 1,
     GateKind.Z: 1,
     GateKind.H: 1,
-    GateKind.S: 1,
-    GateKind.Sdg: 1,
     GateKind.T: 1,
     GateKind.Tdg: 1,
     GateKind.SX: 1,

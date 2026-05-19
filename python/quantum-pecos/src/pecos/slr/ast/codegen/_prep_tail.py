@@ -30,8 +30,8 @@ PREP_TAIL: dict[str, tuple[GateKind, ...]] = {
     "PNZ": (GateKind.X,),  # |1>
     "PX": (GateKind.H,),  # |+>
     "PNX": (GateKind.H, GateKind.Z),  # |->
-    "PY": (GateKind.H, GateKind.S),  # |+i>
-    "PNY": (GateKind.H, GateKind.Sdg),  # |-i>
+    "PY": (GateKind.H, GateKind.SZ),  # |+i>
+    "PNY": (GateKind.H, GateKind.SZdg),  # |-i>
 }
 
 

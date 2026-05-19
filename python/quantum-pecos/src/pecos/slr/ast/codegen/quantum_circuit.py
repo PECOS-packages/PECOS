@@ -64,8 +64,6 @@ GATE_TO_QC: dict[GateKind, str] = {
     # Hadamard
     GateKind.H: "H",
     # Phase gates
-    GateKind.S: "S",
-    GateKind.Sdg: "SDG",
     GateKind.T: "T",
     GateKind.Tdg: "TDG",
     # Square root gates

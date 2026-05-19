@@ -8,13 +8,13 @@
 //!
 //! Measurement identity here is the *ordinal* of the measurement op in HUGR
 //! traversal order. Whether that ordinal coincides with the QIS-trace
-//! `result_id`/MeasId is a separate, verified property (see the dem-polish
+//! `result_id`/`MeasId` is a separate, verified property (see the dem-polish
 //! foundation tests); this module only recovers the structural binding.
 //!
 //! Note: a *runtime* loop (e.g. `for _ in range(comptime(n))`, as the surface
 //! code uses for rounds) is NOT unrolled in the HUGR -- it has one static
 //! measure/result op executed n times. Static extraction therefore yields
-//! `tag -> static-measure-op`; expanding that to per-iteration runtime MeasIds
+//! `tag -> static-measure-op`; expanding that to per-iteration runtime `MeasIds`
 //! requires a separate static-op -> runtime-measurement correspondence.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -23,7 +23,7 @@ use tket::hugr::ops::OpType;
 use tket::hugr::types::Term;
 use tket::hugr::{HugrView, IncomingPort, Node};
 
-fn extension_ids<'a>(op: &'a OpType) -> Option<(&'a str, String)> {
+fn extension_ids(op: &OpType) -> Option<(&str, String)> {
     let ext = op.as_extension_op()?;
     Some((
         ext.extension_id().as_ref(),

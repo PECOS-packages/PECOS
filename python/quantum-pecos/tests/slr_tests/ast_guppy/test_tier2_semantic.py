@@ -325,7 +325,7 @@ def run() -> int:
 
 def test_oversize_creg_raises_loud() -> None:
     """A >64-bit CReg must FAIL LOUD at QIR codegen, not silently drop
-    its storage/output (Codex B2 post-review blocker). 64 is the cap
+    its storage/output (#76 B2). 64 is the cap
     (single-i64 record pack); 65 must raise a clear error."""
     ok = Main(q := QReg("q", 1), c := CReg("c", 64), Measure(q[0]) > c[0], Return(c))
     SlrConverter(ok).qir_bc()  # 64 is allowed (boundary)
@@ -366,7 +366,7 @@ def test_print_raises_loud() -> None:
 
 
 def test_static_for_unrolls_body_not_dropped() -> None:
-    """#74 (Codex): a static `For` must UNROLL its body, not silently
+    """#74: a static `For` must UNROLL its body, not silently
     drop it. The old `_process_for` guard `isinstance(node.start, int)`
     was always false (the converter wraps bounds in `LiteralExpr`), so
     every `For` body was silently dropped -- valid QIR, wrong
@@ -420,7 +420,7 @@ def test_prep_stray_string_arg_raises_loud() -> None:
     `PZ(q, "X")`, even `PZ(q, "Z")` -- would be silently dropped
     and lowered as the plain basis (a miscompile, #80/#79). The
     converter rejects ANY stray string qarg on EVERY prep gate
-    (Codex #81 sym rule). A bare prep gate (no string) is fine."""
+    (#81 sym rule). A bare prep gate (no string) is fine."""
     # No-string preps build (PZ default; dedicated gate identity).
     # No-string prep on every dedicated gate builds (basis = identity).
     for prep in (qb.PZ, qb.PNZ, qb.PX, qb.PNX, qb.PY, qb.PNY):
@@ -443,7 +443,7 @@ def test_prep_stray_string_arg_raises_loud() -> None:
 
 
 def test_return_only_inline_creg_raises_loud() -> None:
-    """#80 (Codex post-review blocker): a CReg surfaced ONLY via
+    """#80: a CReg surfaced ONLY via
     `Return(creg)` -- never measured/assigned/read -- reached no
     point-of-use `_require_creg` site, so `_generate_results` (which
     records only Main-declared CRegs) emitted ZERO recorded output
@@ -466,7 +466,7 @@ def test_return_only_inline_creg_raises_loud() -> None:
     ok_q = Main(q := QReg("q", 1), Return(q))
     SlrConverter(ok_q).qir_bc()
 
-    # #80 Codex RE-CONFIRM blocker: an inline CReg whose name
+    # #80: an inline CReg whose name
     # collides with a declared QReg was misclassified as a qubit
     # return by the old name-membership skip and silently dropped
     # (same silent-output-loss class, reachable via public SLR).
@@ -529,7 +529,7 @@ def test_tier2_executable_differential() -> None:
     # Bell: genuinely quantum -> property check, not a fixed value.
     # NECESSARY: every shot records c[0]==c[1] (single record, packed
     # in {0b00, 0b11}, never 1/2) -- a broken/decorrelating CX trips
-    # this. SUFFICIENT (Codex #77 blocker): the aggregate over fixed
+    # this. SUFFICIENT (#77): the aggregate over fixed
     # seeds must contain BOTH 0b00 AND 0b11 -- a dropped H / dropped
     # CX / no-op Bell lowering yields all-0, which a subset-only check
     # (`in {0,3}`) would wrongly pass. Fixed seeds -> deterministic;

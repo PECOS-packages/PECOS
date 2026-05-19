@@ -322,7 +322,7 @@ class TestVisitorDispatchCompleteness:
         assert not bad, f"_DISPATCH values not methods on BaseVisitor: {bad}"
 
     def test_subclass_of_concrete_node_dispatches_via_mro(self) -> None:
-        """Codex visitor-refactor review: the old `node.accept(self)`
+        """Visitor-refactor rationale: the old `node.accept(self)`
         double-dispatch was inherited, so a user subclass of a concrete
         node dispatched to the base node's `visit_*`. MRO lookup in
         `BaseVisitor.visit` must preserve that (a bare class-name match

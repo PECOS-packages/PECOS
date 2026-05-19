@@ -54,7 +54,7 @@ class _MainReturnTransformer(cst.CSTTransformer):
     def leave_Call(self, _original: cst.Call, updated: cst.Call) -> cst.BaseExpression:  # noqa: N802
         # Match bare `Main(...)` AND any qualified form (`pecos.slr.Main(...)`,
         # `slr.Main(...)`) -- the func is then an Attribute whose final attr
-        # is `Main` (Codex S1-approach review: qualified calls were missed).
+        # is `Main` (qualified calls were previously missed).
         if not m.matches(
             updated.func,
             m.Name("Main") | m.Attribute(attr=m.Name("Main")),

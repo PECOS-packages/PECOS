@@ -2374,7 +2374,7 @@ class TestScratchEffectS1:
             slr_to_ast(prog)
 
     def test_scratch_prep_only_rejected(self) -> None:
-        """Codex S1 review: a PZ with no terminating Measure must be
+        """A PZ with no terminating Measure must be
         rejected -- S2 allocates the scratch qubit internally, so an
         unmeasured trailing PZ diverges from the flatten/QASM path.
         """
@@ -2500,7 +2500,7 @@ class TestScratchEffectS1:
         assert "measure q[0] -> c[1];" in qasm
 
     def test_scratch_return_rejected(self) -> None:
-        """Codex S1 r2: a scratch-bearing block must contain no ReturnOp.
+        """A scratch-bearing block must contain no ReturnOp.
 
         Post-substitution a returned scratch slot keeps the OUTER name
         (a partial VarExpr passes `whole_name` through unchanged), so it
@@ -2613,7 +2613,7 @@ class TestScratchEffectS1:
         }, raw
 
     def test_scratch_outer_slot_misuse_rejected(self) -> None:
-        """Codex S2 r1 blocker 1: a scratch-bound outer slot also used as
+        """A scratch-bound outer slot also used as
         meaningful caller state (gate + later measure) diverges between
         flatten (mutates it) and Guppy (allocates internally) -- reject.
         """
@@ -2677,7 +2677,7 @@ class TestScratchEffectS1:
         assert "a_0 = qubit()" in guppy_src
 
     def test_scratch_malformed_arg_rejected_direct_ast(self) -> None:
-        """Codex S2 r1 blocker 2: a scratch BlockArg referencing an
+        """A scratch BlockArg referencing an
         out-of-bounds outer slot must fail loudly -- scratch args are now
         validated (then excluded), not skipped before validation.
         """
@@ -2708,7 +2708,7 @@ class TestScratchEffectS1:
             ast_to_guppy(prog)
 
     def test_scratch_outer_slot_permute_rejected(self) -> None:
-        """Codex S2 r2 blocker 1: a Permute touching the scratch register
+        """A Permute touching the scratch register
         observes/reorders the scratch-bound outer slot -> reject.
         """
         from pecos.slr import Block, CReg, Main, Permute, QReg, Return, SlrConverter
@@ -2739,7 +2739,7 @@ class TestScratchEffectS1:
             SlrConverter(prog).guppy()
 
     def test_scratch_outer_slot_return_rejected(self) -> None:
-        """Codex S2 r2 blocker 2: returning the register that hosts the
+        """Returning the register that hosts the
         scratch-bound slot exposes a slot Guppy left untouched -> reject.
         """
         from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
@@ -2767,7 +2767,7 @@ class TestScratchEffectS1:
             SlrConverter(prog).guppy()
 
     def test_scratch_misuse_inside_block_body_rejected(self) -> None:
-        """Codex S2 r2 blocker 3: the purity guard runs per scope -- a
+        """The purity guard runs per scope -- a
         nested scratch BlockCall + misuse of that slot inside a BlockDecl
         body (not just main) must be caught.
         """
@@ -2879,7 +2879,7 @@ class TestScratchCheckS4ProductionLockIn:
 
     def test_color488_syn_extract_bare_routes_and_runs(self) -> None:
         """Design says the S4 production lock-in is Steane + Color488
-        (Codex S4 review). Color488's serial `SynExtractBare` uses the
+        Color488's serial `SynExtractBare` uses the
         identical generic `Check` call shape -- it must also route every
         Check through a BlockCall, compile, and run.
         """
@@ -2982,7 +2982,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
         """The CH (`ops="H"`) branch hits a non-Clifford R1XY at runtime
         (Selene cannot execute it), so lock in compile + QASM parity
         only: it must still route through a BlockCall and lower cleanly
-        (Codex O1 review -- not a Selene assertion).
+        (structural check -- not a Selene assertion).
         """
         from pecos.slr import CReg, Main, QReg, Return, SlrConverter
         from pecos.slr.ast import slr_to_ast

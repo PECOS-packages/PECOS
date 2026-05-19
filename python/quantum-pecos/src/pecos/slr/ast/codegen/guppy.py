@@ -479,7 +479,7 @@ class AstToGuppy:
 
     def _validate_scratch_outer_slots(self, program: Program) -> None:
         """Reject programs where a scratch-bound outer slot is also used as
-        meaningful caller state (Codex S2 review).
+        meaningful caller state.
 
         A SCRATCH input lowers asymmetrically: flatten substitutes the
         scratch param to the outer slot (the block resets+measures THAT
@@ -495,7 +495,7 @@ class AstToGuppy:
         wholesale-preps the ancilla register, e.g. `Prep(q)` covering
         `q[3]`, before using `q[3]` as a check ancilla).
 
-        Runs per scope (Codex S2 r2 blocker 3): `program.body` AND every
+        Runs per scope: `program.body` AND every
         `BlockDecl.body` -- a nested BlockCall whose scratch arg references
         the enclosing block's param slot has the same purity requirement
         within that block's scope.
@@ -1154,7 +1154,7 @@ class AstToGuppy:
         # ancilla internally; the outer slot stays live and is discarded at
         # end-of-scope per R1). Validating-then-excluding -- not skipping
         # before validation -- so a malformed scratch binding (unknown/OOB
-        # outer slot) still fails loudly (Codex S2 review blocker 2).
+        # outer slot) still fails loudly.
         scratch_slots: list[tuple[str, int]] = []
         for inp, arg in zip(decl.inputs, node.arg_bindings, strict=True):
             if inp.effect is ResourceEffect.SCRATCH:

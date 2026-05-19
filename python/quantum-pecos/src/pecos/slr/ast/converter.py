@@ -686,7 +686,7 @@ class SlrToAst:
         # `_expand_qubit_args` silently drops strings, so a basis
         # string (`PZ(q, "X")`, the legacy `Prep(q, "X")`, etc.)
         # would otherwise be silently dropped and the gate lowered as
-        # its plain basis -- a miscompile (#80 recast / #81 Codex sym
+        # its plain basis -- a miscompile (#80 recast / #81 sym
         # rule). The prep basis is the gate identity; pass NO string.
         for arg in gate.qargs:
             if isinstance(arg, str):
@@ -863,7 +863,7 @@ class SlrToAst:
         SLR object's type. A whole-register return flattens to its
         bare `sym` name; a returned inline CReg can collide with a
         declared QReg of the same name, which is undecidable
-        downstream by name alone (the #80 re-confirm bug). The
+        downstream by name alone (the #80 name-collision bug). The
         QReg/CReg distinction is known HERE (the real object), so it
         is preserved instead of guessed in codegen.
         """
@@ -1132,7 +1132,7 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
         # A scratch input must never be handed back to the caller: S2
         # allocates it internally and does not thread it through caller
         # state, so returning it would diverge from the flatten/QASM path
-        # (Codex S1 r2 review). Detection cannot be precise here -- the
+        # Detection cannot be precise here -- the
         # substitution leaves Return values as the OUTER name (a partial
         # VarExpr passes through `whole_name` unchanged), so a returned
         # scratch slot is indistinguishable from a returned classical
@@ -1202,8 +1202,8 @@ def _validate_scratch_input(
     # MEASURE before the next PREP and before the body ends. The S2 Guppy
     # lowering allocates the scratch qubit internally; an unmeasured trailing
     # Prep/use would leave the flatten/QASM path with a live reset outer slot
-    # while Guppy silently drops it -- a semantic divergence (Codex S1
-    # review). So every Prep must be terminated by a Measure.
+    # while Guppy silently drops it -- a semantic divergence.
+    # So every Prep must be terminated by a Measure.
     open_prep = False
     for ev in events:
         if ev == "PREP":

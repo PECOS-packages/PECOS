@@ -480,7 +480,7 @@ class ReturnOp(Statement):
     # (the fail-loud-safe default). A bare `values` string cannot be
     # disambiguated CReg-vs-QReg by name alone (a returned inline
     # CReg can collide with a declared QReg name -- the #80
-    # re-confirm bug), so provenance is carried here, not guessed.
+    # name-collision bug), so provenance is carried here, not guessed.
     value_kinds: tuple[str, ...] = ()
 
     def children(self) -> Sequence[AstNode]:

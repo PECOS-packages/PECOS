@@ -94,7 +94,7 @@ def run_ast_guppy_via_selene(
                 RegisterDecl(name=name, size=info.all_creg_sizes[name]),
             )
     if not record_cregs:
-        # Strict (Codex S1-approach review): an explicit `Return(...)`
+        # Strict: an explicit `Return(...)`
         # with no CRegs (e.g. `Return(q)`) has no measurement record --
         # fail loudly rather than silently mis-shape the result table.
         msg = (

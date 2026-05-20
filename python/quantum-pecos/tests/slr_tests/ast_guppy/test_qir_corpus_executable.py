@@ -469,7 +469,7 @@ def test_sqrt_pauli_2q_gates_executable() -> None:
     # the target-phase decomposition.
     h_q1 = lambda q: qb.H(q[1])  # noqa: E731
     assert _run([h_q1], [cy, h_q1], meas_idx=1) == {
-        (0,)
+        (0,),
     }, "H q1; CY; H q1 with q0=|0> must give 0 -- a wrong-phase CY decomposition (e.g. S;CX;S) gives 1"
 
     # SZZ^2 discriminator: H;SZZ;SZZ;H q0 with q1=|0> -> 1 (Z on q0; HZH=X).

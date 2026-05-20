@@ -11,7 +11,11 @@ wrong.
 
 Keeping the partitioning logic in this single helper -- imported by
 both consumers -- is the only source of truth. A unit test pins
-identical batch sequences from both call sites.
+concrete expected batch sequences for small ``(distance, budget)``
+combinations (see
+``tests/qec/surface/test_ancilla_batching.py``) so a regression in
+the partitioning policy itself fails fast, independent of any DEM-
+level oracle.
 
 The two functions are intentionally pure (no circuit object created)
 so neither consumer pulls in the other's dependencies.
@@ -30,12 +34,20 @@ def normalize_ancilla_budget(total_ancilla: int, ancilla_budget: int | None) -> 
 
     ``None`` collapses to the unconstrained ``total_ancilla``. A budget
     ``>= total_ancilla`` clamps to ``total_ancilla`` so callers
-    requesting "no constraint" via either ``None`` or a large
-    integer resolve to the same effective budget. ``< 1`` is rejected
-    fail-loud.
+    requesting "no constraint" via either ``None`` or a large integer
+    resolve to the same effective budget. ``< 1`` is rejected fail-loud.
+
+    Non-``int`` (including ``bool``, ``float``) is rejected fail-loud
+    so the public ``ancilla_budget`` kwarg has a strict integer
+    contract -- avoiding silently-wrong cache keys or qubit counts.
     """
     if ancilla_budget is None:
         return total_ancilla
+
+    # Reject bool first (bool is a subclass of int in Python).
+    if isinstance(ancilla_budget, bool) or not isinstance(ancilla_budget, int):
+        msg = f"ancilla_budget must be int or None, got {type(ancilla_budget).__name__}"
+        raise TypeError(msg)
 
     if ancilla_budget < 1:
         msg = f"ancilla_budget must be >= 1, got {ancilla_budget}"

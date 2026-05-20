@@ -353,11 +353,58 @@ def test_constrained_surface_lowered_qubit_stream_within_budget() -> None:
 
     max_q = max(all_qubits) if all_qubits else -1
     # Budget enforcement: total physical qubits used must fit in d^2 + budget.
-    assert max_q < n_q, (
-        f"max physical qubit id {max_q} exceeds budgeted pool size {n_q}; "
-        "Selene's lowering did not reuse ancilla slots as expected"
-    )
+    over_budget_msg = f"max physical qubit id {max_q} exceeds budgeted pool size {n_q}"
+    assert max_q < n_q, over_budget_msg
     # Reuse demonstrated: some physical qubit appears in multiple MZ ops.
-    assert any(
-        mz_qubits.count(q) > 1 for q in set(mz_qubits)
-    ), "no physical qubit appears in more than one MZ op; expected ancilla-slot reuse across batches"
+    reuse = any(mz_qubits.count(q) > 1 for q in set(mz_qubits))
+    assert reuse, "no physical qubit appears in more than one MZ op"
+
+
+def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> None:
+    """PECOS-native decoder smoke for the constrained-ancilla DEM: the DEM
+    returned by ``from_guppy(...)`` must be consumable by both the PECOS
+    sampler (``dem.to_sampler()``) and the PECOS Rust-backed
+    ``PyMatchingDecoder.from_dem(...)`` -- the actual downstream surfaces
+    callers use, not an external ``pymatching`` install.
+
+    Also asserts ``stim.DetectorErrorModel(dem.to_string_decomposed())``
+    parses as a lightweight syntax-compatibility smoke (optional reference,
+    not the correctness oracle).
+    """
+    from pecos_rslib.decoders import PyMatchingDecoder
+
+    p = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="abstract",
+    )
+    dem = DetectorErrorModel.from_guppy(
+        make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2),
+        num_qubits=get_num_qubits(3, ancilla_budget=2),
+        detectors_json=abstract_tc.get_meta("detectors"),
+        observables_json=abstract_tc.get_meta("observables"),
+        num_measurements=int(abstract_tc.get_meta("num_measurements")),
+        **p,
+    )
+
+    # PECOS-native sampler path: DEM is well-formed for sampling.
+    sampler = dem.to_sampler()
+    assert sampler.num_dem_outputs >= 0
+    assert sampler.num_observables >= 0
+
+    # PECOS-native Rust-backed matching decoder: DEM is consumable by
+    # the actual downstream decoder surface.
+    decomp = dem.to_string_decomposed()
+    decoder = PyMatchingDecoder.from_dem(decomp)
+    assert decoder is not None
+
+    # Lightweight format-compatibility smoke (optional reference coverage,
+    # not the correctness oracle). Stim should parse the decomposed DEM.
+    import stim
+
+    parsed = stim.DetectorErrorModel(decomp)
+    assert parsed.num_detectors >= 0

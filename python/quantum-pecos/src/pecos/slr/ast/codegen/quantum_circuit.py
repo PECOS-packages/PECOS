@@ -102,6 +102,9 @@ TWO_QUBIT_GATES = {
     GateKind.SYYdg,
     GateKind.SZZdg,
     GateKind.RZZ,
+    GateKind.CRX,
+    GateKind.CRY,
+    GateKind.CRZ,
 }
 
 
@@ -296,6 +299,17 @@ class AstToQuantumCircuit:
         """Process a gate operation."""
         gate_name = GATE_TO_QC.get(node.gate, node.gate.name)
 
+        if node.params:
+            # Parameterized gates (RX/RY/RZ/RZZ/CRX/CRY/CRZ etc.):
+            # PECOS QuantumCircuit ticks are parallel sets keyed on
+            # (gate_name, params), so a tick mixing different param
+            # values would lose information. Flush the current tick,
+            # then emit the parameterized gate as its own tick via
+            # `circuit.append(gate, locations, angles=[...])` which the
+            # Rust gate registry routes to the typed-param dispatcher.
+            self._process_parameterized_gate(node, gate_name)
+            return
+
         if node.gate in TWO_QUBIT_GATES:
             self._process_two_qubit_gate(node, gate_name)
         else:
@@ -331,6 +345,48 @@ class AstToQuantumCircuit:
                     node.targets[i + 1].index,
                 )
                 self._add_to_tick(gate_name, (q0, q1))
+
+    def _process_parameterized_gate(self, node: GateOp, gate_name: str) -> None:
+        """Emit a parameterized gate (rotation angle threaded through).
+
+        Resolves `LiteralExpr` bracket-params to raw floats (the AST
+        converter wraps `qb.RZ[0.5]` as a `LiteralExpr`, so a bare
+        `float(p)` would fail). The QC `circuit.append(...,
+        angles=...)` path forwards the angle list to Rust's typed-
+        parameter dispatcher (e.g. `RZ` requires 1 angle, `RXXRYYRZZ`
+        requires 3).
+
+        Flushes the current tick before emission so the parameterized
+        gate gets its own tick -- mixing different param values within
+        a single tick would lose information (tick batches by
+        `(gate_name, target)` only). Non-literal expressions (VarExpr,
+        BinaryExpr at gate-param position) are not yet supported for
+        QC parameterized gates; they fail loud here.
+        """
+        try:
+            angles = [float(p.value if isinstance(p, LiteralExpr) else p) for p in node.params]
+        except (AttributeError, TypeError) as exc:
+            msg = (
+                f"QuantumCircuit codegen: parameterized gate {gate_name!r} "
+                f"requires literal-float params; got non-literal: {node.params}."
+            )
+            raise NotImplementedError(msg) from exc
+
+        self._flush_tick()
+        if node.gate in TWO_QUBIT_GATES:
+            if len(node.targets) < 2:
+                msg = f"QuantumCircuit codegen: two-qubit gate {gate_name!r} needs >=2 targets, got {len(node.targets)}"
+                raise ValueError(msg)
+            # Emit each consecutive pair (mirrors the un-parameterized
+            # two-qubit path which iterates over target pairs).
+            for i in range(0, len(node.targets) - 1, 2):
+                q0 = self.context.get_qubit(node.targets[i].allocator, node.targets[i].index)
+                q1 = self.context.get_qubit(node.targets[i + 1].allocator, node.targets[i + 1].index)
+                self.circuit.append(gate_name, {(q0, q1)}, angles=angles)
+        else:
+            for target in node.targets:
+                qubit = self.context.get_qubit(target.allocator, target.index)
+                self.circuit.append(gate_name, {qubit}, angles=angles)
 
     def _process_measure(self, node: MeasureOp) -> None:
         """Process a measurement operation."""

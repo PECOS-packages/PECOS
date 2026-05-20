@@ -508,6 +508,40 @@ impl PyStateVec {
                 Ok(None)
             }
 
+            "CRX" | "CRY" | "CRZ" => {
+                let Some(params) = params else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Angle parameter missing for controlled rotation gate",
+                    ));
+                };
+                let angle = match params.get_item("angle") {
+                    Ok(Some(py_any)) => py_any.extract::<AngleParam>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Expected a valid angle parameter for controlled rotation gate",
+                        )
+                    })?,
+                    Ok(None) => {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for controlled rotation gate",
+                        ));
+                    }
+                    Err(err) => return Err(err),
+                };
+                match symbol {
+                    "CRX" => {
+                        self.inner.crx(angle.0, pair);
+                    }
+                    "CRY" => {
+                        self.inner.cry(angle.0, pair);
+                    }
+                    "CRZ" => {
+                        self.inner.crz(angle.0, pair);
+                    }
+                    _ => unreachable!(),
+                }
+                Ok(None)
+            }
+
             "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
                 if let Some(params) = params {
                     match params.get_item("angles") {

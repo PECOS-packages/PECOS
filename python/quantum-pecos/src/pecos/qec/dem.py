@@ -173,11 +173,12 @@ class DetectorErrorModel(_RustDetectorErrorModel):
 
         # Tag-referenced detectors require the compiled HUGR (to recover the
         # sound, reorder-immune Guppy `result(tag, ...)` -> measurement
-        # binding). `guppy_to_hugr` only accepts a raw @guppy function -- not
-        # a compiled program or wrapper that the trace path otherwise
-        # accepts. Compile upfront so a wrong input fails loud here, before
-        # tracing, with a clear message instead of crashing inside the HUGR
-        # compile step (the "wrapper-input regression" caught in review).
+        # binding). `guppy_to_hugr` accepts @guppy-decorated functions and
+        # `GuppyFunctionDefinition`s (e.g. `make_surface_code(...)`), but
+        # not arbitrary callables / non-Guppy `pecos.sim`-acceptable inputs.
+        # Compile upfront so a wrong input fails loud here, before tracing,
+        # with a clear @guppy-mentioning message instead of crashing later
+        # inside the HUGR step.
         needs_tags = _result_tags_present(detectors_json, observables_json)
         hugr_bytes: bytes | None = None
         if needs_tags:
@@ -187,12 +188,11 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 hugr_bytes = guppy_to_hugr(guppy)
             except ValueError as exc:
                 msg = (
-                    "result_tags requires a @guppy-decorated function -- not a "
-                    "compiled program or program wrapper. Pass the raw @guppy "
-                    "function directly. For surface-code / runtime-loop "
-                    "programs, use positional 'records' instead: loops are not "
-                    "unrolled in the HUGR, so per-occurrence tag binding is "
-                    "not statically available (see proposal 001)."
+                    "result_tags requires a @guppy-decorated function (or a "
+                    "GuppyFunctionDefinition, e.g. the object "
+                    "make_surface_code(...) returns) so the program can be "
+                    "compiled to a HUGR. Pass such an input directly, or use "
+                    "positional 'records' / 'meas_ids' instead."
                 )
                 raise ValueError(msg) from exc
 

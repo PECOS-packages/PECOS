@@ -1737,16 +1737,14 @@ pub fn resolve_result_tags(
             let Some(tags) = obj.remove("result_tags") else {
                 continue;
             };
-            let mut records: Vec<i64> = obj
-                .get("records")
-                .and_then(|r| r.as_array())
-                .map(|a| a.iter().filter_map(serde_json::Value::as_i64).collect())
-                .unwrap_or_default();
+
+            // Resolve `result_tags` strictly into a list of record offsets.
             let tag_list = tags.as_array().ok_or_else(|| {
                 DemBuilderError::ParseError(
                     "result_tags must be a JSON array of strings".to_string(),
                 )
             })?;
+            let mut tag_offsets: Vec<i64> = Vec::new();
             for tag in tag_list {
                 let tag = tag.as_str().ok_or_else(|| {
                     DemBuilderError::ParseError("result_tags entries must be strings".to_string())
@@ -1758,15 +1756,59 @@ pub fn resolve_result_tags(
                     ))
                 })?;
                 for &ord in ords {
-                    records.push(i64::try_from(ord).unwrap_or(i64::MAX) - traced);
+                    tag_offsets.push(i64::try_from(ord).unwrap_or(i64::MAX) - traced);
                 }
             }
-            obj.insert(
-                "records".to_string(),
-                serde_json::Value::Array(
-                    records.into_iter().map(serde_json::Value::from).collect(),
-                ),
-            );
+
+            // `result_tags` is an *alternative* to `records` (and `meas_ids`),
+            // following the same redundancy discipline as records-vs-meas_ids:
+            // co-presence is allowed only when the two forms reference the
+            // *same* measurements (sorted-set equality). Additive merging
+            // would either silently weaken the DEM (when callers expected
+            // alternatives) or corrupt parity by double-referencing (when
+            // they were actually redundant).
+            match obj.get("records") {
+                None => {
+                    obj.insert(
+                        "records".to_string(),
+                        serde_json::Value::Array(
+                            tag_offsets
+                                .into_iter()
+                                .map(serde_json::Value::from)
+                                .collect(),
+                        ),
+                    );
+                }
+                Some(records_value) => {
+                    let records_array = records_value.as_array().ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "{kind} records must be a JSON array of integers"
+                        ))
+                    })?;
+                    let mut existing: Vec<i64> = Vec::with_capacity(records_array.len());
+                    for rec in records_array {
+                        let r = rec.as_i64().ok_or_else(|| {
+                            DemBuilderError::ParseError(format!(
+                                "{kind} records entries must be integers"
+                            ))
+                        })?;
+                        existing.push(r);
+                    }
+                    let mut a = existing;
+                    let mut b = tag_offsets;
+                    a.sort_unstable();
+                    b.sort_unstable();
+                    if a != b {
+                        return Err(DemBuilderError::ParseError(format!(
+                            "{kind} entry has both 'records' and 'result_tags' but \
+                             they reference different measurements (records {a:?}, \
+                             result_tags resolve to {b:?}); they are alternatives, \
+                             not additive -- provide one, or make them redundant"
+                        )));
+                    }
+                    // Records left unchanged; tag offsets are redundant.
+                }
+            }
         }
         serde_json::to_string(&value)
             .map_err(|e| DemBuilderError::ParseError(format!("failed to re-serialize JSON: {e}")))

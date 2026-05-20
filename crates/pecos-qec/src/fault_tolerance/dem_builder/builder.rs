@@ -1686,9 +1686,12 @@ fn observable_records_from_annotations(
 /// `tag_to_ords` is the **sound** Guppy `result(tag, ...)` -> measurement
 /// ordinal binding recovered structurally from the compiled HUGR
 /// (reorder-immune; see `pecos_hugr_qis::result_tags`). Each referenced tag's
-/// ordinals are converted to record offsets (`ordinal - traced_meas_count`)
-/// and merged into the entry's `records`; `result_tags` is removed so the
-/// downstream parser is unchanged.
+/// ordinals are converted to record offsets (`ordinal - traced_meas_count`).
+/// `result_tags` is an *alternative* to `records` (not additive): if the
+/// entry has no `records`, the resolved offsets become its `records`; if it
+/// has both, they must be redundant (sorted-set equality) and `records` is
+/// left unchanged. `result_tags` is then removed so the downstream parser is
+/// unchanged.
 ///
 /// Fail-loud (returns `Err`), never silently misbinds:
 /// - **Loop guard**: if `static_meas_count != traced_meas_count` the program

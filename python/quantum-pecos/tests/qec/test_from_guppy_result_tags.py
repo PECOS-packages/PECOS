@@ -161,7 +161,7 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Wrapper-input rejection: result_tags requires @guppy directly
+# 3. Non-Guppy callable rejection: result_tags requires a HUGR-compilable input
 # ---------------------------------------------------------------------------
 
 

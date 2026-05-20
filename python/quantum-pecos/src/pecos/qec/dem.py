@@ -13,15 +13,24 @@ This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, optionally compiles the program to a HUGR (only when
 ``result_tags`` is requested -- to recover the sound tag -> measurement
 binding via ``pecos_hugr_qis::extract_result_tag_measurements``), and hands
-the caller's detector/observable JSON to the Rust DEM builder. All metadata
-validation -- JSON shape, ``D0``/``L0`` id forms, tracked-Pauli rejection,
-``num_measurements`` consistency, out-of-range records, ``meas_id``
-resolution against the circuit's stable stamped ``MeasId``s, and
-``result_tags`` -> record-offset resolution with its loop guard -- is the
-single responsibility of the Rust builder
-(``pecos_qec::fault_tolerance::dem_builder``), so the same rules apply
-identically whether a DEM is built via ``from_guppy``, ``from_circuit``,
-``DemSampler.from_circuit``, or the public ``DemBuilder``.
+the caller's detector/observable JSON to the Rust DEM builder. The metadata
+validation that applies to **every** ingest path (``from_guppy``,
+``from_circuit``, ``DemSampler.from_circuit``, public ``DemBuilder``) lives
+solely in the Rust DEM builder
+(``pecos_qec::fault_tolerance::dem_builder``): JSON shape, ``D0``/``L0`` id
+forms, tracked-Pauli rejection, ``num_measurements`` consistency,
+out-of-range records, ``meas_id`` resolution against the circuit's stable
+stamped ``MeasId``s, and the ``records``-vs-``meas_ids`` redundancy rule.
+
+The ``result_tags`` -> record-offset resolution (loop guard included) is
+applied **only** through ``from_guppy``: the rewriter
+(``pecos_qec::resolve_result_tags``, invoked via the pyo3
+``resolve_result_tags_for_guppy`` binding) runs from this wrapper before
+``from_circuit`` is called, so the downstream DEM builder only ever sees
+already-resolved ``records``. ``result_tags`` in circuit metadata fed
+directly to ``from_circuit`` / ``DemSampler.from_circuit`` /
+``DemBuilder.build`` is **not** resolved -- those paths build from
+``records``/``meas_ids`` as usual.
 """
 
 from __future__ import annotations

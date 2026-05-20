@@ -164,8 +164,7 @@ class DetectorErrorModel(_RustDetectorErrorModel):
             statically-scheduled post-measurement gates a normal QEC circuit
             has (the surface code has these every round), so no guard is
             attempted -- pass straight-line programs only. Sound detection
-            would require HUGR conditional-on-measurement analysis (deferred;
-            see proposal 001).
+            would require HUGR conditional-on-measurement analysis (deferred).
 
             Every measurement is anchored to a stable MeasId automatically:
             ``measure()`` itself allocates the result slot in the trace (a
@@ -175,8 +174,7 @@ class DetectorErrorModel(_RustDetectorErrorModel):
             ``result_tags`` field on detectors/observables (see the
             ``detectors_json`` argument). The supported scope is canonical
             scalar ``result(tag, measure(q))`` in straight-line programs; the
-            runtime-loop case (per-occurrence binding) remains deferred. See
-            proposal 001 (``from-guppy-tag-referenced-detectors``).
+            runtime-loop case (per-occurrence binding) remains deferred.
         """
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
 

@@ -150,7 +150,7 @@ def test_result_tags_with_runtime_loop_program_fails_loud() -> None:
     has one static measure op per loop body, not per occurrence. The Rust
     static-vs-traced count guard rejects this case rather than silently
     misbinding (per-occurrence tag binding requires CFG-interpreter-class
-    machinery; see proposal 001)."""
+    machinery)."""
     with pytest.raises(ValueError, match=r"runtime loops|not supported"):
         DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=3, basis="Z"),

@@ -701,7 +701,7 @@ def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 
     a single sampled branch is not a static circuit. No reliable runtime-trace
     heuristic distinguishes that from statically-scheduled post-measurement
     gates (the surface code legitimately has those), so no guard is attempted;
-    callers must pass straight-line programs (see proposal 001).
+    callers must pass straight-line programs.
 
     Args:
         program: Anything ``pecos.sim`` accepts -- a ``@guppy`` function, a

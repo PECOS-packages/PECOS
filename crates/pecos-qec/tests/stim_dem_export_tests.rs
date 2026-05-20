@@ -11,8 +11,7 @@
 // the License.
 
 //! Integration tests for Stim-format DEM export from `DemStabSim` with
-//! per-gate noise. Closes the
-//! `~/Repos/pecos-docs/ideas/stim-compat-dem-export.md` gap.
+//! per-gate noise.
 
 use pecos_core::QubitId;
 use pecos_qec::dem_stab::DemStabSim;

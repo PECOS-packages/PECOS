@@ -392,6 +392,33 @@ impl PyCuStateVec {
         self.inner.rzz(Angle64::from_radians(angle), &pairs);
     }
 
+    /// Apply controlled-RX gate. Pairs of qubits = (control, target).
+    fn crx(&mut self, angle: f64, qubits: Vec<usize>) {
+        let pairs: Vec<(QubitId, QubitId)> = qubits
+            .chunks_exact(2)
+            .map(|c| (QubitId(c[0]), QubitId(c[1])))
+            .collect();
+        self.inner.crx(Angle64::from_radians(angle), &pairs);
+    }
+
+    /// Apply controlled-RY gate. Pairs of qubits = (control, target).
+    fn cry(&mut self, angle: f64, qubits: Vec<usize>) {
+        let pairs: Vec<(QubitId, QubitId)> = qubits
+            .chunks_exact(2)
+            .map(|c| (QubitId(c[0]), QubitId(c[1])))
+            .collect();
+        self.inner.cry(Angle64::from_radians(angle), &pairs);
+    }
+
+    /// Apply controlled-RZ gate. Pairs of qubits = (control, target).
+    fn crz(&mut self, angle: f64, qubits: Vec<usize>) {
+        let pairs: Vec<(QubitId, QubitId)> = qubits
+            .chunks_exact(2)
+            .map(|c| (QubitId(c[0]), QubitId(c[1])))
+            .collect();
+        self.inner.crz(Angle64::from_radians(angle), &pairs);
+    }
+
     /// Apply U gate (general single-qubit rotation).
     fn u(&mut self, theta: f64, phi: f64, lambda: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();

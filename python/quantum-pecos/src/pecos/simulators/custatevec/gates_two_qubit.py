@@ -318,6 +318,73 @@ def RZZ(
     _apply_two_qubit_matrix(state, qubits, matrix)
 
 
+def CRX(
+    state: CuStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Controlled-RX gate (qubits[0] = control, qubits[1] = target).
+
+    Uses `_apply_controlled_matrix` so only the 2x2 RX(theta) action on
+    the target is passed; cuStateVec handles the controlled gating
+    internally. RX(theta) = [[cos(theta/2), -i sin(theta/2)],
+                              [-i sin(theta/2), cos(theta/2)]].
+    """
+    if len(angles) != 1:
+        msg = "CRX gate requires exactly 1 angle parameter."
+        raise ValueError(msg)
+    theta = float(angles[0])
+    c = cmath.cos(theta / 2)
+    s = cmath.sin(theta / 2)
+    matrix = cp.asarray([c, -1j * s, -1j * s, c], dtype=state.cp_type)
+    _apply_controlled_matrix(state, qubits[0], qubits[1], matrix)
+
+
+def CRY(
+    state: CuStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Controlled-RY gate (qubits[0] = control, qubits[1] = target).
+
+    Uses `_apply_controlled_matrix` with the 2x2 RY(theta) on target.
+    RY(theta) = [[cos(theta/2), -sin(theta/2)],
+                  [sin(theta/2), cos(theta/2)]].
+    """
+    if len(angles) != 1:
+        msg = "CRY gate requires exactly 1 angle parameter."
+        raise ValueError(msg)
+    theta = float(angles[0])
+    c = cmath.cos(theta / 2)
+    s = cmath.sin(theta / 2)
+    matrix = cp.asarray([c, -s, s, c], dtype=state.cp_type)
+    _apply_controlled_matrix(state, qubits[0], qubits[1], matrix)
+
+
+def CRZ(
+    state: CuStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Controlled-RZ gate (qubits[0] = control, qubits[1] = target).
+
+    Uses `_apply_controlled_matrix` with the 2x2 RZ(theta) on target.
+    RZ(theta) = diag(exp(-i theta/2), exp(i theta/2)).
+    """
+    if len(angles) != 1:
+        msg = "CRZ gate requires exactly 1 angle parameter."
+        raise ValueError(msg)
+    theta = float(angles[0])
+    matrix = cp.asarray(
+        [cmath.exp(-1j * theta / 2), 0, 0, cmath.exp(1j * theta / 2)],
+        dtype=state.cp_type,
+    )
+    _apply_controlled_matrix(state, qubits[0], qubits[1], matrix)
+
+
 def RXXRYYRZZ(
     state: CuStateVec,
     qubits: tuple[int, int],

@@ -176,8 +176,7 @@ class DetectorErrorModel(_RustDetectorErrorModel):
             ``detectors_json`` argument). The supported scope is canonical
             scalar ``result(tag, measure(q))`` in straight-line programs; the
             runtime-loop case (per-occurrence binding) remains deferred. See
-            proposal 001 (``from-guppy-tag-referenced-detectors``) in the
-            ``pecos-docs`` repository.
+            proposal 001 (``from-guppy-tag-referenced-detectors``).
         """
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
 

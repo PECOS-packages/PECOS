@@ -1716,7 +1716,7 @@ pub fn resolve_result_tags(
              static measurement op(s) but the traced program emits \
              {traced_meas_count} measurement(s). Per-occurrence tag binding is \
              not statically available; use positional records (see proposal \
-             001 from-guppy-tag-referenced-detectors in pecos-docs)."
+             001 from-guppy-tag-referenced-detectors)."
         )));
     }
     let traced = i64::try_from(traced_meas_count).map_err(|_| {

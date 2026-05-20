@@ -15,8 +15,8 @@ Qubit Allocator for SLR.
 Inspired by Zig's allocator pattern and NASA's Power of 10 rules.
 Provides hierarchical qubit slot management with explicit lifecycle states.
 
-See the SLR Qubit Allocator proposal (``slr-qubit-allocators``) in the
-``pecos-docs`` repository for full design documentation.
+See the SLR Qubit Allocator proposal (``slr-qubit-allocators``) for full
+design documentation.
 """
 
 from __future__ import annotations

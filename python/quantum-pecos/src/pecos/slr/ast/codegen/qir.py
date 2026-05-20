@@ -25,6 +25,7 @@ Example:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
@@ -93,49 +94,96 @@ GATE_TO_QIR: dict[GateKind, str] = {
     GateKind.RX: "rx",
     GateKind.RY: "ry",
     GateKind.RZ: "rz",
-    # Two-qubit gates
+    # Two-qubit gates -- only the qir-qis ALLOWED_QIS_FNS that
+    # actually execute through `qir_to_qis -> selene`. The native
+    # Quantinuum 2q is `rzz` (parameterized); `__quantum__qis__zz__body`
+    # is NOT in the allowlist (cf. ~/Repos/qir-qis/src/lib.rs:59).
+    # SZZ/SZZdg/SXX/SXXdg/SYY/SYYdg are lowered via `_GATE_DECOMP`
+    # to RZZ + 1q Cliffords (verified up-to-phase + end-to-end).
     GateKind.CX: "cnot",
     GateKind.CZ: "cz",
     GateKind.RZZ: "rzz",
-    GateKind.SZZ: "zz",
 }
 
-# Single-qubit Clifford sqrt-gates with no direct QIR primitive,
-# lowered to an EXECUTABLE-Clifford sequence (h/s/s__adj/x/z only --
-# NOT rx/ry/rz: `__quantum__qis__rx__body` is a pinned build/exec
-# failure (`docs.rotation_rx`), and selene's Stim backend silently
-# no-ops an rx, so a rotation lowering would be a silent miscompile).
-# Each sequence was found by searching the executable Clifford set
-# and VERIFIED equal (up to a global phase, unobservable for
-# measurement-terminated circuits) to the PECOS `StateVec`
-# simulator's authoritative unitary, AND verified end-to-end via the
-# #79 executable path (qir_to_qis -> selene): SX;SX == X,
-# SXdg;SX == I, SY;SY == Y, SYdg;SY == I. (#93: only this verified
-# subset; F-family/CY/CH/CR*/sqrt-2q gates stay fail-loud pending
-# the scoped verification-first workstream.)
-_GATE_DECOMP: dict[GateKind, tuple[GateKind, ...]] = {
-    GateKind.SX: (GateKind.H, GateKind.SZ, GateKind.H),
-    GateKind.SXdg: (GateKind.H, GateKind.SZdg, GateKind.H),
-    GateKind.SY: (GateKind.H, GateKind.X),
-    GateKind.SYdg: (GateKind.H, GateKind.Z),
-    # #93: the single-qubit Clifford "face" rotations. Same method
-    # as the sqrt-gates above -- searched the executable Clifford
-    # set, verified equal up to a global phase to the PECOS
-    # `StateVec` unitary AND end-to-end via the #79 path
-    # (F;F == F-cubed-is-Fdg identities; F is order-3:
-    # F;F;F == I). Sequences are in circuit order (first applied
-    # first).
-    GateKind.F: (GateKind.SZdg, GateKind.H),
-    GateKind.Fdg: (GateKind.H, GateKind.SZ),
-    GateKind.F4: (GateKind.H, GateKind.SZdg),
-    GateKind.F4dg: (GateKind.SZ, GateKind.H),
+# Decomposition table: a sequence of (primitive_kind, qubit_idx_tuple,
+# params_tuple) steps. Each step's qubit_idx_tuple indexes into the
+# input gate's `targets`; params_tuple is the (constant) angles for a
+# parameterized primitive (RZZ). Every entry was found by extracting
+# the gate's authoritative unitary from `pecos.simulators.StateVec`,
+# searching/deriving a decomposition into ONLY the qir-qis ALLOWED
+# primitive set (`h, x, y, z, s, s__adj, t, t__adj, rx, ry, rz, rzz,
+# cx, cz`), verifying it equal up to a GLOBAL PHASE (unobservable for
+# measurement-terminated circuits) to the PECOS unitary, AND
+# verifying it end-to-end through `qir_to_qis -> selene` with
+# discriminating deterministic identities (a no-op lowering would
+# fail). Sequences are in CIRCUIT order (first applied first).
+_DecompStep = tuple[GateKind, tuple[int, ...], tuple[float, ...]]
+_GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
+    # ---- single-qubit Clifford sqrt + face rotations (#93) ----
+    GateKind.SX: ((GateKind.H, (0,), ()), (GateKind.SZ, (0,), ()), (GateKind.H, (0,), ())),
+    GateKind.SXdg: ((GateKind.H, (0,), ()), (GateKind.SZdg, (0,), ()), (GateKind.H, (0,), ())),
+    GateKind.SY: ((GateKind.H, (0,), ()), (GateKind.X, (0,), ())),
+    GateKind.SYdg: ((GateKind.H, (0,), ()), (GateKind.Z, (0,), ())),
+    GateKind.F: ((GateKind.SZdg, (0,), ()), (GateKind.H, (0,), ())),
+    GateKind.Fdg: ((GateKind.H, (0,), ()), (GateKind.SZ, (0,), ())),
+    GateKind.F4: ((GateKind.H, (0,), ()), (GateKind.SZdg, (0,), ())),
+    GateKind.F4dg: ((GateKind.SZ, (0,), ()), (GateKind.H, (0,), ())),
+    # ---- two-qubit Clifford gates (#93 cont.) ----
+    # SZZ/SZZdg directly via the native parameterized rzz.
+    GateKind.SZZ: ((GateKind.RZZ, (0, 1), (math.pi / 2,)),),
+    GateKind.SZZdg: ((GateKind.RZZ, (0, 1), (-math.pi / 2,)),),
+    # SXX = (H⊗H)·SZZ·(H⊗H); SXXdg with -π/2.
+    GateKind.SXX: (
+        (GateKind.H, (0,), ()),
+        (GateKind.H, (1,), ()),
+        (GateKind.RZZ, (0, 1), (math.pi / 2,)),
+        (GateKind.H, (0,), ()),
+        (GateKind.H, (1,), ()),
+    ),
+    GateKind.SXXdg: (
+        (GateKind.H, (0,), ()),
+        (GateKind.H, (1,), ()),
+        (GateKind.RZZ, (0, 1), (-math.pi / 2,)),
+        (GateKind.H, (0,), ()),
+        (GateKind.H, (1,), ()),
+    ),
+    # SYY = (S⊗S)·(H⊗H)·SZZ·(H⊗H)·(Sdg⊗Sdg) since Y = S·X·S† and
+    # XX = (H⊗H)·ZZ·(H⊗H). SYYdg with -π/2.
+    GateKind.SYY: (
+        (GateKind.SZdg, (0,), ()),
+        (GateKind.SZdg, (1,), ()),
+        (GateKind.H, (0,), ()),
+        (GateKind.H, (1,), ()),
+        (GateKind.RZZ, (0, 1), (math.pi / 2,)),
+        (GateKind.H, (0,), ()),
+        (GateKind.H, (1,), ()),
+        (GateKind.SZ, (0,), ()),
+        (GateKind.SZ, (1,), ()),
+    ),
+    GateKind.SYYdg: (
+        (GateKind.SZdg, (0,), ()),
+        (GateKind.SZdg, (1,), ()),
+        (GateKind.H, (0,), ()),
+        (GateKind.H, (1,), ()),
+        (GateKind.RZZ, (0, 1), (-math.pi / 2,)),
+        (GateKind.H, (0,), ()),
+        (GateKind.H, (1,), ()),
+        (GateKind.SZ, (0,), ()),
+        (GateKind.SZ, (1,), ()),
+    ),
+    # CY = Sdg(target); CX(control,target); S(target).
+    GateKind.CY: (
+        (GateKind.SZdg, (1,), ()),
+        (GateKind.CX, (0, 1), ()),
+        (GateKind.SZ, (1,), ()),
+    ),
 }
 
 # Gates with rotation parameters
 PARAMETERIZED_GATES = {GateKind.RX, GateKind.RY, GateKind.RZ, GateKind.RZZ}
 
 # Two-qubit gates
-TWO_QUBIT_GATES = {GateKind.CX, GateKind.CZ, GateKind.RZZ, GateKind.SZZ}
+TWO_QUBIT_GATES = {GateKind.CX, GateKind.CZ, GateKind.RZZ}
 
 
 @dataclass
@@ -485,14 +533,18 @@ class AstToQir:
         """Process a gate operation."""
         qir_name = GATE_TO_QIR.get(node.gate)
         if qir_name is None and node.gate in _GATE_DECOMP:
-            # #93: a single-qubit Clifford sqrt-gate with no direct
-            # QIR primitive -- emit its verified executable-Clifford
-            # sequence (same target), each primitive in order.
-            for prim_kind in _GATE_DECOMP[node.gate]:
-                self._process_single_qubit_gate(
-                    replace(node, gate=prim_kind, params=()),
-                    GATE_TO_QIR[prim_kind],
-                )
+            # #93: a gate with no direct QIR primitive but a verified
+            # decomposition into the qir-qis ALLOWED primitive set.
+            # Emit each step in circuit order, routing its qubits
+            # through the input gate's `targets` and threading any
+            # constant params (e.g. RZZ angles).
+            for prim_kind, idxs, params in _GATE_DECOMP[node.gate]:
+                prim_targets = tuple(node.targets[i] for i in idxs)
+                prim_node = replace(node, gate=prim_kind, targets=prim_targets, params=params)
+                if prim_kind in TWO_QUBIT_GATES:
+                    self._process_two_qubit_gate(prim_node, GATE_TO_QIR[prim_kind])
+                else:
+                    self._process_single_qubit_gate(prim_node, GATE_TO_QIR[prim_kind])
             return
         if qir_name is None:
             # #88A (the broad class #78 deferred): a gate with no

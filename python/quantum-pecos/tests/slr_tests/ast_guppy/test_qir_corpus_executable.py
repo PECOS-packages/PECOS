@@ -244,6 +244,23 @@ _MANIFEST: dict[str, tuple[str, _Spec]] = {
         "independent decoder oracle; asserting one would ship false "
         "confidence and reverse-fitting is the forbidden anti-pattern",
     ),
+    # #93 cont.: newly QIS_OK after the verified CY decomposition.
+    # Both run the "XYZ" stabiliser check (X-Y-Z product) on |0..0>;
+    # |0..0> is NOT an eigenstate of X_0 . Y_1 . Z_2 (only of
+    # Z_0 . Z_1 . Z_2), so the recorded syndrome bit is uniformly
+    # random -- no deterministic value or hard invariant for #79.
+    # (Pickle's pre-CY classification as D `[0]` was correct only
+    # under the silent-CY-drop miscompile; with the real CY lowering
+    # in place, the honest class is X.)
+    "qeclib.generic_check_xyz": (
+        "X",
+        "XYZ stabiliser check on |0..0>: not an eigenstate -> single "
+        "uniformly random syndrome bit; no hard invariant.",
+    ),
+    "qeclib.generic_check_1flag_ch": (
+        "X",
+        "XYZ flagged stabiliser check on |0..0>: same; single uniformly random syndrome bit; no hard invariant.",
+    ),
 }
 
 
@@ -269,7 +286,7 @@ def test_qir_corpus_manifest_covers_qis_ok() -> None:
     stale = set(_MANIFEST) - qis_ok
     assert not stale, f"manifest entries no longer QIS_OK (remove/retriage): {sorted(stale)}"
     hist = {cls: sum(1 for c, _ in _MANIFEST.values() if c == cls) for cls in ("D", "P", "X")}
-    assert hist == {"D": 3, "P": 8, "X": 11}, f"manifest class histogram changed (deliberate?): {hist}"
+    assert hist == {"D": 3, "P": 8, "X": 13}, f"manifest class histogram changed (deliberate?): {hist}"
 
 
 @pytest.mark.slow
@@ -388,3 +405,59 @@ def test_face_clifford_gates_executable() -> None:
     assert _run(lambda q: [qb.F(q[0])]) == {(0,), (1,)}, "F|0> must be Z-random (not a no-op)"
     # PECOS F is the order-3 face Clifford: F;F;F == I.
     assert _run(lambda q: [qb.F(q[0]), qb.F(q[0]), qb.F(q[0])]) == {(0,)}, "F;F;F must be identity (order 3)"
+
+
+@pytest.mark.slow
+@pytest.mark.optional_dependency
+def test_sqrt_pauli_2q_gates_executable() -> None:
+    """#93 cont.: SZZ/SZZdg/SXX/SXXdg/SYY/SYYdg/CY EXECUTE correctly.
+
+    These have no direct qir-qis primitive; #93 lowers them to
+    decompositions over the qir-qis ALLOWED set (verified up-to-phase
+    against the PECOS StateVec unitary). Pin the end-to-end
+    behavioural proof through QIR -> qir_to_qis -> selene with
+    deterministic, global-phase-immune identities:
+      - inverse pairs collapse to I on |00> (G;Gdg -> 0);
+      - CY|10> -> i|11>, so measuring q1 after `X q0; CY` is 1
+        (a no-op CY would give 0 -- the silent-miscompile signature);
+      - CY|00> -> |00> (no effect when control=0);
+      - SZZ^2 with q1=|0> acts as Z on q0; H;SZZ;SZZ;H|0> -> 1
+        (HZH=X; a no-op SZZ would give 0).
+    """
+
+    def _run(prep, ops, meas_idx=0):
+        q = QReg("q", 2)
+        c = CReg("c", 1)
+        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], Measure(q[meas_idx]) > c[0], Return(c))
+        obs: set[tuple[int, ...]] = set()
+        for seed in _SEEDS:
+            for rec in _qis_exec_records(prog, 2, shots=_SHOTS, seed=seed):
+                obs.add(tuple(rec))
+        return obs
+
+    szz = lambda q: qb.SZZ(q[0], q[1])  # noqa: E731
+    szzdg = lambda q: qb.SZZdg(q[0], q[1])  # noqa: E731
+    sxx = lambda q: qb.SXX(q[0], q[1])  # noqa: E731
+    sxxdg = lambda q: qb.SXXdg(q[0], q[1])  # noqa: E731
+    syy = lambda q: qb.SYY(q[0], q[1])  # noqa: E731
+    syydg = lambda q: qb.SYYdg(q[0], q[1])  # noqa: E731
+    cy = lambda q: qb.CY(q[0], q[1])  # noqa: E731
+    x_q0 = lambda q: qb.X(q[0])  # noqa: E731
+    h_q0 = lambda q: qb.H(q[0])  # noqa: E731
+
+    # Inverse pairs on |00> -> I -> 0
+    assert _run([], [szz, szzdg]) == {(0,)}, "SZZ;SZZdg must be I on |00>"
+    assert _run([], [szzdg, szz]) == {(0,)}, "SZZdg;SZZ must be I"
+    assert _run([], [sxx, sxxdg]) == {(0,)}, "SXX;SXXdg must be I on |00>"
+    assert _run([], [sxxdg, sxx]) == {(0,)}, "SXXdg;SXX must be I"
+    assert _run([], [syy, syydg]) == {(0,)}, "SYY;SYYdg must be I on |00>"
+    assert _run([], [syydg, syy]) == {(0,)}, "SYYdg;SYY must be I"
+
+    # CY non-vacuity: X q0; CY; M q1 -> 1 (Y|0>=i|1>; no-op would give 0).
+    assert _run([x_q0], [cy], meas_idx=1) == {(1,)}, "X q0; CY -> q1 must be 1 (CY not a no-op)"
+    # CY|00>: control=0, no effect; measure q1 -> 0.
+    assert _run([], [cy], meas_idx=1) == {(0,)}, "CY|00> -> q1 must be 0"
+
+    # SZZ^2 discriminator: H;SZZ;SZZ;H q0 with q1=|0> -> 1 (Z on q0; HZH=X).
+    # A no-op SZZ would give 0.
+    assert _run([h_q0], [szz, szz, h_q0]) == {(1,)}, "H;SZZ;SZZ;H must be X on q0 (SZZ not a no-op)"

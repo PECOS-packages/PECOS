@@ -366,18 +366,33 @@ def generate_memory_experiment(
     return factory(num_rounds)
 
 
-def get_num_qubits(d: int) -> int:
+def get_num_qubits(d: int, *, ancilla_budget: int | None = None) -> int:
     """Get total number of qubits for a distance-d surface code.
 
-    Peak qubit count: d^2 data qubits + (d^2 - 1) ancilla qubits.
+    Unconstrained (``ancilla_budget=None``): peak qubit count is
+    ``d^2 data + (d^2 - 1) ancilla = 2 * d^2 - 1``.
+
+    Constrained (``ancilla_budget`` provided): the program reuses
+    ancilla slots across stabilizer-measurement batches, so only
+    ``d^2 data + min(ancilla_budget, d^2 - 1) ancilla`` physical
+    slots are simultaneously live. The clamping is the same as
+    ``pecos.qec.surface._ancilla_batching.normalize_ancilla_budget``
+    so the unconstrained-via-``None`` and unconstrained-via-large-int
+    cases collapse to the same value.
 
     Args:
         d: Code distance
+        ancilla_budget: Optional cap on simultaneously live ancillas.
+            ``None`` (default) returns the peak count.
 
     Returns:
-        Total qubits (2 * d^2 - 1)
+        Total qubits the traced program will simultaneously use.
     """
-    return 2 * d * d - 1
+    from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
+
+    total_ancilla = d * d - 1
+    effective = normalize_ancilla_budget(total_ancilla, ancilla_budget)
+    return d * d + effective
 
 
 def generate_surface_code_module(d: int) -> str:

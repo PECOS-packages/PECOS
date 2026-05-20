@@ -20,25 +20,27 @@ class TestArrayUnpacking:
     """Test array unpacking patterns for measurements."""
 
     @pytest.mark.optional_dependency
-    @pytest.mark.xfail(
-        reason="#88B (pre-existing, not #80/#81): the Guppy emitter's slot-local "
-        "naming `f'{allocator}_{index}'` (guppy.py `_local_name` + "
-        "guppy_linearity.py binding init + the entry-unpack LHS -- three "
-        "sites that must agree) collides when an unpack name (`q_0`) equals "
-        "another declared register's name: `q_0, q_1 = q` rebinds the `q_0` "
-        "param, then `q_0_0, = q_0` raises UnpackableError. A correct fix "
-        "needs a single namespace-wide uniquification authority feeding all "
-        "three sites (linearity state has no register/block-decl names) with "
-        "corpus-wide local-name churn -- cross-cutting, out of #87/#88 "
-        "pre-PR scope; tracked.",
-        strict=True,
-        raises=Exception,
-    )
     def test_unique_unpacked_names(self) -> None:
-        """Test that unpacked names avoid conflicts."""
+        """#88B fix: slot-locals are disambiguated against declared register names.
+
+        Before the fix, the Guppy emitter's slot-local formula
+        `f"{allocator}_{index}"` would generate `q_0` for `q[0]`, which
+        shadows a separately declared `QReg("q_0", ...)` parameter: the
+        entry-unpack LHS `q_0, q_1 = q` rebinds the `q_0` param to the
+        first qubit of `q`, and the next line `q_0_0, = q_0` then tries
+        to unpack a single qubit, raising UnpackableError.
+
+        After the fix, `GuppyContext.populate_slot_locals` builds a
+        single namespace-wide table that is read by both
+        `GuppyLinearityState.from_allocators(..., slot_locals=...)` and
+        the emitter's `_local_name`; colliding candidates get `_`-suffixed
+        until unique. So `q[0]` becomes `q_0_` (one underscore appended,
+        since `q_0` is taken by the other register), and `q_0[0]` stays
+        `q_0_0`. The compiled Guppy + HUGR build cleanly.
+        """
         prog = Main(
             q := QReg("q", 2),
-            q_0 := QReg("q_0", 1),  # Conflicting name
+            q_0 := QReg("q_0", 1),  # Same name as the q[0] slot-local would default to.
             c := CReg("c", 3),
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
@@ -48,16 +50,17 @@ class TestArrayUnpacking:
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should generate unique names to avoid conflicts
-        # The unpacked names might be _q_0, _q_1 or similar
-        assert "= q" in guppy_code  # Some unpacking happens
+        # The fix produces `q_0_, q_1 = q` (q[0] disambiguated against
+        # the register `q_0`); `q_0_0, = q_0` is unchanged.
+        assert "q_0_, q_1 = q" in guppy_code, guppy_code
+        assert "q_0_0, = q_0" in guppy_code, guppy_code
+        # The slot-local must NOT be the bare `q_0`, which would shadow
+        # the parameter:
+        assert "q_0, q_1 = q" not in guppy_code, guppy_code
 
-        # Should compile without name conflicts
-        try:
-            hugr = SlrConverter(prog).hugr()
-            assert hugr is not None
-        except ImportError as e:
-            pytest.fail(f"Should handle name conflicts: {e}")
+        # HUGR build must succeed (this is what raised UnpackableError pre-fix).
+        hugr = SlrConverter(prog).hugr()
+        assert hugr is not None
 
 
 class TestArraySwapPatterns:

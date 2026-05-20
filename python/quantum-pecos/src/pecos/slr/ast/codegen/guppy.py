@@ -134,6 +134,13 @@ class GuppyContext:
     registers: dict[str, RegisterDecl] = field(default_factory=dict)
     linearity: GuppyLinearityState | None = None
     temp_counter: int = 0
+    # #88B: single namespace-wide slot -> Guppy-local table. Populated
+    # by `populate_slot_locals` after declarations are collected (so
+    # the registers + allocator names are known); read by both
+    # `GuppyLinearityState.from_allocators(..., slot_locals=...)` and
+    # `AstToGuppy._local_name` so all three sites that emit a slot
+    # name agree (the bug class the xfail tracked).
+    slot_locals: dict[Slot, str] = field(default_factory=dict)
 
     def indent(self) -> str:
         """Return current indentation string."""
@@ -152,6 +159,36 @@ class GuppyContext:
         name = f"_{prefix}_{self.temp_counter}"
         self.temp_counter += 1
         return name
+
+    def populate_slot_locals(self) -> None:
+        """Compute disambiguated Guppy local names for every allocator slot.
+
+        Default name is `f"{allocator}_{index}"`; if that collides with
+        any declared allocator name, register name, or previously
+        assigned slot local, suffix `_` until unique. The result is the
+        authority used by both linearity-state binding init and the
+        emitter's `_local_name` so the entry-unpack LHS, the linearity
+        bindings, and per-slot references all agree (the #88B fix --
+        prevents `q_0, q_1 = q` from shadowing a separately declared
+        `QReg("q_0", ...)` parameter). Idempotent: caller may invoke
+        once after `_collect_declarations` populates allocators+regs.
+        """
+        taken: set[str] = set(self.root_allocators) | set(self.registers)
+        # Existing slot_locals (a re-population path; should not normally
+        # happen) are preserved -- once a slot's name is committed,
+        # everything downstream depends on it.
+        for name in self.slot_locals.values():
+            taken.add(name)
+        for allocator, size in self.root_allocators.items():
+            for index in range(size):
+                slot = Slot(allocator, index)
+                if slot in self.slot_locals:
+                    continue
+                candidate = f"{allocator}_{index}"
+                while candidate in taken:
+                    candidate += "_"
+                self.slot_locals[slot] = candidate
+                taken.add(candidate)
 
 
 class AstToGuppy:
@@ -186,7 +223,11 @@ class AstToGuppy:
         self.context = GuppyContext()
         self._collect_declarations(program)
         self._collect_implicit_measure_registers(program.body)
-        self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
+        self.context.populate_slot_locals()
+        self.context.linearity = GuppyLinearityState.from_allocators(
+            self.context.root_allocators,
+            slot_locals=self.context.slot_locals,
+        )
         self._reject_child_allocators()
 
         # Phase 1 Print AST-level validators (run before emission so failures
@@ -320,7 +361,11 @@ class AstToGuppy:
                 # no parameter and is seeded CONSUMED below so the first Prep
                 # allocates a fresh internal `qubit()`.
                 self.context.root_allocators[name] = size
-        self.context.linearity = GuppyLinearityState.from_allocators(self.context.root_allocators)
+        self.context.populate_slot_locals()
+        self.context.linearity = GuppyLinearityState.from_allocators(
+            self.context.root_allocators,
+            slot_locals=self.context.slot_locals,
+        )
         # Seed scratch slots CONSUMED so the body's first `Prep(scratch)` takes
         # the fresh-`qubit()` branch in `_emit_prepare` (no entry binding, no
         # parameter to alias). `from_allocators` starts every slot LIVE.
@@ -1661,6 +1706,15 @@ class AstToGuppy:
         return Slot(ref.allocator, ref.index)
 
     def _local_name(self, slot: Slot) -> str:
+        # #88B: read from the disambiguated slot-locals table populated
+        # by `GuppyContext.populate_slot_locals` so this site agrees
+        # with the linearity-state binding and the entry-unpack LHS.
+        # Fall back to the bare formula only if a caller emits a slot
+        # before the table is populated (defensive; should not happen
+        # on a normal emission path).
+        cached = self.context.slot_locals.get(slot)
+        if cached is not None:
+            return cached
         return f"{slot.allocator}_{slot.index}"
 
     def _render_bit_ref(self, ref: BitRef) -> str:

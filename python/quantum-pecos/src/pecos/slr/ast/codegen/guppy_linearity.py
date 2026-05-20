@@ -70,8 +70,22 @@ class GuppyLinearityState:
         self._bindings = dict(bindings)
 
     @classmethod
-    def from_allocators(cls, allocators: Mapping[str, int]) -> GuppyLinearityState:
-        """Create live slot bindings for root QReg/QAlloc declarations."""
+    def from_allocators(
+        cls,
+        allocators: Mapping[str, int],
+        *,
+        slot_locals: Mapping[Slot, str] | None = None,
+    ) -> GuppyLinearityState:
+        """Create live slot bindings for root QReg/QAlloc declarations.
+
+        `slot_locals`, when provided, is the single namespace-wide
+        slot-to-Guppy-local name table from `GuppyContext.slot_locals`
+        (#88B: disambiguates the default `f"{allocator}_{index}"` against
+        register names so the entry-unpack LHS does not shadow another
+        declared register). When omitted, the default name is used --
+        kept for callers that build a linearity table outside the main
+        emitter (no register collision risk for those isolated paths).
+        """
         bindings: dict[Slot, Binding] = {}
         for allocator, size in allocators.items():
             if size < 0:
@@ -79,7 +93,12 @@ class GuppyLinearityState:
                 raise LinearityError(msg)
             for index in range(size):
                 slot = Slot(allocator, index)
-                bindings[slot] = Binding(local=f"{allocator}_{index}", state=SlotState.LIVE)
+                local = (
+                    slot_locals[slot]
+                    if slot_locals is not None and slot in slot_locals
+                    else f"{allocator}_{index}"
+                )
+                bindings[slot] = Binding(local=local, state=SlotState.LIVE)
         return cls(bindings)
 
     def bindings(self) -> Iterable[tuple[Slot, Binding]]:

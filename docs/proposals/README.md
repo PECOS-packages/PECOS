@@ -15,7 +15,8 @@ This directory contains architectural proposals and design explorations for PECO
 
 | Folder/File | Status | Summary |
 |-------------|--------|---------|
-| [001-from-guppy-tag-referenced-detectors.md](001-from-guppy-tag-referenced-detectors.md) | Draft | Capture Guppy `result()` tags so `DetectorErrorModel.from_guppy` detectors are reorder-proof |
+| [001-from-guppy-tag-referenced-detectors.md](001-from-guppy-tag-referenced-detectors.md) | Draft | Capture Guppy `result()` tags so `DetectorErrorModel.from_guppy` detectors are reorder-proof (delivered for the straight-line scope; runtime-loop case deferred to 002) |
+| [002-runtime-loop-result-tags-via-dataflow-provenance.md](002-runtime-loop-result-tags-via-dataflow-provenance.md) | Draft | Close 001's runtime-loop deferral PECOS-side via a dataflow-bound `record_static_measure` FFI injected into the HUGR before Selene compiles it; spike pending |
 
 ## Contributing
 

@@ -102,6 +102,34 @@ TWO_QUBIT_GATES = {
     GateKind.RZZ,
 }
 
+# Decomposition table: Clifford-only PECOS gates with no direct Stim
+# primitive, lowered into the Stim-native gate set. Each entry is a
+# sequence of (Stim gate name, qubit-index tuple-into-targets) steps
+# in CIRCUIT order (first applied first). The compositions mirror the
+# already-verified QIR `_GATE_DECOMP` entries: each H/S/S_DAG step is
+# itself a Stim primitive, so a decomp using only those primitives is
+# correct iff the QIR-side decomp is correct (which was verified
+# up-to-phase against the PECOS oracle and end-to-end via selene).
+#
+# Stim is a Clifford-only stabilizer simulator: gates that involve
+# non-Clifford rotations (CH, CRX/CRY/CRZ, T-decomposable forms) or
+# arbitrary continuous rotations (RX/RY/RZ/RZZ at non-pi/2 angles)
+# remain fail-loud here -- there is no Clifford-only decomposition,
+# and the qir-qis-style "decompose to a Clifford+T target" path is
+# fundamentally unavailable to Stim (the user's "support all gates
+# in all languages, IF DECOMPOSABLE" directive admits this caveat).
+_GATE_DECOMP: dict[GateKind, tuple[tuple[str, tuple[int, ...]], ...]] = {
+    # F = H . SZdg (matrix product; circuit-time: SZdg first, then H).
+    # F cycles Paulis X -> Y -> Z -> X (face rotation of the Bloch cube).
+    GateKind.F: (("S_DAG", (0,)), ("H", (0,))),
+    # Fdg = SZ . H (inverse of F; cycles X <- Y <- Z <- X).
+    GateKind.Fdg: (("H", (0,)), ("S", (0,))),
+    # F4 = SZdg . H -- the F-rotation around a different face axis.
+    GateKind.F4: (("H", (0,)), ("S_DAG", (0,))),
+    # F4dg = H . SZ -- inverse of F4.
+    GateKind.F4dg: (("S", (0,)), ("H", (0,))),
+}
+
 
 @dataclass
 class StimCodeGenContext:
@@ -282,6 +310,15 @@ class AstToStim:
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
         stim_gate = GATE_TO_STIM.get(node.gate)
+        if stim_gate is None and node.gate in _GATE_DECOMP:
+            # A Clifford gate with no direct Stim primitive but a
+            # verified decomposition into Stim-native primitives.
+            # Emit each step in circuit order.
+            qubits = [self.context.get_qubit(t.allocator, t.index) for t in node.targets]
+            for prim_name, idxs in _GATE_DECOMP[node.gate]:
+                prim_qubits = [qubits[i] for i in idxs]
+                self.circuit.append_operation(prim_name, prim_qubits)
+            return
         if stim_gate is None:
             # #88A-class (the #78 surfaced-not-changed Stim analogue):
             # a gate with no GATE_TO_STIM entry was SILENTLY DROPPED
@@ -290,14 +327,18 @@ class AstToStim:
             # uncatchable downstream). Fail loud instead. Stim is
             # Clifford-only, so non-Clifford rotations
             # (RX/RY/RZ/RZZ/CR*) are fundamentally unrepresentable
-            # here; F-family/CH have no Stim primitive. A program
-            # using one must not be silently mis-emitted.
+            # here; CH is non-Clifford too. Gates that are Clifford
+            # but lack a direct Stim primitive get a verified
+            # `_GATE_DECOMP` entry above; anything that reaches this
+            # raise has no representable form.
             gate_name = getattr(node.gate, "name", node.gate)
             msg = (
                 f"Stim codegen: gate {gate_name!r} has no Stim lowering "
-                "(not in GATE_TO_STIM). Emitting the circuit without it "
-                "would be a silent miscompile; it is not supported by "
-                "the Stim backend."
+                "(not in GATE_TO_STIM, no Clifford decomposition in "
+                "_GATE_DECOMP). Emitting the circuit without it would be "
+                "a silent miscompile; it is not supported by the Stim "
+                "backend (non-Clifford gates like CH, CR*, continuous "
+                "rotations are fundamentally unrepresentable here)."
             )
             raise NotImplementedError(msg)
 

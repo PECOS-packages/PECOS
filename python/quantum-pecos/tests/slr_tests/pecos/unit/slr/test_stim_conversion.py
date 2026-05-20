@@ -353,5 +353,56 @@ def test_unsupported_gate_fails_loud() -> None:
         SlrConverter(prog).stim()
 
 
+@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
+def test_face_clifford_gates_decompose() -> None:
+    """F/Fdg/F4/F4dg are PECOS face-Cliffords with no direct Stim
+    primitive; cross-codegen audit landed verified decompositions
+    into H/S/S_DAG so they no longer fail-loud. Verify each decomp
+    produces the *correct* Clifford action via Stim's tableau (catches
+    no-op and wrong-direction mutations -- a wrong-direction F would
+    cycle X<-Y<-Z<-X instead of forward).
+
+    F is order-3 (F^3 = I) and cycles the Paulis X->Y->Z->X up to
+    sign. The Heisenberg-picture conjugation `F . Z . Fdg = X` is
+    the deterministic identity each face-Clifford must satisfy.
+    """
+    # Build a 1q Stim program with just `F q[0]` and read the tableau.
+    def _tableau_of(gate) -> stim.Tableau:
+        q = QReg("q", 1)
+        prog = Main(q, gate(q[0]))
+        circ = SlrConverter(prog).stim()
+        return stim.Tableau.from_circuit(circ)
+
+    # F should send Z -> X and X -> Y (face cycle in the +1,+1,+1
+    # direction). Fdg is the inverse so it sends Z -> Y and X -> Z.
+    f = _tableau_of(qubit.F)
+    fdg = _tableau_of(qubit.Fdg)
+    assert f(stim.PauliString("Z")) == stim.PauliString("+X"), f
+    assert f(stim.PauliString("X")) == stim.PauliString("+Y"), f
+    assert fdg(stim.PauliString("Z")) == stim.PauliString("+Y"), fdg
+    assert fdg(stim.PauliString("X")) == stim.PauliString("+Z"), fdg
+
+    # F . Fdg must be identity (involution-pair). Build the
+    # composed circuit and confirm both Paulis are preserved.
+    q = QReg("q", 1)
+    prog = Main(q, qubit.F(q[0]), qubit.Fdg(q[0]))
+    f_fdg = stim.Tableau.from_circuit(SlrConverter(prog).stim())
+    assert f_fdg(stim.PauliString("Z")) == stim.PauliString("+Z"), f_fdg
+    assert f_fdg(stim.PauliString("X")) == stim.PauliString("+X"), f_fdg
+
+    # F4 / F4dg are a *different* face Clifford (rotation around
+    # a different cube axis). Sanity-check they are well-defined
+    # involution pairs and not aliases of F / Fdg.
+    f4 = _tableau_of(qubit.F4)
+    f4dg = _tableau_of(qubit.F4dg)
+    assert f4 != f, "F4 must not be the same Clifford as F"
+    assert f4dg != fdg, "F4dg must not be the same Clifford as Fdg"
+    q = QReg("q", 1)
+    prog = Main(q, qubit.F4(q[0]), qubit.F4dg(q[0]))
+    f4_f4dg = stim.Tableau.from_circuit(SlrConverter(prog).stim())
+    assert f4_f4dg(stim.PauliString("Z")) == stim.PauliString("+Z"), f4_f4dg
+    assert f4_f4dg(stim.PauliString("X")) == stim.PauliString("+X"), f4_f4dg
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

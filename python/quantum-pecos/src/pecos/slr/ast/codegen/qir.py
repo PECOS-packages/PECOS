@@ -108,15 +108,21 @@ GATE_TO_QIR: dict[GateKind, str] = {
 # Decomposition table: a sequence of (primitive_kind, qubit_idx_tuple,
 # params_tuple) steps. Each step's qubit_idx_tuple indexes into the
 # input gate's `targets`; params_tuple is the (constant) angles for a
-# parameterized primitive (RZZ). Every entry was found by extracting
-# the gate's authoritative unitary from `pecos.simulators.StateVec`,
+# parameterized primitive (RZZ, RY, RX, RZ). Every entry was found by
+# extracting the gate's authoritative unitary from
+# `pecos.simulators.StateVec` (or the canonical matrix oracle in
+# `tests/pecos/integration/state_sim_tests/gate_matrix_def.py`),
 # searching/deriving a decomposition into ONLY the qir-qis ALLOWED
 # primitive set (`h, x, y, z, s, s__adj, t, t__adj, rx, ry, rz, rzz,
-# cx, cz`), verifying it equal up to a GLOBAL PHASE (unobservable for
-# measurement-terminated circuits) to the PECOS unitary, AND
-# verifying it end-to-end through `qir_to_qis -> selene` with
-# discriminating deterministic identities (a no-op lowering would
-# fail). Sequences are in CIRCUIT order (first applied first).
+# rxy, cnot, cz`), verifying it equal up to a GLOBAL PHASE
+# (unobservable for measurement-terminated circuits) to the PECOS
+# unitary, AND verifying it end-to-end through `qir_to_qis -> selene`
+# with discriminating deterministic identities (a no-op lowering
+# would fail). For *Clifford* gates the selene Stim backend can
+# verify; non-Clifford gates (e.g. CH, T-decompositions, arbitrary-
+# angle rotations) use the selene Quest statevector backend.
+# Sequences are in CIRCUIT order (first applied first). Decompositions
+# minimize 2q-gate count first (2q ops are the hardware cost driver).
 _DecompStep = tuple[GateKind, tuple[int, ...], tuple[float, ...]]
 _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
     # ---- single-qubit Clifford sqrt + face rotations (#93) ----
@@ -176,6 +182,17 @@ _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
         (GateKind.SZdg, (1,), ()),
         (GateKind.CX, (0, 1), ()),
         (GateKind.SZ, (1,), ()),
+    ),
+    # CH = (I_c x Ry(-pi/4)_t) . CX(c,t) . (I_c x Ry(pi/4)_t) -- 1 CX
+    # (the 2q-minimal Clifford+rotation form; conjugation by Ry maps
+    # X to H since Ry(-pi/4) X Ry(pi/4) = cos(-pi/4) X - sin(-pi/4) Z
+    # = (X+Z)/sqrt(2) = H). The PECOS oracle CH() in gate_matrix_def
+    # uses a Clifford+T 2-CX form; ours matches it up to global phase
+    # (max_err 3e-14) and matches textbook block-diag(I,H) exactly.
+    GateKind.CH: (
+        (GateKind.RY, (1,), (math.pi / 4,)),
+        (GateKind.CX, (0, 1), ()),
+        (GateKind.RY, (1,), (-math.pi / 4,)),
     ),
 }
 

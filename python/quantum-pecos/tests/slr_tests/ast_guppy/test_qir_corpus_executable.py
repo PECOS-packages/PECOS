@@ -475,3 +475,72 @@ def test_sqrt_pauli_2q_gates_executable() -> None:
     # SZZ^2 discriminator: H;SZZ;SZZ;H q0 with q1=|0> -> 1 (Z on q0; HZH=X).
     # A no-op SZZ would give 0.
     assert _run([h_q0], [szz, szz, h_q0]) == {(1,)}, "H;SZZ;SZZ;H must be X on q0 (SZZ not a no-op)"
+
+
+@pytest.mark.slow
+@pytest.mark.optional_dependency
+def test_ch_executable() -> None:
+    """#93 cont.: CH (controlled-Hadamard) EXECUTES correctly.
+
+    CH has no direct qir-qis primitive; #93 lowers it to the 2q-
+    minimal 1-CX decomposition (I_c x Ry(-pi/4)_t) . CX . (I_c x
+    Ry(pi/4)_t) -- verified up-to-phase against the PECOS oracle
+    `gate_matrix_def.CH()` (max_err 3e-14), and exactly equal to
+    the textbook block-diag(I, H). The 1-CX form beats the PECOS
+    Clifford+T oracle's 2-CX form (per the "minimize 2q-gate count"
+    decomposition-optimality principle; 2q ops are the hardware
+    cost driver).
+
+    CH is NOT a Clifford gate (CH . X_t . CH^{-1} =
+    block-diag(X, Z) is not a Pauli string), so Stim cannot
+    simulate it -- the executable test routes through the Quest
+    statevector backend instead. The PECOS oracle in
+    gate_matrix_def.CH() uses T gates for the same reason: any CH
+    decomposition into the qir-qis allowlist requires non-Clifford
+    rotations (T or arbitrary Ry/Rz angles).
+
+    Pinned identities (deterministic, global-phase-immune):
+      - CH|00> -> |00> (control=0 means no effect, measure q1 -> 0);
+      - CH^2 = I on |10> (involution; X q0; CH; CH; M q1 -> 0);
+      - phase/value discriminator (CH vs CX vs no-op vs Ry-sign-flip):
+            X q0; H q1; CH; M q1 -> 0 deterministically
+        (with c=1, target is |+>; H|+>=|0>; measurement is 0 always).
+        no-op leaves |+>, giving 50/50 (both 0 and 1 observed across
+        seeds/shots); CX-mutation leaves X|+>=|+>, also 50/50; an
+        Ry-sign-flip mutation (Ry(pi/4) . X . Ry(-pi/4)) acts as
+        (X-Z)/sqrt(2) = -H.Z, applied to |+> gives |1> -> measure 1.
+    """
+    import selene_sim
+
+    quest = lambda s: selene_sim.Quest(random_seed=s)  # noqa: E731
+
+    def _run(prep, ops, meas_idx=0):
+        q = QReg("q", 2)
+        c = CReg("c", 1)
+        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], Measure(q[meas_idx]) > c[0], Return(c))
+        obs: set[tuple[int, ...]] = set()
+        for seed in _SEEDS:
+            for rec in _qis_exec_records(prog, 2, shots=_SHOTS, seed=seed, simulator_factory=quest):
+                obs.add(tuple(rec))
+        return obs
+
+    ch = lambda q: qb.CH(q[0], q[1])  # noqa: E731
+    x_q0 = lambda q: qb.X(q[0])  # noqa: E731
+    h_q1 = lambda q: qb.H(q[1])  # noqa: E731
+
+    # control=0: CH is identity; measure q1 -> 0.
+    assert _run([], [ch], meas_idx=1) == {(0,)}, "CH|00> -> q1 must be 0 (control=0; no effect)"
+
+    # CH^2 = I (involution: H^2 = I on the c=1 sector):
+    # X q0; CH; CH; M q1 -> 0.
+    assert _run([x_q0], [ch, ch], meas_idx=1) == {(0,)}, "X q0; CH; CH; M q1 must be 0 (CH^2=I)"
+
+    # Phase-sensitive discriminator: X q0; H q1; CH; M q1 -> 0.
+    # With c=1, target starts at |+>; CH applies H, sending |+> -> |0>.
+    # A no-op or CX-mutation leaves the target at |+> -> 50/50 (both
+    # 0 and 1 appear); an Ry-sign-flip mutation (conjugation that
+    # sends X -> -H.Z instead of H) sends |+> -> |1> -> measure 1.
+    # All three mutations are caught by this single deterministic pin.
+    assert _run([x_q0, h_q1], [ch], meas_idx=1) == {
+        (0,),
+    }, "X q0; H q1; CH; M q1 must be 0 deterministically (a CX-mutation, no-op, or Ry-sign-flip CH all fail)"

@@ -65,8 +65,12 @@ from __future__ import annotations
 
 import re
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 import qir_qis
 import selene_sim
 from pecos.slr import CReg, For, If, Main, Print, QReg, Return, SlrConverter, While
@@ -477,23 +481,39 @@ def test_return_only_inline_creg_raises_loud() -> None:
         SlrConverter(collide).qir_bc()
 
 
-def _qis_exec_records(prog: Main, n_qubits: int, *, shots: int = _SHOTS, seed: int = _SEED) -> list[list[int]]:
+def _qis_exec_records(
+    prog: Main,
+    n_qubits: int,
+    *,
+    shots: int = _SHOTS,
+    seed: int = _SEED,
+    simulator_factory: Callable[[int], object] | None = None,
+) -> list[list[int]]:
     """#77 Layer D -- the real EXECUTABLE differential.
 
     `AST QIR -> qir_qis.qir_to_qis` (LLVM-21 QIS bitcode) ->
     `selene_sim.build` (selene ingests it natively via
     `selene_helios_qis_plugin`; the long-claimed "blocked on an LLVM
-    14<->21 bridge" was false) -> run on Stim. Returns per-shot lists
-    of the recorded `__quantum__rt__int_record_output` *values*, in
-    call order == CReg *declaration* order (B2 `_generate_results`
-    records every declared CReg; the QIS tag is empty post-qir_to_qis
-    so order is the key). This is the executable proof that the B2
-    QIR, lowered by the real Quantinuum compiler and run, computes
-    the correct classical results -- upgrading A+B+C to A+B+C+D.
+    14<->21 bridge" was false) -> run on the selected backend.
+    Returns per-shot lists of the recorded
+    `__quantum__rt__int_record_output` *values*, in call order ==
+    CReg *declaration* order (B2 `_generate_results` records every
+    declared CReg; the QIS tag is empty post-qir_to_qis so order is
+    the key). This is the executable proof that the B2 QIR, lowered
+    by the real Quantinuum compiler and run, computes the correct
+    classical results -- upgrading A+B+C to A+B+C+D.
+
+    `simulator_factory` is a callable `seed -> Simulator` -- defaults
+    to `selene_sim.Stim(random_seed=seed)`. Non-Clifford circuits
+    (e.g. those containing CH, T, arbitrary rotations) must pass a
+    statevector backend such as `lambda s: selene_sim.Quest(
+    random_seed=s)` since Stim rejects non-Clifford operations.
     """
+    if simulator_factory is None:
+        simulator_factory = lambda s: selene_sim.Stim(random_seed=s)  # noqa: E731
     qis = qir_qis.qir_to_qis(SlrConverter(prog).qir_bc())
     inst = selene_sim.build(selene_sim.BitcodeString(qis))
-    shots_out = inst.run_shots(selene_sim.Stim(random_seed=seed), n_qubits=n_qubits, n_shots=shots)
+    shots_out = inst.run_shots(simulator_factory(seed), n_qubits=n_qubits, n_shots=shots)
     return [[value for (_tag, value) in shot] for shot in shots_out]
 
 

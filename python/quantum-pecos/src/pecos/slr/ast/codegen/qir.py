@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -123,7 +124,14 @@ GATE_TO_QIR: dict[GateKind, str] = {
 # angle rotations) use the selene Quest statevector backend.
 # Sequences are in CIRCUIT order (first applied first). Decompositions
 # minimize 2q-gate count first (2q ops are the hardware cost driver).
-_DecompStep = tuple[GateKind, tuple[int, ...], tuple[float, ...]]
+# A decomposition step's params slot is either:
+#   - a tuple of constant floats (most common, e.g. SZZ -> RZZ(pi/2)), or
+#   - a callable that takes the *input* gate's params (e.g. CRZ(theta))
+#     and returns the step's params (e.g. (theta/2,) on RZ, (-theta/2,)
+#     on RZZ). This lets parameterized controlled-rotation gates thread
+#     their angle through a 2q-minimal decomposition.
+_DecompParams = tuple[float, ...] | Callable[[tuple[float, ...]], tuple[float, ...]]
+_DecompStep = tuple[GateKind, tuple[int, ...], _DecompParams]
 _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
     # ---- single-qubit Clifford sqrt + face rotations (#93) ----
     GateKind.SX: ((GateKind.H, (0,), ()), (GateKind.SZ, (0,), ()), (GateKind.H, (0,), ())),
@@ -193,6 +201,38 @@ _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
         (GateKind.RY, (1,), (math.pi / 4,)),
         (GateKind.CX, (0, 1), ()),
         (GateKind.RY, (1,), (-math.pi / 4,)),
+    ),
+    # ---- parameterized controlled rotations (#93 cont.) ----
+    # CRZ(theta) = (RZ(theta/2) o RZ(theta/2)) . RZZ(-theta/2): 1 RZZ,
+    # 2 single-qubit RZ. The RZ on the control absorbs the e^{i theta/2}
+    # phase that PECOS's R*(theta) all carry (otherwise it would be a
+    # c=1-only relative phase, which is observable). Verified against
+    # gate_matrix_def.CRZ(theta) for 5 random angles.
+    GateKind.CRZ: (
+        (GateKind.RZZ, (0, 1), lambda p: (-p[0] / 2,)),
+        (GateKind.RZ, (0,), lambda p: (p[0] / 2,)),
+        (GateKind.RZ, (1,), lambda p: (p[0] / 2,)),
+    ),
+    # CRX(theta) = (I o H) . CRZ(theta) . (I o H): conjugate CRZ by H
+    # on the target since H.Z.H = X. Same 1 RZZ.
+    GateKind.CRX: (
+        (GateKind.H, (1,), ()),
+        (GateKind.RZZ, (0, 1), lambda p: (-p[0] / 2,)),
+        (GateKind.RZ, (0,), lambda p: (p[0] / 2,)),
+        (GateKind.RZ, (1,), lambda p: (p[0] / 2,)),
+        (GateKind.H, (1,), ()),
+    ),
+    # CRY(theta) = (I o (S.H)) . CRZ(theta) . (I o (H.Sdg)): conjugate
+    # CRZ by (S.H) on the target since S.X.Sdg = Y (and H.Z.H = X).
+    # Same 1 RZZ.
+    GateKind.CRY: (
+        (GateKind.SZdg, (1,), ()),
+        (GateKind.H, (1,), ()),
+        (GateKind.RZZ, (0, 1), lambda p: (-p[0] / 2,)),
+        (GateKind.RZ, (0,), lambda p: (p[0] / 2,)),
+        (GateKind.RZ, (1,), lambda p: (p[0] / 2,)),
+        (GateKind.H, (1,), ()),
+        (GateKind.SZ, (1,), ()),
     ),
 }
 
@@ -553,11 +593,33 @@ class AstToQir:
             # #93: a gate with no direct QIR primitive but a verified
             # decomposition into the qir-qis ALLOWED primitive set.
             # Emit each step in circuit order, routing its qubits
-            # through the input gate's `targets` and threading any
-            # constant params (e.g. RZZ angles).
-            for prim_kind, idxs, params in _GATE_DECOMP[node.gate]:
+            # through the input gate's `targets` and threading params
+            # (constant for non-parameterized gates like SZZ -> RZZ(pi/2);
+            # callable on the input gate's params for parameterized
+            # gates like CRZ(theta) -> RZZ(-theta/2)). LiteralExpr
+            # bracket-params are unwrapped to floats here so the
+            # callable can do arithmetic on them; non-literal
+            # expressions (VarExpr / BinaryExpr at gate-param position)
+            # are not yet supported for parameterized decomposition
+            # (out of #93 scope; #94 classical-var lowering covers it).
+            input_params_raw = tuple(node.params or ())
+            for prim_kind, idxs, params_spec in _GATE_DECOMP[node.gate]:
                 prim_targets = tuple(node.targets[i] for i in idxs)
-                prim_node = replace(node, gate=prim_kind, targets=prim_targets, params=params)
+                if callable(params_spec):
+                    try:
+                        input_params_resolved = tuple(
+                            p.value if isinstance(p, LiteralExpr) else float(p) for p in input_params_raw
+                        )
+                    except (AttributeError, TypeError) as exc:
+                        msg = (
+                            f"Parameterized decomposition of gate {node.gate.name} requires literal "
+                            f"params; got non-literal: {input_params_raw}"
+                        )
+                        raise NotImplementedError(msg) from exc
+                    prim_params = params_spec(input_params_resolved)
+                else:
+                    prim_params = params_spec
+                prim_node = replace(node, gate=prim_kind, targets=prim_targets, params=prim_params)
                 if prim_kind in TWO_QUBIT_GATES:
                     self._process_two_qubit_gate(prim_node, GATE_TO_QIR[prim_kind])
                 else:

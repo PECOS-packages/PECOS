@@ -67,6 +67,32 @@ class RZZGate(TQGate):
 RZZ = RZZGate()
 
 
+class CRXGate(TQGate):
+    """Controlled-RX gate.
+
+    This gate applies an RX rotation to the target qubit controlled by
+    the control qubit. The rotation angle is specified as a parameter.
+    """
+
+    has_parameters = True
+
+
+CRX = CRXGate()
+
+
+class CRYGate(TQGate):
+    """Controlled-RY gate.
+
+    This gate applies an RY rotation to the target qubit controlled by
+    the control qubit. The rotation angle is specified as a parameter.
+    """
+
+    has_parameters = True
+
+
+CRY = CRYGate()
+
+
 class CRZGate(TQGate):
     """Controlled-RZ gate.
 

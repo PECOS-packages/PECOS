@@ -544,3 +544,81 @@ def test_ch_executable() -> None:
     assert _run([x_q0, h_q1], [ch], meas_idx=1) == {
         (0,),
     }, "X q0; H q1; CH; M q1 must be 0 deterministically (a CX-mutation, no-op, or Ry-sign-flip CH all fail)"
+
+
+@pytest.mark.slow
+@pytest.mark.optional_dependency
+def test_controlled_rotations_executable() -> None:
+    """#93 cont.: CRX(theta) / CRY(theta) / CRZ(theta) EXECUTE correctly.
+
+    All three controlled rotations are non-Clifford for general theta;
+    executable verification routes through the Quest statevector
+    backend. Decompositions (each 1-RZZ, the 2q-minimal form) are
+    verified up-to-global-phase against the canonical PECOS oracles
+    in `gate_matrix_def.CRX/CRY/CRZ` (5 random angles each).
+
+    Discriminator design: at theta=pi, PECOS R*(pi) equals the
+    corresponding Pauli (RX(pi)=X, RY(pi)=Y, RZ(pi)=Z), so CR*(pi)
+    acts as CX/CY/CZ in the c=1 sector. The (Test A, Test B) outcome
+    pair uniquely identifies the gate (and catches no-op/wrong-gate
+    mutations):
+      Test A -- X q0; CR*(pi); M q1
+        CRX: 1 (X|0>=|1>);   CRY: 1 (Y|0>=i|1>);   CRZ: 0 (Z|0>=|0>).
+      Test B -- X q0; H q1; CR*(pi); H q1; M q1 (H-conjugate)
+        CRX: 0 (HXH=Z, Z|0>=|0>);
+        CRY: 1 (HYH=-Y, Y|+>=-i|->, H|->=|1>);
+        CRZ: 1 (HZH=X, X|0>=|1>).
+      Signatures (A,B): CRX=(1,0), CRY=(1,1), CRZ=(0,1) -- all
+      three distinct, so any cross-swap or no-op is caught.
+
+    Angle-propagation: CR*(pi/2)^2 must produce the same (Test A)
+    outcome as CR*(pi) when q0=|1>. Catches a stuck-angle bug where
+    the callable-params plumbing dropped theta on the floor.
+    """
+    import selene_sim
+
+    quest = lambda s: selene_sim.Quest(random_seed=s)  # noqa: E731
+
+    def _run(prep, ops, meas_idx=0):
+        q = QReg("q", 2)
+        c = CReg("c", 1)
+        prog = Main(q, c, *[g(q) for g in prep], *[g(q) for g in ops], Measure(q[meas_idx]) > c[0], Return(c))
+        obs: set[tuple[int, ...]] = set()
+        for seed in _SEEDS:
+            for rec in _qis_exec_records(prog, 2, shots=_SHOTS, seed=seed, simulator_factory=quest):
+                obs.add(tuple(rec))
+        return obs
+
+    import math as _math
+
+    crx_pi = lambda q: qb.CRX[_math.pi](q[0], q[1])  # noqa: E731
+    cry_pi = lambda q: qb.CRY[_math.pi](q[0], q[1])  # noqa: E731
+    crz_pi = lambda q: qb.CRZ[_math.pi](q[0], q[1])  # noqa: E731
+    crx_half = lambda q: qb.CRX[_math.pi / 2](q[0], q[1])  # noqa: E731
+    cry_half = lambda q: qb.CRY[_math.pi / 2](q[0], q[1])  # noqa: E731
+    crz_half = lambda q: qb.CRZ[_math.pi / 2](q[0], q[1])  # noqa: E731
+    x_q0 = lambda q: qb.X(q[0])  # noqa: E731
+    h_q1 = lambda q: qb.H(q[1])  # noqa: E731
+
+    # c=0 sanity: each CR*(pi)|00> -> q1 unchanged -> 0.
+    assert _run([], [crx_pi], meas_idx=1) == {(0,)}, "CRX(pi)|00> -> q1 must be 0 (c=0)"
+    assert _run([], [cry_pi], meas_idx=1) == {(0,)}, "CRY(pi)|00> -> q1 must be 0 (c=0)"
+    assert _run([], [crz_pi], meas_idx=1) == {(0,)}, "CRZ(pi)|00> -> q1 must be 0 (c=0)"
+
+    # Test A (computational basis): X q0; CR*(pi); M q1.
+    assert _run([x_q0], [crx_pi], meas_idx=1) == {(1,)}, "Test A CRX(pi): X q0; CRX(pi); M q1 must be 1"
+    assert _run([x_q0], [cry_pi], meas_idx=1) == {(1,)}, "Test A CRY(pi): X q0; CRY(pi); M q1 must be 1"
+    assert _run([x_q0], [crz_pi], meas_idx=1) == {(0,)}, "Test A CRZ(pi): X q0; CRZ(pi); M q1 must be 0"
+
+    # Test B (Hadamard sandwich -- distinguishes CR* from each other):
+    # X q0; H q1; CR*(pi); H q1; M q1.
+    assert _run([x_q0, h_q1], [crx_pi, h_q1], meas_idx=1) == {(0,)}, "Test B CRX(pi) must be 0"
+    assert _run([x_q0, h_q1], [cry_pi, h_q1], meas_idx=1) == {(1,)}, "Test B CRY(pi) must be 1"
+    assert _run([x_q0, h_q1], [crz_pi, h_q1], meas_idx=1) == {(1,)}, "Test B CRZ(pi) must be 1"
+
+    # Angle-propagation: CR*(pi/2)^2 must match Test A CR*(pi). Verifies
+    # the callable-params plumbing actually threads theta through the
+    # decomp (a stuck-zero or stuck-pi bug would fail one of these).
+    assert _run([x_q0], [crx_half, crx_half], meas_idx=1) == {(1,)}, "CRX(pi/2)^2 must agree with Test A CRX(pi)"
+    assert _run([x_q0], [cry_half, cry_half], meas_idx=1) == {(1,)}, "CRY(pi/2)^2 must agree with Test A CRY(pi)"
+    assert _run([x_q0], [crz_half, crz_half], meas_idx=1) == {(0,)}, "CRZ(pi/2)^2 must agree with Test A CRZ(pi)"

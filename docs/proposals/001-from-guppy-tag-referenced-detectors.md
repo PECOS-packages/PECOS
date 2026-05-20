@@ -1,9 +1,12 @@
 # 001 - Tag-referenced detectors for `DetectorErrorModel.from_guppy`
 
-**Status:** Partially delivered — see "Final outcome (dem-polish)" at the
-bottom. The sections between here and there record the investigation history
-(including a runtime approach that was implemented then **proven unsound and
-removed**); the final section is authoritative.
+**Status:** Delivered for the supported scope (straight-line canonical
+`result(tag, measure(q))`); runtime-loop case remains deferred (upstream-
+blocked). See "Closure (round 9)" at the bottom -- it is authoritative and
+supersedes every earlier section. The sections in between record the
+investigation history (including a runtime approach that was implemented then
+**proven unsound and removed**, and a first wiring attempt that was reverted
+in review and is now re-introduced correctly).
 
 **Author:** (dem-polish working notes)
 
@@ -439,3 +442,52 @@ Resolution:
 So the previous "proven sound for straight-line / surface byte-identical"
 statement is accurate again *only after the guard revert*; it was false in the
 intermediate broken tree.
+
+## Closure (round 9) -- AUTHORITATIVE
+
+This section supersedes all earlier "outcome" sections. The proposal's Goal
+(tag-referenced detectors that survive measurement reordering) is now
+**delivered** for its supported scope, with the prior review's blockers
+addressed:
+
+**What ships:**
+
+- The Rust `resolve_result_tags`
+  (`pecos_qec::fault_tolerance::dem_builder::resolve_result_tags`) and pyo3
+  `resolve_result_tags_for_guppy` reintroduced from the reverted gap-4, with
+  the same fail-loud loop guard (static vs traced measurement count).
+- `DetectorErrorModel.from_guppy` now accepts a `result_tags` field on each
+  detector/observable entry (alongside or instead of `records`/`meas_ids`).
+  Resolution: HUGR -> sound `tag -> ordinal` map via
+  `pecos_hugr_qis::extract_result_tag_measurements` -> record offsets ->
+  passed to the existing DEM builder. The full schema/redundancy/range
+  validation already in the builder applies to the rewritten metadata.
+- The previously-revert-triggering "wrapper-input regression" is closed by
+  an **upfront** `guppy_to_hugr` compile in `from_guppy` (only when
+  `result_tags` is requested) with a clear `ValueError` mentioning the
+  `@guppy` requirement, instead of a late crash inside the HUGR step.
+- The HUGR-traversal-ordinal == traced-`MeasId`-order correspondence the
+  earlier review (item #7) flagged as unproven is now **committed-test
+  verified** end-to-end for the supported scope by
+  `tests/qec/test_from_guppy_result_tags.py::test_result_tags_match_positional_records`
+  (a scrambled-`result()`-order Guppy program: `result_tags` DEM
+  byte-identical to the positional-records DEM, across all three tags and
+  multi-tag / observables variants).
+- `result_tags.rs` module docs no longer claim a "verified property" that
+  had no committed test; they now accurately reference the committed
+  cross-check and the narrow scope.
+
+**What is still deferred (upstream-blocked):** per-occurrence tag binding
+for `for _ in range(comptime(n))` runtime-loop programs (the surface code's
+round structure). The HUGR has one static measure op per loop body, not per
+occurrence; bridging that to per-iteration `MeasId`s needs CFG-interpreter-
+class machinery (~= the excluded `HugrEngine`) or upstream `tket-qsystem`
+lowering carrying measurement provenance. `from_guppy` rejects this case
+fail-loud (`result_tags ... runtime loops`); positional `records`/`meas_ids`
+remain available for surface-code use.
+
+**Rejected fail-loud cases (committed tests):** runtime-loop programs;
+non-`@guppy` callable inputs when `result_tags` is requested; references to
+tags the program never records; computed / constant / array-valued
+`result(...)` shapes (the extractor excludes them by construction, and an
+unrecognized tag falls through to the unknown-tag error).

@@ -1800,6 +1800,51 @@ fn py_hugr_to_dag_circuit(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<PyDagCirc
     Ok(PyDagCircuit { inner: dag })
 }
 
+/// Resolve `result_tags` on detector/observable JSON using the sound,
+/// reorder-immune Guppy `result(tag, ...)` -> measurement binding recovered
+/// from the compiled HUGR.
+///
+/// All logic (HUGR extraction, the runtime-loop guard, tag->record resolution,
+/// unknown-tag validation) is performed in Rust; this is a thin entry point.
+/// Returns the rewritten `(detectors_json, observables_json)` with
+/// `result_tags` replaced by record offsets.
+///
+/// Args:
+///     `detectors_json` / `observables_json`: detector/observable JSON.
+///     `hugr_bytes`: HUGR envelope bytes (e.g. `guppy_to_hugr(program)`).
+///     `traced_meas_count`: number of measurements in the traced circuit.
+///
+/// Raises:
+///     `ValueError`: on the runtime-loop guard, an unknown tag, malformed
+///         `result_tags`, or invalid JSON.
+#[pyfunction]
+#[pyo3(name = "resolve_result_tags_for_guppy")]
+fn py_resolve_result_tags_for_guppy(
+    detectors_json: &str,
+    observables_json: &str,
+    hugr_bytes: &Bound<'_, PyBytes>,
+    traced_meas_count: usize,
+) -> PyResult<(String, String)> {
+    use pecos_hugr_qis::{
+        extract_result_tag_measurements, measurement_op_count, read_hugr_envelope,
+    };
+    use pecos_qec::fault_tolerance::dem_builder::resolve_result_tags;
+
+    let hugr = read_hugr_envelope(hugr_bytes.as_bytes())
+        .map_err(|e| PyErr::new::<HugrConversionError, _>(format!("Failed to parse HUGR: {e}")))?;
+    let tag_to_ords = extract_result_tag_measurements(&hugr);
+    let static_meas_count = measurement_op_count(&hugr);
+
+    resolve_result_tags(
+        detectors_json,
+        observables_json,
+        &tag_to_ords,
+        static_meas_count,
+        traced_meas_count,
+    )
+    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+}
+
 /// Map a HUGR operation name to a `GateType`.
 ///
 /// Args:
@@ -3773,6 +3818,10 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
     parent_module.add_function(wrap_pyfunction!(py_hugr_op_to_gate_type, parent_module)?)?;
     parent_module.add_function(wrap_pyfunction!(py_gate_type_to_hugr_op, parent_module)?)?;
     parent_module.add_function(wrap_pyfunction!(py_is_quantum_operation, parent_module)?)?;
+    parent_module.add_function(wrap_pyfunction!(
+        py_resolve_result_tags_for_guppy,
+        parent_module
+    )?)?;
 
     Ok(())
 }

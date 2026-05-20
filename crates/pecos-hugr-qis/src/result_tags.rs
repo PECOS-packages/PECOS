@@ -7,9 +7,19 @@
 //! unlike a runtime op-stream heuristic.
 //!
 //! Measurement identity here is the *ordinal* of the measurement op in HUGR
-//! traversal order. Whether that ordinal coincides with the QIS-trace
-//! `result_id`/`MeasId` is a separate, verified property (see the dem-polish
-//! foundation tests); this module only recovers the structural binding.
+//! traversal order. This module only recovers the structural binding; whether
+//! that HUGR ordinal coincides with the QIS-trace `result_id`/`MeasId` order
+//! is a separate property of the Guppy -> HUGR / Guppy -> trace pipelines
+//! agreeing on measurement ordering. Within the narrow scope this module
+//! supports (straight-line `result_bool <- tket.bool:read <-
+//! Measure/MeasureFree`), that correspondence is **committed-test verified**
+//! end-to-end by
+//! `tests/qec/test_from_guppy_result_tags.py::test_result_tags_match_positional_records`
+//! (a scrambled-`result()`-order Guppy program: `result_tags` DEM
+//! byte-identical to the positional-records DEM). Outside that scope
+//! (computed / constant / array-valued `result()`, runtime loops) the
+//! correspondence is undefined and the extractor / runtime-loop guard reject
+//! the case rather than relying on it.
 //!
 //! Note: a *runtime* loop (e.g. `for _ in range(comptime(n))`, as the surface
 //! code uses for rounds) is NOT unrolled in the HUGR -- it has one static

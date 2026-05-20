@@ -9,12 +9,16 @@ Rust extension import the high-level Python package (a dependency cycle), this
 module defines a thin Python subclass that adds :meth:`from_guppy` and is
 re-exported as the public ``pecos.qec.DetectorErrorModel``.
 
-This wrapper is intentionally thin: it only traces the Guppy program into a
-``TickCircuit`` and hands the caller's detector/observable JSON to the Rust
-DEM builder verbatim. All metadata validation -- JSON shape, ``D0``/``L0`` id
-forms, tracked-Pauli rejection, ``num_measurements`` consistency, out-of-range
-records, and ``meas_id`` resolution against the circuit's stable stamped
-``MeasId``s -- is the single responsibility of the Rust builder
+This wrapper is intentionally thin: it traces the Guppy program into a
+``TickCircuit``, optionally compiles the program to a HUGR (only when
+``result_tags`` is requested -- to recover the sound tag -> measurement
+binding via ``pecos_hugr_qis::extract_result_tag_measurements``), and hands
+the caller's detector/observable JSON to the Rust DEM builder. All metadata
+validation -- JSON shape, ``D0``/``L0`` id forms, tracked-Pauli rejection,
+``num_measurements`` consistency, out-of-range records, ``meas_id``
+resolution against the circuit's stable stamped ``MeasId``s, and
+``result_tags`` -> record-offset resolution with its loop guard -- is the
+single responsibility of the Rust builder
 (``pecos_qec::fault_tolerance::dem_builder``), so the same rules apply
 identically whether a DEM is built via ``from_guppy``, ``from_circuit``,
 ``DemSampler.from_circuit``, or the public ``DemBuilder``.
@@ -81,12 +85,38 @@ class DetectorErrorModel(_RustDetectorErrorModel):
                 ``[{"id": 0, "records": [-1, -5]}, ...]``. ``id`` may be a bare
                 integer or, for convenience, the DEM-label form ``"D0"``
                 (observables likewise accept ``"L0"``); both normalize to the
-                same integer. ``records`` are negative measurement offsets
-                (Stim convention), positional in the traced measurement record.
-                ``meas_ids`` may be used instead and reference the *stable
-                stamped* ``MeasId``s -- resolved in Rust against the circuit's
-                actual ids, so they are robust to any measurement reordering
-                introduced by Guppy/Selene compilation.
+                same integer.
+
+                Each entry references measurements in one of three ways
+                (provide exactly one form; co-presence is allowed only if the
+                forms reference the same measurements):
+
+                - ``records``: negative measurement offsets (Stim convention),
+                  positional in the traced measurement record.
+                - ``meas_ids``: stable stamped ``MeasId``s -- resolved in Rust
+                  against the circuit's actual ids, so robust to any
+                  measurement reordering Guppy/Selene compilation may
+                  introduce.
+                - ``result_tags``: Guppy ``result(tag, ...)`` tag strings
+                  (e.g. ``[{"id": 0, "result_tags": ["syn_a"]}]``). The
+                  reorder-immune ``tag -> measurement`` binding is recovered
+                  from the compiled HUGR by
+                  ``pecos_hugr_qis::extract_result_tag_measurements`` and
+                  resolved to record offsets in Rust. Supported only for
+                  **straight-line, canonical** programs:
+                  ``result(tag, measure(q))`` of a raw scalar measurement.
+                  Computed (``result(tag, m0 == m1)``), constant
+                  (``result(tag, True)``), and array-valued
+                  (``result(tag, measure_array(qs))``) forms are not
+                  resolvable and an unknown tag is a hard error. Runtime
+                  ``for _ in range(comptime(n))`` loops (e.g. the surface
+                  code's round structure) have one static measure op per
+                  loop body in the HUGR, not per occurrence -- ``result_tags``
+                  is rejected fail-loud for such programs. ``result_tags``
+                  also requires ``guppy`` to be a ``@guppy``-decorated
+                  function / ``GuppyFunctionDefinition`` (not an arbitrary
+                  ``pecos.sim``-acceptable wrapper); use ``records`` for the
+                  surface-code path.
             observables_json: Observable definitions as a JSON list, e.g.
                 ``[{"id": 0, "records": [-1]}]`` (same id/records rules as
                 detectors).
@@ -132,15 +162,39 @@ class DetectorErrorModel(_RustDetectorErrorModel):
             ``measure()`` itself allocates the result slot in the trace (a
             ``result(...)`` call is not required for MeasId assignment).
 
-            Source-anchored tag-referenced detectors are **not exposed here**:
-            the sound HUGR-based binding
-            (``pecos_hugr_qis::extract_result_tag_measurements``) only covers
-            the canonical scalar ``result(tag, measure(q))`` pattern and is not
-            yet wired into ``from_guppy``; runtime-loop programs remain
-            unsupported. See
+            Source-anchored tag-referenced detectors are exposed via the
+            ``result_tags`` field on detectors/observables (see the
+            ``detectors_json`` argument). The supported scope is canonical
+            scalar ``result(tag, measure(q))`` in straight-line programs; the
+            runtime-loop case (per-occurrence binding) remains deferred. See
             ``docs/proposals/001-from-guppy-tag-referenced-detectors.md``.
         """
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
+
+        # Tag-referenced detectors require the compiled HUGR (to recover the
+        # sound, reorder-immune Guppy `result(tag, ...)` -> measurement
+        # binding). `guppy_to_hugr` only accepts a raw @guppy function -- not
+        # a compiled program or wrapper that the trace path otherwise
+        # accepts. Compile upfront so a wrong input fails loud here, before
+        # tracing, with a clear message instead of crashing inside the HUGR
+        # compile step (the "wrapper-input regression" caught in review).
+        needs_tags = _result_tags_present(detectors_json, observables_json)
+        hugr_bytes: bytes | None = None
+        if needs_tags:
+            from pecos._compilation import guppy_to_hugr
+
+            try:
+                hugr_bytes = guppy_to_hugr(guppy)
+            except ValueError as exc:
+                msg = (
+                    "result_tags requires a @guppy-decorated function -- not a "
+                    "compiled program or program wrapper. Pass the raw @guppy "
+                    "function directly. For surface-code / runtime-loop "
+                    "programs, use positional 'records' instead: loops are not "
+                    "unrolled in the HUGR, so per-occurrence tag binding is "
+                    "not statically available (see proposal 001)."
+                )
+                raise ValueError(msg) from exc
 
         tc = trace_guppy_into_tick_circuit(guppy, num_qubits, seed=seed)
 
@@ -150,6 +204,20 @@ class DetectorErrorModel(_RustDetectorErrorModel):
         # MZ carries the stable id the Rust builder resolves meas_ids against.
         tc.lower_clifford_rotations()
         tc.assign_missing_meas_ids()
+
+        # Resolve `result_tags` -> record offsets via Rust (sound HUGR
+        # extraction + runtime-loop guard via static-vs-traced measurement
+        # count). After this, `detectors_json` / `observables_json` no longer
+        # contain `result_tags`; the downstream Rust DEM builder is unchanged.
+        if needs_tags:
+            from pecos_rslib import resolve_result_tags_for_guppy
+
+            detectors_json, observables_json = resolve_result_tags_for_guppy(
+                detectors_json,
+                observables_json,
+                hugr_bytes,
+                tc.num_measurements(),
+            )
 
         # Hand the caller's metadata to the Rust builder verbatim; it owns all
         # schema/ref validation (including D0/L0 id forms, tracked-Pauli
@@ -167,3 +235,12 @@ class DetectorErrorModel(_RustDetectorErrorModel):
             p_meas=p_meas,
             p_prep=p_prep,
         )
+
+
+def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
+    """Cheap gate: does any entry use ``result_tags``? (substring check).
+
+    Only decides whether to compile the Guppy program to HUGR; the actual
+    extraction, loop-guard, resolution, and validation are all done in Rust.
+    """
+    return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")

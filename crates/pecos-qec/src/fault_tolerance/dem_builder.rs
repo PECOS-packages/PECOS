@@ -83,7 +83,7 @@ mod mem_builder;
 pub(crate) mod sampler;
 mod types;
 
-pub use builder::{DemBuilder, DemBuilderError};
+pub use builder::{DemBuilder, DemBuilderError, resolve_result_tags};
 pub use dem_sampler::{SamplingEngine, SamplingStatistics};
 pub use equivalence::{
     ComparisonDetails, ComparisonMethod, DemParseError, EffectKey, EquivalenceResult,

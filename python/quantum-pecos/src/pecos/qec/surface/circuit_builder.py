@@ -21,6 +21,18 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, TypedDict
 
+# `_batched_stabilizers` and `_normalize_ancilla_budget` are imported from
+# the shared `_ancilla_batching` helper so this builder and the Guppy
+# emitter (`pecos.guppy.surface`) compute identical batches by
+# construction. The local aliases preserve existing call sites; do not
+# fork the partitioning logic.
+from pecos.qec.surface._ancilla_batching import (
+    batched_stabilizers as _batched_stabilizers,
+)
+from pecos.qec.surface._ancilla_batching import (
+    normalize_ancilla_budget as _normalize_ancilla_budget,
+)
+
 if TYPE_CHECKING:
     from pecos.qec.surface.patch import (
         LogicalDescriptor,
@@ -127,39 +139,6 @@ class QubitAllocation:
     def total(self) -> int:
         """Total number of qubits."""
         return len(set(self.data_qubits) | set(self.x_ancilla_qubits) | set(self.z_ancilla_qubits))
-
-
-def _normalize_ancilla_budget(total_ancilla: int, ancilla_budget: int | None) -> int:
-    """Clamp ancilla budget to the valid range for a patch."""
-    if ancilla_budget is None:
-        return total_ancilla
-
-    if ancilla_budget < 1:
-        msg = f"ancilla_budget must be >= 1, got {ancilla_budget}"
-        raise ValueError(msg)
-
-    return min(ancilla_budget, total_ancilla)
-
-
-def _batched_stabilizers(
-    patch: SurfacePatch,
-    ancilla_budget: int,
-) -> list[list[tuple[str, int]]]:
-    """Partition stabilizers into ancilla-reuse batches.
-
-    This mirrors the public Guppy batching order so the abstract circuit and
-    its native DEMs match the actual low-ancilla circuit family.
-    """
-    geom = patch.geometry
-    stabilizers = [("X", stab.index) for stab in geom.x_stabilizers]
-    stabilizers.extend(("Z", stab.index) for stab in geom.z_stabilizers)
-    # Sort key is load-bearing: it mirrors Guppy's stabilizer ordering (ascending
-    # index, X before Z on ties). Batched DEMs are compared against Guppy output
-    # shot-for-shot in the Selene parity tests, so any change here will diverge
-    # from the low-ancilla reference family.
-    stabilizers.sort(key=lambda stab: (stab[1], 0 if stab[0] == "X" else 1))
-
-    return [stabilizers[start : start + ancilla_budget] for start in range(0, len(stabilizers), ancilla_budget)]
 
 
 def build_surface_code_circuit(

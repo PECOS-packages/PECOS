@@ -233,3 +233,131 @@ def test_from_guppy_redundant_records_and_meas_ids_are_accepted() -> None:
     since stamped MeasId values are not predictable from Python here.)"""
     both = _dem_text(detectors_json='[{"id":0,"records":[-1],"meas_ids":[0]}]')
     assert both == _dem_text(detectors_json='[{"id":0,"records":[-1]}]')
+
+
+# ---------------------------------------------------------------------------
+# Constrained-ancilla surface support
+# ---------------------------------------------------------------------------
+
+
+def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise):
+    """Build the constrained-surface DEM through `from_guppy`."""
+    patch = SurfacePatch.create(distance=d)
+    ref = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=rounds,
+        basis=basis,
+        ancilla_budget=budget,
+        circuit_source="traced_qis",
+    )
+    ref.lower_clifford_rotations()
+    ref.assign_missing_meas_ids()
+    ref_dem = DetectorErrorModel.from_circuit(ref, **noise).to_string()
+
+    got = DetectorErrorModel.from_guppy(
+        make_surface_code(distance=d, num_rounds=rounds, basis=basis, ancilla_budget=budget),
+        num_qubits=get_num_qubits(d, ancilla_budget=budget),
+        detectors_json=ref.get_meta("detectors"),
+        observables_json=ref.get_meta("observables"),
+        num_measurements=int(ref.get_meta("num_measurements")),
+        **noise,
+    ).to_string()
+    return ref_dem, got, ref
+
+
+def test_from_guppy_constrained_surface_dem_byte_identical() -> None:
+    """`from_guppy(make_surface_code(..., ancilla_budget=b))` must produce a
+    DEM byte-identical to the reference DEM built through the
+    `_build_surface_tick_circuit_for_native_model(circuit_source="traced_qis",
+    ancilla_budget=b)` path. Covers (d=3, budget=1, Z), (d=3, budget=2, X), and
+    (d=9, budget=17, Z) -- small-and-fast + asymmetric basis + canonical
+    high-distance stress."""
+    noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    for d, basis, rounds, budget in [(3, "Z", 2, 1), (3, "X", 2, 2), (9, "Z", 3, 17)]:
+        ref_dem, got, _ = _constrained_surface_via_guppy(
+            d=d,
+            basis=basis,
+            rounds=rounds,
+            budget=budget,
+            noise=noise,
+        )
+        assert got == ref_dem, (
+            f"constrained surface from_guppy not byte-identical for "
+            f"d={d}, budget={budget}, basis={basis}, rounds={rounds}"
+        )
+
+
+def test_constrained_surface_traced_metadata_matches_abstract() -> None:
+    """The traced TickCircuit's surface metadata is copied verbatim from the
+    abstract reference. Specifically pins that
+    ``_copy_surface_tick_circuit_metadata`` propagates ``ancilla_budget``
+    (the new key added when the constrained codegen landed) alongside the
+    existing detectors/observables/counts."""
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="abstract",
+    )
+    traced_tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+    )
+    for key in (
+        "basis",
+        "detectors",
+        "observables",
+        "num_measurements",
+        "num_detectors",
+        "ancilla_budget",
+    ):
+        a = abstract_tc.get_meta(key)
+        b = traced_tc.get_meta(key)
+        assert a == b, f"metadata mismatch on key {key!r}: abstract={a!r}, traced={b!r}"
+    # ancilla_budget specifically must be the requested budget (stored as a string by set_meta).
+    assert traced_tc.get_meta("ancilla_budget") == "2"
+
+
+def test_constrained_surface_lowered_qubit_stream_within_budget() -> None:
+    """The lowered-trace physical qubit IDs must stay within the budgeted
+    pool, and ancilla slots must be empirically reused (more measurements
+    than physical ancilla qubits). Pins the load-bearing assumption the
+    spike validated."""
+    import pecos
+
+    d, budget = 3, 2
+    program = make_surface_code(distance=d, num_rounds=2, basis="Z", ancilla_budget=budget)
+    n_q = get_num_qubits(d, ancilla_budget=budget)
+    chunks = list(
+        pecos.sim(program)
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(n_q)
+        .seed(0)
+        .capture_operation_trace(),
+    )
+
+    all_qubits: set[int] = set()
+    mz_qubits: list[int] = []
+    for chunk in chunks:
+        for gate in chunk.get("lowered_quantum_ops") or []:
+            qs = [int(q) for q in gate.get("qubits", [])]
+            all_qubits.update(qs)
+            if str(gate.get("gate_type")) == "MZ":
+                mz_qubits.extend(qs)
+
+    max_q = max(all_qubits) if all_qubits else -1
+    # Budget enforcement: total physical qubits used must fit in d^2 + budget.
+    assert max_q < n_q, (
+        f"max physical qubit id {max_q} exceeds budgeted pool size {n_q}; "
+        "Selene's lowering did not reuse ancilla slots as expected"
+    )
+    # Reuse demonstrated: some physical qubit appears in multiple MZ ops.
+    assert any(
+        mz_qubits.count(q) > 1 for q in set(mz_qubits)
+    ), "no physical qubit appears in more than one MZ op; expected ancilla-slot reuse across batches"

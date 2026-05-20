@@ -399,6 +399,7 @@ def _copy_surface_tick_circuit_metadata(source_tc: Any, target_tc: Any) -> None:
         "num_detectors",
         "detector_descriptors",
         "observable_descriptors",
+        "ancilla_budget",
     ):
         value = source_tc.get_meta(key)
         if value is not None:
@@ -734,12 +735,30 @@ def _generate_traced_surface_tick_circuit(
     patch: SurfacePatch,
     num_rounds: int,
     basis: str,
+    *,
+    ancilla_budget: int | None = None,
 ) -> Any:
-    """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit."""
+    """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit.
+
+    With ``ancilla_budget=None``, emits the unconstrained Guppy program
+    (one ancilla per stabilizer, all measured at the end of one round).
+    With a finite budget, emits the stabilizer-batched program; Selene's
+    lowering reuses ancilla slots across batches so the traced TickCircuit
+    uses only ``d^2 + min(budget, d^2-1)`` physical qubits simultaneously.
+    """
     from pecos.guppy import get_num_qubits, make_surface_code
 
-    program = make_surface_code(distance=patch.distance, num_rounds=num_rounds, basis=basis)
-    return trace_guppy_into_tick_circuit(program, get_num_qubits(patch.distance), seed=0)
+    program = make_surface_code(
+        distance=patch.distance,
+        num_rounds=num_rounds,
+        basis=basis,
+        ancilla_budget=ancilla_budget,
+    )
+    return trace_guppy_into_tick_circuit(
+        program,
+        get_num_qubits(patch.distance, ancilla_budget=ancilla_budget),
+        seed=0,
+    )
 
 
 def _build_surface_tick_circuit_for_native_model(
@@ -770,14 +789,12 @@ def _build_surface_tick_circuit_for_native_model(
         msg = f"Unknown circuit_source {circuit_source!r}"
         raise ValueError(msg)
 
-    if ancilla_budget is not None:
-        msg = (
-            "circuit_source='traced_qis' does not currently support ancilla_budget because "
-            "pecos.guppy.surface.make_surface_code does not yet expose ancilla budgeting"
-        )
-        raise ValueError(msg)
-
-    traced_tc = _generate_traced_surface_tick_circuit(patch, num_rounds, basis)
+    traced_tc = _generate_traced_surface_tick_circuit(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+    )
     traced_measurement_order = _extract_measurement_order(traced_tc)
     abstract_measurement_order = _extract_measurement_order(abstract_tc)
     if traced_measurement_order != abstract_measurement_order:

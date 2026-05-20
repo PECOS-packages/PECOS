@@ -458,6 +458,20 @@ def test_sqrt_pauli_2q_gates_executable() -> None:
     # CY|00>: control=0, no effect; measure q1 -> 0.
     assert _run([], [cy], meas_idx=1) == {(0,)}, "CY|00> -> q1 must be 0"
 
+    # CY phase-sensitive interference discriminator:
+    # H q1; CY(q0,q1); H q1; M q1 with q0=|0> -> 0 for the correct
+    # Sdg;CX;S decomposition (CY is identity when control=0, so
+    # H;I;H = I -> 0). A wrong-phase decomposition like S;CX;S
+    # applies (Sdg.S);S=S^2=Z on the target even with control=0
+    # (since CX is identity when control=0), giving H;Z;H=X -> 1.
+    # The simpler computational-basis CY checks above don't catch
+    # this -- this assertion is what makes the test discriminate
+    # the target-phase decomposition.
+    h_q1 = lambda q: qb.H(q[1])  # noqa: E731
+    assert _run([h_q1], [cy, h_q1], meas_idx=1) == {
+        (0,)
+    }, "H q1; CY; H q1 with q0=|0> must give 0 -- a wrong-phase CY decomposition (e.g. S;CX;S) gives 1"
+
     # SZZ^2 discriminator: H;SZZ;SZZ;H q0 with q1=|0> -> 1 (Z on q0; HZH=X).
     # A no-op SZZ would give 0.
     assert _run([h_q0], [szz, szz, h_q0]) == {(1,)}, "H;SZZ;SZZ;H must be X on q0 (SZZ not a no-op)"

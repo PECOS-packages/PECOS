@@ -1427,7 +1427,7 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
 /// Tracked Paulis reference qubits via `pauli`, not measurements, and are
 /// only produced from circuit annotations -- never from `detectors_json` /
 /// `observables_json`. The JSON parser reads only `id`/`records`, so a
-/// tracked-Pauli entry here would be silently mis-ingested.
+/// tracked-Pauli entry here would be silently parsed as the wrong thing.
 fn reject_tracked_pauli(
     object: &serde_json::Map<String, serde_json::Value>,
     kind: &str,

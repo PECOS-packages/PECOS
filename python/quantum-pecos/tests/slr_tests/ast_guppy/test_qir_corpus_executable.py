@@ -622,3 +622,41 @@ def test_controlled_rotations_executable() -> None:
     assert _run([x_q0], [crx_half, crx_half], meas_idx=1) == {(1,)}, "CRX(pi/2)^2 must agree with Test A CRX(pi)"
     assert _run([x_q0], [cry_half, cry_half], meas_idx=1) == {(1,)}, "CRY(pi/2)^2 must agree with Test A CRY(pi)"
     assert _run([x_q0], [crz_half, crz_half], meas_idx=1) == {(0,)}, "CRZ(pi/2)^2 must agree with Test A CRZ(pi)"
+
+    # Control-superposition phase test (Test C). Tests A/B and the
+    # angle-propagation tests above all put the control in a
+    # computational basis state, so they cannot observe the c=1-only
+    # relative phase that the control-side `RZ(theta/2)` in the
+    # `_GATE_DECOMP[CR*]` is there to absorb. Mutations that drop
+    # the control RZ (or change its angle to theta instead of
+    # theta/2) survive Tests A/B silently.
+    #
+    # The discriminator (per Codex review): prep `|+>` on the
+    # control and an R*(pi)-eigenstate on the target so the
+    # CORRECT decomp leaves the control in `|+>`; then H(control)
+    # takes `|+>` -> `|0>` deterministically.
+    #   - CRZ(pi): target=|0>, RZ(pi)|0>=|0> in PECOS convention
+    #     (no kickback when target=|0>); correct CR*: control
+    #     stays in |+>, H sends to |0>, measure 0.
+    #   - CRX(pi): target=|+>, RX(pi)~X, X|+>=|+>: same logic.
+    #   - CRY(pi): target=|+i>=(|0>+i|1>)/sqrt(2), RY(pi)~Y,
+    #     Y|+i>=|+i>: same logic.
+    # A mutation (drop control RZ, or use theta on control instead
+    # of theta/2) gives the control sector a c=1-only relative
+    # phase, rotating it off |+>, so H(control); M(control) is no
+    # longer deterministic 0.
+    h_q0 = lambda q: qb.H(q[0])  # noqa: E731
+    sz_q1 = lambda q: qb.SZ(q[1])  # noqa: E731
+
+    # CRZ phase: H q0; CRZ(pi); H q0; M q0 -> 0 (target=|0>).
+    assert _run([h_q0], [crz_pi, h_q0], meas_idx=0) == {
+        (0,),
+    }, "CRZ(pi) control-phase: H q0; CRZ; H q0; M q0 must be 0 (drop-control-RZ / wrong-angle mutations break this)"
+    # CRX phase: H q0; H q1; CRX(pi); H q0; M q0 -> 0 (target=|+>).
+    assert _run([h_q0, h_q1], [crx_pi, h_q0], meas_idx=0) == {
+        (0,),
+    }, "CRX(pi) control-phase: H q0; H q1; CRX; H q0; M q0 must be 0"
+    # CRY phase: H q0; H q1; SZ q1; CRY(pi); H q0; M q0 -> 0 (target=|+i>).
+    assert _run([h_q0, h_q1, sz_q1], [cry_pi, h_q0], meas_idx=0) == {
+        (0,),
+    }, "CRY(pi) control-phase: H q0; H q1; SZ q1; CRY; H q0; M q0 must be 0"

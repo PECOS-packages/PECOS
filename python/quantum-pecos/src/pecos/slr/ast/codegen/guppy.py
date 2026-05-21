@@ -19,6 +19,7 @@ which local owns each logical slot while recursive descent emits statements.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
@@ -90,13 +91,28 @@ FUNCTIONAL_GATES: dict[GateKind, str] = {
     GateKind.Tdg: "tdg",
     GateKind.SZ: "s",
     GateKind.SZdg: "sdg",
+    # Guppy's `v`/`vdg` are sqrt(X) / sqrt(X)-dagger (the standard V gate).
+    GateKind.SX: "v",
+    GateKind.SXdg: "vdg",
     GateKind.CX: "cx",
     GateKind.CY: "cy",
     GateKind.CZ: "cz",
     GateKind.CH: "ch",
 }
 
-FUNCTIONAL_GATE_IMPORTS = ", ".join(sorted(set(FUNCTIONAL_GATES.values()) | {"reset"}))
+# Native Guppy parameterized rotation gates: `fn(qubit..., angle)`.
+# Guppy's `angle` type stores half-turns (pi radians = 1.0 half-turn),
+# so a radians value theta is emitted as `angle(theta / pi)`.
+PARAMETERIZED_FUNCTIONAL_GATES: dict[GateKind, str] = {
+    GateKind.RX: "rx",
+    GateKind.RY: "ry",
+    GateKind.RZ: "rz",
+    GateKind.CRZ: "crz",
+}
+
+FUNCTIONAL_GATE_IMPORTS = ", ".join(
+    sorted(set(FUNCTIONAL_GATES.values()) | set(PARAMETERIZED_FUNCTIONAL_GATES.values()) | {"reset"}),
+)
 
 BINARY_OP_TO_PYTHON: dict[BinaryOp, str] = {
     BinaryOp.ADD: "+",
@@ -642,13 +658,18 @@ class AstToGuppy:
                                 )
 
     def _imports(self) -> list[str]:
-        return [
+        imports = [
             "from guppylang import guppy",
             "from guppylang.std.builtins import array, owned, result",
             "from guppylang.std.mem import mem_swap",
             "from guppylang.std.quantum import discard, measure, qubit",
             f"from guppylang.std.quantum.functional import {FUNCTIONAL_GATE_IMPORTS}",
         ]
+        # `angle` is only needed when the program emits a parameterized
+        # rotation; import it unconditionally (cheap, keeps the emitter
+        # simple). Half-turn-valued `angle(...)` constructor.
+        imports.append("from guppylang.std.angles import angle")
+        return imports
 
     def _render_params(self) -> str:
         return ", ".join(f"{name}: array[qubit, {size}] @ owned" for name, size in self.context.root_allocators.items())
@@ -998,6 +1019,9 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _emit_gate(self, node: GateOp) -> list[str]:
+        if node.gate in PARAMETERIZED_FUNCTIONAL_GATES:
+            return self._emit_parameterized_gate(node)
+
         gate = FUNCTIONAL_GATES.get(node.gate)
         if gate is None:
             self._raise_unsupported_gate(node.gate)
@@ -1028,8 +1052,54 @@ class AstToGuppy:
         msg = f"AST -> Guppy v1 does not support {node.gate.arity}-qubit gate {node.gate.name}"
         raise GuppyCodegenError(msg)
 
+    def _emit_parameterized_gate(self, node: GateOp) -> list[str]:
+        """Emit a native Guppy rotation: `fn(qubit..., angle(theta/pi))`.
+
+        Guppy's `angle` stores half-turns (pi rad == 1.0 half-turn), so
+        a radians value `theta` becomes `angle(theta / pi)`. Only
+        literal angles are supported (a non-literal classical
+        expression at a gate-param position fails loud, mirroring the
+        QIR backend's parameterized-decomposition guard).
+        """
+        gate = PARAMETERIZED_FUNCTIONAL_GATES[node.gate]
+        if not node.params:
+            msg = f"AST -> Guppy v1: parameterized gate {node.gate.name} requires an angle parameter"
+            raise GuppyCodegenError(msg)
+        angle_args = []
+        for param in node.params:
+            if not isinstance(param, LiteralExpr) or not isinstance(param.value, (int, float)):
+                msg = (
+                    f"AST -> Guppy v1: parameterized gate {node.gate.name} requires literal "
+                    f"angle parameters; got non-literal {param!r}"
+                )
+                raise GuppyCodegenError(msg)
+            angle_args.append(f"angle({float(param.value) / math.pi})")
+        angle_str = ", ".join(angle_args)
+
+        slots = [self._slot_from_ref(target) for target in node.targets]
+        if len(slots) != len(set(slots)):
+            msg = f"Gate {node.gate.name} uses the same qubit slot more than once"
+            raise GuppyCodegenError(msg)
+
+        linearity = self._linearity()
+        locals_ = [linearity.live(slot) for slot in slots]
+
+        if node.gate.arity == 1:
+            local = locals_[0]
+            linearity.set_live(slots[0], local)
+            return [f"{self.context.indent()}{local} = {gate}({local}, {angle_str})"]
+
+        if node.gate.arity == 2:
+            left, right = locals_
+            linearity.set_live(slots[0], left)
+            linearity.set_live(slots[1], right)
+            return [f"{self.context.indent()}{left}, {right} = {gate}({left}, {right}, {angle_str})"]
+
+        msg = f"AST -> Guppy v1 does not support {node.gate.arity}-qubit parameterized gate {node.gate.name}"
+        raise GuppyCodegenError(msg)
+
     def _raise_unsupported_gate(self, gate: GateKind) -> None:
-        if gate in {GateKind.SX, GateKind.SXdg, GateKind.SY, GateKind.SYdg}:
+        if gate in {GateKind.SY, GateKind.SYdg}:
             msg = f"AST -> Guppy v1 rejects {gate.name}; decompose it before Guppy emission"
             raise GuppyCodegenError(msg)
         if gate.is_parameterized:

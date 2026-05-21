@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
@@ -112,6 +113,88 @@ PARAMETERIZED_FUNCTIONAL_GATES: dict[GateKind, str] = {
 
 FUNCTIONAL_GATE_IMPORTS = ", ".join(
     sorted(set(FUNCTIONAL_GATES.values()) | set(PARAMETERIZED_FUNCTIONAL_GATES.values()) | {"reset"}),
+)
+
+# Decomposition table for PECOS gates with no native single Guppy gate.
+# Each step is (guppy_fn, qubit_idx_tuple_into_targets, angle_spec) in
+# CIRCUIT order (first applied first). angle_spec is:
+#   None                          -> non-parameterized gate: fn(q...)
+#   float (radians)               -> constant angle: fn(q..., angle(r/pi))
+#   Callable[[input_params], float] -> angle from the input gate's params
+# The 1q-Clifford sequences mirror the dual-reviewed QIR `_GATE_DECOMP`;
+# the 2q sqrt-Paulis use the native `zz_phase` (= RZZ, qsystem Quantinuum
+# extension); CRX/CRY conjugate the native `crz`.
+_GuppyAngleSpec = None | float | Callable[[tuple[float, ...]], float]
+_GuppyDecompStep = tuple[str, tuple[int, ...], _GuppyAngleSpec]
+GUPPY_GATE_DECOMP: dict[GateKind, tuple[_GuppyDecompStep, ...]] = {
+    # ---- single-qubit Cliffords (no native sqrt-Y / face gate) ----
+    GateKind.SY: (("h", (0,), None), ("x", (0,), None)),
+    GateKind.SYdg: (("h", (0,), None), ("z", (0,), None)),
+    GateKind.F: (("sdg", (0,), None), ("h", (0,), None)),
+    GateKind.Fdg: (("h", (0,), None), ("s", (0,), None)),
+    GateKind.F4: (("h", (0,), None), ("sdg", (0,), None)),
+    GateKind.F4dg: (("s", (0,), None), ("h", (0,), None)),
+    # ---- two-qubit sqrt-Paulis via native zz_phase (= RZZ) ----
+    GateKind.SZZ: (("zz_phase", (0, 1), math.pi / 2),),
+    GateKind.SZZdg: (("zz_phase", (0, 1), -math.pi / 2),),
+    GateKind.SXX: (
+        ("h", (0,), None),
+        ("h", (1,), None),
+        ("zz_phase", (0, 1), math.pi / 2),
+        ("h", (0,), None),
+        ("h", (1,), None),
+    ),
+    GateKind.SXXdg: (
+        ("h", (0,), None),
+        ("h", (1,), None),
+        ("zz_phase", (0, 1), -math.pi / 2),
+        ("h", (0,), None),
+        ("h", (1,), None),
+    ),
+    GateKind.SYY: (
+        ("sdg", (0,), None),
+        ("sdg", (1,), None),
+        ("h", (0,), None),
+        ("h", (1,), None),
+        ("zz_phase", (0, 1), math.pi / 2),
+        ("h", (0,), None),
+        ("h", (1,), None),
+        ("s", (0,), None),
+        ("s", (1,), None),
+    ),
+    GateKind.SYYdg: (
+        ("sdg", (0,), None),
+        ("sdg", (1,), None),
+        ("h", (0,), None),
+        ("h", (1,), None),
+        ("zz_phase", (0, 1), -math.pi / 2),
+        ("h", (0,), None),
+        ("h", (1,), None),
+        ("s", (0,), None),
+        ("s", (1,), None),
+    ),
+    # ---- parameterized two-qubit gates ----
+    # RZZ is the native zz_phase with the passed-through angle.
+    GateKind.RZZ: (("zz_phase", (0, 1), lambda p: p[0]),),
+    # CRX = (I o H) . CRZ . (I o H); CRY = (I o S.H) . CRZ . (I o H.Sdg).
+    # `crz` is native; the passed-through angle threads into it.
+    GateKind.CRX: (
+        ("h", (1,), None),
+        ("crz", (0, 1), lambda p: p[0]),
+        ("h", (1,), None),
+    ),
+    GateKind.CRY: (
+        ("sdg", (1,), None),
+        ("h", (1,), None),
+        ("crz", (0, 1), lambda p: p[0]),
+        ("h", (1,), None),
+        ("s", (1,), None),
+    ),
+}
+
+# Gate names whose decomposition uses the qsystem `zz_phase` import.
+_ZZ_PHASE_GATES = frozenset(
+    gk for gk, steps in GUPPY_GATE_DECOMP.items() if any(fn == "zz_phase" for fn, _, _ in steps)
 )
 
 BINARY_OP_TO_PYTHON: dict[BinaryOp, str] = {
@@ -665,10 +748,13 @@ class AstToGuppy:
             "from guppylang.std.quantum import discard, measure, qubit",
             f"from guppylang.std.quantum.functional import {FUNCTIONAL_GATE_IMPORTS}",
         ]
-        # `angle` is only needed when the program emits a parameterized
-        # rotation; import it unconditionally (cheap, keeps the emitter
-        # simple). Half-turn-valued `angle(...)` constructor.
+        # `angle` is needed for parameterized rotations; `zz_phase` is
+        # the native Quantinuum Q-System 2q ZZ rotation (= RZZ) used by
+        # the SZZ/SXX/SYY-family + RZZ decompositions. Both imported
+        # unconditionally (cheap; unused imports are harmless -- Guppy
+        # only compiles the ops a program actually calls).
         imports.append("from guppylang.std.angles import angle")
+        imports.append("from guppylang.std.qsystem.functional import zz_phase")
         return imports
 
     def _render_params(self) -> str:
@@ -1022,6 +1108,9 @@ class AstToGuppy:
         if node.gate in PARAMETERIZED_FUNCTIONAL_GATES:
             return self._emit_parameterized_gate(node)
 
+        if node.gate in GUPPY_GATE_DECOMP:
+            return self._emit_decomposed_gate(node)
+
         gate = FUNCTIONAL_GATES.get(node.gate)
         if gate is None:
             self._raise_unsupported_gate(node.gate)
@@ -1098,10 +1187,62 @@ class AstToGuppy:
         msg = f"AST -> Guppy v1 does not support {node.gate.arity}-qubit parameterized gate {node.gate.name}"
         raise GuppyCodegenError(msg)
 
-    def _raise_unsupported_gate(self, gate: GateKind) -> None:
-        if gate in {GateKind.SY, GateKind.SYdg}:
-            msg = f"AST -> Guppy v1 rejects {gate.name}; decompose it before Guppy emission"
+    def _emit_decomposed_gate(self, node: GateOp) -> list[str]:
+        """Emit a multi-step decomposition for a PECOS gate with no native
+        single Guppy gate (`GUPPY_GATE_DECOMP`).
+
+        Each step is a Guppy-native gate call threaded through the
+        linearity tracker (functional style: `local = fn(local)` or
+        `a, b = fn(a, b[, angle])`). Angle specs that are callable read
+        the input gate's (literal) params; non-literal params fail loud.
+        """
+        steps = GUPPY_GATE_DECOMP[node.gate]
+        base_slots = [self._slot_from_ref(target) for target in node.targets]
+        if len(base_slots) != len(set(base_slots)):
+            msg = f"Gate {node.gate.name} uses the same qubit slot more than once"
             raise GuppyCodegenError(msg)
+
+        # Resolve the input gate's literal params once (only needed if a
+        # step has a callable angle spec).
+        resolved_params: tuple[float, ...] | None = None
+        if any(callable(spec) for _, _, spec in steps):
+            params = node.params or ()
+            resolved: list[float] = []
+            for param in params:
+                if not isinstance(param, LiteralExpr) or not isinstance(param.value, (int, float)):
+                    msg = (
+                        f"AST -> Guppy v1: parameterized decomposition of {node.gate.name} "
+                        f"requires literal angle parameters; got non-literal {param!r}"
+                    )
+                    raise GuppyCodegenError(msg)
+                resolved.append(float(param.value))
+            resolved_params = tuple(resolved)
+
+        linearity = self._linearity()
+        lines: list[str] = []
+        for fn, idxs, angle_spec in steps:
+            slots = [base_slots[i] for i in idxs]
+            locals_ = [linearity.live(slot) for slot in slots]
+            if angle_spec is None:
+                angle_arg = ""
+            else:
+                theta = angle_spec(resolved_params) if callable(angle_spec) else angle_spec
+                angle_arg = f", angle({float(theta) / math.pi})"
+            if len(idxs) == 1:
+                local = locals_[0]
+                lines.append(f"{self.context.indent()}{local} = {fn}({local}{angle_arg})")
+                linearity.set_live(slots[0], local)
+            elif len(idxs) == 2:
+                left, right = locals_
+                lines.append(f"{self.context.indent()}{left}, {right} = {fn}({left}, {right}{angle_arg})")
+                linearity.set_live(slots[0], left)
+                linearity.set_live(slots[1], right)
+            else:
+                msg = f"AST -> Guppy v1: decomposition step for {node.gate.name} has unsupported arity {len(idxs)}"
+                raise GuppyCodegenError(msg)
+        return lines
+
+    def _raise_unsupported_gate(self, gate: GateKind) -> None:
         if gate.is_parameterized:
             msg = f"AST -> Guppy v1 does not support parameterized gate {gate.name}"
             raise GuppyCodegenError(msg)

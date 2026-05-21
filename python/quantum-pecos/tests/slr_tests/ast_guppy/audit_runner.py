@@ -751,9 +751,14 @@ def _curated_cases() -> list[AuditCase]:
             _docs_rotation_rx_probe,
             expected_failure=ExpectedFailure(
                 exception_type="GuppyCodegenError",
-                message_contains="does not support parameterized gate RX",
-                classification="v2-defer",
-                reason="Parameterized rotations need design beyond v1 fixed Clifford emission",
+                message_contains="requires an angle parameter",
+                classification="api-misuse",
+                reason=(
+                    "RX is now supported via the bracket-param form `RX[theta](q)` "
+                    "(cross-codegen Guppy Phase A -> native `rx`). The doc-test "
+                    "positional form `RX(q, 0.5)` passes the angle as a qarg, leaving "
+                    "no param, so it fails loud -- the gate is supported, the call shape is wrong."
+                ),
             ),
         ),
         AuditCase(

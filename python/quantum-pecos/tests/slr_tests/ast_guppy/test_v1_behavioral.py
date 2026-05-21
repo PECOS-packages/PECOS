@@ -508,3 +508,156 @@ class TestNativeGuppyGates:
         )
         records = run_ast_guppy_via_selene(prog, shots=20)
         assert all(r["measurement_0"] == 1 for r in records), records
+
+
+class TestDecomposedGuppyGates:
+    """Cross-codegen Phase B: PECOS gates with no native single Guppy
+    gate, lowered via `GUPPY_GATE_DECOMP` into Guppy-native gates
+    (1q Cliffords; the qsystem `zz_phase` = RZZ for 2q sqrt-Paulis;
+    native `crz` for CRX/CRY).
+
+    Discriminators are deterministic, numpy-verified against the PECOS
+    gate conventions, and mutation-resistant (catch no-op / wrong-gate /
+    dagger-swap).
+    """
+
+    @staticmethod
+    def _bits(prog: Main, shots: int = 20) -> list[dict[str, int]]:
+        return run_ast_guppy_via_selene(prog, shots=shots)
+
+    # ---- single-qubit Cliffords (SY/SYdg, F-family) ----
+
+    def test_sy_squares_to_y_and_handedness(self) -> None:
+        sq = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.SY(q[0]), Measure(q[0]) > c[0], Return(c))
+        assert all(r["measurement_0"] == 1 for r in self._bits(sq)), "SY;SY must be Y -> 1"
+        # Handedness: SY;H -> 0 (SYdg;H -> 1; no-op -> 50/50).
+        hd = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.H(q[0]), Measure(q[0]) > c[0], Return(c))
+        assert all(r["measurement_0"] == 0 for r in self._bits(hd)), "SY;H must be 0 (handedness)"
+
+    def test_sydg_handedness_and_inverse(self) -> None:
+        hd = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SYdg(q[0]), qb.H(q[0]), Measure(q[0]) > c[0], Return(c))
+        assert all(r["measurement_0"] == 1 for r in self._bits(hd)), "SYdg;H must be 1"
+        inv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.SY(q[0]), qb.SYdg(q[0]), Measure(q[0]) > c[0], Return(c))
+        assert all(r["measurement_0"] == 0 for r in self._bits(inv)), "SY;SYdg must be I -> 0"
+
+    def test_f_family(self) -> None:
+        # F;H -> 0 (distinguishes F from F4 (50/50) and no-op).
+        f = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F(q[0]), qb.H(q[0]), Measure(q[0]) > c[0], Return(c))
+        assert all(r["measurement_0"] == 0 for r in self._bits(f)), "F;H must be 0"
+        # Fdg;Sdg;H -> 0; and F;Fdg = I.
+        fdg = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.Fdg(q[0]),
+            qb.SZdg(q[0]),
+            qb.H(q[0]),
+            Measure(q[0]) > c[0],
+            Return(c),
+        )
+        assert all(r["measurement_0"] == 0 for r in self._bits(fdg)), "Fdg;Sdg;H must be 0"
+        finv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F(q[0]), qb.Fdg(q[0]), Measure(q[0]) > c[0], Return(c))
+        assert all(r["measurement_0"] == 0 for r in self._bits(finv)), "F;Fdg must be I -> 0"
+
+    def test_f4_family(self) -> None:
+        # F4;S;H -> 0 (deterministic; F4;Sdg;H -> 1).
+        f4 = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            qb.F4(q[0]),
+            qb.SZ(q[0]),
+            qb.H(q[0]),
+            Measure(q[0]) > c[0],
+            Return(c),
+        )
+        assert all(r["measurement_0"] == 0 for r in self._bits(f4)), "F4;S;H must be 0"
+        # F4dg;H -> 0; and F4;F4dg = I.
+        f4dg = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F4dg(q[0]), qb.H(q[0]), Measure(q[0]) > c[0], Return(c))
+        assert all(r["measurement_0"] == 0 for r in self._bits(f4dg)), "F4dg;H must be 0"
+        f4inv = Main(q := QReg("q", 1), c := CReg("c", 1), qb.F4(q[0]), qb.F4dg(q[0]), Measure(q[0]) > c[0], Return(c))
+        assert all(r["measurement_0"] == 0 for r in self._bits(f4inv)), "F4;F4dg must be I -> 0"
+
+    # ---- two-qubit sqrt-Paulis via native zz_phase ----
+
+    def test_rzz_native_zz_phase(self) -> None:
+        # H q0; H q1; RZZ(pi); H q0; H q1 -> both measure 1 (numpy-verified).
+        prog = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.H(q[0]),
+            qb.H(q[1]),
+            qb.RZZ[math.pi](q[0], q[1]),
+            qb.H(q[0]),
+            qb.H(q[1]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+            Return(c),
+        )
+        recs = self._bits(prog)
+        assert all(r["measurement_0"] == 1 and r["measurement_1"] == 1 for r in recs), recs
+
+    def test_szz_squared_and_inverse(self) -> None:
+        # SZZ^2 with q1=|0> acts as Z on q0: H q0; SZZ; SZZ; H q0 -> 1.
+        sq = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.H(q[0]),
+            qb.SZZ(q[0], q[1]),
+            qb.SZZ(q[0], q[1]),
+            qb.H(q[0]),
+            Measure(q[0]) > c[0],
+            Return(c),
+        )
+        assert all(r["measurement_0"] == 1 for r in self._bits(sq)), "H;SZZ;SZZ;H must be X on q0 -> 1"
+        # SZZ;SZZdg = I on |00>.
+        inv = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 2),
+            qb.SZZ(q[0], q[1]),
+            qb.SZZdg(q[0], q[1]),
+            Measure(q[0]) > c[0],
+            Measure(q[1]) > c[1],
+            Return(c),
+        )
+        assert all(r["measurement_0"] == 0 and r["measurement_1"] == 0 for r in self._bits(inv)), "SZZ;SZZdg = I"
+
+    def test_sxx_syy_inverse_pairs(self) -> None:
+        for g, gdg, name in [(qb.SXX, qb.SXXdg, "SXX"), (qb.SYY, qb.SYYdg, "SYY")]:
+            prog = Main(
+                q := QReg("q", 2),
+                c := CReg("c", 2),
+                g(q[0], q[1]),
+                gdg(q[0], q[1]),
+                Measure(q[0]) > c[0],
+                Measure(q[1]) > c[1],
+                Return(c),
+            )
+            recs = self._bits(prog)
+            assert all(r["measurement_0"] == 0 and r["measurement_1"] == 0 for r in recs), f"{name};{name}dg = I"
+
+    # ---- controlled rotations via native crz ----
+
+    def test_crx_cry_control_active(self) -> None:
+        # X q0; H q1; CR*(pi); H q1; M q1.  CRX -> 0, CRY -> 1 (numpy-verified;
+        # the differing outcomes also confirm CRX != CRY).
+        crx = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            qb.H(q[1]),
+            qb.CRX[math.pi](q[0], q[1]),
+            qb.H(q[1]),
+            Measure(q[1]) > c[0],
+            Return(c),
+        )
+        assert all(r["measurement_0"] == 0 for r in self._bits(crx)), "X q0; H q1; CRX(pi); H q1 -> 0"
+        cry = Main(
+            q := QReg("q", 2),
+            c := CReg("c", 1),
+            qb.X(q[0]),
+            qb.H(q[1]),
+            qb.CRY[math.pi](q[0], q[1]),
+            qb.H(q[1]),
+            Measure(q[1]) > c[0],
+            Return(c),
+        )
+        assert all(r["measurement_0"] == 1 for r in self._bits(cry)), "X q0; H q1; CRY(pi); H q1 -> 1"

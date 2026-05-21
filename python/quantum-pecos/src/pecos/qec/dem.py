@@ -6,8 +6,9 @@ pipeline, however, lives entirely in Python (``pecos.sim``, ``pecos.guppy``,
 ``pecos.qec.surface.decode``). To keep the convenient
 ``DetectorErrorModel.from_guppy(...)`` call site without making the low-level
 Rust extension import the high-level Python package (a dependency cycle), this
-module defines a thin Python subclass that adds :meth:`from_guppy` and is
-re-exported as the public ``pecos.qec.DetectorErrorModel``.
+module attaches a Python :meth:`from_guppy` classmethod to the Rust-backed
+``pecos_rslib.qec.DetectorErrorModel`` and re-exports that class as the public
+``pecos.qec.DetectorErrorModel``.
 
 This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, optionally compiles the program to a HUGR (only when
@@ -40,22 +41,8 @@ from typing import Any
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
 
-class DetectorErrorModel(_RustDetectorErrorModel):
-    """Detector error model with a Guppy/QIS-trace convenience constructor.
-
-    Identical to :class:`pecos_rslib.qec.DetectorErrorModel` except for the
-    added :meth:`from_guppy` classmethod.
-
-    Identity caveat: the inherited Rust factory classmethods
-    (``from_circuit``, ``from_pecos_metadata_json``, and ``from_guppy``, which
-    delegates to ``from_circuit``) construct and return the *Rust base* class
-    ``pecos_rslib.qec.DetectorErrorModel`` -- they do not return instances of
-    this Python subclass. Consequently ``isinstance(obj, DetectorErrorModel)``
-    is ``False`` for objects produced by those constructors even though every
-    method works identically. Do not use ``isinstance`` against this public
-    subclass to recognize DEMs; check the Rust base type instead. (No PECOS
-    code relies on such an ``isinstance``; this is a public-API caveat only.)
-    """
+class _DetectorErrorModelMixin:
+    """Namespace for the Python Guppy/QIS-trace convenience constructor."""
 
     __slots__ = ()
 
@@ -251,3 +238,7 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     extraction, loop-guard, resolution, and validation are all done in Rust.
     """
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
+
+
+DetectorErrorModel = _RustDetectorErrorModel
+DetectorErrorModel.from_guppy = classmethod(_DetectorErrorModelMixin.__dict__["from_guppy"].__func__)

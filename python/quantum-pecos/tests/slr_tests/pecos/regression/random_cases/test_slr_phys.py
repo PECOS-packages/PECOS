@@ -142,14 +142,15 @@ def test_control_flow_qir() -> None:
     )
     # B1: whole-CReg scalar conditions (`If(m == 0)` / `If(m <
     # m_hidden)`) are now lowered via `_pack_creg` + `_op_map`; the
-    # QIR builds. CAVEAT: `RX[0.3]` in the program has NO qir-qis
-    # lowering (`docs.rotation_rx` is pinned BUILD/exec-failure;
-    # Stim no-ops rx), so the program is NOT end-to-end-executable
-    # post-B1 -- it BUILDS but cannot run through qir_to_qis. Assert
-    # the build succeeds and the QIR contains the expected
-    # classical-comparison structure; end-to-end execution is
-    # covered by `test_plus_qir` / `test_minus_qir` (pure-classical
-    # + Clifford only).
+    # QIR builds. CAVEAT: the `RX(0.3, q)` rotations DO build + lower
+    # (#97 angle-first API; `rx` is qir-qis-allowlisted), but rx(0.3)
+    # is NON-CLIFFORD so the program cannot execute on the Stim
+    # backend -- it is build-/lower-only here, NOT end-to-end. (The
+    # angle-first-executable rotation path is covered by the Guppy
+    # Quest-backed behavioral suite; the pure-classical arithmetic is
+    # covered end-to-end by `test_plus_qir` / `test_minus_qir`.)
+    # Assert the build succeeds and the QIR has the expected
+    # classical-comparison structure.
     qir = SlrConverter(prog).qir()
     # `If(m == 0)` and `If(m < m_hidden)` lower to icmp + i64 packs.
     assert "icmp" in qir, "B1 If(m == 0) must lower to an icmp"

@@ -72,10 +72,23 @@ def batched_stabilizers(
     abstract circuit and the Guppy emitter: ascending stabilizer index,
     X before Z on ties. Any change here will diverge the abstract DEM
     from the traced-Guppy DEM in the Selene parity tests; preserve it.
+
+    ``ancilla_budget`` is validated through
+    :func:`normalize_ancilla_budget` (rejects ``None``, ``bool``,
+    ``float``, ``str``, ``< 1``; clamps ``>= total_ancilla``) so direct
+    callers of this helper get the same fail-loud guarantees as the
+    public ``ancilla_budget`` API surface, not an opaque ``range()`` or
+    silent-empty failure.
     """
     geom = patch.geometry
+    total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
+    effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
+
     stabilizers = [("X", stab.index) for stab in geom.x_stabilizers]
     stabilizers.extend(("Z", stab.index) for stab in geom.z_stabilizers)
     stabilizers.sort(key=lambda stab: (stab[1], 0 if stab[0] == "X" else 1))
 
-    return [stabilizers[start : start + ancilla_budget] for start in range(0, len(stabilizers), ancilla_budget)]
+    return [
+        stabilizers[start : start + effective_budget]
+        for start in range(0, len(stabilizers), effective_budget)
+    ]

@@ -12,6 +12,7 @@ from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import (
     _build_surface_tick_circuit_for_native_model,
+    _reject_partially_lowered_trace,
     _replay_lowered_qis_trace_into_tick_circuit,
     _replay_qis_trace_into_tick_circuit,
 )
@@ -148,6 +149,61 @@ def test_lowered_replay_fails_on_measurement_count_mismatch() -> None:
         _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
 
+def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
+    """A trace where every quantum-carrying chunk is also lowered is accepted
+    (this is the real Selene shape; the byte-identical regressions exercise it
+    end-to-end). A chunk with only non-quantum ops and no lowered form is fine
+    -- there are no gates to drop."""
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [0, 7]}}],
+            "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0], "angles": []}],
+        },
+        {  # allocation/output bookkeeping only; legitimately has no lowered ops
+            "operations": [{"AllocateResult": {"id": 7}}, {"RecordOutput": {"id": 7}}],
+            "lowered_quantum_ops": [],
+        },
+    ]
+    _reject_partially_lowered_trace(chunks)  # must not raise
+
+
+def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
+    """A chunk carrying raw quantum gates but no lowered form, alongside a
+    lowered chunk, is rejected fail-loud: the lowered replay would silently
+    drop that chunk's (non-measurement) gates, and the meas-count guard would
+    not catch it."""
+    chunks = [
+        {
+            "operations": [{"Quantum": {"H": 0}}],
+            "lowered_quantum_ops": [{"gate_type": "H", "qubits": [0], "angles": []}],
+        },
+        {  # raw quantum gate present, but not lowered -> would be dropped
+            "operations": [{"Quantum": {"CX": [0, 1]}}],
+            "lowered_quantum_ops": [],
+        },
+    ]
+    with pytest.raises(ValueError, match=r"mixed/partially-lowered|incomplete gate stream"):
+        _reject_partially_lowered_trace(chunks)
+
+
+def test_reject_partially_lowered_trace_fails_on_unlowered_allocation() -> None:
+    """``AllocateQubit`` lowers to a prep (PZ), so an unlowered chunk that
+    carries only an allocation alongside a lowered chunk would silently drop
+    that prep -- it must fail loud too, not just chunks with raw gate ops."""
+    chunks = [
+        {
+            "operations": [{"Quantum": {"H": 0}}],
+            "lowered_quantum_ops": [{"gate_type": "H", "qubits": [0], "angles": []}],
+        },
+        {  # allocation present (lowers to PZ) but not lowered -> would be dropped
+            "operations": [{"AllocateQubit": {"id": 1}}],
+            "lowered_quantum_ops": [],
+        },
+    ]
+    with pytest.raises(ValueError, match=r"mixed/partially-lowered|incomplete gate stream"):
+        _reject_partially_lowered_trace(chunks)
+
+
 def test_non_lowered_replay_preserves_non_sequential_result_ids() -> None:
     operations = [
         {"AllocateQubit": {"id": 10}},
@@ -265,26 +321,37 @@ def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise):
     return ref_dem, got, ref
 
 
-def test_from_guppy_constrained_surface_dem_byte_identical() -> None:
+@pytest.mark.parametrize(
+    ("d", "basis", "rounds", "budget"),
+    [
+        (3, "Z", 2, 1),  # small-and-fast, minimum budget (one stabilizer/batch)
+        (3, "X", 2, 2),  # asymmetric basis, X/Z paired per batch
+        (9, "Z", 3, 17),  # canonical high-distance stress
+    ],
+)
+def test_from_guppy_constrained_surface_dem_byte_identical(
+    d: int,
+    basis: str,
+    rounds: int,
+    budget: int,
+) -> None:
     """`from_guppy(make_surface_code(..., ancilla_budget=b))` must produce a
     DEM byte-identical to the reference DEM built through the
     `_build_surface_tick_circuit_for_native_model(circuit_source="traced_qis",
-    ancilla_budget=b)` path. Covers (d=3, budget=1, Z), (d=3, budget=2, X), and
-    (d=9, budget=17, Z) -- small-and-fast + asymmetric basis + canonical
-    high-distance stress."""
+    ancilla_budget=b)` path. Parametrized so a regression isolates to the
+    specific (distance, budget, basis) case rather than failing the whole set."""
     noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
-    for d, basis, rounds, budget in [(3, "Z", 2, 1), (3, "X", 2, 2), (9, "Z", 3, 17)]:
-        ref_dem, got, _ = _constrained_surface_via_guppy(
-            d=d,
-            basis=basis,
-            rounds=rounds,
-            budget=budget,
-            noise=noise,
-        )
-        assert got == ref_dem, (
-            f"constrained surface from_guppy not byte-identical for "
-            f"d={d}, budget={budget}, basis={basis}, rounds={rounds}"
-        )
+    ref_dem, got, _ = _constrained_surface_via_guppy(
+        d=d,
+        basis=basis,
+        rounds=rounds,
+        budget=budget,
+        noise=noise,
+    )
+    assert got == ref_dem, (
+        f"constrained surface from_guppy not byte-identical for "
+        f"d={d}, budget={budget}, basis={basis}, rounds={rounds}"
+    )
 
 
 def test_constrained_surface_traced_metadata_matches_abstract() -> None:
@@ -323,14 +390,15 @@ def test_constrained_surface_traced_metadata_matches_abstract() -> None:
     assert traced_tc.get_meta("ancilla_budget") == "2"
 
 
-def test_constrained_surface_lowered_qubit_stream_within_budget() -> None:
+@pytest.mark.parametrize(("d", "budget"), [(3, 1), (3, 2), (5, 3)])
+def test_constrained_surface_lowered_qubit_stream_within_budget(d: int, budget: int) -> None:
     """The lowered-trace physical qubit IDs must stay within the budgeted
     pool, and ancilla slots must be empirically reused (more measurements
     than physical ancilla qubits). Pins the load-bearing assumption the
-    spike validated."""
+    spike validated, across several (distance, budget) combinations so the
+    reuse invariant isn't only checked at one point."""
     import pecos
 
-    d, budget = 3, 2
     program = make_surface_code(distance=d, num_rounds=2, basis="Z", ancilla_budget=budget)
     n_q = get_num_qubits(d, ancilla_budget=budget)
     chunks = list(
@@ -391,10 +459,20 @@ def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> N
         **p,
     )
 
-    # PECOS-native sampler path: DEM is well-formed for sampling.
+    # PECOS-native sampler path: the sampler must agree with the DEM it was
+    # built from (substantive, not merely ``>= 0``) and actually produce
+    # well-shaped samples.
     sampler = dem.to_sampler()
-    assert sampler.num_dem_outputs >= 0
-    assert sampler.num_observables >= 0
+    assert sampler.num_detectors == dem.num_detectors
+    assert sampler.num_observables == dem.num_observables
+    assert dem.num_observables == 1  # one logical observable for a single patch
+
+    batch = sampler.generate_samples(16, 0)
+    assert batch.num_shots == 16
+    # Each shot's syndrome covers exactly the DEM's detectors.
+    assert len(batch.get_syndrome(0)) == dem.num_detectors
+    # The observable mask fits within ``num_observables`` bits (no stray bits).
+    assert batch.get_observable_mask(0) >> dem.num_observables == 0
 
     # PECOS-native Rust-backed matching decoder: DEM is consumable by
     # the actual downstream decoder surface.
@@ -413,10 +491,12 @@ def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> N
 def test_constrained_from_guppy_fails_loud_on_mismatched_num_measurements() -> None:
     """The constrained-ancilla surface program must flow through the same
     Rust metadata-validation fail-loud path as any other Guppy program.
-    No surface-specific bypass: passing a wrong ``num_measurements`` (here,
-    the unconstrained count, which differs from the constrained traced
-    program's count) is rejected by the generic builder, not by anything
-    surface-aware in ``from_guppy``."""
+    No surface-specific bypass: passing a ``num_measurements`` that disagrees
+    with the count the traced program actually performs (here, one greater
+    than the true count) is rejected by the generic builder, not by anything
+    surface-aware in ``from_guppy``. The regex pins the builder's specific
+    'declared count disagrees' diagnostic, not just the bare key name, so a
+    different ``num_measurements``-mentioning error wouldn't pass spuriously."""
     p = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
     patch = SurfacePatch.create(distance=3)
     abstract_tc = _build_surface_tick_circuit_for_native_model(
@@ -429,7 +509,10 @@ def test_constrained_from_guppy_fails_loud_on_mismatched_num_measurements() -> N
     actual = int(abstract_tc.get_meta("num_measurements"))
     wrong = actual + 1
 
-    with pytest.raises(ValueError, match=r"num_measurements"):
+    with pytest.raises(
+        ValueError,
+        match=r"num_measurements=\d+ disagrees with the \d+ measurement",
+    ):
         DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2),
             num_qubits=get_num_qubits(3, ancilla_budget=2),
@@ -438,3 +521,87 @@ def test_constrained_from_guppy_fails_loud_on_mismatched_num_measurements() -> N
             num_measurements=wrong,
             **p,
         )
+
+
+@pytest.mark.parametrize("entry", ["get_num_qubits", "make_surface_code"])
+def test_constrained_public_api_rejects_invalid_ancilla_budget(entry: str) -> None:
+    """Both public entry points that accept ``ancilla_budget`` -- ``get_num_qubits``
+    and ``make_surface_code`` -- validate it fail-loud at the boundary (routing
+    through ``normalize_ancilla_budget``), so a bad budget never reaches codegen or
+    the qubit-count math. ``bool``/``float``/``str`` raise ``TypeError``; ``< 1``
+    raises ``ValueError``."""
+
+    def call(budget: object):
+        if entry == "get_num_qubits":
+            return get_num_qubits(3, ancilla_budget=budget)
+        return make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=budget)
+
+    for bad in (True, 1.5, "2"):
+        with pytest.raises(TypeError, match=r"must be int or None"):
+            call(bad)
+    for bad in (0, -1):
+        with pytest.raises(ValueError, match=r"must be >= 1"):
+            call(bad)
+
+
+def test_copy_surface_metadata_propagates_descriptors() -> None:
+    """``_copy_surface_tick_circuit_metadata`` must propagate the structured
+    detector/observable *descriptor* metadata, not just the raw
+    detectors/observables JSON. The constrained build path doesn't populate
+    descriptors lazily, so the byte-identical and metadata-match tests above
+    never exercise the descriptor branch of the copy helper -- this seeds them
+    explicitly on the source and pins that the copy carries them across."""
+    from pecos.qec.surface import (
+        get_detector_descriptors_from_tick_circuit,
+        get_observable_descriptors_from_tick_circuit,
+    )
+    from pecos.qec.surface.decode import _copy_surface_tick_circuit_metadata
+    from pecos_rslib.quantum import TickCircuit
+
+    patch = SurfacePatch.create(distance=3)
+    source = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="abstract",
+    )
+    # Seed the lazily-built descriptor metadata on the source.
+    det_desc = get_detector_descriptors_from_tick_circuit(source, patch)
+    obs_desc = get_observable_descriptors_from_tick_circuit(source, patch)
+    assert source.get_meta("detector_descriptors") is not None
+    assert source.get_meta("observable_descriptors") is not None
+
+    target = TickCircuit()
+    _copy_surface_tick_circuit_metadata(source, target)
+
+    assert target.get_meta("detector_descriptors") == source.get_meta("detector_descriptors")
+    assert target.get_meta("observable_descriptors") == source.get_meta("observable_descriptors")
+    # Sanity: the seeded descriptors are non-trivial (real content was copied).
+    assert len(det_desc) > 0
+    assert len(obs_desc) > 0
+
+
+def test_surface_module_cache_collapses_unconstrained_budget_forms() -> None:
+    """``get_surface_code_module`` keys its cache on the *effective* budget
+    (``normalize_ancilla_budget(d*d-1, budget)``), so ``ancilla_budget=None``
+    and any ``budget >= total_ancilla`` resolve to the SAME cached module --
+    no redundant codegen for the two ways of saying "unconstrained". A finite
+    constrained budget is a distinct entry."""
+    from pecos.guppy.surface import get_surface_code_module
+
+    d = 3
+    total_ancilla = d * d - 1  # all stabilizer ancillas live simultaneously
+
+    unconstrained_none = get_surface_code_module(d, ancilla_budget=None)
+    unconstrained_exact = get_surface_code_module(d, ancilla_budget=total_ancilla)
+    unconstrained_large = get_surface_code_module(d, ancilla_budget=10**6)
+    # All three "unconstrained" spellings are the identical cached object.
+    assert unconstrained_none is unconstrained_exact
+    assert unconstrained_none is unconstrained_large
+    assert unconstrained_none["ancilla_budget"] == total_ancilla
+
+    constrained = get_surface_code_module(d, ancilla_budget=2)
+    # A genuinely-constrained budget is a separate cache entry.
+    assert constrained is not unconstrained_none
+    assert constrained["ancilla_budget"] == 2

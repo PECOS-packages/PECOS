@@ -363,6 +363,86 @@ class TestDemGeneration:
         )
         assert decoder.get_dem("X", circuit_level=True) == batched_dem
 
+    def test_constrained_budget_uses_cache_and_matches_fresh_build(self) -> None:
+        """A constrained ancilla budget now flows through the shared topology
+        cache (previously bypassed). The cached constrained DEM must equal a
+        DEM built fresh from the corresponding TickCircuit, for both the
+        ``abstract`` and ``traced_qis`` sources -- pinning that caching is
+        sound for constrained budgets, not just unconstrained ones."""
+        from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch
+        from pecos.qec.surface.decode import (
+            _build_surface_tick_circuit_for_native_model,
+            generate_circuit_level_dem_from_builder,
+        )
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        params = {"p1": noise.p1, "p2": noise.p2, "p_meas": noise.p_meas, "p_prep": noise.p_prep}
+
+        # abstract source
+        abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="Z", ancilla_budget=2)
+        cached_abstract = generate_circuit_level_dem_from_builder(
+            patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=2,
+        )
+        assert cached_abstract == generate_dem_from_tick_circuit(abstract_tc, **params, decompose_errors=False)
+
+        # traced_qis source
+        _require_selene_runtime()
+        traced_tc = _build_surface_tick_circuit_for_native_model(
+            patch, 2, "Z", ancilla_budget=2, circuit_source="traced_qis",
+        )
+        cached_traced = generate_circuit_level_dem_from_builder(
+            patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=2, circuit_source="traced_qis",
+        )
+        assert cached_traced == generate_dem_from_tick_circuit(traced_tc, **params, decompose_errors=False)
+
+    def test_unconstrained_budget_spellings_collapse_to_one_dem(self) -> None:
+        """``ancilla_budget`` of ``None``, ``== total_ancilla``, and a value
+        ``>> total_ancilla`` are all "unconstrained" and must produce the same
+        DEM. ``_canonical_ancilla_budget`` collapses them so they also share a
+        single cache entry rather than fragmenting it."""
+        from pecos.qec.surface.decode import _canonical_ancilla_budget, generate_circuit_level_dem_from_builder
+
+        patch = SurfacePatch.create(distance=3)
+        total = len(patch.geometry.x_stabilizers) + len(patch.geometry.z_stabilizers)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+
+        # Canonicalization: every unconstrained spelling -> None; a real
+        # constraint passes through unchanged.
+        assert _canonical_ancilla_budget(patch, None) is None
+        assert _canonical_ancilla_budget(patch, total) is None
+        assert _canonical_ancilla_budget(patch, 10**6) is None
+        assert _canonical_ancilla_budget(patch, 2) == 2
+
+        dem_none = generate_circuit_level_dem_from_builder(patch, num_rounds=2, noise=noise, basis="Z")
+        dem_total = generate_circuit_level_dem_from_builder(
+            patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=total,
+        )
+        dem_huge = generate_circuit_level_dem_from_builder(
+            patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=10**6,
+        )
+        assert dem_none == dem_total == dem_huge
+
+    def test_constrained_budget_sampler_builds_for_all_models(self) -> None:
+        """The native sampler path also caches constrained budgets and builds
+        for every supported sampling model, with a detector count matching the
+        constrained circuit's surface metadata."""
+        from pecos.qec.surface import build_native_sampler
+        from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        abstract_tc = _build_surface_tick_circuit_for_native_model(
+            patch, 2, "Z", ancilla_budget=2, circuit_source="abstract",
+        )
+        expected_detectors = int(abstract_tc.get_meta("num_detectors"))
+
+        for model in ("dem", "influence_dem", "mnm"):
+            sampler = build_native_sampler(
+                patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=2, sampling_model=model,
+            )
+            assert sampler.num_detectors == expected_detectors
+
     def test_native_circuit_level_dem_cache_respects_patch_geometry(self) -> None:
         """Shared native DEM caching should preserve asymmetric patch geometry."""
         from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch

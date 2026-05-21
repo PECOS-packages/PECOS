@@ -137,8 +137,32 @@ class QGate:
                     f"parameter(s) before the qubit(s). Got {len(args)} argument(s)."
                 )
                 raise TypeError(msg)
-            g.params = tuple(args[:n])
-            g.add_qargs(tuple(args[n:]))
+            params = tuple(args[:n])
+            qargs = tuple(args[n:])
+            # Angle-first guard: a qubit reference in an angle slot, or a
+            # non-qubit in a qubit slot, is the classic mis-ordered call
+            # (`RX(q, 0.5)` instead of `RX(0.5, q)`). Pre-#97 this was the
+            # silent-angle-drop footgun; reject it loudly at the call so a
+            # typo can never reach codegen as a no-op (qubit refs are
+            # `Var` subclasses; angles are numbers/expressions).
+            from pecos.slr.vars import Var  # noqa: PLC0415  (avoid import cycle at module load)
+
+            for p in params:
+                if isinstance(p, Var):
+                    msg = (
+                        f"{self.sym}: a qubit reference {p!r} was passed in an angle position. "
+                        f"Call as `{self.sym}(angle, qubit...)` -- angles come before qubit ids."
+                    )
+                    raise TypeError(msg)
+            for qa in qargs:
+                if not isinstance(qa, Var):
+                    msg = (
+                        f"{self.sym}: a non-qubit {qa!r} was passed in a qubit position. "
+                        f"Call as `{self.sym}(angle, qubit...)` with {n} leading angle parameter(s)."
+                    )
+                    raise TypeError(msg)
+            g.params = params
+            g.add_qargs(qargs)
         else:
             g.add_qargs(args)
 

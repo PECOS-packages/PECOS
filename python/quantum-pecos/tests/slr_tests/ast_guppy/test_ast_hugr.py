@@ -66,29 +66,56 @@ def test_hugr_rejects_symbolic_loopvar_indexing_cleanly() -> None:
         SlrConverter(prog).hugr()
 
 
-def test_decomposed_rotation_misuse_fails_loud() -> None:
-    # Cross-codegen post-review fold (Codex) + #97 (angle-first API): a
-    # parameterized gate whose Guppy lowering is a DECOMPOSITION
-    # (RZZ/CRX/CRY) must fail loud on misuse, never a raw IndexError /
-    # silent miscompile.
-    #
-    # (1) Too few arguments (no angle at all) is caught at CALL time by
-    #     the gate base class -- `RZZ(angle, qubit...)` requires the
-    #     leading angle.
-    for gate_obj, name in [(qb.RZZ, "RZZ"), (qb.CRX, "CRX"), (qb.CRY, "CRY")]:
+def test_angle_first_misuse_fails_loud_at_call() -> None:
+    # #97 (angle-first API) post-review fold (Codex blocker): a
+    # mis-ordered `gate(qubit, angle)` call -- the pre-#97 silent-
+    # angle-drop footgun -- must fail loud at the SLR call, never
+    # compile to a silent no-op.
+    q = QReg("q", 2)
+
+    # (1) Too few arguments (no angle at all).
+    for gate_obj, name in [(qb.RX, "RX"), (qb.RZZ, "RZZ"), (qb.CRX, "CRX"), (qb.CRZ, "CRZ")]:
         with pytest.raises(TypeError, match=f"{name} is a parameterized gate"):
             gate_obj()
 
-    # (2) A qubit passed where the angle belongs (`RZZ(q0, q1)` -- only
-    #     two args, so q0 is taken as the angle) builds the gate but
-    #     fails loud at Guppy emission: the angle is not a literal.
-    for gate_obj, name in [(qb.RZZ, "RZZ"), (qb.CRX, "CRX"), (qb.CRY, "CRY")]:
-        prog = Main(
-            q := QReg("q", 2),
-            gate_obj(q[0], q[1]),  # q0 mis-bound as the angle
-        )
-        with pytest.raises(GuppyCodegenError, match=f"decomposition of {name} requires literal angle parameters"):
-            SlrConverter(prog).guppy()
+    # (2) Qubit reference in an angle slot (the classic `RX(q, 0.5)` /
+    #     `RZZ(q0, q1)` mis-order). Caught at the call by the base class.
+    with pytest.raises(TypeError, match=r"RX: a qubit reference .* angle position"):
+        qb.RX(q[0], 0.5)
+    for gate_obj, name in [(qb.RZZ, "RZZ"), (qb.CRX, "CRX"), (qb.CRZ, "CRZ")]:
+        with pytest.raises(TypeError, match=f"{name}: a qubit reference .* angle position"):
+            gate_obj(q[0], q[1])
+
+    # (3) Non-qubit in a qubit slot (`RX(0.5, 0.7)`).
+    with pytest.raises(TypeError, match=r"RX: a non-qubit .* qubit position"):
+        qb.RX(0.5, 0.7)
+
+
+def test_codegen_arity_guard_rejects_malformed_param_gate() -> None:
+    # #97 post-review fold (Codex blocker): even if a malformed
+    # parameterized GateOp reaches a codegen from a non-SLR path
+    # (the SLR `__call__` guard above blocks the user-facing route),
+    # QIR and QASM must FAIL LOUD on too-few-targets rather than
+    # silently emitting no operation (the pre-fold behavior: the
+    # single-qubit emit loop iterated zero targets; the two-qubit
+    # path was gated on `len(targets) >= 2`; the QIR decomposition
+    # path raised a raw IndexError).
+    from pecos.slr.ast.codegen.qasm import AstToQasm
+    from pecos.slr.ast.codegen.qir import AstToQir
+    from pecos.slr.ast.nodes import GateKind, GateOp, LiteralExpr, SlotRef
+
+    one = (SlotRef(allocator="q", index=0),)
+    malformed = [
+        ("RX", GateOp(gate=GateKind.RX, targets=(), params=(LiteralExpr(value=0.5),))),
+        ("RZZ", GateOp(gate=GateKind.RZZ, targets=one, params=(LiteralExpr(value=0.5),))),
+        ("CRX", GateOp(gate=GateKind.CRX, targets=one, params=(LiteralExpr(value=0.5),))),
+        ("CRZ", GateOp(gate=GateKind.CRZ, targets=one, params=(LiteralExpr(value=0.5),))),
+    ]
+    for name, node in malformed:
+        with pytest.raises(NotImplementedError, match=f"QIR codegen: parameterized gate {name!r}"):
+            AstToQir()._process_gate(node)  # noqa: SLF001
+        with pytest.raises(NotImplementedError, match=f"QASM codegen: parameterized gate {name!r}"):
+            AstToQasm().visit_gate(node)
 
 
 def test_hugr_accepts_inline_measure_creg_result() -> None:

@@ -317,6 +317,23 @@ class AstToQasm(BaseVisitor[list[str]]):
         """Generate gate operation."""
         lines = []
 
+        # Fail-loud arity guard (defense-in-depth vs the angle-first
+        # mis-order footgun): a parameterized gate with fewer targets
+        # than its qubit arity would otherwise SILENTLY emit no QASM
+        # line (the two-qubit path is gated on `len(targets) >= 2`, the
+        # single-qubit path iterates zero targets). The SLR
+        # `QGate.__call__` rejects the mis-ordered call at the source;
+        # this guards a malformed GateOp reaching QASM from any other
+        # path. Multi-target (parallel) application is fine (len >= arity).
+        if node.gate.is_parameterized and len(node.targets) < node.gate.arity:
+            msg = (
+                f"QASM codegen: parameterized gate {node.gate.name!r} has "
+                f"{len(node.targets)} qubit target(s) but needs at least "
+                f"{node.gate.arity} (a mis-ordered `gate(qubit, angle)` call "
+                "drops the qubit). Call it as `gate(angle, qubit...)`."
+            )
+            raise NotImplementedError(msg)
+
         # Handle special face rotation gates
         if node.gate == GateKind.F:
             for target in node.targets:

@@ -597,6 +597,25 @@ class AstToQir:
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
+        # Fail-loud arity guard (defense-in-depth vs the angle-first
+        # mis-order footgun): a parameterized gate with fewer targets
+        # than its qubit arity would otherwise SILENTLY emit no call
+        # (the per-target emit loops just iterate zero/too-few times),
+        # or hit a raw IndexError in the decomposition path. The SLR
+        # `QGate.__call__` already rejects the mis-ordered call at the
+        # source; this guards a malformed GateOp reaching codegen from
+        # any other path. Multi-target (parallel) application is fine
+        # (len >= arity).
+        if node.gate.is_parameterized and len(node.targets) < node.gate.arity:
+            gate_name = getattr(node.gate, "name", node.gate)
+            msg = (
+                f"QIR codegen: parameterized gate {gate_name!r} has "
+                f"{len(node.targets)} qubit target(s) but needs at least "
+                f"{node.gate.arity} (a mis-ordered `gate(qubit, angle)` call "
+                "drops the qubit). Call it as `gate(angle, qubit...)`."
+            )
+            raise NotImplementedError(msg)
+
         qir_name = GATE_TO_QIR.get(node.gate)
         if qir_name is None and node.gate in _GATE_DECOMP:
             # #93: a gate with no direct QIR primitive but a verified

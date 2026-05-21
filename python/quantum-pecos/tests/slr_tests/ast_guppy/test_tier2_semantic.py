@@ -393,11 +393,15 @@ def test_static_for_unrolls_body_not_dropped() -> None:
 
 
 def test_varexpr_raises_loud() -> None:
-    """#74: a classical `VarExpr` must FAIL LOUD, not silently
-    evaluate to constant 0 (a value miscompile qir-qis cannot catch).
-    Unit-level: the `VarExpr` arm is reached before any `self._types`
-    use, so a bare generator suffices."""
-    with pytest.raises(NotImplementedError, match=r"classical variable 'x'"):
+    """#74/B1: a classical `VarExpr` whose name is not a declared
+    Main-scope CReg must FAIL LOUD, not silently evaluate to constant
+    0 (a value miscompile qir-qis cannot catch). B1 changed the
+    VarExpr arm from an unconditional fail-loud to "pack the CReg
+    via `_pack_creg` if known, fail loud via `_require_creg`
+    otherwise". The stray-name path still fails loud, just with the
+    `_require_creg` "not declared at Main scope" message (the
+    anti-silent-0 invariant the #74 test pins is preserved)."""
+    with pytest.raises(NotImplementedError, match=r"classical register 'x'.*not.*declared at Main scope"):
         AstToQir()._eval_expression(VarExpr(name="x"))  # noqa: SLF001
 
 

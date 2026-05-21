@@ -140,32 +140,48 @@ def test_control_flow_qir() -> None:
         p.Measure(q) > m,
         Return(m),
     )
-    # #74/#80: whole-CReg scalar conditions (`If(m == 0)` /
-    # `If(m < m_hidden)`) are classical-variable lowering, which the
-    # QIR backend deliberately fails LOUD on (unimplemented; must not
-    # be silently evaluated as 0). Correct post-#74/#80 behavior.
-    with pytest.raises(NotImplementedError, match=r"classical variable"):
-        SlrConverter(prog).qir()
+    # B1: whole-CReg scalar conditions (`If(m == 0)` / `If(m <
+    # m_hidden)`) are now lowered via `_pack_creg` + `_op_map`; the
+    # QIR builds. CAVEAT: `RX[0.3]` in the program has NO qir-qis
+    # lowering (`docs.rotation_rx` is pinned BUILD/exec-failure;
+    # Stim no-ops rx), so the program is NOT end-to-end-executable
+    # post-B1 -- it BUILDS but cannot run through qir_to_qis. Assert
+    # the build succeeds and the QIR contains the expected
+    # classical-comparison structure; end-to-end execution is
+    # covered by `test_plus_qir` / `test_minus_qir` (pure-classical
+    # + Clifford only).
+    qir = SlrConverter(prog).qir()
+    # `If(m == 0)` and `If(m < m_hidden)` lower to icmp + i64 packs.
+    assert "icmp" in qir, "B1 If(m == 0) must lower to an icmp"
+    assert "or i64" in qir, "B1 whole-CReg pack must emit OR_i (zext c[i] << i)"
 
 
 @pytest.mark.optional_dependency
 def test_plus_qir() -> None:
-    """Test a program with addition compiling into QIR."""
+    """B1: whole-CReg scalar arithmetic (`o.set(m + n)`) lowers via
+    `_pack_creg` + i64 `add`, then unpacks back to `o`'s bits."""
     prog = Main(
         _q := QReg("q", 2),
         m := CReg("m", 2),
         n := CReg("n", 2),
-        o := CReg("o", 2),
+        o := CReg("o", 3),  # 3 bits hold up to 7; 2-bit `o` would silently truncate m+n=2+2=4
         m.set(2),
         n.set(2),
         o.set(m + n),
         Return(m, n, o),
     )
-    # #74/#80: whole-CReg scalar arithmetic (`o.set(m + n)`) is
-    # classical-variable lowering, deliberately FAIL-LOUD in the QIR
-    # backend (unimplemented; must not be silently evaluated as 0).
-    with pytest.raises(NotImplementedError, match=r"classical variable"):
-        SlrConverter(prog).qir()
+    qir = SlrConverter(prog).qir()
+    assert "add i64" in qir, "B1 m + n must lower to an i64 add"
+
+    # End-to-end: m=2, n=2, o=m+n=4. Pure-classical + Clifford only,
+    # so the program executes through qir_to_qis + Stim.
+    import qir_qis
+    import selene_sim
+
+    qis = qir_qis.qir_to_qis(SlrConverter(prog).qir_bc())
+    inst = selene_sim.build(selene_sim.BitcodeString(qis))
+    for shot in inst.run_shots(selene_sim.Stim(random_seed=1), n_qubits=2, n_shots=2):
+        assert [v for (_t, v) in shot] == [2, 2, 4], shot
 
 
 @pytest.mark.optional_dependency
@@ -189,42 +205,51 @@ def test_nested_xor_qir() -> None:
 
 @pytest.mark.optional_dependency
 def test_minus_qir() -> None:
-    """Test a program with addition compiling into QIR."""
+    """B1: whole-CReg scalar subtraction (`o.set(m - n)`) lowers via
+    `_pack_creg` + i64 `sub`. Pure-classical + Clifford only -- runs
+    end-to-end through qir_to_qis + Stim."""
     prog = Main(
         _q := QReg("q", 2),
         m := CReg("m", 2),
         n := CReg("n", 2),
-        o := CReg("o", 2),
-        m.set(2),
-        n.set(2),
+        o := CReg("o", 2),  # 2 bits: m=3, n=1, o=m-n=2 fits.
+        m.set(3),
+        n.set(1),
         o.set(m - n),
         Return(m, n, o),
     )
-    # #74/#80: whole-CReg scalar arithmetic (`o.set(m - n)`) is
-    # classical-variable lowering, deliberately FAIL-LOUD in the QIR
-    # backend (unimplemented; must not be silently evaluated as 0).
-    with pytest.raises(NotImplementedError, match=r"classical variable"):
-        SlrConverter(prog).qir()
+    qir = SlrConverter(prog).qir()
+    assert "sub i64" in qir, "B1 m - n must lower to an i64 sub"
+
+    import qir_qis
+    import selene_sim
+
+    qis = qir_qis.qir_to_qis(SlrConverter(prog).qir_bc())
+    inst = selene_sim.build(selene_sim.BitcodeString(qis))
+    for shot in inst.run_shots(selene_sim.Stim(random_seed=1), n_qubits=2, n_shots=2):
+        assert [v for (_t, v) in shot] == [3, 1, 2], shot
 
 
 @pytest.mark.optional_dependency
 def test_steane_qir() -> None:
-    """Test the teleportation program using the Steane code."""
-    # #74/#80: the Steane teleportation uses a classical scalar var
-    # (`smid_flag_x`), classical-variable lowering -> deliberately
-    # FAIL-LOUD in the QIR backend (unimplemented; not silent-0).
-    with pytest.raises(NotImplementedError, match=r"classical variable"):
-        SlrConverter(telep("X", "X")).qir()
+    """B1: the Steane teleportation uses a classical scalar var
+    (`smid_flag_x` -- a `CReg(..., 3)`); B1's `_pack_creg` lowers
+    this scalar reference, so the program builds. The full
+    teleportation contains non-Clifford rotations and the executable
+    path is out of scope for this test -- assert the build succeeds
+    + the emitted QIR has the expected classical-pack structure."""
+    qir = SlrConverter(telep("X", "X")).qir()
+    assert "icmp" in qir, "Steane telep `If(flag == 0)` must lower to icmp"
+    assert "or i64" in qir, "Steane telep flag pack must emit OR_i (zext c[i] << i)"
 
 
 @pytest.mark.optional_dependency
 def test_steane_qir_bc() -> None:
-    """Test the teleportation program using the Steane code."""
-    # #74/#80: same `smid_flag_x` classical scalar var -> the QIR
-    # bitcode path also fails LOUD (unimplemented classical-variable
-    # lowering; must not be silently evaluated as 0).
-    with pytest.raises(NotImplementedError, match=r"classical variable"):
-        SlrConverter(telep("X", "X")).qir_bc()
+    """B1: same Steane telep program through the QIR bitcode path.
+    The bitcode builds (no longer fails loud on classical-variable
+    lowering)."""
+    bc = SlrConverter(telep("X", "X")).qir_bc()
+    assert bc, "qir_bc must return non-empty bitcode for Steane telep post-B1"
 
 
 @pytest.mark.optional_dependency

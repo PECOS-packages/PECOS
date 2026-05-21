@@ -421,13 +421,22 @@ class AstToQir:
 
     def _setup_op_map(self) -> None:
         """Setup binary operator mapping."""
+        # B1: CReg comparisons are UNSIGNED (the CReg's `[N x i1]` buffer
+        # packs to an i64 unsigned bit pattern via `_pack_creg`). The
+        # `icmp_unsigned` choice matters only when bit 63 of a 64-bit
+        # CReg is set; for narrower CRegs (or for bit-level `c[i]`
+        # comparisons that zext to i64 with the top 63 bits zero)
+        # signed and unsigned agree. Switching is safe -- no existing
+        # test asserts the signed semantics on a high-bit-set 64-bit
+        # CReg, and unsigned is the correct interpretation of the
+        # bit-pattern semantics SLR exposes (cf. B1 D3).
         self._op_map = {
-            BinaryOp.EQ: lambda lhs, rhs: self._builder.icmp_signed("==", lhs, rhs),
-            BinaryOp.NE: lambda lhs, rhs: self._builder.icmp_signed("!=", lhs, rhs),
-            BinaryOp.LT: lambda lhs, rhs: self._builder.icmp_signed("<", lhs, rhs),
-            BinaryOp.GT: lambda lhs, rhs: self._builder.icmp_signed(">", lhs, rhs),
-            BinaryOp.LE: lambda lhs, rhs: self._builder.icmp_signed("<=", lhs, rhs),
-            BinaryOp.GE: lambda lhs, rhs: self._builder.icmp_signed(">=", lhs, rhs),
+            BinaryOp.EQ: lambda lhs, rhs: self._builder.icmp_unsigned("==", lhs, rhs),
+            BinaryOp.NE: lambda lhs, rhs: self._builder.icmp_unsigned("!=", lhs, rhs),
+            BinaryOp.LT: lambda lhs, rhs: self._builder.icmp_unsigned("<", lhs, rhs),
+            BinaryOp.GT: lambda lhs, rhs: self._builder.icmp_unsigned(">", lhs, rhs),
+            BinaryOp.LE: lambda lhs, rhs: self._builder.icmp_unsigned("<=", lhs, rhs),
+            BinaryOp.GE: lambda lhs, rhs: self._builder.icmp_unsigned(">=", lhs, rhs),
             BinaryOp.MUL: self._builder.mul,
             BinaryOp.DIV: self._builder.udiv,
             BinaryOp.XOR: self._builder.xor,
@@ -926,15 +935,19 @@ class AstToQir:
             return self._builder.zext(bit, self._types["int"])
 
         if isinstance(expr, VarExpr):
-            # Classical scalar-variable lowering is unimplemented in the
-            # QIR backend. Silently evaluating every VarExpr as constant
-            # 0 is a miscompile -- fail LOUD instead.
-            msg = (
-                f"QIR codegen: classical variable {expr.name!r} is not "
-                "supported by the QIR backend (scalar-variable lowering is "
-                "unimplemented; it must not be silently evaluated as 0)."
-            )
-            raise NotImplementedError(msg)
+            # B1: a classical `VarExpr` denotes a whole CReg used as a
+            # scalar (e.g. `If(m == 0)`, `o.set(m + n)`, Steane
+            # `smid_flag_x`). SLR has no scalar-integer classical type
+            # (verified: `pecos.slr.vars` exposes only Reg/CReg/Bit/
+            # SymbolicElem/LoopVar; `LoopVar` is the compile-time `For`
+            # index and is substituted before this point). The lowering
+            # is the existing i64 pack (`OR_i (zext c[i] << i)`)
+            # factored out of `_generate_results` as `_pack_creg`. A
+            # `VarExpr` whose name is not a declared Main-scope CReg
+            # fails LOUD via `_require_creg`, preserving the
+            # #74/#80 anti-silent-0 guarantee.
+            self._require_creg(expr.name)
+            return self._pack_creg(expr.name)
 
         if isinstance(expr, BinaryExpr):
             left = self._eval_expression(expr.left)
@@ -1125,6 +1138,32 @@ class AstToQir:
         for s_ref, t_ref in mapping.items():
             self.context.permutation_map[s_ref] = old.get(t_ref, t_ref)
 
+    def _pack_creg(self, reg_name: str) -> Any:
+        """Pack a CReg's `[N x i1]` buffer into a single i64 value.
+
+        `OR_i (zext c[i] << i)` -- this is the canonical SLR CReg-as-
+        integer lowering. Used by both `_generate_results` (for the
+        `__quantum__rt__int_record_output` call) and by
+        `_eval_expression(VarExpr)` (B1 -- a whole-CReg scalar
+        reference in `If(m == 0)` / `o.set(m + n)` / etc.). Sharing
+        the pack ensures the record-output and VarExpr interpretations
+        of `m` are bit-identical -- the same packed i64.
+        """
+        c_int: Any = llvm_ir.Constant(self._types["int"], 0)
+        for i in range(self.context.creg_map.get(reg_name, 0)):
+            bit = self._builder.load(
+                self._creg_bit_ptr(reg_name, i),
+                name="",
+            )
+            widened = self._builder.zext(bit, self._types["int"])
+            if i:
+                widened = self._builder.shl(
+                    widened,
+                    llvm_ir.Constant(self._types["int"], i),
+                )
+            c_int = self._builder.or_(c_int, widened)
+        return c_int
+
     def _generate_results(self) -> None:
         """Generate result output calls."""
         for reg_name in self._creg_ptrs:
@@ -1136,20 +1175,9 @@ class AstToQir:
             reg_tag.global_constant = True
             reg_tag.linkage = "private"
 
-            # Pack the [N x i1] buffer into one i64: OR_i (zext c[i] << i).
-            c_int = llvm_ir.Constant(self._types["int"], 0)
-            for i in range(self.context.creg_map.get(reg_name, 0)):
-                bit = self._builder.load(
-                    self._creg_bit_ptr(reg_name, i),
-                    name="",
-                )
-                widened = self._builder.zext(bit, self._types["int"])
-                if i:
-                    widened = self._builder.shl(
-                        widened,
-                        llvm_ir.Constant(self._types["int"], i),
-                    )
-                c_int = self._builder.or_(c_int, widened)
+            # Pack the [N x i1] buffer into one i64 (shared with the
+            # B1 VarExpr lowering).
+            c_int = self._pack_creg(reg_name)
 
             reg_tag_gep = reg_tag.gep(
                 (

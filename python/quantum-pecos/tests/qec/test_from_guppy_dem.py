@@ -408,3 +408,33 @@ def test_constrained_from_guppy_dem_is_consumable_by_pecos_native_decoder() -> N
 
     parsed = stim.DetectorErrorModel(decomp)
     assert parsed.num_detectors >= 0
+
+
+def test_constrained_from_guppy_fails_loud_on_mismatched_num_measurements() -> None:
+    """The constrained-ancilla surface program must flow through the same
+    Rust metadata-validation fail-loud path as any other Guppy program.
+    No surface-specific bypass: passing a wrong ``num_measurements`` (here,
+    the unconstrained count, which differs from the constrained traced
+    program's count) is rejected by the generic builder, not by anything
+    surface-aware in ``from_guppy``."""
+    p = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="abstract",
+    )
+    actual = int(abstract_tc.get_meta("num_measurements"))
+    wrong = actual + 1
+
+    with pytest.raises(ValueError, match=r"num_measurements"):
+        DetectorErrorModel.from_guppy(
+            make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2),
+            num_qubits=get_num_qubits(3, ancilla_budget=2),
+            detectors_json=abstract_tc.get_meta("detectors"),
+            observables_json=abstract_tc.get_meta("observables"),
+            num_measurements=wrong,
+            **p,
+        )

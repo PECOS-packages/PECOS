@@ -23,7 +23,6 @@ from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_budget,
 )
 
-
 # --- normalize_ancilla_budget -----------------------------------------------
 
 

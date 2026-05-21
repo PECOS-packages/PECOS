@@ -107,7 +107,14 @@ class LogicalDescriptor(TypedDict):
     support_axis: str
 
 
-def _get_stabilizer_region(stab: Stabilizer, patch: SurfacePatch) -> str:
+# --- Stabilizer geometry/schedule metadata (single source of truth) ---------
+# These live here (the low-level geometry module) and are re-exposed by
+# ``circuit_builder`` as the public API; both the abstract circuit's detector
+# descriptors and ``SurfacePatch.get_stabilizer_descriptor`` consume them, so a
+# single implementation prevents the two sides from silently diverging.
+
+
+def get_stabilizer_region(stab: Stabilizer, patch: SurfacePatch) -> str:
     """Return a coarse region label like ``top+left`` for a stabilizer."""
     geom = patch.geometry
     positions = [geom.id_to_pos[q] for q in stab.data_qubits]
@@ -118,7 +125,7 @@ def _get_stabilizer_region(stab: Stabilizer, patch: SurfacePatch) -> str:
     return f"{row_label}+{col_label}"
 
 
-def _get_stabilizer_touch_label(stab: Stabilizer, patch: SurfacePatch, data_qubit: int) -> str:
+def get_stabilizer_touch_label(stab: Stabilizer, patch: SurfacePatch, data_qubit: int) -> str:
     """Label how a data qubit sits relative to a stabilizer support."""
     geom = patch.geometry
     if data_qubit not in stab.data_qubits:
@@ -140,13 +147,13 @@ def _get_stabilizer_touch_label(stab: Stabilizer, patch: SurfacePatch, data_qubi
     return vertical + horizontal
 
 
-def _get_stabilizer_schedule_metadata(stab: Stabilizer, patch: SurfacePatch) -> dict[str, object]:
-    """Return metadata describing one stabilizer's schedule and geometry."""
-    entries: list[StabilizerScheduleEntry] = [
+def get_stabilizer_schedule_entries(stab: Stabilizer, patch: SurfacePatch) -> list[StabilizerScheduleEntry]:
+    """Return the per-round touch schedule for one stabilizer."""
+    return [
         {
             "round_0based": round_0based,
             "data_qubit": data_qubit,
-            "touch_label": _get_stabilizer_touch_label(stab, patch, data_qubit),
+            "touch_label": get_stabilizer_touch_label(stab, patch, data_qubit),
         }
         for round_0based, data_qubit in get_stab_schedule(
             stab.stab_type,
@@ -156,12 +163,17 @@ def _get_stabilizer_schedule_metadata(stab: Stabilizer, patch: SurfacePatch) -> 
             patch.dz,
         )
     ]
+
+
+def get_stabilizer_schedule_metadata(stab: Stabilizer, patch: SurfacePatch) -> dict[str, object]:
+    """Return metadata describing one stabilizer's schedule and geometry."""
+    entries = get_stabilizer_schedule_entries(stab, patch)
     rounds = [int(entry["round_0based"]) for entry in entries]
     return {
         "stabilizer_kind": stab.stab_type,
         "stabilizer_index": stab.index,
         "stabilizer_is_boundary": stab.is_boundary,
-        "stabilizer_region": _get_stabilizer_region(stab, patch),
+        "stabilizer_region": get_stabilizer_region(stab, patch),
         "schedule_rounds": rounds,
         "schedule_start_round": rounds[0] if rounds else None,
         "schedule_end_round": rounds[-1] if rounds else None,
@@ -401,7 +413,7 @@ class SurfacePatch:
         """Return one public stabilizer descriptor."""
         stabs = self.x_stabilizers if stab_type.upper() == "X" else self.z_stabilizers
         stab = stabs[index]
-        metadata = _get_stabilizer_schedule_metadata(stab, self)
+        metadata = get_stabilizer_schedule_metadata(stab, self)
         positions = [list(self.geometry.id_to_pos[q]) for q in stab.data_qubits]
         return {
             **metadata,

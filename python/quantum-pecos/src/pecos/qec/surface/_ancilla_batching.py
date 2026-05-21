@@ -68,10 +68,13 @@ def batched_stabilizers(
     ``ancilla_budget`` stabilizers each; within each batch every
     stabilizer is measured concurrently using one ancilla qubit.
 
-    The stabilizer order is **load-bearing** and shared between the
-    abstract circuit and the Guppy emitter: ascending stabilizer index,
-    X before Z on ties. Any change here will diverge the abstract DEM
-    from the traced-Guppy DEM in the Selene parity tests; preserve it.
+    The stabilizer order is **load-bearing** production semantics shared by
+    the abstract circuit and the Guppy emitter: ascending stabilizer index,
+    X before Z on ties. Note the traced-vs-traced Selene parity tests cannot
+    catch a regression here -- both sides import this one helper, so a policy
+    change moves them together. The concrete batch-order and source-level
+    CX-emission pins (``tests/qec/surface/test_ancilla_batching.py``) are what
+    actually guard this order; preserve it.
 
     ``ancilla_budget`` is validated through
     :func:`normalize_ancilla_budget` (rejects ``None``, ``bool``,

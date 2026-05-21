@@ -33,10 +33,17 @@ from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_budget as _normalize_ancilla_budget,
 )
 
+# Stabilizer geometry helpers live in the low-level patch module (single
+# source of truth). Only the two used by the circuit renderer are imported
+# here; the full set is exported publicly from the package __init__.
+from pecos.qec.surface.patch import (
+    get_stabilizer_region,
+    get_stabilizer_touch_label,
+)
+
 if TYPE_CHECKING:
     from pecos.qec.surface.patch import (
         LogicalDescriptor,
-        Stabilizer,
         StabilizerDescriptor,
         SurfacePatch,
         SurfacePatchDescriptor,
@@ -373,70 +380,6 @@ def classify_stabilizer_boundary(stab_type: str, data_qubits: tuple[int, ...], d
     if dz is None:
         dz = d
     return _classify_boundary(stab_type, data_qubits, d, dz)
-
-
-def get_stabilizer_region(stab: Stabilizer, patch: SurfacePatch) -> str:
-    """Return a coarse region label like ``top+left`` for a stabilizer."""
-    geom = patch.geometry
-    positions = [geom.id_to_pos[q] for q in stab.data_qubits]
-    avg_row = sum(row for row, _ in positions) / len(positions)
-    avg_col = sum(col for _, col in positions) / len(positions)
-    row_label = "top" if avg_row < (geom.dx - 1) / 2 else "bottom"
-    col_label = "left" if avg_col < (geom.dz - 1) / 2 else "right"
-    return f"{row_label}+{col_label}"
-
-
-def get_stabilizer_touch_label(stab: Stabilizer, patch: SurfacePatch, data_qubit: int) -> str:
-    """Label how a data qubit sits relative to a stabilizer support."""
-    geom = patch.geometry
-    if data_qubit not in stab.data_qubits:
-        msg = f"Qubit {data_qubit} is not in stabilizer {stab.stab_type}{stab.index}"
-        raise ValueError(msg)
-
-    positions = [geom.id_to_pos[q] for q in stab.data_qubits]
-    data_row, data_col = geom.id_to_pos[data_qubit]
-    rows = [row for row, _ in positions]
-    cols = [col for _, col in positions]
-
-    if len(set(rows)) == 1:
-        return "left" if data_col == min(cols) else "right"
-    if len(set(cols)) == 1:
-        return "top" if data_row == min(rows) else "bottom"
-
-    vertical = "T" if data_row == min(rows) else "B"
-    horizontal = "L" if data_col == min(cols) else "R"
-    return vertical + horizontal
-
-
-def get_stabilizer_schedule_entries(stab: Stabilizer, patch: SurfacePatch) -> list[dict[str, int | str]]:
-    """Return the per-round touch schedule for one stabilizer."""
-    from pecos.qec.surface.schedule import get_stab_schedule
-
-    schedule = get_stab_schedule(stab.stab_type, stab.data_qubits, stab.is_boundary, patch.dx, patch.dz)
-    return [
-        {
-            "round_0based": round_0based,
-            "data_qubit": data_qubit,
-            "touch_label": get_stabilizer_touch_label(stab, patch, data_qubit),
-        }
-        for round_0based, data_qubit in schedule
-    ]
-
-
-def get_stabilizer_schedule_metadata(stab: Stabilizer, patch: SurfacePatch) -> dict[str, object]:
-    """Return metadata describing one stabilizer's schedule and geometry."""
-    entries = get_stabilizer_schedule_entries(stab, patch)
-    rounds = [int(entry["round_0based"]) for entry in entries]
-    return {
-        "stabilizer_kind": stab.stab_type,
-        "stabilizer_index": stab.index,
-        "stabilizer_is_boundary": stab.is_boundary,
-        "stabilizer_region": get_stabilizer_region(stab, patch),
-        "schedule_rounds": rounds,
-        "schedule_start_round": rounds[0] if rounds else None,
-        "schedule_end_round": rounds[-1] if rounds else None,
-        "schedule_entries": entries,
-    }
 
 
 def _build_detector_descriptors(

@@ -1053,7 +1053,8 @@ impl<'a> DemSamplerBuilder<'a> {
     /// # Errors
     /// Returns an error if the JSON is malformed.
     pub fn with_detectors_json(self, json: &str) -> Result<Self, String> {
-        let records = parse_records_json(json);
+        let records = super::builder::parse_detector_record_vectors(json, self.influence_map)
+            .map_err(|err| err.to_string())?;
         Ok(self.with_detector_records(records))
     }
 
@@ -1062,9 +1063,11 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -3, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed.
+    /// Returns an error if the JSON is malformed, fails schema validation, or
+    /// references measurements out of range for the circuit.
     pub fn with_observables_json(self, json: &str) -> Result<Self, String> {
-        let records = parse_records_json(json);
+        let records = super::builder::parse_observable_record_vectors(json, self.influence_map)
+            .map_err(|err| err.to_string())?;
         Ok(self.with_observable_records(records))
     }
 
@@ -1213,6 +1216,23 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Returns an error if detector definitions reference non-deterministic
     /// measurements or are not linearly independent over `Z_2`.
     pub fn build(self) -> Result<DemSampler, DetectorValidationError> {
+        // A supplied measurement order must cover every measurement, otherwise
+        // detector/observable record offsets validated against the circuit's
+        // measurement count would resolve in a different (shorter/longer) frame
+        // at sample time and silently mis-map. (See sampler-JSON validation.)
+        if let Some(ref order) = self.measurement_order {
+            let expected = self.influence_map.measurements.len();
+            if order.len() != expected {
+                return Err(DetectorValidationError::InvalidMetadata {
+                    message: format!(
+                        "measurement_order has {} entries but the circuit performs \
+                         {expected} measurement(s); a measurement order must cover \
+                         every measurement so record offsets resolve in the same frame",
+                        order.len()
+                    ),
+                });
+            }
+        }
         match self.output_mode {
             OutputMode::RawMeasurements => Ok(self.build_raw()),
             OutputMode::DetectorEvents => self.build_detector(),
@@ -1457,106 +1477,6 @@ pub(crate) fn gate_location_prob_from_locations(
         }
     }
     0.0
-}
-
-/// Parse detector or observable definitions from JSON.
-///
-/// Run noiseless symbolic simulation on a `TickCircuit` to identify non-deterministic measurements.
-///
-/// Returns a Vec<bool> where true = non-deterministic (needs coin flip).
-/// Uses `SymbolicSparseStab` which tracks measurement determinism symbolically.
-/// Run noiseless symbolic simulation to identify non-deterministic measurements
-/// and their dependency structure.
-///
-/// Returns:
-/// - `Vec<bool>`: non-det mask (true = needs coin flip)
-/// - `Vec<Option<(Vec<usize>, bool)>>`: per-measurement dependencies
-///   (Some((deps, flip)) for deterministic measurements, None for non-det)
-///
-/// Only supports the Clifford gate subset. Returns error for unsupported gates.
-fn parse_records_json(json: &str) -> Vec<Vec<i32>> {
-    let json = json.trim();
-    if json.is_empty() || json == "[]" {
-        return Vec::new();
-    }
-
-    let mut results = Vec::new();
-    let mut depth = 0;
-    let mut start = None;
-
-    for (i, c) in json.char_indices() {
-        match c {
-            '{' => {
-                if depth == 1 {
-                    start = Some(i);
-                }
-                depth += 1;
-            }
-            '}' => {
-                depth -= 1;
-                if depth == 1 {
-                    if let Some(s) = start {
-                        let obj_str = &json[s..i + c.len_utf8()];
-                        results.push(extract_records_array(obj_str));
-                    }
-                    start = None;
-                }
-            }
-            '[' if depth == 0 => depth = 1,
-            ']' if depth == 1 => depth = 0,
-            _ => {}
-        }
-    }
-
-    results
-}
-
-/// Extract measurement record indices from a JSON object string.
-///
-/// Prefers `"meas_ids"` (absolute `MeasId` IDs) when available.
-/// Also accepts `"records"` for DEM-style negative offsets.
-fn extract_records_array(json: &str) -> Vec<i32> {
-    // Prefer meas_ids (absolute, stable IDs from MeasId)
-    if let Some(pos) = json.find("\"meas_ids\"") {
-        let rest = &json[pos..];
-        if let (Some(arr_start), Some(arr_end)) = (rest.find('['), rest.find(']'))
-            && arr_start < arr_end
-        {
-            let arr_str = &rest[arr_start + 1..arr_end];
-            let ids: Vec<i32> = arr_str
-                .split(',')
-                .filter_map(|s| s.trim().parse::<i32>().ok())
-                .collect();
-            if !ids.is_empty() {
-                // Convert absolute MeasId IDs to negative offsets:
-                // not needed — the DemBuilder resolves negative offsets against
-                // num_measurements. With absolute IDs, we store them as positive
-                // values and handle them in the DemBuilder's build_measurement_mappings.
-                //
-                // For now, keep the negative-offset convention internally but
-                // convert: absolute ID i becomes offset -(num_measurements - i).
-                // We don't know num_measurements here, so return the absolute IDs
-                // as positive i32. The DemBuilder recognizes positive values as
-                // absolute MeasId indices.
-                return ids;
-            }
-        }
-    }
-
-    // Fallback: "records" with negative offsets
-    if let Some(pos) = json.find("\"records\"") {
-        let rest = &json[pos..];
-        if let (Some(arr_start), Some(arr_end)) = (rest.find('['), rest.find(']'))
-            && arr_start < arr_end
-        {
-            let arr_str = &rest[arr_start + 1..arr_end];
-            return arr_str
-                .split(',')
-                .filter_map(|s| s.trim().parse::<i32>().ok())
-                .collect();
-        }
-    }
-    Vec::new()
 }
 
 #[cfg(test)]

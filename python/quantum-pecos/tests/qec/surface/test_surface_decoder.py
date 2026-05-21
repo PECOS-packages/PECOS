@@ -443,6 +443,64 @@ class TestDemGeneration:
             )
             assert sampler.num_detectors == expected_detectors
 
+    def test_traced_qis_traces_the_given_patch_not_its_distance(self) -> None:
+        """A non-rotated patch must be traced from its OWN Guppy program, not
+        the default rotated patch of the same distance. Before the patch-
+        identity fix, the traced path rebuilt make_surface_code(distance=d) and
+        the module cache keyed on dx/dz only, so rotated and non-rotated d=3
+        collapsed to one cached (rotated) module and produced identical DEMs.
+        They must now differ."""
+        from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+
+        _require_selene_runtime()
+        params = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+
+        def traced_dem(*, rotated: bool) -> str:
+            patch = SurfacePatch.create(distance=3, rotated=rotated)
+            tc = _build_surface_tick_circuit_for_native_model(patch, 2, "Z", circuit_source="traced_qis")
+            return generate_dem_from_tick_circuit(tc, **params, decompose_errors=False)
+
+        assert traced_dem(rotated=True) != traced_dem(rotated=False)
+
+    def test_guppy_module_cache_keys_on_full_patch_identity(self) -> None:
+        """Rotated and non-rotated patches of the same dx/dz/budget must NOT
+        share a cached Guppy module (they generate different circuits)."""
+        from pecos.guppy.surface import _load_guppy_module
+
+        rotated = _load_guppy_module(SurfacePatch.create(distance=3, rotated=True), ancilla_budget=2)
+        non_rotated = _load_guppy_module(SurfacePatch.create(distance=3, rotated=False), ancilla_budget=2)
+        assert rotated is not non_rotated
+
+    def test_surface_memory_distance_validation_is_consistent(self) -> None:
+        """All distance-based Guppy entry points enforce the documented
+        'odd >= 3' contract (previously make_surface_code/get_surface_code_module
+        accepted even/<3 and get_num_qubits(0) returned -1)."""
+        from pecos.guppy.surface import (
+            generate_surface_code_module,
+            get_num_qubits,
+            get_surface_code_module,
+            make_surface_code,
+        )
+
+        for bad in (0, 1, 2, 4):
+            with pytest.raises(ValueError, match=r"odd >= 3"):
+                get_num_qubits(bad)
+            with pytest.raises(ValueError, match=r"odd >= 3"):
+                get_surface_code_module(bad)
+            with pytest.raises(ValueError, match=r"odd >= 3"):
+                make_surface_code(distance=bad, num_rounds=2, basis="Z")
+            with pytest.raises(ValueError, match=r"odd >= 3"):
+                generate_surface_code_module(bad)
+        assert get_num_qubits(3) == 2 * 9 - 1  # valid distance still works
+
+    def test_get_num_qubits_requires_exactly_one_of_d_or_patch(self) -> None:
+        from pecos.guppy.surface import get_num_qubits
+
+        with pytest.raises(ValueError, match=r"exactly one of"):
+            get_num_qubits()
+        with pytest.raises(ValueError, match=r"exactly one of"):
+            get_num_qubits(3, patch=SurfacePatch.create(distance=3))
+
     def test_native_circuit_level_dem_cache_respects_patch_geometry(self) -> None:
         """Shared native DEM caching should preserve asymmetric patch geometry."""
         from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch

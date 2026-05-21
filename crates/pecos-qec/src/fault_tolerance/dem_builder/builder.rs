@@ -1422,6 +1422,176 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     })
 }
 
+/// Parse detector JSON into per-detector measurement-reference vectors for the
+/// sampler builders, enforcing the **same** validation and resolution as
+/// `DemBuilder`.
+///
+/// Schema/type validation (rejects malformed JSON, a non-list top level, a
+/// non-object entry, non-integer values, `tracked_pauli` entries, and entries
+/// referencing neither `records` nor `meas_ids`) comes from the shared serde
+/// parser. On top of that, this resolves every reference against the
+/// `influence_map` exactly as `DemBuilder::validate_metadata_refs` /
+/// `resolve_meas_id_to_tc_index` do, and rejects fail-loud:
+///   - a `records` offset that is out of range,
+///   - a `meas_ids` value that does not resolve (a stamped `MeasId` absent from
+///     the circuit, or -- when the circuit carries no stable ids -- an
+///     out-of-range positional index), and
+///   - co-present `records` + `meas_ids` that reference different measurements.
+///
+/// `meas_ids` are stamped stable ids when `influence_map.meas_ids` is populated
+/// (the traced `from_guppy`/`from_circuit` path), and positional indices only
+/// when it is empty -- matching `DemBuilder`. The returned vector uses the
+/// sampler's storage convention: negative `records` offsets are kept as-is
+/// (preferred when present, like `DemBuilder`), while a `meas_ids`-only entry is
+/// emitted as the resolved absolute indices (positive ints).
+///
+/// An empty influence map (no measurements) keeps the escape hatch: refs are
+/// opaque pass-through coordinates and resolution is skipped.
+pub(crate) fn parse_detector_record_vectors(
+    json: &str,
+    influence_map: &DagFaultInfluenceMap,
+) -> Result<Vec<Vec<i32>>, DemBuilderError> {
+    reject_duplicate_stamped_meas_ids(influence_map)?;
+    parse_detectors_json(json)?
+        .iter()
+        .map(|d| resolve_sampler_record_vector("Detector", d.id, &d.records, &d.meas_ids, influence_map))
+        .collect()
+}
+
+/// Observable counterpart of [`parse_detector_record_vectors`].
+pub(crate) fn parse_observable_record_vectors(
+    json: &str,
+    influence_map: &DagFaultInfluenceMap,
+) -> Result<Vec<Vec<i32>>, DemBuilderError> {
+    reject_duplicate_stamped_meas_ids(influence_map)?;
+    parse_observables_json(json)?
+        .iter()
+        .map(|o| resolve_sampler_record_vector("Observable", o.id, &o.records, &o.meas_ids, influence_map))
+        .collect()
+}
+
+/// Reject a circuit whose stable `MeasId`s are not unique, before resolving any
+/// `meas_ids`. A duplicate would make stamped-id resolution bind to the first
+/// occurrence (an ambiguous, silently-wrong bind); it indicates a trace/replay
+/// bug, not bad caller input. Mirrors the guard in
+/// `DemBuilder::validate_measurement_count` so the sampler JSON path rejects
+/// exactly what `DemBuilder` does.
+fn reject_duplicate_stamped_meas_ids(
+    influence_map: &DagFaultInfluenceMap,
+) -> Result<(), DemBuilderError> {
+    let mut seen = std::collections::HashSet::with_capacity(influence_map.meas_ids.len());
+    for mid in &influence_map.meas_ids {
+        if !seen.insert(mid.0) {
+            return Err(DemBuilderError::ParseError(format!(
+                "duplicate stable MeasId {} in the traced circuit; each \
+                 measurement must have a unique stamped id",
+                mid.0
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a stamped/positional `meas_id` against the influence map, mirroring
+/// `DemBuilder::resolve_meas_id_to_tc_index`: a stamped stable id when the
+/// circuit carries them, a positional index only when it does not.
+fn resolve_sampler_meas_id(influence_map: &DagFaultInfluenceMap, meas_id: usize) -> Option<usize> {
+    if influence_map.meas_ids.is_empty() {
+        (meas_id < influence_map.measurements.len()).then_some(meas_id)
+    } else {
+        influence_map.meas_ids.iter().position(|mid| mid.0 == meas_id)
+    }
+}
+
+/// Resolve a parsed `records`/`meas_ids` pair to the sampler's single-`Vec<i32>`
+/// convention, with `DemBuilder`-equivalent validation. See
+/// [`parse_detector_record_vectors`] for the contract.
+fn resolve_sampler_record_vector(
+    kind: &str,
+    id: u32,
+    records: &[i32],
+    meas_ids: &[usize],
+    influence_map: &DagFaultInfluenceMap,
+) -> Result<Vec<i32>, DemBuilderError> {
+    let num_measurements = influence_map.measurements.len();
+
+    // Escape hatch: an empty influence map makes refs opaque pass-through
+    // coordinates with no circuit to resolve against. Prefer records; emit
+    // meas_ids verbatim as positional indices (there are no stable ids).
+    if num_measurements == 0 {
+        if !records.is_empty() {
+            return Ok(records.to_vec());
+        }
+        return meas_ids
+            .iter()
+            .map(|&m| {
+                i32::try_from(m).map_err(|_| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} {id} meas_id {m} is out of range for an i32 record vector"
+                    ))
+                })
+            })
+            .collect();
+    }
+
+    // Resolve each form to absolute measurement indices, fail-loud.
+    let records_abs = records
+        .iter()
+        .map(|&offset| {
+            record_offset_to_absolute_index(num_measurements, offset).ok_or_else(|| {
+                DemBuilderError::ParseError(format!(
+                    "{kind} {id} references record offset {offset}, which is out of \
+                     range for a circuit with {num_measurements} measurement(s)"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let meas_ids_abs = meas_ids
+        .iter()
+        .map(|&meas_id| {
+            resolve_sampler_meas_id(influence_map, meas_id).ok_or_else(|| {
+                DemBuilderError::ParseError(format!(
+                    "{kind} {id} references meas_id {meas_id}, which is not present in \
+                     the circuit's {num_measurements} measurement(s)"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Co-present records and meas_ids must reference the same measurements
+    // (mirrors `validate_metadata_refs`); they are alternatives, not additive.
+    if !records.is_empty() && !meas_ids.is_empty() {
+        let mut a = records_abs.clone();
+        let mut b = meas_ids_abs.clone();
+        a.sort_unstable();
+        b.sort_unstable();
+        if a != b {
+            return Err(DemBuilderError::ParseError(format!(
+                "{kind} {id} has both 'records' and 'meas_ids' but they reference \
+                 different measurements (records -> {a:?}, meas_ids -> {b:?}); they \
+                 are alternatives, not additive"
+            )));
+        }
+    }
+
+    // Prefer records (kept as Stim offsets, like `DemBuilder`); otherwise emit
+    // the resolved absolute indices, which the sampler reads as positive
+    // (absolute-index) record values.
+    if !records.is_empty() {
+        return Ok(records.to_vec());
+    }
+    meas_ids_abs
+        .iter()
+        .map(|&idx| {
+            i32::try_from(idx).map_err(|_| {
+                DemBuilderError::ParseError(format!(
+                    "{kind} {id} resolved measurement index {idx} exceeds i32 range"
+                ))
+            })
+        })
+        .collect()
+}
+
 /// Rejects a JSON entry that declares `kind: "tracked_pauli"`.
 ///
 /// Tracked Paulis reference qubits via `pauli`, not measurements, and are

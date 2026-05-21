@@ -800,19 +800,26 @@ def _generate_traced_surface_tick_circuit(
     (one ancilla per stabilizer, all measured at the end of one round).
     With a finite budget, emits the stabilizer-batched program; Selene's
     lowering reuses ancilla slots across batches so the traced TickCircuit
-    uses only ``d^2 + min(budget, d^2-1)`` physical qubits simultaneously.
-    """
-    from pecos.guppy import get_num_qubits, make_surface_code
+    uses only ``num_data + min(budget, total_ancilla)`` physical qubits
+    simultaneously.
 
-    program = make_surface_code(
-        distance=patch.distance,
-        num_rounds=num_rounds,
-        basis=basis,
+    The program and qubit count are derived from the **actual patch**, not
+    its scalar distance, so a non-default patch (non-rotated, asymmetric) is
+    traced faithfully rather than silently substituting the default rotated
+    patch of the same distance.
+    """
+    from pecos.guppy import get_num_qubits
+    from pecos.guppy.surface import generate_memory_experiment
+
+    program = generate_memory_experiment(
+        patch,
+        num_rounds,
+        basis,
         ancilla_budget=ancilla_budget,
     )
     return trace_guppy_into_tick_circuit(
         program,
-        get_num_qubits(patch.distance, ancilla_budget=ancilla_budget),
+        get_num_qubits(patch=patch, ancilla_budget=ancilla_budget),
         seed=0,
     )
 

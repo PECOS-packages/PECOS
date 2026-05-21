@@ -29,7 +29,10 @@ class _ModuleState:
 
     temp_dir: ClassVar[Path | None] = None
     module_cache: ClassVar[dict[str, object]] = {}
-    distance_module_cache: ClassVar[dict[tuple[int, int], dict]] = {}
+    # Keyed by full patch identity + effective budget (dx, dz, orientation,
+    # rotated, effective_budget) so distinct patch geometries -- e.g. rotated
+    # vs non-rotated at the same dx/dz -- never collide on a cached module.
+    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int], dict]] = {}
 
 
 _state = _ModuleState()
@@ -393,6 +396,34 @@ def generate_guppy_source(
     return "\n".join(lines)
 
 
+def _validate_surface_memory_distance(d: int) -> None:
+    """Enforce the surface-memory Guppy entry-point distance contract.
+
+    The distance-based public entry points (:func:`get_num_qubits`,
+    :func:`get_surface_code_module`, :func:`make_surface_code`,
+    :func:`generate_surface_code_module`) document and require an odd code
+    distance ``>= 3``. Validate it in one place so they fail loud
+    consistently rather than silently building an out-of-contract program
+    (the patch-based entry points validate via ``SurfacePatch`` instead).
+    """
+    if d < 3 or d % 2 == 0:
+        msg = f"Distance must be odd >= 3, got {d}"
+        raise ValueError(msg)
+
+
+def _guppy_module_cache_key(patch: "SurfacePatch", effective_budget: int) -> str:
+    """Filesystem-safe cache key spanning full patch identity + budget.
+
+    Mirrors the topology identity used by the native cache
+    (``decode._surface_patch_cache_key``): dx, dz, orientation, and the
+    rotated flag. Keying on distance/dx-dz alone would collide a rotated and
+    a non-rotated patch of the same shape onto one generated module.
+    """
+    geom = patch.geometry
+    rotated = "rot" if geom.rotated else "unrot"
+    return f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}_b{effective_budget}"
+
+
 def _load_guppy_module(
     patch: "SurfacePatch",
     *,
@@ -400,10 +431,11 @@ def _load_guppy_module(
 ) -> dict:
     """Load a Guppy module for a patch, using caching.
 
-    The cache key is widened by the **effective** budget (after
-    clamping via ``normalize_ancilla_budget``), so ``ancilla_budget=None``
-    and ``ancilla_budget >= total_ancilla`` resolve to the same cache
-    entry and don't produce two equivalent generated modules.
+    The cache key spans the full patch identity (dx, dz, orientation,
+    rotated) and the **effective** budget (after clamping via
+    ``normalize_ancilla_budget``), so ``ancilla_budget=None`` and
+    ``ancilla_budget >= total_ancilla`` resolve to the same cache entry
+    while distinct patch geometries never collide.
 
     Args:
         patch: SurfacePatch with geometry
@@ -417,7 +449,7 @@ def _load_guppy_module(
     geom = patch.geometry
     total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
-    cache_key = f"{patch.dx}x{patch.dz}_b{effective_budget}"
+    cache_key = _guppy_module_cache_key(patch, effective_budget)
 
     if cache_key in _state.module_cache:
         return _state.module_cache[cache_key]
@@ -476,33 +508,48 @@ def generate_memory_experiment(
     return factory(num_rounds)
 
 
-def get_num_qubits(d: int, *, ancilla_budget: int | None = None) -> int:
-    """Get total number of qubits for a distance-d surface code.
+def get_num_qubits(
+    d: int | None = None,
+    *,
+    patch: "SurfacePatch | None" = None,
+    ancilla_budget: int | None = None,
+) -> int:
+    """Get the peak simultaneously-live qubit count for a surface-code program.
 
-    Unconstrained (``ancilla_budget=None``): peak qubit count is
-    ``d^2 data + (d^2 - 1) ancilla = 2 * d^2 - 1``.
+    Provide exactly one of ``d`` or ``patch``:
 
-    Constrained (``ancilla_budget`` provided): the program reuses
-    ancilla slots across stabilizer-measurement batches, so only
-    ``d^2 data + min(ancilla_budget, d^2 - 1) ancilla`` physical
-    slots are simultaneously live. The clamping is the same as
-    ``pecos.qec.surface._ancilla_batching.normalize_ancilla_budget``
-    so the unconstrained-via-``None`` and unconstrained-via-large-int
-    cases collapse to the same value.
+    - ``d`` (odd >= 3): the default symmetric rotated patch, with
+      ``d^2`` data and ``d^2 - 1`` ancilla qubits.
+    - ``patch``: any geometry (asymmetric / non-rotated included); counts
+      are derived from ``patch.geometry`` so the result is faithful to the
+      patch actually being traced -- not a scalar-distance approximation.
 
-    Args:
-        d: Code distance
-        ancilla_budget: Optional cap on simultaneously live ancillas.
-            ``None`` (default) returns the peak count.
+    Unconstrained (``ancilla_budget=None``): peak count is
+    ``num_data + total_ancilla``. Constrained: the program reuses ancilla
+    slots across stabilizer-measurement batches, so only
+    ``num_data + min(ancilla_budget, total_ancilla)`` slots are live at once.
+    Clamping matches ``normalize_ancilla_budget``, so the
+    unconstrained-via-``None`` and unconstrained-via-large-int cases collapse.
 
     Returns:
         Total qubits the traced program will simultaneously use.
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
-    total_ancilla = d * d - 1
-    effective = normalize_ancilla_budget(total_ancilla, ancilla_budget)
-    return d * d + effective
+    if (d is None) == (patch is None):
+        msg = "get_num_qubits requires exactly one of d=... or patch=..."
+        raise ValueError(msg)
+
+    if patch is not None:
+        geom = patch.geometry
+        num_data = geom.num_data
+        total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
+    else:
+        _validate_surface_memory_distance(d)
+        num_data = d * d
+        total_ancilla = d * d - 1
+
+    return num_data + normalize_ancilla_budget(total_ancilla, ancilla_budget)
 
 
 def generate_surface_code_module(d: int, *, ancilla_budget: int | None = None) -> str:
@@ -516,9 +563,7 @@ def generate_surface_code_module(d: int, *, ancilla_budget: int | None = None) -
     Returns:
         Python/Guppy source code as a string
     """
-    if d < 3 or d % 2 == 0:
-        msg = f"Distance must be odd >= 3, got {d}"
-        raise ValueError(msg)
+    _validate_surface_memory_distance(d)
 
     from pecos.qec.surface import SurfacePatch
 
@@ -526,41 +571,52 @@ def generate_surface_code_module(d: int, *, ancilla_budget: int | None = None) -
     return generate_guppy_source(patch, ancilla_budget=ancilla_budget)
 
 
+def _surface_code_module_for_patch(patch: "SurfacePatch", *, ancilla_budget: int | None = None) -> dict:
+    """Load + cache a surface-code module for an arbitrary patch.
+
+    Cache key spans full patch identity (dx, dz, orientation, rotated) plus
+    the effective budget, so distinct geometries never collide and the
+    unconstrained-via-``None`` / unconstrained-via-large-int cases share one
+    entry. Module metadata is derived from the patch geometry (faithful for
+    asymmetric / non-rotated patches), not from a scalar distance.
+    """
+    from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
+
+    geom = patch.geometry
+    total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
+    effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
+    cache_key = (patch.dx, patch.dz, geom.orientation.name, geom.rotated, effective_budget)
+
+    if cache_key in _state.distance_module_cache:
+        return _state.distance_module_cache[cache_key]
+
+    module = _load_guppy_module(patch, ancilla_budget=ancilla_budget)
+
+    # Metadata derived from the actual patch geometry.
+    module["distance"] = patch.distance
+    module["num_data"] = geom.num_data
+    module["num_stab"] = total_ancilla
+    module["ancilla_budget"] = effective_budget
+
+    _state.distance_module_cache[cache_key] = module
+    return module
+
+
 def get_surface_code_module(d: int, *, ancilla_budget: int | None = None) -> dict:
     """Get a loaded surface code module for distance d.
 
-    Cache key is widened to ``(d, effective_budget)`` so the
-    unconstrained-via-``None`` and unconstrained-via-large-int cases
-    collapse to one cached module.
-
     Args:
-        d: Code distance
+        d: Code distance (must be odd >= 3)
         ancilla_budget: Optional cap on simultaneously live ancillas
 
     Returns:
         Dictionary with module contents and metadata
     """
     from pecos.qec.surface import SurfacePatch
-    from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
-    total_ancilla = d * d - 1
-    effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
-    cache_key = (d, effective_budget)
-
-    if cache_key in _state.distance_module_cache:
-        return _state.distance_module_cache[cache_key]
-
+    _validate_surface_memory_distance(d)
     patch = SurfacePatch.create(distance=d)
-    module = _load_guppy_module(patch, ancilla_budget=ancilla_budget)
-
-    # Add metadata
-    module["distance"] = d
-    module["num_data"] = d * d
-    module["num_stab"] = (d * d - 1) // 2
-    module["ancilla_budget"] = effective_budget
-
-    _state.distance_module_cache[cache_key] = module
-    return module
+    return _surface_code_module_for_patch(patch, ancilla_budget=ancilla_budget)
 
 
 def make_surface_code(

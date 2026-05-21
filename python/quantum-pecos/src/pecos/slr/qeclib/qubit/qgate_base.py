@@ -139,26 +139,34 @@ class QGate:
                 raise TypeError(msg)
             params = tuple(args[:n])
             qargs = tuple(args[n:])
-            # Angle-first guard: a qubit reference in an angle slot, or a
-            # non-qubit in a qubit slot, is the classic mis-ordered call
+            # Angle-first guard: a register/qubit reference in an angle
+            # slot, or a non-qubit (number, classical register/bit, junk)
+            # in a qubit slot, is the classic mis-ordered call
             # (`RX(q, 0.5)` instead of `RX(0.5, q)`). Pre-#97 this was the
             # silent-angle-drop footgun; reject it loudly at the call so a
-            # typo can never reach codegen as a no-op (qubit refs are
-            # `Var` subclasses; angles are numbers/expressions).
-            from pecos.slr.vars import Var  # noqa: PLC0415  (avoid import cycle at module load)
+            # typo can never reach codegen as a no-op or as a rotation on
+            # a classical register. Qubit slots accept ONLY quantum
+            # qubit shapes (`Qubit`/`QReg`/`SymbolicQubit`) -- NOT the
+            # broad `Var` (which also covers classical `CReg`/`Bit`/
+            # `SymbolicBit`). Angle slots reject any `Var` ref (no
+            # register/bit is a valid angle; angles are numbers/exprs).
+            from pecos.slr.vars import QReg, Qubit, SymbolicQubit, Var  # noqa: PLC0415  (avoid import cycle)
 
+            qubit_types = (Qubit, QReg, SymbolicQubit)
             for p in params:
                 if isinstance(p, Var):
                     msg = (
-                        f"{self.sym}: a qubit reference {p!r} was passed in an angle position. "
-                        f"Call as `{self.sym}(angle, qubit...)` -- angles come before qubit ids."
+                        f"{self.sym}: a register/qubit reference {p!r} was passed in an angle "
+                        f"position. Call as `{self.sym}(angle, qubit...)` -- angles come before qubit ids."
                     )
                     raise TypeError(msg)
             for qa in qargs:
-                if not isinstance(qa, Var):
+                if not isinstance(qa, qubit_types):
+                    kind = "classical register/bit" if isinstance(qa, Var) else "non-qubit"
                     msg = (
-                        f"{self.sym}: a non-qubit {qa!r} was passed in a qubit position. "
-                        f"Call as `{self.sym}(angle, qubit...)` with {n} leading angle parameter(s)."
+                        f"{self.sym}: a {kind} {qa!r} was passed in a qubit position. "
+                        f"Call as `{self.sym}(angle, qubit...)` with {n} leading angle parameter(s); "
+                        "qubit positions accept only qubits/QRegs."
                     )
                     raise TypeError(msg)
             g.params = params

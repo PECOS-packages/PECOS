@@ -80,15 +80,29 @@ def test_angle_first_misuse_fails_loud_at_call() -> None:
 
     # (2) Qubit reference in an angle slot (the classic `RX(q, 0.5)` /
     #     `RZZ(q0, q1)` mis-order). Caught at the call by the base class.
-    with pytest.raises(TypeError, match=r"RX: a qubit reference .* angle position"):
+    with pytest.raises(TypeError, match=r"RX: a register/qubit reference .* angle position"):
         qb.RX(q[0], 0.5)
     for gate_obj, name in [(qb.RZZ, "RZZ"), (qb.CRX, "CRX"), (qb.CRZ, "CRZ")]:
-        with pytest.raises(TypeError, match=f"{name}: a qubit reference .* angle position"):
+        with pytest.raises(TypeError, match=f"{name}: a register/qubit reference .* angle position"):
             gate_obj(q[0], q[1])
 
     # (3) Non-qubit in a qubit slot (`RX(0.5, 0.7)`).
     with pytest.raises(TypeError, match=r"RX: a non-qubit .* qubit position"):
         qb.RX(0.5, 0.7)
+
+    # (4) Classical register/bit in a qubit slot (Codex reconfirm
+    #     blocker): `CReg`/`Bit`/`SymbolicBit` are `Var` subclasses
+    #     too, so a broad `isinstance(_, Var)` qubit check let
+    #     `RX(0.5, c[0])` through and QASM/QIR lowered `rx(0.5) c[0];`
+    #     against a classical register. Qubit slots accept ONLY
+    #     quantum qubit shapes (Qubit/QReg/SymbolicQubit).
+    c = CReg("c", 1)
+    with pytest.raises(TypeError, match=r"RX: a classical register/bit .* qubit position"):
+        qb.RX(0.5, c[0])
+    with pytest.raises(TypeError, match=r"RX: a classical register/bit .* qubit position"):
+        qb.RX(0.5, c)
+    with pytest.raises(TypeError, match=r"RZZ: a classical register/bit .* qubit position"):
+        qb.RZZ(0.5, q[0], c[0])
 
 
 def test_codegen_arity_guard_rejects_malformed_param_gate() -> None:

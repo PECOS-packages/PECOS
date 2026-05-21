@@ -78,8 +78,8 @@ class TestOptimizeLevels:
         """Level 2 adds rotation merging."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RZ[0.3](q[0]),
+            qb.RZ(0.5, q[0]),
+            qb.RZ(0.3, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -92,7 +92,7 @@ class TestOptimizeLevels:
         """Level 3 adds identity removal."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0](q[0]),
+            qb.RZ(0, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -137,8 +137,8 @@ class TestOptimizationPipeline:
 
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RZ[-0.5](q[0]),
+            qb.RZ(0.5, q[0]),
+            qb.RZ(-0.5, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -206,13 +206,13 @@ class TestCreateDefaultPipeline:
         # Circuit with multiple optimization opportunities
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0](q[0]),  # Identity removal
+            qb.RZ(0, q[0]),  # Identity removal
             qb.X(q[0]),  # Gate cancellation
             qb.X(q[0]),
             qb.SZ(q[0]),  # Inverse cancellation
             qb.SZdg(q[0]),
-            qb.RZ[0.5](q[0]),  # Rotation merging
-            qb.RZ[0.3](q[0]),
+            qb.RZ(0.5, q[0]),  # Rotation merging
+            qb.RZ(0.3, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -257,8 +257,8 @@ class TestPipelinePassTracking:
             q := QReg("q", 1),
             qb.X(q[0]),
             qb.X(q[0]),
-            qb.RZ[0.5](q[0]),
-            qb.RZ[0.3](q[0]),
+            qb.RZ(0.5, q[0]),
+            qb.RZ(0.3, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -305,8 +305,8 @@ class TestComplexOptimization:
         """Chain of rotations that sum to identity."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[math.pi](q[0]),
-            qb.RZ[math.pi](q[0]),  # Sum is 2*pi = identity
+            qb.RZ(math.pi, q[0]),
+            qb.RZ(math.pi, q[0]),  # Sum is 2*pi = identity
         )
 
         ast = slr_to_ast(prog)

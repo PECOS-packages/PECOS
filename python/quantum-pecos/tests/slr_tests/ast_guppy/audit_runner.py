@@ -612,15 +612,17 @@ def _docs_prep_basis_x() -> Block:
 
 
 def _docs_rotation_rx_probe() -> Block:
-    """Probe: RX rotation gate from docs/development/slr-qeclib.md.
+    """Probe: RX rotation gate, angle-first SLR API `RX(theta, q)`.
 
-    Per v1-feature-matrix: rotations need design; doc-test form
-    `RX(q[0], 0.5)` "currently looks like extra qargs." Probe to record.
+    The doc-test originally wrote `RX(q, 0.5)` (qubit-first, angle as a
+    stray qarg). With the angle-first SLR API (#97) the canonical form
+    is `RX(theta, q)`; RX is now a supported native rotation in both
+    the Guppy emitter (Phase A -> `rx`) and the QIR backend.
     """
     return Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
-        qb.RX(q[0], 0.5),
+        qb.RX(0.5, q[0]),
         Measure(q) > c,
         Return(c),
     )
@@ -749,17 +751,6 @@ def _curated_cases() -> list[AuditCase]:
         AuditCase(
             "docs.rotation_rx",
             _docs_rotation_rx_probe,
-            expected_failure=ExpectedFailure(
-                exception_type="GuppyCodegenError",
-                message_contains="requires an angle parameter",
-                classification="api-misuse",
-                reason=(
-                    "RX is now supported via the bracket-param form `RX[theta](q)` "
-                    "(cross-codegen Guppy Phase A -> native `rx`). The doc-test "
-                    "positional form `RX(q, 0.5)` passes the angle as a qarg, leaving "
-                    "no param, so it fails loud -- the gate is supported, the call shape is wrong."
-                ),
-            ),
         ),
         AuditCase(
             "docs.surface_syndrome_block18",

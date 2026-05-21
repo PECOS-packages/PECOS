@@ -280,7 +280,7 @@ def qft_layer(q, n, k):
     operations = []
     for j in range(k + 1, n):
         angle = np.pi / (2 ** (j - k))
-        operations.append(qb.CRZ[angle](q[j], q[k]))
+        operations.append(qb.CRZ(angle, q[j], q[k]))
     return Parallel(*operations) if len(operations) > 1 else operations[0]
 
 

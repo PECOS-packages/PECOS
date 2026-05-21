@@ -26,6 +26,7 @@ class RXGate(QGate):
     """
 
     has_parameters = True
+    num_params = 1
 
 
 RX = RXGate()
@@ -38,6 +39,7 @@ class RYGate(QGate):
     """
 
     has_parameters = True
+    num_params = 1
 
 
 RY = RYGate()
@@ -50,6 +52,7 @@ class RZGate(QGate):
     """
 
     has_parameters = True
+    num_params = 1
 
 
 RZ = RZGate()
@@ -62,6 +65,7 @@ class RZZGate(TQGate):
     """
 
     has_parameters = True
+    num_params = 1
 
 
 RZZ = RZZGate()
@@ -75,6 +79,7 @@ class CRXGate(TQGate):
     """
 
     has_parameters = True
+    num_params = 1
 
 
 CRX = CRXGate()
@@ -88,6 +93,7 @@ class CRYGate(TQGate):
     """
 
     has_parameters = True
+    num_params = 1
 
 
 CRY = CRYGate()
@@ -101,6 +107,7 @@ class CRZGate(TQGate):
     """
 
     has_parameters = True
+    num_params = 1
 
 
 CRZ = CRZGate()

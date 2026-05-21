@@ -175,15 +175,15 @@ prog = Main(
         qb.H(q[2]),
     ),
     # Apply controlled rotations
-    qb.CRZ[np.pi](q[0], q[3]),
-    qb.CRZ[np.pi / 2](q[1], q[3]),
-    qb.CRZ[np.pi / 4](q[2], q[3]),
+    qb.CRZ(np.pi, q[0], q[3]),
+    qb.CRZ(np.pi / 2, q[1], q[3]),
+    qb.CRZ(np.pi / 4, q[2], q[3]),
     # Inverse QFT on ancillas
     qb.H(q[0]),
-    qb.CRZ[-np.pi / 2](q[0], q[1]),
+    qb.CRZ(-np.pi / 2, q[0], q[1]),
     qb.H(q[1]),
-    qb.CRZ[-np.pi / 4](q[0], q[2]),
-    qb.CRZ[-np.pi / 2](q[1], q[2]),
+    qb.CRZ(-np.pi / 4, q[0], q[2]),
+    qb.CRZ(-np.pi / 2, q[1], q[2]),
     qb.H(q[2]),
     # Measure ancillas
     Parallel(

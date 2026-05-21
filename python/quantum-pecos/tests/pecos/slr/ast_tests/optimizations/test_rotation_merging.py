@@ -27,8 +27,8 @@ class TestRotationMergingBasic:
         """RZ+RZ on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RZ[0.3](q[0]),
+            qb.RZ(0.5, q[0]),
+            qb.RZ(0.3, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -49,8 +49,8 @@ class TestRotationMergingBasic:
         """RX+RX on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RX[math.pi / 4](q[0]),
-            qb.RX[math.pi / 4](q[0]),
+            qb.RX(math.pi / 4, q[0]),
+            qb.RX(math.pi / 4, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -69,8 +69,8 @@ class TestRotationMergingBasic:
         """RY+RY on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RY[0.1](q[0]),
-            qb.RY[0.2](q[0]),
+            qb.RY(0.1, q[0]),
+            qb.RY(0.2, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -93,8 +93,8 @@ class TestRotationMergingNoMerge:
         """Different rotation types do not merge."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RX[0.5](q[0]),
-            qb.RZ[0.3](q[0]),
+            qb.RX(0.5, q[0]),
+            qb.RZ(0.3, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -107,8 +107,8 @@ class TestRotationMergingNoMerge:
         """Rotations on different qubits do not merge."""
         prog = Main(
             q := QReg("q", 2),
-            qb.RZ[0.5](q[0]),
-            qb.RZ[0.3](q[1]),
+            qb.RZ(0.5, q[0]),
+            qb.RZ(0.3, q[1]),
         )
 
         ast = slr_to_ast(prog)
@@ -121,9 +121,9 @@ class TestRotationMergingNoMerge:
         """Interleaved rotations do not merge."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
+            qb.RZ(0.5, q[0]),
             qb.H(q[0]),  # Separates the RZ gates
-            qb.RZ[0.3](q[0]),
+            qb.RZ(0.3, q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -142,8 +142,8 @@ class TestRotationMergingControlFlow:
             q := QReg("q", 1),
             c := CReg("c", 1),
             If(c[0] == 1).Then(
-                qb.RZ[0.5](q[0]),
-                qb.RZ[0.3](q[0]),
+                qb.RZ(0.5, q[0]),
+                qb.RZ(0.3, q[0]),
             ),
         )
 
@@ -158,8 +158,8 @@ class TestRotationMergingControlFlow:
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=3).block(
-                qb.RX[0.1](q[0]),
-                qb.RX[0.2](q[0]),
+                qb.RX(0.1, q[0]),
+                qb.RX(0.2, q[0]),
             ),
         )
 
@@ -177,9 +177,9 @@ class TestRotationMergingMultiple:
         """Three consecutive rotations merge to one (requires multiple passes)."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.1](q[0]),
-            qb.RZ[0.2](q[0]),
-            qb.RZ[0.3](q[0]),
+            qb.RZ(0.1, q[0]),
+            qb.RZ(0.2, q[0]),
+            qb.RZ(0.3, q[0]),
         )
 
         ast = slr_to_ast(prog)

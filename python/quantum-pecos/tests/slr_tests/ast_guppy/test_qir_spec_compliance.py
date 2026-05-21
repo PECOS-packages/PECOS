@@ -39,7 +39,7 @@ model (per-CReg entry-block `alloca [N x i1]` + zeroinitializer;
 `mz__body` -> static `%Result*` -> `read_result` -> `store`;
 point-of-use `gep`+`load`/`store`; `zext`/`shl`/`or` pack ->
 `__quantum__rt__int_record_output`). Every validate-passing program
-(`_EXPECTED_QIS_OK`, n=24) now lowers via `qir_to_qis`; `qis_failed`
+(`_EXPECTED_QIS_OK`, n=25) now lowers via `qir_to_qis`; `qis_failed`
 is empty. A NEW qir_to_qis failure -- or a dropped program -- trips
 this deliberately. (`docs.while_loop` was in this set pre-#74 on a
 silently-wrong single-pass approximation; #74 makes the QIR backend
@@ -56,10 +56,9 @@ opaque-pointer QIS bitcode `qir_to_qis` emits, via
 #79 generalises it corpus-wide; this structural gate provides
 that suite's authoritative QIS_OK set.
 
-**Build failures** (5): `qir_bc()` raises for
-`docs.for_loopvar_symbolic` (symbolic `LoopVar` indexing) /
-`docs.rotation_rx` (`rx` gate) -- pre-existing AST-QIR feature
-gaps; `docs.while_loop` (#74: the QIR backend now fails LOUD
+**Build failures** (4): `qir_bc()` raises for
+`docs.for_loopvar_symbolic` (symbolic `LoopVar` indexing) --
+a pre-existing AST-QIR feature gap; `docs.while_loop` (#74: the QIR backend now fails LOUD
 on `While` instead of silently emitting a one-pass
 approximation that qir-qis cannot catch; this aligns the QIR
 path with the Guppy path, which already rejects `While` per
@@ -109,7 +108,12 @@ from .audit_runner import _curated_cases  # noqa: TID252
 # fragment would not match; the bare identifier/head is stable.
 _EXPECTED_BUILD_FAILED: dict[str, tuple[str, str]] = {
     "docs.for_loopvar_symbolic": ("AttributeError", "SymbolicQubit"),
-    "docs.rotation_rx": ("RuntimeError", "__quantum__qis__rx__body"),
+    # #97 (angle-first SLR API): `docs.rotation_rx` was BUILD_FAILED only
+    # because the doc-test probe used the malformed `RX(q, 0.5)` form
+    # (0.5 treated as a stray qarg). With `RX(theta, q)` the probe is
+    # well-formed and `rx` is in the qir-qis allowlist, so it now builds
+    # and lowers via qir_to_qis -> moved to _EXPECTED_QIS_OK (re-pinned
+    # from the actual `_qir_state()`, never guessed).
     # #74: the QIR backend now fails LOUD on `While` (was a silent
     # single-pass approximation that qir-qis could not catch -- valid
     # QIR, wrong semantics). `docs.while_loop` moved QIS_OK -> here
@@ -159,7 +163,7 @@ _EXPECTED_VALIDATE_FAILED: dict[str, str] = {
 
 # Tier 2: post-B2, EVERY validate-passing program lowers via
 # `qir_to_qis` (M-B2-static replaced the bespoke CReg helpers).
-# This is the full set (n=24); `qis_failed` must be empty. A new
+# This is the full set (n=25); `qis_failed` must be empty. A new
 # qir_to_qis failure -- or a dropped/added program -- trips the
 # Tier-2 assertions and must be triaged deliberately.
 _EXPECTED_QIS_OK: frozenset[str] = frozenset(
@@ -170,6 +174,12 @@ _EXPECTED_QIS_OK: frozenset[str] = frozenset(
         # non-Z-Prep BUILD_FAILED pin; re-pinned from actual _qir_state).
         "docs.prep_basis_x",
         "docs.repeat_state_preserving",
+        # #97 (angle-first SLR API): `RX(theta, q)` is well-formed and
+        # `rx` is qir-qis-allowlisted, so the rotation_rx probe now
+        # lowers via qir_to_qis (was BUILD_FAILED on the malformed
+        # `RX(q, 0.5)` doc-form). Not end-to-end-executable on Stim
+        # (rx is non-Clifford) -> #79 manifest classifies it X.
+        "docs.rotation_rx",
         "examples.measure_register_to_creg",
         "examples.parallel_bell_pairs",
         "examples.surface_d3_x_1round",

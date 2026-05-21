@@ -53,8 +53,8 @@ class TestTypeCheckerValid:
         """Valid rotation gate with angle parameter."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RX[math.pi](q[0]),
+            qb.RZ(0.5, q[0]),
+            qb.RX(math.pi, q[0]),
         )
 
         ast = slr_to_ast(prog)

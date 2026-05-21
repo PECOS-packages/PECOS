@@ -348,7 +348,7 @@ def test_unsupported_gate_fails_loud() -> None:
     emitting the circuit without it is the bug.
     """
     q = QReg("q", 1)
-    prog = Main(q, qubit.RX[0.5](q[0]))
+    prog = Main(q, qubit.RX(0.5, q[0]))
     with pytest.raises(NotImplementedError, match=r"has no Stim lowering"):
         SlrConverter(prog).stim()
 
@@ -366,6 +366,7 @@ def test_face_clifford_gates_decompose() -> None:
     sign. The Heisenberg-picture conjugation `F . Z . Fdg = X` is
     the deterministic identity each face-Clifford must satisfy.
     """
+
     # Build a 1q Stim program with just `F q[0]` and read the tableau.
     def _tableau_of(gate) -> stim.Tableau:
         q = QReg("q", 1)

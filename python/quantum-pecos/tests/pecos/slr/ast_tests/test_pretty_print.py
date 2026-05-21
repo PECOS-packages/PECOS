@@ -121,16 +121,16 @@ class TestPrettyPrintGates:
         """Rotation gates with parameters print correctly."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RX[math.pi](q[0]),
+            qb.RZ(0.5, q[0]),
+            qb.RX(math.pi, q[0]),
         )
 
         ast = slr_to_ast(prog)
         result = pretty_print(ast)
 
-        assert "qb.RZ[0.5](q[0])" in result
-        # Pi value should be formatted
-        assert "qb.RX[" in result
+        assert "qb.RZ(0.5, q[0])" in result
+        # #97: angle-first form `qb.RX(theta, q)`, angle rendered first.
+        assert "qb.RX(3.141592653589793, q[0])" in result
 
 
 class TestPrettyPrintControlFlow:
@@ -301,7 +301,7 @@ class TestPrettyPrintStatements:
 
         result = format_statement(stmt)
 
-        assert result == "qb.RZ[0.25](q[0])"
+        assert result == "qb.RZ(0.25, q[0])"
 
 
 class TestPrettyPrintIndentation:

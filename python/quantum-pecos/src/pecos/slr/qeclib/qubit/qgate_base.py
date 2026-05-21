@@ -48,6 +48,11 @@ class QGate:
     qsize = 1
     csize = 0
     has_parameters = False
+    # Number of leading angle parameters for a parameterized gate. The
+    # SLR call convention is angle(s)-FIRST: `RX(theta, q)`,
+    # `CRZ(theta, control, target)`, `RZZ(theta, q0, q1)`. A
+    # parameterized gate must set `num_params` (and `has_parameters`).
+    num_params = 0
 
     def __init__(self, *qargs: Qubit) -> None:
         """Initialize a quantum gate.
@@ -84,15 +89,19 @@ class QGate:
         return copy.copy(self)
 
     def __getitem__(self, *params: complex) -> Self:
-        """Set gate parameters using square bracket notation."""
-        g = self.copy()
+        """Reject the legacy bracket-parameter form.
 
-        if params and not self.has_parameters:
-            msg = "This gate does not accept parameters. You might of meant to put qubits in square brackets."
-            raise Exception(msg)
-        g.params = params
-
-        return g
+        The SLR API now takes rotation angles as leading positional
+        arguments -- ``RX(theta, q)`` -- not via brackets. The old
+        ``RX[theta](q)`` form is removed (angles-first is the single
+        supported convention); raise a clear migration error.
+        """
+        msg = (
+            f"The bracket-parameter form `{self.sym}[angle](qubit)` is no longer "
+            f"supported. Pass the angle as a leading positional argument instead: "
+            f"`{self.sym}(angle, qubit)` (angles come before qubit ids)."
+        )
+        raise TypeError(msg)
 
     def qubits(self, *qargs: Qubit) -> None:
         """Add qubits to the gate.
@@ -102,18 +111,36 @@ class QGate:
         """
         self(*qargs)
 
-    def __call__(self, *qargs: Qubit) -> Self:
-        """Create a new gate instance with specified qubits.
+    def __call__(self, *args: Qubit | complex) -> Self:
+        """Create a new gate instance from angle(s) and qubit(s).
+
+        For a parameterized gate the first `num_params` arguments are
+        the rotation angle(s); the remaining arguments are the qubits:
+        `RX(theta, q)`, `CRZ(theta, control, target)`. For a
+        non-parameterized gate every argument is a qubit.
 
         Args:
-            *qargs: Variable number of qubits to apply the gate to.
+            *args: `num_params` leading angle parameter(s) (if any)
+                followed by the qubit(s) the gate acts on.
 
         Returns:
-            New gate instance with the specified qubits.
+            New gate instance with the specified params + qubits.
         """
         g = self.copy()
 
-        g.add_qargs(qargs)
+        if self.has_parameters:
+            n = self.num_params
+            if len(args) < n:
+                msg = (
+                    f"{self.sym} is a parameterized gate; call it as "
+                    f"`{self.sym}(angle, qubit...)` with {n} leading angle "
+                    f"parameter(s) before the qubit(s). Got {len(args)} argument(s)."
+                )
+                raise TypeError(msg)
+            g.params = tuple(args[:n])
+            g.add_qargs(tuple(args[n:]))
+        else:
+            g.add_qargs(args)
 
         return g
 

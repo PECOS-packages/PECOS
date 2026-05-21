@@ -206,7 +206,7 @@ def test_control_flow_qir() -> None:
             ),
         )
         .Else(
-            p.RX[0.3](q[0]),
+            p.RX(0.3, q[0]),
         ),
         If(m < m_hidden).Then(
             p.H(q[0]),
@@ -216,7 +216,7 @@ def test_control_flow_qir() -> None:
         p.SZdg(q[0]),
         p.CX(q[0], q[1]),
         Barrier(q[1], q[0]),
-        p.RX[0.3](q[0]),
+        p.RX(0.3, q[0]),
         p.Measure(q) > m,
         Return(m),
     )

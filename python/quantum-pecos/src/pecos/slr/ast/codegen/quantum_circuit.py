@@ -350,7 +350,7 @@ class AstToQuantumCircuit:
         """Emit a parameterized gate (rotation angle threaded through).
 
         Resolves `LiteralExpr` bracket-params to raw floats (the AST
-        converter wraps `qb.RZ[0.5]` as a `LiteralExpr`, so a bare
+        converter wraps the `qb.RZ(0.5, q)` angle as a `LiteralExpr`, so a bare
         `float(p)` would fail). The QC `circuit.append(...,
         angles=...)` path forwards the angle list to Rust's typed-
         parameter dispatcher (e.g. `RZ` requires 1 angle, `RXXRYYRZZ`

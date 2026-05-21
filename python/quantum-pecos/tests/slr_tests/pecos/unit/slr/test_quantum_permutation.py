@@ -202,13 +202,13 @@ def test_rotation_gates_with_permutation() -> None:
     prog = Main(
         a,
         b,
-        qubit.RX[0.1](a[0]),  # q0
-        qubit.RY[0.2](a[1]),  # q1
-        qubit.RZ[0.3](b[0]),  # q2
+        qubit.RX(0.1, a[0]),  # q0
+        qubit.RY(0.2, a[1]),  # q1
+        qubit.RZ(0.3, b[0]),  # q2
         qubit.SZ(b[1]),  # q3
         Permute([a[0], b[0]], [b[0], a[0]]),
-        qubit.RX[0.4](a[0]),  # -> b[0] = q2
-        qubit.RY[0.5](b[0]),  # -> a[0] = q0
+        qubit.RX(0.4, a[0]),  # -> b[0] = q2
+        qubit.RY(0.5, b[0]),  # -> a[0] = q0
         qubit.T(a[1]),  # unpermuted = q1
         qubit.Tdg(b[1]),  # unpermuted = q3
     )

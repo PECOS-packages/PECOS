@@ -670,7 +670,7 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                # A bracket param (e.g. `RX[0.5]`) reaches here as a
+                # An angle param (e.g. `RX(0.5, q)`) reaches here as a
                 # `LiteralExpr`, not a raw number -- resolve it before
                 # `float()` (was a hard `TypeError` for parallel/
                 # control-flow rotations).
@@ -699,7 +699,7 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                # A bracket param (e.g. `RX[0.5]`) reaches here as a
+                # An angle param (e.g. `RX(0.5, q)`) reaches here as a
                 # `LiteralExpr`, not a raw number -- resolve it before
                 # `float()` (was a hard `TypeError` for parallel/
                 # control-flow rotations).

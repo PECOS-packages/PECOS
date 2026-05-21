@@ -82,7 +82,7 @@ class PrepHStateFT(Block):
         # ----------------------------------------
         self.extend(
             qubit.PZ(d[6]),
-            qubit.RY[pc.f64.frac_pi_4](d[6]),
+            qubit.RY(pc.f64.frac_pi_4, d[6]),
             EncodingCircuit(d),
         )
 

@@ -236,6 +236,15 @@ _MANIFEST: dict[str, tuple[str, _Spec]] = {
         "(An earlier deterministic [0] guess assumed the OLD broken "
         "Prep('X')=Z-reset, fixed by #81.)",
     ),
+    "docs.rotation_rx": (
+        "X",
+        "#97 (angle-first SLR API): `RX(0.5, q)` builds + lowers via "
+        "qir_to_qis (rx is qir-qis-allowlisted), but rx(0.5) is "
+        "NON-CLIFFORD so it cannot execute on the Stim backend this "
+        "suite uses -- excluded from the executable record (rx "
+        "correctness is covered by the Guppy Quest-backed behavioral "
+        "tests + the QIR rx emission). This #79 suite is Stim-only.",
+    ),
     "qeclib.color488_syn_extract_bare": (
         "X",
         "Color488 syndrome extraction: on |0..0> the X-stabiliser "
@@ -286,7 +295,17 @@ def test_qir_corpus_manifest_covers_qis_ok() -> None:
     stale = set(_MANIFEST) - qis_ok
     assert not stale, f"manifest entries no longer QIS_OK (remove/retriage): {sorted(stale)}"
     hist = {cls: sum(1 for c, _ in _MANIFEST.values() if c == cls) for cls in ("D", "P", "X")}
-    assert hist == {"D": 3, "P": 8, "X": 13}, f"manifest class histogram changed (deliberate?): {hist}"
+    assert hist == {"D": 3, "P": 8, "X": 14}, f"manifest class histogram changed (deliberate?): {hist}"
+
+
+# QIS_OK programs that build + lower via qir_to_qis but contain
+# NON-CLIFFORD operations the Stim backend (this suite's only
+# simulator) cannot execute. They are classified X and the
+# record-shape contract is waived: there is no Stim record to
+# inspect. Their gate semantics are covered elsewhere (e.g. the
+# Guppy Quest-backed behavioral suite). This is the Stim-only
+# boundary of the #79 executable corpus, made explicit.
+_NON_CLIFFORD_UNEXECUTABLE_ON_STIM: frozenset[str] = frozenset({"docs.rotation_rx"})
 
 
 @pytest.mark.slow
@@ -314,6 +333,10 @@ def test_qir_corpus_executable(label: str) -> None:
     has_record = "call void @__quantum__rt__int_record_output" in qir
 
     if cls == "X":
+        if label in _NON_CLIFFORD_UNEXECUTABLE_ON_STIM:
+            # Builds + lowers via qir_to_qis, but Stim cannot run the
+            # non-Clifford op -- no executable record to assert here.
+            return
         if has_record:
             # Record-shape contract: X-with-output must still
             # actually produce executable records (the exclusion is
@@ -591,12 +614,12 @@ def test_controlled_rotations_executable() -> None:
 
     import math as _math
 
-    crx_pi = lambda q: qb.CRX[_math.pi](q[0], q[1])  # noqa: E731
-    cry_pi = lambda q: qb.CRY[_math.pi](q[0], q[1])  # noqa: E731
-    crz_pi = lambda q: qb.CRZ[_math.pi](q[0], q[1])  # noqa: E731
-    crx_half = lambda q: qb.CRX[_math.pi / 2](q[0], q[1])  # noqa: E731
-    cry_half = lambda q: qb.CRY[_math.pi / 2](q[0], q[1])  # noqa: E731
-    crz_half = lambda q: qb.CRZ[_math.pi / 2](q[0], q[1])  # noqa: E731
+    crx_pi = lambda q: qb.CRX(_math.pi, q[0], q[1])  # noqa: E731
+    cry_pi = lambda q: qb.CRY(_math.pi, q[0], q[1])  # noqa: E731
+    crz_pi = lambda q: qb.CRZ(_math.pi, q[0], q[1])  # noqa: E731
+    crx_half = lambda q: qb.CRX(_math.pi / 2, q[0], q[1])  # noqa: E731
+    cry_half = lambda q: qb.CRY(_math.pi / 2, q[0], q[1])  # noqa: E731
+    crz_half = lambda q: qb.CRZ(_math.pi / 2, q[0], q[1])  # noqa: E731
     x_q0 = lambda q: qb.X(q[0])  # noqa: E731
     h_q1 = lambda q: qb.H(q[1])  # noqa: E731
 

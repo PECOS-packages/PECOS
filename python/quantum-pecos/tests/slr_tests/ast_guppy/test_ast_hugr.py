@@ -66,6 +66,23 @@ def test_hugr_rejects_symbolic_loopvar_indexing_cleanly() -> None:
         SlrConverter(prog).hugr()
 
 
+def test_hugr_decomposed_rotation_missing_angle_fails_loud() -> None:
+    # Cross-codegen post-review fold (Codex): a parameterized gate whose
+    # Guppy lowering is a DECOMPOSITION (RZZ/CRX/CRY) must fail loud with
+    # a clear GuppyCodegenError when called with no angle -- e.g. the
+    # malformed positional form `RZZ(q0, q1, 0.5)` that passes the angle
+    # as a qarg (leaving node.params empty). Previously the callable
+    # angle-spec indexed `p[0]` on the empty params and raised a raw
+    # IndexError; now it matches the native-rotation guard's message.
+    for gate_obj, name in [(qb.RZZ, "RZZ"), (qb.CRX, "CRX"), (qb.CRY, "CRY")]:
+        prog = Main(
+            q := QReg("q", 2),
+            gate_obj(q[0], q[1], 0.5),  # angle as positional qarg -> no param
+        )
+        with pytest.raises(GuppyCodegenError, match=f"parameterized gate {name} requires an angle parameter"):
+            SlrConverter(prog).guppy()
+
+
 def test_hugr_accepts_inline_measure_creg_result() -> None:
     final = CReg("final", 2)
     prog = Main(

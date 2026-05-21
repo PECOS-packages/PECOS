@@ -1207,6 +1207,15 @@ class AstToGuppy:
         resolved_params: tuple[float, ...] | None = None
         if any(callable(spec) for _, _, spec in steps):
             params = node.params or ()
+            if not params:
+                # A parameterized decomposition (RZZ/CRX/CRY) with no
+                # angle -- e.g. the malformed positional call
+                # `RZZ(q0, q1, 0.5)` that passes the angle as a qarg.
+                # Fail loud with a clear message (parity with the native
+                # `_emit_parameterized_gate` guard), not a raw IndexError
+                # when a callable spec indexes `p[0]`.
+                msg = f"AST -> Guppy v1: parameterized gate {node.gate.name} requires an angle parameter"
+                raise GuppyCodegenError(msg)
             resolved: list[float] = []
             for param in params:
                 if not isinstance(param, LiteralExpr) or not isinstance(param.value, (int, float)):

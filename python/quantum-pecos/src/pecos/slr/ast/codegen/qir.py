@@ -939,8 +939,12 @@ class AstToQir:
             # scalar (e.g. `If(m == 0)`, `o.set(m + n)`, Steane
             # `smid_flag_x`). SLR has no scalar-integer classical type
             # (verified: `pecos.slr.vars` exposes only Reg/CReg/Bit/
-            # SymbolicElem/LoopVar; `LoopVar` is the compile-time `For`
-            # index and is substituted before this point). The lowering
+            # SymbolicElem/LoopVar). A `LoopVar` used as a symbolic index
+            # is resolved by `For` unrolling; a `LoopVar` appearing as a
+            # bare classical scalar (e.g. `If(i == 0)`) is NOT substituted
+            # by `_process_for` and reaches here as `VarExpr(name="i")`,
+            # where `_require_creg` fails it loud (no CReg named `i`) --
+            # never silent-0. The lowering
             # is the existing i64 pack (`OR_i (zext c[i] << i)`)
             # factored out of `_generate_results` as `_pack_creg`. A
             # `VarExpr` whose name is not a declared Main-scope CReg

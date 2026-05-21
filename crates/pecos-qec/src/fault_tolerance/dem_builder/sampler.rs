@@ -1219,7 +1219,7 @@ impl<'a> DemSamplerBuilder<'a> {
         // A supplied measurement order must cover every measurement, otherwise
         // detector/observable record offsets validated against the circuit's
         // measurement count would resolve in a different (shorter/longer) frame
-        // at sample time and silently mis-map. (See sampler-JSON validation.)
+        // at sample time and silently misbind. (See sampler-JSON validation.)
         if let Some(ref order) = self.measurement_order {
             let expected = self.influence_map.measurements.len();
             if order.len() != expected {

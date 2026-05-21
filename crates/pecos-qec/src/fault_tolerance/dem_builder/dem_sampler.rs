@@ -2662,8 +2662,10 @@ mod tests {
     }
 
     /// Build an influence map for a circuit with `n` independent measurements
-    /// (no stable `MeasId`s, so meas_ids resolve positionally).
-    fn im_with_n_measurements(n: usize) -> crate::fault_tolerance::propagator::DagFaultInfluenceMap {
+    /// (no stable `MeasId`s, so `meas_ids` resolve positionally).
+    fn im_with_n_measurements(
+        n: usize,
+    ) -> crate::fault_tolerance::propagator::DagFaultInfluenceMap {
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
         use pecos_quantum::DagCircuit;
         let mut dag = DagCircuit::new();
@@ -2712,7 +2714,9 @@ mod tests {
         // downstream (the M-E sampler-validation gap). meas_ids resolve
         // positionally here because these circuits carry no stable ids; the
         // stamped-MeasId semantic is exercised from Python (mz_with_ids).
-        use super::super::builder::{parse_detector_record_vectors, parse_observable_record_vectors};
+        use super::super::builder::{
+            parse_detector_record_vectors, parse_observable_record_vectors,
+        };
         let im1 = im_with_n_measurements(1);
         let im3 = im_with_n_measurements(3);
         let im0 = im_with_n_measurements(0);
@@ -2724,9 +2728,15 @@ mod tests {
         assert!(parse_detector_record_vectors(r#"[{"id":0,"meas_ids":[0,999]}]"#, &im1).is_err());
         // Non-redundant co-present records + meas_ids (3-measurement circuit:
         // records[-1] -> index 2, meas_ids[0] -> index 0).
-        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im3).is_err());
+        assert!(
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im3)
+                .is_err()
+        );
         // Redundant co-presence is accepted (both -> index 0).
-        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im1).is_ok());
+        assert!(
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im1)
+                .is_ok()
+        );
         // Empty influence map keeps the opaque escape hatch (no range check).
         assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-99]}]"#, &im0).is_ok());
     }

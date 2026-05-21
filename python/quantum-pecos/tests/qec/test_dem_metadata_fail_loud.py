@@ -156,8 +156,12 @@ def test_dem_sampler_builder_out_of_range_record_fails_loud() -> None:
     from pecos_rslib.qec import DemSamplerBuilder
 
     im = DagFaultAnalyzer(_one_measurement_dag()).build_influence_map()
-    builder = DemSamplerBuilder(im).with_noise(**_NOISE).with_detectors_json(
-        '[{"id": 0, "records": [-1, -2]}]',  # -2 out of range for 1 measurement
+    builder = (
+        DemSamplerBuilder(im)
+        .with_noise(**_NOISE)
+        .with_detectors_json(
+            '[{"id": 0, "records": [-1, -2]}]',  # -2 out of range for 1 measurement
+        )
     )
     with pytest.raises(ValueError, match=r"out of range"):
         builder.build()
@@ -167,8 +171,12 @@ def test_dem_sampler_builder_out_of_range_observable_fails_loud() -> None:
     from pecos_rslib.qec import DemSamplerBuilder
 
     im = DagFaultAnalyzer(_one_measurement_dag()).build_influence_map()
-    builder = DemSamplerBuilder(im).with_noise(**_NOISE).with_observables_json(
-        '[{"id": 0, "records": [-1, -2]}]',
+    builder = (
+        DemSamplerBuilder(im)
+        .with_noise(**_NOISE)
+        .with_observables_json(
+            '[{"id": 0, "records": [-1, -2]}]',
+        )
     )
     with pytest.raises(ValueError, match=r"out of range"):
         builder.build()
@@ -178,8 +186,12 @@ def test_dem_sampler_builder_out_of_range_meas_id_fails_loud() -> None:
     from pecos_rslib.qec import DemSamplerBuilder
 
     im = DagFaultAnalyzer(_one_measurement_dag()).build_influence_map()
-    builder = DemSamplerBuilder(im).with_noise(**_NOISE).with_detectors_json(
-        '[{"id": 0, "meas_ids": [0, 999]}]',  # 999 absent / out of range
+    builder = (
+        DemSamplerBuilder(im)
+        .with_noise(**_NOISE)
+        .with_detectors_json(
+            '[{"id": 0, "meas_ids": [0, 999]}]',  # 999 absent / out of range
+        )
     )
     with pytest.raises(ValueError, match=r"not present|out of range"):
         builder.build()
@@ -190,9 +202,14 @@ def test_dem_sampler_builder_valid_metadata_still_builds() -> None:
     from pecos_rslib.qec import DemSamplerBuilder
 
     im = DagFaultAnalyzer(_one_measurement_dag()).build_influence_map()
-    sampler = DemSamplerBuilder(im).with_noise(**_NOISE).with_detectors_json(
-        '[{"id": 0, "records": [-1]}]',
-    ).build()
+    sampler = (
+        DemSamplerBuilder(im)
+        .with_noise(**_NOISE)
+        .with_detectors_json(
+            '[{"id": 0, "records": [-1]}]',
+        )
+        .build()
+    )
     assert sampler is not None
 
 
@@ -216,8 +233,12 @@ def test_dem_sampler_builder_resolves_stamped_meas_ids() -> None:
     ).build()
 
     # Stamped id 0 is absent -> fail loud (positional would have accepted index 0).
-    builder = DemSamplerBuilder(im).with_noise(**_NOISE).with_detectors_json(
-        '[{"id": 0, "meas_ids": [0]}]',
+    builder = (
+        DemSamplerBuilder(im)
+        .with_noise(**_NOISE)
+        .with_detectors_json(
+            '[{"id": 0, "meas_ids": [0]}]',
+        )
     )
     with pytest.raises(ValueError, match=r"not present|out of range"):
         builder.build()
@@ -226,7 +247,7 @@ def test_dem_sampler_builder_resolves_stamped_meas_ids() -> None:
 def test_dem_sampler_builder_rejects_inconsistent_measurement_order() -> None:
     """A measurement_order must cover every measurement; a shorter order would
     let validated record offsets resolve in a different frame and silently
-    mis-map (the count-frame hole)."""
+    misbind (the count-frame hole)."""
     from pecos_rslib.qec import DemSamplerBuilder
 
     dag = DagCircuit()
@@ -258,8 +279,12 @@ def test_dem_sampler_builder_rejects_duplicate_stamped_meas_ids() -> None:
     tc.tick().mz_with_ids([0, 1], [7, 7])  # duplicate stamped id 7
     im = DagFaultAnalyzer(tc.to_dag_circuit()).build_influence_map()
 
-    builder = DemSamplerBuilder(im).with_noise(**_NOISE).with_detectors_json(
-        '[{"id": 0, "meas_ids": [7]}]',
+    builder = (
+        DemSamplerBuilder(im)
+        .with_noise(**_NOISE)
+        .with_detectors_json(
+            '[{"id": 0, "meas_ids": [7]}]',
+        )
     )
     with pytest.raises(ValueError, match=r"duplicate stable MeasId"):
         builder.build()

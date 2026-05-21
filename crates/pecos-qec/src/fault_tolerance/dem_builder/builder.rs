@@ -1454,7 +1454,9 @@ pub(crate) fn parse_detector_record_vectors(
     reject_duplicate_stamped_meas_ids(influence_map)?;
     parse_detectors_json(json)?
         .iter()
-        .map(|d| resolve_sampler_record_vector("Detector", d.id, &d.records, &d.meas_ids, influence_map))
+        .map(|d| {
+            resolve_sampler_record_vector("Detector", d.id, &d.records, &d.meas_ids, influence_map)
+        })
         .collect()
 }
 
@@ -1466,7 +1468,15 @@ pub(crate) fn parse_observable_record_vectors(
     reject_duplicate_stamped_meas_ids(influence_map)?;
     parse_observables_json(json)?
         .iter()
-        .map(|o| resolve_sampler_record_vector("Observable", o.id, &o.records, &o.meas_ids, influence_map))
+        .map(|o| {
+            resolve_sampler_record_vector(
+                "Observable",
+                o.id,
+                &o.records,
+                &o.meas_ids,
+                influence_map,
+            )
+        })
         .collect()
 }
 
@@ -1499,7 +1509,10 @@ fn resolve_sampler_meas_id(influence_map: &DagFaultInfluenceMap, meas_id: usize)
     if influence_map.meas_ids.is_empty() {
         (meas_id < influence_map.measurements.len()).then_some(meas_id)
     } else {
-        influence_map.meas_ids.iter().position(|mid| mid.0 == meas_id)
+        influence_map
+            .meas_ids
+            .iter()
+            .position(|mid| mid.0 == meas_id)
     }
 }
 

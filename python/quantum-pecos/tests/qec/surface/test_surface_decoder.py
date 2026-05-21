@@ -382,17 +382,30 @@ class TestDemGeneration:
         # abstract source
         abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="Z", ancilla_budget=2)
         cached_abstract = generate_circuit_level_dem_from_builder(
-            patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=2,
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            ancilla_budget=2,
         )
         assert cached_abstract == generate_dem_from_tick_circuit(abstract_tc, **params, decompose_errors=False)
 
         # traced_qis source
         _require_selene_runtime()
         traced_tc = _build_surface_tick_circuit_for_native_model(
-            patch, 2, "Z", ancilla_budget=2, circuit_source="traced_qis",
+            patch,
+            2,
+            "Z",
+            ancilla_budget=2,
+            circuit_source="traced_qis",
         )
         cached_traced = generate_circuit_level_dem_from_builder(
-            patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=2, circuit_source="traced_qis",
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            ancilla_budget=2,
+            circuit_source="traced_qis",
         )
         assert cached_traced == generate_dem_from_tick_circuit(traced_tc, **params, decompose_errors=False)
 
@@ -416,10 +429,18 @@ class TestDemGeneration:
 
         dem_none = generate_circuit_level_dem_from_builder(patch, num_rounds=2, noise=noise, basis="Z")
         dem_total = generate_circuit_level_dem_from_builder(
-            patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=total,
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            ancilla_budget=total,
         )
         dem_huge = generate_circuit_level_dem_from_builder(
-            patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=10**6,
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            ancilla_budget=10**6,
         )
         assert dem_none == dem_total == dem_huge
 
@@ -433,13 +454,22 @@ class TestDemGeneration:
         patch = SurfacePatch.create(distance=3)
         noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
         abstract_tc = _build_surface_tick_circuit_for_native_model(
-            patch, 2, "Z", ancilla_budget=2, circuit_source="abstract",
+            patch,
+            2,
+            "Z",
+            ancilla_budget=2,
+            circuit_source="abstract",
         )
         expected_detectors = int(abstract_tc.get_meta("num_detectors"))
 
         for model in ("dem", "influence_dem", "mnm"):
             sampler = build_native_sampler(
-                patch, num_rounds=2, noise=noise, basis="Z", ancilla_budget=2, sampling_model=model,
+                patch,
+                num_rounds=2,
+                noise=noise,
+                basis="Z",
+                ancilla_budget=2,
+                sampling_model=model,
             )
             assert sampler.num_detectors == expected_detectors
 

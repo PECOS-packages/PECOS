@@ -91,7 +91,4 @@ def batched_stabilizers(
     stabilizers.extend(("Z", stab.index) for stab in geom.z_stabilizers)
     stabilizers.sort(key=lambda stab: (stab[1], 0 if stab[0] == "X" else 1))
 
-    return [
-        stabilizers[start : start + effective_budget]
-        for start in range(0, len(stabilizers), effective_budget)
-    ]
+    return [stabilizers[start : start + effective_budget] for start in range(0, len(stabilizers), effective_budget)]

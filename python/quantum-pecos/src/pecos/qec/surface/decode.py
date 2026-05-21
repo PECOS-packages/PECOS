@@ -701,8 +701,7 @@ def _chunk_has_lowerable_op(chunk: dict[str, Any]) -> bool:
     those legitimately has no lowered ops.
     """
     return any(
-        isinstance(op, dict) and ("Quantum" in op or "AllocateQubit" in op)
-        for op in (chunk.get("operations") or [])
+        isinstance(op, dict) and ("Quantum" in op or "AllocateQubit" in op) for op in (chunk.get("operations") or [])
     )
 
 

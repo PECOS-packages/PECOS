@@ -424,6 +424,11 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_literal(self, node: LiteralExpr) -> str:
         """Visit literal expression."""
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        if isinstance(node.value, Angle):
+            # Round-trip the source unit: `rad(0.5)` / `turns(0.25)`.
+            return node.value.slr_repr()
         if isinstance(node.value, bool):
             return "True" if node.value else "False"
         if isinstance(node.value, float):

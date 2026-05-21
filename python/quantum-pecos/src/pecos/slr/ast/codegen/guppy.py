@@ -19,7 +19,6 @@ which local owns each logical slot while recursive descent emits statements.
 
 from __future__ import annotations
 
-import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -103,7 +102,8 @@ FUNCTIONAL_GATES: dict[GateKind, str] = {
 
 # Native Guppy parameterized rotation gates: `fn(qubit..., angle)`.
 # Guppy's `angle` type stores half-turns (pi radians = 1.0 half-turn),
-# so a radians value theta is emitted as `angle(theta / pi)`.
+# which is exactly `angle64.to_half_turns_signed()`, so the angle is
+# emitted as `angle(<half_turns>)` with no radians/pi conversion.
 PARAMETERIZED_FUNCTIONAL_GATES: dict[GateKind, str] = {
     GateKind.RX: "rx",
     GateKind.RY: "ry",
@@ -119,8 +119,9 @@ FUNCTIONAL_GATE_IMPORTS = ", ".join(
 # Each step is (guppy_fn, qubit_idx_tuple_into_targets, angle_spec) in
 # CIRCUIT order (first applied first). angle_spec is:
 #   None                          -> non-parameterized gate: fn(q...)
-#   float (radians)               -> constant angle: fn(q..., angle(r/pi))
-#   Callable[[input_params], float] -> angle from the input gate's params
+#   float (half-turns)            -> constant angle: fn(q..., angle(h))
+#   Callable[[input_params], float] -> angle (half-turns) from the input
+#                                      gate's params (also half-turns)
 # The 1q-Clifford sequences mirror the dual-reviewed QIR `_GATE_DECOMP`;
 # the 2q sqrt-Paulis use the native `zz_phase` (= RZZ, qsystem Quantinuum
 # extension); CRX/CRY conjugate the native `crz`.
@@ -135,19 +136,19 @@ GUPPY_GATE_DECOMP: dict[GateKind, tuple[_GuppyDecompStep, ...]] = {
     GateKind.F4: (("h", (0,), None), ("sdg", (0,), None)),
     GateKind.F4dg: (("s", (0,), None), ("h", (0,), None)),
     # ---- two-qubit sqrt-Paulis via native zz_phase (= RZZ) ----
-    GateKind.SZZ: (("zz_phase", (0, 1), math.pi / 2),),
-    GateKind.SZZdg: (("zz_phase", (0, 1), -math.pi / 2),),
+    GateKind.SZZ: (("zz_phase", (0, 1), 0.5),),
+    GateKind.SZZdg: (("zz_phase", (0, 1), -0.5),),
     GateKind.SXX: (
         ("h", (0,), None),
         ("h", (1,), None),
-        ("zz_phase", (0, 1), math.pi / 2),
+        ("zz_phase", (0, 1), 0.5),
         ("h", (0,), None),
         ("h", (1,), None),
     ),
     GateKind.SXXdg: (
         ("h", (0,), None),
         ("h", (1,), None),
-        ("zz_phase", (0, 1), -math.pi / 2),
+        ("zz_phase", (0, 1), -0.5),
         ("h", (0,), None),
         ("h", (1,), None),
     ),
@@ -156,7 +157,7 @@ GUPPY_GATE_DECOMP: dict[GateKind, tuple[_GuppyDecompStep, ...]] = {
         ("sdg", (1,), None),
         ("h", (0,), None),
         ("h", (1,), None),
-        ("zz_phase", (0, 1), math.pi / 2),
+        ("zz_phase", (0, 1), 0.5),
         ("h", (0,), None),
         ("h", (1,), None),
         ("s", (0,), None),
@@ -167,7 +168,7 @@ GUPPY_GATE_DECOMP: dict[GateKind, tuple[_GuppyDecompStep, ...]] = {
         ("sdg", (1,), None),
         ("h", (0,), None),
         ("h", (1,), None),
-        ("zz_phase", (0, 1), -math.pi / 2),
+        ("zz_phase", (0, 1), -0.5),
         ("h", (0,), None),
         ("h", (1,), None),
         ("s", (0,), None),
@@ -196,6 +197,26 @@ GUPPY_GATE_DECOMP: dict[GateKind, tuple[_GuppyDecompStep, ...]] = {
 _ZZ_PHASE_GATES = frozenset(
     gk for gk, steps in GUPPY_GATE_DECOMP.items() if any(fn == "zz_phase" for fn, _, _ in steps)
 )
+
+
+def _param_to_half_turns(param: object, gate_name: str) -> float:
+    """Resolve a user gate angle param to signed half-turns for Guppy `angle`.
+
+    Guppy's `angle` is half-turn based (pi rad = 1.0), which is exactly
+    ``angle64.to_half_turns_signed()``. Requires a typed `Angle`
+    (`rad(...)` / `turns(...)`) -- a non-`Angle` param (bare float, or a
+    non-literal classical expression at a gate-param position) fails loud.
+    """
+    from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+    if not isinstance(param, LiteralExpr) or not isinstance(param.value, Angle):
+        msg = (
+            f"AST -> Guppy v1: parameterized gate {gate_name} requires a typed `Angle` "
+            f"parameter (use `rad(...)` / `turns(...)`); got {param!r}"
+        )
+        raise GuppyCodegenError(msg)
+    return param.value.value.to_half_turns_signed()
+
 
 BINARY_OP_TO_PYTHON: dict[BinaryOp, str] = {
     BinaryOp.ADD: "+",
@@ -1142,27 +1163,20 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _emit_parameterized_gate(self, node: GateOp) -> list[str]:
-        """Emit a native Guppy rotation: `fn(qubit..., angle(theta/pi))`.
+        """Emit a native Guppy rotation: `fn(qubit..., angle(half_turns))`.
 
         Guppy's `angle` stores half-turns (pi rad == 1.0 half-turn), so
-        a radians value `theta` becomes `angle(theta / pi)`. Only
-        literal angles are supported (a non-literal classical
-        expression at a gate-param position fails loud, mirroring the
-        QIR backend's parameterized-decomposition guard).
+        the typed `Angle` param is emitted via
+        ``angle64.to_half_turns_signed()`` -- no radians/pi conversion.
+        Only typed `Angle` params are supported (a bare float or a
+        non-literal classical expression at a gate-param position fails
+        loud, mirroring the QIR backend's parameterized guard).
         """
         gate = PARAMETERIZED_FUNCTIONAL_GATES[node.gate]
         if not node.params:
             msg = f"AST -> Guppy v1: parameterized gate {node.gate.name} requires an angle parameter"
             raise GuppyCodegenError(msg)
-        angle_args = []
-        for param in node.params:
-            if not isinstance(param, LiteralExpr) or not isinstance(param.value, (int, float)):
-                msg = (
-                    f"AST -> Guppy v1: parameterized gate {node.gate.name} requires literal "
-                    f"angle parameters; got non-literal {param!r}"
-                )
-                raise GuppyCodegenError(msg)
-            angle_args.append(f"angle({float(param.value) / math.pi})")
+        angle_args = [f"angle({_param_to_half_turns(param, node.gate.name)})" for param in node.params]
         angle_str = ", ".join(angle_args)
 
         slots = [self._slot_from_ref(target) for target in node.targets]
@@ -1216,16 +1230,9 @@ class AstToGuppy:
                 # when a callable spec indexes `p[0]`.
                 msg = f"AST -> Guppy v1: parameterized gate {node.gate.name} requires an angle parameter"
                 raise GuppyCodegenError(msg)
-            resolved: list[float] = []
-            for param in params:
-                if not isinstance(param, LiteralExpr) or not isinstance(param.value, (int, float)):
-                    msg = (
-                        f"AST -> Guppy v1: parameterized decomposition of {node.gate.name} "
-                        f"requires literal angle parameters; got non-literal {param!r}"
-                    )
-                    raise GuppyCodegenError(msg)
-                resolved.append(float(param.value))
-            resolved_params = tuple(resolved)
+            # User params resolve to half-turns; the forwarding lambdas
+            # (`p[0]`) then carry half-turns, matching the constant specs.
+            resolved_params = tuple(_param_to_half_turns(param, node.gate.name) for param in params)
 
         linearity = self._linearity()
         lines: list[str] = []
@@ -1236,7 +1243,7 @@ class AstToGuppy:
                 angle_arg = ""
             else:
                 theta = angle_spec(resolved_params) if callable(angle_spec) else angle_spec
-                angle_arg = f", angle({float(theta) / math.pi})"
+                angle_arg = f", angle({float(theta)})"
             if len(idxs) == 1:
                 local = locals_[0]
                 lines.append(f"{self.context.indent()}{local} = {fn}({local}{angle_arg})")

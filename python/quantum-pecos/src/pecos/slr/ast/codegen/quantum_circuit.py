@@ -363,14 +363,19 @@ class AstToQuantumCircuit:
         BinaryExpr at gate-param position) are not yet supported for
         QC parameterized gates; they fail loud here.
         """
-        try:
-            angles = [float(p.value if isinstance(p, LiteralExpr) else p) for p in node.params]
-        except (AttributeError, TypeError) as exc:
-            msg = (
-                f"QuantumCircuit codegen: parameterized gate {gate_name!r} "
-                f"requires literal-float params; got non-literal: {node.params}."
-            )
-            raise NotImplementedError(msg) from exc
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        # Typed-angle guard: a user/direct-AST parameterized gate's params
+        # must be typed `Angle` literals (matches Guppy + the typed-AST
+        # contract); reject bare floats so backends do not diverge.
+        for p in node.params:
+            if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
+                msg = (
+                    f"QuantumCircuit codegen: parameterized gate {gate_name!r} requires typed `Angle` "
+                    f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+                )
+                raise NotImplementedError(msg)
+        angles = [p.value.value.to_radians_signed() for p in node.params]
 
         self._flush_tick()
         if node.gate in TWO_QUBIT_GATES:

@@ -15,7 +15,7 @@ These tests verify that both paths produce equivalent output.
 """
 
 import pytest
-from pecos.slr import CReg, If, Main, Permute, QReg, Repeat
+from pecos.slr import CReg, If, Main, Permute, QReg, Repeat, rad
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.codegen import generate
 from pecos.slr.gen_codes import (
@@ -355,7 +355,7 @@ class TestRotationGatesEquivalence:
 
         prog = Main(
             q := QReg("q", 1),
-            qb.RX(math.pi / 4, q[0]),
+            qb.RX(rad(math.pi / 4), q[0]),
         )
 
         # AST path first
@@ -376,7 +376,7 @@ class TestRotationGatesEquivalence:
 
         prog = Main(
             q := QReg("q", 1),
-            qb.RY(math.pi / 2, q[0]),
+            qb.RY(rad(math.pi / 2), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -395,7 +395,7 @@ class TestRotationGatesEquivalence:
 
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ(math.pi, q[0]),
+            qb.RZ(rad(math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -414,9 +414,9 @@ class TestRotationGatesEquivalence:
 
         prog = Main(
             q := QReg("q", 2),
-            qb.RX(math.pi / 4, q[0]),
-            qb.RY(math.pi / 2, q[1]),
-            qb.RZ(math.pi, q[0]),
+            qb.RX(rad(math.pi / 4), q[0]),
+            qb.RY(rad(math.pi / 2), q[1]),
+            qb.RZ(rad(math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -666,9 +666,9 @@ class TestComplexCircuitEquivalence:
         prog = Main(
             q := QReg("q", 3),
             qb.H(q[0]),
-            qb.RZ(math.pi / 2, q[0]),
+            qb.RZ(rad(math.pi / 2), q[0]),
             qb.H(q[1]),
-            qb.RZ(math.pi / 4, q[1]),
+            qb.RZ(rad(math.pi / 4), q[1]),
             qb.H(q[2]),
         )
 

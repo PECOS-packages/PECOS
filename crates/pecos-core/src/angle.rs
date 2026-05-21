@@ -148,6 +148,46 @@ where
         }
     }
 
+    /// Converts the angle to turns in `[0, 1)` (the inverse of `from_turns`).
+    ///
+    /// # Panics
+    /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
+    pub fn to_turns(&self) -> f64 {
+        let max_value = T::max_value()
+            .to_f64()
+            .expect("Failed to convert max_value to f64");
+        self.fraction
+            .to_f64()
+            .expect("Failed to convert fraction to f64")
+            / max_value
+    }
+
+    /// Converts the angle to signed turns in `(-0.5, 0.5]`.
+    pub fn to_turns_signed(&self) -> f64 {
+        let t = self.to_turns();
+        if t > 0.5 { t - 1.0 } else { t }
+    }
+
+    /// Converts the angle to half-turns in `[0, 2)` (π radians = 1 half-turn).
+    ///
+    /// Half-turns are the unit used by some backends (e.g. Guppy's `angle`),
+    /// where a full turn is `2.0`.
+    ///
+    /// # Panics
+    /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
+    pub fn to_half_turns(&self) -> f64 {
+        self.to_turns() * 2.0
+    }
+
+    /// Converts the angle to signed half-turns in `(-1, 1]`.
+    ///
+    /// Like [`Self::to_radians_signed`], this principal-value form avoids the
+    /// spurious global phase that the unsigned `[0, 2)` form introduces when a
+    /// half-angle (`θ/2`) computation crosses the 2π wrap point.
+    pub fn to_half_turns_signed(&self) -> f64 {
+        self.to_turns_signed() * 2.0
+    }
+
     /// Creates an angle from a value in radians.
     ///
     /// # Panics
@@ -667,6 +707,35 @@ mod tests {
     use super::*;
     use rand::RngExt;
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
+
+    #[test]
+    fn test_to_turns_and_half_turns() {
+        // Quarter turn = pi/2 rad = 0.25 turns = 0.5 half-turns.
+        let q = Angle64::QUARTER_TURN;
+        assert!((q.to_turns() - 0.25).abs() < 1e-12);
+        assert!((q.to_half_turns() - 0.5).abs() < 1e-12);
+        assert!((q.to_turns_signed() - 0.25).abs() < 1e-12);
+        assert!((q.to_half_turns_signed() - 0.5).abs() < 1e-12);
+
+        // Half-turn boundary: to_turns stays unsigned (0.5), signed maps to 0.5.
+        let h = Angle64::HALF_TURN;
+        assert!((h.to_turns() - 0.5).abs() < 1e-12);
+        assert!((h.to_half_turns() - 1.0).abs() < 1e-12);
+
+        // Three-quarter turn: unsigned 0.75 turns; signed wraps to -0.25 turns
+        // (-0.5 half-turns), mirroring to_radians_signed.
+        let tq = Angle64::THREE_QUARTERS_TURN;
+        assert!((tq.to_turns() - 0.75).abs() < 1e-12);
+        assert!((tq.to_turns_signed() - (-0.25)).abs() < 1e-12);
+        assert!((tq.to_half_turns_signed() - (-0.5)).abs() < 1e-12);
+
+        // half-turns == radians / pi for the unsigned form.
+        let a = Angle64::from_radians(0.7);
+        assert!((a.to_half_turns() - a.to_radians() / PI).abs() < 1e-9);
+        // round-trip turns.
+        let b = Angle64::from_turns(0.3);
+        assert!((b.to_turns() - 0.3).abs() < 1e-9);
+    }
 
     // Basic Construction and Properties
     #[test]

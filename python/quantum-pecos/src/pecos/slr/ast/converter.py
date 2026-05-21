@@ -993,6 +993,16 @@ class SlrToAst:
         if expr is None:
             return LiteralExpr(value=0)
 
+        # Typed angle (rotation-gate parameter). Stored verbatim in the
+        # literal so pretty-print can round-trip the source unit and each
+        # backend can unwrap to the underlying `angle64`. Must come before
+        # the generic `hasattr(expr, "value")` fallback, which would strip
+        # the wrapper down to the bare `angle64` and lose the unit.
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        if isinstance(expr, Angle):
+            return LiteralExpr(value=expr)
+
         # Literal values
         if isinstance(expr, bool | int | float):
             return LiteralExpr(value=expr)

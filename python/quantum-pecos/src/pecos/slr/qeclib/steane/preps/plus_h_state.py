@@ -17,6 +17,7 @@ fault-tolerant distillation and verification protocols.
 
 import pecos as pc
 from pecos.slr import Bit, Block, Comment, CReg, If, QReg, Repeat
+from pecos.slr.angle import rad
 from pecos.slr.misc import Return
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.generic.check_1flag import Check1Flag
@@ -82,7 +83,7 @@ class PrepHStateFT(Block):
         # ----------------------------------------
         self.extend(
             qubit.PZ(d[6]),
-            qubit.RY(pc.f64.frac_pi_4, d[6]),
+            qubit.RY(rad(pc.f64.frac_pi_4), d[6]),
             EncodingCircuit(d),
         )
 

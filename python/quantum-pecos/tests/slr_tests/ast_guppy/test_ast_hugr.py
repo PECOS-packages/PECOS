@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from pecos.slr import CReg, For, LoopVar, Main, QReg, Repeat, Return, SlrConverter, While
+from pecos.slr import CReg, For, LoopVar, Main, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.ast.codegen.guppy import GuppyCodegenError
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
@@ -88,7 +88,7 @@ def test_angle_first_misuse_fails_loud_at_call() -> None:
 
     # (3) Non-qubit in a qubit slot (`RX(0.5, 0.7)`).
     with pytest.raises(TypeError, match=r"RX: a non-qubit .* qubit position"):
-        qb.RX(0.5, 0.7)
+        qb.RX(rad(0.5), 0.7)
 
     # (4) Classical register/bit in a qubit slot (Codex reconfirm
     #     blocker): `CReg`/`Bit`/`SymbolicBit` are `Var` subclasses
@@ -98,11 +98,19 @@ def test_angle_first_misuse_fails_loud_at_call() -> None:
     #     quantum qubit shapes (Qubit/QReg/SymbolicQubit).
     c = CReg("c", 1)
     with pytest.raises(TypeError, match=r"RX: a classical register/bit .* qubit position"):
-        qb.RX(0.5, c[0])
+        qb.RX(rad(0.5), c[0])
     with pytest.raises(TypeError, match=r"RX: a classical register/bit .* qubit position"):
-        qb.RX(0.5, c)
+        qb.RX(rad(0.5), c)
     with pytest.raises(TypeError, match=r"RZZ: a classical register/bit .* qubit position"):
-        qb.RZZ(0.5, q[0], c[0])
+        qb.RZZ(rad(0.5), q[0], c[0])
+
+    # (5) v2 typed-angle: a bare numeric angle (no rad()/turns()) is
+    #     rejected at the call -- even though the Rust `AngleParam`
+    #     extractor would accept a bare f64, SLR requires a typed Angle.
+    with pytest.raises(TypeError, match=r"RX: bare numeric angle .* no longer accepted"):
+        qb.RX(0.5, q[0])
+    with pytest.raises(TypeError, match=r"RZZ: bare numeric angle .* no longer accepted"):
+        qb.RZZ(0.5, q[0], q[1])
 
 
 def test_codegen_arity_guard_rejects_malformed_param_gate() -> None:

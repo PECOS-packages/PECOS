@@ -1,7 +1,7 @@
 """Tests for Stim circuit to/from SLR conversion."""
 
 import pytest
-from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
+from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -348,7 +348,7 @@ def test_unsupported_gate_fails_loud() -> None:
     emitting the circuit without it is the bug.
     """
     q = QReg("q", 1)
-    prog = Main(q, qubit.RX(0.5, q[0]))
+    prog = Main(q, qubit.RX(rad(0.5), q[0]))
     with pytest.raises(NotImplementedError, match=r"has no Stim lowering"):
         SlrConverter(prog).stim()
 

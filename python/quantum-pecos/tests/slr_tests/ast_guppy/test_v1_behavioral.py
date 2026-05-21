@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import math
 
-from pecos.slr import CReg, If, Main, Permute, QReg, Return
+from pecos.slr import CReg, If, Main, Permute, QReg, Return, rad
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 from pecos.slr.qeclib.steane.steane_class import Steane
@@ -442,7 +442,7 @@ class TestNativeGuppyGates:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.RX(math.pi, q[0]),
+            qb.RX(rad(math.pi), q[0]),
             Measure(q[0]) > c[0],
             Return(c),
         )
@@ -453,8 +453,8 @@ class TestNativeGuppyGates:
         halves = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.RX(math.pi / 2, q[0]),
-            qb.RX(math.pi / 2, q[0]),
+            qb.RX(rad(math.pi / 2), q[0]),
+            qb.RX(rad(math.pi / 2), q[0]),
             Measure(q[0]) > c[0],
             Return(c),
         )
@@ -466,7 +466,7 @@ class TestNativeGuppyGates:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.RY(math.pi, q[0]),
+            qb.RY(rad(math.pi), q[0]),
             Measure(q[0]) > c[0],
             Return(c),
         )
@@ -482,7 +482,7 @@ class TestNativeGuppyGates:
             q := QReg("q", 1),
             c := CReg("c", 1),
             qb.H(q[0]),
-            qb.RZ(math.pi, q[0]),
+            qb.RZ(rad(math.pi), q[0]),
             qb.H(q[0]),
             Measure(q[0]) > c[0],
             Return(c),
@@ -501,7 +501,7 @@ class TestNativeGuppyGates:
             c := CReg("c", 1),
             qb.X(q[0]),
             qb.H(q[1]),
-            qb.CRZ(math.pi, q[0], q[1]),
+            qb.CRZ(rad(math.pi), q[0], q[1]),
             qb.H(q[1]),
             Measure(q[1]) > c[0],
             Return(c),
@@ -585,7 +585,7 @@ class TestDecomposedGuppyGates:
             c := CReg("c", 2),
             qb.H(q[0]),
             qb.H(q[1]),
-            qb.RZZ(math.pi, q[0], q[1]),
+            qb.RZZ(rad(math.pi), q[0], q[1]),
             qb.H(q[0]),
             qb.H(q[1]),
             Measure(q[0]) > c[0],
@@ -644,7 +644,7 @@ class TestDecomposedGuppyGates:
             c := CReg("c", 1),
             qb.X(q[0]),
             qb.H(q[1]),
-            qb.CRX(math.pi, q[0], q[1]),
+            qb.CRX(rad(math.pi), q[0], q[1]),
             qb.H(q[1]),
             Measure(q[1]) > c[0],
             Return(c),
@@ -655,7 +655,7 @@ class TestDecomposedGuppyGates:
             c := CReg("c", 1),
             qb.X(q[0]),
             qb.H(q[1]),
-            qb.CRY(math.pi, q[0], q[1]),
+            qb.CRY(rad(math.pi), q[0], q[1]),
             qb.H(q[1]),
             Measure(q[1]) > c[0],
             Return(c),

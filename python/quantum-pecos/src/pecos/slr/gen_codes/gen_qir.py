@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib_llvm import binding, ir
 
-from pecos.slr import Block, If, Repeat
+from pecos.slr import Angle, Block, If, Repeat
 from pecos.slr.cops import (
     NEG,
     NOT,
@@ -806,7 +806,13 @@ class QIRGenerator(Generator):
         gate_declaration = self._gate_declaration_cache[gate.sym]
         gate_args = []
         if gate.has_parameters:
-            gate_args = [ir.Constant(self._types.double_type, param) for param in gate.params]
+            gate_args = [
+                ir.Constant(
+                    self._types.double_type,
+                    param.value.to_radians_signed() if isinstance(param, Angle) else float(param),
+                )
+                for param in gate.params
+            ]
         gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in qargs])
 
         # Create the actual invocation on the builder using the args passed in

@@ -42,7 +42,22 @@ from typing import TYPE_CHECKING
 
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule
-from pecos.slr import Barrier, Block, CReg, For, If, LoopVar, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
+from pecos.slr import (
+    Barrier,
+    Block,
+    CReg,
+    For,
+    If,
+    LoopVar,
+    Main,
+    Parallel,
+    QReg,
+    Repeat,
+    Return,
+    SlrConverter,
+    While,
+    rad,
+)
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.color488 import Color488Patch
 from pecos.slr.qeclib.generic.check import Check
@@ -622,7 +637,7 @@ def _docs_rotation_rx_probe() -> Block:
     return Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
-        qb.RX(0.5, q[0]),
+        qb.RX(rad(0.5), q[0]),
         Measure(q) > c,
         Return(c),
     )

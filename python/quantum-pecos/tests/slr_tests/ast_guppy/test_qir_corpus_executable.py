@@ -72,7 +72,7 @@ import re
 from collections.abc import Callable
 
 import pytest
-from pecos.slr import CReg, Main, QReg, Return, SlrConverter
+from pecos.slr import CReg, Main, QReg, Return, SlrConverter, rad
 from pecos.slr.qeclib import qubit as qb
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -238,7 +238,7 @@ _MANIFEST: dict[str, tuple[str, _Spec]] = {
     ),
     "docs.rotation_rx": (
         "X",
-        "#97 (angle-first SLR API): `RX(0.5, q)` builds + lowers via "
+        "#97/v2 (typed angle-first SLR API): `RX(rad(0.5), q)` builds + lowers via "
         "qir_to_qis (rx is qir-qis-allowlisted), but rx(0.5) is "
         "NON-CLIFFORD so it cannot execute on the Stim backend this "
         "suite uses -- excluded from the executable record (rx "
@@ -614,12 +614,12 @@ def test_controlled_rotations_executable() -> None:
 
     import math as _math
 
-    crx_pi = lambda q: qb.CRX(_math.pi, q[0], q[1])  # noqa: E731
-    cry_pi = lambda q: qb.CRY(_math.pi, q[0], q[1])  # noqa: E731
-    crz_pi = lambda q: qb.CRZ(_math.pi, q[0], q[1])  # noqa: E731
-    crx_half = lambda q: qb.CRX(_math.pi / 2, q[0], q[1])  # noqa: E731
-    cry_half = lambda q: qb.CRY(_math.pi / 2, q[0], q[1])  # noqa: E731
-    crz_half = lambda q: qb.CRZ(_math.pi / 2, q[0], q[1])  # noqa: E731
+    crx_pi = lambda q: qb.CRX(rad(_math.pi), q[0], q[1])  # noqa: E731
+    cry_pi = lambda q: qb.CRY(rad(_math.pi), q[0], q[1])  # noqa: E731
+    crz_pi = lambda q: qb.CRZ(rad(_math.pi), q[0], q[1])  # noqa: E731
+    crx_half = lambda q: qb.CRX(rad(_math.pi / 2), q[0], q[1])  # noqa: E731
+    cry_half = lambda q: qb.CRY(rad(_math.pi / 2), q[0], q[1])  # noqa: E731
+    crz_half = lambda q: qb.CRZ(rad(_math.pi / 2), q[0], q[1])  # noqa: E731
     x_q0 = lambda q: qb.X(q[0])  # noqa: E731
     h_q1 = lambda q: qb.H(q[1])  # noqa: E731
 

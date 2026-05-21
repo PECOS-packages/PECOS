@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pecos.slr.angle import Angle
+
 
 # =============================================================================
 # Source Location
@@ -266,9 +268,9 @@ class Expression(AstNode):
 
 @dataclass(frozen=True, kw_only=True)
 class LiteralExpr(Expression):
-    """Literal value (int, float, bool)."""
+    """Literal value (int, float, bool, or a typed rotation `Angle`)."""
 
-    value: int | float | bool
+    value: int | float | bool | Angle
 
 
 @dataclass(frozen=True, kw_only=True)

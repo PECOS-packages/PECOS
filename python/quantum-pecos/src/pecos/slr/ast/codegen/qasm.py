@@ -334,6 +334,20 @@ class AstToQasm(BaseVisitor[list[str]]):
             )
             raise NotImplementedError(msg)
 
+        # Typed-angle guard: a user/direct-AST parameterized gate's params
+        # must be typed `Angle` literals (matches Guppy + the typed-AST
+        # contract); reject bare floats so backends do not diverge.
+        if node.gate.is_parameterized:
+            from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+            for p in node.params:
+                if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
+                    msg = (
+                        f"QASM codegen: parameterized gate {node.gate.name!r} requires typed `Angle` "
+                        f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+                    )
+                    raise NotImplementedError(msg)
+
         # Handle special face rotation gates
         if node.gate == GateKind.F:
             for target in node.targets:
@@ -810,6 +824,11 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def _render_literal(self, node: LiteralExpr) -> str:
         """Render a literal value."""
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        if isinstance(node.value, Angle):
+            # OpenQASM rotations are in radians; signed principal value.
+            return str(node.value.value.to_radians_signed())
         return str(node.value)
 
     def _render_binary(self, node: BinaryExpr) -> str:

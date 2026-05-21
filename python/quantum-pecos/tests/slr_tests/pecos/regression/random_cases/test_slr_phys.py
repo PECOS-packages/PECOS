@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from pecos.slr import Barrier, Block, Comment, CReg, If, Main, Parallel, QReg, Repeat, Return, SlrConverter
+from pecos.slr import Barrier, Block, Comment, CReg, If, Main, Parallel, QReg, Repeat, Return, SlrConverter, rad
 from pecos.slr.qeclib import qubit as p
 from pecos.slr.qeclib.steane.steane_class import Steane
 
@@ -126,7 +126,7 @@ def test_control_flow_qir() -> None:
             ),
         )
         .Else(
-            p.RX(0.3, q[0]),
+            p.RX(rad(0.3), q[0]),
         ),
         If(m < m_hidden).Then(
             p.H(q[0]),
@@ -136,13 +136,13 @@ def test_control_flow_qir() -> None:
         p.SZdg(q[0]),
         p.CX(q[0], q[1]),
         Barrier(q[1], q[0]),
-        p.RX(0.3, q[0]),
+        p.RX(rad(0.3), q[0]),
         p.Measure(q) > m,
         Return(m),
     )
     # B1: whole-CReg scalar conditions (`If(m == 0)` / `If(m <
     # m_hidden)`) are now lowered via `_pack_creg` + `_op_map`; the
-    # QIR builds. CAVEAT: the `RX(0.3, q)` rotations DO build + lower
+    # QIR builds. CAVEAT: the `RX(rad(0.3), q)` rotations DO build + lower
     # (#97 angle-first API; `rx` is qir-qis-allowlisted), but rx(0.3)
     # is NON-CLIFFORD so the program cannot execute on the Stim
     # backend -- it is build-/lower-only here, NOT end-to-end. (The
@@ -350,9 +350,9 @@ def test_parallel_in_control_flow_qir() -> None:
         ),
         Repeat(2).block(
             Parallel(
-                p.RX(0.5, q[0]),
-                p.RY(0.5, q[1]),
-                p.RZ(0.5, q[2]),
+                p.RX(rad(0.5), q[0]),
+                p.RY(rad(0.5), q[1]),
+                p.RZ(rad(0.5), q[2]),
             ),
         ),
         p.Measure(q) > m,

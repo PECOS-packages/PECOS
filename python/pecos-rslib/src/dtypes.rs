@@ -3991,6 +3991,26 @@ impl ScalarAngle64 {
         self.value.to_radians_signed()
     }
 
+    /// Convert to turns (in [0, 1)) -- the inverse of `from_turns`
+    fn to_turns(&self) -> f64 {
+        self.value.to_turns()
+    }
+
+    /// Convert to signed turns (in (-0.5, 0.5])
+    fn to_turns_signed(&self) -> f64 {
+        self.value.to_turns_signed()
+    }
+
+    /// Convert to half-turns (in [0, 2)); pi radians = 1.0 half-turn
+    fn to_half_turns(&self) -> f64 {
+        self.value.to_half_turns()
+    }
+
+    /// Convert to signed half-turns (in (-1, 1])
+    fn to_half_turns_signed(&self) -> f64 {
+        self.value.to_half_turns_signed()
+    }
+
     /// Get the raw u64 fraction
     #[getter]
     fn fraction(&self) -> u64 {

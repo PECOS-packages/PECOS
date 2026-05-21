@@ -223,7 +223,7 @@ The `qeclib` module provides quantum operations organized by category:
 ### Qubit Operations (`pecos.slr.qeclib.qubit`)
 
 ```python
-from pecos.slr import Main, QReg, CReg
+from pecos.slr import Main, QReg, CReg, rad
 from pecos.slr.qeclib import qubit as qb
 
 prog = Main(
@@ -240,10 +240,10 @@ prog = Main(
     qb.SZdg(q[0]),  # S dagger
     qb.T(q[0]),  # T gate
     qb.Tdg(q[0]),  # T dagger
-    # Rotations (angle in radians)
-    qb.RX(q[0], 0.5),
-    qb.RY(q[0], 0.5),
-    qb.RZ(q[0], 0.5),
+    # Rotations (typed angle: rad(...) / turns(...))
+    qb.RX(rad(0.5), q[0]),
+    qb.RY(rad(0.5), q[0]),
+    qb.RZ(rad(0.5), q[0]),
     # Two-qubit gates
     qb.CX(q[0], q[1]),  # CNOT
     qb.CY(q[0], q[1]),

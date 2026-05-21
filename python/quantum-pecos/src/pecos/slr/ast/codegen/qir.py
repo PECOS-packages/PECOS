@@ -243,6 +243,46 @@ PARAMETERIZED_GATES = {GateKind.RX, GateKind.RY, GateKind.RZ, GateKind.RZZ}
 TWO_QUBIT_GATES = {GateKind.CX, GateKind.CZ, GateKind.RZZ}
 
 
+def _param_to_radians(p: object) -> float:
+    """Resolve a gate angle param to a signed-radians float.
+
+    Accepts a `LiteralExpr` wrapping either a typed `Angle` or a bare
+    number, or a raw number (decomposition steps thread raw floats).
+    Typed angles use the signed principal value so the float-based
+    decomposition arithmetic (`-theta/2`) avoids the global-phase flip
+    that the unsigned `[0, 2pi)` form would introduce at the wrap point.
+    """
+    from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+    value = p.value if isinstance(p, LiteralExpr) else p
+    if isinstance(value, Angle):
+        return value.value.to_radians_signed()
+    return float(value)
+
+
+def _require_typed_angle_params(node: GateOp, backend: str) -> None:
+    """Fail loud if a parameterized user gate has a non-`Angle` param.
+
+    Enforces the typed-AST-dialect contract uniformly across backends: a
+    parameterized `GateOp` reaching codegen from the user / direct-AST path
+    must carry typed `Angle` literals (`rad(...)` / `turns(...)`), not bare
+    floats. (Internal decomposition steps thread raw floats but reach the
+    per-gate emitters directly, not this top-level entry.)
+    """
+    from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+    if not node.gate.is_parameterized:
+        return
+    for p in node.params:
+        if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
+            gate_name = getattr(node.gate, "name", node.gate)
+            msg = (
+                f"{backend} codegen: parameterized gate {gate_name!r} requires typed `Angle` "
+                f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+            )
+            raise NotImplementedError(msg)
+
+
 @dataclass
 class QirCodeGenContext:
     """Context for QIR code generation."""
@@ -616,6 +656,12 @@ class AstToQir:
             )
             raise NotImplementedError(msg)
 
+        # Typed-angle guard: a user/direct-AST parameterized gate's params
+        # must be typed `Angle` literals (matches the Guppy backend and the
+        # typed-AST-dialect contract). Internal decomposition steps thread
+        # raw floats but reach `_process_*_gate` directly, bypassing here.
+        _require_typed_angle_params(node, "QIR")
+
         qir_name = GATE_TO_QIR.get(node.gate)
         if qir_name is None and node.gate in _GATE_DECOMP:
             # #93: a gate with no direct QIR primitive but a verified
@@ -635,9 +681,7 @@ class AstToQir:
                 prim_targets = tuple(node.targets[i] for i in idxs)
                 if callable(params_spec):
                     try:
-                        input_params_resolved = tuple(
-                            p.value if isinstance(p, LiteralExpr) else float(p) for p in input_params_raw
-                        )
+                        input_params_resolved = tuple(_param_to_radians(p) for p in input_params_raw)
                     except (AttributeError, TypeError) as exc:
                         msg = (
                             f"Parameterized decomposition of gate {node.gate.name} requires literal "
@@ -689,17 +733,10 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                # An angle param (e.g. `RX(0.5, q)`) reaches here as a
-                # `LiteralExpr`, not a raw number -- resolve it before
-                # `float()` (was a hard `TypeError` for parallel/
-                # control-flow rotations).
-                args.extend(
-                    llvm_ir.Constant(
-                        self._types["double"],
-                        float(p.value if isinstance(p, LiteralExpr) else p),
-                    )
-                    for p in node.params
-                )
+                # An angle param reaches here as a `LiteralExpr` wrapping a
+                # typed `Angle` (or a raw float from a decomposition step);
+                # resolve to signed radians for the QIR `double`.
+                args.extend(llvm_ir.Constant(self._types["double"], _param_to_radians(p)) for p in node.params)
             args.append(qubit_ptr)
 
             self._builder.call(gate_func, args, name="")
@@ -718,17 +755,10 @@ class AstToQir:
 
             args = []
             if node.gate in PARAMETERIZED_GATES and node.params:
-                # An angle param (e.g. `RX(0.5, q)`) reaches here as a
-                # `LiteralExpr`, not a raw number -- resolve it before
-                # `float()` (was a hard `TypeError` for parallel/
-                # control-flow rotations).
-                args.extend(
-                    llvm_ir.Constant(
-                        self._types["double"],
-                        float(p.value if isinstance(p, LiteralExpr) else p),
-                    )
-                    for p in node.params
-                )
+                # An angle param reaches here as a `LiteralExpr` wrapping a
+                # typed `Angle` (or a raw float from a decomposition step);
+                # resolve to signed radians for the QIR `double`.
+                args.extend(llvm_ir.Constant(self._types["double"], _param_to_radians(p)) for p in node.params)
             args.extend([q0_ptr, q1_ptr])
 
             self._builder.call(gate_func, args, name="")

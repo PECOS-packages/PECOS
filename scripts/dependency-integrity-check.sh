@@ -281,7 +281,7 @@ section "GitHub Actions action pinning"
 # correctly pinned action), whereas rg's regex engine always supports them.
 unpinned_actions="$(
     rg -n 'uses:[[:space:]]+[^[:space:]#]+@[^[:space:]#]+' .github/workflows .github/actions 2>/dev/null |
-        rg -v '@[0-9a-f]{40}([[:space:]#]|$)' ||
+        rg -v 'uses:[[:space:]]+[^[:space:]#]+@[0-9a-f]{40}([[:space:]#]|$)' ||
         true
 )"
 if [[ -n "$unpinned_actions" ]]; then

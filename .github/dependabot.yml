@@ -62,3 +62,18 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+
+  # Go (gomod) - security updates only. Watches the Go module that was
+  # previously uncovered (its transitive tree had accumulated advisories).
+  - package-ecosystem: "gomod"
+    directory: "/go/pecos"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      go-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]

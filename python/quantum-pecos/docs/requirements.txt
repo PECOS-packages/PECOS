@@ -1,4 +1,5 @@
 matplotlib==3.9.2
+pillow>=11.3.0  # security floor: Pillow is transitive via matplotlib; avoid known-vulnerable old releases
 networkx==3.3
 numpy==1.26.4
 scipy==1.14.1

@@ -57,7 +57,7 @@ test = [ # exact pins so workspace tests run against a reproducible environment
   "hypothesis==6.152.1",
   "stim==1.15.0",        # Stim-comparison and decomposition-invariant tests
   "matplotlib>=2.2.0",   # Surface-patch render tests import matplotlib directly
-  "qir-qis==0.1.8",      # QIR spec-compliance validation gate over the audit corpus (#71 Stage A)
+  "qir-qis==0.1.8",      # QIR spec-compliance validation gate over the audit corpus
 ]
 examples = [ # extras used by the examples/ tree and notebook walkthroughs
   "jupyter>=1.1.1",

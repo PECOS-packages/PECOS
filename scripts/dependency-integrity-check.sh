@@ -274,16 +274,14 @@ else
 fi
 
 section "GitHub Actions action pinning"
+# A `uses:` ref is pinned iff the ref after `@` is a 40-hex commit SHA.
+# Do the interval (`{40}`) match with rg rather than awk: ERE interval
+# expressions are not supported by every host awk (a mawk built without
+# --re-interval treats `{40}` literally and would spuriously flag every
+# correctly pinned action), whereas rg's regex engine always supports them.
 unpinned_actions="$(
-    rg -n 'uses:[[:space:]]+[^[:space:]#]+@[^[:space:]#]+' .github/workflows .github/actions |
-        awk -F: '{
-            line = $0
-            sub(/^[^:]+:[0-9]+:/, "", line)
-            if (line ~ /uses:[[:space:]]+[^[:space:]#]+@[0-9a-f]{40}([[:space:]#]|$)/) {
-                next
-            }
-            print
-        }' ||
+    rg -n 'uses:[[:space:]]+[^[:space:]#]+@[^[:space:]#]+' .github/workflows .github/actions 2>/dev/null |
+        rg -v '@[0-9a-f]{40}([[:space:]#]|$)' ||
         true
 )"
 if [[ -n "$unpinned_actions" ]]; then

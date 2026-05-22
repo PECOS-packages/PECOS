@@ -356,9 +356,10 @@ def test_controlled_rotations_statevec() -> None:
         sim_c0 = StateVec(2)
         sim_c0.backend.run_2q_gate(sym, (0, 1), {"angle": theta})
         baseline_c0 = StateVec(2)
-        assert pc.allclose(sim_c0.backend.vector, baseline_c0.backend.vector), (
-            f"{sym}|00> changed the state -- expected identity when control=0"
-        )
+        assert pc.allclose(
+            sim_c0.backend.vector,
+            baseline_c0.backend.vector,
+        ), f"{sym}|00> changed the state -- expected identity when control=0"
 
         # c=1: |10> -> |1, R*(theta)|0>>. Compare against direct R* on target.
         sim_c1 = StateVec(2)
@@ -367,9 +368,10 @@ def test_controlled_rotations_statevec() -> None:
         sim_direct = StateVec(2)
         sim_direct.backend.run_1q_gate("X", 0, None)
         sim_direct.backend.run_1q_gate(direct_sym, 1, {"angle": theta})
-        assert pc.allclose(sim_c1.backend.vector, sim_direct.backend.vector), (
-            f"{sym}(theta) when c=1 must equal direct {direct_sym}(theta) on target"
-        )
+        assert pc.allclose(
+            sim_c1.backend.vector,
+            sim_direct.backend.vector,
+        ), f"{sym}(theta) when c=1 must equal direct {direct_sym}(theta) on target"
 
 
 @pytest.mark.parametrize(

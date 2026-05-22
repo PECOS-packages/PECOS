@@ -93,11 +93,7 @@ class GuppyLinearityState:
                 raise LinearityError(msg)
             for index in range(size):
                 slot = Slot(allocator, index)
-                local = (
-                    slot_locals[slot]
-                    if slot_locals is not None and slot in slot_locals
-                    else f"{allocator}_{index}"
-                )
+                local = slot_locals[slot] if slot_locals is not None and slot in slot_locals else f"{allocator}_{index}"
                 bindings[slot] = Binding(local=local, state=SlotState.LIVE)
         return cls(bindings)
 

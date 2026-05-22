@@ -100,6 +100,25 @@ pub fn collect_env() -> BTreeMap<String, String> {
         env.insert("CMAKE".into(), cmake_bin.display().to_string());
     }
 
+    // PYO3_PYTHON — point pyo3's build script at a Python that ships libpython
+    // so `cargo test` on pecos-rslib* (which depend on pyo3) can link. macOS's
+    // Apple-shipped python3 (the one CommandLineTools provides) has no
+    // libpython, so the default PATH lookup fails to link. The repo's .venv
+    // (created by uv) does ship libpython, so prefer that. Respect an existing
+    // PYO3_PYTHON if the caller already set one.
+    if std::env::var_os("PYO3_PYTHON").is_none()
+        && let Some(repo_root) = pecos_build::llvm::find_cargo_project_root()
+    {
+        let venv_python = if cfg!(windows) {
+            repo_root.join(".venv").join("Scripts").join("python.exe")
+        } else {
+            repo_root.join(".venv").join("bin").join("python")
+        };
+        if venv_python.exists() {
+            env.insert("PYO3_PYTHON".into(), venv_python.display().to_string());
+        }
+    }
+
     env
 }
 

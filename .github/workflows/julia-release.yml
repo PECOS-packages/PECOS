@@ -11,6 +11,9 @@
 
 name: Julia Artifacts
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
 
@@ -59,15 +62,20 @@ jobs:
     steps:
       - name: Check if should run on PR push
         id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
           # Always run on tag pushes (jl-* tags trigger releases)
-          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/jl-* ]]; then
+          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/jl-* ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # Always run on pushes to main branches
-          elif [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref_name }}" =~ ^(main|master|dev|development)$ ]]; then
+          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # For PRs, check the TRIGGER_ON_PR_PUSH setting
-          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ env.TRIGGER_ON_PR_PUSH }}" = "true" ]; then
+          elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
             echo "run=true" >> $GITHUB_OUTPUT
           else
             echo "run=false" >> $GITHUB_OUTPUT
@@ -96,8 +104,9 @@ jobs:
             architecture: x86_64
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Rust
@@ -107,34 +116,34 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           echo "Installing LLVM using pecos..."
-          cargo run -p pecos-cli --release -- install llvm
+          cargo run --locked -p pecos-cli --release -- install llvm
 
           echo "Setting LLVM environment variables..."
-          export PECOS_LLVM=$(cargo run -p pecos-cli --release -- llvm find 2>/dev/null)
+          export PECOS_LLVM=$(cargo run --locked -p pecos-cli --release -- llvm find 2>/dev/null)
           export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
 
           echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
           echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
 
           echo "Verifying LLVM installation..."
-          cargo run -p pecos-cli --release -- llvm check
+          cargo run --locked -p pecos-cli --release -- llvm check
 
       - name: Install LLVM 14.0.6 using pecos-llvm (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Write-Host "Installing LLVM using pecos..."
-          cargo run -p pecos-cli --release -- install llvm
+          cargo run --locked -p pecos-cli --release -- install llvm
 
           Write-Host "Setting LLVM environment variables..."
-          $env:PECOS_LLVM = (cargo run -p pecos-cli --release -- llvm find 2>$null)
+          $env:PECOS_LLVM = (cargo run --locked -p pecos-cli --release -- llvm find 2>$null)
           $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
 
           "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "Verifying LLVM installation..."
-          cargo run -p pecos-cli --release -- llvm check
+          cargo run --locked -p pecos-cli --release -- llvm check
 
       - name: Install Rust target
         run: |
@@ -152,7 +161,7 @@ jobs:
         shell: pwsh
         run: |
           cd julia/pecos-julia-ffi
-          cargo build --release
+          cargo build --locked --release
 
           # Create artifact directory
           New-Item -ItemType Directory -Force -Path ..\..\artifacts
@@ -181,7 +190,7 @@ jobs:
           fi
 
           # Native build for all platforms (no cross-compilation needed with native ARM64 runners)
-          cargo build --release
+          cargo build --locked --release
           target_dir="../../target/release"
 
           # Create artifact directory
@@ -229,7 +238,7 @@ jobs:
           ls -la *.tar.gz
 
       - name: Upload binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: julia-binary-${{ matrix.os }}-${{ matrix.architecture }}
           path: pecos_julia-*.tar.gz
@@ -258,17 +267,18 @@ jobs:
             os: macos-latest
             architecture: aarch64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Julia ${{ matrix.julia-version }}
-        uses: julia-actions/setup-julia@v3
+        uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: ${{ matrix.julia-version }}
 
       - name: Download binary
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: julia-binary-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./julia-binary
@@ -336,12 +346,13 @@ jobs:
       needs.test_binaries.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Julia
-        uses: julia-actions/setup-julia@v3
+        uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3
         with:
           version: '1.10'
 
@@ -352,7 +363,7 @@ jobs:
 
       # Download artifacts into temp directory first
       - name: Download all binaries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: temp-artifacts/
 
@@ -452,7 +463,7 @@ jobs:
           EOF
 
       - name: Upload distribution bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pecos-julia-distribution
           path: dist/
@@ -464,7 +475,7 @@ jobs:
       needs.test_binaries.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ inputs.sha || github.sha }}
 
@@ -475,7 +486,7 @@ jobs:
 
       # Download artifacts
       - name: Download all binaries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: temp-artifacts/
 
@@ -506,18 +517,18 @@ jobs:
           find release-bundle -type f | sort
 
       - name: Generate Artifacts.toml
+        env:
+          RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
           cd release-bundle
 
           # Create Artifacts.toml with actual checksums
-          cat > ../julia/PECOS.jl/Artifacts.toml << 'EOF'
-          # Auto-generated by julia-release workflow
-          # For release: ${{ github.ref_name }}
-
-          [PECOS_julia]
-          git-tree-sha1 = "0000000000000000000000000000000000000000"  # Tree hash will be computed on first use
-
-          EOF
+          {
+            printf '%s\n' '# Auto-generated by julia-release workflow'
+            printf '# For release: %s\n\n' "$RELEASE_REF_NAME"
+            printf '%s\n' '[PECOS_julia]'
+            printf '%s\n\n' 'git-tree-sha1 = "0000000000000000000000000000000000000000"  # Tree hash will be computed on first use'
+          } > ../julia/PECOS.jl/Artifacts.toml
 
           # Add download entries for each platform
           for tarball in binaries/*.tar.gz; do
@@ -526,12 +537,11 @@ jobs:
               platform=$(echo "$filename" | sed 's/pecos_julia-//; s/.tar.gz//')
               sha256=$(sha256sum "$tarball" | cut -d' ' -f1)
 
-              cat >> ../julia/PECOS.jl/Artifacts.toml << EOF
-          [[PECOS_julia.download]]
-          url = "https://github.com/PECOS-packages/PECOS/releases/download/${{ github.ref_name }}/$filename"
-          sha256 = "$sha256"
-
-          EOF
+              {
+                printf '%s\n' '[[PECOS_julia.download]]'
+                printf 'url = "https://github.com/PECOS-packages/PECOS/releases/download/%s/%s"\n' "$RELEASE_REF_NAME" "$filename"
+                printf 'sha256 = "%s"\n\n' "$sha256"
+              } >> ../julia/PECOS.jl/Artifacts.toml
             fi
           done
 
@@ -539,6 +549,9 @@ jobs:
           cat ../julia/PECOS.jl/Artifacts.toml
 
       - name: Create submission instructions
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
           cat > release-bundle/SUBMISSION_INSTRUCTIONS.md << 'EOF'
           # Julia Package Submission Instructions
@@ -588,12 +601,14 @@ jobs:
           - Windows x86_64
 
           ## Version Info
-
-          - Version: 0.1.0
-          - Commit: ${{ github.sha }}
-          - Branch: ${{ github.ref_name }}
-          - Date: $(date -u +%Y-%m-%d)
           EOF
+          {
+            printf '\n'
+            printf '%s\n' '- Version: 0.1.0'
+            printf -- '- Commit: %s\n' "$RELEASE_SHA"
+            printf -- '- Branch: %s\n' "$RELEASE_REF_NAME"
+            printf -- '- Date: %s\n' "$(date -u +%Y-%m-%d)"
+          } >> release-bundle/SUBMISSION_INSTRUCTIONS.md
 
       - name: Create tarball of entire bundle
         run: |
@@ -601,7 +616,7 @@ jobs:
           ls -lh pecos-julia-release-bundle-*.tar.gz
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pecos-julia-release-bundle
           path: pecos-julia-release-bundle-*.tar.gz
@@ -610,9 +625,11 @@ jobs:
       - name: Determine if pre-release
         id: check-prerelease
         if: startsWith(github.ref, 'refs/tags/jl-')
+        env:
+          RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
           # Extract version from tag (remove jl- prefix)
-          VERSION="${{ github.ref_name }}"
+          VERSION="$RELEASE_REF_NAME"
           VERSION="${VERSION#jl-}"
 
           # Check if it contains a hyphen (pre-release indicator)
@@ -626,7 +643,7 @@ jobs:
 
       - name: Create GitHub Release and Upload Binaries
         if: startsWith(github.ref, 'refs/tags/jl-')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release-bundle/binaries/*.tar.gz
           body: |
@@ -647,6 +664,8 @@ jobs:
 
       - name: Commit Artifacts.toml to branch
         if: startsWith(github.ref, 'refs/tags/jl-')
+        env:
+          RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
           # Configure git
           git config --local user.email "action@github.com"
@@ -654,7 +673,7 @@ jobs:
 
           # Add and commit the Artifacts.toml
           git add julia/PECOS.jl/Artifacts.toml
-          git commit -m "Add Artifacts.toml for ${{ github.ref_name }}" || echo "No changes to commit"
+          git commit -m "Add Artifacts.toml for $RELEASE_REF_NAME" || echo "No changes to commit"
 
           # Push to the tag's branch
-          git push origin HEAD:${{ github.ref_name }}-artifacts || echo "Push failed"
+          git push origin "HEAD:${RELEASE_REF_NAME}-artifacts" || echo "Push failed"

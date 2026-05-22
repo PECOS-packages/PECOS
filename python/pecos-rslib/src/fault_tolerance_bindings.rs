@@ -726,7 +726,7 @@ impl PyInfluenceBuilder {
 /// # Output in DEM format
 /// print(dem.to_string())
 /// ```
-#[pyclass(name = "DetectorErrorModel", module = "pecos_rslib.qec")]
+#[pyclass(subclass, name = "DetectorErrorModel", module = "pecos_rslib.qec")]
 pub struct PyDetectorErrorModel {
     inner: RustDetectorErrorModel,
 }
@@ -965,15 +965,15 @@ impl PyDetectorErrorModel {
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
         {
-            Ok(Self {
-                inner: DemBuilder::from_circuit(&dag.inner, p1, p2, p_meas, p_prep),
-            })
+            let inner = DemBuilder::try_from_circuit(&dag.inner, p1, p2, p_meas, p_prep)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+            Ok(Self { inner })
         } else if let Ok(tc) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyTickCircuit>>()
         {
-            Ok(Self {
-                inner: DemBuilder::from_tick_circuit(&tc.inner, p1, p2, p_meas, p_prep),
-            })
+            let inner = DemBuilder::try_from_tick_circuit(&tc.inner, p1, p2, p_meas, p_prep)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+            Ok(Self { inner })
         } else {
             Err(pyo3::exceptions::PyTypeError::new_err(
                 "from_circuit() expects a DagCircuit or TickCircuit",
@@ -1357,7 +1357,9 @@ impl PyDemBuilder {
     ///     A `DetectorErrorModel` that can be converted to string format.
     ///
     /// Raises:
-    ///     `ValueError`: If the detector or observable JSON is malformed.
+    ///     `ValueError`: If the detector or observable JSON is malformed, or
+    ///         a used record offset / `meas_id` is out of range for the
+    ///         configured measurement count.
     fn build(&self) -> PyResult<PyDetectorErrorModel> {
         let mut builder =
             RustDemBuilder::new(&self.influence_map).with_noise_config(self.noise.clone());
@@ -1382,7 +1384,9 @@ impl PyDemBuilder {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         }
 
-        let inner = builder.build();
+        let inner = builder
+            .try_build()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(PyDetectorErrorModel { inner })
     }
 

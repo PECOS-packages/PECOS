@@ -282,6 +282,22 @@ impl SharedLibrary {
 type ResetInterfaceFn = unsafe extern "C" fn();
 type GetOperationsFn = unsafe extern "C" fn() -> *mut OperationCollector;
 type CallQmainFn = unsafe extern "C" fn(extern "C" fn(u64) -> u64) -> u64;
+type CallVoidMainFn = unsafe extern "C" fn(extern "C" fn()) -> u64;
+
+/// The entry-point shape found in a compiled QIR program, bundled with the
+/// matching setjmp wrapper from the C shim. Each variant pairs the function
+/// pointer ABI with the shim that calls it -- mixing them (e.g. calling a
+/// `void main()` through the qmain wrapper) is undefined behaviour.
+enum ExecutionEntryPoint<'a> {
+    Qmain {
+        func: Symbol<'a, extern "C" fn(u64) -> u64>,
+        call: Symbol<'a, CallQmainFn>,
+    },
+    VoidMain {
+        func: Symbol<'a, extern "C" fn()>,
+        call: Symbol<'a, CallVoidMainFn>,
+    },
+}
 type WaitForNeedResultFn = unsafe extern "C" fn(u64) -> u64;
 type SetMeasurementResultFn = unsafe extern "C" fn(u64, bool);
 type SignalResultReadyFn = unsafe extern "C" fn();
@@ -1051,39 +1067,77 @@ impl QisHeliosInterface {
         load_result
     }
 
-    /// Get the qmain and setjmp wrapper function symbols from the libraries
+    /// Get the entry point and matching setjmp wrapper from the libraries.
+    ///
+    /// QIR programs can use one of two entry-point signatures:
+    /// - `i64 @qmain(i64)` -- the Helios / adaptive profile. pecos-hugr-qis
+    ///   emits this (its `LLVM_MAIN` constant in compiler.rs is `"qmain"`),
+    ///   and the pecos-phir RON pipeline fixtures (`ron_support.rs`,
+    ///   `qis_pipeline_tests`) use it. The return value is an error code.
+    /// - `void @main()` -- the "base profile" form. pecos-phir's MLIR/QIR text
+    ///   path matches `@main` directly (see `mlir_toolchain.rs`), and PECOS's QIR
+    ///   text tests use this. It's also the most common form for
+    ///   externally-authored programs.
+    ///
+    /// Calling a `void @main()` function through the qmain ABI (`u64 fn(u64)`)
+    /// is undefined behaviour: the return register is never set, so what looks
+    /// like a "random error code" is actually whatever was in the register on
+    /// return. We dispatch on the symbol that's present so each kind is called
+    /// with the correct ABI.
+    ///
+    /// **Known limitation:** dispatch is name-only. A program with the
+    /// off-spec signature `void @qmain()` or `i64 @main(i64)` would be
+    /// misclassified. The robust fix would be to inspect the LLVM module's
+    /// function type before linking and reject (or dispatch on) any signature
+    /// other than the two canonical shapes; that requires plumbing the IR
+    /// through to this lookup, so it's deferred until we encounter such a
+    /// program in practice. Until then, callers should stick to the two
+    /// canonical signatures above.
     fn get_execution_symbols<'a>(
         program_lib: &'a Library,
         shim_lib: &'a Library,
-    ) -> Result<
-        (
-            Symbol<'a, extern "C" fn(u64) -> u64>,
-            Symbol<'a, CallQmainFn>,
-        ),
-        InterfaceError,
-    > {
-        // Get the qmain or main function symbol
-        let qmain_fn: Symbol<extern "C" fn(u64) -> u64> = unsafe {
-            program_lib
-                .get(b"qmain\0")
-                .or_else(|_| program_lib.get(b"main\0"))
+    ) -> Result<ExecutionEntryPoint<'a>, InterfaceError> {
+        // Prefer `qmain` (Helios profile); fall back to `main` (void-return form).
+        // We look up qmain first because it's the only one we want to call
+        // through the i64-returning wrapper.
+        let qmain_fn: Result<Symbol<'a, extern "C" fn(u64) -> u64>, _> =
+            unsafe { program_lib.get(b"qmain\0") };
+
+        if let Ok(func) = qmain_fn {
+            let call: Symbol<'a, CallQmainFn> = unsafe {
+                shim_lib
+                    .get(b"pecos_call_qmain_with_setjmp\0")
+                    .map_err(|e| {
+                        InterfaceError::ExecutionError(format!(
+                            "Failed to find pecos_call_qmain_with_setjmp wrapper: {e}"
+                        ))
+                    })?
+            };
+            return Ok(ExecutionEntryPoint::Qmain { func, call });
+        }
+
+        // No qmain -- try `main` and dispatch through the void-main wrapper so
+        // we don't read a garbage value out of the return register.
+        let main_fn: Symbol<'a, extern "C" fn()> = unsafe {
+            program_lib.get(b"main\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find qmain or main entry point: {e}"
+                ))
+            })?
+        };
+        let call: Symbol<'a, CallVoidMainFn> = unsafe {
+            shim_lib
+                .get(b"pecos_call_void_main_with_setjmp\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
-                        "Failed to find qmain or main entry point: {e}"
+                        "Failed to find pecos_call_void_main_with_setjmp wrapper: {e}"
                     ))
                 })?
         };
-
-        // Get the setjmp wrapper function
-        let call_with_setjmp: Symbol<CallQmainFn> = unsafe {
-            shim_lib
-                .get(b"pecos_call_qmain_with_setjmp\0")
-                .map_err(|e| {
-                    InterfaceError::ExecutionError(format!("Failed to find setjmp wrapper: {e}"))
-                })?
-        };
-
-        Ok((qmain_fn, call_with_setjmp))
+        Ok(ExecutionEntryPoint::VoidMain {
+            func: main_fn,
+            call,
+        })
     }
 
     /// Add platform-specific linker flags to the clang command
@@ -1812,15 +1866,15 @@ entry:
         let program_lib = Self::get_or_cache_program_lib(so_path)?;
         debug!("Using cached program library");
 
-        // Step 5: Get the execution symbols (qmain and setjmp wrapper)
-        let (qmain_fn, call_with_setjmp) =
-            Self::get_execution_symbols(program_lib.inner(), shim_lib.inner())?;
+        // Step 5: Get the execution entry point (qmain or main) and matching
+        // setjmp wrapper from the shim.
+        let entry_point = Self::get_execution_symbols(program_lib.inner(), shim_lib.inner())?;
 
-        // Step 6: Call qmain via our setjmp wrapper
+        // Step 6: Call the entry point via the matching setjmp wrapper.
         // The call chain will be:
         //   pecos_call_qmain_with_setjmp(qmain) [from our shim]
         //   → setjmp(user_program_jmpbuf) [saves stack state for longjmp]
-        //   → qmain(0) [user code in program.so]
+        //   → qmain(0)  -or-  main()  [user code in program.so]
         //   → ___qalloc() [from libhelios.a linked into program.so]
         //   → selene_qalloc() [from libpecos_selene.so C shim]
         //   → __quantum__rt__qubit_allocate() [from libpecos_qis_ffi.so]
@@ -1828,13 +1882,16 @@ entry:
         // If an error occurs:
         //   → longjmp(user_program_jmpbuf, error_code) [jumps back to setjmp]
         //   → wrapper catches error and returns error code
-        let result = unsafe { call_with_setjmp(*qmain_fn) };
+        let (entry_label, result) = match &entry_point {
+            ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
+            ExecutionEntryPoint::VoidMain { func, call } => ("main", unsafe { call(**func) }),
+        };
         if result != 0 {
             return Err(InterfaceError::ExecutionError(format!(
-                "qmain returned error code: {result}"
+                "{entry_label} returned error code: {result}"
             )));
         }
-        info!("qmain executed successfully!");
+        info!("{entry_label} executed successfully!");
 
         // Step 7: Collect the operations from thread-local storage via the cdylib
         // IMPORTANT: We call the cdylib's version to get the operations from the same

@@ -35,6 +35,9 @@ build-backend = "maturin"
 
 [tool.maturin]
 module-name = "pecos_rslib"
+# extension-module is feature-gated in Cargo.toml so plain `cargo test` works;
+# maturin enables it here so the cdylib doesn't link libpython at build time.
+features = ["extension-module"]
 
 [dependency-groups]
 dev = [

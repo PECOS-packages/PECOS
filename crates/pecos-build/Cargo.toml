@@ -41,6 +41,7 @@ log.workspace = true
 # Serialization (for manifest files)
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
+toml_edit.workspace = true
 
 # Cargo metadata parsing
 cargo_metadata.workspace = true

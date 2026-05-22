@@ -35,6 +35,7 @@ struct ParsedDetector {
     id: u32,
     coords: Option<[f64; 3]>,
     records: Vec<i32>,
+    meas_ids: Vec<usize>,
 }
 
 /// Parsed observable from JSON metadata.
@@ -42,6 +43,7 @@ struct ParsedDetector {
 struct ParsedObservable {
     id: u32,
     records: Vec<i32>,
+    meas_ids: Vec<usize>,
 }
 
 // ============================================================================
@@ -129,6 +131,11 @@ impl<'a> DemBuilder<'a> {
     ///
     /// One-liner for the common case. Reads detector/DEM output definitions
     /// from circuit metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit's detector/observable metadata is malformed (use
+    /// [`Self::try_from_circuit`] to handle that as an error instead).
     #[must_use]
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
@@ -137,12 +144,36 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> DetectorErrorModel {
+        Self::try_from_circuit(circuit, p1, p2, p_meas, p_prep)
+            .unwrap_or_else(|err| panic!("invalid DEM metadata on circuit: {err}"))
+    }
+
+    /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and noise.
+    ///
+    /// Reads detector/DEM output definitions from circuit metadata and returns
+    /// parser errors instead of dropping malformed metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector or observable metadata is malformed.
+    pub fn try_from_circuit(
+        circuit: &pecos_quantum::DagCircuit,
+        p1: f64,
+        p2: f64,
+        p_meas: f64,
+        p_prep: f64,
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
         build_dem_from_circuit(circuit, p1, p2, p_meas, p_prep)
     }
 
     /// Build a `DetectorErrorModel` from a `TickCircuit` and noise.
     ///
     /// Converts to `DagCircuit` internally.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit's detector/observable metadata is malformed (use
+    /// [`Self::try_from_tick_circuit`] to handle that as an error instead).
     #[must_use]
     pub fn from_tick_circuit(
         circuit: &pecos_quantum::TickCircuit,
@@ -151,6 +182,25 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> DetectorErrorModel {
+        Self::try_from_tick_circuit(circuit, p1, p2, p_meas, p_prep)
+            .unwrap_or_else(|err| panic!("invalid DEM metadata on circuit: {err}"))
+    }
+
+    /// Try to build a `DetectorErrorModel` from a `TickCircuit` and noise.
+    ///
+    /// Converts to `DagCircuit` internally and returns parser errors instead
+    /// of dropping malformed metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector or observable metadata is malformed.
+    pub fn try_from_tick_circuit(
+        circuit: &pecos_quantum::TickCircuit,
+        p1: f64,
+        p2: f64,
+        p_meas: f64,
+        p_prep: f64,
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
         let dag = pecos_quantum::DagCircuit::from(circuit);
         build_dem_from_circuit(&dag, p1, p2, p_meas, p_prep)
     }
@@ -379,9 +429,175 @@ impl<'a> DemBuilder<'a> {
                 #[allow(clippy::cast_possible_truncation)] // observable count fits in u32
                 id: id as u32,
                 records,
+                meas_ids: Vec::new(),
             })
             .collect();
         self
+    }
+
+    /// Resolves a JSON `meas_id` to a circuit measurement-record index.
+    ///
+    /// When the circuit carries stable `MeasId`s (the traced
+    /// `from_guppy`/`from_circuit` path), `meas_id` is interpreted as that
+    /// **stable stamped id** and looked up in `influence_map.meas_ids` -- so a
+    /// non-sequential traced id (e.g. the QIS result slot) resolves correctly
+    /// regardless of compilation reordering. When no stable ids are present
+    /// (the decoupled/raw builder with an empty influence map), `meas_id` is a
+    /// positional measurement index (the legacy escape hatch). Returns the
+    /// `0..num_measurements` record index, or `None` if the id is absent.
+    fn resolve_meas_id_to_tc_index(&self, meas_id: usize) -> Option<usize> {
+        if self.influence_map.meas_ids.is_empty() {
+            return (meas_id < self.num_measurements).then_some(meas_id);
+        }
+        self.influence_map
+            .meas_ids
+            .iter()
+            .position(|mid| mid.0 == meas_id)
+    }
+
+    fn meas_id_to_record_offset(&self, meas_id: usize) -> Option<i32> {
+        let index = self.resolve_meas_id_to_tc_index(meas_id)?;
+        let measurement = i64::try_from(index).ok()?;
+        let total = i64::try_from(self.num_measurements).ok()?;
+        i32::try_from(measurement - total).ok()
+    }
+
+    /// Fail loud if any detector/observable references a measurement that does
+    /// not exist, instead of silently dropping it and weakening the DEM.
+    ///
+    /// `records` and `meas_ids` are alternative ways to name the *same*
+    /// measurements (the parser allows neither both-empty). Each used
+    /// reference must resolve in range. When an entry carries **both**, they
+    /// must be redundant -- `meas_ids` must resolve to exactly the `records`
+    /// set -- otherwise the DEM the builder produces (which consumes
+    /// `records`) would silently differ from what `meas_ids` asked for. The
+    /// surface `logical_circuit` path emits both redundantly; a non-redundant
+    /// pair is a caller error and fails loud here.
+    ///
+    /// # Errors
+    /// Returns [`DemBuilderError::ParseError`] if a used record offset is out
+    /// of range, a used `meas_id` is absent, or a both-present entry's
+    /// `records` and `meas_ids` disagree.
+    fn validate_metadata_refs(&self) -> Result<(), DemBuilderError> {
+        let check = |kind: &str, id: u32, records: &[i32], meas_ids: &[usize]| {
+            for &rec in records {
+                if record_offset_to_absolute_index(self.num_measurements, rec).is_none() {
+                    return Err(DemBuilderError::ParseError(format!(
+                        "{kind} {id} references record offset {rec}, which \
+                         is out of range for a circuit with {} \
+                         measurement(s)",
+                        self.num_measurements
+                    )));
+                }
+            }
+            let mut resolved_offsets = Vec::with_capacity(meas_ids.len());
+            for &mid in meas_ids {
+                let offset = self.meas_id_to_record_offset(mid).ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} {id} references meas_id {mid}, which is not \
+                         present in the circuit's {} measurement(s)",
+                        self.num_measurements
+                    ))
+                })?;
+                resolved_offsets.push(offset);
+            }
+            if !records.is_empty() && !meas_ids.is_empty() {
+                let mut a = records.to_vec();
+                let mut b = resolved_offsets;
+                a.sort_unstable();
+                b.sort_unstable();
+                if a != b {
+                    return Err(DemBuilderError::ParseError(format!(
+                        "{kind} {id} has both 'records' and 'meas_ids' but \
+                         they reference different measurements (records map \
+                         to offsets {a:?}, meas_ids resolve to {b:?}); they \
+                         are alternatives, not additive -- the builder would \
+                         consume only 'records' and silently drop the rest"
+                    )));
+                }
+            }
+            Ok(())
+        };
+        for d in &self.detectors {
+            check("Detector", d.id, &d.records, &d.meas_ids)?;
+        }
+        for o in &self.observables {
+            check("Observable", o.id, &o.records, &o.meas_ids)?;
+        }
+        Ok(())
+    }
+
+    fn effective_record_offsets(&self, records: &[i32], meas_ids: &[usize]) -> Vec<i32> {
+        if !records.is_empty() {
+            return records.to_vec();
+        }
+        meas_ids
+            .iter()
+            .filter_map(|&meas_id| self.meas_id_to_record_offset(meas_id))
+            .collect()
+    }
+
+    /// Validates metadata refs, then builds the Detector Error Model.
+    ///
+    /// This is the fail-loud entry point. Every path that ingests
+    /// detector/observable metadata derived from a circuit (the
+    /// `from_circuit` family, [`DemSampler::from_circuit`], and the public
+    /// Python `DemBuilder.build`) must go through here so an out-of-range
+    /// record offset or `meas_id` is rejected rather than silently dropped.
+    ///
+    /// [`Self::build`] is the infallible counterpart, kept for the raw,
+    /// decoupled construction case (e.g. an empty influence map where record
+    /// offsets are opaque DEM coordinates) and so existing callers do not
+    /// change behavior.
+    ///
+    /// Rejects a `num_measurements` that disagrees with a non-empty influence
+    /// map.
+    ///
+    /// When the builder is fed a real circuit (the influence map has
+    /// measurements), record offsets and `meas_id`s are defined against that
+    /// circuit's actual measurement record. A caller-supplied
+    /// `with_num_measurements` that differs would let out-of-range refs pass
+    /// [`Self::validate_metadata_refs`] and silently misbind, so it is an
+    /// error. An empty influence map keeps the escape hatch: the count is then
+    /// purely declarative and record offsets are opaque pass-through DEM
+    /// coordinates.
+    fn validate_measurement_count(&self) -> Result<(), DemBuilderError> {
+        let actual = self.influence_map.measurements.len();
+        if actual != 0 && self.num_measurements != actual {
+            return Err(DemBuilderError::ParseError(format!(
+                "num_measurements={} disagrees with the {actual} measurement(s) \
+                 the circuit performs; the declared count must match so \
+                 detector/observable record offsets resolve correctly",
+                self.num_measurements
+            )));
+        }
+        // Internal-consistency guard: stable MeasIds must be unique. A
+        // duplicate would make stamped-id resolution bind to the wrong
+        // measurement; it indicates a trace/replay bug, not bad caller input.
+        let mut seen = std::collections::HashSet::with_capacity(self.influence_map.meas_ids.len());
+        for mid in &self.influence_map.meas_ids {
+            if !seen.insert(mid.0) {
+                return Err(DemBuilderError::ParseError(format!(
+                    "duplicate stable MeasId {} in the traced circuit; each \
+                     measurement must have a unique stamped id",
+                    mid.0
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// # Errors
+    ///
+    /// Returns [`DemBuilderError::ParseError`] if `num_measurements` disagrees
+    /// with a non-empty influence map, a used record offset is out of range,
+    /// a used `meas_id` is not present in the circuit (resolved against the
+    /// stable stamped ids when available, else positionally), or a
+    /// both-present entry's `records` and `meas_ids` are not redundant.
+    pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
+        self.validate_measurement_count()?;
+        self.validate_metadata_refs()?;
+        Ok(self.build())
     }
 
     /// Builds the Detector Error Model with source tracking.
@@ -390,6 +606,9 @@ impl<'a> DemBuilder<'a> {
     /// through the pipeline, enabling accurate direct/decomposed form splitting.
     ///
     /// Use `dem.to_string()` or `dem.to_string_decomposed()` for output.
+    ///
+    /// This does **not** validate metadata refs; callers ingesting
+    /// circuit-derived metadata must use [`Self::try_build`] instead.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
         let num_influence_dem_outputs = self
@@ -404,7 +623,8 @@ impl<'a> DemBuilder<'a> {
             if let Some(coords) = det.coords {
                 def = def.with_coords(coords);
             }
-            def = def.with_records(det.records.iter().copied());
+            let records = self.effective_record_offsets(&det.records, &det.meas_ids);
+            def = def.with_records(records.iter().copied());
             dem.add_detector(def);
         }
 
@@ -439,7 +659,8 @@ impl<'a> DemBuilder<'a> {
         // Add observable definitions in the standard `L<n>` namespace.
         // Observable IDs are not shifted by tracked Paulis.
         for obs in &self.observables {
-            let def = DemOutput::new(obs.id).with_records(obs.records.iter().copied());
+            let records = self.effective_record_offsets(&obs.records, &obs.meas_ids);
+            let def = DemOutput::new(obs.id).with_records(records.iter().copied());
             dem.add_observable(def);
         }
 
@@ -888,15 +1109,28 @@ impl<'a> DemBuilder<'a> {
             };
 
         for det in &self.detectors {
-            for &rec in &det.records {
-                if let Some(tc_meas_idx) =
-                    record_offset_to_absolute_index(self.num_measurements, rec)
-                    && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
-                {
-                    meas_to_detectors
-                        .entry(influence_idx)
-                        .or_default()
-                        .push(det.id);
+            if det.records.is_empty() {
+                for &meas_id in &det.meas_ids {
+                    if let Some(tc_idx) = self.resolve_meas_id_to_tc_index(meas_id)
+                        && let Some(&influence_idx) = tc_to_influence.get(&tc_idx)
+                    {
+                        meas_to_detectors
+                            .entry(influence_idx)
+                            .or_default()
+                            .push(det.id);
+                    }
+                }
+            } else {
+                for &rec in &det.records {
+                    if let Some(tc_meas_idx) =
+                        record_offset_to_absolute_index(self.num_measurements, rec)
+                        && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                    {
+                        meas_to_detectors
+                            .entry(influence_idx)
+                            .or_default()
+                            .push(det.id);
+                    }
                 }
             }
         }
@@ -905,15 +1139,28 @@ impl<'a> DemBuilder<'a> {
             if influence_observable_ids.contains(&obs.id) {
                 continue;
             }
-            for &rec in &obs.records {
-                if let Some(tc_meas_idx) =
-                    record_offset_to_absolute_index(self.num_measurements, rec)
-                    && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
-                {
-                    meas_to_observables
-                        .entry(influence_idx)
-                        .or_default()
-                        .push(obs.id);
+            if obs.records.is_empty() {
+                for &meas_id in &obs.meas_ids {
+                    if let Some(tc_idx) = self.resolve_meas_id_to_tc_index(meas_id)
+                        && let Some(&influence_idx) = tc_to_influence.get(&tc_idx)
+                    {
+                        meas_to_observables
+                            .entry(influence_idx)
+                            .or_default()
+                            .push(obs.id);
+                    }
+                }
+            } else {
+                for &rec in &obs.records {
+                    if let Some(tc_meas_idx) =
+                        record_offset_to_absolute_index(self.num_measurements, rec)
+                        && let Some(&influence_idx) = tc_to_influence.get(&tc_meas_idx)
+                    {
+                        meas_to_observables
+                            .entry(influence_idx)
+                            .or_default()
+                            .push(obs.id);
+                    }
                 }
             }
         }
@@ -1097,63 +1344,42 @@ fn get_y_decomposition(p1: u8, p2: u8) -> Option<(u8, u8, u8, u8)> {
 
 /// Parses detector definitions from JSON.
 fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderError> {
-    // Simple JSON parsing without serde dependency
-    // Expected format: [{"id": 0, "coords": [0.0, 0.0, 0.0], "records": [-1, -5]}, ...]
-
     let json = json.trim();
     if json.is_empty() || json == "[]" {
         return Ok(Vec::new());
     }
 
-    let mut detectors = Vec::new();
-
-    // Find all objects in the array
-    let mut depth = 0;
-    let mut obj_start = None;
-
-    for (i, c) in json.char_indices() {
-        match c {
-            '[' if depth == 0 => depth = 1,
-            '{' if depth == 1 => {
-                depth = 2;
-                obj_start = Some(i);
-            }
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 1 {
-                    if let Some(start) = obj_start {
-                        // i is the byte index of '}', we want to include it
-                        let obj_str = &json[start..i + c.len_utf8()];
-                        let det = parse_single_detector(obj_str)?;
-                        detectors.push(det);
-                    }
-                    obj_start = None;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(detectors)
+    let parsed: serde_json::Value = serde_json::from_str(json).map_err(|err| {
+        DemBuilderError::ParseError(format!("detectors JSON is malformed: {err}"))
+    })?;
+    let array = parsed
+        .as_array()
+        .ok_or_else(|| DemBuilderError::ParseError("detectors_json must be a JSON list".into()))?;
+    array.iter().map(parse_single_detector).collect()
 }
 
 /// Parses a single detector object.
-fn parse_single_detector(json: &str) -> Result<ParsedDetector, DemBuilderError> {
+fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, DemBuilderError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| DemBuilderError::ParseError("detector entry must be an object".into()))?;
+    reject_tracked_pauli(object, "detector")?;
     let id = extract_u32(
-        json,
-        &["\"id\"", "\"detector_id\""],
+        object,
+        &["id", "detector_id"],
+        'D',
         "missing detector id",
         "detector id out of range",
     )?;
 
-    let coords = extract_coords(json);
-    let records = extract_records(json);
+    let coords = extract_coords(object)?;
+    let (records, meas_ids) = extract_measurement_refs(object, "detector")?;
 
     Ok(ParsedDetector {
         id,
         coords,
         records,
+        meas_ids,
     })
 }
 
@@ -1164,111 +1390,362 @@ fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilde
         return Ok(Vec::new());
     }
 
-    let mut observables = Vec::new();
-
-    let mut depth = 0;
-    let mut obj_start = None;
-
-    for (i, c) in json.char_indices() {
-        match c {
-            '[' if depth == 0 => depth = 1,
-            '{' if depth == 1 => {
-                depth = 2;
-                obj_start = Some(i);
-            }
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 1 {
-                    if let Some(start) = obj_start {
-                        // i is the byte index of '}', we want to include it
-                        let obj_str = &json[start..i + c.len_utf8()];
-                        let obs = parse_single_observable(obj_str)?;
-                        observables.push(obs);
-                    }
-                    obj_start = None;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(observables)
+    let parsed: serde_json::Value = serde_json::from_str(json).map_err(|err| {
+        DemBuilderError::ParseError(format!("observables JSON is malformed: {err}"))
+    })?;
+    let array = parsed.as_array().ok_or_else(|| {
+        DemBuilderError::ParseError("observables_json must be a JSON list".into())
+    })?;
+    array.iter().map(parse_single_observable).collect()
 }
 
 /// Parses a single observable object.
-fn parse_single_observable(json: &str) -> Result<ParsedObservable, DemBuilderError> {
+fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable, DemBuilderError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| DemBuilderError::ParseError("observable entry must be an object".into()))?;
+    reject_tracked_pauli(object, "observable")?;
     let id = extract_u32(
-        json,
-        &["\"id\"", "\"observable_id\""],
+        object,
+        &["id", "observable_id"],
+        'L',
         "missing observable id",
         "observable id out of range",
     )?;
 
-    let records = extract_records(json);
+    let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
 
-    Ok(ParsedObservable { id, records })
+    Ok(ParsedObservable {
+        id,
+        records,
+        meas_ids,
+    })
 }
 
-/// Extracts a number after a key.
-fn extract_number(json: &str, key: &str) -> Option<i64> {
-    let pos = json.find(key)?;
-    let rest = &json[pos + key.len()..];
-    let rest = rest.trim_start_matches(|c: char| c == ':' || c.is_whitespace());
-
-    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-' && c != '.')?;
-    let num_str = &rest[..end];
-    num_str.parse().ok()
-}
-
-fn extract_u32(
+/// Parse detector JSON into per-detector measurement-reference vectors for the
+/// sampler builders, enforcing the **same** validation and resolution as
+/// `DemBuilder`.
+///
+/// Schema/type validation (rejects malformed JSON, a non-list top level, a
+/// non-object entry, non-integer values, `tracked_pauli` entries, and entries
+/// referencing neither `records` nor `meas_ids`) comes from the shared serde
+/// parser. On top of that, this resolves every reference against the
+/// `influence_map` exactly as `DemBuilder::validate_metadata_refs` /
+/// `resolve_meas_id_to_tc_index` do, and rejects fail-loud:
+///   - a `records` offset that is out of range,
+///   - a `meas_ids` value that does not resolve (a stamped `MeasId` absent from
+///     the circuit, or -- when the circuit carries no stable ids -- an
+///     out-of-range positional index), and
+///   - co-present `records` + `meas_ids` that reference different measurements.
+///
+/// `meas_ids` are stamped stable ids when `influence_map.meas_ids` is populated
+/// (the traced `from_guppy`/`from_circuit` path), and positional indices only
+/// when it is empty -- matching `DemBuilder`. The returned vector uses the
+/// sampler's storage convention: negative `records` offsets are kept as-is
+/// (preferred when present, like `DemBuilder`), while a `meas_ids`-only entry is
+/// emitted as the resolved absolute indices (positive ints).
+///
+/// An empty influence map (no measurements) keeps the escape hatch: refs are
+/// opaque pass-through coordinates and resolution is skipped.
+pub(crate) fn parse_detector_record_vectors(
     json: &str,
+    influence_map: &DagFaultInfluenceMap,
+) -> Result<Vec<Vec<i32>>, DemBuilderError> {
+    reject_duplicate_stamped_meas_ids(influence_map)?;
+    parse_detectors_json(json)?
+        .iter()
+        .map(|d| {
+            resolve_sampler_record_vector("Detector", d.id, &d.records, &d.meas_ids, influence_map)
+        })
+        .collect()
+}
+
+/// Observable counterpart of [`parse_detector_record_vectors`].
+pub(crate) fn parse_observable_record_vectors(
+    json: &str,
+    influence_map: &DagFaultInfluenceMap,
+) -> Result<Vec<Vec<i32>>, DemBuilderError> {
+    reject_duplicate_stamped_meas_ids(influence_map)?;
+    parse_observables_json(json)?
+        .iter()
+        .map(|o| {
+            resolve_sampler_record_vector(
+                "Observable",
+                o.id,
+                &o.records,
+                &o.meas_ids,
+                influence_map,
+            )
+        })
+        .collect()
+}
+
+/// Reject a circuit whose stable `MeasId`s are not unique, before resolving any
+/// `meas_ids`. A duplicate would make stamped-id resolution bind to the first
+/// occurrence (an ambiguous, silently-wrong bind); it indicates a trace/replay
+/// bug, not bad caller input. Mirrors the guard in
+/// `DemBuilder::validate_measurement_count` so the sampler JSON path rejects
+/// exactly what `DemBuilder` does.
+fn reject_duplicate_stamped_meas_ids(
+    influence_map: &DagFaultInfluenceMap,
+) -> Result<(), DemBuilderError> {
+    let mut seen = std::collections::HashSet::with_capacity(influence_map.meas_ids.len());
+    for mid in &influence_map.meas_ids {
+        if !seen.insert(mid.0) {
+            return Err(DemBuilderError::ParseError(format!(
+                "duplicate stable MeasId {} in the traced circuit; each \
+                 measurement must have a unique stamped id",
+                mid.0
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a stamped/positional `meas_id` against the influence map, mirroring
+/// `DemBuilder::resolve_meas_id_to_tc_index`: a stamped stable id when the
+/// circuit carries them, a positional index only when it does not.
+fn resolve_sampler_meas_id(influence_map: &DagFaultInfluenceMap, meas_id: usize) -> Option<usize> {
+    if influence_map.meas_ids.is_empty() {
+        (meas_id < influence_map.measurements.len()).then_some(meas_id)
+    } else {
+        influence_map
+            .meas_ids
+            .iter()
+            .position(|mid| mid.0 == meas_id)
+    }
+}
+
+/// Resolve a parsed `records`/`meas_ids` pair to the sampler's single-`Vec<i32>`
+/// convention, with `DemBuilder`-equivalent validation. See
+/// [`parse_detector_record_vectors`] for the contract.
+fn resolve_sampler_record_vector(
+    kind: &str,
+    id: u32,
+    records: &[i32],
+    meas_ids: &[usize],
+    influence_map: &DagFaultInfluenceMap,
+) -> Result<Vec<i32>, DemBuilderError> {
+    let num_measurements = influence_map.measurements.len();
+
+    // Escape hatch: an empty influence map makes refs opaque pass-through
+    // coordinates with no circuit to resolve against. Prefer records; emit
+    // meas_ids verbatim as positional indices (there are no stable ids).
+    if num_measurements == 0 {
+        if !records.is_empty() {
+            return Ok(records.to_vec());
+        }
+        return meas_ids
+            .iter()
+            .map(|&m| {
+                i32::try_from(m).map_err(|_| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} {id} meas_id {m} is out of range for an i32 record vector"
+                    ))
+                })
+            })
+            .collect();
+    }
+
+    // Resolve each form to absolute measurement indices, fail-loud.
+    let records_abs = records
+        .iter()
+        .map(|&offset| {
+            record_offset_to_absolute_index(num_measurements, offset).ok_or_else(|| {
+                DemBuilderError::ParseError(format!(
+                    "{kind} {id} references record offset {offset}, which is out of \
+                     range for a circuit with {num_measurements} measurement(s)"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let meas_ids_abs = meas_ids
+        .iter()
+        .map(|&meas_id| {
+            resolve_sampler_meas_id(influence_map, meas_id).ok_or_else(|| {
+                DemBuilderError::ParseError(format!(
+                    "{kind} {id} references meas_id {meas_id}, which is not present in \
+                     the circuit's {num_measurements} measurement(s)"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Co-present records and meas_ids must reference the same measurements
+    // (mirrors `validate_metadata_refs`); they are alternatives, not additive.
+    if !records.is_empty() && !meas_ids.is_empty() {
+        let mut a = records_abs.clone();
+        let mut b = meas_ids_abs.clone();
+        a.sort_unstable();
+        b.sort_unstable();
+        if a != b {
+            return Err(DemBuilderError::ParseError(format!(
+                "{kind} {id} has both 'records' and 'meas_ids' but they reference \
+                 different measurements (records -> {a:?}, meas_ids -> {b:?}); they \
+                 are alternatives, not additive"
+            )));
+        }
+    }
+
+    // Prefer records (kept as Stim offsets, like `DemBuilder`); otherwise emit
+    // the resolved absolute indices, which the sampler reads as positive
+    // (absolute-index) record values.
+    if !records.is_empty() {
+        return Ok(records.to_vec());
+    }
+    meas_ids_abs
+        .iter()
+        .map(|&idx| {
+            i32::try_from(idx).map_err(|_| {
+                DemBuilderError::ParseError(format!(
+                    "{kind} {id} resolved measurement index {idx} exceeds i32 range"
+                ))
+            })
+        })
+        .collect()
+}
+
+/// Rejects a JSON entry that declares `kind: "tracked_pauli"`.
+///
+/// Tracked Paulis reference qubits via `pauli`, not measurements, and are
+/// only produced from circuit annotations -- never from `detectors_json` /
+/// `observables_json`. The JSON parser reads only `id`/`records`, so a
+/// tracked-Pauli entry here would be silently parsed as the wrong thing.
+fn reject_tracked_pauli(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kind: &str,
+) -> Result<(), DemBuilderError> {
+    if object.get("kind").and_then(serde_json::Value::as_str) == Some("tracked_pauli") {
+        return Err(DemBuilderError::ParseError(format!(
+            "{kind} entry uses kind=\"tracked_pauli\", which is not supported \
+             in detectors_json/observables_json (tracked Paulis come only \
+             from circuit annotations)"
+        )));
+    }
+    Ok(())
+}
+
+/// Reads an entry id as either an unsigned integer or the DEM-label string
+/// form (`prefix` is `'D'` for detectors, `'L'` for observables, e.g.
+/// `"D0"`/`"L0"`); both normalize to the same integer. A string id with the
+/// wrong prefix or a non-numeric body is a hard error -- silently
+/// reinterpreting it would risk a mislabeled DEM.
+fn extract_u32(
+    object: &serde_json::Map<String, serde_json::Value>,
     keys: &[&str],
+    prefix: char,
     missing_message: &str,
     range_message: &str,
 ) -> Result<u32, DemBuilderError> {
     let value = keys
         .iter()
-        .find_map(|key| extract_number(json, key))
+        .find_map(|key| object.get(*key))
         .ok_or_else(|| DemBuilderError::ParseError(missing_message.into()))?;
-    u32::try_from(value).map_err(|_| DemBuilderError::ParseError(range_message.into()))
+    if let Some(raw) = value.as_u64() {
+        return u32::try_from(raw).map_err(|_| DemBuilderError::ParseError(range_message.into()));
+    }
+    if let Some(s) = value.as_str() {
+        let body = s.strip_prefix(prefix);
+        if let Some(digits) = body
+            && !digits.is_empty()
+            && digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return digits
+                .parse::<u32>()
+                .map_err(|_| DemBuilderError::ParseError(range_message.into()));
+        }
+        return Err(DemBuilderError::ParseError(format!(
+            "id {s:?} is not a valid identifier; expected an integer or the \
+             {prefix:?}-prefixed form like {prefix}0"
+        )));
+    }
+    Err(DemBuilderError::ParseError(format!(
+        "{missing_message}: expected an integer or {prefix:?}-prefixed string id"
+    )))
 }
 
 /// Extracts coordinates array [x, y, t].
-fn extract_coords(json: &str) -> Option<[f64; 3]> {
-    let pos = json.find("\"coords\"")?;
-    let rest = &json[pos..];
-    let bracket_start = rest.find('[')?;
-    let bracket_end = rest.find(']')?;
-    let array_str = &rest[bracket_start + 1..bracket_end];
-
-    let nums: Vec<f64> = array_str
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
-
-    if nums.len() == 3 {
-        Some([nums[0], nums[1], nums[2]])
-    } else {
-        None
+fn extract_coords(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<[f64; 3]>, DemBuilderError> {
+    let Some(coords) = object.get("coords") else {
+        return Ok(None);
+    };
+    let array = coords
+        .as_array()
+        .ok_or_else(|| DemBuilderError::ParseError("detector coords must be an array".into()))?;
+    if array.len() != 3 {
+        return Err(DemBuilderError::ParseError(
+            "detector coords must contain exactly three numbers".into(),
+        ));
     }
+    let mut values = [0.0; 3];
+    for (idx, coord) in array.iter().enumerate() {
+        values[idx] = coord
+            .as_f64()
+            .ok_or_else(|| DemBuilderError::ParseError("detector coords must be numeric".into()))?;
+    }
+    Ok(Some(values))
 }
 
-/// Extracts records array.
-fn extract_records(json: &str) -> Vec<i32> {
-    if let Some(pos) = json.find("\"records\"") {
-        let rest = &json[pos..];
-        if let Some(bracket_start) = rest.find('[')
-            && let Some(bracket_end) = rest.find(']')
-        {
-            let array_str = &rest[bracket_start + 1..bracket_end];
-            return array_str
-                .split(',')
-                .filter_map(|s| s.trim().parse().ok())
-                .collect();
-        }
+/// Extracts `records`/`meas_ids` arrays.
+fn extract_measurement_refs(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kind: &str,
+) -> Result<(Vec<i32>, Vec<usize>), DemBuilderError> {
+    let records = if let Some(records) = object.get("records") {
+        let array = records.as_array().ok_or_else(|| {
+            DemBuilderError::ParseError(format!("{kind} records must be an array"))
+        })?;
+        array
+            .iter()
+            .map(|record| {
+                let raw = record.as_i64().ok_or_else(|| {
+                    DemBuilderError::ParseError(format!("{kind} record offsets must be integers"))
+                })?;
+                i32::try_from(raw).map_err(|_| {
+                    DemBuilderError::ParseError(format!("{kind} record offset out of range"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+
+    let meas_ids = if let Some(meas_ids) = object.get("meas_ids") {
+        let array = meas_ids.as_array().ok_or_else(|| {
+            DemBuilderError::ParseError(format!("{kind} meas_ids must be an array"))
+        })?;
+        array
+            .iter()
+            .map(|meas_id| {
+                let raw = meas_id.as_i64().ok_or_else(|| {
+                    DemBuilderError::ParseError(format!("{kind} meas_ids must be integers"))
+                })?;
+                usize::try_from(raw).map_err(|_| {
+                    DemBuilderError::ParseError(format!("{kind} meas_id out of range"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+
+    if records.is_empty() && meas_ids.is_empty() {
+        return Err(DemBuilderError::ParseError(format!(
+            "{kind} entry has neither 'records' nor 'meas_ids'; it would \
+             contribute nothing and silently weaken the DEM"
+        )));
     }
-    Vec::new()
+
+    // `records` and `meas_ids` are alternative ways to reference the *same*
+    // measurements, not additive. Co-presence is allowed but must be
+    // redundant; that equality is enforced fail-loud in
+    // `validate_metadata_refs` (which has the circuit context needed to
+    // resolve `meas_ids`), not here at the pure-parse stage. The surface
+    // `logical_circuit` path legitimately emits both (records = legacy Stim
+    // offsets, meas_ids = the same measurements as stable ids).
+    Ok((records, meas_ids))
 }
 
 // ============================================================================
@@ -1284,7 +1761,7 @@ fn build_dem_from_circuit(
     p2: f64,
     p_meas: f64,
     p_prep: f64,
-) -> DetectorErrorModel {
+) -> Result<DetectorErrorModel, DemBuilderError> {
     use crate::fault_tolerance::influence_builder::InfluenceBuilder;
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
     use pecos_num::graph::Attribute;
@@ -1322,30 +1799,28 @@ fn build_dem_from_circuit(
     let builder = DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep);
 
     let builder = if let Some(ref dj) = det_json {
-        builder
-            .with_detectors_json(dj)
-            .unwrap_or_else(|_| DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep))
+        builder.with_detectors_json(dj)?
     } else {
         builder
     };
 
     let builder = if let Some(ref oj) = obs_json {
-        builder
-            .with_observables_json(oj)
-            .unwrap_or_else(|_| DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep))
+        builder.with_observables_json(oj)?
     } else if !annotated_observable_records.is_empty() {
         builder.with_observable_records(annotated_observable_records)
     } else {
         builder
     };
 
+    // `try_build` enforces num_measurements == influence-map count, so a
+    // metadata override that disagrees with the circuit is rejected there.
     let builder = if let Some(n) = num_meas {
         builder.with_num_measurements(n)
     } else {
         builder
     };
 
-    builder.build()
+    builder.try_build()
 }
 
 fn observable_records_from_annotations(
@@ -1383,6 +1858,151 @@ fn observable_records_from_annotations(
             }
         })
         .collect()
+}
+
+// ============================================================================
+// Tag-referenced detector resolution
+// ============================================================================
+
+/// Resolve `result_tags` on detector/observable JSON into record offsets.
+///
+/// `tag_to_ords` is the **sound** Guppy `result(tag, ...)` -> measurement
+/// ordinal binding recovered structurally from the compiled HUGR
+/// (reorder-immune; see `pecos_hugr_qis::result_tags`). Each referenced tag's
+/// ordinals are converted to record offsets (`ordinal - traced_meas_count`).
+/// `result_tags` is an *alternative* to `records` (not additive): if the
+/// entry has no `records`, the resolved offsets become its `records`; if it
+/// has both, they must be redundant (sorted-set equality) and `records` is
+/// left unchanged. `result_tags` is then removed so the downstream parser is
+/// unchanged.
+///
+/// Fail-loud (returns `Err`), never silently misbinds:
+/// - **Loop guard**: if `static_meas_count != traced_meas_count` the program
+///   has un-unrolled runtime loops (the HUGR has one static measure op per
+///   loop body), so per-occurrence tag binding is not statically available.
+/// - An unknown tag, malformed `result_tags`, or invalid JSON is an error.
+///
+/// # Errors
+/// Returns [`DemBuilderError::ParseError`] on the loop guard, an unknown tag,
+/// malformed `result_tags`, or invalid JSON.
+pub fn resolve_result_tags(
+    detectors_json: &str,
+    observables_json: &str,
+    tag_to_ords: &std::collections::BTreeMap<String, Vec<usize>>,
+    static_meas_count: usize,
+    traced_meas_count: usize,
+) -> Result<(String, String), DemBuilderError> {
+    if static_meas_count != traced_meas_count {
+        return Err(DemBuilderError::ParseError(format!(
+            "result_tags (tag-referenced detectors) is not supported for Guppy \
+             programs with runtime loops: the HUGR has {static_meas_count} \
+             static measurement op(s) but the traced program emits \
+             {traced_meas_count} measurement(s). Per-occurrence tag binding is \
+             not statically available; use positional records."
+        )));
+    }
+    let traced = i64::try_from(traced_meas_count).map_err(|_| {
+        DemBuilderError::ParseError("traced measurement count too large".to_string())
+    })?;
+
+    let rewrite = |json: &str, kind: &str| -> Result<String, DemBuilderError> {
+        if json.trim().is_empty() {
+            return Ok(json.to_string());
+        }
+        let mut value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+            DemBuilderError::ParseError(format!("invalid detector/observable JSON: {e}"))
+        })?;
+        let Some(entries) = value.as_array_mut() else {
+            return Ok(json.to_string());
+        };
+        for entry in entries.iter_mut() {
+            let Some(obj) = entry.as_object_mut() else {
+                continue;
+            };
+            let Some(tags) = obj.remove("result_tags") else {
+                continue;
+            };
+
+            // Resolve `result_tags` strictly into a list of record offsets.
+            let tag_list = tags.as_array().ok_or_else(|| {
+                DemBuilderError::ParseError(
+                    "result_tags must be a JSON array of strings".to_string(),
+                )
+            })?;
+            let mut tag_offsets: Vec<i64> = Vec::new();
+            for tag in tag_list {
+                let tag = tag.as_str().ok_or_else(|| {
+                    DemBuilderError::ParseError("result_tags entries must be strings".to_string())
+                })?;
+                let ords = tag_to_ords.get(tag).ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} references result_tag {tag:?}, which the Guppy \
+                         program never records via result(...)"
+                    ))
+                })?;
+                for &ord in ords {
+                    tag_offsets.push(i64::try_from(ord).unwrap_or(i64::MAX) - traced);
+                }
+            }
+
+            // `result_tags` is an *alternative* to `records` (and `meas_ids`),
+            // following the same redundancy discipline as records-vs-meas_ids:
+            // co-presence is allowed only when the two forms reference the
+            // *same* measurements (sorted-set equality). Additive merging
+            // would either silently weaken the DEM (when callers expected
+            // alternatives) or corrupt parity by double-referencing (when
+            // they were actually redundant).
+            match obj.get("records") {
+                None => {
+                    obj.insert(
+                        "records".to_string(),
+                        serde_json::Value::Array(
+                            tag_offsets
+                                .into_iter()
+                                .map(serde_json::Value::from)
+                                .collect(),
+                        ),
+                    );
+                }
+                Some(records_value) => {
+                    let records_array = records_value.as_array().ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "{kind} records must be a JSON array of integers"
+                        ))
+                    })?;
+                    let mut existing: Vec<i64> = Vec::with_capacity(records_array.len());
+                    for rec in records_array {
+                        let r = rec.as_i64().ok_or_else(|| {
+                            DemBuilderError::ParseError(format!(
+                                "{kind} records entries must be integers"
+                            ))
+                        })?;
+                        existing.push(r);
+                    }
+                    let mut a = existing;
+                    let mut b = tag_offsets;
+                    a.sort_unstable();
+                    b.sort_unstable();
+                    if a != b {
+                        return Err(DemBuilderError::ParseError(format!(
+                            "{kind} entry has both 'records' and 'result_tags' but \
+                             they reference different measurements (records {a:?}, \
+                             result_tags resolve to {b:?}); they are alternatives, \
+                             not additive -- provide one, or make them redundant"
+                        )));
+                    }
+                    // Records left unchanged; tag offsets are redundant.
+                }
+            }
+        }
+        serde_json::to_string(&value)
+            .map_err(|e| DemBuilderError::ParseError(format!("failed to re-serialize JSON: {e}")))
+    };
+
+    Ok((
+        rewrite(detectors_json, "Detector")?,
+        rewrite(observables_json, "Observable")?,
+    ))
 }
 
 // ============================================================================
@@ -1914,6 +2534,7 @@ mod tests {
         assert_eq!(detectors[0].id, 0);
         assert_eq!(detectors[0].coords, Some([0.0, 0.0, 0.0]));
         assert_eq!(detectors[0].records, vec![-1, -5]);
+        assert!(detectors[0].meas_ids.is_empty());
         assert_eq!(detectors[1].id, 1);
         assert_eq!(detectors[1].records, vec![-2]);
     }
@@ -1927,6 +2548,19 @@ mod tests {
         assert_eq!(observables.len(), 1);
         assert_eq!(observables[0].id, 0);
         assert_eq!(observables[0].records, vec![-1, -3, -5]);
+        assert!(observables[0].meas_ids.is_empty());
+    }
+
+    #[test]
+    fn test_parse_json_accepts_meas_ids() {
+        let detectors = parse_detectors_json(r#"[{"id": 0, "meas_ids": [0, 2]}]"#).unwrap();
+        assert_eq!(detectors[0].records, Vec::<i32>::new());
+        assert_eq!(detectors[0].meas_ids, vec![0, 2]);
+
+        let observables =
+            parse_observables_json(r#"[{"observable_id": 1, "meas_ids": [3]}]"#).unwrap();
+        assert_eq!(observables[0].records, Vec::<i32>::new());
+        assert_eq!(observables[0].meas_ids, vec![3]);
     }
 
     #[test]
@@ -1944,10 +2578,184 @@ mod tests {
     }
 
     #[test]
+    fn test_dem_builder_resolves_meas_ids_when_records_are_absent() {
+        let influence_map = DagFaultInfluenceMap::with_capacity(0);
+        let dem = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [0, 2]}]"#)
+            .unwrap()
+            .with_observables_json(r#"[{"id": 0, "meas_ids": [1]}]"#)
+            .unwrap()
+            .with_num_measurements(3)
+            .build();
+
+        assert_eq!(dem.detectors[0].records.as_slice(), &[-3, -1]);
+        assert_eq!(dem.dem_outputs()[0].records.as_slice(), &[-2]);
+    }
+
+    #[test]
+    fn test_try_build_rejects_out_of_range_record_and_meas_id() {
+        let influence_map = DagFaultInfluenceMap::with_capacity(0);
+
+        let bad_record = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "records": [-2]}]"#)
+            .unwrap()
+            .with_num_measurements(1)
+            .try_build();
+        assert!(
+            bad_record.is_err(),
+            "out-of-range record must fail try_build"
+        );
+
+        let bad_meas_id = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [999]}]"#)
+            .unwrap()
+            .with_num_measurements(1)
+            .try_build();
+        assert!(
+            bad_meas_id.is_err(),
+            "out-of-range meas_id must fail try_build"
+        );
+
+        // The infallible `build` stays lax for the decoupled/raw case so
+        // existing pass-through callers are unaffected.
+        let _ = DemBuilder::new(&influence_map)
+            .with_observables_json(r#"[{"id": 0, "records": [-1, -3]}]"#)
+            .unwrap()
+            .build();
+
+        // Empty influence map keeps the escape hatch: a declared count with
+        // no real measurements is allowed (opaque pass-through coordinates).
+        assert!(
+            DemBuilder::new(&influence_map)
+                .with_detectors_json(r#"[{"id": 0, "meas_ids": [0, 2]}]"#)
+                .unwrap()
+                .with_num_measurements(3)
+                .try_build()
+                .is_ok(),
+            "empty influence map must keep the declarative-count escape hatch"
+        );
+    }
+
+    #[test]
+    fn test_parse_accepts_dem_label_id_form() {
+        let det = parse_detectors_json(r#"[{"id": "D0", "records": [-1]}]"#).unwrap();
+        assert_eq!(det[0].id, 0);
+        let obs = parse_observables_json(r#"[{"id": "L7", "records": [-1]}]"#).unwrap();
+        assert_eq!(obs[0].id, 7);
+        // Wrong prefix / non-numeric body is a hard error, not a guess.
+        assert!(parse_detectors_json(r#"[{"id": "L0", "records": [-1]}]"#).is_err());
+        assert!(parse_detectors_json(r#"[{"id": "X0", "records": [-1]}]"#).is_err());
+        assert!(parse_observables_json(r#"[{"id": "Lx", "records": [-1]}]"#).is_err());
+    }
+
+    #[test]
+    fn test_parse_rejects_tracked_pauli_and_refless_entries() {
+        assert!(
+            parse_observables_json(r#"[{"kind": "tracked_pauli", "pauli": "X0"}]"#).is_err(),
+            "tracked_pauli must be rejected in observables_json",
+        );
+        assert!(
+            parse_detectors_json(r#"[{"id": 0, "kind": "tracked_pauli"}]"#).is_err(),
+            "tracked_pauli must be rejected in detectors_json too",
+        );
+        assert!(
+            parse_detectors_json(r#"[{"id": 0}]"#).is_err(),
+            "an entry with neither records nor meas_ids must be rejected",
+        );
+        // Both-present is allowed at parse time (surface logical_circuit
+        // legitimately emits redundant records+meas_ids); the
+        // redundancy/fail-loud decision is made later in try_build.
+        assert!(
+            parse_detectors_json(r#"[{"id": 0, "records": [-1], "meas_ids": [0]}]"#).is_ok(),
+            "both records and meas_ids must parse; redundancy is checked in try_build",
+        );
+    }
+
+    #[test]
+    fn test_try_build_mixed_records_meas_ids_must_be_redundant() {
+        // Empty influence map => positional meas_id resolution (deterministic):
+        // num_measurements=3, meas_id k resolves to record offset k-3.
+        let influence_map = DagFaultInfluenceMap::with_capacity(0);
+
+        // Redundant: records [-3] and meas_ids [0] both name measurement 0.
+        let redundant = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "records": [-3], "meas_ids": [0]}]"#)
+            .unwrap()
+            .with_num_measurements(3)
+            .try_build();
+        assert!(
+            redundant.is_ok(),
+            "redundant records+meas_ids must be accepted: {redundant:?}",
+        );
+
+        // Non-redundant: records [-3] (measurement 0) vs meas_ids [1]
+        // (measurement 1) -> fail loud, not silently records-only.
+        let conflicting = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "records": [-3], "meas_ids": [1]}]"#)
+            .unwrap()
+            .with_num_measurements(3)
+            .try_build();
+        assert!(
+            conflicting.is_err(),
+            "non-redundant records+meas_ids must fail loud, not collapse to records",
+        );
+    }
+
+    #[test]
+    fn test_validate_measurement_count_rejects_duplicate_stamped_meas_id() {
+        let mut influence_map = DagFaultInfluenceMap::with_capacity(0);
+        influence_map.meas_ids = vec![pecos_core::MeasId(5), pecos_core::MeasId(5)];
+        let result = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id": 0, "meas_ids": [5]}]"#)
+            .unwrap()
+            .try_build();
+        assert!(
+            result.is_err(),
+            "a duplicate stable MeasId must fail loud, not bind to the first",
+        );
+    }
+
+    #[test]
     fn test_parse_empty_json() {
         assert!(parse_detectors_json("").unwrap().is_empty());
         assert!(parse_detectors_json("[]").unwrap().is_empty());
         assert!(parse_observables_json("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_detector_json_rejects_malformed_shapes() {
+        for json in [
+            "{}",
+            r#"[{"id":0,"records":["-1"]}]"#,
+            r#"[{"id":0,"records":[-1.2]}]"#,
+            r#"[{"id":0,"meas_ids":["0"]}]"#,
+            r#"[{"id":0,"meas_ids":[-1]}]"#,
+            r#"[{"id":0,"meas_ids":[1.2]}]"#,
+            r#"[{"id":true,"records":[-1]}]"#,
+        ] {
+            assert!(
+                parse_detectors_json(json).is_err(),
+                "detectors JSON should fail loud: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_observable_json_rejects_malformed_shapes() {
+        for json in [
+            "{}",
+            r#"[{"id":0,"records":["-1"]}]"#,
+            r#"[{"id":0,"records":[-1.2]}]"#,
+            r#"[{"id":0,"meas_ids":["0"]}]"#,
+            r#"[{"id":0,"meas_ids":[-1]}]"#,
+            r#"[{"id":0,"meas_ids":[1.2]}]"#,
+            r#"[{"observable_id":false,"records":[-1]}]"#,
+        ] {
+            assert!(
+                parse_observables_json(json).is_err(),
+                "observables JSON should fail loud: {json}"
+            );
+        }
     }
 
     #[test]

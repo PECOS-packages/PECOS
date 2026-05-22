@@ -17,12 +17,20 @@ crate-type = ["cdylib", "rlib"]
 doctest = false
 test = false
 
+[features]
+# See pecos-rslib's Cargo.toml for why this bundle is opt-in.
+extension-module = [
+    "pyo3/extension-module",
+    "pyo3/abi3-py310",
+    "pyo3/generate-import-lib",
+]
+
 [dependencies]
 pecos-cuquantum = { workspace = true }
 pecos-core = { workspace = true }
 pecos-simulators = { workspace = true }
 
-pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib"] }
+pyo3.workspace = true
 log.workspace = true
 
 [build-dependencies]

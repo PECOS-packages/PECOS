@@ -1916,7 +1916,9 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// # Errors
     /// Returns an error if the JSON is malformed or missing required fields.
     pub fn with_detectors_json(mut self, json: &str) -> Result<Self, String> {
-        self.detector_records = parse_records_json(json, "detector")?;
+        self.detector_records =
+            super::builder::parse_detector_record_vectors(json, self.influence_map)
+                .map_err(|err| err.to_string())?;
         Ok(self)
     }
 
@@ -1925,9 +1927,12 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Format: `[{"id": 0, "records": [-1, -3, -5]}, ...]`
     ///
     /// # Errors
-    /// Returns an error if the JSON is malformed or missing required fields.
+    /// Returns an error if the JSON is malformed, fails schema validation, or
+    /// references measurements out of range for the circuit.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, String> {
-        self.observable_records = parse_records_json(json, "observable")?;
+        self.observable_records =
+            super::builder::parse_observable_record_vectors(json, self.influence_map)
+                .map_err(|err| err.to_string())?;
         Ok(self)
     }
 
@@ -2579,68 +2584,6 @@ where
     result
 }
 
-/// Parse detector or observable definitions from JSON.
-///
-/// Uses a simple custom parser to avoid `serde_json` dependency.
-/// Expected format: `[{"id": 0, "records": [-1, -5]}, ...]`
-#[allow(clippy::unnecessary_wraps)]
-fn parse_records_json(json: &str, _kind: &str) -> Result<Vec<Vec<i32>>, String> {
-    let json = json.trim();
-    if json.is_empty() || json == "[]" {
-        return Ok(Vec::new());
-    }
-
-    let mut results = Vec::new();
-
-    // Simple state machine to find each object
-    let mut depth = 0;
-    let mut start = None;
-
-    for (i, c) in json.char_indices() {
-        match c {
-            '{' => {
-                if depth == 1 {
-                    start = Some(i);
-                }
-                depth += 1;
-            }
-            '}' => {
-                depth -= 1;
-                if depth == 1 {
-                    if let Some(s) = start {
-                        let obj_str = &json[s..i + c.len_utf8()];
-                        let records = extract_records_from_object(obj_str);
-                        results.push(records);
-                    }
-                    start = None;
-                }
-            }
-            '[' if depth == 0 => depth = 1,
-            ']' if depth == 1 => depth = 0,
-            _ => {}
-        }
-    }
-
-    Ok(results)
-}
-
-/// Extract the "records" array from a JSON object string.
-fn extract_records_from_object(json: &str) -> Vec<i32> {
-    if let Some(pos) = json.find("\"records\"") {
-        let rest = &json[pos..];
-        if let (Some(arr_start), Some(arr_end)) = (rest.find('['), rest.find(']'))
-            && arr_start < arr_end
-        {
-            let arr_str = &rest[arr_start + 1..arr_end];
-            return arr_str
-                .split(',')
-                .filter_map(|s| s.trim().parse::<i32>().ok())
-                .collect();
-        }
-    }
-    Vec::new()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2718,23 +2661,84 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    #[test]
-    fn test_parse_records_json_empty() {
-        let result = parse_records_json("[]", "test").unwrap();
-        assert!(result.is_empty());
-
-        let result = parse_records_json("", "test").unwrap();
-        assert!(result.is_empty());
+    /// Build an influence map for a circuit with `n` independent measurements
+    /// (no stable `MeasId`s, so `meas_ids` resolve positionally).
+    fn im_with_n_measurements(
+        n: usize,
+    ) -> crate::fault_tolerance::propagator::DagFaultInfluenceMap {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_quantum::DagCircuit;
+        let mut dag = DagCircuit::new();
+        for q in 0..n {
+            dag.pz(&[q]);
+            dag.mz(&[q]);
+        }
+        DagFaultAnalyzer::new(&dag).build_influence_map()
     }
 
     #[test]
-    fn test_parse_records_json_valid() {
-        let json = r#"[{"id": 0, "records": [-1, -5]}, {"id": 1, "records": [-2, -3, -4]}]"#;
-        let result = parse_records_json(json, "detector").unwrap();
+    fn test_record_vectors_empty() {
+        use super::super::builder::parse_detector_record_vectors;
+        let im = im_with_n_measurements(8);
+        assert!(parse_detector_record_vectors("[]", &im).unwrap().is_empty());
+        assert!(parse_detector_record_vectors("", &im).unwrap().is_empty());
+    }
 
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], vec![-1, -5]);
-        assert_eq!(result[1], vec![-2, -3, -4]);
+    #[test]
+    fn test_record_vectors_valid() {
+        use super::super::builder::parse_detector_record_vectors;
+        let im = im_with_n_measurements(8);
+        let json = r#"[{"id": 0, "records": [-1, -5]}, {"id": 1, "records": [-2, -3, -4]}]"#;
+        let result = parse_detector_record_vectors(json, &im).unwrap();
+        assert_eq!(result, vec![vec![-1, -5], vec![-2, -3, -4]]);
+    }
+
+    #[test]
+    fn test_record_vectors_reject_malformed_metadata() {
+        // The consolidated parser fails loud where the old hand-rolled scanner
+        // silently produced empty / partial records.
+        use super::super::builder::parse_detector_record_vectors;
+        let im = im_with_n_measurements(8);
+        // Non-list top level (previously -> empty, accepted).
+        assert!(parse_detector_record_vectors("{}", &im).is_err());
+        // Non-integer record value (previously dropped via filter_map(parse.ok)).
+        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,"bad"]}]"#, &im).is_err());
+        // Entry referencing neither records nor meas_ids (previously -> empty vec).
+        assert!(parse_detector_record_vectors(r#"[{"id":0}]"#, &im).is_err());
+    }
+
+    #[test]
+    fn test_record_vectors_reject_out_of_range_and_nonredundant() {
+        // Context-aware validation: out-of-range refs and non-redundant
+        // records+meas_ids fail loud instead of being silently dropped
+        // downstream (the M-E sampler-validation gap). meas_ids resolve
+        // positionally here because these circuits carry no stable ids; the
+        // stamped-MeasId semantic is exercised from Python (mz_with_ids).
+        use super::super::builder::{
+            parse_detector_record_vectors, parse_observable_record_vectors,
+        };
+        let im1 = im_with_n_measurements(1);
+        let im3 = im_with_n_measurements(3);
+        let im0 = im_with_n_measurements(0);
+        // Out-of-range negative offset on a 1-measurement circuit.
+        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1).is_err());
+        // Out-of-range observable offset, too.
+        assert!(parse_observable_record_vectors(r#"[{"id":0,"records":[-1,-2]}]"#, &im1).is_err());
+        // Out-of-range (positional) meas_id.
+        assert!(parse_detector_record_vectors(r#"[{"id":0,"meas_ids":[0,999]}]"#, &im1).is_err());
+        // Non-redundant co-present records + meas_ids (3-measurement circuit:
+        // records[-1] -> index 2, meas_ids[0] -> index 0).
+        assert!(
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im3)
+                .is_err()
+        );
+        // Redundant co-presence is accepted (both -> index 0).
+        assert!(
+            parse_detector_record_vectors(r#"[{"id":0,"records":[-1],"meas_ids":[0]}]"#, &im1)
+                .is_ok()
+        );
+        // Empty influence map keeps the opaque escape hatch (no range check).
+        assert!(parse_detector_record_vectors(r#"[{"id":0,"records":[-1,-99]}]"#, &im0).is_ok());
     }
 
     #[test]

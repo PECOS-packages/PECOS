@@ -12,13 +12,16 @@ Go bindings for the PECOS quantum error correction simulator.
 ### 1. Build the Rust library
 
 ```bash
-cd go/pecos-go-ffi
-cargo build --release
+just go-build release
 ```
 
 This creates `libpecos_go.so` (Linux), `libpecos_go.dylib` (macOS), or `pecos_go.dll` (Windows) in `target/release/`.
 
-### 2. Set library path
+### 2. Set runtime library paths
+
+The `#cgo LDFLAGS` directive in `pecos/pecos.go` already points at
+`target/release/` for the link step, so for the standard release build only
+the runtime loader paths need to be set:
 
 **Linux:**
 ```bash
@@ -30,11 +33,17 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/target/release
 export DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH:$(pwd)/target/release
 ```
 
+To use a non-release profile (e.g. debug or native), prepend an extra
+search path via `CGO_LDFLAGS` — this is what `just go-test <profile>` does:
+
+```bash
+export CGO_LDFLAGS="-L$(pwd)/target/native"
+```
+
 ### 3. Run Go tests
 
 ```bash
-cd go/pecos
-go test -v
+just go-test release
 ```
 
 ## Usage

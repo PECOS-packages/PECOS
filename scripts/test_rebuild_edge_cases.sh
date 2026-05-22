@@ -132,7 +132,7 @@ test_corrupted_marker() {
 
     # Try to build
     cd "$PROJECT_ROOT"
-    if cargo build -p pecos-llvm-runtime --quiet 2>/dev/null; then
+    if cargo build --locked -p pecos-llvm-runtime --quiet 2>/dev/null; then
         log_info "Build succeeded despite corrupted marker"
     else
         log_error "Build failed with corrupted marker"
@@ -186,7 +186,7 @@ test_permission_issues() {
 
     # Try to build (should handle gracefully)
     cd "$PROJECT_ROOT"
-    if cargo build -p pecos-llvm-runtime --quiet 2>&1 | grep -q "permission"; then
+    if cargo build --locked -p pecos-llvm-runtime --quiet 2>&1 | grep -q "permission"; then
         log_info "Permission error handled gracefully"
         chmod 755 "$MARKER_DIR"
         return 0
@@ -214,7 +214,7 @@ test_symlink_handling() {
 
         # Run build
         cd "$PROJECT_ROOT"
-        if cargo build -p pecos-llvm-runtime --quiet; then
+        if cargo build --locked -p pecos-llvm-runtime --quiet; then
             log_info "Build works with symlinked runtime library"
 
             # Check if marker was created (it shouldn't be if symlink is valid)
@@ -255,7 +255,7 @@ test_cargo_home_variations() {
     log_info "Testing with CARGO_HOME=$CARGO_HOME"
 
     cd "$PROJECT_ROOT"
-    if cargo build -p pecos-llvm-runtime --quiet 2>&1; then
+    if cargo build --locked -p pecos-llvm-runtime --quiet 2>&1; then
         # Check if marker path is created in custom location
         local CUSTOM_MARKER="$CARGO_HOME/pecos-llvm-runtime/.needs_rebuild"
         if [[ -f "$CUSTOM_MARKER" ]]; then
@@ -303,7 +303,7 @@ test_filesystem_full() {
     export CARGO_HOME="$MOUNT_POINT"
 
     cd "$PROJECT_ROOT"
-    if cargo build -p pecos-llvm-runtime --quiet 2>&1 | grep -q "space"; then
+    if cargo build --locked -p pecos-llvm-runtime --quiet 2>&1 | grep -q "space"; then
         log_info "Filesystem full error handled"
     else
         log_info "Build handled full filesystem scenario"
@@ -324,7 +324,7 @@ main() {
     # Build CLI first
     log_info "Building PECOS CLI..."
     cd "$PROJECT_ROOT"
-    cargo build -p pecos-cli --quiet || {
+    cargo build --locked -p pecos-cli --quiet || {
         log_error "Failed to build PECOS CLI"
         exit 1
     }

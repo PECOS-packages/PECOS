@@ -108,14 +108,46 @@ For developers who want to contribute or modify PECOS:
     just lint
     ```
 
-11. To deactivate your development venv:
+11. Run dependency and security policy checks when touching dependency manifests, lockfiles, GitHub Actions workflows, or security policy:
+    ```sh
+    just security-check
+    ```
+
+    For Rust-only dependency changes, `just cargo-deny` runs the same `cargo-deny` checks that CI applies to the root workspace and the standalone native benchmark crate.
+
+12. To deactivate your development venv:
     ```sh
     deactivate
     ```
 
-Before pull requests are merged, they must pass linting and the test.
+Before pull requests are merged, they must pass linting, tests, and dependency/security checks. The local pre-PR gate is:
+
+```sh
+just check-all
+```
 
 Note: For the Rust side of the project, you can use `cargo` to run tests, benchmarks, formatting, etc.
+
+## Dependency and Security Checks
+
+Use the Justfile recipes below so local checks match CI:
+
+| Command | When to run | What it checks |
+|---------|-------------|----------------|
+| `just security-check` | Dependency, lockfile, GitHub Actions, cache, or security-policy changes | Runs the dependency integrity script and both `cargo-deny` checks |
+| `just cargo-deny` | Rust dependency or Cargo lockfile changes | Checks advisories, banned dependency patterns, and allowed dependency sources |
+| `just cargo-deny-workspace` | Root workspace Rust dependency changes | Runs `cargo-deny` on the root Rust workspace |
+| `just cargo-deny-native-bench` | Native benchmark crate dependency changes | Runs `cargo-deny` on `scripts/native_bench/bench_pecos/Cargo.toml` |
+| `just dependency-integrity-check` | CI workflow, lockfile policy, action pinning, or cache posture changes | Checks lock discipline, action pinning, cache write posture, dependency review coverage, and package-worm indicators |
+| `just check-all` | Before opening or updating a PR with broad changes | Runs clean, release build, release tests, lint, and dependency/security checks |
+
+`cargo-deny` is not installed by `uv sync`. To run the Rust dependency policy checks locally, install the same version used by CI:
+
+```sh
+cargo install --locked --version 0.19.6 cargo-deny
+```
+
+The first `cargo-deny` run may update the local advisory database under `~/.cargo`. CI runs these checks on every relevant Cargo manifest, lockfile, `deny.toml`, or cargo-deny workflow change, and also on the scheduled security lane.
 
 ## Cleaning Build Artifacts
 

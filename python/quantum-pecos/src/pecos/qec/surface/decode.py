@@ -399,6 +399,7 @@ def _copy_surface_tick_circuit_metadata(source_tc: Any, target_tc: Any) -> None:
         "num_detectors",
         "detector_descriptors",
         "observable_descriptors",
+        "ancilla_budget",
     ):
         value = source_tc.get_meta(key)
         if value is not None:
@@ -540,8 +541,14 @@ def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any
                 [(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))],
             )
         elif op_name == "Measure":
-            program_id, _result_id = tuple_args(payload, op_name, 2)
-            tick.mz([mapped_slot(int(program_id), op_name)])
+            program_id, result_id = tuple_args(payload, op_name, 2)
+            # Stamp the QIS-provided result_id as the MeasId rather than
+            # discarding it and letting assign_missing_meas_ids() invent
+            # sequential ids (which would be wrong for non-sequential ids).
+            tick.mz_with_ids(
+                [mapped_slot(int(program_id), op_name)],
+                [int(result_id)],
+            )
         elif op_name == "Reset":
             tick.pz([mapped_slot(scalar_arg(payload, op_name), op_name)])
         else:
@@ -577,32 +584,32 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
     tick, then compact (ASAP schedule) so that gates on disjoint qubits share
     a tick --- matching the parallel structure of the abstract circuit.
 
-    MeasIds flow from Guppy result() objects: AllocateResult IDs from the
-    operations stream are stamped on MZ gates via mz_with_ids().
+    MeasIds flow from the QIS measurement result slot: Quantum.Measure carries
+    ``[qubit, result_id]``, and those IDs are stamped on MZ gates via
+    mz_with_ids().
     """
     from pecos_rslib.quantum import TickCircuit
 
     tick_circuit = TickCircuit()
 
+    # Pass 1: the ordered MeasIds, read directly from each Measure op. A
+    # ``Quantum.Measure`` op carries ``[qubit, result_id]`` where ``result_id``
+    # is the QIS result slot the runtime allocated for it (== the MeasId we
+    # stamp). Using it directly needs no AllocateResult/Measure pairing
+    # heuristic and no interleave assumption -- batched
+    # allocate-allocate-measure-measure (a valid QIS pattern) works the same
+    # as interleaved. (The order of Measure ops here matches the order of MZ
+    # gates in ``lowered_quantum_ops``, consumed in pass 2.)
+    meas_ids_in_order: list[int] = []
     for chunk in chunks:
-        # Extract AllocateResult ID → MZ qubit mapping from the operations stream.
-        # Each AllocateResult(id=N) is followed by Quantum.Measure([qubit, slot]).
-        # This gives us the MeasId to stamp on each MZ gate.
-        meas_id_queue: list[tuple[int, int]] = []  # (qubit, meas_id) pairs
-        last_alloc_id: int | None = None
         for op in chunk.get("operations") or []:
-            op_dict = dict(op)
-            if "AllocateResult" in op_dict:
-                last_alloc_id = int(op_dict["AllocateResult"]["id"])
-            elif "Quantum" in op_dict:
-                q_op = op_dict["Quantum"]
-                if "Measure" in q_op and last_alloc_id is not None:
-                    qubit = int(q_op["Measure"][0])
-                    meas_id_queue.append((qubit, last_alloc_id))
-                    last_alloc_id = None
+            quantum = dict(op).get("Quantum")
+            if isinstance(quantum, dict) and "Measure" in quantum:
+                meas_ids_in_order.append(int(quantum["Measure"][1]))
 
-        meas_id_idx = 0  # next MeasId to assign
-
+    # Pass 2: replay gates, stamping MeasIds on MZ gates in global trace order.
+    meas_cursor = 0
+    for chunk in chunks:
         for gate in chunk.get("lowered_quantum_ops") or []:
             gate_type = str(gate["gate_type"])
             qubits = [int(q) for q in gate.get("qubits", [])]
@@ -628,26 +635,16 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
             elif gate_type == "PZ":
                 tick.pz(qubits)
             elif gate_type == "MZ":
-                # Stamp MeasIds from the AllocateResult stream
-                meas_ids = []
-                for q in qubits:
-                    if meas_id_idx < len(meas_id_queue):
-                        expected_q, mid = meas_id_queue[meas_id_idx]
-                        if expected_q == q:
-                            meas_ids.append(mid)
-                            meas_id_idx += 1
-                        else:
-                            # Qubit mismatch — fall back to auto-assign
-                            meas_ids = []
-                            break
-                    else:
-                        meas_ids = []
-                        break
-
-                if meas_ids:
-                    tick.mz_with_ids(qubits, meas_ids)
-                else:
-                    tick.mz(qubits)
+                end = meas_cursor + len(qubits)
+                if end > len(meas_ids_in_order):
+                    msg = (
+                        "More measured qubits than result(...)-anchored "
+                        "MeasIds in the traced program; a measurement is "
+                        "missing its result(...) call."
+                    )
+                    raise ValueError(msg)
+                tick.mz_with_ids(qubits, meas_ids_in_order[meas_cursor:end])
+                meas_cursor = end
             elif gate_type == "RX":
                 tick.rx(angles[0], qubits)
             elif gate_type == "RY":
@@ -678,38 +675,152 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
                 msg = f"Unsupported lowered traced gate {gate_type!r}"
                 raise ValueError(msg)
 
+    if meas_cursor != len(meas_ids_in_order):
+        msg = (
+            f"Traced program has {len(meas_ids_in_order)} result(...)-anchored "
+            f"measurements but only {meas_cursor} measured qubit(s) in the "
+            "lowered gate stream; result()/measurement mismatch."
+        )
+        raise ValueError(msg)
+
     # Compact: ASAP-schedule gates into minimal ticks
     tick_circuit.compact_ticks()
 
     return tick_circuit
 
 
-def _generate_traced_surface_tick_circuit(
-    patch: SurfacePatch,
-    num_rounds: int,
-    basis: str,
-) -> Any:
-    """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit."""
-    import pecos
-    from pecos.guppy import get_num_qubits, make_surface_code
+def _chunk_has_lowerable_op(chunk: dict[str, Any]) -> bool:
+    """True if a chunk carries an operation that lowers to a TickCircuit gate.
 
-    program = make_surface_code(distance=patch.distance, num_rounds=num_rounds, basis=basis)
+    A raw ``Quantum`` op (gate / measure / reset) lowers to a gate, and an
+    ``AllocateQubit`` lowers to a prep (``PZ``) -- both appear in
+    ``lowered_quantum_ops`` after Selene lowering, and both are emitted as
+    gates by the raw replay (see :func:`_replay_qis_trace_into_tick_circuit`).
+    ``AllocateResult``, ``RecordOutput``, ``Barrier``, and ``ReleaseQubit``
+    emit no gate and are pass-through bookkeeping, so a chunk containing only
+    those legitimately has no lowered ops.
+    """
+    return any(
+        isinstance(op, dict) and ("Quantum" in op or "AllocateQubit" in op) for op in (chunk.get("operations") or [])
+    )
+
+
+def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
+    """Fail loud on a mixed/partially-lowered trace.
+
+    The lowered replay consumes a chunk's gates from ``lowered_quantum_ops``
+    only (it reads ``operations`` solely for measurement result ids). So once
+    *any* chunk is lowered, a chunk that carries a lowerable operation (a raw
+    ``Quantum`` gate/measure/reset, or an ``AllocateQubit`` prep) but an empty
+    ``lowered_quantum_ops`` would have those gates silently dropped -- the
+    resulting TickCircuit would be missing operations with no error. A dropped
+    *measurement* is already caught downstream by the meas-count guard in
+    :func:`_replay_lowered_qis_trace_into_tick_circuit`, but a dropped prep or
+    non-measurement gate (H, CX, ...) would pass silently. Reject the
+    incomplete trace here instead of building from a partial gate stream.
+
+    This is the explicit trace-format contract for live
+    ``capture_operation_trace()`` output: lowered and raw forms must not be
+    mixed across chunks. (Per-chunk completeness of lowering is assumed and is
+    exercised end-to-end by the byte-identical surface DEM regressions.)
+    """
+    for idx, chunk in enumerate(chunks):
+        if _chunk_has_lowerable_op(chunk) and not chunk.get("lowered_quantum_ops"):
+            msg = (
+                f"Traced chunk {idx} carries lowerable operations (a quantum "
+                "gate/measure/reset or an AllocateQubit prep) but no "
+                "lowered_quantum_ops while other chunks are lowered. This "
+                "mixed/partially-lowered trace would silently drop the chunk's "
+                "gates in the lowered replay; refusing to build from an "
+                "incomplete gate stream."
+            )
+            raise ValueError(msg)
+
+
+def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 0) -> Any:
+    """Trace a Guppy/QIS program's lowered Selene op stream into a ``TickCircuit``.
+
+    Runs ``program`` under the Selene QIS engine with operation tracing enabled
+    and replays the captured (lowered) gate stream into a PECOS ``TickCircuit``.
+    This is the generic core shared by the surface traced-QIS path and the
+    general ``DetectorErrorModel.from_guppy`` entry point.
+
+    Note: this traces ONE ideal execution. Measurement-dependent (dynamic)
+    control flow is therefore *unsupported / undefined* for DEM construction --
+    a single sampled branch is not a static circuit. No reliable runtime-trace
+    heuristic distinguishes that from statically-scheduled post-measurement
+    gates (the surface code legitimately has those), so no guard is attempted;
+    callers must pass straight-line programs.
+
+    Args:
+        program: Anything ``pecos.sim`` accepts -- a ``@guppy`` function, a
+            compiled Guppy program, or a program wrapper.
+        num_qubits: Number of qubits to allocate. QIS/HUGR programs require an
+            explicit qubit count for trace capture.
+        seed: Seed for the (ideal) trace run.
+
+    Returns:
+        A ``TickCircuit`` with no detector/observable metadata attached; the
+        caller supplies that.
+    """
+    import pecos
+
     sim_builder = (
-        pecos.sim(program)
-        .classical(pecos.selene_engine())
-        .quantum(pecos.stabilizer())
-        .qubits(get_num_qubits(patch.distance))
-        .seed(0)
+        pecos.sim(program).classical(pecos.selene_engine()).quantum(pecos.stabilizer()).qubits(num_qubits).seed(seed)
     )
     chunks = list(sim_builder.capture_operation_trace())
 
+    # Selene lowers QIS gates into per-chunk `lowered_quantum_ops` (the gate
+    # shape actually executed; e.g. cx -> RZZ + rotations). When any chunk is
+    # lowered we replay from those, but first reject a mixed/partially-lowered
+    # trace that would silently drop a chunk's raw gates (see
+    # `_reject_partially_lowered_trace`).
     if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
+        _reject_partially_lowered_trace(chunks)
         return _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
+    # No chunk was lowered: replay the uniformly-raw QIS operation stream.
     operations: list[dict[str, Any]] = []
     for chunk in chunks:
         operations.extend(list(chunk.get("operations", [])))
     return _replay_qis_trace_into_tick_circuit(operations)
+
+
+def _generate_traced_surface_tick_circuit(
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str,
+    *,
+    ancilla_budget: int | None = None,
+) -> Any:
+    """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit.
+
+    With ``ancilla_budget=None``, emits the unconstrained Guppy program
+    (one ancilla per stabilizer, all measured at the end of one round).
+    With a finite budget, emits the stabilizer-batched program; Selene's
+    lowering reuses ancilla slots across batches so the traced TickCircuit
+    uses only ``num_data + min(budget, total_ancilla)`` physical qubits
+    simultaneously.
+
+    The program and qubit count are derived from the **actual patch**, not
+    its scalar distance, so a non-default patch (non-rotated, asymmetric) is
+    traced faithfully rather than silently substituting the default rotated
+    patch of the same distance.
+    """
+    from pecos.guppy import get_num_qubits
+    from pecos.guppy.surface import generate_memory_experiment
+
+    program = generate_memory_experiment(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+    )
+    return trace_guppy_into_tick_circuit(
+        program,
+        get_num_qubits(patch=patch, ancilla_budget=ancilla_budget),
+        seed=0,
+    )
 
 
 def _build_surface_tick_circuit_for_native_model(
@@ -740,20 +851,35 @@ def _build_surface_tick_circuit_for_native_model(
         msg = f"Unknown circuit_source {circuit_source!r}"
         raise ValueError(msg)
 
-    if ancilla_budget is not None:
-        msg = (
-            "circuit_source='traced_qis' does not currently support ancilla_budget because "
-            "pecos.guppy.surface.make_surface_code does not yet expose ancilla budgeting"
-        )
-        raise ValueError(msg)
-
-    traced_tc = _generate_traced_surface_tick_circuit(patch, num_rounds, basis)
+    traced_tc = _generate_traced_surface_tick_circuit(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+    )
+    # Coarse sanity check: the traced and abstract circuits must agree on the
+    # sequence of *measured qubit indices*. This catches gross drift (a dropped
+    # or added measurement, a wrong-qubit measurement, a different schedule
+    # shape). It is NOT an identity-level check: `_extract_measurement_order`
+    # returns physical qubit indices, and under ancilla reuse the same physical
+    # qubit appears in many measurements -- so two different stabilizer
+    # orderings can produce an identical qubit-index sequence and pass here.
+    # There is no independent stabilizer-identity oracle in the stack today:
+    # the detector/observable record offsets are the production binding (not a
+    # validator), and the byte-identical traced-vs-traced DEM regression shares
+    # the same shared batching policy on both sides (so it cannot catch a
+    # policy bug). The current safeguards against identity drift are the shared
+    # `batched_stabilizers` source-of-truth and the source-level CX-emission
+    # pins; a true identity check here would need stabilizer provenance the
+    # replayed TickCircuit does not currently carry (future work).
     traced_measurement_order = _extract_measurement_order(traced_tc)
     abstract_measurement_order = _extract_measurement_order(abstract_tc)
     if traced_measurement_order != abstract_measurement_order:
         msg = (
-            "Lowered traced circuit measurement order does not match the abstract surface "
-            "metadata; refusing to build a mismatched native DEM/sampler"
+            "Traced and abstract surface circuits disagree on the measured-qubit "
+            "sequence (a dropped/added/wrong-qubit measurement or a different "
+            "schedule shape); refusing to build a native DEM/sampler from a "
+            "circuit that does not match the abstract detector/observable metadata"
         )
         raise ValueError(msg)
 
@@ -819,12 +945,31 @@ def build_memory_circuit(
     )
 
 
-def _can_use_cached_surface_topology(
-    *,
-    ancilla_budget: int | None,
-) -> bool:
-    """Return True when we can safely use the shared native topology cache."""
-    return ancilla_budget is None
+def _canonical_ancilla_budget(patch: SurfacePatch, ancilla_budget: int | None) -> int | None:
+    """Canonicalize an ancilla budget for the shared native topology cache.
+
+    Collapses every "unconstrained" spelling -- ``None``, a budget equal to
+    ``total_ancilla``, or any larger value -- to ``None`` so they share one
+    cache entry and use the unconstrained codegen path; a genuine constraint
+    (``< total_ancilla``) passes through unchanged. Routing through
+    :func:`normalize_ancilla_budget` also validates type/range fail-loud at the
+    cache boundary.
+
+    All cache parameters (``ancilla_budget``, ``circuit_source``, idle-gate
+    insertion) are independent keys on the cached functions, so constrained
+    budgets cache correctly -- there is no correctness reason to bypass the
+    cache for them. ``None``/``== total``/``>> total`` were verified to produce
+    byte-identical DEMs for both circuit sources, so canonicalizing them
+    together is behavior-preserving.
+    """
+    if ancilla_budget is None:
+        return None
+    from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
+
+    geom = patch.geometry
+    total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
+    effective = normalize_ancilla_budget(total_ancilla, ancilla_budget)
+    return None if effective >= total_ancilla else effective
 
 
 def _uses_dedicated_idle_noise(
@@ -1006,88 +1151,6 @@ def _build_native_sampler_from_cached_surface_topology(
     )
 
 
-def _build_native_sampler_from_tick_circuit(
-    tc: Any,
-    noise: NoiseModel,
-    *,
-    sampling_model: Literal[
-        "dem",
-        "influence_dem",
-        "mnm",
-    ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
-) -> NativeSampler:
-    """Construct a native sampler directly from a TickCircuit."""
-    import json
-
-    from pecos.qec import DagFaultAnalyzer, DemSampler, ParsedDem
-    from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
-
-    if _noise_uses_dedicated_idle_noise(noise):
-        tc.fill_idle_gates()
-
-    dag = tc.to_dag_circuit()
-    analyzer = DagFaultAnalyzer(dag)
-    influence_map = analyzer.build_influence_map()
-
-    detectors_json = tc.get_meta("detectors") or "[]"
-    observables_json = tc.get_meta("observables") or "[]"
-    num_detectors = len(json.loads(detectors_json)) if detectors_json else 0
-    num_observables = len(json.loads(observables_json)) if observables_json else 0
-
-    if sampling_model == "dem":
-        dem_str = generate_dem_from_tick_circuit(
-            tc,
-            p1=noise.p1,
-            p2=noise.p2,
-            p_meas=noise.p_meas,
-            p_prep=noise.p_prep,
-            p_idle=noise.p_idle,
-            t1=noise.t1,
-            t2=noise.t2,
-            decompose_errors=True,
-        )
-        sampler = ParsedDem.from_string(dem_str).to_dem_sampler()
-    elif sampling_model in ("influence_dem", "mnm"):
-        det_records = [d["records"] for d in json.loads(detectors_json)]
-        obs_records = [o["records"] for o in json.loads(observables_json)] if observables_json else []
-        sampler = DemSampler.with_detectors(
-            influence_map,
-            det_records,
-            obs_records,
-            noise.p1,
-            noise.p2,
-            noise.p_meas,
-            noise.p_prep,
-            p_idle=noise.p_idle,
-            t1=noise.t1,
-            t2=noise.t2,
-        )
-        sampling_model = "influence_dem"
-    elif sampling_model == "from_circuit":
-        # Direct from_circuit path: uses DagCircuit annotations and any
-        # explicit idle locations inserted above for dedicated idle noise.
-        sampler = DemSampler.from_circuit(
-            dag,
-            p1=noise.p1,
-            p2=noise.p2,
-            p_meas=noise.p_meas,
-            p_prep=noise.p_prep,
-            p_idle=noise.p_idle,
-        )
-    else:
-        msg = f"Unknown native sampling_model {sampling_model!r}"
-        raise ValueError(msg)
-
-    return NativeSampler(
-        sampler=sampler,
-        detectors_json=detectors_json,
-        observables_json=observables_json,
-        num_detectors=num_detectors,
-        num_observables=num_observables,
-        sampling_model=sampling_model,
-    )
-
-
 def generate_circuit_level_dem_from_builder(
     patch: SurfacePatch,
     num_rounds: int,
@@ -1136,45 +1199,22 @@ def generate_circuit_level_dem_from_builder(
         >>> noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01)
         >>> dem = generate_circuit_level_dem_from_builder(patch, num_rounds=3, noise=noise)
     """
-    from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit
-
-    if _can_use_cached_surface_topology(ancilla_budget=ancilla_budget):
-        patch_key = _surface_patch_cache_key(patch)
-        return _cached_surface_native_dem_string(
-            patch_key,
-            num_rounds,
-            basis.upper(),
-            ancilla_budget,
-            circuit_source,
-            noise.p1,
-            noise.p2,
-            noise.p_meas,
-            noise.p_prep,
-            decompose_errors=decompose_errors,
-            p_idle=noise.p_idle,
-            t1=noise.t1,
-            t2=noise.t2,
-        )
-
-    tc = _build_surface_tick_circuit_for_native_model(
-        patch,
+    ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
+    patch_key = _surface_patch_cache_key(patch)
+    return _cached_surface_native_dem_string(
+        patch_key,
         num_rounds,
-        basis,
-        ancilla_budget=ancilla_budget,
-        circuit_source=circuit_source,
-    )
-    if _noise_uses_dedicated_idle_noise(noise):
-        tc.fill_idle_gates()
-    return generate_dem_from_tick_circuit(
-        tc,
-        p1=noise.p1,
-        p2=noise.p2,
-        p_meas=noise.p_meas,
-        p_prep=noise.p_prep,
+        basis.upper(),
+        ancilla_budget,
+        circuit_source,
+        noise.p1,
+        noise.p2,
+        noise.p_meas,
+        noise.p_prep,
+        decompose_errors=decompose_errors,
         p_idle=noise.p_idle,
         t1=noise.t1,
         t2=noise.t2,
-        decompose_errors=decompose_errors,
     )
 
 
@@ -2815,57 +2855,44 @@ def build_native_sampler(
         >>> sampler = build_native_sampler(patch, num_rounds=5, noise=noise)
         >>> detection_events, observable_flips = sampler.sample(num_shots=10000)
     """
-    if _can_use_cached_surface_topology(ancilla_budget=ancilla_budget):
-        basis = basis.upper()
-        patch_key = _surface_patch_cache_key(patch)
-        topology = _cached_surface_native_topology(
+    ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
+    basis = basis.upper()
+    patch_key = _surface_patch_cache_key(patch)
+    topology = _cached_surface_native_topology(
+        patch_key,
+        num_rounds,
+        basis,
+        ancilla_budget,
+        circuit_source,
+        _noise_uses_dedicated_idle_noise(noise),
+    )
+    if sampling_model == "dem":
+        dem_str = _cached_surface_native_dem_string(
             patch_key,
             num_rounds,
             basis,
             ancilla_budget,
             circuit_source,
-            _noise_uses_dedicated_idle_noise(noise),
+            noise.p1,
+            noise.p2,
+            noise.p_meas,
+            noise.p_prep,
+            decompose_errors=True,
+            p_idle=noise.p_idle,
+            t1=noise.t1,
+            t2=noise.t2,
         )
-        if sampling_model == "dem":
-            dem_str = _cached_surface_native_dem_string(
-                patch_key,
-                num_rounds,
-                basis,
-                ancilla_budget,
-                circuit_source,
-                noise.p1,
-                noise.p2,
-                noise.p_meas,
-                noise.p_prep,
-                decompose_errors=True,
-                p_idle=noise.p_idle,
-                t1=noise.t1,
-                t2=noise.t2,
-            )
-            sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
-            return NativeSampler(
-                sampler=sampler,
-                detectors_json=topology.detectors_json,
-                observables_json=topology.observables_json,
-                num_detectors=topology.num_detectors,
-                num_observables=topology.num_observables,
-                sampling_model=sampling_model,
-            )
-        return _build_native_sampler_from_cached_surface_topology(
-            topology,
-            noise,
+        sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
+        return NativeSampler(
+            sampler=sampler,
+            detectors_json=topology.detectors_json,
+            observables_json=topology.observables_json,
+            num_detectors=topology.num_detectors,
+            num_observables=topology.num_observables,
             sampling_model=sampling_model,
         )
-
-    tc = _build_surface_tick_circuit_for_native_model(
-        patch,
-        num_rounds,
-        basis,
-        ancilla_budget=ancilla_budget,
-        circuit_source=circuit_source,
-    )
-    return _build_native_sampler_from_tick_circuit(
-        tc,
+    return _build_native_sampler_from_cached_surface_topology(
+        topology,
         noise,
         sampling_model=sampling_model,
     )

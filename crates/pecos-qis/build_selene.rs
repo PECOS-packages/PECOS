@@ -179,6 +179,7 @@ EXPORTS
     selene_random_f64
     selene_custom_runtime_call
     pecos_call_qmain_with_setjmp
+    pecos_call_void_main_with_setjmp
 ";
 
     std::fs::write(&def_file, def_content).expect("Failed to write .def file");

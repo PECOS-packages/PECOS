@@ -18,3 +18,4 @@ build-backend = "maturin"
 
 [tool.maturin]
 module-name = "pecos_rslib_exp"
+features = ["extension-module"]

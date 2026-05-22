@@ -18,12 +18,19 @@
 //
 // Before using this package, you need to build the Rust library:
 //
-//	cd go/pecos-go-ffi
-//	cargo build --release
+//	just go-build release
 //
-// Then set the library path:
+// The #cgo directive below already points at the workspace's target/release/
+// for the link step, so for the standard release build only the runtime
+// loader paths need to be set:
 //
-//	export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/path/to/PECOS/target/release
+//	export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/path/to/PECOS/target/release"
+//	export DYLD_LIBRARY_PATH="$DYLD_LIBRARY_PATH:/path/to/PECOS/target/release" # macOS
+//
+// To use a non-release profile (e.g. debug or native) add an extra search
+// path via CGO_LDFLAGS (this is what `just go-test <profile>` does):
+//
+//	export CGO_LDFLAGS="-L/path/to/PECOS/target/native"
 //
 // # Example
 //
@@ -43,7 +50,13 @@
 package pecos
 
 /*
-#cgo LDFLAGS: -L${SRCDIR}/../pecos-go-ffi/target/release -lpecos_go
+// The -L${SRCDIR}/../../target/release search path lets a plain `go test`
+// link against the workspace's release-built libpecos_go without the caller
+// having to set CGO_LDFLAGS (used by .github/workflows/go-test.yml and
+// direct-from-clone smoke tests). Callers targeting a different cargo profile
+// can prepend their own -L<dir> via CGO_LDFLAGS -- the go toolchain places
+// CGO_LDFLAGS before this directive on the linker command line, so non-release
+// search paths take precedence.
 #cgo LDFLAGS: -L${SRCDIR}/../../target/release -lpecos_go
 
 #include <stdlib.h>

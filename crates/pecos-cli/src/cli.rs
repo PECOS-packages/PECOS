@@ -26,20 +26,26 @@ pub mod setup_cmd;
 pub mod uninstall_cmd;
 pub mod upgrade_cmd;
 
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 
 #[derive(Subcommand, Clone)]
 pub enum RustCommands {
     /// Run cargo check with CUDA-aware feature handling
     Check {
-        /// Also check FFI crates (pecos-rslib, pecos-julia-ffi, pecos-go-ffi)
+        /// Also check FFI crates (pecos-rslib, pecos-rslib-cuda, pecos-julia-ffi,
+        /// pecos-go-ffi). pecos-rslib-cuda transitively pulls in pecos-cuquantum,
+        /// whose Linux build script may download cuTensor over the network if it
+        /// isn't already cached in ~/.pecos/deps/; pecos-julia-ffi and pecos-go-ffi
+        /// also need Julia/Go installed.
         #[arg(long)]
         include_ffi: bool,
     },
 
     /// Run cargo clippy with CUDA-aware feature handling
     Clippy {
-        /// Also check FFI crates (pecos-rslib, pecos-julia-ffi, pecos-go-ffi)
+        /// Also clippy FFI crates (pecos-rslib, pecos-rslib-cuda, pecos-julia-ffi,
+        /// pecos-go-ffi). Same external-toolchain caveats as `rust check
+        /// --include-ffi`.
         #[arg(long)]
         include_ffi: bool,
 
@@ -50,14 +56,35 @@ pub enum RustCommands {
 
     /// Run cargo test with CUDA-aware feature handling
     Test {
-        /// Use release mode for tests
-        #[arg(long)]
-        release: bool,
+        /// Build profile for tests (dev/debug, release, native)
+        #[arg(long, value_enum, default_value = "dev")]
+        profile: BuildProfile,
 
-        /// Also test FFI crates
+        /// Also test FFI crates (pecos-rslib, pecos-rslib-cuda, pecos-julia-ffi,
+        /// pecos-go-ffi). Same external-toolchain caveats as `rust check
+        /// --include-ffi`.
         #[arg(long)]
         include_ffi: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum BuildProfile {
+    Dev,
+    Debug,
+    Release,
+    Native,
+}
+
+impl BuildProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Dev => "dev",
+            Self::Debug => "debug",
+            Self::Release => "release",
+            Self::Native => "native",
+        }
+    }
 }
 
 #[derive(Subcommand, Clone)]
@@ -65,8 +92,8 @@ pub enum PythonCommands {
     /// Build pecos-rslib and quantum-pecos via maturin
     Build {
         /// Build profile (dev/debug, release, native)
-        #[arg(long, default_value = "dev")]
-        profile: String,
+        #[arg(long, value_enum, default_value = "dev")]
+        profile: BuildProfile,
 
         /// Additional RUSTFLAGS
         #[arg(long)]

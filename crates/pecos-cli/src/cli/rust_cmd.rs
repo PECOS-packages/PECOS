@@ -5,8 +5,37 @@ use pecos_build::errors::Error;
 use serde_json::Value;
 use std::process::Command;
 
-/// FFI crates that should be excluded from workspace-wide cargo commands
-const FFI_CRATES: &[&str] = &["pecos-rslib", "pecos-julia-ffi", "pecos-go-ffi"];
+/// FFI crates that need a non-Rust toolchain or external SDK to check /
+/// clippy / test.
+///
+/// - pecos-rslib needs cmake (for mwpf via highs-sys) under `--all-features`.
+/// - pecos-rslib-cuda transitively depends on pecos-cuquantum, whose build.rs
+///   calls `ensure_cutensor()` on Linux -- that will silently download cuTensor
+///   over the network if it's not already cached in `~/.pecos/deps/`, which we
+///   don't want a routine `cargo check` to do. Dedicated CUDA workflows can
+///   opt in via `--include-ffi` or by setting up the cache first.
+/// - pecos-julia-ffi needs Julia.
+/// - pecos-go-ffi needs Go.
+///
+/// All four are excluded from the default workspace check / clippy / test
+/// invocations and only touched when the caller opts in with `--include-ffi`.
+const FFI_CRATES: &[&str] = &[
+    "pecos-rslib",
+    "pecos-rslib-cuda",
+    "pecos-julia-ffi",
+    "pecos-go-ffi",
+];
+
+/// Extra pyo3 cdylib crates excluded only from `cargo test --workspace`.
+///
+/// pecos-rslib-exp and pecos-rslib-llvm are pyo3 cdylibs whose
+/// `extension-module` feature is opt-in (see python/pecos-rslib*/Cargo.toml),
+/// so `cargo test --workspace` would try to link the test binary against
+/// libpython and fail on systems where the active Python is a stub (e.g.
+/// macOS `/usr/bin/python3`). They have no Rust unit tests of their own, so
+/// this exclusion is no-coverage-loss. Default `pecos rust check` and
+/// `pecos rust clippy` still cover them because check/clippy don't link.
+const PYO3_CDYLIB_TEST_EXCLUDES: &[&str] = &["pecos-rslib-exp", "pecos-rslib-llvm"];
 
 /// Warn if shared C++ dependencies differ across per-crate pecos.toml files.
 /// This is informational -- different crates may legitimately pin different versions.
@@ -40,9 +69,9 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
         super::RustCommands::Check { include_ffi } => run_check(*include_ffi),
         super::RustCommands::Clippy { include_ffi, fix } => run_clippy(*include_ffi, *fix),
         super::RustCommands::Test {
-            release,
+            profile,
             include_ffi,
-        } => run_test(*release, *include_ffi),
+        } => run_test(*profile, *include_ffi),
     }
 }
 
@@ -177,10 +206,31 @@ fn is_tool_available(tool: &str) -> bool {
 /// `SDKROOT`, etc.) so build scripts like highs-sys's cmake-rs invocation
 /// find the PECOS-managed cmake without further plumbing.
 fn run_cargo_command(args: &[&str]) -> bool {
+    run_cargo_command_with_rustflags(args, None)
+}
+
+/// Like `run_cargo_command` but lets the caller override `RUSTFLAGS`. Used by
+/// `run_test` to inject `-C target-cpu=native` for the native profile.
+fn run_cargo_command_with_rustflags(args: &[&str], rustflags: Option<&str>) -> bool {
     let mut cmd = Command::new("cargo");
-    cmd.args(args);
+    let mut locked_args = Vec::with_capacity(args.len() + 1);
+    if let Some((subcommand, rest)) = args.split_first() {
+        locked_args.push(*subcommand);
+        if matches!(*subcommand, "build" | "check" | "clippy" | "run" | "test")
+            && !args
+                .iter()
+                .any(|arg| matches!(*arg, "--locked" | "--frozen" | "--offline"))
+        {
+            locked_args.push("--locked");
+        }
+        locked_args.extend(rest.iter().copied());
+    }
+    cmd.args(&locked_args);
     for (key, value) in super::env_cmd::collect_env() {
         cmd.env(key, value);
+    }
+    if let Some(rf) = rustflags {
+        cmd.env("RUSTFLAGS", rf);
     }
     matches!(cmd.status(), Ok(s) if s.success())
 }
@@ -368,15 +418,41 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
 }
 
 /// Run cargo test with GPU-aware feature handling
-fn run_test(release: bool, include_ffi: bool) -> Result<()> {
+fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     // Warn about any C++ dependency version differences across crates
     check_dep_consistency();
 
     let gpu_probe = probe_gpu_availability();
     let include_gpu_sims = should_include_gpu_sims(&gpu_probe);
-    let release_flag = if release { "--release" } else { "" };
 
     maybe_print_gpu_probe_status(&gpu_probe, include_gpu_sims);
+
+    // Map our profile to the cargo flags that select the corresponding profile.
+    // Native goes through `--profile native` (not `--release`) so artifacts land
+    // in target/native/ and the C++ build.rs files (pecos-pymatching et al.)
+    // can detect "native" via OUT_DIR and add -march=native to their builds.
+    let profile_args: &[&str] = match profile {
+        super::BuildProfile::Dev | super::BuildProfile::Debug => &[],
+        super::BuildProfile::Release => &["--release"],
+        super::BuildProfile::Native => &["--profile", "native"],
+    };
+
+    // For native, append -C target-cpu=native to RUSTFLAGS. profile.native.rustflags
+    // in Cargo.toml is still gated on nightly so we inject per-process here, matching
+    // what `pecos python build --profile native` and the Justfile recipes do.
+    let inherited_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+    let computed_rustflags: Option<String> = if matches!(profile, super::BuildProfile::Native) {
+        let mut rf = inherited_rustflags;
+        if !rf.is_empty() {
+            rf.push(' ');
+        }
+        rf.push_str("-C target-cpu=native");
+        Some(rf)
+    } else {
+        None
+    };
+    let rustflags = computed_rustflags.as_deref();
+    let run = |args: &[&str]| -> bool { run_cargo_command_with_rustflags(args, rustflags) };
 
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
@@ -385,9 +461,9 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     // to ensure the pecos binary has PHIR/QIS support for integration tests.
     let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,hugr"];
 
-    for crate_name in FFI_CRATES {
+    for crate_name in FFI_CRATES.iter().chain(PYO3_CDYLIB_TEST_EXCLUDES) {
         args.push("--exclude");
-        args.push(crate_name);
+        args.push(*crate_name);
     }
 
     args.extend(&[
@@ -401,11 +477,9 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
         "pecos-gpu-sims", // Always exclude from workspace test, test separately if GPU available
     ]);
 
-    if !release_flag.is_empty() {
-        args.push(release_flag);
-    }
+    args.extend(profile_args);
 
-    if !run_cargo_command(&args) {
+    if !run(&args) {
         return Err(Error::Config("cargo test (workspace) failed".to_string()));
     }
 
@@ -416,10 +490,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     // binary. Testing separately ensures the binary is built correctly.
     println!("Testing pecos-cli with runtime features...");
     let mut cli_args: Vec<&str> = vec!["test", "-p", "pecos-cli", "--features=runtime"];
-    if !release_flag.is_empty() {
-        cli_args.push(release_flag);
-    }
-    if !run_cargo_command(&cli_args) {
+    cli_args.extend(profile_args);
+    if !run(&cli_args) {
         return Err(Error::Config(
             "cargo test (pecos-cli with runtime) failed".to_string(),
         ));
@@ -429,10 +501,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     if probe_cuquantum_availability() {
         println!("cuQuantum runtime available - testing pecos-cuquantum");
         let mut args = vec!["test", "-p", "pecos-cuquantum"];
-        if !release_flag.is_empty() {
-            args.push(release_flag);
-        }
-        if !run_cargo_command(&args) {
+        args.extend(profile_args);
+        if !run(&args) {
             return Err(Error::Config(
                 "cargo test (pecos-cuquantum) failed".to_string(),
             ));
@@ -444,10 +514,8 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
     if include_gpu_sims {
         println!("Including pecos-gpu-sims in Rust tests");
         let mut args = vec!["test", "-p", "pecos-gpu-sims"];
-        if !release_flag.is_empty() {
-            args.push(release_flag);
-        }
-        if !run_cargo_command(&args) {
+        args.extend(profile_args);
+        if !run(&args) {
             return Err(Error::Config(
                 "cargo test (pecos-gpu-sims) failed".to_string(),
             ));
@@ -456,22 +524,24 @@ fn run_test(release: bool, include_ffi: bool) -> Result<()> {
 
     println!("Testing pecos-decoders...");
     let mut args = vec!["test", "-p", "pecos-decoders", "--all-features"];
-    if !release_flag.is_empty() {
-        args.push(release_flag);
-    }
-    if !run_cargo_command(&args) {
+    args.extend(profile_args);
+    if !run(&args) {
         return Err(Error::Config(
             "cargo test (pecos-decoders) failed".to_string(),
         ));
     }
 
     if include_ffi {
+        // Don't use --all-features here: pecos-rslib's `extension-module` feature
+        // tells pyo3 to skip linking libpython, which is correct when maturin
+        // builds the cdylib but produces unresolved Python C API symbols in a
+        // `cargo test` binary. We instead enable the non-pyo3-linking features
+        // we actually want to exercise (wasm is in default; mwpf pulls in the
+        // optional decoder).
         println!("Testing pecos-rslib...");
-        let mut args = vec!["test", "-p", "pecos-rslib", "--all-features"];
-        if !release_flag.is_empty() {
-            args.push(release_flag);
-        }
-        if !run_cargo_command(&args) {
+        let mut args = vec!["test", "-p", "pecos-rslib", "--features=mwpf"];
+        args.extend(profile_args);
+        if !run(&args) {
             return Err(Error::Config("cargo test (pecos-rslib) failed".to_string()));
         }
     }

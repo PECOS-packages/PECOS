@@ -1,5 +1,8 @@
 name: Selene Plugins
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -C debuginfo=0
@@ -42,29 +45,32 @@ jobs:
         os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: "0.11.14"
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Set up Rust
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
           key: ${{ matrix.os }}
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
@@ -81,7 +87,7 @@ jobs:
             PLUGIN=$(basename "$DIR")
             CARGO_ARGS="$CARGO_ARGS -p $PLUGIN"
           done
-          cargo build --release $CARGO_ARGS
+          cargo build --locked --release $CARGO_ARGS
 
           for DIR in python/selene-plugins/pecos-selene-*/; do
             PLUGIN=$(basename "$DIR")
@@ -98,7 +104,7 @@ jobs:
         run: |
           $plugins = Get-ChildItem -Directory python/selene-plugins/pecos-selene-* | Select-Object -ExpandProperty Name
           $cargoArgs = $plugins | ForEach-Object { "-p"; $_ }
-          cargo build --release @cargoArgs
+          cargo build --locked --release @cargoArgs
 
           foreach ($plugin in $plugins) {
             $libName = $plugin -replace '-', '_'
@@ -136,40 +142,43 @@ jobs:
             package: pecos_selene_mast
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: "0.11.14"
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Set up Rust
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
           key: ${{ matrix.os }}-${{ matrix.plugin.name }}
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Build Rust library (Unix)
         if: runner.os != 'Windows'
         run: |
-          cargo build --release -p ${{ matrix.plugin.name }}
+          cargo build --locked --release -p ${{ matrix.plugin.name }}
 
       - name: Build Rust library (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo build --release -p ${{ matrix.plugin.name }}
+          cargo build --locked --release -p ${{ matrix.plugin.name }}
 
       - name: Copy library to Python package (Unix)
         if: runner.os != 'Windows'
@@ -198,7 +207,7 @@ jobs:
           python -m build --wheel --outdir dist
 
       - name: Upload wheel
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-${{ matrix.plugin.name }}-${{ matrix.os }}
           path: python/selene-plugins/${{ matrix.plugin.name }}/dist/*.whl
@@ -209,7 +218,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: wheels/
           pattern: wheel-*
@@ -224,7 +233,7 @@ jobs:
           echo "Total wheels: $(ls -1 wheels/*.whl 2>/dev/null | wc -l)"
 
       - name: Upload combined wheels
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: selene-plugin-wheels
           path: wheels/*.whl

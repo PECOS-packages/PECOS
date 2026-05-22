@@ -35,6 +35,7 @@ build-backend = "maturin"
 
 [tool.maturin]
 module-name = "pecos_rslib_llvm"
+features = ["extension-module"]
 
 [dependency-groups]
 dev = []

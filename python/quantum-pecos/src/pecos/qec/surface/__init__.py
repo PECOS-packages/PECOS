@@ -40,10 +40,6 @@ from pecos.qec.surface.circuit_builder import (
     get_detector_descriptors_from_tick_circuit,
     get_measurement_order_from_tick_circuit,
     get_observable_descriptors_from_tick_circuit,
-    get_stabilizer_region,
-    get_stabilizer_schedule_entries,
-    get_stabilizer_schedule_metadata,
-    get_stabilizer_touch_label,
     tick_circuit_to_stim,
 )
 from pecos.qec.surface.circuit_builder import (
@@ -99,6 +95,10 @@ from pecos.qec.surface.patch import (
     SurfacePatch,
     SurfacePatchBuilder,
     SurfacePatchDescriptor,
+    get_stabilizer_region,
+    get_stabilizer_schedule_entries,
+    get_stabilizer_schedule_metadata,
+    get_stabilizer_touch_label,
 )
 from pecos.qec.surface.plot import plot_patch, plot_surface_code
 from pecos.qec.surface.schedule import (

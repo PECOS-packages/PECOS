@@ -230,89 +230,10 @@ pub fn auto_configure_llvm(project_root: Option<PathBuf>) -> Result<PathBuf> {
 /// Returns an error if the `.cargo` directory cannot be created or the config file
 /// cannot be written.
 pub fn write_cargo_config(project_root: &Path, llvm_path: &Path, force: bool) -> Result<()> {
-    let cargo_dir = project_root.join(".cargo");
-    let config_path = cargo_dir.join("config.toml");
-
-    fs::create_dir_all(&cargo_dir)?;
-
-    // Convert path to forward slashes for TOML compatibility
+    // Forward slashes keep the value backslash-escape-free in TOML.
     let llvm_path_str = llvm_path.to_string_lossy().replace('\\', "/");
-
-    let llvm_line = if force {
-        format!("LLVM_SYS_140_PREFIX = {{ value = \"{llvm_path_str}\", force = true }}")
-    } else {
-        format!("LLVM_SYS_140_PREFIX = \"{llvm_path_str}\"")
-    };
-
-    let existing_content = fs::read_to_string(&config_path).unwrap_or_default();
-
-    // Check if config already has correct LLVM_SYS_140_PREFIX
-    if existing_content.contains("LLVM_SYS_140_PREFIX") {
-        let simple_format = format!("LLVM_SYS_140_PREFIX = \"{llvm_path_str}\"");
-        let force_format =
-            format!("LLVM_SYS_140_PREFIX = {{ value = \"{llvm_path_str}\", force = true }}");
-
-        if (force && existing_content.contains(&force_format))
-            || (!force && existing_content.contains(&simple_format))
-        {
-            return Ok(());
-        }
-
-        // Update existing configuration
-        let lines: Vec<&str> = existing_content.lines().collect();
-        let mut new_lines = Vec::new();
-        let mut in_env_section = false;
-        let mut updated = false;
-        let mut skip_next_lines = 0;
-
-        for (i, line) in lines.iter().enumerate() {
-            if skip_next_lines > 0 {
-                skip_next_lines -= 1;
-                continue;
-            }
-
-            let trimmed = line.trim();
-
-            if trimmed.starts_with('[') {
-                in_env_section = trimmed == "[env]";
-            }
-
-            if in_env_section && trimmed.starts_with("LLVM_SYS_140_PREFIX") {
-                new_lines.push(llvm_line.clone());
-                updated = true;
-
-                if trimmed.contains('{') && !trimmed.contains('}') {
-                    for line in lines.iter().skip(i + 1) {
-                        skip_next_lines += 1;
-                        if line.contains('}') {
-                            break;
-                        }
-                    }
-                }
-            } else {
-                new_lines.push((*line).to_string());
-            }
-        }
-
-        if updated {
-            fs::write(&config_path, new_lines.join("\n"))?;
-            return Ok(());
-        }
-    }
-
-    // No LLVM configuration exists, append it
-    let llvm_config = format!(
-        "\n# LLVM configuration for PECOS\n\
-         [env]\n\
-         {llvm_line}\n"
-    );
-
-    let new_content = if existing_content.is_empty() {
-        llvm_config.trim_start().to_string()
-    } else {
-        format!("{existing_content}{llvm_config}")
-    };
-
-    fs::write(&config_path, new_content)?;
+    let mut cfg = crate::cargo_config::CargoConfig::open(project_root)?;
+    cfg.set_env("LLVM_SYS_140_PREFIX", &llvm_path_str, force)?;
+    cfg.save()?;
     Ok(())
 }

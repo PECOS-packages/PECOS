@@ -1,5 +1,8 @@
 name: Python Artifacts
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   # Must match pecos_build::cmake::CMAKE_VERSION. The MWPF decoder feature
@@ -52,15 +55,20 @@ jobs:
     steps:
       - name: Check if should run on PR push
         id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
           # Always run on tag pushes (py-* tags trigger releases)
-          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/py-* ]]; then
+          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # Always run on pushes to main branches
-          elif [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref_name }}" =~ ^(main|master|dev|development)$ ]]; then
+          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
             echo "run=true" >> $GITHUB_OUTPUT
           # For PRs, check the TRIGGER_ON_PR_PUSH setting
-          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ env.TRIGGER_ON_PR_PUSH }}" = "true" ]; then
+          elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
             echo "run=true" >> $GITHUB_OUTPUT
           else
             echo "run=false" >> $GITHUB_OUTPUT
@@ -114,8 +122,9 @@ jobs:
             install_cuda: true
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
           submodules: recursive
 
@@ -130,54 +139,55 @@ jobs:
       # See: https://github.com/Jimver/cuda-toolkit/issues/382
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         with:
           cuda: '12.5.1'
           method: 'local'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust"]'
 
-      # On Windows, Git Bash's /usr/bin/link.exe shadows MSVC's link.exe.
-      # Create .cargo/config.toml with the explicit MSVC linker path so cargo
-      # uses the correct linker inside cibuildwheel (which runs on the host).
+      # On Windows, Git Bash's /usr/bin/link.exe shadows MSVC's link.exe, so
+      # pin the linker in .cargo/config.toml for the cargo commands cibuildwheel
+      # runs on the host. Derive it from VCToolsInstallDir -- the toolset the
+      # prior setup-msvc.ps1 step's VsDevCmd actually configured -- so the
+      # linker always matches the LIB/INCLUDE in effect (no lexical toolset
+      # guessing, which could select a mismatched toolset and cause LNK1181).
       - name: Configure MSVC linker for Cargo (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsPath = & $vsWhere -latest -property installationPath
-          $linkPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Recurse -Filter "link.exe" |
-                      Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
-                      Select-Object -First 1 -ExpandProperty FullName
-
-          if ($linkPath) {
-            $escapedPath = $linkPath.Replace('\', '/')
-            $configContent = "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`""
-
-            # Create in repo root (for CIBW_BEFORE_ALL cargo commands)
-            New-Item -ItemType Directory -Force -Path .cargo | Out-Null
-            $configContent | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
-
-            # Create in pecos-rslib directory (for maturin builds)
-            New-Item -ItemType Directory -Force -Path "python\pecos-rslib\.cargo" | Out-Null
-            $configContent | Out-File -FilePath "python\pecos-rslib\.cargo\config.toml" -Encoding UTF8
-
-            # Create in user cargo home (fallback)
-            $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
-            New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null
-            if (Test-Path "$cargoHome\config.toml") {
-              "`n$configContent" | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8 -Append
-            } else {
-              $configContent | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8
-            }
-
-            Write-Host "Configured MSVC linker: $linkPath"
-          } else {
-            Write-Error "Could not find MSVC link.exe"
+          $vcTools = $env:VCToolsInstallDir
+          if (-not $vcTools) {
+            Write-Error "VCToolsInstallDir not set; the setup-msvc.ps1 step must run first"
             exit 1
           }
+          $linkPath = Join-Path ($vcTools.TrimEnd('\', '/')) "bin\Hostx64\x64\link.exe"
+          if (-not (Test-Path $linkPath)) {
+            Write-Error "MSVC link.exe not found at $linkPath"
+            exit 1
+          }
+          $escapedPath = $linkPath.Replace('\', '/')
+          $configContent = "[target.x86_64-pc-windows-msvc]`nlinker = `"$escapedPath`""
+
+          # cibuildwheel and maturin run in different working directories;
+          # write the config where each one looks for it.
+          New-Item -ItemType Directory -Force -Path .cargo | Out-Null
+          $configContent | Out-File -FilePath ".cargo\config.toml" -Encoding UTF8
+
+          New-Item -ItemType Directory -Force -Path "python\pecos-rslib\.cargo" | Out-Null
+          $configContent | Out-File -FilePath "python\pecos-rslib\.cargo\config.toml" -Encoding UTF8
+
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
+          New-Item -ItemType Directory -Force -Path $cargoHome | Out-Null
+          if (Test-Path "$cargoHome\config.toml") {
+            "`n$configContent" | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8 -Append
+          } else {
+            $configContent | Out-File -FilePath "$cargoHome\config.toml" -Encoding UTF8
+          }
+
+          Write-Host "Configured MSVC linker: $linkPath"
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3.3.1
+        uses: pypa/cibuildwheel@298ed2fb2c105540f5ed055e8a6ad78d82dd3a7e # v3.3.1
         with:
           package-dir: python/pecos-rslib
           output-dir: wheelhouse
@@ -195,10 +205,10 @@ jobs:
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
             CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin/cmake
             CUDA_PATH=/usr/local/cuda-12.6
-            MATURIN_PEP517_ARGS=--features=mwpf
+            MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_LINUX: |
-            curl -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
+            bash scripts/ci/ensure-rust.sh stable minimal
+            export PATH=$HOME/.cargo/bin:$PATH
             dnf install libffi-devel -y
             # Install CUDA Toolkit for GPU support on x86_64 (compile-time only, no GPU needed)
             if [ "${{ matrix.install_cuda }}" = "true" ]; then
@@ -216,8 +226,8 @@ jobs:
             else
               echo "Skipping CUDA installation (GPU support not enabled for this build)"
             fi
-            cargo run --release -p pecos-cli -- install llvm --force
-            cargo run --release -p pecos-cli -- install cmake --force
+            cargo run --locked --release -p pecos-cli -- install llvm --force
+            cargo run --locked --release -p pecos-cli -- install cmake --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
@@ -228,13 +238,13 @@ jobs:
             CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/CMake.app/Contents/bin/cmake
             MACOSX_DEPLOYMENT_TARGET=13.2
             SDKROOT=$(xcrun --show-sdk-path)
-            MATURIN_PEP517_ARGS=--features=mwpf
+            MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_MACOS: |
-            curl -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
+            bash scripts/ci/ensure-rust.sh stable minimal
+            export PATH=$HOME/.cargo/bin:$PATH
             rustup update
-            cargo run --release -p pecos-cli -- install llvm --force
-            cargo run --release -p pecos-cli -- install cmake --force
+            cargo run --locked --release -p pecos-cli -- install llvm --force
+            cargo run --locked --release -p pecos-cli -- install cmake --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
             # crashes on macOS 15 when bundled libc++ conflicts with system libc++
             mkdir -p $HOME/.pecos/bin
@@ -248,12 +258,12 @@ jobs:
             PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin;C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin;$PATH"
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
             CMAKE="C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin\\cmake.exe"
-            MATURIN_PEP517_ARGS=--features=mwpf
+            MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_WINDOWS: >
             echo "=== Installing LLVM using pecos ===" &&
             rustup update &&
-            cargo run --release -p pecos-cli -- install llvm --force &&
-            cargo run --release -p pecos-cli -- install cmake --force &&
+            cargo run --locked --release -p pecos-cli -- install llvm --force &&
+            cargo run --locked --release -p pecos-cli -- install cmake --force &&
             echo "=== Checking LLVM installation ===" &&
             (test -d "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14" && echo "LLVM directory exists") || (echo "ERROR: LLVM directory not found!" && exit 1)
           # Install delvewheel and patch it to ignore ext-ms-win-* API sets
@@ -268,14 +278,14 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload pecos-rslib wheels
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-pecos-rslib-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse/*.whl
 
       # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build)
       - name: Build pecos-rslib-llvm wheels
-        uses: pypa/cibuildwheel@v3.3.1
+        uses: pypa/cibuildwheel@298ed2fb2c105540f5ed055e8a6ad78d82dd3a7e # v3.3.1
         with:
           package-dir: python/pecos-rslib-llvm
           output-dir: wheelhouse-llvm
@@ -289,10 +299,10 @@ jobs:
             PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
             LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
           CIBW_BEFORE_ALL_LINUX: |
-            curl -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
+            bash scripts/ci/ensure-rust.sh stable minimal
+            export PATH=$HOME/.cargo/bin:$PATH
             dnf install libffi-devel -y
-            cargo run --release -p pecos-cli -- install llvm --force
+            cargo run --locked --release -p pecos-cli -- install llvm --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
@@ -302,10 +312,13 @@ jobs:
             MACOSX_DEPLOYMENT_TARGET=13.2
             SDKROOT=$(xcrun --show-sdk-path)
           CIBW_BEFORE_ALL_MACOS: |
-            source $HOME/.cargo/env 2>/dev/null || { curl -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env; }
+            if ! command -v cargo >/dev/null 2>&1; then
+              bash scripts/ci/ensure-rust.sh stable minimal
+              export PATH=$HOME/.cargo/bin:$PATH
+            fi
             if [ ! -d "$HOME/.pecos/deps/llvm-14/bin" ]; then
               rustup update
-              cargo run --release -p pecos-cli -- install llvm --force
+              cargo run --locked --release -p pecos-cli -- install llvm --force
             else
               echo "LLVM already installed from pecos-rslib build, skipping"
             fi
@@ -320,7 +333,7 @@ jobs:
             LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
           CIBW_BEFORE_ALL_WINDOWS: >
             rustup update &&
-            if not exist "C:\Users\runneradmin\.pecos\deps\llvm-14\bin" (cargo run --release -p pecos-cli -- install llvm --force) else (echo LLVM already installed from pecos-rslib build)
+            if not exist "C:\Users\runneradmin\.pecos\deps\llvm-14\bin" (cargo run --locked --release -p pecos-cli -- install llvm --force) else (echo LLVM already installed from pecos-rslib build)
           CIBW_BEFORE_BUILD_WINDOWS: >
             pip install delvewheel &&
             python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"
@@ -329,7 +342,7 @@ jobs:
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload pecos-rslib-llvm wheels
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-pecos-rslib-llvm-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse-llvm/*.whl
@@ -358,17 +371,18 @@ jobs:
             os: macos-15
             architecture: aarch64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Download abi3 wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-wheel
@@ -420,23 +434,24 @@ jobs:
       needs.build_wheelspecos_rslib.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.10'
 
       - name: Download pecos-rslib wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
       - name: Download pecos-rslib-llvm wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
           path: ./pecos-rslib-llvm-wheel
@@ -460,7 +475,7 @@ jobs:
           python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos SDist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sdist-quantum-pecos
           path: python/quantum-pecos/dist/*.tar.gz
@@ -473,23 +488,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
+          persist-credentials: false
           ref: ${{ inputs.sha || github.sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.10'
 
       - name: Download pecos-rslib wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-ubuntu-latest-x86_64
           path: ./pecos-rslib-wheel
 
       - name: Download pecos-rslib-llvm wheel
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-llvm-ubuntu-latest-x86_64
           path: ./pecos-rslib-llvm-wheel
@@ -513,7 +529,7 @@ jobs:
           python -c 'import pecos; print(pecos.__version__)'
 
       - name: Upload quantum-pecos wheel
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: wheel-quantum-pecos
           path: python/quantum-pecos/dist/*.whl
@@ -534,7 +550,7 @@ jobs:
 
       # Download artifacts into temp directory first
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: temp-artifacts/
 
@@ -585,7 +601,7 @@ jobs:
 
 
       - name: Upload distribution bundle
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pecos-distribution
           path: dist/

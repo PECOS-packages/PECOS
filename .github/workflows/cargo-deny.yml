@@ -1,0 +1,49 @@
+name: Cargo Deny
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/cargo-deny.yml'
+  pull_request:
+    branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/cargo-deny.yml'
+  schedule:
+    - cron: "17 5 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Install cargo-deny
+        run: cargo install --locked --version 0.19.6 cargo-deny
+
+      - name: Check root Rust workspace
+        run: cargo deny --locked --all-features check advisories bans sources
+
+      - name: Check native benchmark crate
+        run: cargo deny --manifest-path scripts/native_bench/bench_pecos/Cargo.toml --locked --all-features check advisories bans sources

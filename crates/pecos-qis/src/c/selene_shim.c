@@ -472,3 +472,42 @@ EXPORT_API uint64_t pecos_call_qmain_with_setjmp(qmain_fn_t qmain) {
         }
     }
 }
+
+/**
+ * Wrapper function to safely call a `void main()` entry point.
+ *
+ * QIR programs can use either `i64 @qmain(i64)` (the Helios profile, with an
+ * explicit error-code return value) or `void @main()` (the simpler "base
+ * profile" form, with no return value). The two have incompatible C calling
+ * conventions: calling `void @main()` through the qmain wrapper (which expects
+ * `uint64_t (*)(uint64_t)`) is undefined behaviour and reads whatever happens
+ * to be in the return register, producing seemingly-random "error" codes.
+ *
+ * This wrapper exists so the Rust executor can dispatch on the entry-point
+ * symbol it finds and call each kind through the matching ABI.
+ *
+ * Returns: 0 on success, error code on failure (when longjmp is used).
+ */
+typedef void (*void_main_fn_t)(void);
+
+EXPORT_API uint64_t pecos_call_void_main_with_setjmp(void_main_fn_t main_func) {
+    static __thread SeleneInstance dummy_instance;
+    selene_void_result_t start_result = selene_on_shot_start(&dummy_instance, 0);
+    if (start_result.error_code != 0) {
+        return start_result.error_code;
+    }
+
+    int error_code = setjmp(user_program_jmpbuf);
+    if (error_code == 0) {
+        main_func();
+        selene_on_shot_end(&dummy_instance);
+        return 0;
+    } else {
+        selene_on_shot_end(&dummy_instance);
+        if (error_code < 1000) {
+            return 0;
+        } else {
+            return (uint64_t)error_code;
+        }
+    }
+}

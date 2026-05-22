@@ -11,6 +11,9 @@
 
 name: Go test
 
+permissions:
+  contents: read
+
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
@@ -41,10 +44,12 @@ jobs:
         go-version: ["stable"]  # Latest stable (experimental bindings)
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
 
     - name: Set up Go ${{ matrix.go-version }}
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
       with:
         go-version: ${{ matrix.go-version }}
 
@@ -52,23 +57,27 @@ jobs:
       run: rustup show
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
         workspaces: go/pecos-go-ffi
 
-    - name: Set up Visual Studio environment on Windows
+    - name: Bootstrap MSVC for the Cargo build path (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
-      run: ./scripts/ci/setup-msvc.ps1 -Arch x64 -HostArch x64
+      # Single mechanism: writes linker + LIB/INCLUDE into .cargo/config.toml,
+      # which the `cargo build` below (run from go/pecos-go-ffi) picks up via
+      # the parent-dir config search -- same as a local Windows build.
+      run: ./scripts/win-msvc-bootstrap.ps1
 
     - name: Build Rust FFI library (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         cd go/pecos-go-ffi
-        cargo build --release
+        cargo build --locked --release
 
     - name: Build Rust FFI library (Unix)
       if: runner.os != 'Windows'
@@ -90,7 +99,7 @@ jobs:
         fi
 
         cd go/pecos-go-ffi
-        cargo build --release
+        cargo build --locked --release
 
     - name: Run Go tests (Unix)
       if: runner.os != 'Windows'

@@ -357,7 +357,7 @@ impl Poly1d {
     }
 }
 
-/// Fit a non-linear function to data using Levenberg-Marquardt.
+/// Fit a non-linear function to data using damped least-squares.
 ///
 /// This is a drop-in replacement for `scipy.optimize.curve_fit`.
 ///

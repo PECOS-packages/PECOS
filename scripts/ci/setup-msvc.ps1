@@ -9,6 +9,9 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+# Used by the release workflow so nvcc can find cl.exe and the CUDA wheel's
+# cargo build links against the right MSVC toolset. The Cargo build path in
+# python-test.yml / local dev uses scripts/win-msvc-bootstrap.ps1 instead.
 param(
     [string]$Arch = "x64",
     [string]$HostArch = "x64"
@@ -37,9 +40,10 @@ if (-not (Test-Path $vswhere)) {
     throw "Could not find vswhere.exe at $vswhere"
 }
 
-$vsPath = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+# -products * so Build Tools-only installs are found (the default omits them).
+$vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $vsPath) {
-    $vsPath = & $vswhere -latest -property installationPath
+    $vsPath = & $vswhere -latest -products * -property installationPath
 }
 if (-not $vsPath) {
     throw "Could not find a Visual Studio installation"
@@ -96,15 +100,42 @@ if ($after.ContainsKey("Path")) {
     }
 }
 
-$linkPath = Get-ChildItem -Path (Join-Path $vsPath "VC\Tools\MSVC") -Recurse -Filter "link.exe" |
-    Where-Object { $_.FullName -like "*\bin\Hostx64\x64\*" } |
-    Select-Object -First 1 -ExpandProperty FullName
-
-if (-not $linkPath) {
-    throw "Could not find MSVC link.exe for x64"
+# Derive link.exe from the toolset VsDevCmd actually configured
+# (VCToolsInstallDir), so the pinned linker always matches the LIB / INCLUDE
+# this script exports AND the .cargo/config.toml that python-release.yml
+# derives from the same variable. (Cargo env vars outrank config.toml, so the
+# env pin and any generated config MUST agree on the toolset.) This replaces a
+# lexical MSVC-dir scan that could select a mismatched toolset and fail with
+# `LNK1181: cannot open input file 'kernel32.lib'`.
+$vcTools = $after["VCToolsInstallDir"]
+if (-not $vcTools) {
+    throw "VsDevCmd did not set VCToolsInstallDir"
+}
+$linkPath = Join-Path ($vcTools.TrimEnd('\', '/')) "bin\Hostx64\x64\link.exe"
+if (-not (Test-Path $linkPath)) {
+    throw "MSVC link.exe not found at $linkPath"
 }
 
 Add-GitHubEnv -Name "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" -Value $linkPath
 
+# The Justfile pins `set shell := ["bash", "-cu"]`, so every `just` recipe (and
+# the `cargo` / `link.exe` it spawns) runs under git-bash, whose MSYS2 runtime
+# rewrites "path-like" environment variables when crossing the bash<->native
+# boundary. LIB / INCLUDE / LIBPATH from VsDevCmd.bat are semicolon-separated
+# lists of Windows paths that contain spaces and parentheses (e.g.
+# `C:\Program Files (x86)\Windows Kits\10\Lib\...\um\x64`). MSYS2's heuristic
+# conversion corrupts these on the round trip, so the native linker receives a
+# broken LIB and fails with `LNK1181: cannot open input file 'kernel32.lib'`
+# (kernel32.lib lives in the Windows SDK's um\x64, which is exactly the entry
+# that gets mangled). MSYS2_ENV_CONV_EXCL is the documented mechanism to opt
+# specific variables out of that conversion so they pass through verbatim.
+# Setting it here (via GITHUB_ENV) means every subsequent bash step -- and the
+# nested `bash -cu` that `just` spawns for each recipe -- honors it, because the
+# MSYS2 runtime reads MSYS2_ENV_CONV_EXCL from the process environment at
+# startup. This is required for cold cargo builds (build scripts that haven't
+# been pre-warmed in the rust-cache) to link on Windows.
+Add-GitHubEnv -Name "MSYS2_ENV_CONV_EXCL" -Value "LIB;INCLUDE;LIBPATH"
+
 Write-Host "Configured Visual Studio environment from $vsPath for $Arch"
 Write-Host "Configured Cargo MSVC linker: $linkPath"
+Write-Host "Excluded LIB;INCLUDE;LIBPATH from MSYS2 path conversion"

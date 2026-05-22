@@ -11,6 +11,9 @@
 
 name: Julia version consistency
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ "main", "master", "development", "dev" ]
@@ -22,7 +25,9 @@ jobs:
   check-julia-versions:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
 
     - name: Check Julia version consistency
       run: |

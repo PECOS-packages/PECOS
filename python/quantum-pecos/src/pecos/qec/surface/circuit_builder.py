@@ -21,10 +21,29 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, TypedDict
 
+# `_batched_stabilizers` and `_normalize_ancilla_budget` are imported from
+# the shared `_ancilla_batching` helper so this builder and the Guppy
+# emitter (`pecos.guppy.surface`) compute identical batches by
+# construction. The local aliases preserve existing call sites; do not
+# fork the partitioning logic.
+from pecos.qec.surface._ancilla_batching import (
+    batched_stabilizers as _batched_stabilizers,
+)
+from pecos.qec.surface._ancilla_batching import (
+    normalize_ancilla_budget as _normalize_ancilla_budget,
+)
+
+# Stabilizer geometry helpers live in the low-level patch module (single
+# source of truth). Only the two used by the circuit renderer are imported
+# here; the full set is exported publicly from the package __init__.
+from pecos.qec.surface.patch import (
+    get_stabilizer_region,
+    get_stabilizer_touch_label,
+)
+
 if TYPE_CHECKING:
     from pecos.qec.surface.patch import (
         LogicalDescriptor,
-        Stabilizer,
         StabilizerDescriptor,
         SurfacePatch,
         SurfacePatchDescriptor,
@@ -127,39 +146,6 @@ class QubitAllocation:
     def total(self) -> int:
         """Total number of qubits."""
         return len(set(self.data_qubits) | set(self.x_ancilla_qubits) | set(self.z_ancilla_qubits))
-
-
-def _normalize_ancilla_budget(total_ancilla: int, ancilla_budget: int | None) -> int:
-    """Clamp ancilla budget to the valid range for a patch."""
-    if ancilla_budget is None:
-        return total_ancilla
-
-    if ancilla_budget < 1:
-        msg = f"ancilla_budget must be >= 1, got {ancilla_budget}"
-        raise ValueError(msg)
-
-    return min(ancilla_budget, total_ancilla)
-
-
-def _batched_stabilizers(
-    patch: SurfacePatch,
-    ancilla_budget: int,
-) -> list[list[tuple[str, int]]]:
-    """Partition stabilizers into ancilla-reuse batches.
-
-    This mirrors the public Guppy batching order so the abstract circuit and
-    its native DEMs match the actual low-ancilla circuit family.
-    """
-    geom = patch.geometry
-    stabilizers = [("X", stab.index) for stab in geom.x_stabilizers]
-    stabilizers.extend(("Z", stab.index) for stab in geom.z_stabilizers)
-    # Sort key is load-bearing: it mirrors Guppy's stabilizer ordering (ascending
-    # index, X before Z on ties). Batched DEMs are compared against Guppy output
-    # shot-for-shot in the Selene parity tests, so any change here will diverge
-    # from the low-ancilla reference family.
-    stabilizers.sort(key=lambda stab: (stab[1], 0 if stab[0] == "X" else 1))
-
-    return [stabilizers[start : start + ancilla_budget] for start in range(0, len(stabilizers), ancilla_budget)]
 
 
 def build_surface_code_circuit(
@@ -394,70 +380,6 @@ def classify_stabilizer_boundary(stab_type: str, data_qubits: tuple[int, ...], d
     if dz is None:
         dz = d
     return _classify_boundary(stab_type, data_qubits, d, dz)
-
-
-def get_stabilizer_region(stab: Stabilizer, patch: SurfacePatch) -> str:
-    """Return a coarse region label like ``top+left`` for a stabilizer."""
-    geom = patch.geometry
-    positions = [geom.id_to_pos[q] for q in stab.data_qubits]
-    avg_row = sum(row for row, _ in positions) / len(positions)
-    avg_col = sum(col for _, col in positions) / len(positions)
-    row_label = "top" if avg_row < (geom.dx - 1) / 2 else "bottom"
-    col_label = "left" if avg_col < (geom.dz - 1) / 2 else "right"
-    return f"{row_label}+{col_label}"
-
-
-def get_stabilizer_touch_label(stab: Stabilizer, patch: SurfacePatch, data_qubit: int) -> str:
-    """Label how a data qubit sits relative to a stabilizer support."""
-    geom = patch.geometry
-    if data_qubit not in stab.data_qubits:
-        msg = f"Qubit {data_qubit} is not in stabilizer {stab.stab_type}{stab.index}"
-        raise ValueError(msg)
-
-    positions = [geom.id_to_pos[q] for q in stab.data_qubits]
-    data_row, data_col = geom.id_to_pos[data_qubit]
-    rows = [row for row, _ in positions]
-    cols = [col for _, col in positions]
-
-    if len(set(rows)) == 1:
-        return "left" if data_col == min(cols) else "right"
-    if len(set(cols)) == 1:
-        return "top" if data_row == min(rows) else "bottom"
-
-    vertical = "T" if data_row == min(rows) else "B"
-    horizontal = "L" if data_col == min(cols) else "R"
-    return vertical + horizontal
-
-
-def get_stabilizer_schedule_entries(stab: Stabilizer, patch: SurfacePatch) -> list[dict[str, int | str]]:
-    """Return the per-round touch schedule for one stabilizer."""
-    from pecos.qec.surface.schedule import get_stab_schedule
-
-    schedule = get_stab_schedule(stab.stab_type, stab.data_qubits, stab.is_boundary, patch.dx, patch.dz)
-    return [
-        {
-            "round_0based": round_0based,
-            "data_qubit": data_qubit,
-            "touch_label": get_stabilizer_touch_label(stab, patch, data_qubit),
-        }
-        for round_0based, data_qubit in schedule
-    ]
-
-
-def get_stabilizer_schedule_metadata(stab: Stabilizer, patch: SurfacePatch) -> dict[str, object]:
-    """Return metadata describing one stabilizer's schedule and geometry."""
-    entries = get_stabilizer_schedule_entries(stab, patch)
-    rounds = [int(entry["round_0based"]) for entry in entries]
-    return {
-        "stabilizer_kind": stab.stab_type,
-        "stabilizer_index": stab.index,
-        "stabilizer_is_boundary": stab.is_boundary,
-        "stabilizer_region": get_stabilizer_region(stab, patch),
-        "schedule_rounds": rounds,
-        "schedule_start_round": rounds[0] if rounds else None,
-        "schedule_end_round": rounds[-1] if rounds else None,
-        "schedule_entries": entries,
-    }
 
 
 def _build_detector_descriptors(

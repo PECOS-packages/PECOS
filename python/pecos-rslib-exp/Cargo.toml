@@ -16,6 +16,14 @@ name = "pecos_rslib_exp"
 crate-type = ["cdylib", "rlib"]
 doctest = false
 
+[features]
+# See pecos-rslib's Cargo.toml for why this bundle is opt-in.
+extension-module = [
+    "pyo3/extension-module",
+    "pyo3/abi3-py310",
+    "pyo3/generate-import-lib",
+]
+
 [dependencies]
 pecos-core.workspace = true
 pecos-eeg.workspace = true
@@ -28,7 +36,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 rayon.workspace = true
 pecos-stab-tn.workspace = true
-pyo3 = { workspace = true, features = ["extension-module", "abi3-py310", "generate-import-lib", "num-complex"] }
+pyo3 = { workspace = true, features = ["num-complex"] }
 num-complex.workspace = true
 smallvec.workspace = true
 

@@ -18,6 +18,9 @@ repos:
       - id: check-yaml
         args: [--unsafe]
       - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: detect-private-key
       # Python-specific
       - id: check-ast
       - id: check-docstring-first
@@ -47,3 +50,12 @@ repos:
         args: [--line-length=120]
         additional_dependencies:
         - black==25.9.0
+
+  - repo: local
+    hooks:
+      - id: dependency-integrity-check
+        name: dependency integrity check
+        entry: scripts/dependency-integrity-check.sh
+        language: system
+        pass_filenames: false
+        always_run: true

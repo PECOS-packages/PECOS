@@ -62,6 +62,7 @@ The compiler supports standard LLVM optimization levels:
 pub mod array;
 pub mod compiler;
 pub mod prelude;
+pub mod result_tags;
 mod utils;
 
 // Re-export main types and functions
@@ -73,6 +74,8 @@ pub use compiler::{
 
 // Re-export read_hugr_envelope from utils
 pub use utils::read_hugr_envelope;
+
+pub use result_tags::{extract_result_tag_measurements, measurement_op_count};
 
 // Re-export inkwell's OptimizationLevel for convenience
 pub use tket::hugr::llvm::inkwell::OptimizationLevel;

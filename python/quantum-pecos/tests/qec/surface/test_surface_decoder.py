@@ -363,6 +363,174 @@ class TestDemGeneration:
         )
         assert decoder.get_dem("X", circuit_level=True) == batched_dem
 
+    def test_constrained_budget_uses_cache_and_matches_fresh_build(self) -> None:
+        """A constrained ancilla budget now flows through the shared topology
+        cache (previously bypassed). The cached constrained DEM must equal a
+        DEM built fresh from the corresponding TickCircuit, for both the
+        ``abstract`` and ``traced_qis`` sources -- pinning that caching is
+        sound for constrained budgets, not just unconstrained ones."""
+        from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch
+        from pecos.qec.surface.decode import (
+            _build_surface_tick_circuit_for_native_model,
+            generate_circuit_level_dem_from_builder,
+        )
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        params = {"p1": noise.p1, "p2": noise.p2, "p_meas": noise.p_meas, "p_prep": noise.p_prep}
+
+        # abstract source
+        abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="Z", ancilla_budget=2)
+        cached_abstract = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            ancilla_budget=2,
+        )
+        assert cached_abstract == generate_dem_from_tick_circuit(abstract_tc, **params, decompose_errors=False)
+
+        # traced_qis source
+        _require_selene_runtime()
+        traced_tc = _build_surface_tick_circuit_for_native_model(
+            patch,
+            2,
+            "Z",
+            ancilla_budget=2,
+            circuit_source="traced_qis",
+        )
+        cached_traced = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            ancilla_budget=2,
+            circuit_source="traced_qis",
+        )
+        assert cached_traced == generate_dem_from_tick_circuit(traced_tc, **params, decompose_errors=False)
+
+    def test_unconstrained_budget_spellings_collapse_to_one_dem(self) -> None:
+        """``ancilla_budget`` of ``None``, ``== total_ancilla``, and a value
+        ``>> total_ancilla`` are all "unconstrained" and must produce the same
+        DEM. ``_canonical_ancilla_budget`` collapses them so they also share a
+        single cache entry rather than fragmenting it."""
+        from pecos.qec.surface.decode import _canonical_ancilla_budget, generate_circuit_level_dem_from_builder
+
+        patch = SurfacePatch.create(distance=3)
+        total = len(patch.geometry.x_stabilizers) + len(patch.geometry.z_stabilizers)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+
+        # Canonicalization: every unconstrained spelling -> None; a real
+        # constraint passes through unchanged.
+        assert _canonical_ancilla_budget(patch, None) is None
+        assert _canonical_ancilla_budget(patch, total) is None
+        assert _canonical_ancilla_budget(patch, 10**6) is None
+        assert _canonical_ancilla_budget(patch, 2) == 2
+
+        dem_none = generate_circuit_level_dem_from_builder(patch, num_rounds=2, noise=noise, basis="Z")
+        dem_total = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            ancilla_budget=total,
+        )
+        dem_huge = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=noise,
+            basis="Z",
+            ancilla_budget=10**6,
+        )
+        assert dem_none == dem_total == dem_huge
+
+    def test_constrained_budget_sampler_builds_for_all_models(self) -> None:
+        """The native sampler path also caches constrained budgets and builds
+        for every supported sampling model, with a detector count matching the
+        constrained circuit's surface metadata."""
+        from pecos.qec.surface import build_native_sampler
+        from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.01, p_prep=0.001)
+        abstract_tc = _build_surface_tick_circuit_for_native_model(
+            patch,
+            2,
+            "Z",
+            ancilla_budget=2,
+            circuit_source="abstract",
+        )
+        expected_detectors = int(abstract_tc.get_meta("num_detectors"))
+
+        for model in ("dem", "influence_dem", "mnm"):
+            sampler = build_native_sampler(
+                patch,
+                num_rounds=2,
+                noise=noise,
+                basis="Z",
+                ancilla_budget=2,
+                sampling_model=model,
+            )
+            assert sampler.num_detectors == expected_detectors
+
+    def test_traced_qis_traces_the_given_patch_not_its_distance(self) -> None:
+        """A non-rotated patch must be traced from its OWN Guppy program, not
+        the default rotated patch of the same distance. Before the patch-
+        identity fix, the traced path rebuilt make_surface_code(distance=d) and
+        the module cache keyed on dx/dz only, so rotated and non-rotated d=3
+        collapsed to one cached (rotated) module and produced identical DEMs.
+        They must now differ."""
+        from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+
+        _require_selene_runtime()
+        params = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+
+        def traced_dem(*, rotated: bool) -> str:
+            patch = SurfacePatch.create(distance=3, rotated=rotated)
+            tc = _build_surface_tick_circuit_for_native_model(patch, 2, "Z", circuit_source="traced_qis")
+            return generate_dem_from_tick_circuit(tc, **params, decompose_errors=False)
+
+        assert traced_dem(rotated=True) != traced_dem(rotated=False)
+
+    def test_guppy_module_cache_keys_on_full_patch_identity(self) -> None:
+        """Rotated and non-rotated patches of the same dx/dz/budget must NOT
+        share a cached Guppy module (they generate different circuits)."""
+        from pecos.guppy.surface import _load_guppy_module
+
+        rotated = _load_guppy_module(SurfacePatch.create(distance=3, rotated=True), ancilla_budget=2)
+        non_rotated = _load_guppy_module(SurfacePatch.create(distance=3, rotated=False), ancilla_budget=2)
+        assert rotated is not non_rotated
+
+    def test_surface_memory_distance_validation_is_consistent(self) -> None:
+        """All distance-based Guppy entry points enforce the documented
+        'odd >= 3' contract (previously make_surface_code/get_surface_code_module
+        accepted even/<3 and get_num_qubits(0) returned -1)."""
+        from pecos.guppy.surface import (
+            generate_surface_code_module,
+            get_num_qubits,
+            get_surface_code_module,
+            make_surface_code,
+        )
+
+        for bad in (0, 1, 2, 4):
+            with pytest.raises(ValueError, match=r"odd >= 3"):
+                get_num_qubits(bad)
+            with pytest.raises(ValueError, match=r"odd >= 3"):
+                get_surface_code_module(bad)
+            with pytest.raises(ValueError, match=r"odd >= 3"):
+                make_surface_code(distance=bad, num_rounds=2, basis="Z")
+            with pytest.raises(ValueError, match=r"odd >= 3"):
+                generate_surface_code_module(bad)
+        assert get_num_qubits(3) == 2 * 9 - 1  # valid distance still works
+
+    def test_get_num_qubits_requires_exactly_one_of_d_or_patch(self) -> None:
+        from pecos.guppy.surface import get_num_qubits
+
+        with pytest.raises(ValueError, match=r"exactly one of"):
+            get_num_qubits()
+        with pytest.raises(ValueError, match=r"exactly one of"):
+            get_num_qubits(3, patch=SurfacePatch.create(distance=3))
+
     def test_native_circuit_level_dem_cache_respects_patch_geometry(self) -> None:
         """Shared native DEM caching should preserve asymmetric patch geometry."""
         from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch

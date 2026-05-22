@@ -1,5 +1,8 @@
 name: Documentation Tests & Build
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ main, master, development, dev ]
@@ -26,41 +29,44 @@ jobs:
     name: Test and build documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.10'
 
       - name: Install the latest version of uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: "0.11.14"
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Set up Rust
         run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup show
 
       - name: Install just
-        uses: extractions/setup-just@v4
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
           workspaces: |
             python/pecos-rslib
             python/pecos-rslib-llvm
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm
-        uses: actions/cache@v5
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-14
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
@@ -68,16 +74,23 @@ jobs:
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env
 
+      - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
+
       - name: Install dependencies and build
         run: |
-          uv lock --project .
-          uv sync --project . --all-packages
-          cargo install --path crates/pecos-cli --force
+          uv lock --check --project .
+          uv sync --locked --project . --all-packages
+          cargo install --locked --path crates/pecos-cli --force
           pecos python build --profile debug
 
       - name: Test working documentation examples
-        run: uv run python scripts/docs/test_working_examples.py
+        run: uv run --frozen python scripts/docs/test_working_examples.py
 
       - name: Build documentation
         if: success()
-        run: uv run mkdocs build
+        run: uv run --frozen mkdocs build

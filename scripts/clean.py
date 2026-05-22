@@ -216,10 +216,11 @@ def clean_selene(root: Path, *, dry_run: bool = False) -> None:
             # File-less leftover scaffolding — safe to remove.
             stale_count += 1
 
+    action = "Would remove" if dry_run else "Removed"
     if dist_count > 0:
-        print(f"  Removed {dist_count} _dist directories")
+        print(f"  {action} {dist_count} _dist directories")
     if stale_count > 0:
-        print(f"  Removed {stale_count} stale plugin scaffold directories")
+        print(f"  {action} {stale_count} stale plugin scaffold directories")
 
 
 def clean_pecos_home(what: str, *, dry_run: bool = False) -> None:
@@ -282,9 +283,9 @@ def main() -> int:
         clean_selene(root, dry_run=args.dry_run)
         clean_pecos_home("cache", dry_run=args.dry_run)
         clean_pecos_home("deps", dry_run=args.dry_run)
-    elif args.selene:
-        clean_selene(root, dry_run=args.dry_run)
-    elif args.cache or args.deps:
+    elif args.selene or args.cache or args.deps:
+        if args.selene:
+            clean_selene(root, dry_run=args.dry_run)
         if args.cache:
             clean_pecos_home("cache", dry_run=args.dry_run)
         if args.deps:

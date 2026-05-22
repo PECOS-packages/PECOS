@@ -1,0 +1,77 @@
+name: Dependency Review
+
+on:
+  push:
+    branches: [ "**" ]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/native_bench/bench_pecos/Cargo.toml'
+      - 'scripts/native_bench/bench_pecos/Cargo.lock'
+      - 'pyproject.toml'
+      - 'python/**/pyproject.toml'
+      - 'uv.lock'
+      - 'requirements*.txt'
+      - '**/requirements*.txt'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'yarn.lock'
+      - 'bun.lock'
+      - 'bun.lockb'
+      - '.github/dependabot.yml'
+      - '.github/workflows/dependency-review.yml'
+  pull_request:
+    branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/native_bench/bench_pecos/Cargo.toml'
+      - 'scripts/native_bench/bench_pecos/Cargo.lock'
+      - 'pyproject.toml'
+      - 'python/**/pyproject.toml'
+      - 'uv.lock'
+      - 'requirements*.txt'
+      - '**/requirements*.txt'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'yarn.lock'
+      - 'bun.lock'
+      - 'bun.lockb'
+      - '.github/dependabot.yml'
+      - '.github/workflows/dependency-review.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes in pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          fail-on-severity: high
+
+      - name: Review dependency changes in push
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          fail-on-severity: high
+          base-ref: ${{ github.event.before }}
+          head-ref: ${{ github.sha }}
+
+      - name: Skip dependency review for first push to a branch
+        if: github.event_name == 'push' && github.event.before == '0000000000000000000000000000000000000000'
+        run: echo "No previous commit exists for this pushed ref; dependency review will run on subsequent pushes."

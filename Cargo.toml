@@ -41,6 +41,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ron = "0.12"
 toml = "1"
+toml_edit = "0.22"
 
 # --- CLI ---
 clap = { version = "4", features = ["derive"] }
@@ -48,7 +49,12 @@ clap_complete = "4.5"
 cargo_metadata = "0.23"
 
 # --- Python bindings ---
-pyo3 = { version = "0.28", features = ["extension-module"] }
+# Note: `extension-module`/`abi3-py310`/`generate-import-lib` are intentionally
+# NOT enabled at the workspace level. They tell pyo3 to skip linking libpython
+# at build time, which is what we want when maturin builds the cdylib but is
+# fatal for plain `cargo test`. Each pecos-rslib* crate gates them behind its
+# own `extension-module` feature; maturin opts in via pyproject.toml.
+pyo3 = "0.28"
 
 # --- C/C++ FFI & build ---
 bindgen = "0.72"
@@ -84,7 +90,6 @@ pest_derive = "2"
 regex = "1"
 
 # --- Numerical computing ---
-levenberg-marquardt = "0.15"
 nalgebra = "0.34"
 num = "0.4"
 num-complex = "0.4"
@@ -159,7 +164,7 @@ quizx = "0.3"
 
 # --- Decoder libraries ---
 fusion-blossom = "0.2"
-mwpf = { git = "https://github.com/yuewuo/mwpf", tag = "v0.2.12", default-features = false, features = [
+mwpf = { git = "https://github.com/yuewuo/mwpf", rev = "b8444428f999457208c4b0956f3f1c745a0ec2d5", default-features = false, features = [
   "f64_weight",
 ] }
 relay-bp = "0.2"
@@ -238,9 +243,13 @@ inherits = "release"
 strip = false
 debug = 1            # line tables only — minimal size impact
 
-# Native profile: release + CPU-specific optimizations
-# Use with: cargo build --profile native
-# Build scripts detect this via PROFILE=native env var and add --march=native for C++ code
+# Native profile: release + CPU-specific optimizations.
+# Use with: cargo build --profile native (or just <recipe> native).
+# Build scripts detect this via PROFILE=native env var and add --march=native for C++ code.
+# Rust code gets -C target-cpu=native via RUSTFLAGS supplied by the caller (Justfile
+# recipes, pecos python build --profile native, etc.). Setting it here as
+# `profile.native.rustflags` would be cleaner but that field is still unstable in
+# stable cargo as of 1.93.
 [profile.native]
 inherits = "release"
 

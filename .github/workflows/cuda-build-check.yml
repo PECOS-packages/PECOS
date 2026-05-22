@@ -4,6 +4,9 @@
 
 name: CUDA Build Check
 
+permissions:
+  contents: read
+
 env:
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
@@ -32,7 +35,9 @@ jobs:
   cuda-build-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Free disk space
         run: |
@@ -42,22 +47,23 @@ jobs:
 
       - name: Install Rust
         run: |
-          curl https://sh.rustup.rs -sSf | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
 
       - name: Set up Rust
-        run: rustup override set stable && rustup update
+        run: |
+          rustup override set stable
+          rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Install CUDA Toolkit
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
         id: cuda-toolkit
         with:
           cuda: '12.6.3'
@@ -68,28 +74,28 @@ jobs:
       - name: Check pecos-cuquantum-sys compiles (stub mode)
         run: |
           echo "Building pecos-cuquantum-sys (will use stubs since cuQuantum SDK is not installed)..."
-          cargo check -p pecos-cuquantum-sys
+          cargo check --locked -p pecos-cuquantum-sys
 
       - name: Check pecos-cuquantum compiles (stub mode)
         run: |
           echo "Building pecos-cuquantum (will use stubs since cuQuantum SDK is not installed)..."
-          cargo check -p pecos-cuquantum
+          cargo check --locked -p pecos-cuquantum
 
       - name: Check pecos-rslib-cuda compiles (stub mode)
         run: |
           echo "Building pecos-rslib-cuda Python bindings..."
-          cargo check -p pecos-rslib-cuda
+          cargo check --locked -p pecos-rslib-cuda
 
       - name: Run clippy on CUDA crates
         run: |
           echo "Running clippy on CUDA crates..."
-          cargo clippy -p pecos-cuquantum-sys -p pecos-cuquantum -p pecos-rslib-cuda -- -D warnings
+          cargo clippy --locked -p pecos-cuquantum-sys -p pecos-cuquantum -p pecos-rslib-cuda -- -D warnings
 
       - name: Verify stub mode detection
         run: |
           echo "Verifying that build correctly detects stub mode..."
           # The crates should compile but is_cuquantum_available() should return false
-          cargo build -p pecos-cuquantum --release
+          cargo build --locked -p pecos-cuquantum --release
           # Note: We can't actually run the binary to test is_cuquantum_available()
           # because it requires the cuQuantum runtime, but the build succeeding
           # in stub mode means the detection is working

@@ -184,7 +184,7 @@ pub fn pre_reduce_for_measurement_pub(tableau: &mut SparseStabY, mps: &mut Mps, 
 /// Proper long-term fix: lazy virtual-frame tracking — accumulate a
 /// deferred Clifford V such that effective MPS = V·stored MPS, conjugate
 /// Pauli strings by V before applying to stored MPS, flush only when MPS
-/// must be read directly. See `docs/future_work.md`.
+/// must be read directly.
 fn pre_reduce_for_measurement(
     tableau: &mut SparseStabY,
     mps: &mut Mps,

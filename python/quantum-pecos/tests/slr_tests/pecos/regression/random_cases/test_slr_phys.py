@@ -159,7 +159,7 @@ def test_control_flow_qir() -> None:
 
 @pytest.mark.optional_dependency
 def test_plus_qir() -> None:
-    """B1: whole-CReg scalar arithmetic (`o.set(m + n)`) lowers via
+    """Whole-CReg scalar arithmetic (`o.set(m + n)`) lowers via
     `_pack_creg` + i64 `add`, then unpacks back to `o`'s bits."""
     prog = Main(
         _q := QReg("q", 2),
@@ -206,7 +206,7 @@ def test_nested_xor_qir() -> None:
 
 @pytest.mark.optional_dependency
 def test_minus_qir() -> None:
-    """B1: whole-CReg scalar subtraction (`o.set(m - n)`) lowers via
+    """Whole-CReg scalar subtraction (`o.set(m - n)`) lowers via
     `_pack_creg` + i64 `sub`. Pure-classical + Clifford only -- runs
     end-to-end through qir_to_qis + Stim."""
     prog = Main(
@@ -233,8 +233,8 @@ def test_minus_qir() -> None:
 
 @pytest.mark.optional_dependency
 def test_steane_qir() -> None:
-    """B1: the Steane teleportation uses a classical scalar var
-    (`smid_flag_x` -- a `CReg(..., 3)`); B1's `_pack_creg` lowers
+    """The Steane teleportation uses a classical scalar var
+    (`smid_flag_x` -- a `CReg(..., 3)`); `_pack_creg` lowers
     this scalar reference, so the program builds. The full
     teleportation contains non-Clifford rotations and the executable
     path is out of scope for this test -- assert the build succeeds
@@ -246,7 +246,7 @@ def test_steane_qir() -> None:
 
 @pytest.mark.optional_dependency
 def test_steane_qir_bc() -> None:
-    """B1: same Steane telep program through the QIR bitcode path.
+    """Same Steane telep program through the QIR bitcode path.
     The bitcode builds (no longer fails loud on classical-variable
     lowering)."""
     bc = SlrConverter(telep("X", "X")).qir_bc()

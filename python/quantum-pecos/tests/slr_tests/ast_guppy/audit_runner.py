@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Audit runner for Step 4 Workstream B (cutover gap discovery).
+"""Audit runner for cutover gap discovery.
 
 Iterates a curated list of `(source_label, slr_program_factory)`
 pairs from PECOS examples, qeclib, and existing test fixtures.
@@ -30,7 +30,7 @@ For each program: emits one of
 
 The curated list is intentionally small at first and grows as we
 identify canonical examples worth exercising. The list is the audit
-surface; growing it is part of Workstream B.
+surface; growing it is part of the cutover audit.
 """
 
 from __future__ import annotations
@@ -486,15 +486,15 @@ def _qeclib_surface_patch_builder_empty() -> Block:
 
 
 def _qeclib_steane_pz() -> Block:
-    """Steane pz(): lowers under S5 (M2 converter-time elision of flattened
-    composite block-boundary Returns); Main has no user Return -> main()->None.
+    """Steane pz(): lowers via converter-time elision of flattened
+    composite block-boundary Returns; Main has no user Return -> main()->None.
 
     Audit scope is build+lower (compile) only -- steane_pz genuinely
-    compiles post-S5. Behavioral correctness is a SEPARATE concern: the v1
+    compiles. Behavioral correctness is a SEPARATE concern: the v1
     AST->Guppy FT-RUS pz() prepares a non-codeword state (pre-existing,
-    S5-independent). That defect is tracked post-3b and pinned by a strict
-    xfail in test_v1_behavioral.TestS5SteanePzBehavioral -- it is NOT
-    asserted correct here."""
+    independent of the Return-elision). That defect is tracked separately and
+    pinned by a strict xfail in test_v1_behavioral.TestS5SteanePzBehavioral
+    -- it is NOT asserted correct here."""
     return Main(
         c := Steane("c"),
         c.pz(),
@@ -744,7 +744,7 @@ def _curated_cases() -> list[AuditCase]:
             expected_failure=ExpectedFailure(
                 exception_type="GuppyCodegenError",
                 message_contains="does not support While loops",
-                classification="v2-defer",
+                classification="deferred",
                 reason="While loop linearity fixed-points are outside v1 scope",
             ),
         ),
@@ -754,7 +754,7 @@ def _curated_cases() -> list[AuditCase]:
             expected_failure=ExpectedFailure(
                 exception_type="GuppyCodegenError",
                 message_contains="symbolic LoopVar indexing",
-                classification="v2-defer",
+                classification="deferred",
                 reason="Symbolic SlotRef indices require shared AST/converter design",
             ),
         ),

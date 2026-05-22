@@ -75,8 +75,8 @@ def run_ast_guppy_via_selene(
     # wrapper (default `emit_return_result_tags=False`) is untouched.
     wrapper, info = build_no_arg_entry_wrapper(program, emit_return_result_tags=True)
     # The returned CRegs (explicit `Return(...)`, in listed order) are the
-    # source of truth for the public `measurement_N` order. Phase 3b removed
-    # the v1 implicit result-CReg path, so a program with no `Return` has no
+    # source of truth for the public `measurement_N` order. The implicit
+    # result-CReg path was removed, so a program with no `Return` has no
     # measurement record at all.
     if info.explicit_return is None:
         msg = (

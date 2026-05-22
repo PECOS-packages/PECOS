@@ -35,7 +35,7 @@ class Check1Flag(Block):
     to detect errors during the syndrome extraction process.
     """
 
-    # Phase 3a.3 (scratch-ancilla effect, 5e.5): emit BlockDecl + BlockCall.
+    # Scratch-ancilla effect: emit BlockDecl + BlockCall.
     # `a` and `flag` are both reset-reused scratch ancillas (prepped +
     # measured inside, allocated internally in Guppy so callers can reuse
     # physical slots across sequential checks); data passes through; the two

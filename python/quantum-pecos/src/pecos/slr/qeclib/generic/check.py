@@ -35,7 +35,7 @@ class Check(Block):
     a sequence of Pauli operators to data qubits controlled by an ancilla qubit.
     """
 
-    # Phase 3a.3 (scratch-ancilla effect): emit BlockDecl + BlockCall instead
+    # Scratch-ancilla effect: emit BlockDecl + BlockCall instead
     # of inlining. Data qubits pass through unchanged; `a` is a reset-reused
     # scratch ancilla (prepped + measured inside, allocated internally in
     # Guppy so callers like SynExtractBare can reuse one physical slot across

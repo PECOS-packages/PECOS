@@ -597,7 +597,7 @@ class ParallelBlock(Statement):
 
 
 # =============================================================================
-# Reusable block declarations (Phase 3a.1)
+# Reusable block declarations
 # =============================================================================
 
 
@@ -633,7 +633,7 @@ class BlockDecl(AstNode):
         return nodes
 
 
-# ---- BlockCall argument types (Phase 3a.3 iter 5a typed sum type) ----
+# ---- BlockCall argument types (typed sum type) ----
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Phase 3b hard-contract tests for the v2 output model.
+"""Hard-contract tests for the v2 output model.
 
 S3 removed the `CReg(result=...)` kwarg, the `RegisterDecl.is_result`
 field, and the v1 implicit return of result-flagged CRegs. These tests

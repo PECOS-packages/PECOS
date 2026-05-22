@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Phase 3a.3 iter 5e.1 -- direct unit tests for the shared body substitution.
+"""Direct unit tests for the shared body substitution.
 
 The 7 already-converted Steane Blocks only exercise the *whole-allocator
 identity* path (`q[i] -> q[i]`). 5e.1 is "dead-code-with-tests" without

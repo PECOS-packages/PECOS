@@ -397,10 +397,10 @@ class AstToQir:
         # Setup creg helper functions
         self._setup_creg_funcs()
 
-        # B2: standard QIR classical model. A measurement lowers to a
+        # Standard QIR classical model. A measurement lowers to a
         # static `%Result*` slot -> `__quantum__qis__mz__body` ->
         # `__quantum__rt__read_result` -> `store` into a per-CReg mutable
-        # `[N x i1]` entry-block `alloca` buffer (M-B2-static). `%Result*`
+        # `[N x i1]` entry-block `alloca` buffer. `%Result*`
         # is the existing `result_ptr` type.
         self._mz_body = self._declare_function(
             "__quantum__qis__mz__body",
@@ -441,7 +441,8 @@ class AstToQir:
     def _setup_creg_funcs(self) -> None:
         """Declare the standard classical-output runtime function.
 
-        B2 (M-B2-static) replaced the bespoke `create_creg`/`get_creg_bit`/
+        The static `[N x i1]` CReg model replaced the bespoke
+        `create_creg`/`get_creg_bit`/
         `set_creg_bit`/`get_int_from_creg`/`set_creg_to_int`/`mz_to_creg_bit`
         runtime helpers with native `alloca`/`store`/`load`/`gep`/`zext`,
         so only the standard `__quantum__rt__int_record_output` remains.
@@ -461,7 +462,7 @@ class AstToQir:
 
     def _setup_op_map(self) -> None:
         """Setup binary operator mapping."""
-        # B1: CReg comparisons are UNSIGNED (the CReg's `[N x i1]` buffer
+        # CReg comparisons are UNSIGNED (the CReg's `[N x i1]` buffer
         # packs to an i64 unsigned bit pattern via `_pack_creg`). The
         # `icmp_unsigned` choice matters only when bit 63 of a 64-bit
         # CReg is set; for narrower CRegs (or for bit-level `c[i]`
@@ -469,7 +470,7 @@ class AstToQir:
         # signed and unsigned agree. Switching is safe -- no existing
         # test asserts the signed semantics on a high-bit-set 64-bit
         # CReg, and unsigned is the correct interpretation of the
-        # bit-pattern semantics SLR exposes (cf. B1 D3).
+        # bit-pattern semantics SLR exposes.
         self._op_map = {
             BinaryOp.EQ: lambda lhs, rhs: self._builder.icmp_unsigned("==", lhs, rhs),
             BinaryOp.NE: lambda lhs, rhs: self._builder.icmp_unsigned("!=", lhs, rhs),
@@ -509,7 +510,7 @@ class AstToQir:
                     for i in range(decl.capacity):
                         self.context.get_qubit_index(decl.name, i)
             elif isinstance(decl, RegisterDecl):
-                # M-B2-static: a CReg is a mutable `[N x i1]` buffer in the
+                # A CReg is a mutable `[N x i1]` buffer in the
                 # entry block (declarations are processed at entry, before
                 # any control flow, so the builder is positioned there),
                 # zero-initialised so unmeasured/unset bits read 0. The
@@ -984,7 +985,7 @@ class AstToQir:
             return self._builder.zext(bit, self._types["int"])
 
         if isinstance(expr, VarExpr):
-            # B1: a classical `VarExpr` denotes a whole CReg used as a
+            # A classical `VarExpr` denotes a whole CReg used as a
             # scalar (e.g. `If(m == 0)`, `o.set(m + n)`, Steane
             # `smid_flag_x`). SLR has no scalar-integer classical type
             # (verified: `pecos.slr.vars` exposes only Reg/CReg/Bit/
@@ -1197,7 +1198,7 @@ class AstToQir:
         `OR_i (zext c[i] << i)` -- this is the canonical SLR CReg-as-
         integer lowering. Used by both `_generate_results` (for the
         `__quantum__rt__int_record_output` call) and by
-        `_eval_expression(VarExpr)` (B1 -- a whole-CReg scalar
+        `_eval_expression(VarExpr)` (a whole-CReg scalar
         reference in `If(m == 0)` / `o.set(m + n)` / etc.). Sharing
         the pack ensures the record-output and VarExpr interpretations
         of `m` are bit-identical -- the same packed i64.
@@ -1229,7 +1230,7 @@ class AstToQir:
             reg_tag.linkage = "private"
 
             # Pack the [N x i1] buffer into one i64 (shared with the
-            # B1 VarExpr lowering).
+            # VarExpr lowering).
             c_int = self._pack_creg(reg_name)
 
             reg_tag_gep = reg_tag.gep(

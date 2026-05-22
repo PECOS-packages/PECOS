@@ -184,7 +184,7 @@ class SlrToAst:
         self._position = 0  # Track position for source locations
         self._block_decls: list[BlockDecl] = []  # Hoisted BlockDecls accumulated during convert()
         self._decl_counter = 0
-        # S5/M2: True while converting the ops of a legacy-flattened composite
+        # True while converting the ops of a legacy-flattened composite
         # Block. A `Return` inside such a block is a block-boundary qubit
         # handoff (the qubits are already in linear scope by allocator name),
         # NOT the root Main return -- elide it. Provenance-based, not
@@ -389,7 +389,7 @@ class SlrToAst:
 
         if op_class == "Return":
             if self._in_flattened_block:
-                # S5/M2: elide block-boundary Return from a flattened composite.
+                # Elide block-boundary Return from a flattened composite.
                 return None
             return self._convert_return(op)
 
@@ -405,14 +405,14 @@ class SlrToAst:
 
         # Nested blocks (Block subclasses)
         if hasattr(op, "ops"):
-            # Phase 3a.1: a Block subclass that declares `block_inputs` opts in to
+            # A Block subclass that declares `block_inputs` opts in to
             # BlockDecl/BlockCall lowering. Without it, the legacy flatten path
-            # remains the default for all qeclib Blocks until Phase 3a.3.
+            # remains the default for all qeclib Blocks.
             if _has_block_inputs(op):
                 return self._convert_block_call(op)
 
             # Legacy flatten path. Returns inside the flattened composite are
-            # block-boundary handoffs, not the root Main return (S5/M2):
+            # block-boundary handoffs, not the root Main return:
             # elide them via the in_flattened_block provenance flag, including
             # inside nested If/Repeat/For/While/Parallel. Save/restore so
             # nested composites and the root scope are handled correctly.
@@ -429,8 +429,8 @@ class SlrToAst:
     def _convert_block_call(self, block: Block) -> BlockCall:
         """Build a BlockDecl + BlockCall pair from a Block subclass with `block_inputs`.
 
-        Each call site emits a fresh BlockDecl (no dedup in Phase 3a.1; dedup is
-        a Phase 3a.3 optimization once qeclib conversion lands). The BlockDecl
+        Each call site emits a fresh BlockDecl (no dedup yet; dedup is
+        a later optimization once qeclib conversion lands). The BlockDecl
         body is the block's `ops` with allocator names rewritten from the
         outer-scope binding name to the input parameter name.
         """
@@ -589,7 +589,7 @@ class SlrToAst:
         # R4 (scratch design): a SCRATCH input is only sound if the block
         # resets it before any other use and never touches it after the
         # terminal measurement without re-Prepping. The Guppy lowering
-        # (S2) allocates the qubit internally on that assumption; validate
+        # allocates the qubit internally on that assumption; validate
         # it here so a mis-declared scratch input fails loudly at
         # conversion rather than miscompiling.
         for scratch_name in scratch_inputs:
@@ -1066,7 +1066,7 @@ def slr_to_ast(block: Main | Block) -> Program:
     return converter.convert(block)
 
 
-# === Phase 3a.1 BlockDecl/BlockCall helpers ===
+# === BlockDecl/BlockCall helpers ===
 
 _EFFECT_NAME_MAP: dict[str, ResourceEffect] = {
     "live_preserved": ResourceEffect.LIVE_PRESERVED,
@@ -1108,7 +1108,7 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
     A reference inside control flow / Parallel / a nested BlockCall /
     PermuteOp cannot be linearized for the R4 reset-first analysis, so
     it is reported as the sentinel UNSUPPORTED and the validator rejects
-    (S1 scope: scratch inputs must have a flat Prep -> ... -> Measure
+    (scratch inputs must have a flat Prep -> ... -> Measure
     lifecycle).
     """
     if isinstance(stmt, CommentOp):
@@ -1139,15 +1139,15 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
                     return ["UNSUPPORTED"]
         return []
     if isinstance(stmt, ReturnOp):
-        # A scratch input must never be handed back to the caller: S2
-        # allocates it internally and does not thread it through caller
+        # A scratch input must never be handed back to the caller: the
+        # Guppy lowering allocates it internally and does not thread it through caller
         # state, so returning it would diverge from the flatten/QASM path
         # Detection cannot be precise here -- the
         # substitution leaves Return values as the OUTER name (a partial
         # VarExpr passes through `whole_name` unchanged), so a returned
         # scratch slot is indistinguishable from a returned classical
         # value at this point. Conservatively reject ANY ReturnOp in a
-        # scratch-bearing block (S1 scope: in-scope blocks like `Check`
+        # scratch-bearing block (in-scope blocks like `Check`
         # have no Return; relax deliberately in a later stage if needed).
         return ["UNSUPPORTED"]
     # Anything else carries no qubit-slot ref. AssignOp/PrintOp operate on
@@ -1177,10 +1177,10 @@ def _validate_scratch_input(
 
     The block must reset `name` before any other use, and every Prep
     lifecycle must be closed by a Measure before the next Prep and
-    before the body ends (the S2 Guppy lowering allocates the scratch
+    before the body ends (the Guppy lowering allocates the scratch
     qubit internally, so an unmeasured trailing Prep/use would diverge
     from the flatten/QASM path). Anything the
-    S1 analysis cannot linearize (control flow / Parallel / nested
+    linearization analysis cannot handle (control flow / Parallel / nested
     BlockCall / Permute over the scratch slot) is rejected loudly --
     silently allowing it would let the Guppy internal-allocation
     lowering miscompile.
@@ -1209,7 +1209,7 @@ def _validate_scratch_input(
         )
         raise ValueError(msg)
     # Segment state machine: a PREP opens a lifecycle that MUST close with a
-    # MEASURE before the next PREP and before the body ends. The S2 Guppy
+    # MEASURE before the next PREP and before the body ends. The Guppy
     # lowering allocates the scratch qubit internally; an unmeasured trailing
     # Prep/use would leave the flatten/QASM path with a live reset outer slot
     # while Guppy silently drops it -- a semantic divergence.

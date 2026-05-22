@@ -28,7 +28,7 @@ class CX(Block):
     two logical qubits encoded in the Steane code.
     """
 
-    # Phase 3a.3: declare resource effects so SLR -> AST emits BlockDecl + BlockCall
+    # Declare resource effects so SLR -> AST emits BlockDecl + BlockCall
     # instead of inlining. Both registers are live_preserved -- the body applies a
     # transversal CX pairwise (no internal measurements).
     block_inputs: ClassVar[dict[str, str]] = {

@@ -229,20 +229,20 @@ _MANIFEST: dict[str, tuple[str, _Spec]] = {
     ),
     "docs.prep_basis_x": (
         "X",
-        "#81 PX = reset+H = |+>; Z-measure is ONE uniform random bit -- "
+        "PX = reset+H = |+>; Z-measure is ONE uniform random bit -- "
         "no hard invariant. PX correctness is validated behaviorally by "
         "test_prep_gates (Stim peek_bloch + Selene), not here. "
         "(An earlier deterministic [0] guess assumed the OLD broken "
-        "Prep('X')=Z-reset, fixed by #81.)",
+        "Prep('X')=Z-reset, now fixed.)",
     ),
     "docs.rotation_rx": (
         "X",
-        "#97/v2 (typed angle-first SLR API): `RX(rad(0.5), q)` builds + lowers via "
+        "Typed angle-first SLR API: `RX(rad(0.5), q)` builds + lowers via "
         "qir_to_qis (rx is qir-qis-allowlisted), but rx(0.5) is "
         "NON-CLIFFORD so it cannot execute on the Stim backend this "
         "suite uses -- excluded from the executable record (rx "
         "correctness is covered by the Guppy Quest-backed behavioral "
-        "tests + the QIR rx emission). This #79 suite is Stim-only.",
+        "tests + the QIR rx emission). This suite is Stim-only.",
     ),
     "qeclib.color488_syn_extract_bare": (
         "X",
@@ -290,7 +290,7 @@ def test_qir_corpus_manifest_covers_qis_ok() -> None:
     """
     qis_ok = set(_qis_ok_labels())
     missing = qis_ok - set(_MANIFEST)
-    assert not missing, f"QIS_OK programs with no #79 manifest class (classify them): {sorted(missing)}"
+    assert not missing, f"QIS_OK programs with no manifest class (classify them): {sorted(missing)}"
     stale = set(_MANIFEST) - qis_ok
     assert not stale, f"manifest entries no longer QIS_OK (remove/retriage): {sorted(stale)}"
     hist = {cls: sum(1 for c, _ in _MANIFEST.values() if c == cls) for cls in ("D", "P", "X")}

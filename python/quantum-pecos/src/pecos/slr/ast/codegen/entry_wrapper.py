@@ -19,8 +19,8 @@ logic the emitter uses, so the wrapper signature matches main's exactly.
 
 Two modes match `AstToGuppy._return_type`:
 - Explicit `Return(...)` -> pass through main's return value unchanged.
-- No `Return(...)` -> `entry() -> None` and discard (Phase 3b removed the
-  implicit return of result-flagged CRegs).
+- No `Return(...)` -> `entry() -> None` and discard (the output model no
+  longer implicitly returns result-flagged CRegs).
 """
 
 from __future__ import annotations

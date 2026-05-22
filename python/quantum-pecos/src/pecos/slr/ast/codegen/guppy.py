@@ -386,10 +386,10 @@ class AstToGuppy:
     def _validate_block_decl(self, decl: BlockDecl) -> None:
         """Reject BlockDecl shapes that the v1 Guppy emitter cannot lower."""
         for inp in decl.inputs:
-            # Phase 3a.3 iter 5a: array[qubit, N]. Iter 5b: single qubit (bare
-            # `QubitTypeExpr`). Iter 5c: single classical bit (bare
+            # Supported input shapes: array[qubit, N]; single qubit (bare
+            # `QubitTypeExpr`); single classical bit (bare
             # `BitTypeExpr`, lowered via an array[bool, 1] write-back proxy).
-            # Later iters add qubit/bit bundles.
+            # Qubit/bit bundles are added later.
             is_qubit = isinstance(inp.type_expr, QubitTypeExpr)
             is_qubit_array = isinstance(inp.type_expr, ArrayTypeExpr) and isinstance(
                 inp.type_expr.element,
@@ -442,7 +442,7 @@ class AstToGuppy:
     def _generate_block_decl(self, decl: BlockDecl) -> list[str]:
         """Emit a BlockDecl as a top-level Guppy @guppy def function.
 
-        Each input is one of (Phase 3a.3 iter 5c scope):
+        Each input is one of:
         - `array[qubit, N]`: parameter `name: array[qubit, N] @ owned`,
           unpacks at entry into `name_0..name_{N-1}` slots.
         - bare `qubit`: parameter `name: qubit @ owned`, aliased to its
@@ -1382,7 +1382,7 @@ class AstToGuppy:
     def _emit_block_call(self, node: BlockCall) -> list[str]:
         """Lower a BlockCall to a packed-array call + unpack pattern.
 
-        Per-input dispatch (Phase 3a.3 iter 5d scope):
+        Per-input dispatch:
         - `array[qubit, N]` input + `AllocatorArg(name=outer)`: pack the
           outer allocator's slots into `array(outer_0, outer_1, ...)`,
           unpack the returned array back into the same slots.

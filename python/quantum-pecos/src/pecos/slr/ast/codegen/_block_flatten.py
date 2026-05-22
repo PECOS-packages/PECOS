@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Phase 3a.2 BlockDecl/BlockCall flattening for non-Guppy codegens.
+"""BlockDecl/BlockCall flattening for non-Guppy codegens.
 
 Non-Guppy codegens (qasm, qir, stim, quantum_circuit) cannot represent
 reusable functions, so a `BlockCall` is inlined at its call site by
@@ -64,9 +64,9 @@ def flatten_block_calls(program: Program) -> Program:
     """Return a new Program with every BlockCall inlined and no BlockDecls left.
 
     The substitution rule maps each `BlockDecl` input parameter name to the
-    typed `BlockCall.arg_bindings` BlockArg. In Phase 3a.3 iter 5a only
+    typed `BlockCall.arg_bindings` BlockArg. Currently only
     `AllocatorArg` is supported; richer BlockArg shapes raise
-    `NotImplementedError`. Quantum-only in Phase 3a.1.
+    `NotImplementedError`. Quantum-only for now.
     """
     if not program.block_decls:
         return program

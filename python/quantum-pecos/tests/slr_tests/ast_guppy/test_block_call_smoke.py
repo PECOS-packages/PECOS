@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Phase 3a.1 smoke tests for BlockDecl / BlockCall.
+"""Smoke tests for BlockDecl / BlockCall.
 
 Builds AST programs directly (without going through SLR) to exercise the new
 Guppy emitter codepaths:
@@ -164,7 +164,7 @@ class TestBlockCallValidation:
             ast_to_guppy(prog)
 
     def test_unsupported_effect_rejected(self) -> None:
-        """`PRODUCED` and `DROPPED` effects are not lowered in Phase 3a.1."""
+        """`PRODUCED` and `DROPPED` effects are not yet lowered."""
         bell = BlockDecl(
             name="bell",
             inputs=(
@@ -186,7 +186,7 @@ class TestBlockCallValidation:
             ast_to_guppy(prog)
 
     def test_unsupported_input_type_rejected(self) -> None:
-        """Only `array[qubit, N]` inputs are supported in Phase 3a.1."""
+        """Only `array[qubit, N]` inputs are supported here."""
         from pecos.slr.ast.nodes import BitTypeExpr
 
         bell = BlockDecl(
@@ -238,7 +238,7 @@ class TestBlockCallValidation:
 
 
 class TestBlockCallNonGuppyFlatten:
-    """Phase 3a.2: non-Guppy codegens inline BlockCall byte-identical to a flat program."""
+    """Non-Guppy codegens inline BlockCall byte-identical to a flat program."""
 
     def test_qasm_blockcall_matches_inlined_program(self) -> None:
         """QASM output for a BlockCall program matches the hand-flattened program."""
@@ -278,7 +278,7 @@ class TestBlockCallNonGuppyFlatten:
 
 
 class TestConvertedQeclibBlocksUseBlockCallPath:
-    """Lock in that each Phase 3a.3-converted Steane Block actually goes through
+    """Lock in that each converted Steane Block actually goes through
     the BlockCall lowering path -- not silently flattening.
 
     Goes through `SlrConverter(prog).guppy()` end-to-end (not just `slr_to_ast`)
@@ -351,7 +351,7 @@ class TestConvertedQeclibBlocksUseBlockCallPath:
 class TestConsumedEffect:
     """End-to-end coverage for CONSUMED inputs.
 
-    The Phase 3a.1 validator allows CONSUMED in BlockDecl.inputs, and the
+    The validator allows CONSUMED in BlockDecl.inputs, and the
     `_emit_block_call` code path marks the outer slot CONSUMED post-call. But
     no existing test confirmed that a subsequent outer-scope reference raises
     a LinearityError. Add a direct-AST test that pins this behavior.
@@ -644,7 +644,7 @@ class TestAstOptimizationPreservesBlockDecls:
 
 
 class TestSingleQubitInputSupport:
-    """Phase 3a.3 iter 5b: single-qubit (bare `qubit`) input + `SingleQubitArg`
+    """Single-qubit (bare `qubit`) input + `SingleQubitArg`
     at the call site. Validator accepts `QubitTypeExpr` as a BlockInput type;
     emitter renders `name: qubit @ owned` and passes the outer slot's local
     directly (no array wrap); LIVE_PRESERVED rebinds the slot from the
@@ -850,7 +850,7 @@ class TestSingleQubitInputSupport:
 
 
 class TestSingleBitInputSupport:
-    """Phase 3a.3 iter 5c: single classical-bit (bare `BitTypeExpr`) input +
+    """Single classical-bit (bare `BitTypeExpr`) input +
     `SingleBitArg` at the call site. The bit is modeled as an
     `array[bool, 1] @ owned` write-back proxy: the callee mutates `name[0]`,
     returns the array, and the caller writes it back into the outer CReg bit.
@@ -978,7 +978,7 @@ class TestSingleBitInputSupport:
 
 
 class TestQubitBundleInputSupport:
-    """Phase 3a.3 iter 5d: a single `array[qubit, N]` BlockInput bound at the
+    """A single `array[qubit, N]` BlockInput bound at the
     call site to a non-contiguous bundle of N arbitrary outer slots via
     `QubitBundleArg(slots=(...))`. The BlockDecl side is unchanged from the
     AllocatorArg case -- only the caller's slot-bundling differs.
@@ -1308,7 +1308,7 @@ class TestQubitBundleInputSupport:
 
 
 class TestDeferredBlockArgRejection:
-    """Phase 3a.3 iter 5e.2 scope:
+    """Scope:
     - `AllocatorArg`, `SingleQubitArg`, `SingleBitArg`, `QubitBundleArg` are
       now supported in BOTH the Guppy emitter AND the non-Guppy flatten path.
       The former `test_<shape>_arg_rejected_in_flatten_pass` lock-ins are
@@ -1537,7 +1537,7 @@ class TestDuplicateBlockDeclNameValidation:
 
 
 class TestBlockBodyStatementSubstitution:
-    """Phase 3a.1 substitution must cover every SLR statement type that names allocators.
+    """Substitution must cover every SLR statement type that names allocators.
 
     PermuteOp (which carries source/target register names as strings, not
     SlotRefs) was silently passed through in
@@ -1615,7 +1615,7 @@ class TestBlockBodyStatementSubstitution:
 
 
 class TestSlrBlockInputsWiring:
-    """Phase 3a.1: an SLR Block with class-level `block_inputs` lowers to BlockDecl/BlockCall."""
+    """An SLR Block with class-level `block_inputs` lowers to BlockDecl/BlockCall."""
 
     def test_slr_block_with_inputs_emits_block_decl_and_call(self) -> None:
         """slr_to_ast on a Main containing a Block with `block_inputs` produces a BlockDecl + BlockCall."""
@@ -1754,7 +1754,7 @@ class TestBlockCallSelene:
 
 
 class TestSlrBlockArgShapeDetectionViaConverter:
-    """Phase 3a.3 iter 5e.2: an SLR `Block` subclass whose `block_inputs`
+    """An SLR `Block` subclass whose `block_inputs`
     bind a single `Qubit`, a `list[Qubit]` bundle (same- or cross-QReg), or
     a single `Bit` must drive the full real pipeline:
 
@@ -2138,10 +2138,11 @@ class TestSlrBlockArgShapeDetectionViaConverter:
 
 
 class TestScratchEffectS1:
-    """Phase 3a.3 scratch-ancilla effect, stage S1: `ResourceEffect.SCRATCH`
+    """Scratch-ancilla effect: `ResourceEffect.SCRATCH`
     + converter detection + the mandatory R4 reset-first validator + O2.
 
-    S1 does NOT lower scratch in Guppy (that is S2); until then Guppy must
+    This stage does NOT lower scratch in Guppy (the internal-allocation
+    lowering lands later); until then Guppy must
     reject a SCRATCH input loudly (no silent fallback). Flatten/QASM
     already works because the scratch param substitutes to the outer slot
     exactly like any per-slot input.
@@ -2220,7 +2221,7 @@ class TestScratchEffectS1:
         assert "measure q[2] -> c[0];" in qasm
 
     def test_scratch_guppy_internal_alloc_no_param(self) -> None:
-        """S2: a SCRATCH input is allocated INSIDE the @guppy def -- it is
+        """A SCRATCH input is allocated INSIDE the @guppy def -- it is
         neither a function parameter nor a positional call argument; the
         body's PZ(scratch) lowers to a fresh internal `qubit()`.
         """
@@ -2315,7 +2316,7 @@ class TestScratchEffectS1:
             slr_to_ast(prog)
 
     def test_scratch_inside_control_flow_rejected(self) -> None:
-        """S1 conservative scope: a scratch slot touched inside control
+        """Conservative scope: a scratch slot touched inside control
         flow cannot be linearized for the R4 analysis -> reject loudly.
         """
         from pecos.slr import CReg, Main, QReg, Repeat, Return
@@ -2372,7 +2373,7 @@ class TestScratchEffectS1:
 
     def test_scratch_prep_only_rejected(self) -> None:
         """A PZ with no terminating Measure must be
-        rejected -- S2 allocates the scratch qubit internally, so an
+        rejected -- the Guppy lowering allocates the scratch qubit internally, so an
         unmeasured trailing PZ diverges from the flatten/QASM path.
         """
         from pecos.slr import Main, QReg, Return
@@ -2501,7 +2502,7 @@ class TestScratchEffectS1:
 
         Post-substitution a returned scratch slot keeps the OUTER name
         (a partial VarExpr passes `whole_name` through unchanged), so it
-        is indistinguishable from a returned classical value -- S1
+        is indistinguishable from a returned classical value -- the validator
         conservatively rejects ANY Return in a scratch block (in-scope
         `Check` has none). Covers both returning the scratch qubit and
         returning an unrelated value.
@@ -2549,7 +2550,7 @@ class TestScratchEffectS1:
             slr_to_ast(prog2)
 
     def test_scratch_reuse_across_calls_compiles_and_runs(self) -> None:
-        """S2 end-to-end: the original blocker. The SAME outer ancilla slot
+        """End-to-end: the original blocker. The SAME outer ancilla slot
         feeds two sequential scratch BlockCalls (the production
         `SynExtractBare` reuse pattern). Under `a: consumed` this was a
         Guppy LinearityError; with `a: scratch` each call allocates its
@@ -2916,7 +2917,7 @@ class TestScratchCheckS4ProductionLockIn:
 
 
 class TestScratchCheck1FlagS5ProductionLockIn:
-    """S5: `Check1Flag` converted (`a`, `flag`: scratch; the body's
+    """`Check1Flag` converted (`a`, `flag`: scratch; the body's
     `PZ(a, flag)` split into `PZ(a); PZ(flag)` per O1 option (a)).
     Steane `SynExtractFlagged` reuses ancilla+flag slots across 6
     Check1Flag calls -- it must route every one through a BlockCall,

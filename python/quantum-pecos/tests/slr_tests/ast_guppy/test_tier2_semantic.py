@@ -207,7 +207,7 @@ def _assert_set_int_unpack(label: str, ir: str, *, name: str, size: int, value: 
     NOT by the Guppy oracle: the AST->Guppy return wrapper cannot
     return a `set(int)`-assigned CReg -- it models the CReg as `int`
     while the wrapper expects `array[bool, N]`. That is a Guppy-path
-    limitation orthogonal to the B2 QIR, whose lowering is exact and
+    limitation orthogonal to the QIR, whose lowering is exact and
     checked structurally here.)
     """
     for i in range(size):
@@ -295,7 +295,7 @@ def run() -> int:
     # per-bit lshr/trunc unpack). The AST->Guppy return wrapper
     # cannot return a `set(int)`-assigned CReg (it models the CReg as
     # `int`, the wrapper expects `array[bool, N]`) -- a Guppy-path
-    # limitation orthogonal to the B2 QIR, so Guppy is not the right
+    # limitation orthogonal to the QIR, so Guppy is not the right
     # oracle for those two shapes.
     det_checks: list[tuple[str, Main, str]] = [
         ("v1.bell", _case("v1.bell"), "bell"),
@@ -591,13 +591,13 @@ def test_tier2_executable_differential() -> None:
         failures.append(f"v1.conditional_correction: QIS-exec {qis_vals} != Guppy-oracle {oracle_vals}")
         print(f"[D~oracle FAIL] {failures[-1]}")
 
-    assert not failures, "#77 executable differential failures:\n" + "\n".join(failures)
+    assert not failures, "Executable differential failures:\n" + "\n".join(failures)
 
 
 @pytest.mark.slow
 def test_tier2_semantic_b2() -> None:
     """Pytest entry (slow: builds the Selene runtime)."""
-    assert run() == 0, "Stage B2 semantic assurance failed (see stdout)"
+    assert run() == 0, "Semantic assurance failed (see stdout)"
 
 
 if __name__ == "__main__":

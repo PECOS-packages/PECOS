@@ -343,7 +343,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
         lines.append(")")
         return "\n".join(lines)
 
-    # Reusable blocks (Phase 3a.1)
+    # Reusable blocks
 
     def visit_block_decl(self, node: BlockDecl) -> str:
         """Visit a BlockDecl, rendering it as a reusable function-like declaration."""

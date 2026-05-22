@@ -97,7 +97,7 @@ class ParallelOptimizer:
             # state set by the subclass __init__ (e.g. `self.q1`, `self.q2`
             # bound for `block_inputs` lookup) survive the optimization pass.
             # Reconstructing via `Block(*new_ops)` here would erase that state
-            # and cause Phase 3a.3 converted Blocks to silently fall back to
+            # and cause converted Blocks to silently fall back to
             # the v1 flatten path.
             cls = type(block)
             if cls is Block:

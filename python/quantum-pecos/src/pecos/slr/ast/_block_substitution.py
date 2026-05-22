@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Phase 3a.3 iter 5e.1 -- shared BlockDecl-body reference substitution.
+"""Shared BlockDecl-body reference substitution.
 
 `BodyRemap` is a bidirectional slot/bit/whole-name remap. Two consumers
 build it in opposite directions but use the identical substitution core:

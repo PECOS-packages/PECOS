@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""qeclib Selene roundtrip corpus (Phase 3a.0 + 3a.3 byte-identity safety net).
+"""qeclib Selene roundtrip corpus (byte-identity safety net).
 
 This
 corpus pins per-shot measurement records under fixed seed for each tracked
@@ -18,7 +18,7 @@ the Block was still flattened) and remained byte-identical **post-conversion**
 (once `block_inputs` was declared and the SLR converter began emitting
 BlockDecl + BlockCall).
 
-When a Phase 3a.3 iteration converts a new Block, the workflow is:
+When a new Block is converted, the workflow is:
 1. Pin its Selene record here against today's flattened compile.
 2. Add `block_inputs` to the Block class.
 3. Re-run this corpus; identical records prove behavior preservation.
@@ -28,10 +28,11 @@ Steane CX/CY/CZ + Steane X/Y/Z + Steane H are converted; their entries
 now exercise the BlockCall path (parametrized lock-in in
 `test_block_call_smoke.py::TestConvertedQeclibBlocksUseBlockCallPath`).
 
-## Scope (Phase 3a.0 baseline + Phase 3a.3 iters 1-4 conversions)
+## Scope (baseline + early Block conversions)
 
 Pattern A Blocks only -- side-effect-only Blocks that compile under v1
-without errors. Phase 3a.1 + 3a.2 + 3a.3 iters 1-4 have landed on
+without errors. The BlockDecl/BlockCall lowering and the first Block
+conversions have landed on
 `phase3a-blockcall`; the Steane Block rows below now exercise the
 real BlockCall lowering path.
 
@@ -72,8 +73,8 @@ from pecos.slr.qeclib.steane.gates_tq import transversal_tq as steane_tq
 def _run_via_selene(prog: Main, *, shots: int = 4, seed: int = 42, qubits: int) -> dict:
     """Compile prog through SlrConverter.hugr() and run through Selene.
 
-    The corpus programs use explicit `Return(...)` (Phase 3b removed the
-    v1 implicit-return path).
+    The corpus programs use explicit `Return(...)` (the implicit-return
+    path was removed).
     """
     package = SlrConverter(prog).hugr()
     hugr_bytes = package.to_str().encode("utf-8")
@@ -215,7 +216,7 @@ class TestQeclibSteaneTransversalCX:
 
     Steane logical CX is a transversal pairwise CX between two 7-qubit registers
     (the two logical Steane patches). Both registers are live_preserved (no internal
-    measurements). Phase 3a.3 conversion adds `block_inputs={"q1": "live_preserved",
+    measurements). Block conversion adds `block_inputs={"q1": "live_preserved",
     "q2": "live_preserved"}` and these pinned records must remain byte-identical.
     """
 

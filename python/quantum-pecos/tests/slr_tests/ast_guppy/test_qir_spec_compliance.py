@@ -265,7 +265,7 @@ def _qir_state() -> tuple[
 
 
 def test_audit_corpus_qir_compliance_baseline() -> None:
-    """Pin the post-B1 two-tier QIR-compliance baseline (see module docstring)."""
+    """Pin the two-tier QIR-compliance baseline (see module docstring)."""
     build_failed, validate_failed, qis_ok, qis_failed, entry_attrs = _qir_state()
 
     # Sanity: validate_qir actually ran on built QIR (not vacuous).
@@ -294,7 +294,7 @@ def test_audit_corpus_qir_compliance_baseline() -> None:
     assert set(got_vf) == set(_EXPECTED_VALIDATE_FAILED), (
         f"validate_qir failure set changed: got {sorted(got_vf)}, expected "
         f"{sorted(_EXPECTED_VALIDATE_FAILED)}. A new validate failure likely "
-        "means a B1 metadata regression -- triage before re-pinning."
+        "means a metadata regression -- triage before re-pinning."
     )
     for label, frag in _EXPECTED_VALIDATE_FAILED.items():
         assert frag in got_vf[label], f"{label}: validate msg lacks {frag!r}: {got_vf[label][:200]}"
@@ -307,23 +307,23 @@ def test_audit_corpus_qir_compliance_baseline() -> None:
         for key, want in _EXPECTED_ENTRY_ATTRS.items():
             assert attrs.get(key) == want, (
                 f"{label}: entry attr {key!r} = {attrs.get(key)!r}, expected {want!r}. "
-                "B1 metadata value regression -- qir-qis does not catch this; "
+                "metadata value regression -- qir-qis does not catch this; "
                 "this pin is the only guard."
             )
 
-    # Tier 2 -- qir_to_qis: Stage B2 DONE. Every validate-passing
-    # program now lowers via qir_to_qis (M-B2-static replaced the
+    # Tier 2 -- qir_to_qis: every validate-passing program now lowers
+    # via qir_to_qis (the static `[N x i1]` CReg model replaced the
     # bespoke CReg helpers). The OK set is pinned and `qis_failed`
-    # must be empty -- a new qir_to_qis failure (B2 regression) or a
-    # dropped/added program trips this and must be triaged.
+    # must be empty -- a new qir_to_qis failure (a lowering regression)
+    # or a dropped/added program trips this and must be triaged.
     assert set(qis_ok) == set(_EXPECTED_QIS_OK), (
         f"qir_to_qis-OK set changed: got {sorted(qis_ok)}, expected "
-        f"{sorted(_EXPECTED_QIS_OK)}. Triage (B2 regression vs further "
+        f"{sorted(_EXPECTED_QIS_OK)}. Triage (lowering regression vs further "
         "progress) before updating this baseline."
     )
     assert not qis_failed, (
-        "unexpected qir_to_qis failure(s) post-B2: "
-        f"{[(label, msg[:160]) for label, msg in qis_failed]}. After "
-        "Stage B2 every validate-passing program must lower via "
+        "unexpected qir_to_qis failure(s): "
+        f"{[(label, msg[:160]) for label, msg in qis_failed]}. Every "
+        "validate-passing program must lower via "
         "qir_to_qis -- triage before re-pinning."
     )

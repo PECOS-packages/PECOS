@@ -133,7 +133,7 @@ class Print(Statement):
         run later during emission.
         """
         if isinstance(value, SymbolicBit):
-            msg = "Print does not support SymbolicBit (LoopVar-indexed) values; this is v2-defer scope."
+            msg = "Print does not support SymbolicBit (LoopVar-indexed) values."
             raise TypeError(msg)
         if not isinstance(value, (CReg, Bit)):
             msg = (

@@ -350,7 +350,7 @@ class AstToGuppy:
         )
         self._reject_child_allocators()
 
-        # Phase 1 Print AST-level validators (run before emission so failures
+        # Print AST-level validators (run before emission so failures
         # point at the source program, not the generated Guppy).
         self._validate_print_paths(program.body)
         self._validate_print_inline_creg_assignment(program)
@@ -400,7 +400,7 @@ class AstToGuppy:
                 msg = (
                     f"BlockDecl {decl.name!r} input {inp.name!r}: only array[qubit, N], "
                     f"bare qubit, and bare bit inputs are supported "
-                    f"iter 5c (got {type(inp.type_expr).__name__})"
+                    f"(got {type(inp.type_expr).__name__})"
                 )
                 raise GuppyCodegenError(msg)
             if is_bit:
@@ -862,8 +862,8 @@ class AstToGuppy:
         If, both `then_body` and `else_body` (recursively) must emit the
         same ordered sequence of Print events. `Repeat(n)` and static-bound
         `For(name, start, stop[, step])` multiply inner signatures by the
-        static trip count. Non-static `For` and `While` reject Prints in
-        Phase 1 since the trip count is not statically known.
+        static trip count. Non-static `For` and `While` reject Prints
+        since the trip count is not statically known.
 
         Side effect: raises `GuppyCodegenError` if any validation fails.
         """
@@ -901,7 +901,7 @@ class AstToGuppy:
                         "Print path-signature mismatch across If branches:\n"
                         f"  Then: {then_sig}\n"
                         f"  Else: {else_sig}\n"
-                        "Phase 1 requires symmetric Print emission across all branches of an "
+                        "Symmetric Print emission is required across all branches of an "
                         "If/Elif chain. Either add the missing Print(s) to the lighter branch, "
                         "or move the Print outside the If."
                     )
@@ -916,7 +916,7 @@ class AstToGuppy:
                     trip = self._static_for_trip_count(stmt)
                     if trip is None:
                         msg = (
-                            "Print inside non-static `For` is not supported in Phase 1. "
+                            "Print inside non-static `For` is not supported. "
                             "Use `Repeat(n)` or `For(name, start, stop)` with literal int "
                             "start/stop/step, or move the Print outside the For body."
                         )
@@ -926,7 +926,7 @@ class AstToGuppy:
                 inner = self._collect_print_path_signature(stmt.body, print_op_cls)
                 if inner:
                     msg = (
-                        "Print inside `While` is not supported in Phase 1 (no static trip "
+                        "Print inside `While` is not supported (no static trip "
                         "count). Move the Print outside the While body."
                     )
                     raise GuppyCodegenError(msg)
@@ -946,7 +946,7 @@ class AstToGuppy:
         """Compute static trip count for a `For(name, start, stop[, step])`.
 
         Returns the integer trip count when start/stop/step are all integer
-        literals; returns None otherwise (Phase 1 then rejects Print in the
+        literals; returns None otherwise (Print is then rejected in the
         loop body via `_collect_print_path_signature`).
         """
         start = self._static_int(stmt.start)
@@ -1068,7 +1068,7 @@ class AstToGuppy:
             reg = op.value
             if reg not in inline_cregs:
                 return
-            # Reject whole-CReg Print of an inline CReg outright in Phase 1.
+            # Reject whole-CReg Print of an inline CReg outright.
             # The user-stated `CReg(name, size)` size is lost during inline-from-
             # Measure inference (only Measure-targeted bit indices contribute to
             # the inferred RegisterDecl.size). Emitting `result(tag, c)` for the
@@ -1077,7 +1077,7 @@ class AstToGuppy:
             # CReg is no longer inline and whole-CReg Print is allowed) or per-bit
             # `Print(c[i], ...)` calls.
             msg = (
-                f"Print(whole-CReg) of inline CReg {reg!r} is rejected in Phase 1. "
+                f"Print(whole-CReg) of inline CReg {reg!r} is rejected. "
                 "Whole-register Print can silently shrink an inline CReg because the "
                 "original `CReg(name, size)` size is lost during inline-from-Measure "
                 f"inference. Declare {reg!r} as a positional in `Main(...)` (then whole-"

@@ -1177,7 +1177,7 @@ class TestQubitBundleInputSupport:
 
     def test_qubit_bundle_cross_input_alias_rejected_pre_consume(self) -> None:
         """A slot referenced by two distinct
-        quantum arg_bindings must raise a clean GuppyCodegenError in Phase 1
+        quantum arg_bindings must raise a clean GuppyCodegenError
         (pre-consume), not a mid-Phase-2 LinearityError with the tracker
         half-mutated.
         """

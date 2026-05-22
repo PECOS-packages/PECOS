@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Phase 1 behavioral tests for `Print(value, *, tag=None, namespace="result")`.
+"""Behavioral tests for `Print(value, *, tag=None, namespace="result")`.
 
 Print lowers to Guppy's `result(name, value)` and surfaces in Selene's parsed
 result dict under the key `f"{namespace}.{tag}"`. Tests verify:
@@ -330,7 +330,7 @@ class TestPrintAndSeleneOutput:
 class TestPathSignatureValidator:
     """Reject asymmetric Print emission across If/Elif branches.
 
-    Phase 1 requires that the ordered sequence of Print events along every
+    The validator requires that the ordered sequence of Print events along every
     conditional path is identical. Selene's parsed-result dict expects
     rectangular tag emission per shot; asymmetric emission triggers a
     register-count mismatch at runtime, so the AST validator fails fast.
@@ -615,13 +615,13 @@ class TestInlineCRegDefiniteAssignment:
             SlrConverter(prog).hugr()
 
     def test_whole_inline_creg_print_rejected_outright(self) -> None:
-        """Phase 1 rejects whole-CReg Print of an inline CReg unconditionally.
+        """Whole-CReg Print of an inline CReg is rejected unconditionally.
 
         Even when every inferred bit has been Measure-assigned, whole-CReg
         Print of an inline CReg silently shrinks the register relative to the
         user's CReg(name, size) intent -- inline-from-Measure inference only
         sees Measure-targeted indices, so the inferred RegisterDecl.size can
-        be smaller than what the user wrote. Phase 1 fail-fast: require
+        be smaller than what the user wrote. Fail-fast: require
         explicit Main(...) declaration or per-bit Print.
         """
         inline = CReg("inline", 2)

@@ -51,8 +51,8 @@ PRODUCED/DROPPED effects) land.
 | `Check1Flag` | qeclib/generic/check_1flag.py | live_preserved data; scratch ancilla/flag; live_preserved out/flag |
 | `transversal_tq` (CX) | qeclib/generic/transversal.py | both registers: live_preserved (no internal measurements) |
 | Steane CX/CY/CZ | qeclib/steane/gates_tq/transversal_tq.py | both registers: live_preserved (converted iters 1+2) |
-| Steane X/Y/Z | qeclib/steane/gates_sq/paulis.py | single register: live_preserved (converted iter 3) |
-| Steane H | qeclib/steane/gates_sq/hadamards.py | single register: live_preserved (converted iter 4) |
+| Steane X/Y/Z | qeclib/steane/gates_sq/paulis.py | single register: live_preserved |
+| Steane H | qeclib/steane/gates_sq/hadamards.py | single register: live_preserved |
 
 """
 

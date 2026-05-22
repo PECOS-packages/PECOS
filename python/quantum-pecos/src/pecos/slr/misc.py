@@ -106,7 +106,7 @@ class Print(Statement):
     name (CReg name, or ``f"{reg}_{index}"`` for a Bit).
 
     Args:
-        value: A CReg or Bit (CReg element). Phase 1 supports these only.
+        value: A CReg or Bit (CReg element). Only these are supported.
             Expression values (e.g. ``c[0] ^ c[1]``), SymbolicBit, and other
             types are rejected at construction time.
         tag: Explicit tag string overriding the derived name. Must match
@@ -139,7 +139,7 @@ class Print(Statement):
             msg = (
                 f"Print(value, ...) requires a CReg or Bit value; got {type(value).__name__}. "
                 "Expression values (e.g. c[0] ^ c[1]) are deferred and must be passed with explicit tag=...; "
-                "Phase 1 supports CReg and Bit only."
+                "Only CReg and Bit values are supported."
             )
             raise TypeError(msg)
 

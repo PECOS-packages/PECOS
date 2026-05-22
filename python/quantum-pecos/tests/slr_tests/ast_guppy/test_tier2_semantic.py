@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""#71 Stage B2 -- semantic assurance for the M-B2-static CReg lowering.
+"""Semantic assurance for the static CReg lowering.
 
 Three independent layers per representative program (the structural
 `test_qir_spec_compliance.py` gate covers the whole corpus; this is the
@@ -18,11 +18,11 @@ deeper *semantic* proof for the load-bearing CReg shapes):
   A. **Real-compiler acceptance.** Quantinuum's `qir-qis` (a real
      ~10k-LOC QIR->QIS compiler: type-checking, call allowlist,
      profile + result-slot validation, full QIS lowering) must
-     `validate_qir` AND `qir_to_qis` the B2 QIR. Acceptance by an
+     `validate_qir` AND `qir_to_qis` the emitted QIR. Acceptance by an
      independent production compiler is strong evidence the emitted
      QIR is well-formed and semantically valid.
 
-  B. **Emitted-QIR structural invariants.** The M-B2-static classical
+  B. **Emitted-QIR structural invariants.** The static classical
      model is deterministic bit-shuffling; its correctness is exactly
      checkable on the emitted IR: per-CReg entry-block `alloca [N x
      i1]` + `zeroinitializer` store; measurements use monotonic
@@ -33,18 +33,18 @@ deeper *semantic* proof for the load-bearing CReg shapes):
      bespoke `create_creg`/`*_creg_bit`/... runtime helpers remain.
 
   C. **Independent executable cross-anchor.** The SAME SLR programs
-     run through the dual-reviewed AST->Guppy->Selene path
+     run through the AST->Guppy->Selene path
      (`run_ast_guppy_via_selene`); for the deterministic programs the
-     exact classical outcome is asserted. The B2 QIR is a
+     exact classical outcome is asserted. The emitted QIR is a
      deterministic sibling lowering (proven structurally in B) of the
      same AST whose classical semantics C executes.
 
-  D. **Executable differential (#77).** `selene_sim` natively
+  D. **Executable differential.** `selene_sim` natively
      executes `qir_qis.qir_to_qis`'s LLVM-21 opaque-pointer QIS
      bitcode via the bundled `selene_helios_qis_plugin` (+ Helios
      QIR runtime) -- `selene_sim.build(BitcodeString(...)) ->
      run_shots(Stim)`. So the direct `qir_to_qis -> Selene`
-     differential the #71/B2 saga long claimed "blocked" (an
+     differential long claimed "blocked" (an
      alleged LLVM 14<->21 / opaque-vs-typed bridge) is in fact
      available with zero PECOS LLVM work: PECOS-Rust stays LLVM-14;
      the LLVM-21 capability lives entirely in the qir-qis +
@@ -329,7 +329,7 @@ def run() -> int:
 
 def test_oversize_creg_raises_loud() -> None:
     """A >64-bit CReg must FAIL LOUD at QIR codegen, not silently drop
-    its storage/output (#76 B2). 64 is the cap
+    its storage/output. 64 is the cap
     (single-i64 record pack); 65 must raise a clear error."""
     ok = Main(q := QReg("q", 1), c := CReg("c", 64), Measure(q[0]) > c[0], Return(c))
     SlrConverter(ok).qir_bc()  # 64 is allowed (boundary)
@@ -340,10 +340,10 @@ def test_oversize_creg_raises_loud() -> None:
 
 
 def test_while_raises_loud() -> None:
-    """#74: the QIR backend must FAIL LOUD on `While`, not silently
+    """The QIR backend must FAIL LOUD on `While`, not silently
     emit a one-pass approximation (qir-qis cannot catch that -- one
     pass is valid QIR, wrong semantics). Aligns with the Guppy path,
-    which already rejects `While` (v1-feature-matrix: real While is
+    which already rejects `While` (real While is
     out of scope for the sound emitter)."""
     prog = Main(
         q := QReg("q", 1),
@@ -356,7 +356,7 @@ def test_while_raises_loud() -> None:
 
 
 def test_print_raises_loud() -> None:
-    """#74: the QIR backend must FAIL LOUD on `Print`, not silently
+    """The QIR backend must FAIL LOUD on `Print`, not silently
     drop it (silently losing observable program output)."""
     prog = Main(
         q := QReg("q", 1),
@@ -370,11 +370,11 @@ def test_print_raises_loud() -> None:
 
 
 def test_static_for_unrolls_body_not_dropped() -> None:
-    """#74: a static `For` must UNROLL its body, not silently
+    """A static `For` must UNROLL its body, not silently
     drop it. The old `_process_for` guard `isinstance(node.start, int)`
     was always false (the converter wraps bounds in `LiteralExpr`), so
     every `For` body was silently dropped -- valid QIR, wrong
-    semantics, qir-qis-uncatchable (the exact bug class #74 targets)."""
+    semantics, qir-qis-uncatchable (the exact bug class this targets)."""
     prog = Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
@@ -393,27 +393,27 @@ def test_static_for_unrolls_body_not_dropped() -> None:
 
 
 def test_varexpr_raises_loud() -> None:
-    """#74/B1: a classical `VarExpr` whose name is not a declared
+    """A classical `VarExpr` whose name is not a declared
     Main-scope CReg must FAIL LOUD, not silently evaluate to constant
-    0 (a value miscompile qir-qis cannot catch). B1 changed the
-    VarExpr arm from an unconditional fail-loud to "pack the CReg
-    via `_pack_creg` if known, fail loud via `_require_creg`
-    otherwise". The stray-name path still fails loud, just with the
+    0 (a value miscompile qir-qis cannot catch). The
+    VarExpr arm packs the CReg
+    via `_pack_creg` if known and fails loud via `_require_creg`
+    otherwise. The stray-name path still fails loud, just with the
     `_require_creg` "not declared at Main scope" message (the
-    anti-silent-0 invariant the #74 test pins is preserved)."""
+    anti-silent-0 invariant is preserved)."""
     with pytest.raises(NotImplementedError, match=r"classical register 'x'.*not.*declared at Main scope"):
         AstToQir()._eval_expression(VarExpr(name="x"))  # noqa: SLF001
 
 
 def test_inline_returned_creg_raises_loud() -> None:
-    """#80: a CReg that is measured/returned but NOT declared at Main
+    """A CReg that is measured/returned but NOT declared at Main
     scope must FAIL LOUD. Only Main-scope CRegs get an entry-block
     `alloca [N x i1]`; an inline/local CReg surfaced only via
     `Return(creg)` had no storage, so the measure-store was SILENTLY
     skipped and the explicit returned value vanished from the QIS
-    records (the `docs.inline_measure_creg` defect #79 surfaced --
+    records (the `docs.inline_measure_creg` defect surfaced --
     QIS recorded `[]` for an explicit `Return(final)`). Mirrors the
-    #74/#78 doctrine: silent miscompile -> loud NotImplementedError."""
+    fail-loud doctrine: silent miscompile -> loud NotImplementedError."""
     final = CReg("final", 2)
     prog = Main(q := QReg("q", 2), Measure(q) > final, Return(final))
     with pytest.raises(NotImplementedError, match=r"classical register 'final'.*not.*declared at Main scope"):
@@ -421,14 +421,14 @@ def test_inline_returned_creg_raises_loud() -> None:
 
 
 def test_prep_stray_string_arg_raises_loud() -> None:
-    """#80 recast under #81: the prep basis is the GATE IDENTITY
+    """The prep basis is the GATE IDENTITY
     (`PZ`/`PNZ`/`PX`/`PNX`/`PY`/`PNY`), not a string argument.
     `_expand_qubit_args` silently drops a string qarg, so a basis
     string on ANY prep gate -- the legacy `PZ(q, "X")`, or
     `PZ(q, "X")`, even `PZ(q, "Z")` -- would be silently dropped
-    and lowered as the plain basis (a miscompile, #80/#79). The
+    and lowered as the plain basis (a miscompile). The
     converter rejects ANY stray string qarg on EVERY prep gate
-    (#81 sym rule). A bare prep gate (no string) is fine."""
+    (the prep-basis symmetry rule). A bare prep gate (no string) is fine."""
     # No-string preps build (PZ default; dedicated gate identity).
     # No-string prep on every dedicated gate builds (basis = identity).
     for prep in (qb.PZ, qb.PNZ, qb.PX, qb.PNX, qb.PY, qb.PNY):
@@ -451,7 +451,7 @@ def test_prep_stray_string_arg_raises_loud() -> None:
 
 
 def test_return_only_inline_creg_raises_loud() -> None:
-    """#80: a CReg surfaced ONLY via
+    """A CReg surfaced ONLY via
     `Return(creg)` -- never measured/assigned/read -- reached no
     point-of-use `_require_creg` site, so `_generate_results` (which
     records only Main-declared CRegs) emitted ZERO recorded output
@@ -474,7 +474,7 @@ def test_return_only_inline_creg_raises_loud() -> None:
     ok_q = Main(q := QReg("q", 1), Return(q))
     SlrConverter(ok_q).qir_bc()
 
-    # #80: an inline CReg whose name
+    # An inline CReg whose name
     # collides with a declared QReg was misclassified as a qubit
     # return by the old name-membership skip and silently dropped
     # (same silent-output-loss class, reachable via public SLR).
@@ -493,7 +493,7 @@ def _qis_exec_records(
     seed: int = _SEED,
     simulator_factory: Callable[[int], object] | None = None,
 ) -> list[list[int]]:
-    """#77 Layer D -- the real EXECUTABLE differential.
+    """The real EXECUTABLE differential.
 
     `AST QIR -> qir_qis.qir_to_qis` (LLVM-21 QIS bitcode) ->
     `selene_sim.build` (selene ingests it natively via
@@ -501,9 +501,9 @@ def _qis_exec_records(
     14<->21 bridge" was false) -> run on the selected backend.
     Returns per-shot lists of the recorded
     `__quantum__rt__int_record_output` *values*, in call order ==
-    CReg *declaration* order (B2 `_generate_results` records every
+    CReg *declaration* order (`_generate_results` records every
     declared CReg; the QIS tag is empty post-qir_to_qis so order is
-    the key). This is the executable proof that the B2 QIR, lowered
+    the key). This is the executable proof that the emitted QIR, lowered
     by the real Quantinuum compiler and run, computes the correct
     classical results -- upgrading A+B+C to A+B+C+D.
 
@@ -523,11 +523,11 @@ def _qis_exec_records(
 
 @pytest.mark.slow
 def test_tier2_executable_differential() -> None:
-    """#77: deterministic representative programs must EXECUTE through
+    """Deterministic representative programs must EXECUTE through
     QIR -> qir_to_qis -> QIS -> selene to the exact known classical
     record (records are all declared CRegs, declaration order, packed
     LSB-first -- empirically pinned). Oracle-independent: this is the
-    real executable equivalence the #71/B2 saga substituted A+B+C for.
+    real executable equivalence that A+B+C otherwise substituted for.
     """
     cases: list[tuple[str, Main, int, list[int]]] = [
         # c.set(0b1011); Return(c) -> [11] every shot
@@ -553,7 +553,7 @@ def test_tier2_executable_differential() -> None:
     # Bell: genuinely quantum -> property check, not a fixed value.
     # NECESSARY: every shot records c[0]==c[1] (single record, packed
     # in {0b00, 0b11}, never 1/2) -- a broken/decorrelating CX trips
-    # this. SUFFICIENT (#77): the aggregate over fixed
+    # this. SUFFICIENT: the aggregate over fixed
     # seeds must contain BOTH 0b00 AND 0b11 -- a dropped H / dropped
     # CX / no-op Bell lowering yields all-0, which a subset-only check
     # (`in {0,3}`) would wrongly pass. Fixed seeds -> deterministic;

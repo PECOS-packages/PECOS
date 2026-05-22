@@ -141,7 +141,7 @@ class StimCodeGenContext:
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
     qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
-    # Static logical permutation (same model as the QIR codegen #87 /
+    # Static logical permutation (same model as the QIR codegen /
     # the Guppy linearity tracker -- Stim has no permute instruction).
     # Maps a logical (reg, index) ref to the (reg, index) whose qubit
     # it resolves to. Consulted at every qubit-ref lowering.
@@ -298,7 +298,7 @@ class AstToStim:
         elif isinstance(stmt, PrintOp):
             # Classical-output streaming is unimplemented in the Stim
             # backend. Silently dropping it loses observable program
-            # output -- fail LOUD (same decision as the QIR backend, #74).
+            # output -- fail LOUD (same decision as the QIR backend).
             msg = (
                 "Stim codegen does not support Print (classical output "
                 "streaming is unimplemented; silently dropping it would "
@@ -320,10 +320,9 @@ class AstToStim:
                 self.circuit.append_operation(prim_name, prim_qubits)
             return
         if stim_gate is None:
-            # #88A-class (the #78 surfaced-not-changed Stim analogue):
-            # a gate with no GATE_TO_STIM entry was SILENTLY DROPPED
+            # A gate with no GATE_TO_STIM entry was SILENTLY DROPPED
             # -- the emitted Stim circuit ran but with wrong
-            # semantics (a #74-class silent miscompile,
+            # semantics (a silent miscompile,
             # uncatchable downstream). Fail loud instead. Stim is
             # Clifford-only, so non-Clifford rotations
             # (RX/RY/RZ/RZZ/CR*) are fundamentally unrepresentable
@@ -384,7 +383,7 @@ class AstToStim:
         self.context.measurement_count += len(qubits)
 
     def _process_prepare(self, node: PrepareOp) -> None:
-        """Process a prepare/reset operation (Z-reset + #81 basis tail)."""
+        """Process a prepare/reset operation (Z-reset + canonical basis tail)."""
         tail = prep_tail(node.basis)
         if node.slots is None:
             if tail:
@@ -420,8 +419,8 @@ class AstToStim:
 
         Stim has no runtime loop. The previous "process body once + TICK"
         silently dropped the loop condition and all iterations -- a
-        miscompile. Fail LOUD instead (same decision as the QIR backend,
-        #74; real While is out of scope per v1-feature-matrix).
+        miscompile. Fail LOUD instead (same decision as the QIR backend;
+        real While is out of scope).
         """
         _ = node
         msg = (
@@ -495,7 +494,7 @@ class AstToStim:
         `name[idx]` -> a single element; bare `name` -> every element
         of the qubit register. Stim has no classical-register model,
         so a bare CReg permute is not realizable -> fail loud (never
-        a silent no-op). Mirrors the QIR codegen's #87 helper.
+        a silent no-op). Mirrors the QIR codegen's helper.
         """
         if ref.endswith("]") and "[" in ref:
             name, idx = ref[:-1].split("[", 1)
@@ -513,7 +512,7 @@ class AstToStim:
         """Realize a Permute as a static logical relabel.
 
         Stim has no permute instruction, so -- exactly like the QIR
-        codegen (#87) and the Guppy linearity tracker -- a Permute is
+        codegen and the Guppy linearity tracker -- a Permute is
         realized at compile time by relabelling which qubit each
         logical (reg, index) ref resolves to (consulted in
         `get_qubit`). The old `allocator_offsets` swap was a no-op

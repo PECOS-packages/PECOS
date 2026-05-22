@@ -9,19 +9,18 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""#79 corpus-wide EXECUTABLE QIR validation (generalises #77 Layer D).
+"""Corpus-wide EXECUTABLE QIR validation.
 
-For every audit-corpus program `qir_to_qis` accepts (the #71
+For every audit-corpus program `qir_to_qis` accepts (the
 `_qir_state()` QIS_OK set), actually EXECUTE the lowered QIS
 (`SlrConverter(prog).qir_bc() -> qir_qis.qir_to_qis ->
-selene_sim.build(BitcodeString) -> run_shots(Stim)`, via the
-#77-proven `_qis_exec_records`) and assert the EXECUTED classical
+selene_sim.build(BitcodeString) -> run_shots(Stim)`, via
+`_qis_exec_records`) and assert the EXECUTED classical
 records -- not merely "qir_to_qis accepts". This is the end-to-end
-proof of the B2 M-B2-static lowering + #74/#78/#87(Permute)/#88A
-fail-loud line, at corpus scale.
+proof of the static CReg lowering + the fail-loud line
+(While/Print/Permute/unsupported-gate), at corpus scale.
 
-THE HARD PART IS THE ORACLE (per the scoped plan + dual
-#79 design + dual review). Every QIS_OK program
+THE HARD PART IS THE ORACLE. Every QIS_OK program
 is assigned a validation CLASS in `_MANIFEST`, derived from first
 principles (reading the circuit) and CONFIRMED -- never
 reverse-fitted -- by execution:
@@ -39,25 +38,25 @@ reverse-fitted -- by execution:
   CReg), or a single unconstrained random bit / fully
   unconstrained register / no sound first-principles invariant.
   Documented per program; X with output still gets the
-  record-shape contract (#79 design blocker 1).
+  record-shape contract.
 
-Drift safety (#79 design item 4): the
+Drift safety: the
 candidate set is taken LIVE from `_qir_state()` QIS_OK, and every
 QIS_OK label MUST be in `_MANIFEST` -- a new/changed corpus
 program forces a classification decision (no silent gap), and the
-executable set cannot drift from the #71 structural gate.
+executable set cannot drift from the structural gate.
 
-n_qubits derivation (#79 design blocker 3): from the QIR
+n_qubits derivation: from the QIR
 `required_num_qubits` entry attribute -- NOT a max-operand-
 reference count (that is 0 for no-op QReg programs and panics
 selene with "No more qubits available to allocate").
 
-#79 design blockers 1 (inline/Return-only CReg output loss) and 2
-(non-Z `Prep` silently Z-reset) were RESOLVED upstream by #80
-(inline CReg fails loud -> BUILD_FAILED, out of QIS_OK) and #81
-(dedicated `PX`/etc with correct reset+Clifford-tail lowering);
+Two earlier failure modes -- inline/Return-only CReg output loss
+and non-Z `Prep` silently Z-reset -- were RESOLVED upstream
+(inline CReg fails loud -> BUILD_FAILED, out of QIS_OK; dedicated
+`PX`/etc with correct reset+Clifford-tail lowering);
 the prep cases are reclassified here from first principles under
-the CORRECT #81 semantics (`docs.prep_basis_x` is `PX`=|+>, a
+the CORRECT semantics (`docs.prep_basis_x` is `PX`=|+>, a
 single uniform Z-measure bit -> **X**, NOT an earlier
 deterministic `[0]` which assumed the old broken Z-reset).
 
@@ -90,7 +89,7 @@ _SHOTS = 16
 def _required_num_qubits(prog: Main) -> int:
     """n_qubits from the QIR `required_num_qubits` entry attr.
 
-    #79 design blocker 3: a max-operand-reference count
+    A max-operand-reference count
     is 0 for no-op QReg programs (e.g. surface_patch_builder_empty)
     and panics selene. The entry attr is the AST root-allocator
     capacity the backend pins, which is correct for every program.
@@ -184,7 +183,7 @@ def _partial_consumption(obs: set[tuple[int, ...]]) -> None:
 def _high_bits_zero_1(obs: set[tuple[int, ...]]) -> None:
     """docs.for_static_indexing: H unrolled 3x on q[0] (= H) ->
     q[0] random; q[1]=q[2]=|0>. 3-bit CReg -> record in {0,1}
-    (bits 1,2 provably 0 == the #74 static-For body actually
+    (bits 1,2 provably 0 == the static-For body actually
     unrolled and touched only q[0]); both 0 and 1 occur."""
     assert obs <= {(0,), (1,)}, f"a high bit set -> static-For body wrong: {obs}"
     assert obs == {(0,), (1,)}, f"q[0] randomness not exercised: {obs}"
@@ -253,12 +252,12 @@ _MANIFEST: dict[str, tuple[str, _Spec]] = {
         "independent decoder oracle; asserting one would ship false "
         "confidence and reverse-fitting is the forbidden anti-pattern",
     ),
-    # #93 cont.: newly QIS_OK after the verified CY decomposition.
+    # Newly QIS_OK after the verified CY decomposition.
     # Both run the "XYZ" stabiliser check (X-Y-Z product) on |0..0>;
     # |0..0> is NOT an eigenstate of X_0 . Y_1 . Z_2 (only of
     # Z_0 . Z_1 . Z_2), so the recorded syndrome bit is uniformly
-    # random -- no deterministic value or hard invariant for #79.
-    # (Pickle's pre-CY classification as D `[0]` was correct only
+    # random -- no deterministic value or hard invariant.
+    # (The pre-CY classification as D `[0]` was correct only
     # under the silent-CY-drop miscompile; with the real CY lowering
     # in place, the honest class is X.)
     "qeclib.generic_check_xyz": (
@@ -283,7 +282,7 @@ def _qis_ok_labels() -> list[str]:
 def test_qir_corpus_manifest_covers_qis_ok() -> None:
     """Drift guard: every live QIS_OK label has a manifest class.
 
-    Ties the executable set to the #71 `_qir_state()` QIS_OK so a
+    Ties the executable set to the `_qir_state()` QIS_OK so a
     new/changed corpus program (or a QIS_OK drift from a codegen
     change) forces a classification decision -- it cannot be
     silently skipped. Also pins the class histogram so a
@@ -304,7 +303,7 @@ def test_qir_corpus_manifest_covers_qis_ok() -> None:
 # record-shape contract is waived: there is no Stim record to
 # inspect. Their gate semantics are covered elsewhere (e.g. the
 # Guppy Quest-backed behavioral suite). This is the Stim-only
-# boundary of the #79 executable corpus, made explicit.
+# boundary of the executable corpus, made explicit.
 _NON_CLIFFORD_UNEXECUTABLE_ON_STIM: frozenset[str] = frozenset({"docs.rotation_rx"})
 
 
@@ -317,8 +316,8 @@ def test_qir_corpus_executable(label: str) -> None:
     D: exact record == spec, every shot, every seed.
     P: the hard invariant holds AND is exercised over the fixed
        seed set.
-    X: documented exclusion. Record-shape contract (#79
-       design blocker 1): a program with an explicit
+    X: documented exclusion. Record-shape contract:
+       a program with an explicit
        `Return(CReg)` and a Main-scope CReg `alloca` MUST emit >=1
        executed record -- an explicit-return program that produces
        no record is an output-loss miscompile, NOT a silent X.
@@ -341,8 +340,8 @@ def test_qir_corpus_executable(label: str) -> None:
             # Record-shape contract: X-with-output must still
             # actually produce executable records (the exclusion is
             # "no sound invariant", NOT "no output"). An
-            # explicit-return program emitting nothing would be the
-            # #80-class output-loss miscompile and must fail here.
+            # explicit-return program emitting nothing would be an
+            # output-loss miscompile and must fail here.
             obs = _observed(prog, n_qubits)
             assert obs, f"X-with-record {label!r} produced NO executed record (output-loss miscompile)"
             assert all(len(r) >= 1 for r in obs), f"{label!r} emitted an empty record tuple: {obs}"
@@ -361,9 +360,9 @@ def test_qir_corpus_executable(label: str) -> None:
 @pytest.mark.slow
 @pytest.mark.optional_dependency
 def test_sqrt_clifford_gates_executable() -> None:
-    """#93: the SX/SXdg/SY/SYdg QIR lowering EXECUTES correctly.
+    """The SX/SXdg/SY/SYdg QIR lowering EXECUTES correctly.
 
-    These have no direct QIR primitive; #93 lowers them to a
+    These have no direct QIR primitive; they are lowered to a
     verified executable-Clifford sequence (H;S;H / H;Sdg;H / H;X /
     H;Z -- NOT rx, which silently no-ops on the Stim backend). Pin
     the end-to-end behavioral proof through
@@ -395,10 +394,10 @@ def test_sqrt_clifford_gates_executable() -> None:
 @pytest.mark.slow
 @pytest.mark.optional_dependency
 def test_face_clifford_gates_executable() -> None:
-    """#93: the F/Fdg/F4/F4dg QIR lowering EXECUTES correctly.
+    """The F/Fdg/F4/F4dg QIR lowering EXECUTES correctly.
 
     The single-qubit Clifford "face" rotations have no direct QIR
-    primitive; #93 lowers them to executable-Clifford sequences
+    primitive; they are lowered to executable-Clifford sequences
     (F=Sdg;H, Fdg=H;S, F4=H;Sdg, F4dg=S;H -- circuit order),
     verified equal up to a global phase to the PECOS StateVec
     unitary. Pin the end-to-end behavioral proof through
@@ -433,9 +432,9 @@ def test_face_clifford_gates_executable() -> None:
 @pytest.mark.slow
 @pytest.mark.optional_dependency
 def test_sqrt_pauli_2q_gates_executable() -> None:
-    """#93 cont.: SZZ/SZZdg/SXX/SXXdg/SYY/SYYdg/CY EXECUTE correctly.
+    """SZZ/SZZdg/SXX/SXXdg/SYY/SYYdg/CY EXECUTE correctly.
 
-    These have no direct qir-qis primitive; #93 lowers them to
+    These have no direct qir-qis primitive; they are lowered to
     decompositions over the qir-qis ALLOWED set (verified up-to-phase
     against the PECOS StateVec unitary). Pin the end-to-end
     behavioural proof through QIR -> qir_to_qis -> selene with
@@ -503,9 +502,9 @@ def test_sqrt_pauli_2q_gates_executable() -> None:
 @pytest.mark.slow
 @pytest.mark.optional_dependency
 def test_ch_executable() -> None:
-    """#93 cont.: CH (controlled-Hadamard) EXECUTES correctly.
+    """CH (controlled-Hadamard) EXECUTES correctly.
 
-    CH has no direct qir-qis primitive; #93 lowers it to the 2q-
+    CH has no direct qir-qis primitive; it is lowered to the 2q-
     minimal 1-CX decomposition (I_c x Ry(-pi/4)_t) . CX . (I_c x
     Ry(pi/4)_t) -- verified up-to-phase against the PECOS oracle
     `gate_matrix_def.CH()` (max_err 3e-14), and exactly equal to
@@ -572,7 +571,7 @@ def test_ch_executable() -> None:
 @pytest.mark.slow
 @pytest.mark.optional_dependency
 def test_controlled_rotations_executable() -> None:
-    """#93 cont.: CRX(theta) / CRY(theta) / CRZ(theta) EXECUTE correctly.
+    """CRX(theta) / CRY(theta) / CRZ(theta) EXECUTE correctly.
 
     All three controlled rotations are non-Clifford for general theta;
     executable verification routes through the Quest statevector
@@ -654,7 +653,7 @@ def test_controlled_rotations_executable() -> None:
     # the control RZ (or change its angle to theta instead of
     # theta/2) survive Tests A/B silently.
     #
-    # The discriminator (per Codex review): prep `|+>` on the
+    # The discriminator: prep `|+>` on the
     # control and an R*(pi)-eigenstate on the target so the
     # CORRECT decomp leaves the control in `|+>`; then H(control)
     # takes `|+>` -> `|0>` deterministically.

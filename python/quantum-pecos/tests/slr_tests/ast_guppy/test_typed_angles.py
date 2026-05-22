@@ -94,7 +94,7 @@ def test_bare_float_rejected_but_typed_angle_accepted() -> None:
 
 
 def test_construction_arity_guard() -> None:
-    # Codex blocker 1: a parameterized call with too few qubits must fail
+    # A parameterized call with too few qubits must fail
     # at construction, not survive to codegen.
     q = QReg("q", 2)
     with pytest.raises(TypeError, match="needs at least one qubit"):
@@ -110,7 +110,7 @@ def test_construction_arity_guard() -> None:
 
 
 def test_direct_ast_float_param_rejected_uniformly_across_backends() -> None:
-    # Codex blocker 2: a malformed direct-AST GateOp carrying a bare-float
+    # A malformed direct-AST GateOp carrying a bare-float
     # angle (bypassing the SLR call guard) must fail loud in EVERY backend,
     # not just Guppy -- the backends must not diverge.
     from dataclasses import replace

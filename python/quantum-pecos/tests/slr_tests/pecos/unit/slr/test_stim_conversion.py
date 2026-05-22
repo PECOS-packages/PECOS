@@ -306,7 +306,7 @@ class TestStimRoundTrip:
 
 @pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
 class TestStimStaticForAndWhile:
-    """#78: same silent-miscompile class as #74, in the AST Stim codegen.
+    """Same silent-miscompile class as the QIR For/While, in the AST Stim codegen.
 
     The AST converter wraps `For` range bounds in `LiteralExpr`, so the
     old `isinstance(node.start, int)` guard was always false -- Stim
@@ -340,10 +340,9 @@ class TestStimStaticForAndWhile:
 
 
 def test_unsupported_gate_fails_loud() -> None:
-    """#88A-class (the #78 surfaced-not-changed Stim analogue): a
-    gate with no GATE_TO_STIM entry must FAIL LOUD, not be silently
+    """A gate with no GATE_TO_STIM entry must FAIL LOUD, not be silently
     dropped (a silent drop produced a runnable circuit with wrong
-    semantics -- a #74-class miscompile). Stim is Clifford-only, so
+    semantics -- a miscompile). Stim is Clifford-only, so
     a non-Clifford rotation is fundamentally unrepresentable;
     emitting the circuit without it is the bug.
     """

@@ -64,7 +64,7 @@ class EntryWrapperInfo:
     all_creg_sizes: dict[str, int]
 
 
-# Reserved namespace for the opt-in returned-CReg result tags (#72). Private
+# Reserved namespace for the opt-in returned-CReg result tags. Private
 # (double-underscore) so it cannot collide with user `Print(..., namespace=
 # "result")` -> `result.<tag>` outputs. Single source of truth shared with
 # `_selene_harness` so the emit/read sides never drift.
@@ -88,7 +88,7 @@ def build_no_arg_entry_wrapper(
             Selene key the outputs by CReg name (immune to internal,
             non-returned measurements -- e.g. RUS verify). Default False
             keeps the production wrapper byte-identical (the `.hugr()` /
-            raw-`measurement_N` consumers must not change -- #72).
+            raw-`measurement_N` consumers must not change).
 
     Returns:
         A `(source, info)` tuple. `source` is the Guppy snippet defining
@@ -157,7 +157,7 @@ def _render_wrapper(info: EntryWrapperInfo, *, emit_return_result_tags: bool = F
     call_expr = f"main({call_args})"
 
     if emit_return_result_tags and info.explicit_return is not None:
-        # Opt-in (#72): destructure main's return and tag each returned CReg
+        # Opt-in: destructure main's return and tag each returned CReg
         # by name so Selene keys outputs by name, not positional
         # measurement_N (which counts internal measurements too).
         targets = [v if isinstance(v, str) else getattr(v, "name", None) for v in info.explicit_return.values]

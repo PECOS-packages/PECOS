@@ -118,7 +118,7 @@ class QCCodeGenContext:
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
     qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
-    # Static logical permutation (same model as the QIR codegen #87 /
+    # Static logical permutation (same model as the QIR codegen /
     # the Guppy linearity tracker -- QuantumCircuit has no permute
     # instruction). Maps a logical (reg, index) ref to the (reg,
     # index) whose qubit it resolves to; consulted in `get_qubit`.
@@ -283,7 +283,7 @@ class AstToQuantumCircuit:
         elif isinstance(stmt, PrintOp):
             # Print is not yet implemented for the QuantumCircuit
             # backend. Fail LOUD rather than silently drop observable
-            # program output (#74 principle). Unlike Stim, PECOS owns
+            # program output (fail-loud principle). Unlike Stim, PECOS owns
             # the QuantumCircuit format, so a `Print` representation
             # could be added later -- this is "not yet", not "cannot".
             msg = (
@@ -400,7 +400,7 @@ class AstToQuantumCircuit:
             self._add_to_tick("Measure", qubit)
 
     def _process_prepare(self, node: PrepareOp) -> None:
-        """Process a prepare/reset operation (Z-reset + #81 basis tail).
+        """Process a prepare/reset operation (Z-reset + canonical basis tail).
 
         QC ticks are parallel sets; reset and the Clifford tail MUST
         be sequential, so each is its own flushed tick (PZ has no
@@ -517,7 +517,7 @@ class AstToQuantumCircuit:
         of the qubit register. QuantumCircuit has no realized
         classical-register model, so a bare CReg permute is not
         realizable -> fail loud (never a silent no-op). Mirrors the
-        QIR codegen's #87 helper.
+        QIR codegen's helper.
         """
         if ref.endswith("]") and "[" in ref:
             name, idx = ref[:-1].split("[", 1)
@@ -535,7 +535,7 @@ class AstToQuantumCircuit:
         """Realize a Permute as a static logical relabel.
 
         QuantumCircuit has no permute instruction, so -- exactly like
-        the QIR codegen (#87) and the Guppy linearity tracker -- a
+        the QIR codegen and the Guppy linearity tracker -- a
         Permute is realized at compile time by relabelling which qubit
         each logical (reg, index) ref resolves to (consulted in
         `get_qubit`). The old `allocator_offsets` swap was a no-op for

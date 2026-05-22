@@ -99,10 +99,10 @@ def test_qir_creg_size_too_large() -> None:
         Return(m),
     )
 
-    # #76/#80: the M-B2-static classical model packs each CReg into a
+    # The static classical model packs each CReg into a
     # single i64 (`__quantum__rt__int_record_output`), so a >64-bit
     # CReg fails LOUD with NotImplementedError (was the older
-    # ValueError message; updated to the current #76/#80 guard).
+    # ValueError message; updated to the current guard).
     with pytest.raises(NotImplementedError, match=re.escape("has 75 bits")):
         SlrConverter(prog).qir()
 
@@ -140,10 +140,10 @@ def test_control_flow_qir() -> None:
         p.Measure(q) > m,
         Return(m),
     )
-    # B1: whole-CReg scalar conditions (`If(m == 0)` / `If(m <
+    # Whole-CReg scalar conditions (`If(m == 0)` / `If(m <
     # m_hidden)`) are now lowered via `_pack_creg` + `_op_map`; the
     # QIR builds. CAVEAT: the `RX(rad(0.3), q)` rotations DO build + lower
-    # (#97 angle-first API; `rx` is qir-qis-allowlisted), but rx(0.3)
+    # (angle-first API; `rx` is qir-qis-allowlisted), but rx(0.3)
     # is NON-CLIFFORD so the program cannot execute on the Stim
     # backend -- it is build-/lower-only here, NOT end-to-end. (The
     # angle-first-executable rotation path is covered by the Guppy
@@ -257,13 +257,13 @@ def test_steane_qir_bc() -> None:
 def test_sx_sxdg() -> None:
     """SX/SXdg lower to a verified executable-Clifford sequence.
 
-    #93: SX/SXdg have no direct QIR primitive but ARE Clifford
+    SX/SXdg have no direct QIR primitive but ARE Clifford
     sqrt-X gates. They lower to `H;S;H` / `H;Sdg;H` (executable
     Clifford only -- NOT rx, which is a pinned build/exec failure
     and would silently no-op on the Stim backend). The sequence was
     verified equal up to a global phase to the PECOS `StateVec`
-    simulator's unitary AND end-to-end via the #79 executable path
-    (SX;SX == X, SXdg;SX == I). (#88A's earlier fail-loud was the
+    simulator's unitary AND end-to-end via the executable path
+    (SX;SX == X, SXdg;SX == I). (The earlier fail-loud was the
     correct interim until this verified lowering landed.)
     """
     prog: Main = Main(

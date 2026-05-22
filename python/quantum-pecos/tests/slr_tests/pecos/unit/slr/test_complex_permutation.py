@@ -121,7 +121,7 @@ def test_permutation_with_conditional_qasm() -> None:
 # QIR Tests
 
 
-# #87a: a Permute is realized as a static logical relabel consulted at
+# A Permute is realized as a static logical relabel consulted at
 # every qubit/classical-bit lowering (mirroring the Guppy linearity
 # tracker's `.permute()`; QIR/Selene have no runtime permute
 # intrinsic). These pin the realized targeting from the actual

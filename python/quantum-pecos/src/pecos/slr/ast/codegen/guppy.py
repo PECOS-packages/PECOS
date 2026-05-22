@@ -254,7 +254,7 @@ class GuppyContext:
     registers: dict[str, RegisterDecl] = field(default_factory=dict)
     linearity: GuppyLinearityState | None = None
     temp_counter: int = 0
-    # #88B: single namespace-wide slot -> Guppy-local table. Populated
+    # Single namespace-wide slot -> Guppy-local table. Populated
     # by `populate_slot_locals` after declarations are collected (so
     # the registers + allocator names are known); read by both
     # `GuppyLinearityState.from_allocators(..., slot_locals=...)` and
@@ -288,7 +288,7 @@ class GuppyContext:
         assigned slot local, suffix `_` until unique. The result is the
         authority used by both linearity-state binding init and the
         emitter's `_local_name` so the entry-unpack LHS, the linearity
-        bindings, and per-slot references all agree (the #88B fix --
+        bindings, and per-slot references all agree (this disambiguation
         prevents `q_0, q_1 = q` from shadowing a separately declared
         `QReg("q_0", ...)` parameter). Idempotent: caller may invoke
         once after `_collect_declarations` populates allocators+regs.
@@ -1266,7 +1266,7 @@ class AstToGuppy:
         raise GuppyCodegenError(msg)
 
     def _emit_prepare(self, node: PrepareOp) -> list[str]:
-        # Z-reset/alloc to |0>, then the #81 canonical Clifford tail
+        # Z-reset/alloc to |0>, then the canonical Clifford tail
         # (functional, linearity-preserving -- same FUNCTIONAL_GATES
         # path as ordinary 1q gates; the qubit primitive yields |0>
         # so this is exactly `PZ(q); H(q); ...`).
@@ -1933,7 +1933,7 @@ class AstToGuppy:
         return Slot(ref.allocator, ref.index)
 
     def _local_name(self, slot: Slot) -> str:
-        # #88B: read from the disambiguated slot-locals table populated
+        # Read from the disambiguated slot-locals table populated
         # by `GuppyContext.populate_slot_locals` so this site agrees
         # with the linearity-state binding and the entry-unpack LHS.
         # Fall back to the bare formula only if a caller emits a slot
@@ -2079,7 +2079,7 @@ def _validate_slr_gate_for_guppy_v1(gate: object) -> None:
         msg = "AST -> Guppy v1 does not support symbolic LoopVar indexing"
         raise GuppyCodegenError(msg)
 
-    # (#81: the non-Z `Prep` string-basis preflight reject was
+    # (The non-Z `Prep` string-basis preflight reject was
     # removed -- prep basis is the gate identity now; the dedicated
     # gates carry it through `PrepareOp.basis` and the converter
     # already fails loud on any stray prep string arg.)

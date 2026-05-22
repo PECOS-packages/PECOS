@@ -17,8 +17,8 @@ Runs each through `SlrConverter.hugr()` (now AST-routed by default
 post-cutover) and captures any failures.
 
 This is NOT a pytest test file. It's an audit tool run
-during Workstream B and at cutover. Output is the seed for new
-rows in `~/Repos/pecos-docs/design/slr/v1-audit-manifest.md`.
+during the cutover. Output is the seed for new
+rows in the audit manifest.
 
 Invocation:
     cd /home/ciaranra/Repos/PECOS
@@ -531,8 +531,7 @@ def _qeclib_color488_syn_extract_bare() -> Block:
 def _docs_for_static_indexing() -> Block:
     """v1-shaped For loop: string iteration variable, integer bounds, fixed-slot body.
 
-    Shape per v1-feature-matrix: v1 supports For("i", 0, 3) over fixed
-    slots, no symbolic indexing.
+    v1 supports For("i", 0, 3) over fixed slots, no symbolic indexing.
     """
     return Main(
         q := QReg("q", 3),
@@ -579,7 +578,7 @@ def _docs_repeat_state_preserving() -> Block:
 
 
 def _docs_while_loop_v2_defer() -> Block:
-    """Deliberate red-light: While loop is v2-defer per v1-feature-matrix.
+    """Deliberate red-light: While loop is out of scope for v1.
 
     Body consumes-and-replaces the qubit slot inside an unbounded loop;
     "Fixed-point linear state through unknown iteration count is too large
@@ -597,10 +596,10 @@ def _docs_while_loop_v2_defer() -> Block:
 
 
 def _docs_for_loopvar_symbolic_v2_defer() -> Block:
-    """Deliberate red-light: For with LoopVar + symbolic q[i] is v2-defer.
+    """Deliberate red-light: For with LoopVar + symbolic q[i] is out of scope for v1.
 
-    Per v1-feature-matrix: "Current AST converter cannot represent symbolic
-    SlotRef.index; supporting it would touch shared conversion semantics."
+    The current AST converter cannot represent symbolic
+    SlotRef.index; supporting it would touch shared conversion semantics.
     """
     i = LoopVar("i")
     return Main(
@@ -615,8 +614,8 @@ def _docs_for_loopvar_symbolic_v2_defer() -> Block:
 
 
 def _docs_prep_basis_x() -> Block:
-    """X-basis prep via the dedicated `PX` gate (#81 -- was v2-defer;
-    the basis is the gate identity, not a string argument)."""
+    """X-basis prep via the dedicated `PX` gate (the basis is the gate
+    identity, not a string argument)."""
     return Main(
         q := QReg("q", 1),
         c := CReg("c", 1),
@@ -630,9 +629,9 @@ def _docs_rotation_rx_probe() -> Block:
     """Probe: RX rotation gate, angle-first SLR API `RX(theta, q)`.
 
     The doc-test originally wrote `RX(q, 0.5)` (qubit-first, angle as a
-    stray qarg). With the angle-first SLR API (#97) the canonical form
+    stray qarg). With the angle-first SLR API the canonical form
     is `RX(theta, q)`; RX is now a supported native rotation in both
-    the Guppy emitter (Phase A -> `rx`) and the QIR backend.
+    the Guppy emitter (-> `rx`) and the QIR backend.
     """
     return Main(
         q := QReg("q", 1),
@@ -655,8 +654,8 @@ def _docs_inline_measure_creg() -> Block:
 
 def _docs_surface_syndrome_block18() -> Block:
     """surface_code_syndrome doc-test shape from test_slr_qeclib_block_18,
-    using the dedicated prep gates (#81 -- was v2-defer on the PZ
-    basis-string arg; X-syndrome ancilla = `PX` (|+>) directly)."""
+    using the dedicated prep gates (X-syndrome ancilla = `PX` (|+>)
+    directly)."""
     d = 2
     num_data = d * d
     num_ancilla = 2

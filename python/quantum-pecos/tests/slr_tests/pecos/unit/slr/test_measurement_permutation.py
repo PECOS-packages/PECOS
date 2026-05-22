@@ -66,10 +66,10 @@ def test_register_measurement_permutation_qasm(
 # QIR Tests
 
 
-# #87a: a Permute is realized as a static logical relabel consulted at
+# A Permute is realized as a static logical relabel consulted at
 # every qubit/classical-bit lowering (the bespoke
 # @create_creg/@set_creg_bit/@mz_to_creg_bit helpers the old tests
-# pinned were removed by #76-B2; measurement is the standard 2-arg
+# pinned were removed by the static CReg model; measurement is the standard 2-arg
 # `@__quantum__qis__mz__body(%Qubit*, %Result*)` + read_result +
 # store-into-creg-buffer). Pin the realized measurement targeting.
 

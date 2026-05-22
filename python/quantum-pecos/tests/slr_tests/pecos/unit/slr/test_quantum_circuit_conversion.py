@@ -395,7 +395,7 @@ class TestQuantumCircuitRoundTrip:
 
 
 class TestQuantumCircuitStaticForAndWhile:
-    """#78: same silent-miscompile class as #74, in the AST
+    """Same silent-miscompile class as the QIR For/While, in the AST
     QuantumCircuit codegen.
 
     The AST converter wraps `For` range bounds in `LiteralExpr`, so the

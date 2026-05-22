@@ -17,8 +17,6 @@ Guppy emitter codepaths:
 - `BlockCall` lowers to `array(...)` pack + call + unpack
 - `LIVE_PRESERVED` inputs leave outer-scope slots in the LIVE state post-call
 - `CONSUMED` inputs leave outer-scope slots in the CONSUMED state post-call
-
-See `~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`.
 """
 
 from __future__ import annotations
@@ -2146,8 +2144,7 @@ class TestScratchEffectS1:
     S1 does NOT lower scratch in Guppy (that is S2); until then Guppy must
     reject a SCRATCH input loudly (no silent fallback). Flatten/QASM
     already works because the scratch param substitutes to the outer slot
-    exactly like any per-slot input. Design:
-    ~/Repos/pecos-docs/design/slr/v2-scratch-ancilla-effect.md.
+    exactly like any per-slot input.
     """
 
     @staticmethod

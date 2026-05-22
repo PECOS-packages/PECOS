@@ -4,15 +4,11 @@ Each test is the spec for one feature in the v1 supported set. All
 marked `xfail(strict=True)` until the emitter rewrite lands the
 corresponding feature; xfail comes off as features ship.
 
-Source matrix:
-    ~/Repos/pecos-docs/design/slr/v1-feature-matrix.md
-    ~/Repos/pecos-docs/design/slr/stage5-integrity-review.md (findings 5, 6)
-
-Test layout follows the "practical v1 acceptance set" plus the
-coverage gaps surfaced in stage 5 (final-root-return, static For,
+Test layout follows the practical v1 acceptance set plus the
+coverage gaps for final-root-return, static For,
 Parallel, PZ-after-measure, mixed Permute, gates beyond CX,
-SZ/SZdg mapping, measurement-without-output, targeted unsupported
-errors).
+SZ/SZdg mapping, measurement-without-output, and targeted unsupported
+errors.
 """
 
 from __future__ import annotations
@@ -233,10 +229,7 @@ class TestReturn:
 
 
 # Rejection tests for divergent control flow + unsupported gates land
-# in a follow-up PR once the emitter has a specific `LinearityError`
+# in a follow-up once the emitter has a specific `LinearityError`
 # (or analogous typed error) to assert against. Asserting `Exception`
 # today would silently pass on the AST path's pre-existing breakage --
-# a fallback the design philosophy explicitly disallows. See:
-#   ~/Repos/pecos-docs/design/slr/stage5-integrity-review.md (finding 6)
-#   ~/Repos/pecos-docs/design/slr/v1-feature-matrix.md ("Explicitly
-#       unsupported in v1" table)
+# a fallback the design philosophy explicitly disallows.

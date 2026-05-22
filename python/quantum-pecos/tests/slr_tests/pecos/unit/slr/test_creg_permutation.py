@@ -56,12 +56,12 @@ def test_creg_permutation_qasm() -> None:
 
 @pytest.mark.optional_dependency
 def test_creg_permutation_qir() -> None:
-    """Whole-register CReg Permute IS realized in QIR (M-B2-static).
+    """Whole-register CReg Permute IS realized in QIR (static CReg model).
 
-    #87a: a Permute is realized as a static logical relabel consulted
+    A Permute is realized as a static logical relabel consulted
     at every classical-bit lowering (the bespoke
     @set_creg_bit/@set_creg_to_int/creg-xor helpers the old test
-    pinned were removed by #76-B2). `Permute(a, b)` relabels a[0] <->
+    pinned were removed by the static CReg model). `Permute(a, b)` relabels a[0] <->
     b[0], so the subsequent `a[0].set(1)` writes b[0]'s storage.
     """
     prog = create_creg_permutation_program()

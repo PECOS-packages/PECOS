@@ -4702,7 +4702,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -4732,7 +4732,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -4762,7 +4762,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -4792,7 +4792,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -4822,7 +4822,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -4948,7 +4948,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -4978,7 +4978,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -5008,7 +5008,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -5038,7 +5038,7 @@ impl Array {
                 let mut result = arr.clone();
                 for (axis, start, stop, step) in slices {
                     if step < 0 {
-                        // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                        // ndarray's Slice doesn't match NumPy for negative steps
                         // We need to manually implement NumPy's behavior:
                         // 1. Slice forward [stop+1, start+1] with step=1
                         // 2. Reverse the axis
@@ -5484,7 +5484,7 @@ impl Array {
                             // So we can use the slice params as-is, just on the current_axis.
 
                             if *step < 0 {
-                                // ndarray's Slice doesn't match NumPy for negative steps (see issue #312)
+                                // ndarray's Slice doesn't match NumPy for negative steps
                                 // We need to manually implement NumPy's behavior:
                                 // 1. Slice forward [stop+1, start+1] with step=1
                                 // 2. Reverse the axis

@@ -210,7 +210,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
         targets = ", ".join(self.visit_slot_ref(t) for t in node.targets)
 
         if node.params:
-            # #97: angle-first SLR API -- `qb.RX(theta, q)`, angles
+            # Angle-first SLR API -- `qb.RX(theta, q)`, angles
             # before qubits (not the legacy `qb.RX[theta](q)` bracket).
             params = ", ".join(self.format_expression(p) for p in node.params)
             sep = ", " if targets else ""

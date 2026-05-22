@@ -9,7 +9,7 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""#81 dedicated prep gates -- BEHAVIORAL suite.
+"""Dedicated prep gates -- BEHAVIORAL suite.
 
 The 6 dedicated prep gates `PZ/PNZ/PX/PNX/PY/PNY` (basis is the gate
 IDENTITY, not a string arg) lower to a Z-reset + a fixed Clifford
@@ -21,7 +21,7 @@ tail (single shared `_prep_tail` map). This suite asserts the
       deterministic; assert the fixed bit over shots.
   (c) emitted-tail spot-check (QIR/QASM/QuantumCircuit) -- the
       distinguishing Clifford tail is present per the pinned table.
-  (d) B1 (#81 soundness-critical): a non-PZ prep inside a
+  (d) Soundness-critical: a non-PZ prep inside a
       BlockDecl invoked via BlockCall survives `flatten_block_calls`
       with its basis intact (QASM AND Guppy).
   (e) simulator: the Pn->PN-renamed entry points + human aliases
@@ -127,7 +127,7 @@ def test_prep_gate_emitted_tail(gate: str, needles: dict[str, list[str]]) -> Non
 
 
 def test_b1_blockcall_preserves_prep_basis() -> None:
-    """(d) #81 soundness-critical: a non-PZ prep inside a
+    """(d) Soundness-critical: a non-PZ prep inside a
     BlockDecl invoked via BlockCall must keep its basis through
     `flatten_block_calls` -- in QASM AND Guppy. PX = |0> reset + H;
     if the basis were dropped to PZ the H tail would vanish."""
@@ -184,7 +184,7 @@ test_b1_blockcall_preserves_prep_basis = pytest.mark.slow(test_b1_blockcall_pres
 @pytest.mark.parametrize(
     ("entry", "meas", "expected"),
     [
-        # Direct canonical keys (#81: all 6 must dispatch
+        # Direct canonical keys (all 6 must dispatch
         # directly, not only via aliases).
         ("PZ", "MZ", 0),
         ("PNZ", "MZ", 1),

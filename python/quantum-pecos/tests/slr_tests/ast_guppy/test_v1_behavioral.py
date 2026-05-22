@@ -311,20 +311,20 @@ class TestConditionalCorrectness:
 
 
 class TestS5SteanePzBehavioral:
-    """Steane pz() prepares a valid logical |0> (S5 + #72 lock-in).
+    """Steane pz() prepares a valid logical |0>.
 
     `Main(c := Steane("c"), c.pz())` has no user Return -> main() -> None;
-    the flattened PrepRUS block-boundary Returns are elided at convert time
-    (S5/M2). The companion adds an explicit Measure(c.d)+Return so Selene
+    the flattened PrepRUS block-boundary Returns are elided at convert time.
+    The companion adds an explicit Measure(c.d)+Return so Selene
     yields the 7-bit data record; every shot must satisfy the Steane Z-check
     syndrome == (0, 0, 0) (codespace membership = a real logical-|0>
     lock-in, not "deterministic bits").
 
     Previously a strict xfail under a wrong diagnosis ("v1 FT-RUS pz()
-    non-codeword"). #72 re-diagnosed: pz() is correct (stim-verified); the
+    non-codeword"). Re-diagnosed: pz() is correct (stim-verified); the
     failure was `_selene_harness` mis-mapping `measurement_N` because the
     Steane RUS performs an internal (non-returned) verify measurement. With
-    #72's named return-tag mapping the harness reads the returned data CReg
+    named return-tag mapping the harness reads the returned data CReg
     by name, so this now passes.
     """
 
@@ -347,11 +347,11 @@ class TestS5SteanePzBehavioral:
 
 
 class TestHarnessInternalMeasurementMapping:
-    """#72 regression: an internal (non-returned) measurement before the
+    """Regression: an internal (non-returned) measurement before the
     returned data must not shift the public `measurement_N` mapping.
 
     `internal` is measured (q[0], forced to 1) but NOT returned; `out`
-    (q[1], stays 0) IS returned. Pre-#72 the harness counted positionally
+    (q[1], stays 0) IS returned. Previously the harness counted positionally
     and read `measurement_0` = the internal measurement (=1) -> wrong.
     With named return tags it reads `out` by name -> 0 every shot.
     """

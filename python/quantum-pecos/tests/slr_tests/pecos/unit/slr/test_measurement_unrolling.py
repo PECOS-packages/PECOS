@@ -80,7 +80,7 @@ def test_measurement_unrolling_qasm() -> None:
 def test_measurement_unrolling_qir() -> None:
     """Element-wise then whole-register Permute compose through measures.
 
-    #87a: a Permute is realized as a static logical relabel; the
+    A Permute is realized as a static logical relabel; the
     element-wise `[a[0], b[1], c[2]] -> [c[2], a[0], b[1]]` composes
     with the later whole-register `Permute(a, c)`, and the register
     measurement unrolls onto the relabelled qubits. Pinned from the

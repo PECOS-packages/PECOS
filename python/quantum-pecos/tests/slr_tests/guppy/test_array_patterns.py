@@ -21,7 +21,7 @@ class TestArrayUnpacking:
 
     @pytest.mark.optional_dependency
     def test_unique_unpacked_names(self) -> None:
-        """#88B fix: slot-locals are disambiguated against declared register names.
+        """Slot-locals are disambiguated against declared register names.
 
         Before the fix, the Guppy emitter's slot-local formula
         `f"{allocator}_{index}"` would generate `q_0` for `q[0]`, which

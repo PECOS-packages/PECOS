@@ -40,7 +40,6 @@ class Check(Block):
     # scratch ancilla (prepped + measured inside, allocated internally in
     # Guppy so callers like SynExtractBare can reuse one physical slot across
     # sequential Checks); `out` is the live_preserved measurement-result bit.
-    # See ~/Repos/pecos-docs/design/slr/v2-scratch-ancilla-effect.md.
     block_inputs: ClassVar[dict[str, str]] = {
         "d": "live_preserved",
         "a": "scratch",

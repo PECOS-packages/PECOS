@@ -751,7 +751,7 @@ impl<'ctx> LLIRBuilder<'ctx> {
     }
 
     // ========================================================================
-    // Memory ops + casts (#75 -- unblocks #71 B2 standard CReg model)
+    // Memory ops + casts (unblocks the standard CReg model)
     // ========================================================================
 
     /// `alloca <ty>` -- stack slot. Caller positions the builder (B2
@@ -899,7 +899,7 @@ impl LLConstant {
         }
     }
 
-    /// Zero/`zeroinitializer` constant of `ll_type` (#75 -- backs
+    /// Zero/`zeroinitializer` constant of `ll_type` (backs
     /// `Constant(ty, None)`; Array -> `zeroinitializer`, Int -> `iN 0`).
     pub fn zero(ll_type: LLType<'_>) -> LLResult<LLValue<'_>> {
         match ll_type {

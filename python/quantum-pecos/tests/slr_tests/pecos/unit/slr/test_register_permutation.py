@@ -116,10 +116,10 @@ def test_mixed_permutation_qasm() -> None:
 # QIR Tests
 
 
-# #87a: a Permute is realized as a static logical relabel consulted at
+# A Permute is realized as a static logical relabel consulted at
 # every qubit/classical-bit lowering (the bespoke
 # @set_creg_bit/@get_creg_bit/creg-xor helpers the old tests pinned
-# were removed by #76-B2; classical writes are `store i1` into the
+# were removed by the static CReg model; classical writes are `store i1` into the
 # relabelled register's `[N x i1]` buffer). Works for whole-register
 # (QReg + CReg) and element-wise; pinned from the actual emitted QIR.
 

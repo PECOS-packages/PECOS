@@ -66,7 +66,7 @@ def run_ast_guppy_via_selene(
     ast_source = SlrConverter(slr_program).guppy()
     program = slr_to_ast(slr_program)
 
-    # #72: opt-in named return tags. The wrapper emits
+    # Opt-in named return tags. The wrapper emits
     # `result("__pecos_return.<creg>", <creg>)` per returned CReg, so Selene
     # keys outputs by CReg NAME -- immune to internal (non-returned)
     # measurements like the Steane RUS verify. `_shot_records` reads those
@@ -141,7 +141,7 @@ def _shot_records(result: pecos_rslib.ShotVec, record_cregs: list[RegisterDecl])
     """Re-export the named `__pecos_return.<creg>` tags as the public shape.
 
     The wrapper emits `result("__pecos_return.<creg>", <creg>)` per returned
-    CReg (#72), so Selene's `to_dict()` keys outputs by CReg name and each
+    CReg, so Selene's `to_dict()` keys outputs by CReg name and each
     shot value is a list of that CReg's bits in declaration order. We flatten
     the returned CRegs (in `Return(...)` order) into the historical public
     shape `{"measurement_0": .., "measurement_1": .., ...}` so existing
@@ -174,7 +174,7 @@ def _shot_records(result: pecos_rslib.ShotVec, record_cregs: list[RegisterDecl])
             # Selene shapes a size-1 CReg result tag as a scalar int per
             # shot, and a size>1 CReg as a list of `size` ints per shot.
             # Be explicit and fail LOUD on any other shape -- a silent
-            # mis-count is the exact bug class #72 fixed (do not let an
+            # mis-count is the exact bug class this guard prevents (do not let an
             # unexpected Selene type, e.g. a numpy array/generator, be
             # silently wrapped as one bit).
             if isinstance(shot_val, (list, tuple)):

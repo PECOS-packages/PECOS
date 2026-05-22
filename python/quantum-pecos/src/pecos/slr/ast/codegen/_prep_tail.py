@@ -9,13 +9,13 @@
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-"""Canonical prep-basis lowering (#81), single source for every codegen.
+"""Canonical prep-basis lowering, single source for every codegen.
 
 A prep gate is a Z-reset (|0>) followed by a fixed Clifford tail. The
 tail is expressed as `GateKind`s so each backend reuses its existing
 `GateKind -> name` map (`GATE_TO_QIR/STIM/QC/QASM`, guppy
 `FUNCTIONAL_GATES`); there is exactly ONE tail table, not six. Pinned
-by the #81 round-1 review (states experimentally verified;
+by review (states experimentally verified;
 S = diag(1, i)): the uniform symmetric model X-basis = H,
 phase-flip via trailing Z; Y-basis = H then S(+)/Sdg(-).
 """
@@ -39,7 +39,7 @@ def prep_tail(basis: str) -> tuple[GateKind, ...]:
     """Tail for `basis`, or fail LOUD on an unknown basis.
 
     An unknown basis silently lowering as a bare |0> reset would be
-    exactly the silent-miscompile class #80/#81 exist to kill.
+    exactly the silent-miscompile class this lowering exists to kill.
     """
     try:
         return PREP_TAIL[basis]

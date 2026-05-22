@@ -56,7 +56,7 @@ def test_quantum_permutation_qasm(quantum_permutation_program: tuple) -> None:
 
 # QIR Tests
 #
-# #87a: a Permute is realized as a static logical relabel (a
+# A Permute is realized as a static logical relabel (a
 # permutation_map consulted at every qubit/classical-bit lowering,
 # mirroring the Guppy linearity tracker's `.permute()` -- QIR/Selene
 # have no runtime permute intrinsic). These tests pin the realized
@@ -64,7 +64,7 @@ def test_quantum_permutation_qasm(quantum_permutation_program: tuple) -> None:
 # are deterministic in register-declaration order). The legacy
 # `; Permutation:` comment is preserved. The bespoke
 # @set_creg_bit/@mz_to_creg_bit helpers the old tests pinned were
-# removed by #76-B2 (measurement is the standard 2-arg
+# removed by the static CReg model (measurement is the standard 2-arg
 # `@__quantum__qis__mz__body(%Qubit*, %Result*)`).
 
 
@@ -124,7 +124,7 @@ def test_permutation_with_bell_circuit_qir() -> None:
     # Qubits: a[0]=0, a[1]=1, b[0]=2, b[1]=3. a[0] now -> b[1] (q3):
     # H(a[0]) -> q3, CX(a[0], a[1]) -> cnot(3, 1).
     assert _q("h", qir) == [3], qir
-    # Standard 2-arg measurement (the #76-B2-removed @mz_to_creg_bit is
+    # Standard 2-arg measurement (the removed @mz_to_creg_bit is
     # gone): Measure(a[0]) reads q3, Measure(a[1]) reads q1.
     mz = re.findall(
         r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), %Result\*",
@@ -141,7 +141,7 @@ def test_comprehensive_qir_verification() -> None:
 
     Previously this silently passed on a miscompile (the
     `; Permutation` comment was emitted but the qubit remap was a
-    no-op). With #87a the relabel is real; pin the corrected targeting.
+    no-op). The relabel is now real; pin the corrected targeting.
     """
     a = QReg("a", 2)
     b = QReg("b", 2)
@@ -264,7 +264,7 @@ def test_whole_register_qreg_permutation_realized_qir() -> None:
 def test_non_bijective_permute_fails_loud() -> None:
     """A non-bijective Permute must fail loud, not silently miscompile.
 
-    #87: the bijectivity guard must validate the EXPANDED
+    The bijectivity guard must validate the EXPANDED
     source/target lists BEFORE building the map -- a dict would
     collapse a duplicate expanded source, so a genuinely
     non-bijective Permute would compile (silent miscompile). All
@@ -295,9 +295,9 @@ def test_non_bijective_permute_fails_loud() -> None:
 
 
 def test_permute_realized_quantum_circuit() -> None:
-    """A2: element-wise + whole-register Permute is realized in the
+    """Element-wise + whole-register Permute is realized in the
     QuantumCircuit codegen (was a silent no-op -- same class as the
-    QIR #87 bug; the allocator_offsets swap never reached gate
+    QIR Permute bug; the allocator_offsets swap never reached gate
     qubit-index resolution / self-cancelled for a whole-reg pair).
     """
     a = QReg("a", 2)
@@ -321,8 +321,8 @@ def test_permute_realized_quantum_circuit() -> None:
 
 @pytest.mark.optional_dependency
 def test_permute_realized_stim() -> None:
-    """A2: element-wise + whole-register Permute is realized in the
-    Stim codegen (was a silent no-op -- same class as QIR #87).
+    """Element-wise + whole-register Permute is realized in the
+    Stim codegen (was a silent no-op -- same class as the QIR Permute bug).
     """
     a = QReg("a", 2)
     b = QReg("b", 2)

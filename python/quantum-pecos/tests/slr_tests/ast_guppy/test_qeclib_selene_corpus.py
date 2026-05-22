@@ -11,7 +11,7 @@
 
 """qeclib Selene roundtrip corpus (Phase 3a.0 + 3a.3 byte-identity safety net).
 
-Per `~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`, this
+This
 corpus pins per-shot measurement records under fixed seed for each tracked
 qeclib Block class. Each entry was first pinned **pre-conversion** (when
 the Block was still flattened) and remained byte-identical **post-conversion**
@@ -36,8 +36,8 @@ without errors. Phase 3a.1 + 3a.2 + 3a.3 iters 1-4 have landed on
 real BlockCall lowering path.
 
 Pattern B Blocks (Steane preps, surface_std_pz, color488 syn
-extraction) currently fail v1 compile and are v2-defer-XFAIL in the
-audit manifest; they'll join this corpus in later Phase 3a.3
+extraction) currently fail v1 compile and are deferred-XFAIL in the
+audit manifest; they'll join this corpus in later
 iterations once the shape-gap expansions (single-qubit input,
 single-bit input with write-back, list[Qubit] bundles,
 PRODUCED/DROPPED effects) land.
@@ -53,8 +53,6 @@ PRODUCED/DROPPED effects) land.
 | Steane X/Y/Z | qeclib/steane/gates_sq/paulis.py | single register: live_preserved (converted iter 3) |
 | Steane H | qeclib/steane/gates_sq/hadamards.py | single register: live_preserved (converted iter 4) |
 
-The audit log lives in
-`~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`.
 """
 
 from __future__ import annotations

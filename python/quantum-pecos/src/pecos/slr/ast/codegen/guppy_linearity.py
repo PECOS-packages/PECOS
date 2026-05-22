@@ -80,7 +80,7 @@ class GuppyLinearityState:
 
         `slot_locals`, when provided, is the single namespace-wide
         slot-to-Guppy-local name table from `GuppyContext.slot_locals`
-        (#88B: disambiguates the default `f"{allocator}_{index}"` against
+        (disambiguates the default `f"{allocator}_{index}"` against
         register names so the entry-unpack LHS does not shadow another
         declared register). When omitted, the default name is used --
         kept for callers that build a linearity table outside the main

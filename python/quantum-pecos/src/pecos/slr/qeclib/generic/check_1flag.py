@@ -43,7 +43,6 @@ class Check1Flag(Block):
     # single `PZ(a, flag)` is split into `PZ(a), PZ(flag)` (O1 option
     # (a) -- byte-identical in QASM/Guppy/Selene, confirmed 2026-05-16;
     # one PrepareOp per scratch input avoids multi-destination substitution).
-    # See ~/Repos/pecos-docs/design/slr/v2-scratch-ancilla-effect.md.
     block_inputs: ClassVar[dict[str, str]] = {
         "d": "live_preserved",
         "a": "scratch",

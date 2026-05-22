@@ -40,11 +40,11 @@ def test_hugr_rejects_while_before_parallel_optimizer_erases_it() -> None:
 
 
 def test_hugr_rejects_stray_prep_basis_string() -> None:
-    # #81: the prep basis is the gate IDENTITY (PZ/PNZ/PX/PNX/PY/PNY),
+    # The prep basis is the gate IDENTITY (PZ/PNZ/PX/PNX/PY/PNY),
     # not a string argument. A stray string qarg on any prep gate is
     # rejected loudly at the shared converter root (NotImplementedError),
     # so it never silently reaches the codegen -- superseding the old
-    # Guppy-preflight non-Z-Prep reject (removed in #81 Stage C along
+    # Guppy-preflight non-Z-Prep reject (removed along
     # with the `Prep` alias).
     prog = Main(
         q := QReg("q", 1),
@@ -67,8 +67,8 @@ def test_hugr_rejects_symbolic_loopvar_indexing_cleanly() -> None:
 
 
 def test_angle_first_misuse_fails_loud_at_call() -> None:
-    # #97 (angle-first API) post-review fold (Codex blocker): a
-    # mis-ordered `gate(qubit, angle)` call -- the pre-#97 silent-
+    # Angle-first API: a
+    # mis-ordered `gate(qubit, angle)` call -- the old silent-
     # angle-drop footgun -- must fail loud at the SLR call, never
     # compile to a silent no-op.
     q = QReg("q", 2)
@@ -90,8 +90,8 @@ def test_angle_first_misuse_fails_loud_at_call() -> None:
     with pytest.raises(TypeError, match=r"RX: a non-qubit .* qubit position"):
         qb.RX(rad(0.5), 0.7)
 
-    # (4) Classical register/bit in a qubit slot (Codex reconfirm
-    #     blocker): `CReg`/`Bit`/`SymbolicBit` are `Var` subclasses
+    # (4) Classical register/bit in a qubit slot:
+    #     `CReg`/`Bit`/`SymbolicBit` are `Var` subclasses
     #     too, so a broad `isinstance(_, Var)` qubit check let
     #     `RX(0.5, c[0])` through and QASM/QIR lowered `rx(0.5) c[0];`
     #     against a classical register. Qubit slots accept ONLY
@@ -114,7 +114,7 @@ def test_angle_first_misuse_fails_loud_at_call() -> None:
 
 
 def test_codegen_arity_guard_rejects_malformed_param_gate() -> None:
-    # #97 post-review fold (Codex blocker): even if a malformed
+    # Even if a malformed
     # parameterized GateOp reaches a codegen from a non-SLR path
     # (the SLR `__call__` guard above blocks the user-facing route),
     # QIR and QASM must FAIL LOUD on too-few-targets rather than

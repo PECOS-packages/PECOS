@@ -207,10 +207,7 @@ class UnaryOp(Enum):
 
 
 class ResourceEffect(Enum):
-    """Effect declared by a `BlockDecl` input on the outer scope's binding.
-
-    See `~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`.
-    """
+    """Effect declared by a `BlockDecl` input on the outer scope's binding."""
 
     LIVE_PRESERVED = auto()  # caller binding survives the call unchanged
     CONSUMED = auto()  # caller binding is invalidated by the call
@@ -220,8 +217,7 @@ class ResourceEffect(Enum):
     # measures it at exit, depending on no incoming state. The caller's slot is
     # a flatten-path naming vehicle only; in Guppy the block allocates the qubit
     # internally so the same outer slot can feed a subsequent BlockCall (the
-    # `consumed` model would kill it). See
-    # ~/Repos/pecos-docs/design/slr/v2-scratch-ancilla-effect.md.
+    # `consumed` model would kill it).
     SCRATCH = auto()
 
 
@@ -419,8 +415,8 @@ class PrepareOp(Statement):
     # `_convert_prep` from the SLR gate symbol (PZ default). Carried
     # on the AST so codegens lower the correct reset+Clifford tail;
     # MUST be preserved through block substitution (else a non-PZ
-    # prep inside a BlockCall body silently reverts to PZ -- the
-    # #81-B1 soundness-critical case).
+    # prep inside a BlockCall body silently reverts to PZ -- a
+    # soundness-critical case).
     basis: str = "PZ"
 
 
@@ -479,7 +475,7 @@ class ReturnOp(Statement):
     # which case a backend treats a bare-name value as classical
     # (the fail-loud-safe default). A bare `values` string cannot be
     # disambiguated CReg-vs-QReg by name alone (a returned inline
-    # CReg can collide with a declared QReg name -- the #80
+    # CReg can collide with a declared QReg name -- the
     # name-collision bug), so provenance is carried here, not guessed.
     value_kinds: tuple[str, ...] = ()
 
@@ -607,10 +603,7 @@ class ParallelBlock(Statement):
 
 @dataclass(frozen=True, kw_only=True)
 class BlockInput(AstNode):
-    """One declared input parameter to a `BlockDecl`.
-
-    See `~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`.
-    """
+    """One declared input parameter to a `BlockDecl`."""
 
     name: str
     effect: ResourceEffect

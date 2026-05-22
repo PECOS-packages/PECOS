@@ -151,10 +151,10 @@ def test_same_register_permutation_qasm(
 # QIR Tests
 
 
-# #87a: a Permute is realized as a static logical relabel consulted at
+# A Permute is realized as a static logical relabel consulted at
 # every classical-bit lowering (mirroring the Guppy linearity
 # tracker's `.permute()`). The bespoke @set_creg_bit helpers the old
-# tests pinned were removed by #76-B2; bit writes are now `store i1`
+# tests pinned were removed by the static CReg model; bit writes are now `store i1`
 # into the relabelled register's `[N x i1]` buffer.
 
 

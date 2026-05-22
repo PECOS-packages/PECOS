@@ -129,7 +129,7 @@ class TestPrettyPrintGates:
         result = pretty_print(ast)
 
         assert "qb.RZ(rad(0.5), q[0])" in result
-        # #97: angle-first form `qb.RX(theta, q)`, angle rendered first.
+        # Angle-first form `qb.RX(theta, q)`, angle rendered first.
         assert "qb.RX(rad(3.141592653589793), q[0])" in result
 
 

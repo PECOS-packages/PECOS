@@ -86,9 +86,9 @@ if TYPE_CHECKING:
     from pecos.slr.main import Main
 
 
-# SLR prep-gate symbol -> canonical AST prep basis (#81). The basis
-# is the gate identity, not a string argument. (`Prep` was removed
-# in Stage C -- hard-replaced repo-wide by `PZ`.)
+# SLR prep-gate symbol -> canonical AST prep basis. The basis
+# is the gate identity, not a string argument. (`Prep` was removed,
+# hard-replaced repo-wide by `PZ`.)
 _PREP_BASIS: dict[str, str] = {
     "PZ": "PZ",
     "PNZ": "PNZ",
@@ -615,8 +615,8 @@ class SlrToAst:
         gate_name = gate.sym
 
         # Handle special operations. All prep gates route through one
-        # path; the basis is the GATE IDENTITY (#81;
-        # PZ/PNZ/PX/PNX/PY/PNY), never a string argument.
+        # path; the basis is the GATE IDENTITY
+        # (PZ/PNZ/PX/PNX/PY/PNY), never a string argument.
         if gate_name in _PREP_BASIS:
             return self._convert_prep(gate, basis=_PREP_BASIS[gate_name])
 
@@ -675,7 +675,7 @@ class SlrToAst:
         """Convert an SLR prep gate to an AST PrepareOp.
 
         `basis` is the canonical eigenstate from the gate IDENTITY
-        (#81: `PZ`/`PNZ`/`PX`/`PNX`/`PY`/`PNY`; `Prep` -> `PZ`), NOT
+        (`PZ`/`PNZ`/`PX`/`PNX`/`PY`/`PNY`; `Prep` -> `PZ`), NOT
         a string argument.
         """
         if not gate.qargs:
@@ -686,8 +686,8 @@ class SlrToAst:
         # `_expand_qubit_args` silently drops strings, so a basis
         # string (`PZ(q, "X")`, the legacy `Prep(q, "X")`, etc.)
         # would otherwise be silently dropped and the gate lowered as
-        # its plain basis -- a miscompile (#80 recast / #81 sym
-        # rule). The prep basis is the gate identity; pass NO string.
+        # its plain basis -- a miscompile under the prep-basis
+        # symmetry rule. The prep basis is the gate identity; pass NO string.
         for arg in gate.qargs:
             if isinstance(arg, str):
                 msg = (
@@ -863,7 +863,7 @@ class SlrToAst:
         SLR object's type. A whole-register return flattens to its
         bare `sym` name; a returned inline CReg can collide with a
         declared QReg of the same name, which is undecidable
-        downstream by name alone (the #80 name-collision bug). The
+        downstream by name alone (the name-collision bug). The
         QReg/CReg distinction is known HERE (the real object), so it
         is preserved instead of guessed in codegen.
         """

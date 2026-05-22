@@ -133,7 +133,7 @@ GATE_TO_QIR: dict[GateKind, str] = {
 _DecompParams = tuple[float, ...] | Callable[[tuple[float, ...]], tuple[float, ...]]
 _DecompStep = tuple[GateKind, tuple[int, ...], _DecompParams]
 _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
-    # ---- single-qubit Clifford sqrt + face rotations (#93) ----
+    # ---- single-qubit Clifford sqrt + face rotations ----
     GateKind.SX: ((GateKind.H, (0,), ()), (GateKind.SZ, (0,), ()), (GateKind.H, (0,), ())),
     GateKind.SXdg: ((GateKind.H, (0,), ()), (GateKind.SZdg, (0,), ()), (GateKind.H, (0,), ())),
     GateKind.SY: ((GateKind.H, (0,), ()), (GateKind.X, (0,), ())),
@@ -142,7 +142,7 @@ _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
     GateKind.Fdg: ((GateKind.H, (0,), ()), (GateKind.SZ, (0,), ())),
     GateKind.F4: ((GateKind.H, (0,), ()), (GateKind.SZdg, (0,), ())),
     GateKind.F4dg: ((GateKind.SZ, (0,), ()), (GateKind.H, (0,), ())),
-    # ---- two-qubit Clifford gates (#93 cont.) ----
+    # ---- two-qubit Clifford gates ----
     # SZZ/SZZdg directly via the native parameterized rzz.
     GateKind.SZZ: ((GateKind.RZZ, (0, 1), (math.pi / 2,)),),
     GateKind.SZZdg: ((GateKind.RZZ, (0, 1), (-math.pi / 2,)),),
@@ -202,7 +202,7 @@ _GATE_DECOMP: dict[GateKind, tuple[_DecompStep, ...]] = {
         (GateKind.CX, (0, 1), ()),
         (GateKind.RY, (1,), (-math.pi / 4,)),
     ),
-    # ---- parameterized controlled rotations (#93 cont.) ----
+    # ---- parameterized controlled rotations ----
     # CRZ(theta) = (RZ(theta/2) o RZ(theta/2)) . RZZ(-theta/2): 1 RZZ,
     # 2 single-qubit RZ. The RZ on the control absorbs the e^{i theta/2}
     # phase that PECOS's R*(theta) all carry (otherwise it would be a
@@ -608,19 +608,19 @@ class AstToQir:
         an inline / local-scope returned CReg produced ZERO recorded
         output for an explicit `Return` -- the build succeeded and
         validated, the program just silently returned nothing
-        (#80; same silent-output-loss class as the four
+        (same silent-output-loss class as the four
         point-of-use sites). Qubit returns record no classical
         output and are skipped via per-value provenance
         (`ReturnOp.value_kinds` from `_convert_return`), so a
         `Return(qreg)` is not false-rejected AND a returned inline
         CReg whose name collides with a declared QReg is still
-        validated (#80: a name-membership skip was unsound).
+        validated (a name-membership skip was unsound).
         """
         # Provenance comes from `_convert_return` (it knows the real
         # QReg/CReg object), NOT from a name-membership guess: a
         # returned inline CReg can share a declared QReg's name, which
         # a `qubit_map`-name skip silently mistook for a qubit return
-        # and dropped (#80). Unknown kind
+        # and dropped. Unknown kind
         # ("" -- e.g. a directly-constructed ReturnOp) falls back to
         # "classical", the fail-loud-safe default.
         kinds = node.value_kinds
@@ -664,7 +664,7 @@ class AstToQir:
 
         qir_name = GATE_TO_QIR.get(node.gate)
         if qir_name is None and node.gate in _GATE_DECOMP:
-            # #93: a gate with no direct QIR primitive but a verified
+            # A gate with no direct QIR primitive but a verified
             # decomposition into the qir-qis ALLOWED primitive set.
             # Emit each step in circuit order, routing its qubits
             # through the input gate's `targets` and threading params
@@ -675,7 +675,7 @@ class AstToQir:
             # callable can do arithmetic on them; non-literal
             # expressions (VarExpr / BinaryExpr at gate-param position)
             # are not yet supported for parameterized decomposition
-            # (out of #93 scope; #94 classical-var lowering covers it).
+            # (out of scope; classical-var lowering covers it).
             input_params_raw = tuple(node.params or ())
             for prim_kind, idxs, params_spec in _GATE_DECOMP[node.gate]:
                 prim_targets = tuple(node.targets[i] for i in idxs)
@@ -698,9 +698,9 @@ class AstToQir:
                     self._process_single_qubit_gate(prim_node, GATE_TO_QIR[prim_kind])
             return
         if qir_name is None:
-            # #88A (the broad class #78 deferred): a gate with no
+            # A gate with no
             # GATE_TO_QIR entry was SILENTLY DROPPED -- valid QIR,
-            # wrong semantics, qir-qis-uncatchable (#74-class). Fail
+            # wrong semantics, qir-qis-uncatchable. Fail
             # loud instead of miscompiling. Gates with a real QIR
             # lowering should be added to GATE_TO_QIR (a feature);
             # until then a program using one must not be silently
@@ -808,8 +808,8 @@ class AstToQir:
         measure/assign/read against it used to be SILENTLY skipped
         (the store dropped, a read folded to constant 0) and the
         explicit returned value vanished from the QIS records (the
-        `docs.inline_measure_creg` defect #79 surfaced). Mirror the
-        #74/#78 doctrine: a silent miscompile must become a loud
+        `docs.inline_measure_creg` defect surfaced). Mirror the
+        fail-loud doctrine: a silent miscompile must become a loud
         `NotImplementedError`, not a buried wrong answer.
         """
         if reg_name not in self._creg_ptrs:
@@ -889,7 +889,7 @@ class AstToQir:
                 )
 
     def _process_prepare(self, node: PrepareOp) -> None:
-        """Process a prepare/reset operation (Z-reset + #81 basis tail)."""
+        """Process a prepare/reset operation (Z-reset + canonical basis tail)."""
         tail = prep_tail(node.basis)
         if node.slots is None:
             # prepare_all is a pre-existing no-op gap; a NON-PZ
@@ -998,7 +998,7 @@ class AstToQir:
             # factored out of `_generate_results` as `_pack_creg`. A
             # `VarExpr` whose name is not a declared Main-scope CReg
             # fails LOUD via `_require_creg`, preserving the
-            # #74/#80 anti-silent-0 guarantee.
+            # anti-silent-0 guarantee.
             self._require_creg(expr.name)
             return self._pack_creg(expr.name)
 
@@ -1018,7 +1018,7 @@ class AstToQir:
             return operand
 
         # Any unhandled expression type silently evaluating to constant
-        # 0 is a value miscompile qir-qis cannot catch (the #74 / #80
+        # 0 is a value miscompile qir-qis cannot catch (the
         # fail-loud class -- same smell as the VarExpr arm above). Every
         # currently-reachable type is handled above; a new/unhandled one
         # must fail LOUD, not lower as 0.
@@ -1050,8 +1050,8 @@ class AstToQir:
         """`While` is not supported by the QIR backend.
 
         Unbounded iteration / fixed-point linear state through an
-        unknown iteration count is out of scope for the sound emitter
-        (v1-feature-matrix); the AST->Guppy path also rejects `While`.
+        unknown iteration count is out of scope for the sound emitter;
+        the AST->Guppy path also rejects `While`.
         Fail LOUD here -- the previous single-pass approximation
         silently dropped the loop condition and all iterations (a
         miscompile qir-qis cannot catch, since one pass is valid QIR).
@@ -1251,7 +1251,7 @@ class AstToQir:
 
         mod_w_attr += '\nattributes #0 = { "entry_point"'
         # adaptive_profile: PECOS emits measurement-conditioned `If` ->
-        # adaptive, not base profile (#71 Stage B1, dual-review pinned).
+        # adaptive, not base profile.
         mod_w_attr += ' "qir_profiles"="adaptive_profile"'
         mod_w_attr += ' "output_labeling_schema"="labeled"'
         mod_w_attr += f' "required_num_qubits"="{self.context.qubit_count}"'
@@ -1260,8 +1260,8 @@ class AstToQir:
         # QIR module flags (Adaptive Profile). pecos_rslib_llvm.ir.Module has
         # no named-metadata API, so append as raw IR text -- same approach as
         # the entry attributes above. The emitted module carries no `!`
-        # metadata, so !0..!4 are collision-free. Static classical model
-        # (#71 Stage B): dynamic_*/arrays = false (B2 keeps the static
+        # metadata, so !0..!4 are collision-free. The static classical
+        # model sets dynamic_*/arrays = false (it keeps the static
         # %Result + mutable local-buffer model; flags must match).
         mod_w_attr += "\n!llvm.module.flags = !{!0, !1, !2, !3, !4}"
         mod_w_attr += '\n!0 = !{i32 1, !"qir_major_version", i32 1}'

@@ -18,8 +18,6 @@ substituting each input parameter name with the corresponding
 
 The Guppy emitter does NOT use this pass: it lowers `BlockDecl` to
 `@guppy def` and `BlockCall` to a packed-array call.
-
-See `~/Repos/pecos-docs/design/slr/v2-blockcall-resource-effects.md`.
 """
 
 from __future__ import annotations

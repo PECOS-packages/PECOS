@@ -785,19 +785,19 @@ class TestCrossCodegenPrintEmission:
     - **QASM**: emits `// Print result.debug c` as a comment line; output is
       *not* byte-identical (intentional, per the doc's "comment-only across
       non-Guppy" plan).
-    - **QIR**: #74 -- the QIR backend now **fails loud** on `Print`
+    - **QIR**: the QIR backend now **fails loud** on `Print`
       (`NotImplementedError`) instead of silently dropping it. Silently
       losing observable output is a miscompile qir-qis cannot catch; the
       bounded fix is to raise, not emit. (Real `Print`->record_output is
       deferred, like real `While`.)
-    - **Stim**, **QuantumCircuit**: #78 -- now also **fail loud** on
+    - **Stim**, **QuantumCircuit**: now also **fail loud** on
       `Print` (`NotImplementedError`), the same silent-drop class as
-      #74's QIR Print, applied per the explicit-over-implicit rule.
+      the QIR Print, applied per the explicit-over-implicit rule.
       Stim's is fundamental ("does not support" -- Stim has no
       classical-output stream); QuantumCircuit's is "does not yet
       support" (PECOS owns that format, so it may be added later).
       Was a deliberately-pinned silent skip; flipped here exactly as
-      #74 flipped `test_qir_byte_identical` -> `..._raises_loud`.
+      the QIR Print flipped `test_qir_byte_identical` -> `..._raises_loud`.
 
     These tests pin all four behaviors. If any backend stops
     raising / starts emitting, or QASM stops the comment, this catches
@@ -844,7 +844,7 @@ class TestCrossCodegenPrintEmission:
         assert added_lines == [expected_added], f"expected exactly [{expected_added!r}] added lines, got {added_lines}"
 
     def test_qir_raises_loud_on_print(self) -> None:
-        """#74: QIR must FAIL LOUD on Print, not silently drop it.
+        """QIR must FAIL LOUD on Print, not silently drop it.
 
         The no-Print program still builds; adding Print makes `.qir()`
         raise `NotImplementedError` (a silent drop would lose observable
@@ -855,14 +855,14 @@ class TestCrossCodegenPrintEmission:
             SlrConverter(self._bell_with_print()).qir()
 
     def test_stim_raises_loud_on_print(self) -> None:
-        """#78: Stim must FAIL LOUD on Print (no classical-output
+        """Stim must FAIL LOUD on Print (no classical-output
         stream), not silently drop it. No-Print still converts."""
         SlrConverter(self._bell_no_print()).stim()  # no Print: fine
         with pytest.raises(NotImplementedError, match=r"does not support Print"):
             SlrConverter(self._bell_with_print()).stim()
 
     def test_quantum_circuit_raises_loud_on_print(self) -> None:
-        """#78: QuantumCircuit must FAIL LOUD on Print (not yet
+        """QuantumCircuit must FAIL LOUD on Print (not yet
         implemented -- may be added since PECOS owns this format), not
         silently drop it. No-Print still converts."""
         SlrConverter(self._bell_no_print()).quantum_circuit()  # no Print: fine

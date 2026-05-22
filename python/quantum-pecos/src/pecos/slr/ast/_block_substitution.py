@@ -33,8 +33,6 @@ Name-level refs (`BarrierOp`, bare `PermuteOp`, `PrepareOp(slots=None)`,
 `VarExpr`, str `ReturnOp`/`AssignOp` targets) cannot express a partial
 (single-qubit / bundle / single-bit) binding; touching a partially-bound
 outer name raises `BodySubstitutionError` rather than silently leaking it.
-
-See `~/Repos/pecos-docs/design/slr/v2-iter5e-check-conversion-plan.md`.
 """
 
 from __future__ import annotations
@@ -245,7 +243,7 @@ def substitute_stmt(stmt: Statement, remap: BodyRemap) -> Statement:
         # Substitution remaps names in place (1:1, order/count
         # preserved), so the parallel `value_kinds` provenance still
         # aligns and MUST be carried (dropping it would re-introduce
-        # the #80 CReg/QReg name-collision miscompile inside a
+        # the CReg/QReg name-collision miscompile inside a
         # substituted BlockCall body).
         return ReturnOp(
             values=tuple(

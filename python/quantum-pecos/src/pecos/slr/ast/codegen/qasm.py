@@ -402,7 +402,7 @@ class AstToQasm(BaseVisitor[list[str]]):
         return lines
 
     def visit_prepare(self, node: PrepareOp) -> list[str]:
-        """Generate reset/prep operation (Z-reset + #81 basis tail)."""
+        """Generate reset/prep operation (Z-reset + canonical basis tail)."""
         lines = []
         tail = prep_tail(node.basis)
 

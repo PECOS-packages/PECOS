@@ -522,7 +522,7 @@ class AstToQir:
                 if decl.size > 64:
                     msg = (
                         f"QIR codegen: CReg {decl.name!r} has {decl.size} bits, "
-                        "but the M-B2-static classical model packs each CReg "
+                        "but the static classical model packs each CReg "
                         "into a single i64 for "
                         "`__quantum__rt__int_record_output` (64-bit cap). "
                         ">64-bit CRegs are not supported by the QIR backend."

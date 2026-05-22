@@ -2139,7 +2139,7 @@ class TestSlrBlockArgShapeDetectionViaConverter:
 
 class TestScratchEffectS1:
     """Scratch-ancilla effect: `ResourceEffect.SCRATCH`
-    + converter detection + the mandatory R4 reset-first validator + O2.
+    + converter detection + the mandatory reset-first validator.
 
     This stage does NOT lower scratch in Guppy (the internal-allocation
     lowering lands later); until then Guppy must
@@ -2191,7 +2191,7 @@ class TestScratchEffectS1:
         ast = slr_to_ast(prog)
         call = next(s for s in ast.body if isinstance(s, BlockCall))
         # Scratch `a` is detected as a single-qubit arg and stays in
-        # arg_bindings (O2: the 5e.2 alias guard still applies)...
+        # arg_bindings (the alias guard still applies)...
         assert any(isinstance(a, SingleQubitArg) for a in call.arg_bindings)
         # ...but is NOT live-preserved, so it is absent from out_bindings.
         assert call.out_bindings == (
@@ -2317,7 +2317,7 @@ class TestScratchEffectS1:
 
     def test_scratch_inside_control_flow_rejected(self) -> None:
         """Conservative scope: a scratch slot touched inside control
-        flow cannot be linearized for the R4 analysis -> reject loudly.
+        flow cannot be linearized for the reset-first analysis -> reject loudly.
         """
         from pecos.slr import CReg, Main, QReg, Repeat, Return
         from pecos.slr.ast import slr_to_ast
@@ -2348,7 +2348,7 @@ class TestScratchEffectS1:
             slr_to_ast(prog)
 
     def test_scratch_aliased_to_other_input_rejected(self) -> None:
-        """O2: scratch stays in arg_bindings, so the 5e.2 cross-input
+        """Scratch stays in arg_bindings, so the cross-input
         aliasing guard still rejects a scratch slot aliased to another
         qubit input.
         """
@@ -2918,7 +2918,7 @@ class TestScratchCheckS4ProductionLockIn:
 
 class TestScratchCheck1FlagS5ProductionLockIn:
     """`Check1Flag` converted (`a`, `flag`: scratch; the body's
-    `PZ(a, flag)` split into `PZ(a); PZ(flag)` per O1 option (a)).
+    `PZ(a, flag)` split into `PZ(a); PZ(flag)`).
     Steane `SynExtractFlagged` reuses ancilla+flag slots across 6
     Check1Flag calls -- it must route every one through a BlockCall,
     compile (12 internal allocs, no LinearityError), and run.

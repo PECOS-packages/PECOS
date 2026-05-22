@@ -138,7 +138,7 @@ class Print(Statement):
         if not isinstance(value, (CReg, Bit)):
             msg = (
                 f"Print(value, ...) requires a CReg or Bit value; got {type(value).__name__}. "
-                "Expression values (e.g. c[0] ^ c[1]) are deferred to v2.1 and must be passed with explicit tag=...; "
+                "Expression values (e.g. c[0] ^ c[1]) are deferred and must be passed with explicit tag=...; "
                 "Phase 1 supports CReg and Bit only."
             )
             raise TypeError(msg)

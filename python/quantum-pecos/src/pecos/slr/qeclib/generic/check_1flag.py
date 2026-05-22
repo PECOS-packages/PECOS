@@ -40,7 +40,7 @@ class Check1Flag(Block):
     # measured inside, allocated internally in Guppy so callers can reuse
     # physical slots across sequential checks); data passes through; the two
     # out bits are live_preserved measurement-result write-backs. The body's
-    # single `PZ(a, flag)` is split into `PZ(a), PZ(flag)` (O1 option
+    # single `PZ(a, flag)` is split into `PZ(a), PZ(flag)` (option
     # (a) -- byte-identical in QASM/Guppy/Selene, confirmed 2026-05-16;
     # one PrepareOp per scratch input avoids multi-destination substitution).
     block_inputs: ClassVar[dict[str, str]] = {

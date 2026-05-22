@@ -399,7 +399,7 @@ class AstToGuppy:
             if not (is_qubit or is_qubit_array or is_bit):
                 msg = (
                     f"BlockDecl {decl.name!r} input {inp.name!r}: only array[qubit, N], "
-                    f"bare qubit, and bare bit inputs are supported in Phase 3a.3 "
+                    f"bare qubit, and bare bit inputs are supported "
                     f"iter 5c (got {type(inp.type_expr).__name__})"
                 )
                 raise GuppyCodegenError(msg)
@@ -414,11 +414,11 @@ class AstToGuppy:
                     )
                     raise GuppyCodegenError(msg)
             elif inp.effect is ResourceEffect.SCRATCH:
-                # Scratch ancilla (design v2-scratch-ancilla-effect): the
+                # Scratch ancilla: the
                 # block resets+measures it internally. Guppy allocates it
                 # internally (no parameter), so it must be a bare qubit --
                 # array/bundle scratch is out of scope (Check's ancilla is a
-                # bare qubit; Check1Flag's flag is too but is deferred via O1).
+                # bare qubit; Check1Flag's flag is too but is deferred).
                 if not is_qubit:
                     msg = (
                         f"BlockDecl {decl.name!r} input {inp.name!r}: SCRATCH is "
@@ -429,13 +429,13 @@ class AstToGuppy:
             elif inp.effect not in {ResourceEffect.LIVE_PRESERVED, ResourceEffect.CONSUMED}:
                 msg = (
                     f"BlockDecl {decl.name!r} input {inp.name!r}: only LIVE_PRESERVED and "
-                    f"CONSUMED effects are supported in Phase 3a.1 (got {inp.effect.name})"
+                    f"CONSUMED effects are supported (got {inp.effect.name})"
                 )
                 raise GuppyCodegenError(msg)
         if decl.return_op is not None:
             msg = (
                 f"BlockDecl {decl.name!r}: explicit Return inside BlockDecl is not yet "
-                "supported in Phase 3a.1; live_preserved inputs are returned implicitly"
+                "supported; live_preserved inputs are returned implicitly"
             )
             raise GuppyCodegenError(msg)
 
@@ -1702,7 +1702,7 @@ class AstToGuppy:
 
         msg = (
             f"BlockCall {callee!r} {position} for input {inp.name!r}: BlockArg "
-            f"{type(arg).__name__} is not yet supported in Phase 3a.3 iter 5d"
+            f"{type(arg).__name__} is not yet supported"
         )
         raise GuppyCodegenError(msg)
 

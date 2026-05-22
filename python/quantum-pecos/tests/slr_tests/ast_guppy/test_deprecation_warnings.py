@@ -11,7 +11,7 @@
 
 """Hard-contract tests for the v2 output model.
 
-S3 removed the `CReg(result=...)` kwarg, the `RegisterDecl.is_result`
+Removed the `CReg(result=...)` kwarg, the `RegisterDecl.is_result`
 field, and the v1 implicit return of result-flagged CRegs. These tests
 pin those removals as hard contracts: the old knobs now raise, and a
 program must use an explicit `Return(...)` to produce any output.
@@ -29,7 +29,7 @@ from ._selene_harness import run_ast_guppy_via_selene  # noqa: TID252
 
 
 class TestCRegResultKwargRemoved:
-    """S3: the `CReg(result=...)` kwarg is gone -> hard `TypeError`."""
+    """The `CReg(result=...)` kwarg is gone -> hard `TypeError`."""
 
     def test_creg_result_false_raises_type_error(self) -> None:
         with pytest.raises(TypeError):
@@ -45,7 +45,7 @@ class TestCRegResultKwargRemoved:
 
 
 class TestRegisterDeclIsResultRemoved:
-    """S3: the `RegisterDecl.is_result` field is gone -> hard `TypeError`."""
+    """The `RegisterDecl.is_result` field is gone -> hard `TypeError`."""
 
     def test_register_decl_is_result_raises_type_error(self) -> None:
         with pytest.raises(TypeError):
@@ -59,7 +59,7 @@ class TestRegisterDeclIsResultRemoved:
 
 
 class TestNoImplicitReturn:
-    """S3: no `Return(...)` means no output (the v1 implicit path is gone)."""
+    """No `Return(...)` means no output (the v1 implicit path is gone)."""
 
     def test_no_return_compiles_to_main_returning_none(self) -> None:
         prog = Main(

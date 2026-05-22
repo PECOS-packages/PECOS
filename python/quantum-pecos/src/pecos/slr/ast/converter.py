@@ -528,10 +528,7 @@ class SlrToAst:
                         _claim_qubit(e.reg.sym, e.index, here=where, owner=input_name)
                         remap.add_slot((e.reg.sym, e.index), (input_name, k))
                 elif all(isinstance(e, SlrBit) for e in var):
-                    msg = (
-                        f"{where}: list[Bit] (classical bit bundle / BitBundleArg) "
-                        "is not yet supported in Phase 3a.3"
-                    )
+                    msg = f"{where}: list[Bit] (classical bit bundle / BitBundleArg) is not yet supported"
                     raise ValueError(msg)
                 else:
                     msg = (
@@ -554,7 +551,7 @@ class SlrToAst:
                 raise ValueError(msg)  # noqa: TRY004
             elif isinstance(var, CReg):
                 msg = (
-                    f"{where}: whole CReg input is not yet supported in Phase 3a.3 "
+                    f"{where}: whole CReg input is not yet supported "
                     "(only single Bit via SingleBitArg); pass a single bit `c[i]`"
                 )
                 raise ValueError(msg)  # noqa: TRY004
@@ -571,7 +568,7 @@ class SlrToAst:
             # (the emitter's iter-5b cross-check requires arg == out, by value).
             # SCRATCH is NOT live-preserved -> never in out_bindings (same as
             # CONSUMED); it stays in arg_bindings so the 5e.2 cross-input alias
-            # guard still rejects a scratch slot aliased to another input (O2).
+            # guard still rejects a scratch slot aliased to another input.
             if effect is ResourceEffect.LIVE_PRESERVED:
                 out_bindings.append(arg)
             if effect is ResourceEffect.SCRATCH:
@@ -586,7 +583,7 @@ class SlrToAst:
         self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
         rewritten_body = tuple(substitute_stmt(stmt, remap) for stmt in sub_body)
 
-        # R4 (scratch design): a SCRATCH input is only sound if the block
+        # A SCRATCH input is only sound if the block
         # resets it before any other use and never touches it after the
         # terminal measurement without re-Prepping. The Guppy lowering
         # allocates the qubit internally on that assumption; validate
@@ -1106,7 +1103,7 @@ def _scratch_events(stmt: Statement, name: str) -> list[str]:
 
     Returns a list drawn from PREP / MEASURE / USE in execution order.
     A reference inside control flow / Parallel / a nested BlockCall /
-    PermuteOp cannot be linearized for the R4 reset-first analysis, so
+    PermuteOp cannot be linearized for the reset-first analysis, so
     it is reported as the sentinel UNSUPPORTED and the validator rejects
     (scratch inputs must have a flat Prep -> ... -> Measure
     lifecycle).
@@ -1173,7 +1170,7 @@ def _validate_scratch_input(
     *,
     cls_name: str,
 ) -> None:
-    """Enforce R4 for a SCRATCH input (design v2-scratch-ancilla-effect).
+    """Enforce the reset-first rule for a SCRATCH input.
 
     The block must reset `name` before any other use, and every Prep
     lifecycle must be closed by a Measure before the next Prep and
@@ -1242,6 +1239,6 @@ def _validate_scratch_input(
         msg = (
             f"{where}: scratch lifecycle not closed -- a Prep has no "
             "terminating Measure; the block must measure the scratch "
-            "qubit before returning (S2 allocates it internally)"
+            "qubit before returning (allocated internally)"
         )
         raise ValueError(msg)

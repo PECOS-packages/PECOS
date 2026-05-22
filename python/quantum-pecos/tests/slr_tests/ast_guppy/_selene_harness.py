@@ -81,7 +81,7 @@ def run_ast_guppy_via_selene(
     if info.explicit_return is None:
         msg = (
             "Selene behavioral test requires an explicit `Return(<creg>...)`. "
-            "Phase 3b removed the implicit result-CReg return; a program with "
+            "The implicit result-CReg return was removed; a program with "
             "no `Return` compiles to `entry() -> None` and has no measurement "
             "record."
         )

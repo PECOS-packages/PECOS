@@ -153,8 +153,8 @@ def test_control_flow_qir() -> None:
     # classical-comparison structure.
     qir = SlrConverter(prog).qir()
     # `If(m == 0)` and `If(m < m_hidden)` lower to icmp + i64 packs.
-    assert "icmp" in qir, "B1 If(m == 0) must lower to an icmp"
-    assert "or i64" in qir, "B1 whole-CReg pack must emit OR_i (zext c[i] << i)"
+    assert "icmp" in qir, "If(m == 0) must lower to an icmp"
+    assert "or i64" in qir, "whole-CReg pack must emit OR_i (zext c[i] << i)"
 
 
 @pytest.mark.optional_dependency
@@ -172,7 +172,7 @@ def test_plus_qir() -> None:
         Return(m, n, o),
     )
     qir = SlrConverter(prog).qir()
-    assert "add i64" in qir, "B1 m + n must lower to an i64 add"
+    assert "add i64" in qir, "m + n must lower to an i64 add"
 
     # End-to-end: m=2, n=2, o=m+n=4. Pure-classical + Clifford only,
     # so the program executes through qir_to_qis + Stim.
@@ -220,7 +220,7 @@ def test_minus_qir() -> None:
         Return(m, n, o),
     )
     qir = SlrConverter(prog).qir()
-    assert "sub i64" in qir, "B1 m - n must lower to an i64 sub"
+    assert "sub i64" in qir, "m - n must lower to an i64 sub"
 
     import qir_qis
     import selene_sim
@@ -250,7 +250,7 @@ def test_steane_qir_bc() -> None:
     The bitcode builds (no longer fails loud on classical-variable
     lowering)."""
     bc = SlrConverter(telep("X", "X")).qir_bc()
-    assert bc, "qir_bc must return non-empty bitcode for Steane telep post-B1"
+    assert bc, "qir_bc must return non-empty bitcode for Steane telep"
 
 
 @pytest.mark.optional_dependency

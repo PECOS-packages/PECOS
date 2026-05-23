@@ -1,5 +1,6 @@
 matplotlib==3.9.2
-pillow>=11.3.0  # security floor: Pillow is transitive via matplotlib; avoid known-vulnerable old releases
+pillow>=11.3.0  # CVE-2023-50447 + libwebp; transitive via matplotlib
+idna>=3.15  # CVE-2026-45409 (re-fix of CVE-2024-3651): idna.encode() DoS on crafted long inputs
 networkx==3.3
 numpy==1.26.4
 scipy==1.14.1

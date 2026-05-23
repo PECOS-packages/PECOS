@@ -157,6 +157,9 @@ pub fn load_plugin(path: &Path) -> Result<LoadedPlugin, PluginError> {
 
     // Wrap decoder if provided.
     let decoder = if !desc.decoder_handle.is_null() && !desc.decoder_vtable.is_null() {
+        // SAFETY: `decoder_vtable` was just null-checked; the plugin protocol
+        // requires `init_fn` to populate it with a `*const DecoderVTable` that
+        // points to a vtable owned by the loaded plugin for the plugin's lifetime.
         let vtable_copy = unsafe { *desc.decoder_vtable };
         unsafe { ForeignDecoder::new(desc.decoder_handle, vtable_copy) }
     } else {
@@ -165,6 +168,9 @@ pub fn load_plugin(path: &Path) -> Result<LoadedPlugin, PluginError> {
 
     // Wrap simulator if provided.
     let simulator = if !desc.simulator_handle.is_null() && !desc.simulator_vtable.is_null() {
+        // SAFETY: `simulator_vtable` was just null-checked; per plugin protocol,
+        // `init_fn` populates it with a `*const SimulatorVTable` owned by the
+        // loaded plugin for the plugin's lifetime.
         let vtable_copy = unsafe { *desc.simulator_vtable };
         unsafe {
             ForeignSimulator::new(

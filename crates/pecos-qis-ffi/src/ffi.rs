@@ -1570,7 +1570,8 @@ mod tests {
         let ptr = unsafe { heap_alloc(100) };
         assert!(!ptr.is_null());
 
-        // Write to the memory to verify it's valid
+        // SAFETY: `ptr` was just allocated by `heap_alloc(100)` and asserted non-null
+        // above; the test scope owns it exclusively until `heap_free` below.
         unsafe {
             std::ptr::write(ptr, 42u8);
             assert_eq!(std::ptr::read(ptr), 42u8);

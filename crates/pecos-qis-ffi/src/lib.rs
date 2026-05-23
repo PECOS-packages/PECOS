@@ -1048,7 +1048,8 @@ mod tests {
         let ptr = pecos_get_pending_operations();
         assert!(!ptr.is_null());
 
-        // Verify operations
+        // SAFETY: `pecos_get_pending_operations` returns a fresh leaked Box;
+        // non-null asserted above; the test scope owns it until `pecos_free_operations`.
         let collector = unsafe { &*ptr };
         assert_eq!(collector.operations.len(), 2);
 
@@ -1341,6 +1342,8 @@ mod tests {
         // Verify operations were exported
         let ops_ptr = pecos_get_pending_operations();
         assert!(!ops_ptr.is_null());
+        // SAFETY: `pecos_get_pending_operations` returns a fresh leaked Box;
+        // non-null asserted above; freed below via `pecos_free_operations`.
         let ops = unsafe { &*ops_ptr };
         assert_eq!(ops.operations.len(), 2);
         unsafe { pecos_free_operations(ops_ptr) };
@@ -1407,6 +1410,8 @@ mod tests {
         assert_eq!(needed_id, 0);
         let ops_ptr = pecos_get_pending_operations();
         assert!(!ops_ptr.is_null());
+        // SAFETY: `pecos_get_pending_operations` returns a fresh leaked Box;
+        // non-null asserted above; freed below via `pecos_free_operations`.
         let ops = unsafe { &*ops_ptr };
         assert_eq!(ops.operations, vec![Operation::AllocateQubit { id: 0 }]);
         unsafe { pecos_free_operations(ops_ptr) };
@@ -1416,6 +1421,8 @@ mod tests {
         assert_eq!(needed_id, 1);
         let ops_ptr = pecos_get_pending_operations();
         assert!(!ops_ptr.is_null());
+        // SAFETY: `pecos_get_pending_operations` returns a fresh leaked Box;
+        // non-null asserted above; freed below via `pecos_free_operations`.
         let ops = unsafe { &*ops_ptr };
         assert_eq!(ops.operations, vec![Operation::Quantum(QuantumOp::H(0))]);
         unsafe { pecos_free_operations(ops_ptr) };

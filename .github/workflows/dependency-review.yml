@@ -22,25 +22,12 @@ on:
       - '.github/dependabot.yml'
       - '.github/workflows/dependency-review.yml'
   pull_request:
+    # No `paths:` filter here on purpose. `dependency-review` is a required
+    # status check on protected branches; gating it by `paths:` blocks merges
+    # of PRs that don't touch dep files (GitHub waits forever for a check
+    # that doesn't fire). `actions/dependency-review-action` is cheap and
+    # idempotent on no-diff PRs.
     branches: [ "main", "master", "development", "dev" ]
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'scripts/native_bench/bench_pecos/Cargo.toml'
-      - 'scripts/native_bench/bench_pecos/Cargo.lock'
-      - 'pyproject.toml'
-      - 'python/**/pyproject.toml'
-      - 'uv.lock'
-      - 'requirements*.txt'
-      - '**/requirements*.txt'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'pnpm-lock.yaml'
-      - 'yarn.lock'
-      - 'bun.lock'
-      - 'bun.lockb'
-      - '.github/dependabot.yml'
-      - '.github/workflows/dependency-review.yml'
 
 permissions:
   contents: read

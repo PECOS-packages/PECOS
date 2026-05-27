@@ -23,7 +23,7 @@ These tests verify that the various AST modules work correctly together:
 import math
 
 import pytest
-from pecos.slr import CReg, If, Main, QReg, Repeat
+from pecos.slr import CReg, If, Main, QReg, Repeat, rad
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.codegen import (
     CodegenOptions,
@@ -160,9 +160,9 @@ class TestSerializationRoundTrip:
         """Rotation gates with float params round-trip."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RX[math.pi / 4](q[0]),
-            qb.RY[1.234567890123](q[0]),
+            qb.RZ(rad(0.5), q[0]),
+            qb.RX(rad(math.pi / 4), q[0]),
+            qb.RY(rad(1.234567890123), q[0]),
         )
 
         ast = slr_to_ast(prog)

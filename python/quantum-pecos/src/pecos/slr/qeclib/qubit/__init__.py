@@ -15,9 +15,10 @@ rotations, measurements, and state preparations.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from pecos.slr.angle import Angle, rad, turns
 from pecos.slr.qeclib.qubit.measures import Measure
-from pecos.slr.qeclib.qubit.preps import Prep
-from pecos.slr.qeclib.qubit.rots import CRZ, RX, RY, RZ, RZZ
+from pecos.slr.qeclib.qubit.preps import PNX, PNY, PNZ, PX, PY, PZ
+from pecos.slr.qeclib.qubit.rots import CRX, CRY, CRZ, RX, RY, RZ, RZZ
 from pecos.slr.qeclib.qubit.sq_face_rots import F4, F, F4dg, Fdg
 from pecos.slr.qeclib.qubit.sq_hadamards import H
 from pecos.slr.qeclib.qubit.sq_noncliffords import T, Tdg
@@ -38,11 +39,19 @@ from pecos.slr.qeclib.qubit.tq_noncliffords import CH
 
 __all__ = [
     "CH",
+    "CRX",
+    "CRY",
     "CRZ",
     "CX",
     "CY",
     "CZ",
     "F4",
+    "PNX",
+    "PNY",
+    "PNZ",
+    "PX",
+    "PY",
+    "PZ",
     "RX",
     "RY",
     "RZ",
@@ -53,12 +62,12 @@ __all__ = [
     "SYY",
     "SZ",
     "SZZ",
+    "Angle",
     "F",
     "F4dg",
     "Fdg",
     "H",
     "Measure",
-    "Prep",
     "SXXdg",
     "SXdg",
     "SYYdg",
@@ -70,4 +79,6 @@ __all__ = [
     "X",
     "Y",
     "Z",
+    "rad",
+    "turns",
 ]

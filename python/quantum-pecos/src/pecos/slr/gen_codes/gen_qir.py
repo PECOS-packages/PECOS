@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from pecos_rslib_llvm import binding, ir
 
-from pecos.slr import Block, If, Repeat
+from pecos.slr import Angle, Block, If, Repeat
 from pecos.slr.cops import (
     NEG,
     NOT,
@@ -299,7 +299,9 @@ class QIRGenerator(Generator):
                 [ir.Constant(ir.IntType(64), creg.size)],
                 f"{creg.sym}",
             ),
-            creg.result,
+            # The per-register result flag was removed; all user cregs
+            # are recorded (internal scratch temps still pass False below).
+            True,
         )
 
     def create_qreg(self, qreg: QReg):
@@ -320,7 +322,7 @@ class QIRGenerator(Generator):
         """Generates the proper results calls at the end of the SLR program,
         according to all the classical registers that were defined."""
         for reg_name, (reg_inst, result) in self._creg_dict.items():
-            if not result:  # ignore non-result cregs
+            if not result:  # skip internal scratch temps (all user cregs are recorded post-3b)
                 continue
             # add global tag for each CReg
             reg_name_bytes = bytearray(reg_name.encode("utf-8"))
@@ -804,7 +806,13 @@ class QIRGenerator(Generator):
         gate_declaration = self._gate_declaration_cache[gate.sym]
         gate_args = []
         if gate.has_parameters:
-            gate_args = [ir.Constant(self._types.double_type, param) for param in gate.params]
+            gate_args = [
+                ir.Constant(
+                    self._types.double_type,
+                    param.value.to_radians_signed() if isinstance(param, Angle) else float(param),
+                )
+                for param in gate.params
+            ]
         gate_args.extend([self._qarg_to_qubit_ptr(qarg) for qarg in qargs])
 
         # Create the actual invocation on the builder using the args passed in

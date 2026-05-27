@@ -268,7 +268,8 @@ def write_json(path: Path, points: list[ComparisonPoint], config: dict) -> None:
 
 def write_html(path: Path, points: list[ComparisonPoint], config: dict) -> None:
     """Write an HTML report with comparison tables."""
-    style = dedent("""
+    style = dedent(
+        """
         :root {
           color-scheme: light dark;
           --bg: #f8fafc; --fg: #0f172a;
@@ -351,7 +352,8 @@ def write_html(path: Path, points: list[ComparisonPoint], config: dict) -> None:
         td:first-child, th:first-child { text-align: left; }
         tr:nth-child(even) td { background: var(--table-stripe); }
         code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    """).strip()
+    """,
+    ).strip()
 
     def meta_card(label: str, value: str) -> str:
         return f'      <div class="meta-card"><strong>{html.escape(label)}</strong>{html.escape(value)}</div>'
@@ -435,7 +437,8 @@ def write_html(path: Path, points: list[ComparisonPoint], config: dict) -> None:
     parts.extend(
         [
             "</main>",
-            dedent("""
+            dedent(
+                """
         <script>
         (function() {
           var html = document.documentElement;
@@ -451,7 +454,8 @@ def write_html(path: Path, points: list[ComparisonPoint], config: dict) -> None:
           });
         })();
         </script>
-        """).strip(),
+        """,
+            ).strip(),
             "</body>",
             "</html>",
         ],

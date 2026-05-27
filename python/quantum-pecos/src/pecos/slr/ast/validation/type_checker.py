@@ -73,8 +73,6 @@ GATE_ARITY: dict[GateKind, int] = {
     GateKind.Y: 1,
     GateKind.Z: 1,
     GateKind.H: 1,
-    GateKind.S: 1,
-    GateKind.Sdg: 1,
     GateKind.T: 1,
     GateKind.Tdg: 1,
     GateKind.SX: 1,
@@ -211,12 +209,14 @@ class TypeChecker(ValidationPass):
                 )
 
     def _validate_numeric_expression(self, expr: Expression, context: str) -> None:
-        """Validate that an expression is numeric."""
+        """Validate that an expression is numeric (or a typed angle)."""
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
         if isinstance(expr, LiteralExpr):
-            if not isinstance(expr.value, int | float):
+            if not isinstance(expr.value, int | float | Angle):
                 self.errors.append(
                     ValidationError(
-                        message=f"Expected numeric value for {context}, got {type(expr.value).__name__}",
+                        message=f"Expected numeric value or Angle for {context}, got {type(expr.value).__name__}",
                         location=expr.location,
                         severity=Severity.ERROR,
                         code="E203",

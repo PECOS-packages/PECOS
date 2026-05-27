@@ -74,6 +74,7 @@ class IdentityRemovalPass(OptimizationPass):
             body=optimized_body,
             returns=program.returns,
             allocator=program.allocator,
+            block_decls=program.block_decls,
             location=program.location,
         )
 
@@ -151,7 +152,15 @@ class IdentityRemovalPass(OptimizationPass):
             # Can't evaluate symbolic angles at compile time
             return False
 
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
         value = angle.value
+        if isinstance(value, Angle):
+            # Use the signed-radians principal value with the same tolerance
+            # as the float path: fixed-point addition (e.g. rad(0.5) +
+            # rad(-0.5) from merging) leaves a sub-ULP residual, so an exact
+            # `fraction == 0` check would miss near-identity rotations.
+            return abs(value.value.to_radians_signed()) < self.IDENTITY_ANGLE_TOLERANCE
         if not isinstance(value, (int, float)):
             return False
 

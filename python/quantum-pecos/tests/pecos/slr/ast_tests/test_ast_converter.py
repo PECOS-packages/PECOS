@@ -71,7 +71,6 @@ class TestSlrToAstBasic:
         assert isinstance(decl, RegisterDecl)
         assert decl.name == "c"
         assert decl.size == 3
-        assert decl.is_result is True
 
     def test_program_with_both_regs(self) -> None:
         """Program with QReg and CReg has both declarations."""
@@ -143,13 +142,13 @@ class TestSlrToAstGates:
 
 
 class TestSlrToAstPrepMeasure:
-    """Prep and Measure conversion tests."""
+    """PZ and Measure conversion tests."""
 
     def test_prep_operation(self) -> None:
-        """Prep converts to PrepareOp with correct allocator and slots."""
+        """PZ converts to PrepareOp with correct allocator and slots."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -299,9 +298,9 @@ class TestSlrToAstQEC:
             ancilla := QReg("ancilla", 1),
             c := CReg("c", 1),
             # Initialize
-            qb.Prep(data[0]),
-            qb.Prep(data[1]),
-            qb.Prep(ancilla[0]),
+            qb.PZ(data[0]),
+            qb.PZ(data[1]),
+            qb.PZ(ancilla[0]),
             # Syndrome extraction
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
@@ -331,9 +330,9 @@ class TestSlrToAstQEC:
         prog = Main(
             q := QReg("q", 3),
             c := CReg("c", 1),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
-            qb.Prep(q[2]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
+            qb.PZ(q[2]),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.CX(q[1], q[2]),

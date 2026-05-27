@@ -31,9 +31,12 @@ from typing import TYPE_CHECKING
 
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
+    ArrayTypeExpr,
     BinaryOp,
     BitRef,
+    BitTypeExpr,
     Expression,
+    QubitTypeExpr,
     RegisterDecl,
     UnaryOp,
 )
@@ -47,6 +50,10 @@ if TYPE_CHECKING:
         BarrierOp,
         BinaryExpr,
         BitExpr,
+        BlockArg,
+        BlockCall,
+        BlockDecl,
+        BlockInput,
         CommentOp,
         ForStmt,
         GateOp,
@@ -56,11 +63,13 @@ if TYPE_CHECKING:
         ParallelBlock,
         PermuteOp,
         PrepareOp,
+        PrintOp,
         Program,
         RepeatStmt,
         ReturnOp,
         SlotRef,
         Statement,
+        TypeExpr,
         UnaryExpr,
         VarExpr,
         WhileStmt,
@@ -134,7 +143,14 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_program(self, node: Program) -> str:
         """Visit program node."""
-        lines = ["Main("]
+        # BlockDecls are hoisted above the Main block in the rendering so the
+        # output reads top-down (defs first, call sites below).
+        lines: list[str] = []
+        for decl in node.block_decls:
+            lines.append(self.visit_block_decl(decl))
+            lines.append("")
+
+        lines.append("Main(")
         self._level += 1
 
         # Allocator
@@ -186,7 +202,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def format_statement(self, stmt: Statement) -> str:
         """Format a statement."""
-        return stmt.accept(self)
+        return self.visit(stmt)
 
     def visit_gate(self, node: GateOp) -> str:
         """Visit gate operation."""
@@ -194,18 +210,24 @@ class AstPrettyPrinter(BaseVisitor[str]):
         targets = ", ".join(self.visit_slot_ref(t) for t in node.targets)
 
         if node.params:
+            # Angle-first SLR API -- `qb.RX(theta, q)`, angles
+            # before qubits (not the legacy `qb.RX[theta](q)` bracket).
             params = ", ".join(self.format_expression(p) for p in node.params)
-            return f"qb.{gate_name}[{params}]({targets})"
+            sep = ", " if targets else ""
+            return f"qb.{gate_name}({params}{sep}{targets})"
         return f"qb.{gate_name}({targets})"
 
     def visit_prepare(self, node: PrepareOp) -> str:
         """Visit prepare operation."""
+        # Default `PZ` stays byte-identical (no churn for the existing
+        # corpus); a non-PZ basis is shown so the dump is faithful.
+        b = "" if node.basis == "PZ" else f", basis={node.basis!r}"
         if node.slots is None:
-            return f"{node.allocator}.prepare_all()"
+            return f"{node.allocator}.prepare_all({node.basis!r})" if b else f"{node.allocator}.prepare_all()"
         if len(node.slots) == 1:
-            return f"{node.allocator}.prepare({node.slots[0]})"
+            return f"{node.allocator}.prepare({node.slots[0]}{b})"
         slots = ", ".join(str(s) for s in node.slots)
-        return f"{node.allocator}.prepare({slots})"
+        return f"{node.allocator}.prepare({slots}{b})"
 
     def visit_measure(self, node: MeasureOp) -> str:
         """Visit measure operation."""
@@ -244,6 +266,11 @@ class AstPrettyPrinter(BaseVisitor[str]):
         sources = ", ".join(node.sources)
         targets = ", ".join(node.targets)
         return f"Permute([{sources}], [{targets}])"
+
+    def visit_print(self, node: PrintOp) -> str:
+        """Visit print."""
+        value = node.value if isinstance(node.value, str) else f"{node.value.register}[{node.value.index}]"
+        return f'Print({value}, tag="{node.tag}", namespace="{node.namespace}")'
 
     # Control flow
 
@@ -316,6 +343,69 @@ class AstPrettyPrinter(BaseVisitor[str]):
         lines.append(")")
         return "\n".join(lines)
 
+    # Reusable blocks
+
+    def visit_block_decl(self, node: BlockDecl) -> str:
+        """Visit a BlockDecl, rendering it as a reusable function-like declaration."""
+        inputs_str = ", ".join(self.visit_block_input(inp) for inp in node.inputs)
+        lines = [f'BlockDecl("{node.name}", inputs=[{inputs_str}]):']
+
+        self._level += 1
+        if not node.body and node.return_op is None:
+            lines.append(self._indented("pass"))
+        else:
+            lines.extend(self._indented(f"{self.format_statement(stmt)},") for stmt in node.body)
+            if node.return_op is not None:
+                lines.append(self._indented(f"{self.format_statement(node.return_op)},"))
+        self._level -= 1
+        return "\n".join(lines)
+
+    def visit_block_input(self, node: BlockInput) -> str:
+        """Visit a BlockInput, rendering it as `name: type @ effect`."""
+        return f"{node.name}: {self._format_type_expr(node.type_expr)} @ {node.effect.name.lower()}"
+
+    def visit_block_call(self, node: BlockCall) -> str:
+        """Visit a BlockCall as a parenthesized invocation site."""
+        args = ", ".join(self._format_block_arg(a) for a in node.arg_bindings)
+        if node.out_bindings:
+            outs = ", ".join(self._format_block_arg(a) for a in node.out_bindings)
+            return f"({outs}) = BlockCall({node.callee!r}, {args})"
+        return f"BlockCall({node.callee!r}, {args})"
+
+    def _format_block_arg(self, arg: BlockArg) -> str:
+        """Render a BlockArg inline (for visit_block_call)."""
+        from pecos.slr.ast.nodes import (  # noqa: PLC0415  -- subclass dispatch
+            AllocatorArg,
+            BitBundleArg,
+            QubitBundleArg,
+            SingleBitArg,
+            SingleQubitArg,
+        )
+
+        if isinstance(arg, AllocatorArg):
+            return arg.name
+        if isinstance(arg, SingleQubitArg):
+            return self.visit_slot_ref(arg.slot)
+        if isinstance(arg, SingleBitArg):
+            return self.visit_bit_ref(arg.bit)
+        if isinstance(arg, QubitBundleArg):
+            inner = ", ".join(self.visit_slot_ref(s) for s in arg.slots)
+            return f"[{inner}]"
+        if isinstance(arg, BitBundleArg):
+            inner = ", ".join(self.visit_bit_ref(b) for b in arg.bits)
+            return f"[{inner}]"
+        return repr(arg)
+
+    def _format_type_expr(self, type_expr: TypeExpr) -> str:
+        """Render a TypeExpr inline (BlockInput rendering uses this)."""
+        if isinstance(type_expr, ArrayTypeExpr):
+            return f"array[{self._format_type_expr(type_expr.element)}, {type_expr.size}]"
+        if isinstance(type_expr, QubitTypeExpr):
+            return "qubit"
+        if isinstance(type_expr, BitTypeExpr):
+            return "bit"
+        return self.visit(type_expr)
+
     # References
 
     def visit_slot_ref(self, node: SlotRef) -> str:
@@ -330,10 +420,15 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def format_expression(self, expr: Expression) -> str:
         """Format an expression."""
-        return expr.accept(self)
+        return self.visit(expr)
 
     def visit_literal(self, node: LiteralExpr) -> str:
         """Visit literal expression."""
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        if isinstance(node.value, Angle):
+            # Round-trip the source unit: `rad(0.5)` / `turns(0.25)`.
+            return node.value.slr_repr()
         if isinstance(node.value, bool):
             return "True" if node.value else "False"
         if isinstance(node.value, float):
@@ -376,7 +471,7 @@ class AstPrettyPrinter(BaseVisitor[str]):
 
     def visit_array_type(self, node) -> str:
         """Visit array type."""
-        element = node.element.accept(self)
+        element = self.visit(node.element)
         return f"Array[{element}, {node.size}]"
 
     def visit_allocator_type(self, node) -> str:

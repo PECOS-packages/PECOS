@@ -339,7 +339,7 @@ impl PyStateVec {
                 self.inner.pz(q);
                 Ok(None)
             }
-            "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" | "PnZ" => {
+            "Init -Z" | "init |1>" | "leak |1>" | "unleak |1>" | "PNZ" => {
                 self.inner.pnz(q);
                 Ok(None)
             }
@@ -347,7 +347,7 @@ impl PyStateVec {
                 self.inner.px(q);
                 Ok(None)
             }
-            "Init -X" | "init |->" | "PnX" => {
+            "Init -X" | "init |->" | "PNX" => {
                 self.inner.pnx(q);
                 Ok(None)
             }
@@ -355,7 +355,7 @@ impl PyStateVec {
                 self.inner.py(q);
                 Ok(None)
             }
-            "Init -Y" | "init |-i>" | "PnY" => {
+            "Init -Y" | "init |-i>" | "PNY" => {
                 self.inner.pny(q);
                 Ok(None)
             }
@@ -504,6 +504,40 @@ impl PyStateVec {
                             return Err(err);
                         }
                     }
+                }
+                Ok(None)
+            }
+
+            "CRX" | "CRY" | "CRZ" => {
+                let Some(params) = params else {
+                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                        "Angle parameter missing for controlled rotation gate",
+                    ));
+                };
+                let angle = match params.get_item("angle") {
+                    Ok(Some(py_any)) => py_any.extract::<AngleParam>().map_err(|_| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Expected a valid angle parameter for controlled rotation gate",
+                        )
+                    })?,
+                    Ok(None) => {
+                        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                            "Angle parameter missing for controlled rotation gate",
+                        ));
+                    }
+                    Err(err) => return Err(err),
+                };
+                match symbol {
+                    "CRX" => {
+                        self.inner.crx(angle.0, pair);
+                    }
+                    "CRY" => {
+                        self.inner.cry(angle.0, pair);
+                    }
+                    "CRZ" => {
+                        self.inner.crz(angle.0, pair);
+                    }
+                    _ => unreachable!(),
                 }
                 Ok(None)
             }

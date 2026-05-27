@@ -143,6 +143,17 @@ class AstComparator:
                 return False
             return True
 
+        # Typed angle: a leaf compared by exact value (angle64 fraction +
+        # source unit). Recursing into its angle64 field would fail since
+        # angle64 is not an AST node / primitive handled below.
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        if isinstance(a, Angle):
+            if a != b:
+                self._add_diff(f"angle mismatch: {a!r} vs {b!r}")
+                return False
+            return True
+
         # Handle enums
         if hasattr(a, "name") and hasattr(a, "value") and not is_dataclass(a):
             if a != b:

@@ -1567,17 +1567,16 @@ mod tests {
 
     #[test]
     fn test_heap_alloc_and_free() {
-        let ptr = unsafe { heap_alloc(100) };
-        assert!(!ptr.is_null());
+        let ptr = std::ptr::NonNull::new(unsafe { heap_alloc(100) })
+            .expect("heap_alloc(100) should return non-null");
 
-        // Write to the memory to verify it's valid
+        // SAFETY: `ptr` owns this allocation exclusively for the test scope;
+        // `heap_alloc` returns a properly-aligned `u8` allocation.
         unsafe {
-            std::ptr::write(ptr, 42u8);
-            assert_eq!(std::ptr::read(ptr), 42u8);
+            std::ptr::write(ptr.as_ptr(), 42u8);
+            assert_eq!(std::ptr::read(ptr.as_ptr()), 42u8);
+            heap_free(ptr.as_ptr());
         }
-
-        // Free should not crash
-        unsafe { heap_free(ptr) };
     }
 
     #[test]

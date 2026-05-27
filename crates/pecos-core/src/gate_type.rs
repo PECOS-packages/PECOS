@@ -97,12 +97,12 @@ pub enum GateType {
     // TODO: MPauli instead of the other variants?
 
     // PX = 130
-    // PnX = 131
+    // PNX = 131
     // PY = 132
-    // PnY = 133
+    // PNY = 133
     // PZ = 134
     PZ = 134,
-    // PnZ
+    // PNZ
     /// Allocate a qubit in the |0⟩ state
     QAlloc = 135,
     /// Free/deallocate a qubit

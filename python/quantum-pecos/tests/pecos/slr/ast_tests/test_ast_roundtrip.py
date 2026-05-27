@@ -137,7 +137,7 @@ class TestRoundTripQASM:
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
             c := CReg("c", 1),
-            qb.Prep(ancilla[0]),
+            qb.PZ(ancilla[0]),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
             qb.Measure(ancilla[0]) > c[0],
@@ -202,11 +202,11 @@ class TestRoundTripGuppy:
 
         # Verify Guppy imports and structure
         assert "from guppylang import guppy" in guppy
-        assert "from guppylang.std import quantum" in guppy
+        assert "from guppylang.std.builtins import array, owned" in guppy
         assert "@guppy" in guppy
         assert "def main" in guppy.lower()
-        assert "quantum.h" in guppy
-        assert "quantum.cx" in guppy
+        assert "q_0 = h(q_0)" in guppy
+        assert "q_0, q_1 = cx(q_0, q_1)" in guppy
 
     def test_measurement_guppy_structure(self) -> None:
         """Test measurement generates correct Guppy structure."""
@@ -219,7 +219,7 @@ class TestRoundTripGuppy:
         ast = slr_to_ast(prog)
         guppy = ast_to_guppy(ast)
 
-        assert "quantum.measure" in guppy
+        assert "c[0] = measure(q_0)" in guppy
 
 
 class TestRoundTripStim:
@@ -439,8 +439,9 @@ class TestRoundTripConsistency:
 
         # Guppy
         guppy = ast_to_guppy(ast)
-        assert "a[0]" in guppy
-        assert "b[0]" in guppy
+        assert "a_0 = h(a_0)" in guppy
+        assert "b_0 = h(b_0)" in guppy
+        assert "a_0, b_0 = cx(a_0, b_0)" in guppy
 
     def test_gate_sequence_preserved_all_generators(self) -> None:
         """Test that gate sequence is preserved in all generators."""
@@ -462,9 +463,9 @@ class TestRoundTripConsistency:
 
         # Guppy - check order
         guppy = ast_to_guppy(ast)
-        h_pos = guppy.find("quantum.h")
-        x_pos = guppy.find("quantum.x")
-        z_pos = guppy.find("quantum.z")
+        h_pos = guppy.find("q_0 = h(q_0)")
+        x_pos = guppy.find("q_0 = x(q_0)")
+        z_pos = guppy.find("q_0 = z(q_0)")
         assert h_pos < x_pos < z_pos, "Gate order not preserved in Guppy"
 
 

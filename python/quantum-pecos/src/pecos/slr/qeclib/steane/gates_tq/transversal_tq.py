@@ -15,6 +15,8 @@ fault-tolerant operations between logical qubits while preserving error correcti
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+from typing import ClassVar
+
 from pecos.slr import Barrier, Block, Comment, QReg
 from pecos.slr.qeclib import qubit
 
@@ -25,6 +27,14 @@ class CX(Block):
     This class implements a transversal logical controlled-X gate between
     two logical qubits encoded in the Steane code.
     """
+
+    # Declare resource effects so SLR -> AST emits BlockDecl + BlockCall
+    # instead of inlining. Both registers are live_preserved -- the body applies a
+    # transversal CX pairwise (no internal measurements).
+    block_inputs: ClassVar[dict[str, str]] = {
+        "q1": "live_preserved",
+        "q2": "live_preserved",
+    }
 
     def __init__(self, q1: QReg, q2: QReg, *, barrier: bool = True) -> None:
         """Initialize a transversal logical CX gate on two Steane code logical qubits.
@@ -47,6 +57,9 @@ class CX(Block):
             raise Exception(msg)
 
         super().__init__()
+        # SLR -> AST converter reads these to bind block_inputs param names to outer-scope refs.
+        self.q1 = q1
+        self.q2 = q2
         self.extend(
             Comment("Transversal Logical CX"),
         )
@@ -77,6 +90,11 @@ class CY(Block):
     This class implements a transversal logical controlled-Y gate between
     two logical qubits encoded in the Steane code.
     """
+
+    block_inputs: ClassVar[dict[str, str]] = {
+        "q1": "live_preserved",
+        "q2": "live_preserved",
+    }
 
     def __init__(self, q1: QReg, q2: QReg) -> None:
         """Initialize a transversal logical CY gate on two Steane code logical qubits.
@@ -110,6 +128,8 @@ class CY(Block):
             ),
             Barrier(q1, q2),
         )
+        self.q1 = q1
+        self.q2 = q2
 
 
 class CZ(Block):
@@ -118,6 +138,11 @@ class CZ(Block):
     This class implements a transversal logical controlled-Z gate between
     two logical qubits encoded in the Steane code.
     """
+
+    block_inputs: ClassVar[dict[str, str]] = {
+        "q1": "live_preserved",
+        "q2": "live_preserved",
+    }
 
     def __init__(self, q1: QReg, q2: QReg) -> None:
         """Initialize a transversal logical CZ gate on two Steane code logical qubits.
@@ -151,6 +176,8 @@ class CZ(Block):
             ),
             Barrier(q1, q2),
         )
+        self.q1 = q1
+        self.q2 = q2
 
 
 class SZZ(Block):

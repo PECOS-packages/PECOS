@@ -102,7 +102,7 @@ class Color488Patch(Vars):
         """
         block = Block()
         block.extend(
-            qb.Prep(self.d),
+            qb.PZ(self.d),
         )
         for s in syndromes:
             block.extend(

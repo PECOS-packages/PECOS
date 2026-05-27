@@ -43,6 +43,7 @@ class SlrConverter:
             optimize_parallel: Whether to apply ParallelOptimizer transformation (default: True).
                              Only affects blocks containing Parallel() statements.
         """
+        self._original_block = block
         self._block = block
         self._optimize_parallel = optimize_parallel
 
@@ -106,32 +107,37 @@ class SlrConverter:
 
     def _generate_guppy(self) -> str:
         """Generate Guppy code using AST-based codegen."""
-        from pecos.slr.ast.codegen.guppy import ast_to_guppy
+        from pecos.slr.ast.codegen.guppy import ast_to_guppy, validate_slr_for_guppy_v1
 
+        validate_slr_for_guppy_v1(self._original_block)
         ast = self._to_ast()
         return ast_to_guppy(ast)
 
     def _generate_qir(self, *, bytecode: bool = False) -> str | bytes:
         """Generate QIR code using AST-based codegen."""
-        if bytecode:
-            # QIR bytecode requires the old generator
-            from pecos.slr.gen_codes.gen_qir import QIRGenerator
-
-            if QIRGenerator is None:
-                msg = (
-                    "Trying to compile QIR without the appropriate optional dependencies install. "
-                    "Use optional dependency group `qir` or `all`"
-                )
-                raise ImportError(msg)
-
-            generator = QIRGenerator(_internal=True)
-            generator.generate_block(self._block)
-            return generator.get_bc()
-
         from pecos.slr.ast.codegen.qir import ast_to_qir
 
         ast = self._to_ast()
-        return ast_to_qir(ast)
+        ir_text = ast_to_qir(ast)
+        if not bytecode:
+            return ir_text
+
+        try:
+            from pecos_rslib_llvm import binding
+        except ImportError as exc:
+            msg = (
+                "Trying to compile QIR without the appropriate optional dependencies install. "
+                "Use optional dependency group `qir` or `all`"
+            )
+            raise ImportError(msg) from exc
+
+        try:
+            bc = binding.parse_assembly(ir_text).as_bitcode()
+        except RuntimeError as exc:
+            msg = f"Failed to compile QIR to bitcode: {exc}"
+            raise RuntimeError(msg) from exc
+        binding.shutdown()
+        return bc
 
     def qasm(self, *, skip_headers: bool = False, add_versions: bool = False) -> str:
         """Generate QASM code.
@@ -180,25 +186,51 @@ class SlrConverter:
             ImportError: If guppylang is not available
             RuntimeError: If compilation fails
         """
-        # Generate Guppy code
-        self._generate_guppy()
+        return self._compile_hugr()
 
-        # Compile to HUGR
+    def _compile_hugr(self):
+        from pecos.slr.ast.codegen.entry_wrapper import build_no_arg_entry_wrapper, truncate_source_for_error
+
+        guppy_code = self._generate_guppy()
+        program = self._to_ast()
+
+        wrapper, _info = build_no_arg_entry_wrapper(program)
+        full_source = guppy_code + wrapper
+
+        import linecache
+        import sys
+        import tempfile
+        from contextlib import suppress
+        from pathlib import Path
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            temp_file = Path(f.name)
+            f.write(full_source)
+
+        module_name = f"_ast_guppy_generated_{temp_file.stem}"
+        linecache.cache[str(temp_file)] = (
+            len(full_source),
+            None,
+            full_source.splitlines(keepends=True),
+            str(temp_file),
+        )
+
         try:
-            from pecos.slr.gen_codes.guppy.hugr_compiler import HugrCompiler
-        except ImportError as e:
-            msg = "Failed to import HugrCompiler. Make sure guppylang is installed."
-            raise ImportError(msg) from e
-
-        # HugrCompiler needs the generator object for its internal state
-        # For now, fall back to the old path
-        from pecos.slr.gen_codes.guppy import IRGuppyGenerator
-
-        generator = IRGuppyGenerator(_internal=True)
-        generator.generate_block(self._block)
-
-        compiler = HugrCompiler(generator)
-        return compiler.compile_to_hugr()
+            try:
+                return _load_and_compile_entry(temp_file, module_name)
+            except Exception as exc:
+                truncated = truncate_source_for_error(full_source)
+                msg = (
+                    f"Failed to compile AST-generated Guppy to HUGR.\n\n"
+                    f"Error: {type(exc).__name__}: {exc}\n\n"
+                    f"Generated Guppy source (truncated):\n{truncated}"
+                )
+                raise RuntimeError(msg) from exc
+        finally:
+            sys.modules.pop(module_name, None)
+            linecache.cache.pop(str(temp_file), None)
+            with suppress(OSError, FileNotFoundError):
+                temp_file.unlink()
 
     def stim(self) -> stim.Circuit:
         """Generate a Stim circuit from the SLR block.
@@ -278,3 +310,31 @@ class SlrConverter:
             optimizer = ParallelOptimizer()
             slr_block = optimizer.transform(slr_block)
         return slr_block
+
+
+def _load_and_compile_entry(temp_file, module_name: str):
+    """Import the AST-generated module from `temp_file` and compile its `entry()`.
+
+    Failures here (spec creation, exec_module raising on import/decorator/syntax
+    errors, missing `entry`, Guppy compile errors) propagate to the caller so a
+    single outer except can attach the generated source to the error message.
+    """
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(module_name, temp_file)
+    if spec is None or spec.loader is None:
+        msg = "Failed to create module spec for AST-generated Guppy source"
+        raise RuntimeError(msg)
+
+    module = importlib.util.module_from_spec(spec)
+    module.__file__ = str(temp_file)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+    entry_func = getattr(module, "entry", None)
+    if entry_func is None:
+        msg = "No entry function found in AST-generated Guppy source"
+        raise RuntimeError(msg)
+
+    return entry_func.compile()

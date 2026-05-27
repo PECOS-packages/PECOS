@@ -57,10 +57,10 @@ class RotationMergingPass(OptimizationPass):
 
     Example:
         # Before optimization
-        RX(0.5, q[0]), RX(0.3, q[0])
+        RX(rad(0.5), q[0]), RX(rad(0.3), q[0])
 
         # After optimization
-        RX(0.8, q[0])
+        RX(rad(0.8), q[0])
     """
 
     @property
@@ -77,6 +77,7 @@ class RotationMergingPass(OptimizationPass):
             body=optimized_body,
             returns=program.returns,
             allocator=program.allocator,
+            block_decls=program.block_decls,
             location=program.location,
         )
 
@@ -176,12 +177,23 @@ class RotationMergingPass(OptimizationPass):
         If both angles are literals, computes the sum at compile time.
         Otherwise, creates a symbolic BinaryExpr for the sum.
         """
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
         angle1 = gate1.params[0]
         angle2 = gate2.params[0]
 
         # Try to evaluate at compile time if both are literals
         if isinstance(angle1, LiteralExpr) and isinstance(angle2, LiteralExpr):
-            merged_angle = LiteralExpr(value=angle1.value + angle2.value)
+            v1, v2 = angle1.value, angle2.value
+            if isinstance(v1, Angle) and isinstance(v2, Angle):
+                # Sum in exact fixed-point (angle64 wraps mod a full turn,
+                # which is the correct rotation-composition semantics).
+                merged_angle = LiteralExpr(value=Angle(v1.value + v2.value, v1.source_unit))
+            elif not isinstance(v1, Angle) and not isinstance(v2, Angle):
+                merged_angle = LiteralExpr(value=v1 + v2)
+            else:
+                # Mixed Angle/number (unexpected from SLR) -- keep symbolic.
+                merged_angle = BinaryExpr(op=BinaryOp.ADD, left=angle1, right=angle2)
         else:
             # Create symbolic sum
             merged_angle = BinaryExpr(

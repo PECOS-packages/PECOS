@@ -1,6 +1,6 @@
 """Test partial array consumption in SLR."""
 
-from pecos.slr import Block, CReg, Main, QReg, SlrConverter
+from pecos.slr import Block, CReg, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
 
@@ -34,6 +34,7 @@ prog = Main(
     MeasureAncillas(data, ancilla, syndrome),
     qubit.H(data[0]),
     Measure(data) > result,
+    Return(syndrome, result),
 )
 
 print("Generated Guppy code:")

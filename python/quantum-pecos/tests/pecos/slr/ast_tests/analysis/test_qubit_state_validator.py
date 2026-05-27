@@ -56,7 +56,7 @@ class TestQubitStateValidatorBasic:
         """Gate on prepared qubit should pass."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
         )
         ast = slr_to_ast(prog)
@@ -69,7 +69,7 @@ class TestQubitStateValidatorBasic:
         """Multiple gates after prep should all pass."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
             qb.X(q[0]),
             qb.Z(q[0]),
@@ -89,7 +89,7 @@ class TestQubitStateValidatorMeasurement:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
             qb.Measure(q[0]) > c[0],
             qb.X(q[0]),  # Gate after measure
@@ -107,10 +107,10 @@ class TestQubitStateValidatorMeasurement:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
             qb.Measure(q[0]) > c[0],
-            qb.Prep(q[0]),  # Re-prep
+            qb.PZ(q[0]),  # Re-prep
             qb.X(q[0]),
         )
         ast = slr_to_ast(prog)
@@ -127,8 +127,8 @@ class TestQubitStateValidatorMultiQubit:
         """Two-qubit gate with both qubits prepared should pass."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.CX(q[0], q[1]),
         )
         ast = slr_to_ast(prog)
@@ -141,7 +141,7 @@ class TestQubitStateValidatorMultiQubit:
         """Two-qubit gate with one qubit unprepared should fail."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             # q[1] not prepared
             qb.CX(q[0], q[1]),
         )
@@ -169,12 +169,12 @@ class TestQubitStateValidatorControlFlow:
     """Control flow tests."""
 
     def test_if_branch_prep_not_sufficient(self) -> None:
-        """Prep in only one branch is not sufficient."""
+        """PZ in only one branch is not sufficient."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
             If(c[0] == 1).Then(
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
             ),
             # After if, q[0] might not be prepared (else branch doesn't prep)
             qb.H(q[0]),
@@ -186,16 +186,16 @@ class TestQubitStateValidatorControlFlow:
         assert len(violations) == 1
 
     def test_if_both_branches_prep(self) -> None:
-        """Prep in both branches is sufficient."""
+        """PZ in both branches is sufficient."""
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
             If(c[0] == 1)
             .Then(
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
             )
             .Else(
-                qb.Prep(q[0]),
+                qb.PZ(q[0]),
             ),
             qb.H(q[0]),  # Safe - prepared in both branches
         )
@@ -210,7 +210,7 @@ class TestQubitStateValidatorControlFlow:
         prog = Main(
             q := QReg("q", 1),
             c := CReg("c", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             If(c[0] == 1).Then(
                 qb.H(q[0]),
             ),
@@ -225,7 +225,7 @@ class TestQubitStateValidatorControlFlow:
         """Repeat body can use prep from before."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             Repeat(cond=3).block(
                 qb.H(q[0]),
             ),
@@ -246,11 +246,11 @@ class TestQubitStateValidatorQEC:
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
             c := CReg("c", 1),
-            # Prep data qubits
-            qb.Prep(data[0]),
-            qb.Prep(data[1]),
-            # Prep ancilla
-            qb.Prep(ancilla[0]),
+            # PZ data qubits
+            qb.PZ(data[0]),
+            qb.PZ(data[1]),
+            # PZ ancilla
+            qb.PZ(ancilla[0]),
             # Syndrome extraction
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
@@ -269,16 +269,16 @@ class TestQubitStateValidatorQEC:
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
             c := CReg("c", 1),
-            # Prep everything
-            qb.Prep(data[0]),
-            qb.Prep(data[1]),
-            qb.Prep(ancilla[0]),
+            # PZ everything
+            qb.PZ(data[0]),
+            qb.PZ(data[1]),
+            qb.PZ(ancilla[0]),
             # First round
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
             qb.Measure(ancilla[0]) > c[0],
             # Second round - need to re-prep ancilla
-            qb.Prep(ancilla[0]),
+            qb.PZ(ancilla[0]),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
             qb.Measure(ancilla[0]) > c[0],
@@ -305,7 +305,7 @@ class TestValidatorClass:
 
         prog2 = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),  # No violation
         )
         ast2 = slr_to_ast(prog2)

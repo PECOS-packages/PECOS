@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.slr import CReg, QReg
+from pecos.slr import CReg, QReg, Return
 from pecos.slr.qeclib.steane.syn_extract.six_check_nonflagging import SixUnflaggedSyn
 
 
@@ -25,4 +25,5 @@ def test_SixUnflaggedSyn(compare_qasm: Callable[..., None]) -> None:
     syn_z = CReg("syn_z_test", 3)
 
     block = SixUnflaggedSyn(q, a, syn_x, syn_z)
+    block.extend(Return(syn_x, syn_z))
     compare_qasm(block)

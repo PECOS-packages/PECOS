@@ -10,9 +10,17 @@ sys.path.insert(
 
 import pytest
 from pecos.circuits.quantum_circuit import QuantumCircuit
-from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, SlrConverter
+from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
+
+
+def _return_declared_cregs(prog: Main) -> Main:
+    cregs = [var for var in prog.vars if isinstance(var, CReg)]
+    if cregs:
+        prog.extend(Return(*cregs))
+    return prog
 
 
 class TestQuantumCircuitToSLR:
@@ -25,7 +33,7 @@ class TestQuantumCircuitToSLR:
         qc.append({"X": {0}, "Y": {1}, "Z": {2}})  # Different gates
         qc.append({"S": {0}, "SDG": {1}, "T": {2}})  # Phase gates
 
-        slr_prog = SlrConverter.from_quantum_circuit(qc)
+        slr_prog = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
 
         # Convert to QASM to verify structure
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
@@ -52,7 +60,7 @@ class TestQuantumCircuitToSLR:
         qc.append({"CY": {(1, 2)}})
         qc.append({"CZ": {(0, 3)}})
 
-        slr_prog = SlrConverter.from_quantum_circuit(qc)
+        slr_prog = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         assert "cx q[0],q[1]" in qasm or "cx q[0], q[1]" in qasm
@@ -68,7 +76,7 @@ class TestQuantumCircuitToSLR:
         qc.append({"CX": {(0, 1)}})
         qc.append({"Measure": {0, 1}})
 
-        slr_prog = SlrConverter.from_quantum_circuit(qc)
+        slr_prog = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         assert "reset q[0]" in qasm
@@ -159,12 +167,13 @@ class TestSLRToQuantumCircuit:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
+            Return(c),
         )
 
         generator = QuantumCircuitGenerator(_internal=True)
@@ -173,7 +182,7 @@ class TestSLRToQuantumCircuit:
 
         # Check for reset and measure operations
         circuit_str = str(qc)
-        assert "RESET" in circuit_str or "Prep" in circuit_str
+        assert "RESET" in circuit_str or "PZ" in circuit_str
         assert "Measure" in circuit_str
 
     def test_parallel_block_to_qc(self) -> None:
@@ -341,10 +350,10 @@ class TestQuantumCircuitRoundTrip:
             q := QReg("q", 4),
             c := CReg("c", 4),
             # Initialize
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
-            qubit.Prep(q[2]),
-            qubit.Prep(q[3]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
+            qubit.PZ(q[2]),
+            qubit.PZ(q[3]),
             # Create entanglement
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
@@ -355,6 +364,7 @@ class TestQuantumCircuitRoundTrip:
             qubit.Measure(q[1]) > c[1],
             qubit.Measure(q[2]) > c[2],
             qubit.Measure(q[3]) > c[3],
+            Return(c),
         )
 
         # Convert to QuantumCircuit and back
@@ -362,7 +372,7 @@ class TestQuantumCircuitRoundTrip:
         generator.generate_block(prog)
         qc = generator.get_circuit()
 
-        reconstructed = SlrConverter.from_quantum_circuit(qc)
+        reconstructed = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
 
         # Both should produce similar QASM
         orig_qasm = SlrConverter(prog).qasm(skip_headers=True)
@@ -382,6 +392,40 @@ class TestQuantumCircuitRoundTrip:
         for op_nospace, op_space in cx_gates:
             assert op_nospace in orig_qasm.lower() or op_space in orig_qasm.lower()
             assert op_nospace in recon_qasm.lower() or op_space in recon_qasm.lower()
+
+
+class TestQuantumCircuitStaticForAndWhile:
+    """Same silent-miscompile class as the QIR For/While, in the AST
+    QuantumCircuit codegen.
+
+    The AST converter wraps `For` range bounds in `LiteralExpr`, so the
+    old `isinstance(node.start, int)` guard was always false -- the
+    `else` *rejected every* static `For` (even valid `For(i, 0, 3)`)
+    with a `TypeError`. Now: static `For` unrolls; symbolic bound fails
+    loud with a clear message. (`While` already failed loud here.)
+    """
+
+    def test_static_for_unrolls_body_not_dropped(self) -> None:
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            For("i", 0, 3).Do(qubit.X(q[0])),
+            Measure(q[0]) > c[0],
+            Return(c),
+        )
+        qc = SlrConverter(prog).quantum_circuit()
+        # 3 unrolled X on qubit 0 in the QuantumCircuit op list.
+        assert str(qc).count("{'X': {0}}") == 3, f"static For not unrolled 3x: {qc}"
+
+    def test_while_raises_loud(self) -> None:
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            While(c[0] == 0).Do(qubit.X(q[0]), Measure(q[0]) > c[0]),
+            Return(c),
+        )
+        with pytest.raises(NotImplementedError, match=r"While loops cannot be converted"):
+            SlrConverter(prog).quantum_circuit()
 
 
 if __name__ == "__main__":

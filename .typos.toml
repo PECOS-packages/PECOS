@@ -8,7 +8,6 @@ IY = "IY"
 IZ = "IZ"
 iz = "iz"
 anc = "anc"
-Pn = "Pn"
 emiss = "emiss"
 fo = "fo"
 # HUGR JSON format uses "typ" as a field name for type information
@@ -42,3 +41,13 @@ agger = "agger"
 CPY = "CPY"
 # Abbreviation for "undetectable" in fault enumeration debug output
 UNDET = "UNDET"
+# Legitimate "mis-" prefix used in comments/messages (mis-ordered,
+# mis-declared, mis-emitted, mis-shape, mis-count, mis-mapping, ...)
+mis = "mis"
+# Valid spelling of "unparseable" (used in comments + a test name)
+unparseable = "unparseable"
+Unparseable = "Unparseable"
+# Prep-gate naming: the "Pn -> PN" entry-point rename (PNX/PNY/PNZ)
+Pn = "Pn"
+PN = "PN"
+pn = "pn"

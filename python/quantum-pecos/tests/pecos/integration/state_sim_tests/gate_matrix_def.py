@@ -482,6 +482,73 @@ ch_def = (project_zero & I) + (project_one & h_def)
 assert eqv2phase(CH(), ch_def)
 
 
+def CRZ(theta: float) -> pc.Array:
+    """Controlled-RZ(theta) gate. Convention: block-diag(I, RZ(theta)).
+
+    Decomposition (2q-minimal: 1 RZZ + 2 single-qubit RZ):
+        CRZ(theta) = (RZ(theta/2) o RZ(theta/2)) . RZZ(-theta/2)
+    Works because PECOS_RZ and PECOS_RZZ share the same e^{i.t/2}
+    global-phase convention. RZ on control absorbs the c=1-only phase
+    that the bare RZZ-based form would leave (it would otherwise be
+    a *relative* phase, not a global one, and thus observable).
+    """
+    return oporder_multiply(
+        [
+            RZZ(-theta / 2),
+            (RZ(theta / 2), RZ(theta / 2)),
+        ],
+    )
+
+
+for _ in range(5):
+    crz_th = pc.random.random()
+    assert eqv2phase(CRZ(crz_th), (project_zero & I) + (project_one & RZ(crz_th)))
+
+
+def CRX(theta: float) -> pc.Array:
+    """Controlled-RX(theta) gate. Convention: block-diag(I, RX(theta)).
+
+    Decomposition (2q-minimal: 1 RZZ, via H conjugation of CRZ):
+        CRX(theta) = (I o H) . CRZ(theta) . (I o H)
+    """
+    return oporder_multiply(
+        [
+            (I, H()),
+            CRZ(theta),
+            (I, H()),
+        ],
+    )
+
+
+for _ in range(5):
+    crx_th = pc.random.random()
+    assert eqv2phase(CRX(crx_th), (project_zero & I) + (project_one & RX(crx_th)))
+
+
+def CRY(theta: float) -> pc.Array:
+    """Controlled-RY(theta) gate. Convention: block-diag(I, RY(theta)).
+
+    Decomposition (2q-minimal: 1 RZZ, via (S.H) conjugation of CRZ):
+        CRY(theta) = (I o (S.H)) . CRZ(theta) . (I o (H.Sdg))
+    Identity used: S.X.Sdg = Y, so S.Rx.Sdg = Ry; combined with
+    H.Rz.H = Rx gives S.H.Rz.H.Sdg = Ry.
+    """
+    return oporder_multiply(
+        [
+            (I, Sdg()),
+            (I, H()),
+            CRZ(theta),
+            (I, H()),
+            (I, S()),
+        ],
+    )
+
+
+for _ in range(5):
+    cry_th = pc.random.random()
+    assert eqv2phase(CRY(cry_th), (project_zero & I) + (project_one & RY(cry_th)))
+
+
 def Toffoli() -> pc.Array:
     """C3 gate: Toffoli.
 

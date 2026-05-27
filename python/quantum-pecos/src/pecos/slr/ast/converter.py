@@ -21,7 +21,7 @@ Example:
 
     prog = Main(
         q := QReg("q", 2),
-        qb.Prep(q[0]),
+        qb.PZ(q[0]),
         qb.H(q[0]),
     )
 
@@ -33,7 +33,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pecos.slr.ast._block_substitution import BodyRemap, substitute_stmt
 from pecos.slr.ast.nodes import (
+    AllocatorArg,
     AllocatorDecl,
     ArrayTypeExpr,
     AssignOp,
@@ -43,6 +45,9 @@ from pecos.slr.ast.nodes import (
     BitExpr,
     BitRef,
     BitTypeExpr,
+    BlockCall,
+    BlockDecl,
+    BlockInput,
     CommentOp,
     ForStmt,
     GateKind,
@@ -53,11 +58,16 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     PermuteOp,
     PrepareOp,
+    PrintOp,
     Program,
+    QubitBundleArg,
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
+    ResourceEffect,
     ReturnOp,
+    SingleBitArg,
+    SingleQubitArg,
     SlotRef,
     UnaryExpr,
     UnaryOp,
@@ -67,6 +77,7 @@ from pecos.slr.ast.nodes import (
 
 if TYPE_CHECKING:
     from pecos.slr.ast.nodes import (
+        BlockArg,
         Expression,
         Statement,
         TypeExpr,
@@ -74,6 +85,18 @@ if TYPE_CHECKING:
     from pecos.slr.block import Block
     from pecos.slr.main import Main
 
+
+# SLR prep-gate symbol -> canonical AST prep basis. The basis
+# is the gate identity, not a string argument. (`Prep` was removed,
+# hard-replaced repo-wide by `PZ`.)
+_PREP_BASIS: dict[str, str] = {
+    "PZ": "PZ",
+    "PNZ": "PNZ",
+    "PX": "PX",
+    "PNX": "PNX",
+    "PY": "PY",
+    "PNY": "PNY",
+}
 
 # Mapping from SLR gate class names to AST GateKind
 GATE_KIND_MAP: dict[str, GateKind] = {
@@ -84,8 +107,8 @@ GATE_KIND_MAP: dict[str, GateKind] = {
     # Hadamard
     "H": GateKind.H,
     # Phase gates
-    "S": GateKind.S,
-    "Sdg": GateKind.Sdg,
+    "S": GateKind.SZ,
+    "Sdg": GateKind.SZdg,
     "T": GateKind.T,
     "Tdg": GateKind.Tdg,
     # Square root gates
@@ -159,6 +182,15 @@ class SlrToAst:
     def __init__(self) -> None:
         """Initialize the converter."""
         self._position = 0  # Track position for source locations
+        self._block_decls: list[BlockDecl] = []  # Hoisted BlockDecls accumulated during convert()
+        self._decl_counter = 0
+        # True while converting the ops of a legacy-flattened composite
+        # Block. A `Return` inside such a block is a block-boundary qubit
+        # handoff (the qubits are already in linear scope by allocator name),
+        # NOT the root Main return -- elide it. Provenance-based, not
+        # position/count (a single final root ReturnOp can come from a qeclib
+        # block, e.g. `Main(q, EncodingCircuit(q))`).
+        self._in_flattened_block = False
 
     def convert(self, block: Main | Block) -> Program:
         """Convert an SLR Main/Block to an AST Program.
@@ -170,6 +202,8 @@ class SlrToAst:
             An AST Program node.
         """
         self._position = 0
+        self._block_decls = []
+        self._decl_counter = 0
 
         # Get the block name
         name = getattr(block, "block_name", block.__class__.__name__)
@@ -200,6 +234,7 @@ class SlrToAst:
             body=tuple(body),
             returns=returns,
             allocator=allocator,
+            block_decls=tuple(self._block_decls),
         )
 
     def _convert_declarations(self, block: Block) -> list:
@@ -294,7 +329,6 @@ class SlrToAst:
             return RegisterDecl(
                 name=var.sym,
                 size=var.size,
-                is_result=getattr(var, "result", True),
             )
 
         if var_class == "QAlloc":
@@ -354,10 +388,16 @@ class SlrToAst:
             return CommentOp(text=op.txt)
 
         if op_class == "Return":
+            if self._in_flattened_block:
+                # Elide block-boundary Return from a flattened composite.
+                return None
             return self._convert_return(op)
 
         if op_class == "Permute":
             return self._convert_permute(op)
+
+        if op_class == "Print":
+            return self._convert_print(op)
 
         # Assignment operations
         if op_class == "SET":
@@ -365,19 +405,217 @@ class SlrToAst:
 
         # Nested blocks (Block subclasses)
         if hasattr(op, "ops"):
-            # This is a nested block - flatten its statements into the parent
-            # We return a special marker that _convert_statements will handle
-            return ("__FLATTEN__", self._convert_statements(op.ops))
+            # A Block subclass that declares `block_inputs` opts in to
+            # BlockDecl/BlockCall lowering. Without it, the legacy flatten path
+            # remains the default for all qeclib Blocks.
+            if _has_block_inputs(op):
+                return self._convert_block_call(op)
+
+            # Legacy flatten path. Returns inside the flattened composite are
+            # block-boundary handoffs, not the root Main return:
+            # elide them via the in_flattened_block provenance flag, including
+            # inside nested If/Repeat/For/While/Parallel. Save/restore so
+            # nested composites and the root scope are handled correctly.
+            prev_in_flattened = self._in_flattened_block
+            self._in_flattened_block = True
+            try:
+                flattened = self._convert_statements(op.ops)
+            finally:
+                self._in_flattened_block = prev_in_flattened
+            return ("__FLATTEN__", flattened)
 
         return None
+
+    def _convert_block_call(self, block: Block) -> BlockCall:
+        """Build a BlockDecl + BlockCall pair from a Block subclass with `block_inputs`.
+
+        Each call site emits a fresh BlockDecl (no dedup yet; dedup is
+        a later optimization once qeclib conversion lands). The BlockDecl
+        body is the block's `ops` with allocator names rewritten from the
+        outer-scope binding name to the input parameter name.
+        """
+        # Concrete-isinstance detection (`.sym`/`.size` duck-typing
+        # misclassifies CReg as QReg). Local import keeps the
+        # SLR var classes off the module-import path (circular-safe, matching
+        # the other lazy `from pecos.slr...` imports in this file).
+        from pecos.slr.vars import (  # noqa: PLC0415
+            Bit as SlrBit,
+        )
+        from pecos.slr.vars import (  # noqa: PLC0415
+            CReg,
+            QReg,
+            Qubit,
+            SymbolicElem,
+        )
+
+        inputs_spec = type(block).block_inputs  # type: ignore[attr-defined]
+        cls_name = type(block).__name__
+        remap = BodyRemap()
+        block_inputs: list[BlockInput] = []
+        arg_bindings: list[BlockArg] = []
+        out_bindings: list[BlockArg] = []
+        scratch_inputs: list[str] = []
+
+        # Cross-input aliasing guard. The same concrete qubit slot (or
+        # classical bit) bound to two block-input positions --
+        # e.g. `[q[0], q[0]]` or two single-qubit inputs both `q[0]` --
+        # silently corrupts body substitution: Guppy rejects it on linearity
+        # while the QASM flatten path emits invalid `cx q[0], q[0];`.
+        # BodyRemap.add_slot/add_bit also reject this (defense-in-depth), but
+        # we check here first to give a Block-context error message.
+        seen_qubit: dict[tuple[str, int], str] = {}
+        seen_bit: dict[tuple[str, int], str] = {}
+
+        def _claim_qubit(reg: str, index: int, *, here: str, owner: str) -> None:
+            prior = seen_qubit.get((reg, index))
+            if prior is not None:
+                msg = (
+                    f"{here}: qubit {reg}[{index}] is also bound by input "
+                    f"{prior!r}; a qubit cannot be aliased to two block-input "
+                    "positions (no-cloning)"
+                )
+                raise ValueError(msg)
+            seen_qubit[(reg, index)] = owner
+
+        def _claim_bit(reg: str, index: int, *, here: str, owner: str) -> None:
+            prior = seen_bit.get((reg, index))
+            if prior is not None:
+                msg = (
+                    f"{here}: bit {reg}[{index}] is also bound by input "
+                    f"{prior!r}; the same outer bit cannot back two "
+                    "block-input positions (lossy substitution)"
+                )
+                raise ValueError(msg)
+            seen_bit[(reg, index)] = owner
+
+        for input_name, effect_value in inputs_spec.items():
+            if not hasattr(block, input_name):
+                msg = (
+                    f"Block {cls_name!r} declares input {input_name!r} but the "
+                    f"instance does not bind self.{input_name} (set it in __init__ "
+                    "after super().__init__())"
+                )
+                raise ValueError(msg)
+            var = getattr(block, input_name)
+            where = f"Block {cls_name!r} input {input_name!r}"
+            effect = _normalize_effect(effect_value, where=where)
+
+            type_expr: TypeExpr
+            arg: BlockArg
+            if isinstance(var, QReg):
+                type_expr = ArrayTypeExpr(element=QubitTypeExpr(), size=var.size)
+                arg = AllocatorArg(name=var.sym)
+                remap.add_whole_alloc(var.sym, input_name, var.size)
+            elif isinstance(var, Qubit):
+                type_expr = QubitTypeExpr()
+                _claim_qubit(var.reg.sym, var.index, here=where, owner=input_name)
+                arg = SingleQubitArg(slot=SlotRef(allocator=var.reg.sym, index=var.index))
+                remap.add_slot((var.reg.sym, var.index), (input_name, 0))
+            elif isinstance(var, SlrBit):
+                type_expr = BitTypeExpr()
+                _claim_bit(var.reg.sym, var.index, here=where, owner=input_name)
+                arg = SingleBitArg(bit=BitRef(register=var.reg.sym, index=var.index))
+                remap.add_bit((var.reg.sym, var.index), (input_name, 0))
+            elif isinstance(var, (list, tuple)):
+                if not var:
+                    msg = f"{where}: empty {type(var).__name__} bundle is not supported"
+                    raise ValueError(msg)
+                if all(isinstance(e, Qubit) for e in var):
+                    slots = tuple(SlotRef(allocator=e.reg.sym, index=e.index) for e in var)
+                    type_expr = ArrayTypeExpr(element=QubitTypeExpr(), size=len(var))
+                    arg = QubitBundleArg(slots=slots)
+                    for k, e in enumerate(var):
+                        _claim_qubit(e.reg.sym, e.index, here=where, owner=input_name)
+                        remap.add_slot((e.reg.sym, e.index), (input_name, k))
+                elif all(isinstance(e, SlrBit) for e in var):
+                    msg = f"{where}: list[Bit] (classical bit bundle / BitBundleArg) is not yet supported"
+                    raise ValueError(msg)
+                else:
+                    msg = (
+                        f"{where}: a bundle must be all Qubit (or all Bit, deferred); "
+                        f"got mixed/unsupported element types in {var!r}"
+                    )
+                    raise ValueError(msg)
+            # Every unsupported-input-shape branch raises ValueError uniformly
+            # (the bundle branches above do too): the public rejection surface
+            # is a single exception type so callers catch one thing, and the
+            # rejection tests pin ValueError. TRY004 wants
+            # TypeError for the isinstance-guarded branches, but that would
+            # split the surface across two exception types -- noqa is the
+            # correct call here.
+            elif isinstance(var, SymbolicElem):
+                msg = (
+                    f"{where}: symbolic (loop-variable-indexed) Qubit/Bit is not "
+                    "supported as a block input; pass a concrete element"
+                )
+                raise ValueError(msg)  # noqa: TRY004
+            elif isinstance(var, CReg):
+                msg = (
+                    f"{where}: whole CReg input is not yet supported "
+                    "(only single Bit via SingleBitArg); pass a single bit `c[i]`"
+                )
+                raise ValueError(msg)  # noqa: TRY004
+            else:
+                msg = (
+                    f"{where}: unsupported binding type {type(var).__name__} "
+                    f"({var!r}); supported: QReg, Qubit, list[Qubit], Bit"
+                )
+                raise ValueError(msg)  # noqa: TRY004
+
+            block_inputs.append(BlockInput(name=input_name, effect=effect, type_expr=type_expr))
+            arg_bindings.append(arg)
+            # out_bindings mirror the arg BlockArg for each LIVE_PRESERVED input
+            # (the emitter's iter-5b cross-check requires arg == out, by value).
+            # SCRATCH is NOT live-preserved -> never in out_bindings (same as
+            # CONSUMED); it stays in arg_bindings so the 5e.2 cross-input alias
+            # guard still rejects a scratch slot aliased to another input.
+            if effect is ResourceEffect.LIVE_PRESERVED:
+                out_bindings.append(arg)
+            if effect is ResourceEffect.SCRATCH:
+                scratch_inputs.append(input_name)
+
+        # Build the BlockDecl body by converting block.ops in a NEW sub-converter,
+        # then remapping outer -> param via the shared substitute_stmt. Share
+        # `_decl_counter` so nested converted Blocks get globally-unique names.
+        sub = SlrToAst()
+        sub._decl_counter = self._decl_counter  # type: ignore[attr-defined]
+        sub_body = sub._convert_statements(block.ops)  # type: ignore[attr-defined]
+        self._decl_counter = sub._decl_counter  # type: ignore[attr-defined]
+        rewritten_body = tuple(substitute_stmt(stmt, remap) for stmt in sub_body)
+
+        # A SCRATCH input is only sound if the block
+        # resets it before any other use and never touches it after the
+        # terminal measurement without re-Prepping. The Guppy lowering
+        # allocates the qubit internally on that assumption; validate
+        # it here so a mis-declared scratch input fails loudly at
+        # conversion rather than miscompiling.
+        for scratch_name in scratch_inputs:
+            _validate_scratch_input(rewritten_body, scratch_name, cls_name=cls_name)
+
+        # Unique decl name per call site (dedup is a later optimization).
+        decl_name = f"{cls_name.lower()}_{self._decl_counter}"
+        self._decl_counter += 1
+
+        decl = BlockDecl(name=decl_name, inputs=tuple(block_inputs), body=rewritten_body)
+        # Hoist any block_decls emitted by the sub-converter (nested BlockCalls) first.
+        self._block_decls.extend(sub._block_decls)
+        self._block_decls.append(decl)
+
+        return BlockCall(
+            callee=decl_name,
+            arg_bindings=tuple(arg_bindings),
+            out_bindings=tuple(out_bindings),
+        )
 
     def _convert_gate(self, gate: Any) -> Statement:
         """Convert an SLR gate to an AST GateOp, PrepareOp, or MeasureOp."""
         gate_name = gate.sym
 
-        # Handle special operations
-        if gate_name == "Prep":
-            return self._convert_prep(gate)
+        # Handle special operations. All prep gates route through one
+        # path; the basis is the GATE IDENTITY
+        # (PZ/PNZ/PX/PNX/PY/PNY), never a string argument.
+        if gate_name in _PREP_BASIS:
+            return self._convert_prep(gate, basis=_PREP_BASIS[gate_name])
 
         if gate_name == "Measure":
             return self._convert_measure(gate)
@@ -430,11 +668,32 @@ class SlrToAst:
 
         return GateOp(gate=gate_kind, targets=targets, params=params)
 
-    def _convert_prep(self, gate: Any) -> Statement:
-        """Convert an SLR Prep gate to an AST PrepareOp or flattened list."""
+    def _convert_prep(self, gate: Any, basis: str = "PZ") -> Statement:
+        """Convert an SLR prep gate to an AST PrepareOp.
+
+        `basis` is the canonical eigenstate from the gate IDENTITY
+        (`PZ`/`PNZ`/`PX`/`PNX`/`PY`/`PNY`; `Prep` -> `PZ`), NOT
+        a string argument.
+        """
         if not gate.qargs:
             msg = "Prep gate has no qubit arguments"
             raise ValueError(msg)
+
+        # A stray STRING qarg on ANY prep gate is rejected loudly.
+        # `_expand_qubit_args` silently drops strings, so a basis
+        # string (`PZ(q, "X")`, the legacy `Prep(q, "X")`, etc.)
+        # would otherwise be silently dropped and the gate lowered as
+        # its plain basis -- a miscompile under the prep-basis
+        # symmetry rule. The prep basis is the gate identity; pass NO string.
+        for arg in gate.qargs:
+            if isinstance(arg, str):
+                msg = (
+                    f"AST conversion: prep gate {gate.sym!r} got a stray "
+                    f"string argument {arg!r}. The prep basis is the gate "
+                    "identity, not an argument -- use PZ/PNZ/PX/PNX/PY/PNY "
+                    "(a string would be silently dropped -- a miscompile)."
+                )
+                raise NotImplementedError(msg)
 
         # Expand full registers into individual qubits
         expanded_qargs = self._expand_qubit_args(gate.qargs)
@@ -453,7 +712,7 @@ class SlrToAst:
 
         slots = tuple(q.index for q in expanded_qargs)
 
-        return PrepareOp(allocator=allocator, slots=slots)
+        return PrepareOp(allocator=allocator, slots=slots, basis=basis)
 
     def _convert_measure(self, gate: Any) -> MeasureOp:
         """Convert an SLR Measure gate to an AST MeasureOp."""
@@ -472,12 +731,13 @@ class SlrToAst:
     def _expand_qubit_args(self, qargs: list) -> list:
         """Expand qubit arguments, converting full registers to individual qubits.
 
-        Filters out non-qubit arguments like strings (e.g., basis state "Z" in Prep).
+        Filters out non-qubit arguments like strings (a stray basis
+        string on a prep gate is rejected upstream in `_convert_prep`).
         """
         expanded = []
         for q in qargs:
             if isinstance(q, str):
-                # Skip string arguments (e.g., basis state in Prep)
+                # Skip non-qubit string arguments
                 continue
             if isinstance(q, list):
                 # This is a slice (list of qubits) - recursively expand
@@ -594,18 +854,35 @@ class SlrToAst:
         return BarrierOp(allocators=allocators)
 
     def _convert_return(self, op: Any) -> ReturnOp:
-        """Convert an SLR Return to an AST ReturnOp."""
+        """Convert an SLR Return to an AST ReturnOp.
+
+        Carries per-value provenance (`value_kinds`) derived from the
+        SLR object's type. A whole-register return flattens to its
+        bare `sym` name; a returned inline CReg can collide with a
+        declared QReg of the same name, which is undecidable
+        downstream by name alone (the name-collision bug). The
+        QReg/CReg distinction is known HERE (the real object), so it
+        is preserved instead of guessed in codegen.
+        """
+        from pecos.slr.vars import QReg  # noqa: PLC0415
+
         values: list = []
+        kinds: list[str] = []
         for var in op.return_vars:
             if isinstance(var, str):
+                # Raw user-supplied name (provenance unknown); the
+                # fail-loud-safe default is "classical" so a backend
+                # validates it as a declared classical register.
                 values.append(var)
+                kinds.append("classical")
             elif hasattr(var, "sym"):
                 values.append(var.sym)
+                kinds.append("quantum" if isinstance(var, QReg) else "classical")
             else:
-                # Try to convert as expression
                 values.append(self._convert_expression(var))
+                kinds.append("expr")
 
-        return ReturnOp(values=tuple(values))
+        return ReturnOp(values=tuple(values), value_kinds=tuple(kinds))
 
     def _convert_permute(self, op: Any) -> PermuteOp:
         """Convert an SLR Permute to an AST PermuteOp."""
@@ -627,6 +904,7 @@ class SlrToAst:
                 sources=(elems_i.sym, elems_f.sym),
                 targets=(elems_f.sym, elems_i.sym),
                 add_comment=add_comment,
+                whole_register=True,
             )
 
         # Extract register/allocator names from sources (elems_i)
@@ -669,6 +947,27 @@ class SlrToAst:
             add_comment=add_comment,
         )
 
+    def _convert_print(self, op: Any) -> PrintOp:
+        """Convert an SLR Print to an AST PrintOp.
+
+        SLR-side already validated tag/namespace characters, derived the tag
+        from the value's name when omitted, and rejected non-CReg/Bit values.
+        AST conversion lowers the value into AST shape: a `BitRef` for
+        Bit values, or a CReg name string for whole-register Print.
+        """
+        value: BitRef | str
+        if hasattr(op.value, "reg") and hasattr(op.value, "index"):
+            # Bit reference (e.g., c[0]).
+            value = self._convert_bit_ref(op.value)
+        elif hasattr(op.value, "sym"):
+            # Whole CReg.
+            value = op.value.sym
+        else:
+            msg = f"Print value must be a CReg or Bit; got {type(op.value).__name__}"
+            raise TypeError(msg)
+
+        return PrintOp(value=value, tag=op.tag, namespace=op.namespace)
+
     def _convert_assignment(self, op: Any) -> AssignOp:
         """Convert an SLR SET operation to an AST AssignOp."""
         # Target
@@ -690,6 +989,16 @@ class SlrToAst:
         """Convert an SLR expression to an AST Expression."""
         if expr is None:
             return LiteralExpr(value=0)
+
+        # Typed angle (rotation-gate parameter). Stored verbatim in the
+        # literal so pretty-print can round-trip the source unit and each
+        # backend can unwrap to the underlying `angle64`. Must come before
+        # the generic `hasattr(expr, "value")` fallback, which would strip
+        # the wrapper down to the bare `angle64` and lose the unit.
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        if isinstance(expr, Angle):
+            return LiteralExpr(value=expr)
 
         # Literal values
         if isinstance(expr, bool | int | float):
@@ -752,3 +1061,184 @@ def slr_to_ast(block: Main | Block) -> Program:
     """
     converter = SlrToAst()
     return converter.convert(block)
+
+
+# === BlockDecl/BlockCall helpers ===
+
+_EFFECT_NAME_MAP: dict[str, ResourceEffect] = {
+    "live_preserved": ResourceEffect.LIVE_PRESERVED,
+    "consumed": ResourceEffect.CONSUMED,
+    "produced": ResourceEffect.PRODUCED,
+    "dropped": ResourceEffect.DROPPED,
+    "scratch": ResourceEffect.SCRATCH,
+}
+
+
+def _has_block_inputs(block: Block) -> bool:
+    return isinstance(getattr(type(block), "block_inputs", None), dict)
+
+
+def _normalize_effect(value: Any, *, where: str) -> ResourceEffect:
+    """Accept either a ResourceEffect enum or its lowercased string name."""
+    if isinstance(value, ResourceEffect):
+        return value
+    if isinstance(value, str):
+        normalized = value.lower()
+        if normalized in _EFFECT_NAME_MAP:
+            return _EFFECT_NAME_MAP[normalized]
+    msg = (
+        f"{where}: effect {value!r} is not a valid ResourceEffect. "
+        f"Expected one of: ResourceEffect enum, or strings {sorted(_EFFECT_NAME_MAP)}"
+    )
+    raise ValueError(msg)
+
+
+def _ref_base_name(ref: str) -> str:
+    """Leading identifier of a PermuteOp ref string (`q[0]`/`q`/`q.x` -> `q`)."""
+    return ref.split("[", 1)[0].split(".", 1)[0]
+
+
+def _scratch_events(stmt: Statement, name: str) -> list[str]:
+    """Ordered scratch-lifecycle events for allocator `name` in `stmt`.
+
+    Returns a list drawn from PREP / MEASURE / USE in execution order.
+    A reference inside control flow / Parallel / a nested BlockCall /
+    PermuteOp cannot be linearized for the reset-first analysis, so
+    it is reported as the sentinel UNSUPPORTED and the validator rejects
+    (scratch inputs must have a flat Prep -> ... -> Measure
+    lifecycle).
+    """
+    if isinstance(stmt, CommentOp):
+        return []
+    if isinstance(stmt, PrepareOp):
+        return ["PREP"] if stmt.allocator == name else []
+    if isinstance(stmt, MeasureOp):
+        return ["MEASURE"] if any(t.allocator == name for t in stmt.targets) else []
+    if isinstance(stmt, GateOp):
+        return ["USE"] if any(t.allocator == name for t in stmt.targets) else []
+    if isinstance(stmt, BarrierOp):
+        return ["USE"] if name in stmt.allocators else []
+    if isinstance(stmt, PermuteOp):
+        refs = (*stmt.sources, *stmt.targets)
+        return ["UNSUPPORTED"] if any(_ref_base_name(r) == name for r in refs) else []
+    if isinstance(stmt, BlockCall):
+        for arg in (*stmt.arg_bindings, *stmt.out_bindings):
+            if _block_arg_mentions_allocator(arg, name):
+                return ["UNSUPPORTED"]
+        return []
+    if isinstance(stmt, (IfStmt, WhileStmt, ForStmt, RepeatStmt, ParallelBlock)):
+        bodies: list[tuple[Statement, ...]] = (
+            [stmt.then_body, stmt.else_body] if isinstance(stmt, IfStmt) else [stmt.body]
+        )
+        for b in bodies:
+            for inner in b:
+                if _scratch_events(inner, name):
+                    return ["UNSUPPORTED"]
+        return []
+    if isinstance(stmt, ReturnOp):
+        # A scratch input must never be handed back to the caller: the
+        # Guppy lowering allocates it internally and does not thread it through caller
+        # state, so returning it would diverge from the flatten/QASM path
+        # Detection cannot be precise here -- the
+        # substitution leaves Return values as the OUTER name (a partial
+        # VarExpr passes through `whole_name` unchanged), so a returned
+        # scratch slot is indistinguishable from a returned classical
+        # value at this point. Conservatively reject ANY ReturnOp in a
+        # scratch-bearing block (in-scope blocks like `Check`
+        # have no Return; relax deliberately in a later stage if needed).
+        return ["UNSUPPORTED"]
+    # Anything else carries no qubit-slot ref. AssignOp/PrintOp operate on
+    # classical bit/int expressions only -- a qubit scratch slot cannot
+    # appear there -- so they are irrelevant to a qubit scratch lifecycle.
+    return []
+
+
+def _block_arg_mentions_allocator(arg: BlockArg, name: str) -> bool:
+    """True if a nested BlockCall arg references qubit allocator `name`."""
+    slot = getattr(arg, "slot", None)
+    if slot is not None and getattr(slot, "allocator", None) == name:
+        return True
+    if getattr(arg, "name", None) == name:  # AllocatorArg(name=...)
+        return True
+    slots = getattr(arg, "slots", None)
+    return bool(slots) and any(getattr(s, "allocator", None) == name for s in slots)
+
+
+def _validate_scratch_input(
+    body: tuple[Statement, ...],
+    name: str,
+    *,
+    cls_name: str,
+) -> None:
+    """Enforce the reset-first rule for a SCRATCH input.
+
+    The block must reset `name` before any other use, and every Prep
+    lifecycle must be closed by a Measure before the next Prep and
+    before the body ends (the Guppy lowering allocates the scratch
+    qubit internally, so an unmeasured trailing Prep/use would diverge
+    from the flatten/QASM path). Anything the
+    linearization analysis cannot handle (control flow / Parallel / nested
+    BlockCall / Permute over the scratch slot) is rejected loudly --
+    silently allowing it would let the Guppy internal-allocation
+    lowering miscompile.
+    """
+    events: list[str] = []
+    for stmt in body:
+        events.extend(_scratch_events(stmt, name))
+
+    where = f"Block {cls_name!r} scratch input {name!r}"
+    if "UNSUPPORTED" in events:
+        msg = (
+            f"{where}: scratch inputs must have a flat PZ -> ... -> "
+            "Measure lifecycle; referencing the scratch slot inside "
+            "control flow, Parallel, a nested BlockCall, or a Permute -- "
+            "or any ReturnOp in a scratch-bearing block -- is not "
+            "supported"
+        )
+        raise ValueError(msg)
+    if not events:
+        msg = f"{where}: declared SCRATCH but never used in the block body (expected PZ(...) then Measure(...))"
+        raise ValueError(msg)
+    if events[0] != "PREP":
+        msg = (
+            f"{where}: first use is {events[0]}, but a SCRATCH input must "
+            "be reset (PZ) before any other use (reset-first)"
+        )
+        raise ValueError(msg)
+    # Segment state machine: a PREP opens a lifecycle that MUST close with a
+    # MEASURE before the next PREP and before the body ends. The Guppy
+    # lowering allocates the scratch qubit internally; an unmeasured trailing
+    # Prep/use would leave the flatten/QASM path with a live reset outer slot
+    # while Guppy silently drops it -- a semantic divergence.
+    # So every Prep must be terminated by a Measure.
+    open_prep = False
+    for ev in events:
+        if ev == "PREP":
+            if open_prep:
+                msg = (
+                    f"{where}: re-Prepped before measuring the previous "
+                    "scratch lifecycle (every PZ must be closed by a "
+                    "Measure)"
+                )
+                raise ValueError(msg)
+            open_prep = True
+        elif ev == "MEASURE":
+            if not open_prep:
+                msg = (
+                    f"{where}: measured without an open PZ (measure "
+                    "before PZ, or measured again without an "
+                    "intervening PZ)"
+                )
+                raise ValueError(msg)
+            open_prep = False
+        else:  # USE
+            if not open_prep:
+                msg = f"{where}: used after measurement without re-PZ (scratch lifecycle must be PZ -> use -> Measure)"
+                raise ValueError(msg)
+    if open_prep:
+        msg = (
+            f"{where}: scratch lifecycle not closed -- a Prep has no "
+            "terminating Measure; the block must measure the scratch "
+            "qubit before returning (allocated internally)"
+        )
+        raise ValueError(msg)

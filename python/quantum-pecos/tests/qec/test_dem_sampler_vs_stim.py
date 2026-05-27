@@ -793,7 +793,7 @@ class TestRandomCliffordFuzzing:
             name = instruction.name
             targets = instruction.targets_copy()
             if name == "R":
-                stim_op_count += len(targets)  # Prep error after
+                stim_op_count += len(targets)  # PZ error after
             elif name in ("H", "S", "S_DAG"):
                 stim_op_count += len(targets)  # Gate error after
             elif name == "CX":

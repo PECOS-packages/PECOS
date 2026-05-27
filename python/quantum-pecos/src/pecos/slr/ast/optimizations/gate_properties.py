@@ -40,8 +40,6 @@ SELF_INVERSE_GATES: frozenset[GateKind] = frozenset(
 
 # Mapping from gate to its inverse
 INVERSE_PAIRS: dict[GateKind, GateKind] = {
-    GateKind.S: GateKind.Sdg,
-    GateKind.Sdg: GateKind.S,
     GateKind.T: GateKind.Tdg,
     GateKind.Tdg: GateKind.T,
     GateKind.SX: GateKind.SXdg,

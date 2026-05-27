@@ -87,7 +87,7 @@ _GATETYPE_TO_SYMBOL = {
     "SWAP": "SWAP",
     "RXXRYYRZZ": "RXXRYYRZZ",
     "R2XXYYZZ": "RXXRYYRZZ",
-    "Prep": "init |0>",
+    "PZ": "init |0>",
     "Measure": "measure",
     "MeasureFree": "measure",
     "QAlloc": "QAlloc",

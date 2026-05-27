@@ -105,8 +105,26 @@ class TestPermuteCodegen:
         ast = slr_to_ast(prog)
 
         guppy = generate(ast, "guppy")
-        # Should contain swap code
-        assert "Swap" in guppy or "_temp_" in guppy or "a, b = b, a" in guppy
+        # Qubits are remapped logically in the Guppy slot state.
+        assert "# Permute: a -> b, b -> a" in guppy
+        assert "b_0 = x(b_0)" in guppy
+
+    def test_creg_permute_guppy_uses_mem_swap(self) -> None:
+        """Test CReg Permute uses Guppy's in-place swap helper."""
+        prog = Main(
+            c := CReg("c", 2),
+            d := CReg("d", 2),
+            c[0].set(1),
+            d[1].set(1),
+            Permute(c, d),
+        )
+        ast = slr_to_ast(prog)
+
+        guppy = generate(ast, "guppy")
+
+        assert "from guppylang.std.mem import mem_swap" in guppy
+        assert "mem_swap(c[0], d[0])" in guppy
+        assert "mem_swap(c[1], d[1])" in guppy
 
     def test_permute_qasm_codegen(self) -> None:
         """Test Permute generates QASM comment."""

@@ -226,7 +226,7 @@ impl<'ctx> LLFunctionType<'ctx> {
 }
 
 /// Wrapper for LLVM types that mirrors llvmlite's type hierarchy
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LLType<'ctx> {
     Void,
     Int(IntType<'ctx>),
@@ -234,6 +234,38 @@ pub enum LLType<'ctx> {
     Pointer(PointerType<'ctx>),
     Struct(StructType<'ctx>),
     Array(ArrayType<'ctx>),
+}
+
+// inkwell 0.8.0 only derives `Hash` for `IntType`; the other type wrappers
+// are `Eq` (LLVM type-ref pointer equality) but not `Hash`. Hash the same
+// `LLVMTypeRef` pointer so `Hash` stays consistent with that `Eq`.
+impl std::hash::Hash for LLType<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use inkwell::types::AsTypeRef;
+        match self {
+            LLType::Void => 0u8.hash(state),
+            LLType::Int(t) => {
+                1u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+            LLType::Float(t) => {
+                2u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+            LLType::Pointer(t) => {
+                3u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+            LLType::Struct(t) => {
+                4u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+            LLType::Array(t) => {
+                5u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+        }
+    }
 }
 
 impl<'ctx> LLType<'ctx> {
@@ -717,6 +749,106 @@ impl<'ctx> LLIRBuilder<'ctx> {
             Ok(LLValue::Pointer(result))
         }
     }
+
+    // ========================================================================
+    // Memory ops + casts (unblocks the standard CReg model)
+    // ========================================================================
+
+    /// `alloca <ty>` -- stack slot. Caller positions the builder (B2
+    /// places `CReg` buffers in the entry block via `position_at_end`).
+    pub fn alloca(&self, ll_type: LLType<'ctx>, name: &str) -> LLResult<LLValue<'ctx>> {
+        let basic_ty = ll_type
+            .to_basic_metadata_type()
+            .ok_or_else(|| PecosError::Generic("Cannot alloca a void type".into()))?;
+        let result = self
+            .builder
+            .build_alloca(basic_ty, name)
+            .map_err(|e| PecosError::Generic(format!("Failed to build alloca: {e}")))?;
+        Ok(LLValue::Pointer(result))
+    }
+
+    /// `load` (LLVM-14 typed pointer: pointee inferred from `ptr`).
+    pub fn load(&self, ptr: LLValue<'ctx>, name: &str) -> LLResult<LLValue<'ctx>> {
+        let result = self
+            .builder
+            .build_load(ptr.as_pointer_value(), name)
+            .map_err(|e| PecosError::Generic(format!("Failed to build load: {e}")))?;
+        Ok(match result {
+            BasicValueEnum::IntValue(v) => LLValue::Int(v),
+            BasicValueEnum::FloatValue(v) => LLValue::Float(v),
+            BasicValueEnum::PointerValue(v) => LLValue::Pointer(v),
+            BasicValueEnum::ArrayValue(v) => LLValue::Array(v),
+            other => {
+                return Err(PecosError::Generic(format!(
+                    "load: unsupported loaded value type: {other:?}"
+                )));
+            }
+        })
+    }
+
+    /// `store` -- discards inkwell's returned pointer (Python `-> None`).
+    pub fn store(&self, ptr: LLValue<'ctx>, value: LLValue<'ctx>) -> LLResult<()> {
+        self.builder
+            .build_store(ptr.as_pointer_value(), value.to_basic_value())
+            .map_err(|e| PecosError::Generic(format!("Failed to build store: {e}")))?;
+        Ok(())
+    }
+
+    /// `zext` int value to a wider int type.
+    pub fn zext(
+        &self,
+        value: LLValue<'ctx>,
+        dest_type: LLType<'ctx>,
+        name: &str,
+    ) -> LLResult<LLValue<'ctx>> {
+        let result = self
+            .builder
+            .build_int_z_extend(value.as_int_value(), dest_type.as_int_type(), name)
+            .map_err(|e| PecosError::Generic(format!("Failed to build zext: {e}")))?;
+        Ok(LLValue::Int(result))
+    }
+
+    /// `trunc` int value to a narrower int type.
+    pub fn trunc(
+        &self,
+        value: LLValue<'ctx>,
+        dest_type: LLType<'ctx>,
+        name: &str,
+    ) -> LLResult<LLValue<'ctx>> {
+        let result = self
+            .builder
+            .build_int_truncate(value.as_int_value(), dest_type.as_int_type(), name)
+            .map_err(|e| PecosError::Generic(format!("Failed to build trunc: {e}")))?;
+        Ok(LLValue::Int(result))
+    }
+
+    /// Unsigned integer comparison (mirrors `icmp_signed` with U-predicates).
+    pub fn icmp_unsigned(
+        &self,
+        op: &str,
+        lhs: LLValue<'ctx>,
+        rhs: LLValue<'ctx>,
+        name: &str,
+    ) -> LLResult<LLValue<'ctx>> {
+        let predicate = match op {
+            "==" => IntPredicate::EQ,
+            "!=" => IntPredicate::NE,
+            "<" => IntPredicate::ULT,
+            ">" => IntPredicate::UGT,
+            "<=" => IntPredicate::ULE,
+            ">=" => IntPredicate::UGE,
+            _ => {
+                return Err(PecosError::Generic(format!(
+                    "Unknown comparison operator: {op}"
+                )));
+            }
+        };
+        let result = self
+            .builder
+            .build_int_compare(predicate, lhs.as_int_value(), rhs.as_int_value(), name)
+            .map_err(|e| PecosError::Generic(format!("Failed to build icmp: {e}")))?;
+        Ok(LLValue::Int(result))
+    }
 }
 
 // ============================================================================
@@ -763,6 +895,20 @@ impl LLConstant {
             }
             _ => Err(PecosError::Generic(
                 "Unsupported array element type for constant".to_string(),
+            )),
+        }
+    }
+
+    /// Zero/`zeroinitializer` constant of `ll_type` (backs
+    /// `Constant(ty, None)`; Array -> `zeroinitializer`, Int -> `iN 0`).
+    pub fn zero(ll_type: LLType<'_>) -> LLResult<LLValue<'_>> {
+        match ll_type {
+            LLType::Int(t) => Ok(LLValue::Int(t.const_zero())),
+            LLType::Float(t) => Ok(LLValue::Float(t.const_zero())),
+            LLType::Pointer(t) => Ok(LLValue::Pointer(t.const_zero())),
+            LLType::Array(t) => Ok(LLValue::Array(t.const_zero())),
+            LLType::Void | LLType::Struct(_) => Err(PecosError::Generic(
+                "Cannot create a zero constant for void/struct type".to_string(),
             )),
         }
     }

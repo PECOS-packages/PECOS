@@ -13,7 +13,7 @@
 
 import math
 
-from pecos.slr import CReg, If, Main, QReg, Repeat
+from pecos.slr import CReg, If, Main, QReg, Repeat, rad
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.nodes import GateKind, GateOp, LiteralExpr
 from pecos.slr.ast.optimizations import RotationMergingPass
@@ -27,8 +27,8 @@ class TestRotationMergingBasic:
         """RZ+RZ on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RZ[0.3](q[0]),
+            qb.RZ(rad(0.5), q[0]),
+            qb.RZ(rad(0.3), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -43,14 +43,14 @@ class TestRotationMergingBasic:
         assert gate.gate == GateKind.RZ
         assert len(gate.params) == 1
         assert isinstance(gate.params[0], LiteralExpr)
-        assert abs(gate.params[0].value - 0.8) < 1e-10
+        assert abs(gate.params[0].value.value.to_radians_signed() - 0.8) < 1e-10
 
     def test_rx_rx_merges(self) -> None:
         """RX+RX on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RX[math.pi / 4](q[0]),
-            qb.RX[math.pi / 4](q[0]),
+            qb.RX(rad(math.pi / 4), q[0]),
+            qb.RX(rad(math.pi / 4), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -63,14 +63,14 @@ class TestRotationMergingBasic:
         assert isinstance(gate, GateOp)
         assert gate.gate == GateKind.RX
         assert isinstance(gate.params[0], LiteralExpr)
-        assert abs(gate.params[0].value - math.pi / 2) < 1e-10
+        assert abs(gate.params[0].value.value.to_radians_signed() - math.pi / 2) < 1e-10
 
     def test_ry_ry_merges(self) -> None:
         """RY+RY on same qubit merges."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RY[0.1](q[0]),
-            qb.RY[0.2](q[0]),
+            qb.RY(rad(0.1), q[0]),
+            qb.RY(rad(0.2), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -83,7 +83,7 @@ class TestRotationMergingBasic:
         assert isinstance(gate, GateOp)
         assert gate.gate == GateKind.RY
         assert isinstance(gate.params[0], LiteralExpr)
-        assert abs(gate.params[0].value - 0.3) < 1e-10
+        assert abs(gate.params[0].value.value.to_radians_signed() - 0.3) < 1e-10
 
 
 class TestRotationMergingNoMerge:
@@ -93,8 +93,8 @@ class TestRotationMergingNoMerge:
         """Different rotation types do not merge."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RX[0.5](q[0]),
-            qb.RZ[0.3](q[0]),
+            qb.RX(rad(0.5), q[0]),
+            qb.RZ(rad(0.3), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -107,8 +107,8 @@ class TestRotationMergingNoMerge:
         """Rotations on different qubits do not merge."""
         prog = Main(
             q := QReg("q", 2),
-            qb.RZ[0.5](q[0]),
-            qb.RZ[0.3](q[1]),
+            qb.RZ(rad(0.5), q[0]),
+            qb.RZ(rad(0.3), q[1]),
         )
 
         ast = slr_to_ast(prog)
@@ -121,9 +121,9 @@ class TestRotationMergingNoMerge:
         """Interleaved rotations do not merge."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
+            qb.RZ(rad(0.5), q[0]),
             qb.H(q[0]),  # Separates the RZ gates
-            qb.RZ[0.3](q[0]),
+            qb.RZ(rad(0.3), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -142,8 +142,8 @@ class TestRotationMergingControlFlow:
             q := QReg("q", 1),
             c := CReg("c", 1),
             If(c[0] == 1).Then(
-                qb.RZ[0.5](q[0]),
-                qb.RZ[0.3](q[0]),
+                qb.RZ(rad(0.5), q[0]),
+                qb.RZ(rad(0.3), q[0]),
             ),
         )
 
@@ -158,8 +158,8 @@ class TestRotationMergingControlFlow:
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=3).block(
-                qb.RX[0.1](q[0]),
-                qb.RX[0.2](q[0]),
+                qb.RX(rad(0.1), q[0]),
+                qb.RX(rad(0.2), q[0]),
             ),
         )
 
@@ -177,9 +177,9 @@ class TestRotationMergingMultiple:
         """Three consecutive rotations merge to one (requires multiple passes)."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.1](q[0]),
-            qb.RZ[0.2](q[0]),
-            qb.RZ[0.3](q[0]),
+            qb.RZ(rad(0.1), q[0]),
+            qb.RZ(rad(0.2), q[0]),
+            qb.RZ(rad(0.3), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -198,4 +198,4 @@ class TestRotationMergingMultiple:
         gate = result2.program.body[0]
         assert isinstance(gate, GateOp)
         assert isinstance(gate.params[0], LiteralExpr)
-        assert abs(gate.params[0].value - 0.6) < 1e-10
+        assert abs(gate.params[0].value.value.to_radians_signed() - 0.6) < 1e-10

@@ -217,11 +217,11 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
                     ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
     elif gate_name in ["R", "RZ"]:
         # Reset
-        ops.extend(qubit.Prep(q[idx]) for idx in qubit_targets)
+        ops.extend(qubit.PZ(q[idx]) for idx in qubit_targets)
     elif gate_name in ["RX", "RY"]:
         # Reset in X or Y basis
         for idx in qubit_targets:
-            ops.append(qubit.Prep(q[idx]))
+            ops.append(qubit.PZ(q[idx]))
             if gate_name == "RX":
                 ops.append(qubit.H(q[idx]))
             else:  # RY

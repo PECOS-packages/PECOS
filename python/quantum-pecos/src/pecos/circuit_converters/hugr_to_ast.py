@@ -276,9 +276,7 @@ class HugrToAstConverter:
             )
 
         # Add classical register declarations for measurement results
-        decl_list.extend(
-            RegisterDecl(name=result_var, size=1, is_result=True) for result_var in self.measurement_results.values()
-        )
+        decl_list.extend(RegisterDecl(name=result_var, size=1) for result_var in self.measurement_results.values())
 
         declarations = tuple(decl_list)
 
@@ -1249,7 +1247,7 @@ def hugr_to_ast(
         ...
         >>> package = simple.compile()
         >>> ast = hugr_to_ast(package.modules[0])
-        >>> len(ast.body)  # Prep + H + Measure
+        >>> len(ast.body)  # PZ + H + Measure
         3
     """
     converter = HugrToAstConverter(hugr)

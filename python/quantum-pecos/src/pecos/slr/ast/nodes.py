@@ -24,7 +24,6 @@ All nodes are immutable frozen dataclasses for safety and hashability.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING
@@ -32,7 +31,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pecos.slr.ast.visitor import AstVisitor, T
+    from pecos.slr.angle import Angle
 
 
 # =============================================================================
@@ -63,21 +62,16 @@ class SourceLocation:
 
 
 @dataclass(frozen=True, kw_only=True)
-class AstNode(ABC):
+class AstNode:
     """Base class for all AST nodes.
 
     All AST nodes are immutable frozen dataclasses that support:
-    - Visitor pattern via accept()
+    - Visitor traversal via `BaseVisitor` (centralized dispatch)
     - Child traversal via children()
     - Optional source location tracking
     """
 
     location: SourceLocation | None = field(default=None, compare=False, repr=False)
-
-    @abstractmethod
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        """Accept a visitor for traversal."""
-        ...
 
     def children(self) -> Sequence[AstNode]:
         """Return child nodes for traversal. Override in subclasses."""
@@ -101,8 +95,6 @@ class GateKind(Enum):
     H = auto()
 
     # Phase gates
-    S = auto()
-    Sdg = auto()
     T = auto()
     Tdg = auto()
 
@@ -214,6 +206,21 @@ class UnaryOp(Enum):
     NEG = auto()
 
 
+class ResourceEffect(Enum):
+    """Effect declared by a `BlockDecl` input on the outer scope's binding."""
+
+    LIVE_PRESERVED = auto()  # caller binding survives the call unchanged
+    CONSUMED = auto()  # caller binding is invalidated by the call
+    PRODUCED = auto()  # callee writes; caller's binding is rebound from return
+    DROPPED = auto()  # callee discards; caller binding is invalidated
+    # Reset-reused scratch ancilla: the block resets the input at entry and
+    # measures it at exit, depending on no incoming state. The caller's slot is
+    # a flatten-path naming vehicle only; in Guppy the block allocates the qubit
+    # internally so the same outer slot can feed a subsequent BlockCall (the
+    # `consumed` model would kill it).
+    SCRATCH = auto()
+
+
 # =============================================================================
 # References
 # =============================================================================
@@ -230,9 +237,6 @@ class SlotRef(AstNode):
     allocator: str
     index: int
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_slot_ref(self)
-
     def __str__(self) -> str:
         return f"{self.allocator}[{self.index}]"
 
@@ -244,9 +248,6 @@ class BitRef(AstNode):
     register: str
     index: int
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_bit_ref(self)
-
     def __str__(self) -> str:
         return f"{self.register}[{self.index}]"
 
@@ -257,18 +258,15 @@ class BitRef(AstNode):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Expression(AstNode, ABC):
+class Expression(AstNode):
     """Base class for all expressions."""
 
 
 @dataclass(frozen=True, kw_only=True)
 class LiteralExpr(Expression):
-    """Literal value (int, float, bool)."""
+    """Literal value (int, float, bool, or a typed rotation `Angle`)."""
 
-    value: int | float | bool
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_literal(self)
+    value: int | float | bool | Angle
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -277,18 +275,12 @@ class VarExpr(Expression):
 
     name: str
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_var(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class BitExpr(Expression):
     """Bit reference as expression (for conditions)."""
 
     ref: BitRef
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_bit_expr(self)
 
     def children(self) -> Sequence[AstNode]:
         return (self.ref,)
@@ -302,9 +294,6 @@ class BinaryExpr(Expression):
     left: Expression
     right: Expression
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_binary(self)
-
     def children(self) -> Sequence[AstNode]:
         return (self.left, self.right)
 
@@ -316,9 +305,6 @@ class UnaryExpr(Expression):
     op: UnaryOp
     operand: Expression
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_unary(self)
-
     def children(self) -> Sequence[AstNode]:
         return (self.operand,)
 
@@ -329,7 +315,7 @@ class UnaryExpr(Expression):
 
 
 @dataclass(frozen=True, kw_only=True)
-class TypeExpr(AstNode, ABC):
+class TypeExpr(AstNode):
     """Base class for type expressions."""
 
 
@@ -337,16 +323,10 @@ class TypeExpr(AstNode, ABC):
 class QubitTypeExpr(TypeExpr):
     """Single qubit type."""
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_qubit_type(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class BitTypeExpr(TypeExpr):
     """Single classical bit type."""
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_bit_type(self)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -355,9 +335,6 @@ class ArrayTypeExpr(TypeExpr):
 
     element: TypeExpr
     size: int
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_array_type(self)
 
     def children(self) -> Sequence[AstNode]:
         return (self.element,)
@@ -369,9 +346,6 @@ class AllocatorTypeExpr(TypeExpr):
 
     capacity: int
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_allocator_type(self)
-
 
 # =============================================================================
 # Declarations
@@ -379,7 +353,7 @@ class AllocatorTypeExpr(TypeExpr):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Declaration(AstNode, ABC):
+class Declaration(AstNode):
     """Base class for all declarations."""
 
 
@@ -395,9 +369,6 @@ class AllocatorDecl(Declaration):
     capacity: int
     parent: str | None = None  # Name of parent allocator
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_allocator_decl(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class RegisterDecl(Declaration):
@@ -405,10 +376,6 @@ class RegisterDecl(Declaration):
 
     name: str
     size: int
-    is_result: bool = True
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_register_decl(self)
 
 
 # =============================================================================
@@ -417,7 +384,7 @@ class RegisterDecl(Declaration):
 
 
 @dataclass(frozen=True, kw_only=True)
-class Statement(AstNode, ABC):
+class Statement(AstNode):
     """Base class for all statements."""
 
 
@@ -428,9 +395,6 @@ class GateOp(Statement):
     gate: GateKind
     targets: tuple[SlotRef, ...]
     params: tuple[Expression, ...] = ()
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_gate(self)
 
     def children(self) -> Sequence[AstNode]:
         return (*self.targets, *self.params)
@@ -446,9 +410,14 @@ class PrepareOp(Statement):
 
     allocator: str
     slots: tuple[int, ...] | None = None  # None means prepare_all
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_prepare(self)
+    # Canonical prep basis / target eigenstate, one of
+    # {PZ,PNZ,PX,PNX,PY,PNY} (|0>,|1>,|+>,|->,|+i>,|-i>). Set by
+    # `_convert_prep` from the SLR gate symbol (PZ default). Carried
+    # on the AST so codegens lower the correct reset+Clifford tail;
+    # MUST be preserved through block substitution (else a non-PZ
+    # prep inside a BlockCall body silently reverts to PZ -- a
+    # soundness-critical case).
+    basis: str = "PZ"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -461,9 +430,6 @@ class MeasureOp(Statement):
     targets: tuple[SlotRef, ...]
     results: tuple[BitRef, ...] = ()
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_measure(self)
-
     def children(self) -> Sequence[AstNode]:
         return (*self.targets, *self.results)
 
@@ -474,9 +440,6 @@ class AssignOp(Statement):
 
     target: BitRef | str  # Variable name or bit reference
     value: Expression
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_assign(self)
 
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = []
@@ -492,9 +455,6 @@ class BarrierOp(Statement):
 
     allocators: tuple[str, ...] = ()
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_barrier(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class CommentOp(Statement):
@@ -502,21 +462,50 @@ class CommentOp(Statement):
 
     text: str
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_comment(self)
-
 
 @dataclass(frozen=True, kw_only=True)
 class ReturnOp(Statement):
     """Return statement."""
 
     values: tuple[Expression | str, ...] = ()  # Can be variable names
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_return(self)
+    # Per-value provenance, parallel to `values`: "quantum" (a QReg --
+    # no classical record), "classical" (a CReg -- must be recorded),
+    # or "expr". Set by `_convert_return` from the SLR object type;
+    # `()` means unknown (e.g. a directly-constructed ReturnOp), in
+    # which case a backend treats a bare-name value as classical
+    # (the fail-loud-safe default). A bare `values` string cannot be
+    # disambiguated CReg-vs-QReg by name alone (a returned inline
+    # CReg can collide with a declared QReg name -- the
+    # name-collision bug), so provenance is carried here, not guessed.
+    value_kinds: tuple[str, ...] = ()
 
     def children(self) -> Sequence[AstNode]:
         return tuple(v for v in self.values if isinstance(v, AstNode))
+
+
+@dataclass(frozen=True, kw_only=True)
+class PrintOp(Statement):
+    """Emit an intermediate streamed value at the call site.
+
+    Lowers to Guppy's `result(name, value)`. Scope-orthogonal side-effect:
+    does not allocate, does not modify the result-register set used for
+    return-shape computation.
+
+    `value` is either a `BitRef` (single bit) or a register name string
+    (whole-CReg emission). `tag` is the resolved tag (the SLR-side
+    conversion derives the default from the value's name when the user
+    did not pass `tag=` explicitly). `namespace` is the tag prefix; the
+    full emitted Guppy tag is `f"{namespace}.{tag}"`.
+    """
+
+    value: BitRef | str
+    tag: str
+    namespace: str = "result"
+
+    def children(self) -> Sequence[AstNode]:
+        if isinstance(self.value, AstNode):
+            return (self.value,)
+        return ()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -533,9 +522,11 @@ class PermuteOp(Statement):
     sources: tuple[str, ...]  # Initial register/allocator names
     targets: tuple[str, ...]  # Final register/allocator names
     add_comment: bool = True  # Whether to add a comment in generated code
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_permute(self)
+    # Whole-register swap `Permute(a, b)` -> comment `; Permutation:
+    # a <-> b`; else per-element `; Permutation: a[0] -> b[1], ...`
+    # (the comment is rendered at codegen from the post-substitution
+    # sources/targets, mirroring the legacy gen_qir format).
+    whole_register: bool = False
 
 
 # =============================================================================
@@ -551,9 +542,6 @@ class IfStmt(Statement):
     then_body: tuple[Statement, ...]
     else_body: tuple[Statement, ...] = ()
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_if(self)
-
     def children(self) -> Sequence[AstNode]:
         return (self.condition, *self.then_body, *self.else_body)
 
@@ -564,9 +552,6 @@ class WhileStmt(Statement):
 
     condition: Expression
     body: tuple[Statement, ...]
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_while(self)
 
     def children(self) -> Sequence[AstNode]:
         return (self.condition, *self.body)
@@ -581,9 +566,6 @@ class ForStmt(Statement):
     stop: Expression
     step: Expression | None = None
     body: tuple[Statement, ...] = ()
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_for(self)
 
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = [self.start, self.stop]
@@ -600,9 +582,6 @@ class RepeatStmt(Statement):
     count: int
     body: tuple[Statement, ...]
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_repeat(self)
-
     def children(self) -> Sequence[AstNode]:
         return self.body
 
@@ -613,11 +592,124 @@ class ParallelBlock(Statement):
 
     body: tuple[Statement, ...]
 
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_parallel(self)
-
     def children(self) -> Sequence[AstNode]:
         return self.body
+
+
+# =============================================================================
+# Reusable block declarations
+# =============================================================================
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlockInput(AstNode):
+    """One declared input parameter to a `BlockDecl`."""
+
+    name: str
+    effect: ResourceEffect
+    type_expr: TypeExpr
+
+    def children(self) -> Sequence[AstNode]:
+        return (self.type_expr,)
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlockDecl(AstNode):
+    """Reusable Block declaration that lowers to a top-level Guppy function.
+
+    Non-Guppy codegens inline `body` at every `BlockCall` site.
+    """
+
+    name: str
+    inputs: tuple[BlockInput, ...]
+    body: tuple[Statement, ...]
+    return_op: ReturnOp | None = None
+
+    def children(self) -> Sequence[AstNode]:
+        nodes: list[AstNode] = list(self.inputs)
+        nodes.extend(self.body)
+        if self.return_op is not None:
+            nodes.append(self.return_op)
+        return nodes
+
+
+# ---- BlockCall argument types (typed sum type) ----
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlockArg(AstNode):
+    """Base class for `BlockCall` argument bindings.
+
+    Each BlockInput on the callee is bound to exactly one BlockArg at the
+    caller, describing what outer-scope state the input refers to.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class AllocatorArg(BlockArg):
+    """Whole-allocator binding: every slot of an outer-scope allocator."""
+
+    name: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class SingleQubitArg(BlockArg):
+    """Single-qubit slot binding."""
+
+    slot: SlotRef
+
+    def children(self) -> Sequence[AstNode]:
+        return (self.slot,)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SingleBitArg(BlockArg):
+    """Single classical-bit binding (write-back via array[bool, 1] proxy in emitter)."""
+
+    bit: BitRef
+
+    def children(self) -> Sequence[AstNode]:
+        return (self.bit,)
+
+
+@dataclass(frozen=True, kw_only=True)
+class QubitBundleArg(BlockArg):
+    """Non-contiguous bundle of qubit slots packed into a single array[qubit, N]."""
+
+    slots: tuple[SlotRef, ...]
+
+    def children(self) -> Sequence[AstNode]:
+        return self.slots
+
+
+@dataclass(frozen=True, kw_only=True)
+class BitBundleArg(BlockArg):
+    """Non-contiguous bundle of classical bits packed into a single array[bool, N]."""
+
+    bits: tuple[BitRef, ...]
+
+    def children(self) -> Sequence[AstNode]:
+        return self.bits
+
+
+@dataclass(frozen=True, kw_only=True)
+class BlockCall(Statement):
+    """Invoke a `BlockDecl` from the outer scope.
+
+    `arg_bindings` lists outer-scope bindings (typed `BlockArg`) in the same
+    order as the callee's declared inputs (one per input).
+    `out_bindings` lists outer-scope bindings that receive the callee's
+    outputs (`live_preserved`/`produced` inputs + explicit `Return` values,
+    in declaration order then return order). Empty for callees that return
+    nothing.
+    """
+
+    callee: str
+    arg_bindings: tuple[BlockArg, ...]
+    out_bindings: tuple[BlockArg, ...] = ()
+
+    def children(self) -> Sequence[AstNode]:
+        return (*self.arg_bindings, *self.out_bindings)
 
 
 # =============================================================================
@@ -641,18 +733,24 @@ class Program(AstNode):
     body: tuple[Statement, ...] = ()
     returns: tuple[TypeExpr, ...] = ()
     allocator: AllocatorDecl | None = None  # Base allocator
-
-    def accept(self, visitor: AstVisitor[T]) -> T:
-        return visitor.visit_program(self)
+    block_decls: tuple[BlockDecl, ...] = ()
 
     def children(self) -> Sequence[AstNode]:
         nodes: list[AstNode] = []
         if self.allocator:
             nodes.append(self.allocator)
         nodes.extend(self.declarations)
+        nodes.extend(self.block_decls)
         nodes.extend(self.body)
         nodes.extend(self.returns)
         return nodes
+
+    def get_block_decl(self, name: str) -> BlockDecl | None:
+        """Find a BlockDecl by name."""
+        for decl in self.block_decls:
+            if decl.name == name:
+                return decl
+        return None
 
     def get_allocator(self, name: str) -> AllocatorDecl | None:
         """Find an allocator declaration by name."""

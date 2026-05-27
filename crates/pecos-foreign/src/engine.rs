@@ -153,7 +153,13 @@ pub unsafe extern "C" fn pecos_engine_process(
     output_ptr: *mut *mut u8,
     output_len: *mut usize,
 ) -> i32 {
+    if engine.is_null() {
+        return -1;
+    }
+    // SAFETY: null-checked above; per `# Safety` doc, no other reference exists
+    // for this call (single-threaded FFI contract), so `&mut` aliasing is unique.
     let eng = unsafe { &mut *engine };
+    // SAFETY: per `# Safety` doc, `input_ptr` is valid for `input_len` bytes.
     let input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
     let input = ByteMessage::new(input_bytes);
 
@@ -185,6 +191,10 @@ pub unsafe extern "C" fn pecos_engine_process(
 /// `engine` must be a valid pointer from `pecos_engine_create`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_engine_reset(engine: *mut PecosEngine) -> i32 {
+    if engine.is_null() {
+        return -1;
+    }
+    // SAFETY: null-checked above; per `# Safety` doc, exclusively owned for this call.
     let eng = unsafe { &mut *engine };
     match eng.inner.reset() {
         Ok(()) => 0,
@@ -486,5 +496,32 @@ pub unsafe extern "C" fn pecos_free_outcomes(ptr: *mut u32, len: usize) {
         unsafe {
             let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_returns_minus_one_on_null_engine() {
+        let mut out_ptr: *mut u8 = std::ptr::null_mut();
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            pecos_engine_process(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                0,
+                &raw mut out_ptr,
+                &raw mut out_len,
+            )
+        };
+        assert_eq!(rc, -1);
+    }
+
+    #[test]
+    fn reset_returns_minus_one_on_null_engine() {
+        let rc = unsafe { pecos_engine_reset(std::ptr::null_mut()) };
+        assert_eq!(rc, -1);
     }
 }

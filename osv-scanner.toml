@@ -1,0 +1,67 @@
+# OSV-Scanner configuration for the PECOS workspace.
+#
+# Ignore list policy:
+# - Only include entries we cannot fix from this repo (transitive, blocked on
+#   an upstream release).
+# - Each entry must record (a) the offending crate@version, (b) the chain that
+#   pulls it in, and (c) the upstream that owns the fix.
+# - Real CVEs on first-party deps are NEVER ignored here -- pin and fix them
+#   in the manifest instead (see docs/requirements.txt for the idna pin).
+# - Periodically review this list when bumping hugr/tket, fusion-blossom, or
+#   mwpf and drop entries that the new upstream version eliminates.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0057"
+# fxhash@0.2.1 -- unmaintained.
+# Chain: hugr-passes -> hugr -> tket -> pecos-hugr.
+# Upstream owner: https://github.com/CQCL/hugr (awaiting rustc-hash/ahash swap).
+reason = "Transitive via hugr/tket; unmaintained-crate warning, no exploit path in PECOS."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+# paste@1.0.15 -- unmaintained proc-macro.
+# Chain: hugr-passes/ascent and mwpf both pull it in.
+# Upstream owners: https://github.com/CQCL/hugr and https://github.com/yuewuo/mwpf.
+reason = "Transitive via hugr/tket and mwpf; unmaintained-crate warning, no runtime impact (proc-macro)."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0388"
+# derivative@2.2.0 -- unmaintained proc-macro.
+# Chain: fusion-blossom and mwpf both pull it in.
+# Upstream owners: https://github.com/yuewuo/fusion-blossom and https://github.com/yuewuo/mwpf.
+reason = "Transitive via fusion-blossom and mwpf; unmaintained-crate warning, no runtime impact (proc-macro)."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0384"
+# instant@0.1.13 -- unmaintained; replaced by web-time.
+# Chain: hugr-passes/ascent -> ... -> pecos-hugr.
+# Upstream owner: https://github.com/CQCL/hugr (ascent is a transitive build-graph helper).
+reason = "Transitive via hugr-passes/ascent; unmaintained-crate warning, no Wasm target."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0375"
+# atty@0.2.14 -- unmaintained (clap 4.x dropped it).
+# Chain: mwpf -> slp -> structopt 0.3 -> clap 2.34.
+# Upstream owner: https://github.com/yuewuo/mwpf (awaiting clap 4 / pico-args migration in slp).
+reason = "Transitive via mwpf -> slp (clap2-era CLI helper); CLI tty-detect path not exercised by PECOS."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+# proc-macro-error@1.0.4 -- unmaintained; proc-macro-error2 is the maintained fork.
+# Chain: mwpf -> slp -> structopt-derive (compile-time only).
+# Upstream owner: https://github.com/yuewuo/mwpf.
+reason = "Transitive via mwpf -> slp -> structopt-derive; compile-time proc-macro only, no runtime impact."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2021-0145"
+# atty@0.2.14 -- potential unaligned read on Windows custom allocators.
+# Chain: mwpf -> slp -> structopt 0.3 -> clap 2.34.
+# Upstream owner: https://github.com/yuewuo/mwpf.
+reason = "Transitive via mwpf -> slp -> clap2; PECOS does not invoke slp's CLI tty-detection at runtime."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2021-0139"
+# ansi_term@0.12.1 -- unmaintained.
+# Chain: mwpf -> slp -> structopt 0.3 -> clap 2.34.
+# Upstream owner: https://github.com/yuewuo/mwpf.
+reason = "Transitive via mwpf -> slp -> clap2; unmaintained-crate warning, terminal-color path unused."

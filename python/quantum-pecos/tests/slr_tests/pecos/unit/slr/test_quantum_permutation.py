@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from pecos.slr import CReg, Main, Permute, QReg, SlrConverter
+from pecos.slr import CReg, Main, Permute, QReg, SlrConverter, rad
 from pecos.slr.qeclib import qubit
 
 # QASM Tests
@@ -55,61 +55,50 @@ def test_quantum_permutation_qasm(quantum_permutation_program: tuple) -> None:
 
 
 # QIR Tests
+#
+# A Permute is realized as a static logical relabel (a
+# permutation_map consulted at every qubit/classical-bit lowering,
+# mirroring the Guppy linearity tracker's `.permute()` -- QIR/Selene
+# have no runtime permute intrinsic). These tests pin the realized
+# post-permute targeting from the actual emitted QIR (qubit indices
+# are deterministic in register-declaration order). The legacy
+# `; Permutation:` comment is preserved. The bespoke
+# @set_creg_bit/@mz_to_creg_bit helpers the old tests pinned were
+# removed by the static CReg model (measurement is the standard 2-arg
+# `@__quantum__qis__mz__body(%Qubit*, %Result*)`).
+
+
+def _q(name: str, qir: str) -> list[int]:
+    """All qubit indices a single-qubit `name` gate is applied to."""
+    return [
+        int(m) for m in re.findall(rf"call void @__quantum__qis__{name}__body\(%Qubit\* inttoptr \(i64 (\d+) ", qir)
+    ]
 
 
 @pytest.mark.optional_dependency
 def test_quantum_permutation_qir(quantum_permutation_program: tuple) -> None:
-    """Test permutation with quantum gates in QIR generation."""
+    """Element-wise QReg Permute is realized (a[0] <-> b[0])."""
     prog, _, _ = quantum_permutation_program
 
-    # Generate QIR
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for analysis
-    print("\nQIR Output for quantum_permutation_qir:")
-    print(qir)
-
-    # Verify that the QIR contains a comment about the permutation
-    assert "Permutation: a[0] -> b[0], b[0] -> a[0]" in qir
-
-    # Extract the qubit indices used in the H and CNOT operations
-    h_calls = re.findall(
-        r"call void @__quantum__qis__h__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    cnot_calls = re.findall(
-        r"call void @__quantum__qis__cnot__body\("
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
+    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir
+    # Qubits: a[0]=0, a[1]=1, b[0]=2, b[1]=3. After the swap, H(a[0])
+    # targets b[0]'s qubit (2) and CX(a[0], a[1]) -> cnot(2, 1).
+    assert _q("h", qir) == [2], qir
+    cnot = re.findall(
+        r"call void @__quantum__qis__cnot__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
         r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
         qir,
     )
+    assert cnot == [("2", "1")], qir
 
-    print(f"H calls found: {h_calls}")
-    print(f"CNOT calls found: {cnot_calls}")
-
-    # We should have at least one H call and one CNOT call
-    assert len(h_calls) >= 1, "No H gate call found"
-    assert len(cnot_calls) >= 1, "No CNOT gate call found"
-
-    # Get the qubit indices
-    h_qubit = int(h_calls[0])
-    cnot_control, _cnot_target = map(int, cnot_calls[0])
-
-    # Verify that the H and CNOT operations are applied to the correct qubits after permutation
-    # The exact indices will depend on how qubits are allocated in the QIR generator
-    # We can't assert the exact indices without knowing the allocation strategy
-    # But we can verify that the CNOT control qubit is the same as the H qubit
-    assert h_qubit == cnot_control, f"H applied to qubit {h_qubit}, but CNOT control is qubit {cnot_control}"
-
-    # Verify that running QIR generation twice produces consistent results
-    qir2 = SlrConverter(prog).qir()
-    assert qir == qir2, "QIR generation is not deterministic"
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
 @pytest.mark.optional_dependency
 def test_permutation_with_bell_circuit_qir() -> None:
-    """Test permutation functionality with a Bell circuit in QIR generation."""
-    # Create a program with permutations and a Bell circuit
+    """Element-wise QReg + CReg Permute is realized in a Bell circuit."""
     a = QReg("a", 2)
     b = QReg("b", 2)
     m = CReg("m", 2)
@@ -120,79 +109,40 @@ def test_permutation_with_bell_circuit_qir() -> None:
         b,
         m,
         n,
-        # Permute quantum registers
-        Permute(
-            [a[0], b[1]],
-            [b[1], a[0]],
-        ),
-        # Permute classical registers
-        Permute(
-            [m[0], n[0]],
-            [n[0], m[0]],
-        ),
-        # Apply H gate to a[0] - should be applied to b[1] after permutation
+        Permute([a[0], b[1]], [b[1], a[0]]),
+        Permute([m[0], n[0]], [n[0], m[0]]),
         qubit.H(a[0]),
-        # Apply CX gate from a[0] to a[1] - should be from b[1] to a[1] after permutation
         qubit.CX(a[0], a[1]),
-        # Measure individual qubits to individual bits
         qubit.Measure(a[0]) > m[0],
         qubit.Measure(a[1]) > m[1],
     )
 
-    # Generate QIR
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for analysis
-    print("\nQIR Output for bell_circuit_qir:")
-    print(qir)
-
-    # Verify that the QIR contains comments about the permutations
-    assert "Permutation: a[0] -> b[1], b[1] -> a[0]" in qir
-    assert "Permutation: m[0] -> n[0], n[0] -> m[0]" in qir
-
-    # Extract the quantum operations
-    h_calls = re.findall(
-        r"call void @__quantum__qis__h__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
+    assert "; Permutation: a[0] -> b[1], b[1] -> a[0]" in qir
+    assert "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir
+    # Qubits: a[0]=0, a[1]=1, b[0]=2, b[1]=3. a[0] now -> b[1] (q3):
+    # H(a[0]) -> q3, CX(a[0], a[1]) -> cnot(3, 1).
+    assert _q("h", qir) == [3], qir
+    # Standard 2-arg measurement (the removed @mz_to_creg_bit is
+    # gone): Measure(a[0]) reads q3, Measure(a[1]) reads q1.
+    mz = re.findall(
+        r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), %Result\*",
         qir,
     )
-    cx_calls = re.findall(
-        r"call void @__quantum__qis__cnot__body\("
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
+    assert mz == ["3", "1"], qir
 
-    print(f"H calls found: {h_calls}")
-    print(f"CX calls found: {cx_calls}")
-
-    # We should have at least one H call and one CX call
-    assert len(h_calls) >= 1, "No H gate call found"
-    assert len(cx_calls) >= 1, "No CX gate call found"
-
-    # Extract the measurement operations
-    mz_calls = re.findall(
-        r"call %Result\* @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    mz_to_creg_calls = re.findall(
-        r"call void @mz_to_creg_bit\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), i1\* %(\w+), i64 (\d+)\)",
-        qir,
-    )
-
-    print(f"MZ calls found: {mz_calls}")
-    print(f"MZ to creg calls found: {mz_to_creg_calls}")
-
-    # We should have at least two measurement calls (one for each qubit)
-    assert len(mz_calls) + len(mz_to_creg_calls) >= 2, (
-        f"Expected at least 2 measurement calls, found {len(mz_calls)} mz calls "
-        f"and {len(mz_to_creg_calls)} mz_to_creg calls"
-    )
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
 @pytest.mark.optional_dependency
 def test_comprehensive_qir_verification() -> None:
-    """Test comprehensive verification of QIR generation with permutations."""
-    # Create a program with a variety of operations to test permutation effects
+    """Two element-wise QReg Permutes are realized across many gates.
+
+    Previously this silently passed on a miscompile (the
+    `; Permutation` comment was emitted but the qubit remap was a
+    no-op). The relabel is now real; pin the corrected targeting.
+    """
     a = QReg("a", 2)
     b = QReg("b", 2)
     c = QReg("c", 2)
@@ -205,249 +155,187 @@ def test_comprehensive_qir_verification() -> None:
         c,
         m,
         n,
-        # Apply some initial gates to track qubit allocation
-        qubit.H(a[0]),  # Track as "original a[0]"
-        qubit.X(a[1]),  # Track as "original a[1]"
-        qubit.Y(b[0]),  # Track as "original b[0]"
-        qubit.Z(b[1]),  # Track as "original b[1]"
-        # First permutation: swap a[0] and b[0]
-        Permute(
-            [a[0], b[0]],
-            [b[0], a[0]],
-        ),
-        # Apply gates after first permutation
-        qubit.H(a[0]),  # Should apply to "original b[0]"
-        qubit.X(b[0]),  # Should apply to "original a[0]"
-        # Second permutation: swap a[1] and b[1]
-        Permute(
-            [a[1], b[1]],
-            [b[1], a[1]],
-        ),
-        # Apply gates after second permutation
-        qubit.Y(a[1]),  # Should apply to "original b[1]"
-        qubit.Z(b[1]),  # Should apply to "original a[1]"
-        # Apply some two-qubit gates to test cross-register operations
-        qubit.CX(a[0], b[1]),  # Should be CX from "original b[0]" to "original a[1]"
-        # Measure qubits to classical bits
-        qubit.Measure(a[0]) > m[0],  # Should measure "original b[0]" to m[0]
-        qubit.Measure(b[1]) > n[0],  # Should measure "original a[1]" to n[0]
+        qubit.H(a[0]),  # q0
+        qubit.X(a[1]),  # q1
+        qubit.Y(b[0]),  # q2
+        qubit.Z(b[1]),  # q3
+        Permute([a[0], b[0]], [b[0], a[0]]),
+        qubit.H(a[0]),  # -> b[0] = q2
+        qubit.X(b[0]),  # -> a[0] = q0
+        Permute([a[1], b[1]], [b[1], a[1]]),
+        qubit.Y(a[1]),  # -> b[1] = q3
+        qubit.Z(b[1]),  # -> a[1] = q1
+        qubit.CX(a[0], b[1]),  # a[0]->b[0]=q2, b[1]->a[1]=q1
+        qubit.Measure(a[0]) > m[0],  # a[0]->b[0]=q2
+        qubit.Measure(b[1]) > n[0],  # b[1]->a[1]=q1
     )
 
-    # Generate QIR
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for analysis
-    print("\nQIR Output for comprehensive_qir_verification:")
-    print(qir)
-
-    # Extract all gate operations to track qubit allocation
-    h_calls = re.findall(
-        r"call void @__quantum__qis__h__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    x_calls = re.findall(
-        r"call void @__quantum__qis__x__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    y_calls = re.findall(
-        r"call void @__quantum__qis__y__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    z_calls = re.findall(
-        r"call void @__quantum__qis__z__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    cx_calls = re.findall(
-        r"call void @__quantum__qis__cnot__body\("
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
+    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir
+    assert "; Permutation: a[1] -> b[1], b[1] -> a[1]" in qir
+    assert _q("h", qir) == [0, 2], qir  # initial a[0]=0, then ->b[0]=2
+    assert _q("x", qir) == [1, 0], qir  # initial a[1]=1, then ->a[0]=0
+    assert _q("y", qir) == [2, 3], qir  # initial b[0]=2, then ->b[1]=3
+    assert _q("z", qir) == [3, 1], qir  # initial b[1]=3, then ->a[1]=1
+    cnot = re.findall(
+        r"call void @__quantum__qis__cnot__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
         r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
         qir,
     )
-    mz_to_creg_calls = re.findall(
-        r"call void @mz_to_creg_bit\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), i1\* %(\w+), i64 (\d+)\)",
+    assert cnot == [("2", "1")], qir
+    mz = re.findall(
+        r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), %Result\*",
         qir,
     )
+    assert mz == ["2", "1"], qir
 
-    print(f"H calls: {h_calls}")
-    print(f"X calls: {x_calls}")
-    print(f"Y calls: {y_calls}")
-    print(f"Z calls: {z_calls}")
-    print(f"CX calls: {cx_calls}")
-    print(f"MZ to creg calls: {mz_to_creg_calls}")
-
-    # Based on the initial gates, we can infer the qubit allocation:
-    # The first H call should be for "original a[0]"
-    # The first X call should be for "original a[1]"
-    # The first Y call should be for "original b[0]"
-    # The first Z call should be for "original b[1]"
-    if len(h_calls) >= 1 and len(x_calls) >= 1 and len(y_calls) >= 1 and len(z_calls) >= 1:
-        original_a0 = int(h_calls[0])
-        original_a1 = int(x_calls[0])
-        original_b0 = int(y_calls[0])
-        original_b1 = int(z_calls[0])
-
-        print("Inferred qubit allocation:")
-        print(f"  original a[0] -> physical qubit {original_a0}")
-        print(f"  original a[1] -> physical qubit {original_a1}")
-        print(f"  original b[0] -> physical qubit {original_b0}")
-        print(f"  original b[1] -> physical qubit {original_b1}")
-
-        # Now we can verify that the gates after permutations are applied to the correct qubits
-        # The second H call should be for "original b[0]"
-        # The second X call should be for "original a[0]"
-        if len(h_calls) >= 2 and len(x_calls) >= 2:
-            assert int(h_calls[1]) == original_b0, (
-                f"Second H gate should be applied to original b[0] "
-                f"(physical qubit {original_b0}), but was applied to physical qubit {h_calls[1]}"
-            )
-            assert int(x_calls[1]) == original_a0, (
-                f"Second X gate should be applied to original a[0] "
-                f"(physical qubit {original_a0}), but was applied to physical qubit {x_calls[1]}"
-            )
-
-        # The second Y call should be for "original b[1]"
-        # The second Z call should be for "original a[1]"
-        if len(y_calls) >= 2 and len(z_calls) >= 2:
-            assert int(y_calls[1]) == original_b1, (
-                f"Second Y gate should be applied to original b[1] "
-                f"(physical qubit {original_b1}), but was applied to physical qubit {y_calls[1]}"
-            )
-            assert int(z_calls[1]) == original_a1, (
-                f"Second Z gate should be applied to original a[1] "
-                f"(physical qubit {original_a1}), but was applied to physical qubit {z_calls[1]}"
-            )
-
-        # The CX gate should be from "original b[0]" to "original a[1]"
-        if len(cx_calls) >= 1:
-            cx_control, cx_target = map(int, cx_calls[0])
-            assert (
-                cx_control == original_b0
-            ), f"CX control should be original b[0] (physical qubit {original_b0}), but was physical qubit {cx_control}"
-            assert (
-                cx_target == original_a1
-            ), f"CX target should be original a[1] (physical qubit {original_a1}), but was physical qubit {cx_target}"
-
-        # The measurements should be from "original b[0]" to m[0] and from "original a[1]" to n[0]
-        if len(mz_to_creg_calls) >= 2:
-            mz1_qubit, mz1_reg, mz1_idx = mz_to_creg_calls[0]
-            mz2_qubit, mz2_reg, mz2_idx = mz_to_creg_calls[1]
-
-            # Check if either measurement matches our expectations
-            b0_to_m0 = (int(mz1_qubit) == original_b0 and mz1_reg == "m" and int(mz1_idx) == 0) or (
-                int(mz2_qubit) == original_b0 and mz2_reg == "m" and int(mz2_idx) == 0
-            )
-            a1_to_n0 = (int(mz1_qubit) == original_a1 and mz1_reg == "n" and int(mz1_idx) == 0) or (
-                int(mz2_qubit) == original_a1 and mz2_reg == "n" and int(mz2_idx) == 0
-            )
-
-            assert b0_to_m0, (
-                f"Expected measurement from original b[0] (physical qubit {original_b0}) to m[0], "
-                f"but found measurements: {mz_to_creg_calls}"
-            )
-            assert a1_to_n0, (
-                f"Expected measurement from original a[1] (physical qubit {original_a1}) to n[0], "
-                f"but found measurements: {mz_to_creg_calls}"
-            )
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
 @pytest.mark.optional_dependency
 def test_rotation_gates_with_permutation() -> None:
-    """Test that permutations work correctly with rotation gates in QIR generation."""
-    # Create a program with rotation gates and permutations
+    """Element-wise QReg Permute is realized across rotation gates."""
     a = QReg("a", 2)
     b = QReg("b", 2)
 
     prog = Main(
         a,
         b,
-        # Apply initial gates to track qubit allocation
-        qubit.RX[0.1](a[0]),  # Track as "original a[0]"
-        qubit.RY[0.2](a[1]),  # Track as "original a[1]"
-        qubit.RZ[0.3](b[0]),  # Track as "original b[0]"
-        qubit.SZ(b[1]),  # Track as "original b[1]"
-        # Apply permutation
-        Permute(
-            [a[0], b[0]],
-            [b[0], a[0]],
-        ),
-        # Apply gates after permutation
-        qubit.RX[0.4](a[0]),  # Should apply to "original b[0]"
-        qubit.RY[0.5](b[0]),  # Should apply to "original a[0]"
-        qubit.T(a[1]),  # Should apply to "original a[1]"
-        qubit.Tdg(b[1]),  # Should apply to "original b[1]"
+        qubit.RX(rad(0.1), a[0]),  # q0
+        qubit.RY(rad(0.2), a[1]),  # q1
+        qubit.RZ(rad(0.3), b[0]),  # q2
+        qubit.SZ(b[1]),  # q3
+        Permute([a[0], b[0]], [b[0], a[0]]),
+        qubit.RX(rad(0.4), a[0]),  # -> b[0] = q2
+        qubit.RY(rad(0.5), b[0]),  # -> a[0] = q0
+        qubit.T(a[1]),  # unpermuted = q1
+        qubit.Tdg(b[1]),  # unpermuted = q3
     )
 
-    # Generate QIR
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for analysis
-    print("\nQIR Output for rotation_gates_with_permutation:")
-    print(qir)
+    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir
+    rx = re.findall(r"call void @__quantum__qis__rx__body\(double [^,]+, %Qubit\* inttoptr \(i64 (\d+) ", qir)
+    ry = re.findall(r"call void @__quantum__qis__ry__body\(double [^,]+, %Qubit\* inttoptr \(i64 (\d+) ", qir)
+    assert rx == ["0", "2"], qir  # initial a[0]=0, then ->b[0]=2
+    assert ry == ["1", "0"], qir  # initial a[1]=1, then ->a[0]=0
+    assert _q("t", qir) == [1], qir  # T(a[1]) unpermuted
+    tdg = re.findall(r"call void @__quantum__qis__t__adj\(%Qubit\* inttoptr \(i64 (\d+) ", qir)
+    assert tdg == ["3"], qir  # Tdg(b[1]) unpermuted
 
-    # Extract all gate operations to track qubit allocation
-    rx_calls = re.findall(
-        r"call void @__quantum__qis__rx__body\(double (0x[0-9a-f]+), %Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    ry_calls = re.findall(
-        r"call void @__quantum__qis__ry__body\(double (0x[0-9a-f]+), %Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    rz_calls = re.findall(
-        r"call void @__quantum__qis__rz__body\(double (0x[0-9a-f]+), %Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    s_calls = re.findall(
-        r"call void @__quantum__qis__s__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    t_calls = re.findall(
-        r"call void @__quantum__qis__t__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    tdg_calls = re.findall(
-        r"call void @__quantum__qis__t__adj\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
+
+
+@pytest.mark.optional_dependency
+def test_whole_register_qreg_permutation_realized_qir() -> None:
+    """Whole-register *qubit*-register Permute IS realized in QIR.
+
+    `Permute(a, b)` on two same-size QRegs relabels every (a, i) <->
+    (b, i) so subsequent `a[i]`/`b[i]` references resolve to the
+    swapped qubits, and emits the legacy-format `; Permutation: a <->
+    b` comment. Protects the realizable path against regression.
+    """
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+
+    prog = Main(
+        a,
+        b,
+        qubit.H(a[0]),  # original a[0] = q0
+        qubit.X(b[0]),  # original b[0] = q2
+        Permute(a, b),  # whole-register qubit swap
+        qubit.Y(a[0]),  # after swap -> original b[0] = q2
+        qubit.Z(b[0]),  # after swap -> original a[0] = q0
     )
 
-    print(f"Rx calls: {rx_calls}")
-    print(f"Ry calls: {ry_calls}")
-    print(f"Rz calls: {rz_calls}")
-    print(f"S calls: {s_calls}")
-    print(f"T calls: {t_calls}")
-    print(f"Tdg calls: {tdg_calls}")
+    qir = SlrConverter(prog).qir()
 
-    # Based on the initial gates, we can infer the qubit allocation:
-    if len(rx_calls) >= 1 and len(ry_calls) >= 1 and len(rz_calls) >= 1 and len(s_calls) >= 1:
-        # Extract the qubit indices from the first calls
-        original_a0 = int(rx_calls[0][1])
-        original_a1 = int(ry_calls[0][1])
-        original_b0 = int(rz_calls[0][1])
-        original_b1 = int(s_calls[0])
+    assert "; Permutation: a <-> b" in qir, f"Expected whole-register permutation comment in QIR:\n{qir}"
+    assert _q("h", qir) == [0], qir
+    assert _q("x", qir) == [2], qir
+    assert _q("y", qir) == [2], qir  # Y(a[0]) after swap -> q2
+    assert _q("z", qir) == [0], qir  # Z(b[0]) after swap -> q0
 
-        print("Inferred qubit allocation:")
-        print(f"  original a[0] -> physical qubit {original_a0}")
-        print(f"  original a[1] -> physical qubit {original_a1}")
-        print(f"  original b[0] -> physical qubit {original_b0}")
-        print(f"  original b[1] -> physical qubit {original_b1}")
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
-        # Now we can verify that the gates after permutations are applied to the correct qubits
-        if len(rx_calls) >= 2 and len(ry_calls) >= 2:
-            assert int(rx_calls[1][1]) == original_b0, (
-                f"Second Rx gate should be applied to original b[0] "
-                f"(physical qubit {original_b0}), but was applied to physical qubit {rx_calls[1][1]}"
-            )
-            assert int(ry_calls[1][1]) == original_a0, (
-                f"Second Ry gate should be applied to original a[0] "
-                f"(physical qubit {original_a0}), but was applied to physical qubit {ry_calls[1][1]}"
-            )
 
-        if len(t_calls) >= 1 and len(tdg_calls) >= 1:
-            assert int(t_calls[0]) == original_a1, (
-                f"T gate should be applied to original a[1] "
-                f"(physical qubit {original_a1}), but was applied to physical qubit {t_calls[0]}"
-            )
-            assert int(tdg_calls[0]) == original_b1, (
-                f"Tdg gate should be applied to original b[1] "
-                f"(physical qubit {original_b1}), but was applied to physical qubit {tdg_calls[0]}"
-            )
+@pytest.mark.optional_dependency
+def test_non_bijective_permute_fails_loud() -> None:
+    """A non-bijective Permute must fail loud, not silently miscompile.
+
+    The bijectivity guard must validate the EXPANDED
+    source/target lists BEFORE building the map -- a dict would
+    collapse a duplicate expanded source, so a genuinely
+    non-bijective Permute would compile (silent miscompile). All
+    malformed shapes must raise.
+    """
+    # Distinct refs, src set != tgt set.
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    prog = Main(a, b, Permute([a[0], a[1]], [a[1], b[0]]), qubit.H(a[0]))
+    with pytest.raises(NotImplementedError, match=r"bijective over the same ref set"):
+        SlrConverter(prog).qir()
+
+    # Duplicate source ref: would collapse in a dict and bypass the
+    # set-equality check -- must be rejected on the duplicate.
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    prog = Main(a, b, Permute([a[0], a[0]], [b[0], a[0]]), qubit.H(a[0]))
+    with pytest.raises(NotImplementedError, match=r"duplicate source ref"):
+        SlrConverter(prog).qir()
+
+    # Duplicate target ref (symmetry: the duplicate-target guard must
+    # also be live, not just duplicate-source).
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    prog = Main(a, b, Permute([a[0], b[0]], [a[0], a[0]]), qubit.H(a[0]))
+    with pytest.raises(NotImplementedError, match=r"duplicate target ref"):
+        SlrConverter(prog).qir()
+
+
+def test_permute_realized_quantum_circuit() -> None:
+    """Element-wise + whole-register Permute is realized in the
+    QuantumCircuit codegen (was a silent no-op -- same class as the
+    QIR Permute bug; the allocator_offsets swap never reached gate
+    qubit-index resolution / self-cancelled for a whole-reg pair).
+    """
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+    elem = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute([a[0], b[0]], [b[0], a[0]]), qubit.Y(a[0]), qubit.Z(b[0]))
+    # a=0,1 b=2,3. After a[0]<->b[0]: Y(a[0])->q2, Z(b[0])->q0.
+    expected = "QuantumCircuit([{'H': {0}}, {'X': {2}}, {'Y': {2}}, {'Z': {0}}])"
+    assert str(SlrConverter(elem).quantum_circuit()) == expected
+
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+    whole = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute(a, b), qubit.Y(a[0]), qubit.Z(b[0]))
+    assert str(SlrConverter(whole).quantum_circuit()) == expected
+
+    # Non-bijective must fail loud, not silently mis-resolve.
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    with pytest.raises(NotImplementedError, match=r"duplicate source ref"):
+        SlrConverter(Main(a, b, Permute([a[0], a[0]], [b[0], a[0]]), qubit.H(a[0]))).quantum_circuit()
+
+
+@pytest.mark.optional_dependency
+def test_permute_realized_stim() -> None:
+    """Element-wise + whole-register Permute is realized in the
+    Stim codegen (was a silent no-op -- same class as the QIR Permute bug).
+    """
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+    elem = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute([a[0], b[0]], [b[0], a[0]]), qubit.Y(a[0]), qubit.Z(b[0]))
+    # a=0,1 b=2,3. After a[0]<->b[0]: Y(a[0])->q2, Z(b[0])->q0.
+    assert str(SlrConverter(elem).stim()).split() == ["H", "0", "X", "2", "Y", "2", "Z", "0"]
+
+    a = QReg("a", 2)
+    b = QReg("b", 2)
+    whole = Main(a, b, qubit.H(a[0]), qubit.X(b[0]), Permute(a, b), qubit.Y(a[0]), qubit.Z(b[0]))
+    assert str(SlrConverter(whole).stim()).split() == ["H", "0", "X", "2", "Y", "2", "Z", "0"]
+
+    a = QReg("a", 2)
+    b = QReg("b", 1)
+    with pytest.raises(NotImplementedError, match=r"bijective over the same ref set"):
+        SlrConverter(Main(a, b, Permute([a[0], a[1]], [a[1], b[0]]), qubit.H(a[0]))).stim()

@@ -34,14 +34,12 @@ various target formats including QASM, QIR, Stim, and QuantumCircuit.
 For AST-based code generation, see :mod:`pecos.slr.ast.codegen`.
 """
 
-from pecos.slr.gen_codes.gen_guppy import GuppyGenerator
 from pecos.slr.gen_codes.gen_qasm import QASMGenerator
 from pecos.slr.gen_codes.gen_qir import QIRGenerator
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.gen_codes.gen_stim import StimGenerator
 
 __all__ = [
-    "GuppyGenerator",
     "QASMGenerator",
     "QIRGenerator",
     "QuantumCircuitGenerator",

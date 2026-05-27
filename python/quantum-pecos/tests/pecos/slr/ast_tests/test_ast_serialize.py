@@ -448,15 +448,17 @@ class TestEdgeCases:
         assert len(restored.declarations) == 0
         assert len(restored.body) == 0
 
-    def test_register_with_is_result_false(self) -> None:
-        """Test RegisterDecl with is_result=False."""
-        decl = RegisterDecl(name="scratch", size=4, is_result=False)
+    def test_register_decl_roundtrip(self) -> None:
+        """RegisterDecl round-trips through dict (no is_result field post-3b)."""
+        decl = RegisterDecl(name="scratch", size=4)
 
         data = ast_to_dict(decl)
         restored = dict_to_ast(data)
 
         assert isinstance(restored, RegisterDecl)
-        assert restored.is_result is False
+        assert restored.name == "scratch"
+        assert restored.size == 4
+        assert "is_result" not in data
 
     def test_allocator_without_parent(self) -> None:
         """Test AllocatorDecl without parent."""

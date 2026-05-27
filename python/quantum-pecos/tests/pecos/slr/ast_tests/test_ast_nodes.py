@@ -350,16 +350,12 @@ class TestDeclarations:
         assert decl.parent == "base"
 
     def test_register_decl(self) -> None:
-        """RegisterDecl stores name and size."""
+        """RegisterDecl stores name and size (no is_result field post-3b)."""
         decl = RegisterDecl(name="c", size=5)
         assert decl.name == "c"
         assert decl.size == 5
-        assert decl.is_result is True
-
-    def test_register_decl_not_result(self) -> None:
-        """RegisterDecl can mark register as not a result."""
-        decl = RegisterDecl(name="scratch", size=3, is_result=False)
-        assert decl.is_result is False
+        with pytest.raises(AttributeError):
+            _ = decl.is_result
 
 
 class TestProgram:

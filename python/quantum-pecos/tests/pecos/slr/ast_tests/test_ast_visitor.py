@@ -191,8 +191,8 @@ class TestCustomVisitor:
             def visit_prepare(self, node: PrepareOp) -> str:
                 if node.slots:
                     slots = ", ".join(str(s) for s in node.slots)
-                    return f"Prep({node.allocator}[{slots}])"
-                return f"Prep({node.allocator}[*])"
+                    return f"PZ({node.allocator}[{slots}])"
+                return f"PZ({node.allocator}[*])"
 
             def visit_measure(self, node: MeasureOp) -> str:
                 targets = ", ".join(str(t) for t in node.targets)
@@ -209,7 +209,7 @@ class TestCustomVisitor:
         prog = Program(name="test", body=(prep, gate1, gate2, measure))
 
         code = visitor.visit(prog)
-        assert "Prep(q[0, 1])" in code
+        assert "PZ(q[0, 1])" in code
         assert "H(q[0])" in code
         assert "CX(q[0], q[1])" in code
         assert "Measure(q[0])" in code
@@ -273,3 +273,71 @@ class TestVisitorTraversal:
 
         assert "H" in visitor.visited
         assert "X" in visitor.visited
+
+
+class TestVisitorDispatchCompleteness:
+    """Safety net for the centralized `_DISPATCH` (replaced per-node
+    `accept()`): a new concrete AST node without a dispatch entry must
+    fail loudly here -- this is what catching a missing `accept()`
+    used to do implicitly.
+    """
+
+    @staticmethod
+    def _concrete_node_names() -> set[str]:
+        import pecos.slr.ast.nodes as nodes_mod
+
+        def all_subclasses(cls: type) -> set[type]:
+            out: set[type] = set()
+            for sub in cls.__subclasses__():
+                out.add(sub)
+                out |= all_subclasses(sub)
+            return out
+
+        # Only nodes shipped in `pecos.slr.ast.nodes` -- user/test
+        # subclasses (e.g. `MyGate(GateOp)`) are intentionally resolved
+        # by MRO in BaseVisitor.visit and must NOT be required in
+        # _DISPATCH, so scope the enumeration to the nodes module.
+        nodes = {c for c in all_subclasses(nodes_mod.AstNode) if c.__module__ == nodes_mod.__name__}
+        # Intermediate/abstract bases (AstNode, Expression, Statement,
+        # TypeExpr, Declaration, BlockArg) are never instantiated directly
+        # and are correctly absent from _DISPATCH.
+        bases = {base for cls in nodes for base in cls.__bases__ if base in nodes or base is nodes_mod.AstNode}
+        return {cls.__name__ for cls in nodes if cls not in bases}
+
+    def test_every_concrete_node_has_a_dispatch_entry(self) -> None:
+        from pecos.slr.ast.visitor import _DISPATCH
+
+        missing = sorted(self._concrete_node_names() - set(_DISPATCH))
+        assert (
+            not missing
+        ), f"concrete AST nodes with no _DISPATCH entry: {missing} (add them to pecos.slr.ast.visitor._DISPATCH)"
+
+    def test_no_stale_or_invalid_dispatch_entries(self) -> None:
+        from pecos.slr.ast.visitor import _DISPATCH, BaseVisitor
+
+        concrete = self._concrete_node_names()
+        stale = sorted(set(_DISPATCH) - concrete)
+        assert not stale, f"_DISPATCH keys that are not concrete nodes: {stale}"
+        bad = sorted(v for v in _DISPATCH.values() if not callable(getattr(BaseVisitor, v, None)))
+        assert not bad, f"_DISPATCH values not methods on BaseVisitor: {bad}"
+
+    def test_subclass_of_concrete_node_dispatches_via_mro(self) -> None:
+        """Visitor-refactor rationale: the old `node.accept(self)`
+        double-dispatch was inherited, so a user subclass of a concrete
+        node dispatched to the base node's `visit_*`. MRO lookup in
+        `BaseVisitor.visit` must preserve that (a bare class-name match
+        would wrongly raise).
+        """
+
+        class MyGate(GateOp):
+            pass
+
+        class Recorder(BaseVisitor[str]):
+            def visit_gate(self, node: GateOp) -> str:
+                return f"gate:{node.gate.name}"
+
+            def default_result(self) -> str:
+                return ""
+
+        node = MyGate(gate=GateKind.H, targets=(SlotRef(allocator="q", index=0),))
+        assert Recorder().visit(node) == "gate:H"

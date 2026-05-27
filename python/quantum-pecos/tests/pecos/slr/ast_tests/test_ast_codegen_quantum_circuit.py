@@ -148,7 +148,7 @@ class TestAstToQuantumCircuitGates:
 
 
 class TestAstToQuantumCircuitPrepMeasure:
-    """Prep and measure code generation tests."""
+    """PZ and measure code generation tests."""
 
     def test_measurement(self) -> None:
         """Measurement creates tick with Measure operation."""
@@ -167,10 +167,10 @@ class TestAstToQuantumCircuitPrepMeasure:
         assert 0 in tick["Measure"]
 
     def test_prep_reset(self) -> None:
-        """Prep creates tick with RESET operation."""
+        """PZ creates tick with RESET operation."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
         )
         ast = slr_to_ast(prog)
 
@@ -390,7 +390,7 @@ class TestAstToQuantumCircuitFullPipeline:
                 qb.CX(data[0], ancilla[0]),
                 qb.CX(data[1], ancilla[0]),
                 qb.Measure(ancilla[0]) > c[0],
-                qb.Prep(ancilla[0]),
+                qb.PZ(ancilla[0]),
             ),
         )
 

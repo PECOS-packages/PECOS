@@ -38,7 +38,7 @@ class NoFlagMeasureX(Block):
 
         self.extend(
             Comment("Measure logical X with no flagging"),
-            qubit.Prep(a[0]),
+            qubit.PZ(a[0]),
             qubit.H(a[0]),
             qubit.CX(
                 (d[0], a[0]),

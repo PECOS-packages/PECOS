@@ -42,7 +42,7 @@ class PrepEncodeTPlusNonFT(Block):
         """
         super().__init__(
             Comment("Initialize logical |T> = T|+>\n============================="),
-            qubit.Prep(q[6]),
+            qubit.PZ(q[6]),
             qubit.H(q[6]),
             qubit.T(q[6]),
             EncodingCircuit(q),
@@ -69,7 +69,7 @@ class PrepEncodeTDagPlusNonFT(Block):
         """
         super().__init__(
             Comment("Initialize logical |T> = T|+>\n============================="),
-            qubit.Prep(q[6]),
+            qubit.PZ(q[6]),
             qubit.H(q[6]),
             qubit.Tdg(q[6]),
             EncodingCircuit(q),

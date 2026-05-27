@@ -97,10 +97,10 @@ prog = Main(
     c := CReg("c", 4),
     # Initialization block
     Block(
-        qb.Prep(q[0], "Z"),
-        qb.Prep(q[1], "Z"),
-        qb.Prep(q[2], "X"),
-        qb.Prep(q[3], "X"),
+        qb.PZ(q[0]),  # |0>
+        qb.PZ(q[1]),  # |0>
+        qb.PX(q[2]),  # |+>
+        qb.PX(q[3]),  # |+>
     ),
     # Entanglement block
     Block(
@@ -223,7 +223,7 @@ The `qeclib` module provides quantum operations organized by category:
 ### Qubit Operations (`pecos.slr.qeclib.qubit`)
 
 ```python
-from pecos.slr import Main, QReg, CReg
+from pecos.slr import Main, QReg, CReg, rad
 from pecos.slr.qeclib import qubit as qb
 
 prog = Main(
@@ -240,18 +240,18 @@ prog = Main(
     qb.SZdg(q[0]),  # S dagger
     qb.T(q[0]),  # T gate
     qb.Tdg(q[0]),  # T dagger
-    # Rotations (angle in radians)
-    qb.RX(q[0], 0.5),
-    qb.RY(q[0], 0.5),
-    qb.RZ(q[0], 0.5),
+    # Rotations (typed angle: rad(...) / turns(...))
+    qb.RX(rad(0.5), q[0]),
+    qb.RY(rad(0.5), q[0]),
+    qb.RZ(rad(0.5), q[0]),
     # Two-qubit gates
     qb.CX(q[0], q[1]),  # CNOT
     qb.CY(q[0], q[1]),
     qb.CZ(q[0], q[1]),
     # Measurements and preparations
     qb.Measure(q[0]) > c[0],
-    qb.Prep(q[0], "Z"),  # Prepare |0>
-    qb.Prep(q[0], "X"),  # Prepare |+>
+    qb.PZ(q[0]),  # Prepare |0>
+    qb.PX(q[0]),  # Prepare |+>
 )
 ```
 
@@ -429,11 +429,10 @@ def surface_code_syndrome(d: int):
         ancilla := QReg("anc", num_ancilla),
         syn := CReg("syn", num_ancilla),
         # Initialize data qubits
-        Block(*[qb.Prep(data[i], "Z") for i in range(num_data)]),
+        Block(*[qb.PZ(data[i]) for i in range(num_data)]),
         # X stabilizer measurement (simplified)
         Block(
-            qb.Prep(ancilla[0], "X"),  # Prepare |+>
-            qb.H(ancilla[0]),
+            qb.PX(ancilla[0]),  # |+>
             qb.CX(ancilla[0], data[0]),
             qb.CX(ancilla[0], data[1]),
             qb.H(ancilla[0]),
@@ -441,7 +440,7 @@ def surface_code_syndrome(d: int):
         ),
         # Z stabilizer measurement (simplified)
         Block(
-            qb.Prep(ancilla[1], "Z"),  # Prepare |0>
+            qb.PZ(ancilla[1]),  # Prepare |0>
             qb.CX(data[0], ancilla[1]),
             qb.CX(data[3], ancilla[1]),
             qb.Measure(ancilla[1]) > syn[1],

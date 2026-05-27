@@ -2405,7 +2405,7 @@ mod detailed_tq_gate_cases {
     use num_complex::Complex64;
     use pecos_core::{Angle64, QubitId};
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec, qid};
-    use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, PI};
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, FRAC_PI_6, PI};
 
     #[test]
     fn test_cx_decomposition() {
@@ -2482,6 +2482,64 @@ mod detailed_tq_gate_cases {
 
         // Assert that the states are equal
         assert_states_equal(state_rxx.state(), state_decomposed.state());
+    }
+
+    #[test]
+    fn test_crz_decomposition() {
+        // Cross-codegen: default crz impl is (I o RZ(theta/2)) . RZZ(-theta/2).
+        // Verify the 1-RZZ default matches direct controlled-RZ semantics:
+        //   c=0: identity on target (no rotation applied)
+        //   c=1: target gets RZ(theta)
+        let theta = Angle64::from_radians(FRAC_PI_3);
+
+        // c=0: |00> stays |00> (no rotation when control = 0).
+        let mut crz_c0 = StateVec::new(2);
+        let mut baseline_c0 = StateVec::new(2);
+        crz_c0.crz(theta, &[(QubitId(0), QubitId(1))]);
+        assert_states_equal(crz_c0.state(), baseline_c0.state());
+
+        // c=1: |10> -> |1, RZ(theta)|0>> -- target receives exactly RZ(theta).
+        let mut crz_c1 = StateVec::new(2);
+        let mut direct_rz = StateVec::new(2);
+        crz_c1.x(&qid(0)).crz(theta, &[(QubitId(0), QubitId(1))]);
+        direct_rz.x(&qid(0)).rz(theta, &qid(1));
+        assert_states_equal(crz_c1.state(), direct_rz.state());
+    }
+
+    #[test]
+    fn test_crx_decomposition() {
+        // Cross-codegen: default crx impl is (I o H) . CRZ . (I o H).
+        let theta = Angle64::from_radians(FRAC_PI_4);
+
+        let mut crx_c0 = StateVec::new(2);
+        let mut baseline_c0 = StateVec::new(2);
+        crx_c0.crx(theta, &[(QubitId(0), QubitId(1))]);
+        assert_states_equal(crx_c0.state(), baseline_c0.state());
+
+        // c=1: target gets RX(theta).
+        let mut crx_c1 = StateVec::new(2);
+        let mut direct_rx = StateVec::new(2);
+        crx_c1.x(&qid(0)).crx(theta, &[(QubitId(0), QubitId(1))]);
+        direct_rx.x(&qid(0)).rx(theta, &qid(1));
+        assert_states_equal(crx_c1.state(), direct_rx.state());
+    }
+
+    #[test]
+    fn test_cry_decomposition() {
+        // Cross-codegen: default cry impl is (I o S.H) . CRZ . (I o H.Sdg).
+        let theta = Angle64::from_radians(FRAC_PI_6);
+
+        let mut cry_c0 = StateVec::new(2);
+        let mut baseline_c0 = StateVec::new(2);
+        cry_c0.cry(theta, &[(QubitId(0), QubitId(1))]);
+        assert_states_equal(cry_c0.state(), baseline_c0.state());
+
+        // c=1: target gets RY(theta).
+        let mut cry_c1 = StateVec::new(2);
+        let mut direct_ry = StateVec::new(2);
+        cry_c1.x(&qid(0)).cry(theta, &[(QubitId(0), QubitId(1))]);
+        direct_ry.x(&qid(0)).ry(theta, &qid(1));
+        assert_states_equal(cry_c1.state(), direct_ry.state());
     }
 
     #[test]

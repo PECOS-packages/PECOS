@@ -28,6 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BarrierOp,
@@ -35,10 +37,12 @@ from pecos.slr.ast.nodes import (
     GateKind,
     GateOp,
     IfStmt,
+    LiteralExpr,
     MeasureOp,
     ParallelBlock,
     PermuteOp,
     PrepareOp,
+    PrintOp,
     RegisterDecl,
     RepeatStmt,
     WhileStmt,
@@ -60,8 +64,6 @@ GATE_TO_QC: dict[GateKind, str] = {
     # Hadamard
     GateKind.H: "H",
     # Phase gates
-    GateKind.S: "S",
-    GateKind.Sdg: "SDG",
     GateKind.T: "T",
     GateKind.Tdg: "TDG",
     # Square root gates
@@ -100,6 +102,9 @@ TWO_QUBIT_GATES = {
     GateKind.SYYdg,
     GateKind.SZZdg,
     GateKind.RZZ,
+    GateKind.CRX,
+    GateKind.CRY,
+    GateKind.CRZ,
 }
 
 
@@ -112,6 +117,12 @@ class QCCodeGenContext:
     current_tick: dict[str, set] = field(default_factory=dict)
     allocator_parents: dict[str, str | None] = field(default_factory=dict)
     allocator_offsets: dict[str, int] = field(default_factory=dict)
+    qreg_sizes: dict[str, int] = field(default_factory=dict)  # name -> capacity
+    # Static logical permutation (same model as the QIR codegen /
+    # the Guppy linearity tracker -- QuantumCircuit has no permute
+    # instruction). Maps a logical (reg, index) ref to the (reg,
+    # index) whose qubit it resolves to; consulted in `get_qubit`.
+    permutation_map: dict[tuple[str, int], tuple[str, int]] = field(default_factory=dict)
 
     def get_root_allocator(self, name: str) -> str:
         """Get the root allocator for a given allocator name."""
@@ -130,6 +141,11 @@ class QCCodeGenContext:
 
         For child allocators, translates to root allocator with computed offset.
         """
+        # Resolve any active logical permutation first (identity until
+        # a Permute runs; decl-time pre-population sees the empty map,
+        # so real qubits are still allocated 1:1).
+        allocator, index = self.permutation_map.get((allocator, index), (allocator, index))
+
         # Translate to root allocator and absolute index
         root = self.get_root_allocator(allocator)
         abs_index = self.get_absolute_index(allocator, index)
@@ -166,6 +182,8 @@ class AstToQuantumCircuit:
         """
         from pecos.circuits.quantum_circuit import QuantumCircuit  # noqa: PLC0415
 
+        program = flatten_block_calls(program)
+
         self.context = QCCodeGenContext()
         self.circuit = QuantumCircuit()
         self._in_parallel = False
@@ -198,12 +216,15 @@ class AstToQuantumCircuit:
         # Allocate qubits only for root allocators
         for decl in program.declarations:
             if isinstance(decl, AllocatorDecl):
+                self.context.qreg_sizes[decl.name] = decl.capacity
                 if decl.parent is None:
                     for i in range(decl.capacity):
                         self.context.get_qubit(decl.name, i)
             elif isinstance(decl, RegisterDecl):
                 pass  # Classical registers don't need qubit allocation
 
+        if program.allocator:
+            self.context.qreg_sizes[program.allocator.name] = program.allocator.capacity
         if program.allocator and program.allocator.parent is None:
             for i in range(program.allocator.capacity):
                 self.context.get_qubit(program.allocator.name, i)
@@ -259,10 +280,35 @@ class AstToQuantumCircuit:
             self._process_parallel(stmt)
         elif isinstance(stmt, PermuteOp):
             self._process_permute(stmt)
+        elif isinstance(stmt, PrintOp):
+            # Print is not yet implemented for the QuantumCircuit
+            # backend. Fail LOUD rather than silently drop observable
+            # program output (fail-loud principle). Unlike Stim, PECOS owns
+            # the QuantumCircuit format, so a `Print` representation
+            # could be added later -- this is "not yet", not "cannot".
+            msg = (
+                "QuantumCircuit codegen does not yet support Print "
+                "(classical output streaming is not implemented for this "
+                "backend; it is silently-drop-free by design -- fail "
+                "loud. PECOS controls this format, so Print support may "
+                "be added in future)."
+            )
+            raise NotImplementedError(msg)
 
     def _process_gate(self, node: GateOp) -> None:
         """Process a gate operation."""
         gate_name = GATE_TO_QC.get(node.gate, node.gate.name)
+
+        if node.params:
+            # Parameterized gates (RX/RY/RZ/RZZ/CRX/CRY/CRZ etc.):
+            # PECOS QuantumCircuit ticks are parallel sets keyed on
+            # (gate_name, params), so a tick mixing different param
+            # values would lose information. Flush the current tick,
+            # then emit the parameterized gate as its own tick via
+            # `circuit.append(gate, locations, angles=[...])` which the
+            # Rust gate registry routes to the typed-param dispatcher.
+            self._process_parameterized_gate(node, gate_name)
+            return
 
         if node.gate in TWO_QUBIT_GATES:
             self._process_two_qubit_gate(node, gate_name)
@@ -300,6 +346,53 @@ class AstToQuantumCircuit:
                 )
                 self._add_to_tick(gate_name, (q0, q1))
 
+    def _process_parameterized_gate(self, node: GateOp, gate_name: str) -> None:
+        """Emit a parameterized gate (rotation angle threaded through).
+
+        Resolves `LiteralExpr` bracket-params to raw floats (the AST
+        converter wraps the `qb.RZ(0.5, q)` angle as a `LiteralExpr`, so a bare
+        `float(p)` would fail). The QC `circuit.append(...,
+        angles=...)` path forwards the angle list to Rust's typed-
+        parameter dispatcher (e.g. `RZ` requires 1 angle, `RXXRYYRZZ`
+        requires 3).
+
+        Flushes the current tick before emission so the parameterized
+        gate gets its own tick -- mixing different param values within
+        a single tick would lose information (tick batches by
+        `(gate_name, target)` only). Non-literal expressions (VarExpr,
+        BinaryExpr at gate-param position) are not yet supported for
+        QC parameterized gates; they fail loud here.
+        """
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        # Typed-angle guard: a user/direct-AST parameterized gate's params
+        # must be typed `Angle` literals (matches Guppy + the typed-AST
+        # contract); reject bare floats so backends do not diverge.
+        for p in node.params:
+            if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
+                msg = (
+                    f"QuantumCircuit codegen: parameterized gate {gate_name!r} requires typed `Angle` "
+                    f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+                )
+                raise NotImplementedError(msg)
+        angles = [p.value.value.to_radians_signed() for p in node.params]
+
+        self._flush_tick()
+        if node.gate in TWO_QUBIT_GATES:
+            if len(node.targets) < 2:
+                msg = f"QuantumCircuit codegen: two-qubit gate {gate_name!r} needs >=2 targets, got {len(node.targets)}"
+                raise ValueError(msg)
+            # Emit each consecutive pair (mirrors the un-parameterized
+            # two-qubit path which iterates over target pairs).
+            for i in range(0, len(node.targets) - 1, 2):
+                q0 = self.context.get_qubit(node.targets[i].allocator, node.targets[i].index)
+                q1 = self.context.get_qubit(node.targets[i + 1].allocator, node.targets[i + 1].index)
+                self.circuit.append(gate_name, {(q0, q1)}, angles=angles)
+        else:
+            for target in node.targets:
+                qubit = self.context.get_qubit(target.allocator, target.index)
+                self.circuit.append(gate_name, {qubit}, angles=angles)
+
     def _process_measure(self, node: MeasureOp) -> None:
         """Process a measurement operation."""
         for target in node.targets:
@@ -307,13 +400,26 @@ class AstToQuantumCircuit:
             self._add_to_tick("Measure", qubit)
 
     def _process_prepare(self, node: PrepareOp) -> None:
-        """Process a prepare/reset operation."""
+        """Process a prepare/reset operation (Z-reset + canonical basis tail).
+
+        QC ticks are parallel sets; reset and the Clifford tail MUST
+        be sequential, so each is its own flushed tick (PZ has no
+        tail -> byte-identical to the prior behaviour).
+        """
+        tail = prep_tail(node.basis)
         if node.slots is None:
+            if tail:
+                msg = f"QuantumCircuit codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
+                raise NotImplementedError(msg)
             return
 
-        for slot in node.slots:
-            qubit = self.context.get_qubit(node.allocator, slot)
+        qubits = [self.context.get_qubit(node.allocator, slot) for slot in node.slots]
+        for qubit in qubits:
             self._add_to_tick("RESET", qubit)
+        for gk in tail:
+            self._flush_tick()  # sequence reset/prev-tail before this gate
+            for qubit in qubits:
+                self._add_to_tick(GATE_TO_QC[gk], qubit)
 
     def _add_to_tick(self, gate_name: str, target: int | tuple[int, int]) -> None:
         """Add a gate to the current tick."""
@@ -349,17 +455,40 @@ class AstToQuantumCircuit:
         )
         raise NotImplementedError(msg)
 
+    def _static_int_bound(self, expr: object, which: str) -> int:
+        """Resolve a static integer `For` bound.
+
+        The AST converter wraps integer range bounds in `LiteralExpr`
+        (`converter.py` `_convert_for`), so the bound is never a raw
+        `int` -- the old `isinstance(int)` guard was always false, so
+        the `else` branch *rejected every* static `For` (even valid
+        `For(i, 0, 3)`). Resolve the literal; a non-literal / non-int
+        bound is a symbolic/dynamic `For`: fail LOUD.
+        """
+        if isinstance(expr, LiteralExpr) and isinstance(expr.value, int) and not isinstance(expr.value, bool):
+            return expr.value
+        msg = (
+            f"QuantumCircuit codegen: For loop {which} bound is not a "
+            f"static integer ({type(expr).__name__}); only fixed-bound "
+            "`For(i, <int>, <int>)` is supported (symbolic/dynamic For "
+            "is out of scope)."
+        )
+        raise NotImplementedError(msg)
+
     def _process_for(self, node: ForStmt) -> None:
-        """Process a for loop by unrolling."""
-        # Unroll if bounds are static
-        if isinstance(node.start, int) and isinstance(node.stop, int):
-            step = node.step if isinstance(node.step, int) else 1
-            for _ in range(node.start, node.stop, step):
-                for stmt in node.body:
-                    self._process_statement(stmt)
-        else:
-            msg = f"Cannot unroll For loop with non-integer bounds: start={node.start}, stop={node.stop}"
-            raise TypeError(msg)
+        """Unroll a static fixed-bound `For` (v1-supported)."""
+        start = self._static_int_bound(node.start, "start")
+        stop = self._static_int_bound(node.stop, "stop")
+        step = 1 if node.step is None else self._static_int_bound(node.step, "step")
+        if step == 0:
+            msg = (
+                "QuantumCircuit codegen: For loop step is 0 (infinite "
+                "loop); only a non-zero static step is supported."
+            )
+            raise NotImplementedError(msg)
+        for _ in range(start, stop, step):
+            for stmt in node.body:
+                self._process_statement(stmt)
 
     def _process_repeat(self, node: RepeatStmt) -> None:
         """Process a repeat loop by unrolling."""
@@ -381,21 +510,69 @@ class AstToQuantumCircuit:
         self._in_parallel = False
         self._flush_tick()
 
-    def _process_permute(self, node: PermuteOp) -> None:
-        """Process a permutation operation.
+    def _expand_permute_ref(self, ref: str) -> list[tuple[str, int]]:
+        """Expand a Permute ref string to logical (reg, index) pairs.
 
-        Updates the internal allocator mapping to swap qubit references.
-        QuantumCircuit doesn't have a permute instruction, so this just updates
-        how we map allocator names to qubit indices.
+        `name[idx]` -> a single element; bare `name` -> every element
+        of the qubit register. QuantumCircuit has no realized
+        classical-register model, so a bare CReg permute is not
+        realizable -> fail loud (never a silent no-op). Mirrors the
+        QIR codegen's helper.
         """
-        # Swap the allocator offsets
-        for src, tgt in zip(node.sources, node.targets, strict=False):
-            # Get current offsets
-            src_offset = self.context.allocator_offsets.get(src, 0)
-            tgt_offset = self.context.allocator_offsets.get(tgt, 0)
-            # Swap them
-            self.context.allocator_offsets[src] = tgt_offset
-            self.context.allocator_offsets[tgt] = src_offset
+        if ref.endswith("]") and "[" in ref:
+            name, idx = ref[:-1].split("[", 1)
+            return [(name, int(idx))]
+        if ref in self.context.qreg_sizes:
+            return [(ref, i) for i in range(self.context.qreg_sizes[ref])]
+        msg = (
+            f"QuantumCircuit codegen: whole-register Permute of {ref!r} "
+            "is not supported (no classical-register model); a "
+            "qubit-register or element-wise Permute is realizable."
+        )
+        raise NotImplementedError(msg)
+
+    def _process_permute(self, node: PermuteOp) -> None:
+        """Realize a Permute as a static logical relabel.
+
+        QuantumCircuit has no permute instruction, so -- exactly like
+        the QIR codegen and the Guppy linearity tracker -- a
+        Permute is realized at compile time by relabelling which qubit
+        each logical (reg, index) ref resolves to (consulted in
+        `get_qubit`). The old `allocator_offsets` swap was a no-op for
+        element-wise refs and self-cancelling for a whole-register
+        (a,b)/(b,a) pair -- a silent miscompile.
+        """
+        if len(node.sources) != len(node.targets):
+            msg = "QuantumCircuit codegen: Permute source/target length mismatch"
+            raise NotImplementedError(msg)
+
+        # Validate the expanded ref lists BEFORE building the dict (a
+        # dict would silently collapse a duplicate source).
+        src_all: list[tuple[str, int]] = []
+        tgt_all: list[tuple[str, int]] = []
+        for source, target in zip(node.sources, node.targets, strict=True):
+            src_refs = self._expand_permute_ref(source)
+            tgt_refs = self._expand_permute_ref(target)
+            if len(src_refs) != len(tgt_refs):
+                msg = f"QuantumCircuit codegen: Permute element count mismatch for {source!r} -> {target!r}"
+                raise NotImplementedError(msg)
+            src_all.extend(src_refs)
+            tgt_all.extend(tgt_refs)
+
+        if len(src_all) != len(set(src_all)):
+            msg = "QuantumCircuit codegen: Permute has a duplicate source ref (not a permutation)"
+            raise NotImplementedError(msg)
+        if len(tgt_all) != len(set(tgt_all)):
+            msg = "QuantumCircuit codegen: Permute has a duplicate target ref (not a permutation)"
+            raise NotImplementedError(msg)
+        if set(src_all) != set(tgt_all):
+            msg = "QuantumCircuit codegen: Permute must be bijective over the same ref set"
+            raise NotImplementedError(msg)
+
+        # Compose ATOMICALLY (snapshot old, then map[s] = old.get(t, t))
+        # so a whole-register (a,b)/(b,a) pair applies once.
+        old = dict(self.context.permutation_map)
+        self.context.permutation_map.update({s: old.get(t, t) for s, t in zip(src_all, tgt_all, strict=True)})
 
 
 def ast_to_quantum_circuit(program: Program) -> QuantumCircuit:

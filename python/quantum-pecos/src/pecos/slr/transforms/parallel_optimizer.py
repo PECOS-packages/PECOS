@@ -92,9 +92,22 @@ class ParallelOptimizer:
         elif isinstance(block, Main) and type(block) is Main:
             new_block = Main(*new_ops)
         elif isinstance(block, Block):
-            # Use isinstance to handle Block subclasses
-            new_block = Block(*new_ops)
-            # Preserve block metadata if available
+            # For Block subclasses, preserve class identity so class-level
+            # attributes (block_inputs, block_returns, etc.) and any instance
+            # state set by the subclass __init__ (e.g. `self.q1`, `self.q2`
+            # bound for `block_inputs` lookup) survive the optimization pass.
+            # Reconstructing via `Block(*new_ops)` here would erase that state
+            # and cause converted Blocks to silently fall back to
+            # the v1 flatten path.
+            cls = type(block)
+            if cls is Block:
+                new_block = Block(*new_ops)
+            else:
+                new_block = cls.__new__(cls)
+                new_block.__dict__.update(block.__dict__)
+                new_block.ops = list(new_ops)
+            # The metadata copy below is redundant for the subclass case (already
+            # carried via __dict__) but kept for the plain-Block branch.
             if hasattr(block, "block_name"):
                 new_block.block_name = block.block_name
             if hasattr(block, "block_module"):
@@ -152,14 +165,33 @@ class ParallelOptimizer:
     def _can_optimize_parallel(self, parallel: Parallel) -> bool:
         """Check if a Parallel block can be safely optimized.
 
-        Returns False if the block contains control flow (If/Repeat).
+        Returns False if the block contains control flow (If/Repeat) or any
+        converted Block (a Block subclass with class-level `block_inputs`).
+        Splatting a converted Block's body into the surrounding Parallel
+        would destroy its scope boundary -- the BlockCall lowering needs the
+        Block to remain a single op in the AST.
         """
         for op in parallel.ops:
             if isinstance(op, If | Repeat):
                 return False
-            if isinstance(op, Block) and self._contains_control_flow(op):
-                return False
+            if isinstance(op, Block):
+                if hasattr(type(op), "block_inputs"):
+                    return False
+                if self._contains_control_flow(op):
+                    return False
+                if self._contains_converted_block(op):
+                    return False
         return True
+
+    def _contains_converted_block(self, block: Block) -> bool:
+        """Check if a Block (recursively) contains any converted Block."""
+        for op in block.ops:
+            if isinstance(op, Block):
+                if hasattr(type(op), "block_inputs"):
+                    return True
+                if self._contains_converted_block(op):
+                    return True
+        return False
 
     def _contains_control_flow(self, block: Block) -> bool:
         """Check if a block contains any control flow operations."""

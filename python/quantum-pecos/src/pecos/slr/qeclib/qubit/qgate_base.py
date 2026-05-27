@@ -48,6 +48,11 @@ class QGate:
     qsize = 1
     csize = 0
     has_parameters = False
+    # Number of leading angle parameters for a parameterized gate. The
+    # SLR call convention is angle(s)-FIRST: `RX(theta, q)`,
+    # `CRZ(theta, control, target)`, `RZZ(theta, q0, q1)`. A
+    # parameterized gate must set `num_params` (and `has_parameters`).
+    num_params = 0
 
     def __init__(self, *qargs: Qubit) -> None:
         """Initialize a quantum gate.
@@ -84,15 +89,19 @@ class QGate:
         return copy.copy(self)
 
     def __getitem__(self, *params: complex) -> Self:
-        """Set gate parameters using square bracket notation."""
-        g = self.copy()
+        """Reject the legacy bracket-parameter form.
 
-        if params and not self.has_parameters:
-            msg = "This gate does not accept parameters. You might of meant to put qubits in square brackets."
-            raise Exception(msg)
-        g.params = params
-
-        return g
+        The SLR API now takes rotation angles as leading positional
+        arguments -- ``RX(theta, q)`` -- not via brackets. The old
+        ``RX[theta](q)`` form is removed (angles-first is the single
+        supported convention); raise a clear migration error.
+        """
+        msg = (
+            f"The bracket-parameter form `{self.sym}[angle](qubit)` is no longer "
+            f"supported. Pass the angle as a leading positional argument instead: "
+            f"`{self.sym}(angle, qubit)` (angles come before qubit ids)."
+        )
+        raise TypeError(msg)
 
     def qubits(self, *qargs: Qubit) -> None:
         """Add qubits to the gate.
@@ -102,18 +111,100 @@ class QGate:
         """
         self(*qargs)
 
-    def __call__(self, *qargs: Qubit) -> Self:
-        """Create a new gate instance with specified qubits.
+    def __call__(self, *args: Qubit | complex) -> Self:
+        """Create a new gate instance from angle(s) and qubit(s).
+
+        For a parameterized gate the first `num_params` arguments are
+        the rotation angle(s); the remaining arguments are the qubits:
+        `RX(theta, q)`, `CRZ(theta, control, target)`. For a
+        non-parameterized gate every argument is a qubit.
 
         Args:
-            *qargs: Variable number of qubits to apply the gate to.
+            *args: `num_params` leading angle parameter(s) (if any)
+                followed by the qubit(s) the gate acts on.
 
         Returns:
-            New gate instance with the specified qubits.
+            New gate instance with the specified params + qubits.
         """
         g = self.copy()
 
-        g.add_qargs(qargs)
+        if self.has_parameters:
+            n = self.num_params
+            if len(args) < n:
+                msg = (
+                    f"{self.sym} is a parameterized gate; call it as "
+                    f"`{self.sym}(angle, qubit...)` with {n} leading angle "
+                    f"parameter(s) before the qubit(s). Got {len(args)} argument(s)."
+                )
+                raise TypeError(msg)
+            params = tuple(args[:n])
+            qargs = tuple(args[n:])
+            # Typed-angle guard: each angle slot must be a typed `Angle`
+            # (built with `rad(...)` / `turns(...)`), and each qubit slot
+            # must be a quantum qubit shape. This rejects the classic
+            # mis-ordered call (`RX(q, 0.5)` instead of `RX(rad(0.5), q)`)
+            # AND the now-removed bare-float form (`RX(0.5, q)`) loudly at
+            # the call, so a typo can never reach codegen as a no-op or as
+            # a rotation on a classical register. Qubit slots accept ONLY
+            # `Qubit`/`QReg`/`SymbolicQubit` -- NOT the broad `Var` (which
+            # also covers classical `CReg`/`Bit`/`SymbolicBit`).
+            from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+            from pecos.slr.vars import QReg, Qubit, SymbolicQubit, Var  # noqa: PLC0415  (avoid import cycle)
+
+            qubit_types = (Qubit, QReg, SymbolicQubit)
+            for p in params:
+                if isinstance(p, Angle):
+                    continue
+                if isinstance(p, Var):
+                    msg = (
+                        f"{self.sym}: a register/qubit reference {p!r} was passed in an angle "
+                        f"position. Call as `{self.sym}(angle, qubit...)` -- angles come before qubit "
+                        "ids, and the angle must be a typed `Angle` (use `rad(...)` / `turns(...)`)."
+                    )
+                    raise TypeError(msg)
+                if isinstance(p, (bool, int, float, complex)):
+                    msg = (
+                        f"{self.sym}: bare numeric angle {p!r} is no longer accepted. Wrap it in a "
+                        f"typed `Angle`: `{self.sym}(rad({p}), qubit...)` (radians) or "
+                        f"`{self.sym}(turns(...), qubit...)`."
+                    )
+                    raise TypeError(msg)
+                msg = (
+                    f"{self.sym}: angle parameter {p!r} must be a typed `Angle` "
+                    "built with `rad(...)` / `turns(...)`."
+                )
+                raise TypeError(msg)
+            for qa in qargs:
+                if not isinstance(qa, qubit_types):
+                    kind = "classical register/bit" if isinstance(qa, Var) else "non-qubit"
+                    msg = (
+                        f"{self.sym}: a {kind} {qa!r} was passed in a qubit position. "
+                        f"Call as `{self.sym}(angle, qubit...)` with {n} leading angle parameter(s); "
+                        "qubit positions accept only qubits/QRegs."
+                    )
+                    raise TypeError(msg)
+            # Construction-time arity guard: a parameterized call must
+            # supply enough qubits, so a malformed `gate(angle)` (no
+            # qubit) or `RZZ(angle, q[0])` (one short) fails loud here
+            # rather than surviving to QIR/QASM. A whole `QReg` broadcasts
+            # (its size is only known on expansion), so the explicit-qubit
+            # count is only checked when no register is passed.
+            if not qargs:
+                msg = (
+                    f"{self.sym}: a parameterized gate needs at least one qubit; got only angle(s). "
+                    f"Call as `{self.sym}(angle, qubit...)`."
+                )
+                raise TypeError(msg)
+            if not any(isinstance(qa, QReg) for qa in qargs) and len(qargs) < self.qsize:
+                msg = (
+                    f"{self.sym}: needs at least {self.qsize} qubit(s) for a {self.qsize}-qubit gate, "
+                    f"got {len(qargs)}. (Pass a whole QReg to broadcast.)"
+                )
+                raise TypeError(msg)
+            g.params = params
+            g.add_qargs(qargs)
+        else:
+            g.add_qargs(args)
 
         return g
 

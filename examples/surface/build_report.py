@@ -661,7 +661,8 @@ def _build_html(analysis: dict) -> str:
     tables = analysis.get("comparison_tables", [])
     curves = analysis.get("threshold_curves", [])
 
-    style = dedent("""
+    style = dedent(
+        """
         :root {
           color-scheme: light dark;
           --bg: #f8fafc; --fg: #0f172a;
@@ -762,7 +763,8 @@ def _build_html(analysis: dict) -> str:
         details.collapsible > summary::before { content: "\\25B6  "; font-size: 0.8em; }
         details.collapsible[open] > summary::before { content: "\\25BC  "; }
         details.collapsible > .section { margin-top: 8px; }
-    """).strip()
+    """,
+    ).strip()
 
     def meta_card(label: str, value: str, *, raw: bool = False) -> str:
         val = value if raw else html_mod.escape(value)
@@ -1051,7 +1053,8 @@ def _build_html(analysis: dict) -> str:
     parts.extend(
         [
             "</main>",
-            dedent("""
+            dedent(
+                """
         <script>
         (function() {
           var html = document.documentElement;
@@ -1067,7 +1070,8 @@ def _build_html(analysis: dict) -> str:
           });
         })();
         </script>
-        """).strip(),
+        """,
+            ).strip(),
             "</body>",
             "</html>",
         ],

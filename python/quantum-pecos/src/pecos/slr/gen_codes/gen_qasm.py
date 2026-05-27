@@ -17,6 +17,15 @@ import pecos as pc
 from pecos.slr.gen_codes.generator import Generator
 
 
+def _param_qasm(p: object) -> str:
+    """Render a gate param for QASM: a typed `Angle` -> signed radians."""
+    from pecos.slr.angle import Angle
+
+    if isinstance(p, Angle):
+        return str(p.value.to_radians_signed())
+    return str(p)
+
+
 class QASMGenerator(Generator):
     """Generate QASM code from SLR programs.
 
@@ -645,7 +654,7 @@ class QASMGenerator(Generator):
                         ],
                     )
 
-                case "Prep":
+                case "PZ":
                     op_str = self.qgate_sq_qasm(op, "reset")
 
                 case "T":
@@ -686,7 +695,7 @@ class QASMGenerator(Generator):
             repr_str = op.sym.lower()
 
         if op.params:
-            str_cargs = ", ".join([str(p) for p in op.params])
+            str_cargs = ", ".join([_param_qasm(p) for p in op.params])
             repr_str = f"{repr_str}({str_cargs})"
 
         str_list = []
@@ -721,7 +730,7 @@ class QASMGenerator(Generator):
             repr_str = op.sym.lower()
 
         if op.params:
-            str_cargs = ",".join([str(p) for p in op.params])
+            str_cargs = ",".join([_param_qasm(p) for p in op.params])
             repr_str = f"{repr_str}({str_cargs})"
 
         str_list = []

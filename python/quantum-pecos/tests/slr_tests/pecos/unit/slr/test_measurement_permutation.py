@@ -66,126 +66,56 @@ def test_register_measurement_permutation_qasm(
 # QIR Tests
 
 
+# A Permute is realized as a static logical relabel consulted at
+# every qubit/classical-bit lowering (the bespoke
+# @create_creg/@set_creg_bit/@mz_to_creg_bit helpers the old tests
+# pinned were removed by the static CReg model; measurement is the standard 2-arg
+# `@__quantum__qis__mz__body(%Qubit*, %Result*)` + read_result +
+# store-into-creg-buffer). Pin the realized measurement targeting.
+
+
+def _mz_then_store(qir: str) -> list[tuple[str, str, str]]:
+    """(qubit_idx, creg_name, creg_idx) for each measure+store."""
+    pat = (
+        r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
+        r"%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)\n"
+        r"\s*%(?:\.\d+) = call i1 @__quantum__rt__read_result\(%Result\* inttoptr \(i64 \2 to %Result\*\)\)\n"
+        r"\s*%(\.\d+) = getelementptr \[\d+ x i1\], \[\d+ x i1\]\* %(\w+), i64 0, i64 (\d+)"
+    )
+    # groups: 1=qubit, 2=result idx, 3=gep var, 4=creg name, 5=creg idx
+    return [(m[0], m[3], m[4]) for m in re.findall(pat, qir)]
+
+
 @pytest.mark.optional_dependency
 def test_individual_measurement_permutation_qir(
     individual_measurement_program: tuple,
 ) -> None:
-    """Test individual measurements with permutations in QIR generation."""
+    """Element-wise QReg+CReg Permute is realized through measurements."""
     prog, _, _, _, _ = individual_measurement_program
-
-    # Generate QIR
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for debugging
-    print("\nQIR output:")
-    print(qir)
+    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir, qir
+    assert "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir, qir
+    # Qubits a=0,1 b=2,3. Measure(a[0]) -> b[0]=q2, result -> m[0]
+    # which is relabelled to n[0]. Measure(a[1]) -> q1 (unpermuted),
+    # result -> m[1] (unpermuted).
+    assert _mz_then_store(qir) == [("2", "n", "0"), ("1", "m", "1")], qir
 
-    # Verify that the QIR contains comments about the permutations
-    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
-    assert "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
-
-    # Verify that the QIR contains the correct classical bit permutation using a temporary bit
-    assert (
-        "%_bit_swap = call i1* @create_creg(i64 1)" in qir
-    ), f"Expected temporary bit creation not found in QIR:\n{qir}"
-
-    # Verify that the QIR contains the correct quantum operations after permutation
-    # H gate should be applied to b[0] after permutation
-    h_gate_pattern = r"call void @__quantum__qis__h__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)"
-    h_gates = re.findall(h_gate_pattern, qir)
-    assert len(h_gates) >= 1, f"Expected at least one H gate, found {len(h_gates)}"
-
-    # CX gate should be applied to b[0] and a[0] after permutation
-    cx_gate_pattern = (
-        r"call void @__quantum__qis__cnot__body\("
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)"
-    )
-    cx_gates = re.findall(cx_gate_pattern, qir)
-    assert len(cx_gates) >= 1, f"Expected at least one CX gate, found {len(cx_gates)}"
-
-    # Extract the measurement operations
-    # In QIR, measurements are done with mz_to_creg_bit
-    mz_to_creg_pattern = (
-        r"call void @mz_to_creg_bit\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), i1\* %(\w+), i64 (\d+)\)"
-    )
-    mz_to_creg_calls = re.findall(mz_to_creg_pattern, qir)
-
-    # We should have at least two measurement calls (one for each qubit in register a)
-    assert len(mz_to_creg_calls) >= 2, f"Expected at least 2 measurement calls, found {len(mz_to_creg_calls)}"
-
-    # Create a dictionary to store the measurements
-    measurements = {}
-    for qubit_idx, creg_name, creg_idx in mz_to_creg_calls:
-        if creg_name == "m":
-            measurements[int(creg_idx)] = (creg_name, int(qubit_idx))
-
-    # Verify that the correct qubits are measured into the correct classical bits
-    assert 0 in measurements, f"Expected measurement to m[0], found measurements to {list(measurements.keys())}"
-    assert 1 in measurements, f"Expected measurement to m[1], found measurements to {list(measurements.keys())}"
-
-    # Verify that different qubits are measured into different classical bits
-    measured_qubits = [idx for _, idx in measurements.values()]
-    assert len(set(measured_qubits)) == len(
-        measured_qubits,
-    ), f"Expected all measurements to be from different qubits, found duplicates: {measured_qubits}"
-
-    # Verify that running QIR generation twice produces consistent results
-    qir2 = SlrConverter(prog).qir()
-    assert qir == qir2, "QIR generation is not deterministic"
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
 @pytest.mark.optional_dependency
 def test_register_measurement_permutation_qir(
     register_measurement_program: tuple,
 ) -> None:
-    """Test register-wide measurements with permutations in QIR generation."""
+    """Element-wise Permute is realized through a register-wide measure."""
     prog, _, _, _, _ = register_measurement_program
-
-    # Generate QIR
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for debugging
-    print("\nQIR output:")
-    print(qir)
+    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir, qir
+    assert "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir, qir
+    # Measure(a) unrolls: a[0]->b[0]=q2 (-> m[0] relabelled to n[0]),
+    # a[1]->q1 (-> m[1] unpermuted).
+    assert _mz_then_store(qir) == [("2", "n", "0"), ("1", "m", "1")], qir
 
-    # Verify that the QIR contains comments about the permutations
-    assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
-    assert "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir, f"Expected permutation comment not found in QIR:\n{qir}"
-
-    # Verify that the QIR contains the correct classical bit permutation using a temporary bit
-    assert (
-        "%_bit_swap = call i1* @create_creg(i64 1)" in qir
-    ), f"Expected temporary bit creation not found in QIR:\n{qir}"
-    assert (
-        "call void @set_creg_bit(i1* %_bit_swap, i64 0, i1 %.4)" in qir
-    ), f"Expected temporary bit assignment not found in QIR:\n{qir}"
-    assert "call void @set_creg_bit(i1* %m, i64 0, i1 %.6)" in qir, f"Expected bit assignment not found in QIR:\n{qir}"
-    assert "call void @set_creg_bit(i1* %n, i64 0, i1 %.8)" in qir, f"Expected bit assignment not found in QIR:\n{qir}"
-
-    # Verify that the QIR contains the correct quantum operations after permutation
-    # H gate should be applied to b[0] (qubit 2) after permutation
-    assert (
-        "call void @__quantum__qis__h__body(%Qubit* inttoptr (i64 2 to %Qubit*))" in qir
-    ), f"Expected H gate on permuted qubit not found in QIR:\n{qir}"
-
-    # CNOT gate should be applied to b[0] (qubit 2) and a[0] (qubit 0) after permutation
-    assert (
-        "call void @__quantum__qis__cnot__body("
-        "%Qubit* inttoptr (i64 2 to %Qubit*), %Qubit* inttoptr (i64 0 to %Qubit*))" in qir
-    ), f"Expected CNOT gate on permuted qubits not found in QIR:\n{qir}"
-
-    # Verify that the QIR contains the correct measurements after permutation
-    # a[0] should be measured as b[0] (qubit 2) after permutation
-    assert (
-        "call void @mz_to_creg_bit(%Qubit* inttoptr (i64 2 to %Qubit*), i1* %m, i64 0)" in qir
-    ), f"Expected measurement of permuted qubit not found in QIR:\n{qir}"
-
-    # a[1] should be measured as a[1] (qubit 1) since it's not permuted
-    assert (
-        "call void @mz_to_creg_bit(%Qubit* inttoptr (i64 1 to %Qubit*), i1* %m, i64 1)" in qir
-    ), f"Expected measurement of non-permuted qubit not found in QIR:\n{qir}"
-
-    # Verify that running QIR generation twice produces consistent results
-    qir2 = SlrConverter(prog).qir()
-    assert qir == qir2, "QIR generation is not deterministic"
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"

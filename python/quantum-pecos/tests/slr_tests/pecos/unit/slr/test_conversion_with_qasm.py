@@ -9,7 +9,7 @@ sys.path.insert(
 )
 
 import pytest
-from pecos.slr import CReg, Main, Parallel, QReg, Repeat, SlrConverter
+from pecos.slr import CReg, Main, Parallel, QReg, Repeat, Return, SlrConverter
 from pecos.slr.gen_codes.gen_quantum_circuit import QuantumCircuitGenerator
 from pecos.slr.qeclib import qubit
 
@@ -23,6 +23,13 @@ except ImportError:
     stim = None
 
 
+def _return_declared_cregs(prog: Main) -> Main:
+    cregs = [var for var in prog.vars if isinstance(var, CReg)]
+    if cregs:
+        prog.extend(Return(*cregs))
+    return prog
+
+
 class TestConversionConsistency:
     """Test that different conversion paths produce consistent QASM output."""
 
@@ -32,12 +39,13 @@ class TestConversionConsistency:
         slr_prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
+            Return(c),
         )
 
         # Get QASM from SLR
@@ -48,7 +56,7 @@ class TestConversionConsistency:
         generator.generate_block(slr_prog)
         qc = generator.get_circuit()
 
-        reconstructed_slr = SlrConverter.from_quantum_circuit(qc)
+        reconstructed_slr = _return_declared_cregs(SlrConverter.from_quantum_circuit(qc))
         qc_qasm = SlrConverter(reconstructed_slr).qasm(skip_headers=True)
 
         # Check that both QASM outputs contain the same essential operations
@@ -79,13 +87,13 @@ class TestConversionConsistency:
         )
 
         # Convert Stim -> SLR -> QASM
-        slr_prog = SlrConverter.from_stim(stim_circuit)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(stim_circuit))
         slr_qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         # Convert SLR -> Stim -> SLR -> QASM
         converter = SlrConverter(slr_prog)
         reconstructed_stim = converter.stim()
-        reconstructed_slr = SlrConverter.from_stim(reconstructed_stim)
+        reconstructed_slr = _return_declared_cregs(SlrConverter.from_stim(reconstructed_stim))
         roundtrip_qasm = SlrConverter(reconstructed_slr).qasm(skip_headers=True)
 
         # Both should contain the same operations
@@ -238,9 +246,9 @@ class TestConversionConsistency:
             q := QReg("q", 3),
             c := CReg("c", 3),
             # Prepare a GHZ state
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
-            qubit.Prep(q[2]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
+            qubit.PZ(q[2]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.CX(q[1], q[2]),
@@ -248,6 +256,7 @@ class TestConversionConsistency:
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
             qubit.Measure(q[2]) > c[2],
+            Return(c),
         )
 
         qasm = SlrConverter(prog).qasm(skip_headers=True)
@@ -285,7 +294,7 @@ class TestConversionConsistency:
         )
 
         # Convert to SLR (noise should become comments)
-        slr_prog = SlrConverter.from_stim(stim_circuit)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(stim_circuit))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         # Quantum operations should be preserved
@@ -312,6 +321,7 @@ class TestQASMValidation:
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
             qubit.Measure(q[2]) > c[2],
+            Return(c),
         )
 
         qasm = SlrConverter(prog).qasm()
@@ -348,6 +358,7 @@ class TestQASMValidation:
             qubit.CX(q1[0], q2[0]),
             qubit.Measure(q1[0]) > c1[0],
             qubit.Measure(q2[0]) > c2[0],
+            Return(c1, c2),
         )
 
         qasm = SlrConverter(prog).qasm()

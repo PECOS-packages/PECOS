@@ -766,10 +766,10 @@ class TickCircuitRenderer(CircuitRenderer):
         """Render to PECOS TickCircuit.
 
         The tick structure follows Stim's pattern:
-        - Tick: Prep data qubits
+        - Tick: PZ data qubits
         - Tick: H for X-basis prep (if X-basis)
         - For each syndrome round:
-            - Tick: Prep ancillas
+            - Tick: PZ ancillas
             - Tick: H on X ancillas
             - Tick: CX round 1
             - Tick: CX round 2

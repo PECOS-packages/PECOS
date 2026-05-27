@@ -4,3 +4,4 @@ mkdocstrings>=0.24.0
 mkdocstrings-python>=1.7.4
 markdown-exec>=1.10.3
 pymdown-extensions>=10.21.3
+idna>=3.15  # CVE-2026-45409 (re-fix of CVE-2024-3651): idna.encode() DoS on crafted long inputs

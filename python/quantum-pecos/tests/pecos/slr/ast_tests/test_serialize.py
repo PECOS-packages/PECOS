@@ -15,7 +15,7 @@ import json
 import math
 
 import pytest
-from pecos.slr import CReg, If, Main, QReg, Repeat
+from pecos.slr import CReg, If, Main, QReg, Repeat, rad
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -236,8 +236,8 @@ class TestJsonRoundTrip:
         """Rotation gates with float params round-trip."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RX[math.pi](q[0]),
+            qb.RZ(rad(0.5), q[0]),
+            qb.RX(rad(math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -247,7 +247,8 @@ class TestJsonRoundTrip:
         # Find RZ gate
         rz_gates = [s for s in restored.body if isinstance(s, GateOp) and s.gate == GateKind.RZ]
         assert len(rz_gates) == 1
-        assert rz_gates[0].params[0].value == 0.5
+        # The typed angle round-trips by exact fixed-point fraction + unit.
+        assert rz_gates[0].params[0].value == rad(0.5)
 
     def test_measurement(self) -> None:
         """Measurement with classical register round-trips."""

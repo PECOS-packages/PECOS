@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from pecos.slr import CReg, Main, Permute, SlrConverter
+from pecos.slr import CReg, Main, Permute, Return, SlrConverter
 
 # Test fixtures
 
@@ -21,6 +21,7 @@ def create_basic_permutation_program() -> tuple:
             [b[1], a[0]],
         ),
         a[0].set(1),  # Should become b[1] = 1 after permutation
+        Return(a, b),
     )
 
     return prog, a, b
@@ -39,6 +40,7 @@ def create_same_register_permutation_program() -> tuple:
         a[0].set(1),  # Should become a[2] = 1
         a[1].set(0),  # Should become a[0] = 0
         a[2].set(1),  # Should become a[1] = 1
+        Return(a),
     )
 
     return prog, a
@@ -57,6 +59,7 @@ def test_permutation_consistency_for_bits_in_qasm() -> None:
             [b[1], a[0]],
         ),
         a[0].set(1),
+        Return(a, b),
     )
 
     qasm1 = SlrConverter(prog).qasm()
@@ -148,79 +151,52 @@ def test_same_register_permutation_qasm(
 # QIR Tests
 
 
+# A Permute is realized as a static logical relabel consulted at
+# every classical-bit lowering (mirroring the Guppy linearity
+# tracker's `.permute()`). The bespoke @set_creg_bit helpers the old
+# tests pinned were removed by the static CReg model; bit writes are now `store i1`
+# into the relabelled register's `[N x i1]` buffer.
+
+
 @pytest.mark.optional_dependency
 def test_basic_permutation_qir(basic_permutation_program: tuple) -> None:
-    """Test basic permutation functionality in QIR generation."""
+    """Element-wise CReg Permute is realized (a[0] <-> b[1])."""
     prog, _, _ = basic_permutation_program
-
-    # Generate QIR
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for debugging
-    print("\nQIR output:")
-    print(qir)
+    assert "; Permutation: a[0] -> b[1], b[1] -> a[0]" in qir, qir
+    # a[0].set(1) after the swap writes b[1]'s slot, not a[0]'s.
+    m = re.search(r"%(\.\d+) = getelementptr \[2 x i1\], \[2 x i1\]\* %b, i64 0, i64 1\n\s*store i1 1, i1\* %\1", qir)
+    assert m, f"Expected a[0].set(1) to store into b[1] (relabelled):\n{qir}"
 
-    # Verify that the QIR contains a comment about the permutation
-    assert "Permutation: a[0] -> b[1], b[1] -> a[0]" in qir
-
-    # Extract the register and index used in the set_creg_bit call
-    # This should be setting a[0] (register %a, index 0) since the permutation
-    # is not being applied to the operations in the QIR generator
-    set_creg_calls = re.findall(
-        r"call void @set_creg_bit\(i1\* %(\w+), i64 (\d+), i1 1\)",
-        qir,
-    )
-
-    # We should have at least one set_creg_bit call
-    assert len(set_creg_calls) >= 1, "No set_creg_bit call found"
-
-    # Get the register and index
-    reg_name, index = set_creg_calls[0]
-
-    # Verify that the set_creg_bit call is setting a[0] since the permutation
-    # is not being applied to the operations in the QIR generator
-    assert reg_name == "a", f"set_creg_bit applied to register {reg_name}, expected a"
-    assert index == "0", f"set_creg_bit applied to index {index}, expected 0"
-
-    # Verify that running QIR generation twice produces consistent results
-    qir2 = SlrConverter(prog).qir()
-    assert qir == qir2, "QIR generation is not deterministic"
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
 
 @pytest.mark.optional_dependency
 def test_same_register_permutation_qir(
     same_register_permutation_program: tuple,
 ) -> None:
-    """Test permutation of elements within the same register in QIR."""
+    """Element-wise same-CReg cycle Permute is realized."""
     prog, _ = same_register_permutation_program
-
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for debugging
-    print("\nQIR output:")
-    print(qir)
+    assert "; Permutation: a[0] -> a[2], a[1] -> a[0], a[2] -> a[1]" in qir, qir
 
-    # Verify that the QIR contains a comment about the permutation
-    assert "Permutation: a[0] -> a[2], a[1] -> a[0], a[2] -> a[1]" in qir
+    # a[0].set(1)->a[2], a[1].set(0)->a[0], a[2].set(1)->a[1].
+    def _stored(slot: int, val: int) -> bool:
+        pat = (
+            rf"%(\.\d+) = getelementptr \[3 x i1\], \[3 x i1\]\* %a, i64 0, i64 {slot}\n"
+            rf"\s*store i1 {val}, i1\* %\1"
+        )
+        return bool(
+            re.search(
+                pat,
+                qir,
+            ),
+        )
 
-    # Extract the register and indices used in the set_creg_bit calls
-    set_creg_calls = re.findall(
-        r"call void @set_creg_bit\(i1\* %(\w+), i64 (\d+), i1 (\d+)\)",
-        qir,
-    )
+    assert _stored(2, 1), qir  # a[0].set(1) -> a[2]
+    assert _stored(0, 0), qir  # a[1].set(0) -> a[0]
+    assert _stored(1, 1), qir  # a[2].set(1) -> a[1]
 
-    # We should have at least three set_creg_bit calls
-    assert len(set_creg_calls) >= 3, f"Expected at least 3 set_creg_bit calls, found {len(set_creg_calls)}"
-
-    # Create a dictionary to store the values set for each index
-    set_values = {}
-    for reg_name, index, value in set_creg_calls:
-        assert reg_name == "a", f"set_creg_bit applied to register {reg_name}, expected a"
-        set_values[int(index)] = int(value)
-
-    # Verify that the set_creg_bit calls are setting the correct values
-    # Since the permutation is not being applied to the operations in the QIR generator,
-    # we expect the original operations to be executed
-    assert set_values.get(0) == 1, "a[0] should be set to 1"
-    assert set_values.get(1) == 0, "a[1] should be set to 0"
-    assert set_values.get(2) == 1, "a[2] should be set to 1"
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"

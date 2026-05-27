@@ -18,8 +18,8 @@ from pecos.slr.qeclib import qubit
 
 
 def test_Prep(compare_qasm: Callable[..., None]) -> None:
-    """Test Prep gate QASM regression."""
+    """Test PZ gate QASM regression."""
     q = QReg("q_test", 1)
 
-    prog = qubit.Prep(q[0])
+    prog = qubit.PZ(q[0])
     compare_qasm(prog)

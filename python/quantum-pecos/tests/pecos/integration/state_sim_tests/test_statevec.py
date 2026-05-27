@@ -313,6 +313,9 @@ def _test_all_gates_incremental(
     _apply({"SWAP": {(3, 0)}})
     _apply({"Tdg": {3, 1}})
     _apply({"RXX": {(1, 3)}}, angles=(pc.f64.frac_pi_4,))
+    _apply({"CRZ": {(0, 1)}}, angles=(pc.f64.pi / 5,))
+    _apply({"CRX": {(2, 3)}}, angles=(pc.f64.pi / 7,))
+    _apply({"CRY": {(1, 2)}}, angles=(pc.f64.pi / 6,))
     _apply({"Q": {0, 1, 2}})
     _apply({"Qd": {0, 3}})
     _apply({"R": {0}})
@@ -337,6 +340,38 @@ def _test_all_gates_incremental(
     # Measure
     qc.append({"Measure": {0, 1, 2, 3}})
     check_measurement(simulator, qc)
+
+
+def test_controlled_rotations_statevec() -> None:
+    """CRX/CRY/CRZ via the StateVec backend (cross-codegen QC support).
+
+    Verifies the 1-RZZ default implementations in
+    `ArbitraryRotationGateable::{crx,cry,crz}` produce the textbook
+    block-diag(I, R*(theta)) action by comparing against direct
+    R*(theta) on the target with the control prepared in |1>.
+    """
+    theta = pc.f64.pi / 3
+    for sym, direct_sym in [("CRZ", "RZ"), ("CRX", "RX"), ("CRY", "RY")]:
+        # c=0: |00> stays |00>.
+        sim_c0 = StateVec(2)
+        sim_c0.backend.run_2q_gate(sym, (0, 1), {"angle": theta})
+        baseline_c0 = StateVec(2)
+        assert pc.allclose(
+            sim_c0.backend.vector,
+            baseline_c0.backend.vector,
+        ), f"{sym}|00> changed the state -- expected identity when control=0"
+
+        # c=1: |10> -> |1, R*(theta)|0>>. Compare against direct R* on target.
+        sim_c1 = StateVec(2)
+        sim_c1.backend.run_1q_gate("X", 0, None)
+        sim_c1.backend.run_2q_gate(sym, (0, 1), {"angle": theta})
+        sim_direct = StateVec(2)
+        sim_direct.backend.run_1q_gate("X", 0, None)
+        sim_direct.backend.run_1q_gate(direct_sym, 1, {"angle": theta})
+        assert pc.allclose(
+            sim_c1.backend.vector,
+            sim_direct.backend.vector,
+        ), f"{sym}(theta) when c=1 must equal direct {direct_sym}(theta) on target"
 
 
 @pytest.mark.parametrize(

@@ -134,6 +134,8 @@ from pecos.slr.ast.codegen import (
 from pecos.slr.ast.compare import ast_equal, compare_ast, nodes_equal
 from pecos.slr.ast.converter import SlrToAst, slr_to_ast
 from pecos.slr.ast.nodes import (
+    # Reusable blocks
+    AllocatorArg,
     # Declarations
     AllocatorDecl,
     # Types
@@ -148,10 +150,15 @@ from pecos.slr.ast.nodes import (
     BinaryExpr,
     # Enums
     BinaryOp,
+    BitBundleArg,
     BitExpr,
     # References
     BitRef,
     BitTypeExpr,
+    BlockArg,
+    BlockCall,
+    BlockDecl,
+    BlockInput,
     CommentOp,
     Declaration,
     Expression,
@@ -165,12 +172,17 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     PermuteOp,
     PrepareOp,
+    PrintOp,
     # Program
     Program,
+    QubitBundleArg,
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
+    ResourceEffect,
     ReturnOp,
+    SingleBitArg,
+    SingleQubitArg,
     SlotRef,
     SourceLocation,
     Statement,
@@ -190,26 +202,28 @@ from pecos.slr.ast.visitor import (
 )
 
 __all__ = [
+    "AllocatorArg",
     "AllocatorDecl",
     "AllocatorTypeExpr",
     "ArrayTypeExpr",
     "AssignOp",
-    # Base
     "AstNode",
-    # Analysis
     "AstQubitStateValidator",
-    # Code generation
     "AstToGuppy",
     "AstToQasm",
-    # Visitors
     "AstVisitor",
     "BarrierOp",
     "BaseVisitor",
     "BinaryExpr",
     "BinaryOp",
+    "BitBundleArg",
     "BitExpr",
     "BitRef",
     "BitTypeExpr",
+    "BlockArg",
+    "BlockCall",
+    "BlockDecl",
+    "BlockInput",
     "CodegenOptions",
     "CodegenResult",
     "CollectingVisitor",
@@ -231,18 +245,21 @@ __all__ = [
     "ParallelBlock",
     "PermuteOp",
     "PrepareOp",
+    "PrintOp",
     # Program
     "Program",
+    "QubitBundleArg",
     "QubitStateTracker",
     "QubitTypeExpr",
     "RegisterDecl",
     "RepeatStmt",
     "ResourceCount",
     "ResourceCounter",
+    "ResourceEffect",
     "ReturnOp",
-    # References
+    "SingleBitArg",
+    "SingleQubitArg",
     "SlotRef",
-    # Converter
     "SlrToAst",
     "SourceLocation",
     "StateViolation",

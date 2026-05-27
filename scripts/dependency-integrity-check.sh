@@ -46,6 +46,19 @@ collect_files() {
     rg --files "$@"
 }
 
+# Static indicator lists for known supply-chain worm campaigns (the
+# Shai-Hulud npm worm and related typosquats). These catch KNOWN-bad
+# package names and payload/persistence indicators only -- novel campaigns
+# are not covered here (the live-CVE side is handled by osv-scanner +
+# Dependabot, and runtime egress by harden-runner).
+#
+# MAINTENANCE: refresh these when a new campaign is disclosed. Sources:
+#   - GitHub Security advisories / GitHub blog incident write-ups
+#   - CISA alerts (https://www.cisa.gov/news-events/alerts)
+#   - StepSecurity / Socket / OpenSSF campaign IoC reports
+# The daily scheduled run of this check (see dependency-integrity-check.yml)
+# exercises the lists against the whole tree, so an update takes effect on
+# the next scheduled scan without needing a PR to trip it.
 KNOWN_BAD_PACKAGE_RE='(mistralai|guardrails-ai|lightning|@tanstack/|@mistralai/|@uipath/|@opensearch-project/|@squawk/|@tallyui/|@beproduct/|@draftauth/|@dirigible-ai/|@ml-toolkit-ts/|@supersurkhet/|agentwork-cli|cmux-agent-mcp|cross-stitch|git-branch-selector|git-git-git|nextmove-mcp|safe-action|ts-dna|wot-api|finch-rust|sha-rust|finch_cli_rust|finch-rst|sha-rst)'
 SHAI_HULUD_IOC_RE='(shai[-_ ]?hulud|router_init\.js|router_runtime\.js|setup\.mjs|setup_bun\.js|bun_environment\.js|transformers\.pyz|git-tanstack\.com|api\.masscan\.cloud|getsession\.org|filev2\.getsession|gh-token-monitor|IfYouRevokeThisTokenItWillWipeTheComputerOfTheOwner|shai-hulud-workflow)'
 
@@ -274,16 +287,14 @@ else
 fi
 
 section "GitHub Actions action pinning"
+# A `uses:` ref is pinned iff the ref after `@` is a 40-hex commit SHA.
+# Do the interval (`{40}`) match with rg rather than awk: ERE interval
+# expressions are not supported by every host awk (a mawk built without
+# --re-interval treats `{40}` literally and would spuriously flag every
+# correctly pinned action), whereas rg's regex engine always supports them.
 unpinned_actions="$(
-    rg -n 'uses:[[:space:]]+[^[:space:]#]+@[^[:space:]#]+' .github/workflows .github/actions |
-        awk -F: '{
-            line = $0
-            sub(/^[^:]+:[0-9]+:/, "", line)
-            if (line ~ /uses:[[:space:]]+[^[:space:]#]+@[0-9a-f]{40}([[:space:]#]|$)/) {
-                next
-            }
-            print
-        }' ||
+    rg -n 'uses:[[:space:]]+[^[:space:]#]+@[^[:space:]#]+' .github/workflows .github/actions 2>/dev/null |
+        rg -v 'uses:[[:space:]]+[^[:space:]#]+@[0-9a-f]{40}([[:space:]#]|$)' ||
         true
 )"
 if [[ -n "$unpinned_actions" ]]; then

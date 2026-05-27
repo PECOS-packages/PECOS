@@ -322,7 +322,7 @@ class QuantumCircuitGenerator(Generator):
             "CY": "CY",
             "CZ": "CZ",
             "Measure": "Measure",
-            "Prep": "RESET",
+            "PZ": "RESET",
             "RX": "RX",
             "RY": "RY",
             "RZ": "RZ",

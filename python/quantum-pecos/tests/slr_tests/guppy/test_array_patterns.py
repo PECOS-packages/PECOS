@@ -1,241 +1,85 @@
 """Tests for array handling patterns in Guppy code generation.
 
-These tests verify various array patterns including:
-- Array unpacking for measurements
-- Swapping and permutation patterns
-- Option[qubit] patterns (future enhancement)
-- Array indexing vs unpacking trade-offs
+After the AST -> Guppy v1 emitter rewrite, the canonical acceptance corpus
+lives in ``tests/slr_tests/ast_guppy/test_v1_acceptance.py``. The legacy
+string-shape tests in this file are mostly duplicate coverage of that
+corpus and have been deleted; the surviving cases either exercise a
+v1 pattern not yet in the acceptance set (e.g. ``Permute``) or test
+non-Guppy fallthrough behavior on the legacy IR path.
 """
 
 import pytest
-from pecos.slr import Block, CReg, Main, Permute, QReg, SlrConverter
+from pecos.slr import Block, CReg, Main, Permute, QReg, Return, SlrConverter
 from pecos.slr.qeclib import qubit
 from pecos.slr.qeclib.qubit.measures import Measure
+
+from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
 
 
 class TestArrayUnpacking:
     """Test array unpacking patterns for measurements."""
 
-    def test_unpack_for_selective_measurement(self) -> None:
-        """Test selective measurements of individual qubits."""
-        prog = Main(
-            q := QReg("q", 4),
-            c := CReg("c", 4),
-            # Selective measurements
-            Measure(q[0]) > c[0],
-            qubit.H(q[1]),  # Operation between measurements
-            Measure(q[1]) > c[1],
-            Measure(q[2]) > c[2],
-            Measure(q[3]) > c[3],
-        )
-
-        guppy_code = SlrConverter(prog).guppy()
-
-        # AST codegen uses array indexing
-        # Check that measurements use array indexing
-        assert "quantum.measure(q[0])" in guppy_code
-        assert "quantum.measure(q[1])" in guppy_code
-
-        # Check that gate uses array indexing
-        assert "quantum.h(q[1])" in guppy_code
-
-    def test_no_unpack_for_full_measurement(self) -> None:
-        """Test full array measurements."""
-        prog = Main(
-            q := QReg("q", 4),
-            c := CReg("c", 4),
-            qubit.H(q[0]),
-            qubit.CX(q[0], q[1]),
-            # Full array measurement
-            Measure(q) > c,
-        )
-
-        guppy_code = SlrConverter(prog).guppy()
-
-        # AST codegen measures each qubit individually
-        assert "quantum.measure(q[0])" in guppy_code
-        assert "quantum.measure(q[1])" in guppy_code
-        assert "quantum.measure(q[2])" in guppy_code
-        assert "quantum.measure(q[3])" in guppy_code
-
-    def test_unpack_timing_for_first_measurement(self) -> None:
-        """Test measurement order is preserved."""
-        prog = Main(
-            q := QReg("q", 3),
-            c := CReg("c", 3),
-            # Operations before measurement
-            qubit.H(q[0]),
-            qubit.CX(q[0], q[1]),
-            qubit.CX(q[1], q[2]),
-            # First measurement triggers unpacking
-            Measure(q[1]) > c[1],  # Not measuring in order
-            Measure(q[0]) > c[0],
-            Measure(q[2]) > c[2],
-        )
-
-        guppy_code = SlrConverter(prog).guppy()
-
-        # AST codegen uses array parameters and indexing
-        assert "q: array[qubit, 3]" in guppy_code
-        assert "quantum.h(q[0])" in guppy_code
-        assert "quantum.cx(q[0], q[1])" in guppy_code
-        assert "quantum.cx(q[1], q[2])" in guppy_code
-
-        # Measurements use array indexing
-        assert "c_1 = quantum.measure(q[1])" in guppy_code
-        assert "c_0 = quantum.measure(q[0])" in guppy_code
-        assert "c_2 = quantum.measure(q[2])" in guppy_code
-
     @pytest.mark.optional_dependency
     def test_unique_unpacked_names(self) -> None:
-        """Test that unpacked names avoid conflicts."""
+        """Slot-locals are disambiguated against declared register names.
+
+        Before the fix, the Guppy emitter's slot-local formula
+        `f"{allocator}_{index}"` would generate `q_0` for `q[0]`, which
+        shadows a separately declared `QReg("q_0", ...)` parameter: the
+        entry-unpack LHS `q_0, q_1 = q` rebinds the `q_0` param to the
+        first qubit of `q`, and the next line `q_0_0, = q_0` then tries
+        to unpack a single qubit, raising UnpackableError.
+
+        After the fix, `GuppyContext.populate_slot_locals` builds a
+        single namespace-wide table that is read by both
+        `GuppyLinearityState.from_allocators(..., slot_locals=...)` and
+        the emitter's `_local_name`; colliding candidates get `_`-suffixed
+        until unique. So `q[0]` becomes `q_0_` (one underscore appended,
+        since `q_0` is taken by the other register), and `q_0[0]` stays
+        `q_0_0`. The compiled Guppy + HUGR build cleanly.
+        """
         prog = Main(
             q := QReg("q", 2),
-            q_0 := QReg("q_0", 1),  # Conflicting name
+            q_0 := QReg("q_0", 1),  # Same name as the q[0] slot-local would default to.
             c := CReg("c", 3),
             Measure(q[0]) > c[0],
             Measure(q[1]) > c[1],
             Measure(q_0[0]) > c[2],
+            Return(c),
         )
 
         guppy_code = SlrConverter(prog).guppy()
 
-        # Should generate unique names to avoid conflicts
-        # The unpacked names might be _q_0, _q_1 or similar
-        assert "= q" in guppy_code  # Some unpacking happens
+        # The fix produces `q_0_, q_1 = q` (q[0] disambiguated against
+        # the register `q_0`); `q_0_0, = q_0` is unchanged.
+        assert "q_0_, q_1 = q" in guppy_code, guppy_code
+        assert "q_0_0, = q_0" in guppy_code, guppy_code
+        # The slot-local must NOT be the bare `q_0`, which would shadow
+        # the parameter:
+        assert "q_0, q_1 = q" not in guppy_code, guppy_code
 
-        # Should compile without name conflicts
-        try:
-            hugr = SlrConverter(prog).hugr()
-            assert hugr is not None
-        except ImportError as e:
-            pytest.fail(f"Should handle name conflicts: {e}")
+        # HUGR build must succeed (this is what raised UnpackableError pre-fix).
+        hugr = SlrConverter(prog).hugr()
+        assert hugr is not None
 
 
 class TestArraySwapPatterns:
-    """Test patterns for swapping array elements."""
+    """Test patterns for swapping array elements via Permute."""
 
     def test_permute_operation(self) -> None:
-        """Test Permute operation for register swapping."""
+        """Permute on whole quantum registers compiles via the AST emitter."""
         prog = Main(
             q1 := QReg("q1", 2),
             q2 := QReg("q2", 2),
             c := CReg("c", 4),
-            # Prepare states
             qubit.H(q1[0]),
             qubit.X(q2[0]),
-            # Swap registers
             Permute(q1, q2),
-            # Measure (q1 and q2 are swapped)
             Measure(q1) > c[0:2],
             Measure(q2) > c[2:4],
+            Return(c),
         )
-
-        guppy_code = SlrConverter(prog).guppy()
-
-        # Permute operation generates a swap comment
-        assert "# Swap" in guppy_code
-        # AST codegen uses Python tuple swap syntax
-        assert "q1, q2 = q2, q1" in guppy_code
-
-    def test_manual_element_swap(self) -> None:
-        """Test measuring in different order than indices."""
-        # This pattern might be used to reorder qubits
-        prog = Main(
-            q := QReg("q", 3),
-            c := CReg("c", 3),
-            # Prepare different states
-            qubit.H(q[0]),
-            qubit.X(q[1]),
-            qubit.Y(q[2]),
-            # Measure in different order
-            Measure(q[2]) > c[0],
-            Measure(q[0]) > c[1],
-            Measure(q[1]) > c[2],
-        )
-
-        guppy_code = SlrConverter(prog).guppy()
-
-        # AST codegen uses array indexing
-        assert "quantum.h(q[0])" in guppy_code
-        assert "quantum.x(q[1])" in guppy_code
-        assert "quantum.y(q[2])" in guppy_code
-        # Measurements in the specified order
-        assert "c_0 = quantum.measure(q[2])" in guppy_code
-        assert "c_1 = quantum.measure(q[0])" in guppy_code
-        assert "c_2 = quantum.measure(q[1])" in guppy_code
-
-
-class TestMeasurementIntoArrays:
-    """Test patterns for measuring into classical arrays."""
-
-    def test_measure_into_preallocated_array(self) -> None:
-        """Test measuring qubits into classical variables."""
-        prog = Main(
-            q := QReg("q", 4),
-            c := CReg("c", 4),
-            # Initialize qubits
-            qubit.H(q[0]),
-            qubit.CX(q[0], q[1]),
-            # Measure into specific indices
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
-            Measure(q[2]) > c[2],
-            Measure(q[3]) > c[3],
-        )
-
-        guppy_code = SlrConverter(prog).guppy()
-
-        # AST codegen uses array indexing for qubits
-        assert "quantum.h(q[0])" in guppy_code
-        assert "quantum.cx(q[0], q[1])" in guppy_code
-        assert "c_0 = quantum.measure(q[0])" in guppy_code
-        assert "c_1 = quantum.measure(q[1])" in guppy_code
-
-    def test_measure_into_multiple_arrays(self) -> None:
-        """Test measuring into different classical variables."""
-        prog = Main(
-            q := QReg("q", 4),
-            even := CReg("even", 2),
-            odd := CReg("odd", 2),
-            # Measure even indices to one array, odd to another
-            Measure(q[0]) > even[0],
-            Measure(q[2]) > even[1],
-            Measure(q[1]) > odd[0],
-            Measure(q[3]) > odd[1],
-        )
-
-        guppy_code = SlrConverter(prog).guppy()
-
-        # AST codegen uses array indexing
-        # Results distributed to correctly named variables
-        assert "even_0 = quantum.measure(q[0])" in guppy_code
-        assert "even_1 = quantum.measure(q[2])" in guppy_code
-        assert "odd_0 = quantum.measure(q[1])" in guppy_code
-        assert "odd_1 = quantum.measure(q[3])" in guppy_code
-
-    def test_partial_array_measurement(self) -> None:
-        """Test measuring only part of a quantum array."""
-        prog = Main(
-            q := QReg("q", 5),
-            c := CReg("c", 3),
-            # Only measure first 3 qubits
-            Measure(q[0]) > c[0],
-            Measure(q[1]) > c[1],
-            Measure(q[2]) > c[2],
-            # q[3] and q[4] remain unmeasured
-        )
-
-        guppy_code = SlrConverter(prog).guppy()
-
-        # AST codegen uses array indexing
-        assert "c_0 = quantum.measure(q[0])" in guppy_code
-        assert "c_1 = quantum.measure(q[1])" in guppy_code
-        assert "c_2 = quantum.measure(q[2])" in guppy_code
-
-        # Unmeasured qubits are returned in the function signature
-        # since not all qubits are consumed
-        assert "array[qubit, 5]" in guppy_code
+        assert_ast_guppy_compiles(prog)
 
 
 class TestComplexArrayPatterns:
@@ -262,6 +106,7 @@ class TestComplexArrayPatterns:
             ProcessPair(q[4:6]),
             # Measure all
             Measure(q) > c,
+            Return(c),
         )
 
         # Note: Slicing syntax q[0:2] might not be fully supported yet
@@ -285,6 +130,7 @@ class TestComplexArrayPatterns:
             c := CReg("c", 4),
             # All current operations use fixed indices
             Measure(q) > c,
+            Return(c),
         )
 
         guppy_code = SlrConverter(prog).guppy()

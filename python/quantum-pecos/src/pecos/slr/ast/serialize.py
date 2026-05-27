@@ -32,7 +32,11 @@ import json
 from dataclasses import fields, is_dataclass
 from typing import TYPE_CHECKING, Any
 
+from pecos_rslib import angle64
+
+from pecos.slr.angle import Angle
 from pecos.slr.ast.nodes import (
+    AllocatorArg,
     AllocatorDecl,
     AllocatorTypeExpr,
     ArrayTypeExpr,
@@ -40,9 +44,13 @@ from pecos.slr.ast.nodes import (
     BarrierOp,
     BinaryExpr,
     BinaryOp,
+    BitBundleArg,
     BitExpr,
     BitRef,
     BitTypeExpr,
+    BlockCall,
+    BlockDecl,
+    BlockInput,
     CommentOp,
     ForStmt,
     GateKind,
@@ -53,11 +61,16 @@ from pecos.slr.ast.nodes import (
     ParallelBlock,
     PermuteOp,
     PrepareOp,
+    PrintOp,
     Program,
+    QubitBundleArg,
     QubitTypeExpr,
     RegisterDecl,
     RepeatStmt,
+    ResourceEffect,
     ReturnOp,
+    SingleBitArg,
+    SingleQubitArg,
     SlotRef,
     SourceLocation,
     UnaryExpr,
@@ -82,6 +95,14 @@ _NODE_CLASSES: dict[str, type[AstNode]] = {
     "BitExpr": BitExpr,
     "BitRef": BitRef,
     "BitTypeExpr": BitTypeExpr,
+    "AllocatorArg": AllocatorArg,
+    "BitBundleArg": BitBundleArg,
+    "BlockCall": BlockCall,
+    "BlockDecl": BlockDecl,
+    "BlockInput": BlockInput,
+    "QubitBundleArg": QubitBundleArg,
+    "SingleBitArg": SingleBitArg,
+    "SingleQubitArg": SingleQubitArg,
     "CommentOp": CommentOp,
     "ForStmt": ForStmt,
     "GateOp": GateOp,
@@ -91,6 +112,7 @@ _NODE_CLASSES: dict[str, type[AstNode]] = {
     "ParallelBlock": ParallelBlock,
     "PermuteOp": PermuteOp,
     "PrepareOp": PrepareOp,
+    "PrintOp": PrintOp,
     "Program": Program,
     "QubitTypeExpr": QubitTypeExpr,
     "RegisterDecl": RegisterDecl,
@@ -108,6 +130,7 @@ _ENUM_CLASSES: dict[str, type] = {
     "GateKind": GateKind,
     "BinaryOp": BinaryOp,
     "UnaryOp": UnaryOp,
+    "ResourceEffect": ResourceEffect,
 }
 
 
@@ -139,8 +162,14 @@ def _serialize_value(value: Any) -> Any:
         return None
     if isinstance(value, (int, float, bool, str)):
         return value
-    if isinstance(value, (GateKind, BinaryOp, UnaryOp)):
+    if isinstance(value, (GateKind, BinaryOp, UnaryOp, ResourceEffect)):
         return {"_enum": type(value).__name__, "value": value.name}
+    if isinstance(value, Angle):
+        # Encode by the exact fixed-point fraction + source unit so the
+        # angle64 value round-trips losslessly and pretty-print keeps the
+        # unit label. (Must precede the generic dataclass branch below --
+        # Angle is a dataclass but its `angle64` field is not serializable.)
+        return {"_angle": {"fraction": value.value.fraction, "unit": value.source_unit}}
     if isinstance(value, tuple):
         return [_serialize_value(v) for v in value]
     if isinstance(value, list):
@@ -216,6 +245,10 @@ def _deserialize_value(value: Any, field_name: str, field_info: dict) -> Any:
                 msg = f"Unknown enum type: {value['_enum']}"
                 raise ValueError(msg)
             return enum_class[value["value"]]
+        if "_angle" in value:
+            # Typed rotation angle: rebuild from the fixed-point fraction.
+            a = value["_angle"]
+            return Angle(angle64(a["fraction"]), a["unit"])
         if "_type" in value:
             # Nested AST node
             return dict_to_ast(value)

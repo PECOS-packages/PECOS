@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.slr import CReg, QReg
+from pecos.slr import CReg, QReg, Return
 from pecos.slr.qeclib.steane.syn_extract.three_parallel_flagging import (
     ThreeParallelFlaggingXZZ,
     ThreeParallelFlaggingZXX,
@@ -39,6 +39,7 @@ def test_ThreeParallelFlaggingXZZ(compare_qasm: Callable[..., None]) -> None:
         last_raw_syn_x,
         last_raw_syn_z,
     )
+    block.extend(Return(flag_x, flag_z, flags, last_raw_syn_x, last_raw_syn_z))
     compare_qasm(block)
 
 
@@ -61,4 +62,5 @@ def test_ThreeParallelFlaggingZXX(compare_qasm: Callable[..., None]) -> None:
         last_raw_syn_x,
         last_raw_syn_z,
     )
+    block.extend(Return(flag_x, flag_z, flags, last_raw_syn_x, last_raw_syn_z))
     compare_qasm(block)

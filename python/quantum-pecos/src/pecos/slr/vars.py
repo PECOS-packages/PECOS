@@ -215,17 +215,14 @@ class SymbolicQubit(SymbolicElem):
 
 
 class CReg(Reg, PyCOp):
-    def __init__(self, sym: str, size: int, *, result: bool = True) -> None:
-        """
-        Representation for a collection of bits.
+    def __init__(self, sym: str, size: int) -> None:
+        """Representation for a collection of bits.
 
         Args:
-            sym:
-            size:
-            result: Whether this register is a result register (default True)
+            sym: Register name.
+            size: Number of bits.
         """
         super().__init__(sym, size, elem_type=Bit)
-        self.result = result
 
     @property
     def _symbolic_elem_type(self) -> type[SymbolicBit]:

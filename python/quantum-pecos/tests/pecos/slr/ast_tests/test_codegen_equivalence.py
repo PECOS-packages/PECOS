@@ -15,11 +15,10 @@ These tests verify that both paths produce equivalent output.
 """
 
 import pytest
-from pecos.slr import CReg, If, Main, Permute, QReg, Repeat
+from pecos.slr import CReg, If, Main, Permute, QReg, Repeat, rad
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.codegen import generate
 from pecos.slr.gen_codes import (
-    GuppyGenerator,
     QASMGenerator,
     QIRGenerator,
     QuantumCircuitGenerator,
@@ -172,38 +171,6 @@ class TestStimEquivalence:
         ast_lines = set(normalize_whitespace(ast_stim).split("\n"))
 
         assert direct_lines == ast_lines
-
-
-class TestGuppyEquivalence:
-    """Compare Guppy output from direct SLR vs AST."""
-
-    def test_bell_state_guppy_structure(self) -> None:
-        """Test Bell state produces structurally similar Guppy."""
-        prog = Main(
-            q := QReg("q", 2),
-            qb.H(q[0]),
-            qb.CX(q[0], q[1]),
-        )
-
-        # AST path first (before direct generator mutates prog)
-        ast = slr_to_ast(prog)
-        ast_guppy = generate(ast, "guppy")
-
-        # Direct SLR path
-        gen = GuppyGenerator(_internal=True)
-        gen.generate_block(prog)
-        direct_guppy = gen.get_output()
-
-        # Both should have key elements
-        assert "@guppy" in direct_guppy or "guppy" in direct_guppy.lower()
-        assert "@guppy" in ast_guppy or "guppy" in ast_guppy.lower()
-
-        # Both should have H and CX gates
-        assert "quantum.h" in direct_guppy.lower() or ".h(" in direct_guppy.lower()
-        assert "quantum.h" in ast_guppy.lower() or ".h(" in ast_guppy.lower()
-
-        assert "quantum.cx" in direct_guppy.lower() or ".cx(" in direct_guppy.lower()
-        assert "quantum.cx" in ast_guppy.lower() or ".cx(" in ast_guppy.lower()
 
 
 class TestQIREquivalence:
@@ -388,7 +355,7 @@ class TestRotationGatesEquivalence:
 
         prog = Main(
             q := QReg("q", 1),
-            qb.RX[math.pi / 4](q[0]),
+            qb.RX(rad(math.pi / 4), q[0]),
         )
 
         # AST path first
@@ -409,7 +376,7 @@ class TestRotationGatesEquivalence:
 
         prog = Main(
             q := QReg("q", 1),
-            qb.RY[math.pi / 2](q[0]),
+            qb.RY(rad(math.pi / 2), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -428,7 +395,7 @@ class TestRotationGatesEquivalence:
 
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[math.pi](q[0]),
+            qb.RZ(rad(math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -447,9 +414,9 @@ class TestRotationGatesEquivalence:
 
         prog = Main(
             q := QReg("q", 2),
-            qb.RX[math.pi / 4](q[0]),
-            qb.RY[math.pi / 2](q[1]),
-            qb.RZ[math.pi](q[0]),
+            qb.RX(rad(math.pi / 4), q[0]),
+            qb.RY(rad(math.pi / 2), q[1]),
+            qb.RZ(rad(math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -699,9 +666,9 @@ class TestComplexCircuitEquivalence:
         prog = Main(
             q := QReg("q", 3),
             qb.H(q[0]),
-            qb.RZ[math.pi / 2](q[0]),
+            qb.RZ(rad(math.pi / 2), q[0]),
             qb.H(q[1]),
-            qb.RZ[math.pi / 4](q[1]),
+            qb.RZ(rad(math.pi / 4), q[1]),
             qb.H(q[2]),
         )
 

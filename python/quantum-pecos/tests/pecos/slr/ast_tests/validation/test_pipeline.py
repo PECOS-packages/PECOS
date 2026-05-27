@@ -13,7 +13,7 @@
 
 import math
 
-from pecos.slr import CReg, If, Main, QReg
+from pecos.slr import CReg, If, Main, QReg, rad
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
@@ -54,8 +54,8 @@ class TestValidateFunction:
         """Program with rotation gates passes."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
-            qb.RX[math.pi](q[0]),
+            qb.RZ(rad(0.5), q[0]),
+            qb.RX(rad(math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -71,7 +71,7 @@ class TestValidateFunction:
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.CX(q[1], q[2]),
-            qb.RZ[0.5](q[0]),
+            qb.RZ(rad(0.5), q[0]),
             If(c[0] == 1).Then(
                 qb.X(q[0]),
             ),

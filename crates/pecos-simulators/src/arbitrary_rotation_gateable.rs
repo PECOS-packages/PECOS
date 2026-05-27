@@ -254,6 +254,76 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
         self.rxx(theta, pairs).ryy(phi, pairs).rzz(lambda, pairs)
     }
 
+    /// Applies a controlled-RZ rotation: target qubit gets RZ(theta) when control = |1>.
+    ///
+    /// `CRZ(theta) = block-diag(I, RZ(theta)) = diag(1, 1, exp(-i*theta/2), exp(i*theta/2))`.
+    ///
+    /// Default 2q-minimal decomposition (1 RZZ + 1 single-qubit RZ on the
+    /// target): `CRZ(theta) = (I o RZ(theta/2)) . RZZ(-theta/2)`.
+    /// Verified: with the trait's `RZ = exp(-i*theta/2*Z)` and `RZZ =
+    /// exp(-i*theta/2*Z*Z)` conventions, the product on the c=0 sector
+    /// gives `RZ(theta/2) . exp(i*theta/4*I) = I` up to global phase, and
+    /// on c=1 (where ZZ acts as -Z on target) gives `RZ(theta/2) . X .
+    /// RZ(theta/2) . X = RZ(theta)` -- i.e. the convention-1 controlled
+    /// rotation. The non-PECOS-prefactor convention requires no extra
+    /// RZ on the control.
+    ///
+    /// # Parameters
+    /// - `theta`: The rotation angle on the target.
+    /// - `pairs`: Pairs of qubit indices `[(control, target), ...]`.
+    ///
+    /// # Returns
+    /// A mutable reference to `Self` for method chaining.
+    #[inline]
+    fn crz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        // Half-angle first, THEN negate -- `Angle<T>` is a wrapping fraction
+        // of a full turn (modulo 2pi), so `-theta / 2` would halve the wrapped
+        // 2*pi - theta and produce pi - theta/2, not -theta/2.
+        let half = theta / 2u64;
+        let targets: QubitBuf = pairs.iter().map(|&(_, t)| t).collect();
+        self.rzz(-half, pairs).rz(half, &targets)
+    }
+
+    /// Applies a controlled-RX rotation: target qubit gets RX(theta) when control = |1>.
+    ///
+    /// Default decomposition: `CRX(theta) = (I o H) . CRZ(theta) . (I o H)`,
+    /// using `H.Z.H = X` so the c=1 sector applies `H.RZ(theta).H = RX(theta)`.
+    /// Same 2q cost as `crz` (1 RZZ).
+    ///
+    /// # Parameters
+    /// - `theta`: The rotation angle on the target.
+    /// - `pairs`: Pairs of qubit indices `[(control, target), ...]`.
+    ///
+    /// # Returns
+    /// A mutable reference to `Self` for method chaining.
+    #[inline]
+    fn crx(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let targets: QubitBuf = pairs.iter().map(|&(_, t)| t).collect();
+        self.h(&targets).crz(theta, pairs).h(&targets)
+    }
+
+    /// Applies a controlled-RY rotation: target qubit gets RY(theta) when control = |1>.
+    ///
+    /// Default decomposition: `CRY(theta) = (I o S.H) . CRZ(theta) . (I o H.Sdg)`,
+    /// using `S.X.Sdg = Y` (so `S.Rx.Sdg = Ry`) and `H.Rz.H = Rx`, giving
+    /// `S.H.RZ.H.Sdg = RY`. Same 2q cost as `crz` (1 RZZ).
+    ///
+    /// # Parameters
+    /// - `theta`: The rotation angle on the target.
+    /// - `pairs`: Pairs of qubit indices `[(control, target), ...]`.
+    ///
+    /// # Returns
+    /// A mutable reference to `Self` for method chaining.
+    #[inline]
+    fn cry(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        let targets: QubitBuf = pairs.iter().map(|&(_, t)| t).collect();
+        self.szdg(&targets)
+            .h(&targets)
+            .crz(theta, pairs)
+            .h(&targets)
+            .sz(&targets)
+    }
+
     /// Applies a general 2-qubit unitary via KAK decomposition:
     /// U = (U3(before[0]) x U3(before[1])) * RXXRYYRZZ(interaction) * (U3(after[0]) x U3(after[1]))
     ///

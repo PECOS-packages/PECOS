@@ -34,20 +34,20 @@ class TestDepthAnalyzerBasic:
         """Single gate has depth 1."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
         )
         ast = slr_to_ast(prog)
 
         result = analyze_depth(ast)
 
-        assert result.depth == 2  # Prep + H
+        assert result.depth == 2  # PZ + H
 
     def test_sequential_gates_same_qubit(self) -> None:
         """Sequential gates on same qubit add to depth."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
             qb.X(q[0]),
             qb.Z(q[0]),
@@ -56,14 +56,14 @@ class TestDepthAnalyzerBasic:
 
         result = analyze_depth(ast)
 
-        assert result.depth == 4  # Prep + H + X + Z
+        assert result.depth == 4  # PZ + H + X + Z
 
     def test_parallel_gates_different_qubits(self) -> None:
         """Gates on different qubits can run in parallel."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.H(q[0]),
             qb.X(q[1]),
         )
@@ -71,8 +71,8 @@ class TestDepthAnalyzerBasic:
 
         result = analyze_depth(ast)
 
-        # q[0]: Prep(1) -> H(2)
-        # q[1]: Prep(1) -> X(2)
+        # q[0]: PZ(1) -> H(2)
+        # q[1]: PZ(1) -> X(2)
         # Both paths have depth 2
         assert result.depth == 2
 
@@ -84,8 +84,8 @@ class TestDepthAnalyzerTwoQubit:
         """Two-qubit gate increases depth for both qubits."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.CX(q[0], q[1]),
         )
         ast = slr_to_ast(prog)
@@ -100,8 +100,8 @@ class TestDepthAnalyzerTwoQubit:
         """Two-qubit gate waits for both qubits to be ready."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.H(q[0]),  # q[0] now at depth 2
             qb.CX(q[0], q[1]),  # Must wait for q[0]
         )
@@ -109,17 +109,17 @@ class TestDepthAnalyzerTwoQubit:
 
         result = analyze_depth(ast)
 
-        # q[0]: Prep(1) -> H(2) -> CX(3)
-        # q[1]: Prep(1) -> (wait) -> CX(3)
+        # q[0]: PZ(1) -> H(2) -> CX(3)
+        # q[1]: PZ(1) -> (wait) -> CX(3)
         assert result.depth == 3
 
     def test_chain_of_two_qubit_gates(self) -> None:
         """Chain of two-qubit gates increases depth."""
         prog = Main(
             q := QReg("q", 3),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
-            qb.Prep(q[2]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
+            qb.PZ(q[2]),
             qb.CX(q[0], q[1]),  # Depth 2
             qb.CX(q[1], q[2]),  # Depth 3 (waits for q[1])
         )
@@ -138,8 +138,8 @@ class TestDepthAnalyzerBellState:
         """Bell state has depth 3 (prep + H + CX)."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
         )
@@ -147,8 +147,8 @@ class TestDepthAnalyzerBellState:
 
         result = analyze_depth(ast)
 
-        # q[0]: Prep(1) -> H(2) -> CX(3)
-        # q[1]: Prep(1) -> (wait) -> CX(3)
+        # q[0]: PZ(1) -> H(2) -> CX(3)
+        # q[1]: PZ(1) -> (wait) -> CX(3)
         assert result.depth == 3
 
 
@@ -159,7 +159,7 @@ class TestDepthAnalyzerControlFlow:
         """Repeat loop adds depth for each iteration."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             Repeat(cond=3).block(
                 qb.H(q[0]),
             ),
@@ -168,7 +168,7 @@ class TestDepthAnalyzerControlFlow:
 
         result = analyze_depth(ast)
 
-        # Prep(1) + H(2) + H(3) + H(4)
+        # PZ(1) + H(2) + H(3) + H(4)
         assert result.depth == 4
 
 
@@ -181,9 +181,9 @@ class TestDepthAnalyzerQEC:
             data := QReg("data", 2),
             ancilla := QReg("ancilla", 1),
             c := CReg("c", 1),
-            qb.Prep(data[0]),
-            qb.Prep(data[1]),
-            qb.Prep(ancilla[0]),
+            qb.PZ(data[0]),
+            qb.PZ(data[1]),
+            qb.PZ(ancilla[0]),
             qb.CX(data[0], ancilla[0]),
             qb.CX(data[1], ancilla[0]),
             qb.Measure(ancilla[0]) > c[0],
@@ -209,12 +209,12 @@ class TestDepthAnalyzerClass:
 
         prog1 = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
         )
         prog2 = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
             qb.H(q[0]),
             qb.X(q[0]),
         )
@@ -232,8 +232,8 @@ class TestDepthAnalyzerClass:
         """DepthResult has useful string representation."""
         prog = Main(
             q := QReg("q", 2),
-            qb.Prep(q[0]),
-            qb.Prep(q[1]),
+            qb.PZ(q[0]),
+            qb.PZ(q[1]),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
         )

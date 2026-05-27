@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from pecos.slr import CReg, Main, Permute, QReg, SlrConverter
+from pecos.slr import CReg, Main, Permute, QReg, SlrConverter, rad
 from pecos.slr.qeclib import qubit
 
 # QASM Tests
@@ -361,9 +361,9 @@ def test_rotation_gates_with_permutation() -> None:
         a,
         b,
         # Apply initial gates to track qubit allocation
-        qubit.RX[0.1](a[0]),  # Track as "original a[0]"
-        qubit.RY[0.2](a[1]),  # Track as "original a[1]"
-        qubit.RZ[0.3](b[0]),  # Track as "original b[0]"
+        qubit.RX(rad(0.1), a[0]),  # Track as "original a[0]"
+        qubit.RY(rad(0.2), a[1]),  # Track as "original a[1]"
+        qubit.RZ(rad(0.3), b[0]),  # Track as "original b[0]"
         qubit.SZ(b[1]),  # Track as "original b[1]"
         # Apply permutation
         Permute(
@@ -371,8 +371,8 @@ def test_rotation_gates_with_permutation() -> None:
             [b[0], a[0]],
         ),
         # Apply gates after permutation
-        qubit.RX[0.4](a[0]),  # Should apply to "original b[0]"
-        qubit.RY[0.5](b[0]),  # Should apply to "original a[0]"
+        qubit.RX(rad(0.4), a[0]),  # Should apply to "original b[0]"
+        qubit.RY(rad(0.5), b[0]),  # Should apply to "original a[0]"
         qubit.T(a[1]),  # Should apply to "original a[1]"
         qubit.Tdg(b[1]),  # Should apply to "original b[1]"
     )

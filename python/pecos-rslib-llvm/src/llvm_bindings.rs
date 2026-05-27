@@ -31,6 +31,7 @@
 use pecos_llvm::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::pyclass::CompareOp;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -394,7 +395,7 @@ impl PyModuleContext {
 // --- Type Classes ---
 
 /// Enum to handle any type for function parameters
-#[derive(Copy, Clone, FromPyObject)]
+#[derive(Copy, Clone, FromPyObject, IntoPyObject)]
 pub enum PyAnyType {
     Int(PyIntType),
     Double(PyDoubleType),
@@ -415,6 +416,50 @@ impl PyAnyType {
             PyAnyType::Array(t) => t.ll_type,
         }
     }
+
+    /// Underlying `LLType` (context-free; `to_ll_type` ignores its arg).
+    fn ll_type(&self) -> LLType<'static> {
+        match self {
+            PyAnyType::Int(t) => t.ll_type,
+            PyAnyType::Double(t) => t.ll_type,
+            PyAnyType::Void(_) => LLType::Void,
+            PyAnyType::Pointer(t) => t.ll_type,
+            PyAnyType::Struct(t) => LLType::Struct(t.struct_type),
+            PyAnyType::Array(t) => t.ll_type,
+        }
+    }
+}
+
+/// Type equality by LLVM `LLVMTypeRef` identity within one `Context`
+/// (sufficient for #71 B2: every type check happens inside one module).
+/// `Eq`/`Ne` only; non-type `other` -> not-equal (`==` False, `!=` True).
+/// Ordering ops are unsupported -> `NotImplemented` so Python raises
+/// `TypeError` rather than returning a silently-wrong `False`.
+fn lltype_richcmp(
+    py: Python<'_>,
+    a: LLType<'static>,
+    other: &Bound<'_, PyAny>,
+    op: CompareOp,
+) -> Py<PyAny> {
+    match op {
+        CompareOp::Eq | CompareOp::Ne => {
+            let eq = other.extract::<PyAnyType>().is_ok_and(|o| a == o.ll_type());
+            let val = if matches!(op, CompareOp::Eq) { eq } else { !eq };
+            val.into_pyobject(py)
+                .expect("bool -> PyBool is infallible")
+                .to_owned()
+                .into_any()
+                .unbind()
+        }
+        _ => py.NotImplemented(),
+    }
+}
+
+/// Hash consistent with `lltype_richcmp` (equal types hash equal).
+fn lltype_hash(a: LLType<'static>) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&a, &mut h);
+    std::hash::Hasher::finish(&h)
 }
 
 /// Python wrapper for struct types
@@ -455,6 +500,13 @@ unsafe impl Sync for PyPointerType {}
 
 #[pymethods]
 impl PyPointerType {
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, self.ll_type, other, op)
+    }
+    fn __hash__(&self) -> u64 {
+        lltype_hash(self.ll_type)
+    }
+
     fn as_pointer(&self) -> PyPointerType {
         let context = unsafe { &*self.context_ptr };
         let ptr_type = self.ll_type.as_pointer(context);
@@ -478,6 +530,13 @@ unsafe impl Sync for PyIntType {}
 
 #[pymethods]
 impl PyIntType {
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, self.ll_type, other, op)
+    }
+    fn __hash__(&self) -> u64 {
+        lltype_hash(self.ll_type)
+    }
+
     fn as_pointer(&self) -> PyPointerType {
         let context = unsafe { &*self.context_ptr };
         let ptr_type = self.ll_type.as_pointer(context);
@@ -510,6 +569,13 @@ unsafe impl Sync for PyDoubleType {}
 
 #[pymethods]
 impl PyDoubleType {
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, self.ll_type, other, op)
+    }
+    fn __hash__(&self) -> u64 {
+        lltype_hash(self.ll_type)
+    }
+
     fn as_pointer(&self) -> PyPointerType {
         let context = unsafe { &*self.context_ptr };
         let ptr_type = self.ll_type.as_pointer(context);
@@ -542,6 +608,13 @@ unsafe impl Sync for PyArrayType {}
 
 #[pymethods]
 impl PyArrayType {
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, self.ll_type, other, op)
+    }
+    fn __hash__(&self) -> u64 {
+        lltype_hash(self.ll_type)
+    }
+
     #[new]
     fn new(element_type: PyAnyType, count: u32) -> Self {
         // Extract context pointer from element type
@@ -583,6 +656,20 @@ pub struct PyVoidType {
 
 unsafe impl Send for PyVoidType {}
 unsafe impl Sync for PyVoidType {}
+
+#[pymethods]
+impl PyVoidType {
+    // `&self` is mandated by pyo3 `#[pymethods]` dunders; the void type
+    // carries no per-instance state, so `self` is unused here by design.
+    #[allow(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
+    fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        lltype_richcmp(py, LLType::Void, other, op)
+    }
+    #[allow(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
+    fn __hash__(&self) -> u64 {
+        lltype_hash(LLType::Void)
+    }
+}
 
 // --- IRBuilder - Instruction builder ---
 
@@ -837,6 +924,92 @@ impl PyIRBuilder {
         let result = builder
             .gep(ptr.value, &index_values, name)
             .map_err(|e| PyRuntimeError::new_err(format!("gep failed: {e}")))?;
+        Ok(PyLLValue {
+            value: result,
+            context_ptr: self.context_ptr,
+        })
+    }
+
+    /// Allocate a stack slot (`alloca <ty>`); caller positions the builder.
+    #[pyo3(signature = (ty, name=""))]
+    fn alloca(&mut self, ty: PyAnyType, name: &str) -> PyResult<PyLLValue> {
+        let builder = unsafe { &mut *self.builder_ptr };
+        let context = unsafe { &*self.context_ptr };
+        let ll_type = ty.to_ll_type(context);
+        let result = builder
+            .alloca(ll_type, name)
+            .map_err(|e| PyRuntimeError::new_err(format!("alloca failed: {e}")))?;
+        Ok(PyLLValue {
+            value: result,
+            context_ptr: self.context_ptr,
+        })
+    }
+
+    /// Load from a pointer (`load`; LLVM-14 typed-pointer pointee).
+    #[pyo3(signature = (ptr, name=""))]
+    fn load(&mut self, ptr: PyLLValue, name: &str) -> PyResult<PyLLValue> {
+        let builder = unsafe { &mut *self.builder_ptr };
+        let result = builder
+            .load(ptr.value, name)
+            .map_err(|e| PyRuntimeError::new_err(format!("load failed: {e}")))?;
+        Ok(PyLLValue {
+            value: result,
+            context_ptr: self.context_ptr,
+        })
+    }
+
+    /// Store a value to a pointer (`store`).
+    fn store(&mut self, ptr: PyLLValue, value: PyLLValue) -> PyResult<()> {
+        let builder = unsafe { &mut *self.builder_ptr };
+        builder
+            .store(ptr.value, value.value)
+            .map_err(|e| PyRuntimeError::new_err(format!("store failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Zero-extend an integer value to a wider int type (`zext`).
+    #[pyo3(signature = (value, ty, name=""))]
+    fn zext(&mut self, value: PyLLValue, ty: PyAnyType, name: &str) -> PyResult<PyLLValue> {
+        let builder = unsafe { &mut *self.builder_ptr };
+        let context = unsafe { &*self.context_ptr };
+        let dest = ty.to_ll_type(context);
+        let result = builder
+            .zext(value.value, dest, name)
+            .map_err(|e| PyRuntimeError::new_err(format!("zext failed: {e}")))?;
+        Ok(PyLLValue {
+            value: result,
+            context_ptr: self.context_ptr,
+        })
+    }
+
+    /// Truncate an integer value to a narrower int type (`trunc`).
+    #[pyo3(signature = (value, ty, name=""))]
+    fn trunc(&mut self, value: PyLLValue, ty: PyAnyType, name: &str) -> PyResult<PyLLValue> {
+        let builder = unsafe { &mut *self.builder_ptr };
+        let context = unsafe { &*self.context_ptr };
+        let dest = ty.to_ll_type(context);
+        let result = builder
+            .trunc(value.value, dest, name)
+            .map_err(|e| PyRuntimeError::new_err(format!("trunc failed: {e}")))?;
+        Ok(PyLLValue {
+            value: result,
+            context_ptr: self.context_ptr,
+        })
+    }
+
+    /// Unsigned integer comparison (`icmp` with U-predicates).
+    #[pyo3(signature = (cmp_op, lhs, rhs, name=""))]
+    fn icmp_unsigned(
+        &mut self,
+        cmp_op: &str,
+        lhs: PyLLValue,
+        rhs: PyLLValue,
+        name: &str,
+    ) -> PyResult<PyLLValue> {
+        let builder = unsafe { &mut *self.builder_ptr };
+        let result = builder
+            .icmp_unsigned(cmp_op, lhs.value, rhs.value, name)
+            .map_err(|e| PyRuntimeError::new_err(format!("icmp_unsigned failed: {e}")))?;
         Ok(PyLLValue {
             value: result,
             context_ptr: self.context_ptr,
@@ -1241,6 +1414,30 @@ impl PyLLValue {
             context_ptr: self.context_ptr,
         })
     }
+
+    /// The LLVM type of this value (llvmlite parity: `value.type`).
+    #[getter]
+    #[pyo3(name = "type")]
+    fn type_(&self) -> PyAnyType {
+        match &self.value {
+            LLValue::Int(v) => PyAnyType::Int(PyIntType {
+                ll_type: LLType::Int(v.get_type()),
+                context_ptr: self.context_ptr,
+            }),
+            LLValue::Float(v) => PyAnyType::Double(PyDoubleType {
+                ll_type: LLType::Float(v.get_type()),
+                context_ptr: self.context_ptr,
+            }),
+            LLValue::Pointer(v) => PyAnyType::Pointer(PyPointerType {
+                ll_type: LLType::Pointer(v.get_type()),
+                context_ptr: self.context_ptr,
+            }),
+            LLValue::Array(v) => PyAnyType::Array(PyArrayType {
+                ll_type: LLType::Array(v.get_type()),
+                context_ptr: self.context_ptr,
+            }),
+        }
+    }
 }
 
 // --- GlobalVariable - Global variable support ---
@@ -1348,11 +1545,32 @@ impl PyGlobalVariable {
 /// ```
 #[pyfunction]
 #[allow(non_snake_case)]
-fn Constant(_py: Python, ty: PyAnyType, value: &Bound<'_, PyAny>) -> PyResult<PyLLValue> {
+#[pyo3(signature = (ty, value=None))]
+fn Constant(_py: Python, ty: PyAnyType, value: Option<&Bound<'_, PyAny>>) -> PyResult<PyLLValue> {
     // Check type isn't void (llvmlite doesn't allow void constants)
     if matches!(ty, PyAnyType::Void(_)) {
         return Err(PyRuntimeError::new_err("Cannot create void constant"));
     }
+
+    // `Constant(ty)` / `Constant(ty, None)` -> the type's zeroinitializer
+    // (Array -> `zeroinitializer`, Int -> `iN 0`); backs B2's zero-init buffer.
+    let Some(value) = value else {
+        let context_ptr = match &ty {
+            PyAnyType::Int(t) => t.context_ptr,
+            PyAnyType::Double(t) => t.context_ptr,
+            PyAnyType::Void(t) => t.context_ptr,
+            PyAnyType::Pointer(t) => t.context_ptr,
+            PyAnyType::Struct(t) => t.context_ptr,
+            PyAnyType::Array(t) => t.context_ptr,
+        };
+        let context = unsafe { &*context_ptr };
+        let zero = LLConstant::zero(ty.to_ll_type(context))
+            .map_err(|e| PyRuntimeError::new_err(format!("Constant(zero) failed: {e}")))?;
+        return Ok(PyLLValue {
+            value: zero,
+            context_ptr,
+        });
+    };
 
     // Handle different type/value combinations
     match &ty {

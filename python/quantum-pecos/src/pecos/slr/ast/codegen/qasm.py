@@ -32,6 +32,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pecos.slr.ast.codegen._block_flatten import flatten_block_calls
+from pecos.slr.ast.codegen._prep_tail import prep_tail
 from pecos.slr.ast.nodes import (
     AllocatorDecl,
     BinaryExpr,
@@ -60,6 +62,7 @@ if TYPE_CHECKING:
         ParallelBlock,
         PermuteOp,
         PrepareOp,
+        PrintOp,
         Program,
         RepeatStmt,
         ReturnOp,
@@ -77,8 +80,6 @@ GATE_TO_QASM: dict[GateKind, str] = {
     # Hadamard
     GateKind.H: "h",
     # Phase gates
-    GateKind.S: "s",
-    GateKind.Sdg: "sdg",
     GateKind.T: "rz(pi/4)",  # T gate as rotation
     GateKind.Tdg: "rz(-pi/4)",
     # Square root gates
@@ -218,6 +219,7 @@ class AstToQasm(BaseVisitor[list[str]]):
         Returns:
             List of code lines.
         """
+        program = flatten_block_calls(program)
         self.context = QasmContext()
         return self.visit(program)
 
@@ -315,6 +317,37 @@ class AstToQasm(BaseVisitor[list[str]]):
         """Generate gate operation."""
         lines = []
 
+        # Fail-loud arity guard (defense-in-depth vs the angle-first
+        # mis-order footgun): a parameterized gate with fewer targets
+        # than its qubit arity would otherwise SILENTLY emit no QASM
+        # line (the two-qubit path is gated on `len(targets) >= 2`, the
+        # single-qubit path iterates zero targets). The SLR
+        # `QGate.__call__` rejects the mis-ordered call at the source;
+        # this guards a malformed GateOp reaching QASM from any other
+        # path. Multi-target (parallel) application is fine (len >= arity).
+        if node.gate.is_parameterized and len(node.targets) < node.gate.arity:
+            msg = (
+                f"QASM codegen: parameterized gate {node.gate.name!r} has "
+                f"{len(node.targets)} qubit target(s) but needs at least "
+                f"{node.gate.arity} (a mis-ordered `gate(qubit, angle)` call "
+                "drops the qubit). Call it as `gate(angle, qubit...)`."
+            )
+            raise NotImplementedError(msg)
+
+        # Typed-angle guard: a user/direct-AST parameterized gate's params
+        # must be typed `Angle` literals (matches Guppy + the typed-AST
+        # contract); reject bare floats so backends do not diverge.
+        if node.gate.is_parameterized:
+            from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+            for p in node.params:
+                if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
+                    msg = (
+                        f"QASM codegen: parameterized gate {node.gate.name!r} requires typed `Angle` "
+                        f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+                    )
+                    raise NotImplementedError(msg)
+
         # Handle special face rotation gates
         if node.gate == GateKind.F:
             for target in node.targets:
@@ -369,22 +402,25 @@ class AstToQasm(BaseVisitor[list[str]]):
         return lines
 
     def visit_prepare(self, node: PrepareOp) -> list[str]:
-        """Generate reset/prep operation."""
+        """Generate reset/prep operation (Z-reset + canonical basis tail)."""
         lines = []
+        tail = prep_tail(node.basis)
 
         # Get root allocator for this allocator
         root = self.context.get_root_allocator(node.allocator)
 
         if node.slots is None:
-            # Reset all qubits in the allocator
+            if tail:
+                msg = f"QASM codegen: prepare_all with non-PZ basis {node.basis!r} is not supported"
+                raise NotImplementedError(msg)
             capacity = self.context.allocators.get(node.allocator, 1)
-            for i in range(capacity):
-                abs_index = self.context.get_absolute_index(node.allocator, i)
-                lines.append(self._maybe_conditional(f"reset {root}[{abs_index}];"))
+            indices = [self.context.get_absolute_index(node.allocator, i) for i in range(capacity)]
         else:
-            for slot in node.slots:
-                abs_index = self.context.get_absolute_index(node.allocator, slot)
-                lines.append(self._maybe_conditional(f"reset {root}[{abs_index}];"))
+            indices = [self.context.get_absolute_index(node.allocator, slot) for slot in node.slots]
+
+        for abs_index in indices:
+            lines.append(self._maybe_conditional(f"reset {root}[{abs_index}];"))
+            lines.extend(self._maybe_conditional(f"{GATE_TO_QASM[gk]} {root}[{abs_index}];") for gk in tail)
 
         return lines
 
@@ -443,6 +479,11 @@ class AstToQasm(BaseVisitor[list[str]]):
     def visit_return(self, _node: ReturnOp) -> list[str]:
         """Return is not a QASM concept - ignored."""
         return []
+
+    def visit_print(self, node: PrintOp) -> list[str]:
+        """Print has no native QASM equivalent; emit as a comment for traceability."""
+        value_repr = node.value if isinstance(node.value, str) else f"{node.value.register}[{node.value.index}]"
+        return [f"// Print {node.namespace}.{node.tag} {value_repr}"]
 
     def visit_permute(self, node: PermuteOp) -> list[str]:
         """Handle permutation.
@@ -783,6 +824,11 @@ class AstToQasm(BaseVisitor[list[str]]):
 
     def _render_literal(self, node: LiteralExpr) -> str:
         """Render a literal value."""
+        from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
+
+        if isinstance(node.value, Angle):
+            # OpenQASM rotations are in radians; signed principal value.
+            return str(node.value.value.to_radians_signed())
         return str(node.value)
 
     def _render_binary(self, node: BinaryExpr) -> str:

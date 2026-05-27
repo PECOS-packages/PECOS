@@ -412,6 +412,45 @@ def RZZ(
     state.backend.rzz(angles[0], list(qubits))
 
 
+def CRX(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Controlled-RX gate (qubits = (control, target))."""
+    if len(angles) != 1:
+        msg = "CRX gate requires exactly 1 angle parameter."
+        raise ValueError(msg)
+    state.backend.crx(angles[0], list(qubits))
+
+
+def CRY(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Controlled-RY gate (qubits = (control, target))."""
+    if len(angles) != 1:
+        msg = "CRY gate requires exactly 1 angle parameter."
+        raise ValueError(msg)
+    state.backend.cry(angles[0], list(qubits))
+
+
+def CRZ(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Controlled-RZ gate (qubits = (control, target))."""
+    if len(angles) != 1:
+        msg = "CRZ gate requires exactly 1 angle parameter."
+        raise ValueError(msg)
+    state.backend.crz(angles[0], list(qubits))
+
+
 # =============================================================================
 # Gate dictionary
 # =============================================================================
@@ -505,6 +544,9 @@ gate_dict = {
     "SqrtZZ": SZZ,
     "SZZdg": SZZdg,
     # Two-qubit rotations
+    "CRX": CRX,
+    "CRY": CRY,
+    "CRZ": CRZ,
     "RXX": RXX,
     "RYY": RYY,
     "RZZ": RZZ,

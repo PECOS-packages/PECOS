@@ -17,4 +17,9 @@ pecos.qeclib.qubit.preps
 
    .. autosummary::
 
-      Prep
+      PNX
+      PNY
+      PNZ
+      PX
+      PY
+      PZ

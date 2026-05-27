@@ -13,7 +13,7 @@
 
 import math
 
-from pecos.slr import CReg, If, Main, QReg, Repeat
+from pecos.slr import CReg, If, Main, QReg, Repeat, rad
 from pecos.slr.ast import slr_to_ast
 from pecos.slr.ast.optimizations import IdentityRemovalPass
 from pecos.slr.qeclib import qubit as qb
@@ -26,7 +26,7 @@ class TestIdentityRemovalBasic:
         """RZ(0) is removed."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0](q[0]),
+            qb.RZ(rad(0), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -39,7 +39,7 @@ class TestIdentityRemovalBasic:
         """RX(0) is removed."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RX[0](q[0]),
+            qb.RX(rad(0), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -52,7 +52,7 @@ class TestIdentityRemovalBasic:
         """RY(0) is removed."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RY[0](q[0]),
+            qb.RY(rad(0), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -65,7 +65,7 @@ class TestIdentityRemovalBasic:
         """RZ(2*pi) is removed."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[2 * math.pi](q[0]),
+            qb.RZ(rad(2 * math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -78,7 +78,7 @@ class TestIdentityRemovalBasic:
         """RZ(4*pi) is removed (multiple of 2*pi)."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[4 * math.pi](q[0]),
+            qb.RZ(rad(4 * math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -95,7 +95,7 @@ class TestIdentityRemovalNoRemove:
         """RZ(0.5) is not removed."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0.5](q[0]),
+            qb.RZ(rad(0.5), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -108,7 +108,7 @@ class TestIdentityRemovalNoRemove:
         """RZ(pi) is not removed."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[math.pi](q[0]),
+            qb.RZ(rad(math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -141,7 +141,7 @@ class TestIdentityRemovalControlFlow:
             q := QReg("q", 1),
             c := CReg("c", 1),
             If(c[0] == 1).Then(
-                qb.RZ[0](q[0]),
+                qb.RZ(rad(0), q[0]),
                 qb.H(q[0]),
             ),
         )
@@ -157,7 +157,7 @@ class TestIdentityRemovalControlFlow:
         prog = Main(
             q := QReg("q", 1),
             Repeat(cond=3).block(
-                qb.RX[0](q[0]),
+                qb.RX(rad(0), q[0]),
             ),
         )
 
@@ -175,10 +175,10 @@ class TestIdentityRemovalMultiple:
         """Multiple identity gates are removed."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0](q[0]),
+            qb.RZ(rad(0), q[0]),
             qb.H(q[0]),
-            qb.RX[0](q[0]),
-            qb.RY[2 * math.pi](q[0]),
+            qb.RX(rad(0), q[0]),
+            qb.RY(rad(2 * math.pi), q[0]),
         )
 
         ast = slr_to_ast(prog)
@@ -191,10 +191,10 @@ class TestIdentityRemovalMultiple:
         """Identity gates removed among non-identity gates."""
         prog = Main(
             q := QReg("q", 1),
-            qb.RZ[0](q[0]),  # Removed
-            qb.RZ[0.5](q[0]),  # Kept
-            qb.RX[0](q[0]),  # Removed
-            qb.RX[0.5](q[0]),  # Kept
+            qb.RZ(rad(0), q[0]),  # Removed
+            qb.RZ(rad(0.5), q[0]),  # Kept
+            qb.RX(rad(0), q[0]),  # Removed
+            qb.RX(rad(0.5), q[0]),  # Kept
         )
 
         ast = slr_to_ast(prog)

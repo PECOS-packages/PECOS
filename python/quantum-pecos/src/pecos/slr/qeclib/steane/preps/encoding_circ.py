@@ -46,7 +46,7 @@ class EncodingCircuit(Block):
         self.extend(
             Comment("\nEncoding circuit"),
             Comment("---------------"),
-            qubit.Prep(
+            qubit.PZ(
                 q[0],
                 q[1],
                 q[2],

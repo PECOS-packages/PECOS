@@ -18,10 +18,10 @@ errors that occur during the measurement process.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pecos.slr import Barrier, Block, Comment
-from pecos.slr.qeclib.qubit import CH, CX, CY, CZ, H, Measure, Prep
+from pecos.slr.qeclib.qubit import CH, CX, CY, CZ, PZ, H, Measure
 
 if TYPE_CHECKING:
     from pecos.slr import Bit, Qubit
@@ -34,6 +34,22 @@ class Check1Flag(Block):
     This class implements a stabilizer check operation with a single flag qubit
     to detect errors during the syndrome extraction process.
     """
+
+    # Scratch-ancilla effect: emit BlockDecl + BlockCall.
+    # `a` and `flag` are both reset-reused scratch ancillas (prepped +
+    # measured inside, allocated internally in Guppy so callers can reuse
+    # physical slots across sequential checks); data passes through; the two
+    # out bits are live_preserved measurement-result write-backs. The body's
+    # single `PZ(a, flag)` is split into `PZ(a), PZ(flag)` (option
+    # (a) -- byte-identical in QASM/Guppy/Selene, confirmed 2026-05-16;
+    # one PrepareOp per scratch input avoids multi-destination substitution).
+    block_inputs: ClassVar[dict[str, str]] = {
+        "d": "live_preserved",
+        "a": "scratch",
+        "flag": "scratch",
+        "out": "live_preserved",
+        "out_flag": "live_preserved",
+    }
 
     def __init__(
         self,
@@ -65,6 +81,13 @@ class Check1Flag(Block):
             Exception: If invalid operator is specified.
         """
         super().__init__()
+        # SLR -> AST converter reads these to bind block_inputs param names
+        # to outer-scope refs.
+        self.d = d
+        self.a = a
+        self.flag = flag
+        self.out = out
+        self.out_flag = out_flag
 
         n: int = len(d)
 
@@ -85,7 +108,8 @@ class Check1Flag(Block):
 
         self.extend(
             Comment(f"Measure check {ops}"),
-            Prep(a, flag),
+            PZ(a),
+            PZ(flag),
             H(a),
         )
         if with_barriers:

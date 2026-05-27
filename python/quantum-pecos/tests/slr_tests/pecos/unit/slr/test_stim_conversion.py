@@ -1,8 +1,17 @@
 """Tests for Stim circuit to/from SLR conversion."""
 
 import pytest
-from pecos.slr import CReg, Main, Parallel, QReg, Repeat, SlrConverter
+from pecos.slr import CReg, For, Main, Parallel, QReg, Repeat, Return, SlrConverter, While, rad
 from pecos.slr.qeclib import qubit
+from pecos.slr.qeclib.qubit.measures import Measure
+
+
+def _return_declared_cregs(prog: Main) -> Main:
+    cregs = [var for var in prog.vars if isinstance(var, CReg)]
+    if cregs:
+        prog.extend(Return(*cregs))
+    return prog
+
 
 # Check if stim is available
 try:
@@ -31,7 +40,7 @@ class TestStimToSLR:
         """,
         )
 
-        slr_prog = SlrConverter.from_stim(circuit)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
 
         # Convert back to QASM to verify structure
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
@@ -52,7 +61,7 @@ class TestStimToSLR:
         """,
         )
 
-        slr_prog = SlrConverter.from_stim(circuit)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         assert "cx q[0],q[1]" in qasm or "cx q[0], q[1]" in qasm
@@ -70,7 +79,7 @@ class TestStimToSLR:
         """,
         )
 
-        slr_prog = SlrConverter.from_stim(circuit)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(circuit))
         qasm = SlrConverter(slr_prog).qasm(skip_headers=True)
 
         assert "reset q[0]" in qasm
@@ -158,12 +167,13 @@ class TestSLRToStim:
         prog = Main(
             q := QReg("q", 2),
             c := CReg("c", 2),
-            qubit.Prep(q[0]),
-            qubit.Prep(q[1]),
+            qubit.PZ(q[0]),
+            qubit.PZ(q[1]),
             qubit.H(q[0]),
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
+            Return(c),
         )
 
         converter = SlrConverter(prog)
@@ -250,7 +260,7 @@ class TestStimRoundTrip:
         )
 
         # Convert to SLR and back
-        slr_prog = SlrConverter.from_stim(original)
+        slr_prog = _return_declared_cregs(SlrConverter.from_stim(original))
         converter = SlrConverter(slr_prog)
         reconstructed = converter.stim()
 
@@ -272,12 +282,13 @@ class TestStimRoundTrip:
             qubit.CX(q[0], q[1]),
             qubit.Measure(q[0]) > c[0],
             qubit.Measure(q[1]) > c[1],
+            Return(c),
         )
 
         # Convert to Stim and back
         converter = SlrConverter(original)
         stim_circuit = converter.stim()
-        reconstructed = SlrConverter.from_stim(stim_circuit)
+        reconstructed = _return_declared_cregs(SlrConverter.from_stim(stim_circuit))
 
         # Convert both to QASM for comparison
         orig_qasm = SlrConverter(original).qasm(skip_headers=True)
@@ -291,6 +302,106 @@ class TestStimRoundTrip:
         # Check CX with flexible formatting
         assert "cx q[0],q[1]" in orig_qasm or "cx q[0], q[1]" in orig_qasm
         assert "cx q[0],q[1]" in recon_qasm or "cx q[0], q[1]" in recon_qasm
+
+
+@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
+class TestStimStaticForAndWhile:
+    """Same silent-miscompile class as the QIR For/While, in the AST Stim codegen.
+
+    The AST converter wraps `For` range bounds in `LiteralExpr`, so the
+    old `isinstance(node.start, int)` guard was always false -- Stim
+    silently dropped every `For` body, and `While` was silently
+    processed once (+ a stray TICK). Both are valid-output / wrong-
+    semantics. Now: static `For` unrolls; `While` fails loud.
+    """
+
+    def test_static_for_unrolls_body_not_dropped(self) -> None:
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            For("i", 0, 3).Do(qubit.X(q[0])),
+            Measure(q[0]) > c[0],
+            Return(c),
+        )
+        circ = SlrConverter(prog).stim()
+        # 3 X applications on qubit 0 (Stim coalesces to `X 0 0 0`);
+        # 0 == the old silent drop.
+        assert "X 0 0 0" in str(circ), f"static For body not unrolled 3x:\n{circ}"
+
+    def test_while_raises_loud(self) -> None:
+        prog = Main(
+            q := QReg("q", 1),
+            c := CReg("c", 1),
+            While(c[0] == 0).Do(qubit.X(q[0]), Measure(q[0]) > c[0]),
+            Return(c),
+        )
+        with pytest.raises(NotImplementedError, match=r"does not support While loops"):
+            SlrConverter(prog).stim()
+
+
+def test_unsupported_gate_fails_loud() -> None:
+    """A gate with no GATE_TO_STIM entry must FAIL LOUD, not be silently
+    dropped (a silent drop produced a runnable circuit with wrong
+    semantics -- a miscompile). Stim is Clifford-only, so
+    a non-Clifford rotation is fundamentally unrepresentable;
+    emitting the circuit without it is the bug.
+    """
+    q = QReg("q", 1)
+    prog = Main(q, qubit.RX(rad(0.5), q[0]))
+    with pytest.raises(NotImplementedError, match=r"has no Stim lowering"):
+        SlrConverter(prog).stim()
+
+
+@pytest.mark.skipif(not STIM_AVAILABLE, reason="Stim not installed")
+def test_face_clifford_gates_decompose() -> None:
+    """F/Fdg/F4/F4dg are PECOS face-Cliffords with no direct Stim
+    primitive; cross-codegen audit landed verified decompositions
+    into H/S/S_DAG so they no longer fail-loud. Verify each decomp
+    produces the *correct* Clifford action via Stim's tableau (catches
+    no-op and wrong-direction mutations -- a wrong-direction F would
+    cycle X<-Y<-Z<-X instead of forward).
+
+    F is order-3 (F^3 = I) and cycles the Paulis X->Y->Z->X up to
+    sign. The Heisenberg-picture conjugation `F . Z . Fdg = X` is
+    the deterministic identity each face-Clifford must satisfy.
+    """
+
+    # Build a 1q Stim program with just `F q[0]` and read the tableau.
+    def _tableau_of(gate) -> stim.Tableau:
+        q = QReg("q", 1)
+        prog = Main(q, gate(q[0]))
+        circ = SlrConverter(prog).stim()
+        return stim.Tableau.from_circuit(circ)
+
+    # F should send Z -> X and X -> Y (face cycle in the +1,+1,+1
+    # direction). Fdg is the inverse so it sends Z -> Y and X -> Z.
+    f = _tableau_of(qubit.F)
+    fdg = _tableau_of(qubit.Fdg)
+    assert f(stim.PauliString("Z")) == stim.PauliString("+X"), f
+    assert f(stim.PauliString("X")) == stim.PauliString("+Y"), f
+    assert fdg(stim.PauliString("Z")) == stim.PauliString("+Y"), fdg
+    assert fdg(stim.PauliString("X")) == stim.PauliString("+Z"), fdg
+
+    # F . Fdg must be identity (involution-pair). Build the
+    # composed circuit and confirm both Paulis are preserved.
+    q = QReg("q", 1)
+    prog = Main(q, qubit.F(q[0]), qubit.Fdg(q[0]))
+    f_fdg = stim.Tableau.from_circuit(SlrConverter(prog).stim())
+    assert f_fdg(stim.PauliString("Z")) == stim.PauliString("+Z"), f_fdg
+    assert f_fdg(stim.PauliString("X")) == stim.PauliString("+X"), f_fdg
+
+    # F4 / F4dg are a *different* face Clifford (rotation around
+    # a different cube axis). Sanity-check they are well-defined
+    # involution pairs and not aliases of F / Fdg.
+    f4 = _tableau_of(qubit.F4)
+    f4dg = _tableau_of(qubit.F4dg)
+    assert f4 != f, "F4 must not be the same Clifford as F"
+    assert f4dg != fdg, "F4dg must not be the same Clifford as Fdg"
+    q = QReg("q", 1)
+    prog = Main(q, qubit.F4(q[0]), qubit.F4dg(q[0]))
+    f4_f4dg = stim.Tableau.from_circuit(SlrConverter(prog).stim())
+    assert f4_f4dg(stim.PauliString("Z")) == stim.PauliString("+Z"), f4_f4dg
+    assert f4_f4dg(stim.PauliString("X")) == stim.PauliString("+X"), f4_f4dg
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from pecos.slr import Block, CReg, If, Main, Parallel, QReg, Repeat
+from pecos.slr import Block, CReg, If, Main, Parallel, QReg, Repeat, Return
 from pecos.slr.qeclib import qubit as qb
 
 
@@ -25,6 +25,7 @@ def test_phys_teleport(compare_qasm: Callable[..., None]) -> None:
         qb.H(q[0]),
         qb.CX(q[0], q[1]),
         qb.Measure(q) > c,
+        Return(c),
     )
 
     compare_qasm(prog, filename="phys.teleport")
@@ -44,6 +45,7 @@ def test_phys_tele_block_block(compare_qasm: Callable[..., None]) -> None:
                 qb.H(q[1]),
             ),
         ),
+        Return(c),
     )
 
     compare_qasm(prog, filename="phys.tele_block_block")
@@ -60,6 +62,7 @@ def test_phys_tele_if(compare_qasm: Callable[..., None]) -> None:
         If(c == 0).Then(
             qb.H(q[0]),
         ),
+        Return(c),
     )
 
     compare_qasm(prog, filename="phys.tele_if")
@@ -79,6 +82,7 @@ def test_phys_tele_if_block_block(compare_qasm: Callable[..., None]) -> None:
                 qb.H(q[1]),
             ),
         ),
+        Return(c),
     )
 
     compare_qasm(prog, filename="phys.tele_if_block_block")
@@ -94,7 +98,7 @@ def test_phys_tele_block_telep_block(compare_qasm: Callable[..., None]) -> None:
         qb.CX(q[0], q[1]),
         qb.Measure(q) > c,
         Block(
-            qb.Prep(q),
+            qb.PZ(q),
             qb.H(q[0]),
             qb.CX(q[0], q[1]),
             qb.Measure(q) > c2,
@@ -102,6 +106,7 @@ def test_phys_tele_block_telep_block(compare_qasm: Callable[..., None]) -> None:
                 qb.H(q[0]),
             ),
         ),
+        Return(c, c2),
     )
 
     compare_qasm(prog, filename="phys.tele_block_telep_block")
@@ -117,6 +122,7 @@ def test_phys_repeat(compare_qasm: Callable[..., None]) -> None:
             qb.CX(q[0], q[1]),
             qb.Measure(q) > c,
         ),
+        Return(c),
     )
 
     compare_qasm(prog, filename="phys.tele_repeat")
@@ -136,6 +142,7 @@ def test_phys_parallel() -> None:
             qb.Y(q[3]),
         ),
         qb.Measure(q) > c,
+        Return(c),
     )
 
     qasm = SlrConverter(prog).qasm()
@@ -168,6 +175,7 @@ def test_phys_nested_parallel() -> None:
             qb.Z(q[3]),
         ),
         qb.Measure(q) > c,
+        Return(c),
     )
 
     qasm = SlrConverter(prog).qasm()
@@ -198,6 +206,7 @@ def test_phys_parallel_in_if() -> None:
             ),
         ),
         qb.Measure(q[1:4]) > c[1:4],
+        Return(c),
     )
 
     qasm = SlrConverter(prog).qasm()

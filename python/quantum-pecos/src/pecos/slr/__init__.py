@@ -83,19 +83,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pecos.slr import ast, qeclib
+from pecos.slr.angle import Angle, rad, turns
 from pecos.slr.block import Block
 from pecos.slr.cond_block import If, Repeat
-from pecos.slr.gen_codes.guppy.qubit_state_validator import (
-    QubitStateValidator,
-    StateViolation,
-    validate_qubit_states,
-)
 from pecos.slr.loop_block import For, While
 from pecos.slr.main import Main
 from pecos.slr.main import (
     Main as SLR,
 )
-from pecos.slr.misc import Barrier, Comment, Parallel, Permute, Return
+from pecos.slr.misc import Barrier, Comment, Parallel, Permute, Print, Return
 from pecos.slr.qalloc import QAlloc, QubitRef, SlotState
 from pecos.slr.slr_converter import SlrConverter
 from pecos.slr.types import Array
@@ -169,6 +165,7 @@ def generate(
 
 __all__ = [
     "SLR",
+    "Angle",
     "Array",
     "Barrier",
     "Bit",
@@ -182,20 +179,18 @@ __all__ = [
     "Main",
     "Parallel",
     "Permute",
+    "Print",
     # Qubit allocator (new)
     "QAlloc",
     # Legacy register (kept for compatibility)
     "QReg",
     "Qubit",
     "QubitRef",
-    # State validation
-    "QubitStateValidator",
     "QubitType",
     "Repeat",
     "Return",
     "SlotState",
     "SlrConverter",
-    "StateViolation",
     "Vars",
     "While",
     # AST module
@@ -204,5 +199,7 @@ __all__ = [
     "generate",
     # QEC library
     "qeclib",
-    "validate_qubit_states",
+    # Typed angles for rotation gates
+    "rad",
+    "turns",
 ]

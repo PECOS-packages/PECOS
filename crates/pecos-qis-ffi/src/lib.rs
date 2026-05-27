@@ -1046,10 +1046,11 @@ mod tests {
 
         // Get pending operations
         let ptr = pecos_get_pending_operations();
-        assert!(!ptr.is_null());
-
-        // Verify operations
-        let collector = unsafe { &*ptr };
+        // SAFETY: `pecos_get_pending_operations` returns null or a leaked
+        // `Box<OperationCollector>` (properly initialised + aligned);
+        // ownership stays here until `pecos_free_operations` below.
+        let collector =
+            unsafe { ptr.as_ref() }.expect("pecos_get_pending_operations returned null");
         assert_eq!(collector.operations.len(), 2);
 
         // Free the collector
@@ -1340,8 +1341,8 @@ mod tests {
 
         // Verify operations were exported
         let ops_ptr = pecos_get_pending_operations();
-        assert!(!ops_ptr.is_null());
-        let ops = unsafe { &*ops_ptr };
+        // SAFETY: see `pecos_get_pending_operations` -- null-or-leaked-Box invariant.
+        let ops = unsafe { ops_ptr.as_ref() }.expect("pecos_get_pending_operations returned null");
         assert_eq!(ops.operations.len(), 2);
         unsafe { pecos_free_operations(ops_ptr) };
 
@@ -1406,8 +1407,8 @@ mod tests {
         let needed_id = pecos_wait_for_need_result(500);
         assert_eq!(needed_id, 0);
         let ops_ptr = pecos_get_pending_operations();
-        assert!(!ops_ptr.is_null());
-        let ops = unsafe { &*ops_ptr };
+        // SAFETY: see `pecos_get_pending_operations` -- null-or-leaked-Box invariant.
+        let ops = unsafe { ops_ptr.as_ref() }.expect("pecos_get_pending_operations returned null");
         assert_eq!(ops.operations, vec![Operation::AllocateQubit { id: 0 }]);
         unsafe { pecos_free_operations(ops_ptr) };
         pecos_signal_result_ready();
@@ -1415,8 +1416,8 @@ mod tests {
         let needed_id = pecos_wait_for_need_result(500);
         assert_eq!(needed_id, 1);
         let ops_ptr = pecos_get_pending_operations();
-        assert!(!ops_ptr.is_null());
-        let ops = unsafe { &*ops_ptr };
+        // SAFETY: see `pecos_get_pending_operations` -- null-or-leaked-Box invariant.
+        let ops = unsafe { ops_ptr.as_ref() }.expect("pecos_get_pending_operations returned null");
         assert_eq!(ops.operations, vec![Operation::Quantum(QuantumOp::H(0))]);
         unsafe { pecos_free_operations(ops_ptr) };
         pecos_signal_result_ready();

@@ -15,6 +15,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 import pecos as pc
+from pecos.slr.angle import rad
 from pecos.slr.qeclib import qubit as q
 
 if TYPE_CHECKING:
@@ -55,7 +56,7 @@ class QIRGateMetadata(Enum):
     R1XY = QG("u1q")
     RZZ = QG("rzz")
     SZZ = QG("zz")
-    Prep = QG("reset")
+    PZ = QG("reset")
 
     # These dagger/adjoint gates are generated with slightly different names
     Sdg = QG("s__adj")
@@ -68,22 +69,22 @@ class QIRGateMetadata(Enum):
 
     SX = QG.decompose(
         lambda sx: [
-            q.RX[pc.f64.frac_pi_2](sx.qargs[0]),
+            q.RX(rad(pc.f64.frac_pi_2), sx.qargs[0]),
         ],
     )
     SXdg = QG.decompose(
         lambda sxdg: [
-            q.RX[-pc.f64.frac_pi_2](sxdg.qargs[0]),
+            q.RX(rad(-pc.f64.frac_pi_2), sxdg.qargs[0]),
         ],
     )
     SY = QG.decompose(
         lambda sy: [
-            q.RY[pc.f64.frac_pi_2](sy.qargs[0]),
+            q.RY(rad(pc.f64.frac_pi_2), sy.qargs[0]),
         ],
     )
     SYdg = QG.decompose(
         lambda sydg: [
-            q.RY[-pc.f64.frac_pi_2](sydg.qargs[0]),
+            q.RY(rad(-pc.f64.frac_pi_2), sydg.qargs[0]),
         ],
     )
 
@@ -112,7 +113,7 @@ class QIRGateMetadata(Enum):
         lambda f4dg: [
             q.SXdg(f4dg.qargs[0]),
             # q.SZdg(f4dg.qargs[0]),
-            q.RZ[-pc.f64.frac_pi_2](f4dg.qargs[0]),
+            q.RZ(rad(-pc.f64.frac_pi_2), f4dg.qargs[0]),
         ],
     )
 

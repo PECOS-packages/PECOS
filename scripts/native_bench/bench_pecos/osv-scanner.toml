@@ -1,0 +1,8 @@
+# OSV-Scanner configuration for the native_bench/bench_pecos workspace.
+# See root osv-scanner.toml for policy.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+# paste@1.0.15 -- unmaintained proc-macro; same chain as workspace root.
+# Upstream owner: https://github.com/CQCL/hugr and https://github.com/yuewuo/mwpf.
+reason = "Transitive via bench dependencies; unmaintained-crate warning, no runtime impact (proc-macro)."

@@ -18,6 +18,7 @@ def create_creg_permutation_program() -> tuple:
         pecos.slr.Permute(a, b),
         a[0].set(1),  # Bit-level operation
         a.set(1),  # Register-level operation
+        pecos.slr.Return(a, b),
     )
 
 
@@ -55,54 +56,23 @@ def test_creg_permutation_qasm() -> None:
 
 @pytest.mark.optional_dependency
 def test_creg_permutation_qir() -> None:
-    """Test permutation of whole classical registers followed by both bit and register operations in QIR."""
+    """Whole-register CReg Permute IS realized in QIR (static CReg model).
+
+    A Permute is realized as a static logical relabel consulted
+    at every classical-bit lowering (the bespoke
+    @set_creg_bit/@set_creg_to_int/creg-xor helpers the old test
+    pinned were removed by the static CReg model). `Permute(a, b)` relabels a[0] <->
+    b[0], so the subsequent `a[0].set(1)` writes b[0]'s storage.
+    """
     prog = create_creg_permutation_program()
     qir = SlrConverter(prog).qir()
 
-    # Print the QIR for debugging
-    print("\nQIR output:")
-    print(qir)
+    assert "; Permutation: a <-> b" in qir, f"Expected whole-register permutation comment in QIR:\n{qir}"
+    # a[0].set(1) after Permute(a, b) -> stores into register b's
+    # `[1 x i1]` buffer (a[0] now resolves to b[0]); register a's
+    # buffer is never the store target for that set.
+    assert re.search(r"store i1 1, i1\* %\.\d+", qir), qir
+    b_slot = re.search(r"%(\.\d+) = getelementptr \[1 x i1\], \[1 x i1\]\* %b, i64 0, i64 0", qir)
+    assert b_slot, f"Expected a[0].set(1) to target register b's buffer (relabelled):\n{qir}"
 
-    # Verify that the QIR contains a comment about the permutation
-    assert "Permutation: a <-> b" in qir, "Expected permutation comment not found in QIR"
-
-    # Verify that the XOR operations are present
-    assert "xor" in qir, "Expected XOR operations not found in QIR"
-
-    # Verify the temporary bit approach is NOT used for whole register permutations
-    assert (
-        "_bit_swap = call i1* @create_creg(i64 1)" not in qir
-    ), "Unexpected '_bit_swap = call i1* @create_creg(i64 1)' found in QIR"
-
-    # Extract the register and index used in the set_creg_bit call for the bit-level operation
-    set_creg_bit_calls = re.findall(
-        r"call void @set_creg_bit\(i1\* %(\w+), i64 (\d+), i1 1\)",
-        qir,
-    )
-    assert len(set_creg_bit_calls) >= 1, "No set_creg_bit call found for bit-level operation"
-
-    # Get the register and index for the bit-level operation
-    reg_name, index = set_creg_bit_calls[0]
-
-    # In QIR, unlike QASM, the permutation is not applied to bit-level operations
-    # So a[0].set(1) still refers to register a, index 0
-    assert reg_name == "a", f"set_creg_bit applied to register {reg_name}, expected a"
-    assert index == "0", f"set_creg_bit applied to index {index}, expected 0"
-
-    # Extract the register used in the set_creg call for the register-level operation
-    set_creg_calls = re.findall(
-        r"call void @set_creg_to_int\(i1\* %(\w+), i64 1\)",
-        qir,
-    )
-    assert len(set_creg_calls) >= 1, "No set_creg_to_int call found for register-level operation"
-
-    # Get the register for the register-level operation
-    reg_name = set_creg_calls[0]
-
-    # For register-level operations, the original register name is used
-    # So a.set(1) still refers to register a
-    assert reg_name == "a", f"set_creg_to_int applied to register {reg_name}, expected a"
-
-    # Verify that running QIR generation twice produces consistent results
-    qir2 = SlrConverter(prog).qir()
-    assert qir == qir2, "QIR generation is not deterministic"
+    assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"

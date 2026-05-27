@@ -146,7 +146,7 @@ class TestAstToQirGates:
 
 
 class TestAstToQirPrepMeasure:
-    """Prep and measure code generation tests."""
+    """PZ and measure code generation tests."""
 
     def test_measurement(self) -> None:
         """Measurement generates mz_to_creg_bit call."""
@@ -163,10 +163,10 @@ class TestAstToQirPrepMeasure:
         assert "mz_to_creg_bit" in llvm_ir
 
     def test_prep_reset(self) -> None:
-        """Prep generates reset_body call."""
+        """PZ generates reset_body call."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
         )
         ast = slr_to_ast(prog)
 
@@ -232,7 +232,7 @@ class TestAstToQirClassicalRegisters:
         """Result CReg generates int_record_output call."""
         prog = Main(
             q := QReg("q", 1),
-            c := CReg("c", 1, result=True),
+            c := CReg("c", 1),
             qb.Measure(q[0]) > c[0],
         )
         ast = slr_to_ast(prog)

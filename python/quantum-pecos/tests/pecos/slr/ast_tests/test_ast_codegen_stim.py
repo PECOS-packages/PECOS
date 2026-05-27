@@ -168,7 +168,7 @@ class TestAstToStimGates:
 
 
 class TestAstToStimPrepMeasure:
-    """Prep and measure code generation tests."""
+    """PZ and measure code generation tests."""
 
     def test_measurement(self) -> None:
         """Measurement generates M instruction."""
@@ -202,10 +202,10 @@ class TestAstToStimPrepMeasure:
         assert "1" in code
 
     def test_prep_reset(self) -> None:
-        """Prep generates R (reset) instruction."""
+        """PZ generates R (reset) instruction."""
         prog = Main(
             q := QReg("q", 1),
-            qb.Prep(q[0]),
+            qb.PZ(q[0]),
         )
         ast = slr_to_ast(prog)
 
@@ -299,7 +299,7 @@ class TestAstToStimQEC:
                 qb.CX(data[0], ancilla[0]),
                 qb.CX(data[1], ancilla[0]),
                 qb.Measure(ancilla[0]) > c[0],
-                qb.Prep(ancilla[0]),
+                qb.PZ(ancilla[0]),
             ),
         )
         ast = slr_to_ast(prog)

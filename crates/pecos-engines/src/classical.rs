@@ -10,6 +10,14 @@ use std::any::Any;
 pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send + Sync {
     fn num_qubits(&self) -> usize;
 
+    /// Provide a qubit-count hint from higher-level simulation configuration.
+    ///
+    /// Most classical engines can ignore this. Dynamic runtimes may need it
+    /// before program execution discovers allocations.
+    fn set_num_qubits_hint(&mut self, _num_qubits: usize) {
+        // Default implementation does nothing.
+    }
+
     /// Generate a `ByteMessage` containing the next batch of quantum commands to execute.
     /// An empty message indicates no more commands are available.
     ///
@@ -96,6 +104,10 @@ dyn_clone::clone_trait_object!(ClassicalControlEngine);
 impl ClassicalEngine for Box<dyn ClassicalControlEngine> {
     fn num_qubits(&self) -> usize {
         (**self).num_qubits()
+    }
+
+    fn set_num_qubits_hint(&mut self, num_qubits: usize) {
+        (**self).set_num_qubits_hint(num_qubits);
     }
 
     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {

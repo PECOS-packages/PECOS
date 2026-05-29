@@ -265,7 +265,7 @@ impl SimBuilder {
         use crate::quantum::SparseStabEngine;
 
         // Build classical engine (required)
-        let classical_engine = match self.classical_builder {
+        let mut classical_engine = match self.classical_builder {
             Some(builder) => builder.build_boxed()?,
             None => {
                 return Err(PecosError::Input(
@@ -283,6 +283,8 @@ impl SimBuilder {
                     "Number of qubits not specified and cannot be inferred from engine".to_string(),
                 )
             })?;
+
+        classical_engine.set_num_qubits_hint(num_qubits);
 
         // Build quantum engine (require explicit qubit specification)
         let quantum_engine = if let Some(mut builder) = self.quantum_builder {

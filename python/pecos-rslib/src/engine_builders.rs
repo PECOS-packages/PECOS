@@ -24,6 +24,7 @@ type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 // Import existing shot result types
@@ -93,6 +94,7 @@ impl PyQasmEngineBuilder {
 #[derive(Clone)]
 pub struct PyQisEngineBuilder {
     pub(crate) inner: RustQisEngineBuilder,
+    runtime_configured: bool,
 }
 
 #[pymethods]
@@ -101,6 +103,7 @@ impl PyQisEngineBuilder {
     fn new() -> Self {
         Self {
             inner: pecos_qis::qis_engine(),
+            runtime_configured: false,
         }
     }
 
@@ -139,14 +142,42 @@ impl PyQisEngineBuilder {
         Ok(self.clone())
     }
 
-    /// Use Selene simple runtime
-    fn selene_runtime(&mut self) -> PyResult<Self> {
-        let runtime = pecos_qis::selene_simple_runtime().map_err(|e| {
+    /// Use a Selene runtime built into the current PECOS/Cargo target.
+    #[pyo3(signature = (runtime_name = None))]
+    fn selene_runtime(&mut self, runtime_name: Option<&str>) -> PyResult<Self> {
+        let runtime = match runtime_name {
+            None | Some("selene_simple_runtime") => pecos_qis::selene_simple_runtime(),
+            Some(name) => pecos_qis::selene_runtime_auto(name),
+        }
+        .map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Failed to load Selene runtime: {e}"
             ))
         })?;
         self.inner = self.inner.clone().runtime(runtime);
+        self.runtime_configured = true;
+        Ok(self.clone())
+    }
+
+    /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None))]
+    fn selene_runtime_plugin(
+        &mut self,
+        library_file: &str,
+        init_args: Option<Vec<String>>,
+        library_search_dirs: Option<Vec<String>>,
+    ) -> PyResult<Self> {
+        let runtime = pecos_qis::SeleneRuntime::with_plugin_config(
+            library_file,
+            init_args.unwrap_or_default(),
+            library_search_dirs
+                .unwrap_or_default()
+                .into_iter()
+                .map(PathBuf::from)
+                .collect(),
+        );
+        self.inner = self.inner.clone().runtime(runtime);
+        self.runtime_configured = true;
         Ok(self.clone())
     }
 
@@ -163,14 +194,18 @@ impl PyQisEngineBuilder {
             .clone()
             .interface(pecos_qis::helios_interface_builder());
 
-        // Always set Selene runtime to work with Helios interface
-        log::debug!("Setting Selene runtime for Helios interface");
-        let runtime = pecos_qis::selene_simple_runtime().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to load Selene runtime: {e}"
-            ))
-        })?;
-        self.inner = self.inner.clone().runtime(runtime);
+        if !self.runtime_configured {
+            log::debug!(
+                "No runtime configured; setting default Selene runtime for Helios interface"
+            );
+            let runtime = pecos_qis::selene_simple_runtime().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to load Selene runtime: {e}"
+                ))
+            })?;
+            self.inner = self.inner.clone().runtime(runtime);
+            self.runtime_configured = true;
+        }
 
         log::debug!("Helios interface and Selene runtime configured");
         Ok(self.clone())
@@ -745,19 +780,26 @@ pub fn qasm_engine() -> PyQasmEngineBuilder {
 pub fn qis_engine() -> PyQisEngineBuilder {
     PyQisEngineBuilder {
         inner: pecos_qis::qis_engine(),
+        runtime_configured: false,
     }
 }
 
 /// Create a Selene-backed QIS Control Engine builder.
 #[pyfunction]
-pub fn selene_engine() -> PyResult<PyQisEngineBuilder> {
-    let runtime = pecos_qis::selene_simple_runtime().map_err(|e| {
+#[pyo3(signature = (runtime_name = None))]
+pub fn selene_engine(runtime_name: Option<&str>) -> PyResult<PyQisEngineBuilder> {
+    let runtime = match runtime_name {
+        None | Some("selene_simple_runtime") => pecos_qis::selene_simple_runtime(),
+        Some(name) => pecos_qis::selene_runtime_auto(name),
+    }
+    .map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
             "Failed to load Selene runtime: {e}"
         ))
     })?;
     Ok(PyQisEngineBuilder {
         inner: pecos_qis::qis_engine().runtime(runtime),
+        runtime_configured: true,
     })
 }
 

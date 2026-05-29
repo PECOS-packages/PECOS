@@ -49,6 +49,9 @@ pub enum QuantumOp {
     // Hardware-native gates (for Selene compatibility)
     RXY(f64, f64, usize), // theta, phi, qubit
 
+    // Idle period in seconds for time-based noise models
+    Idle(f64, usize), // duration_seconds, qubit
+
     // Two-qubit gates
     CX(usize, usize),
     CY(usize, usize),

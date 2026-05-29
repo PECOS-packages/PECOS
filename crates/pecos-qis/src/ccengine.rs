@@ -197,6 +197,9 @@ pub struct QisEngine {
     /// qubit handles — use `active_qubit_slots.len()` for that.
     num_physical_slots: usize,
 
+    /// Optional device-size hint supplied by the top-level simulation builder.
+    num_qubits_hint: Option<usize>,
+
     /// Mapping from program-level qubit handles to physical simulator slots.
     active_qubit_slots: BTreeMap<usize, usize>,
 
@@ -320,6 +323,7 @@ impl QisEngine {
             runtime,
             current_operations: None,
             num_physical_slots: 0,
+            num_qubits_hint: None,
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
             seen_program_qubits: BTreeSet::new(),
@@ -412,6 +416,7 @@ impl QisEngine {
             runtime,
             current_operations: None,
             num_physical_slots: 0,
+            num_qubits_hint: None,
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
             seen_program_qubits: BTreeSet::new(),
@@ -598,6 +603,9 @@ impl QisEngine {
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
                         }
+                        QuantumOp::Idle(duration, qubit) => {
+                            builder.idle(*duration, &[self.mapped_qubit(*qubit, qop)?]);
+                        }
                         QuantumOp::CX(control, target) => {
                             builder.cx(&[(
                                 self.mapped_qubit(*control, qop)?,
@@ -641,6 +649,26 @@ impl QisEngine {
         let message = result.map(|()| builder.build());
         self.command_builder = builder;
         message
+    }
+
+    /// Convert freshly collected dynamic operations into a `ByteMessage`.
+    ///
+    /// Selene runtime plugins can opt in to lowering so their scheduler sees
+    /// the same operation stream that Selene would receive. Other runtimes keep
+    /// using PECOS's direct QIS lowering path.
+    fn lower_operations_to_bytemessage(
+        &mut self,
+        ops: &[Operation],
+    ) -> Result<ByteMessage, PecosError> {
+        if self.runtime.supports_operation_lowering() {
+            let lowered_ops = self
+                .runtime
+                .lower_operations(ops)
+                .map_err(|e| PecosError::Generic(format!("Runtime lowering error: {e}")))?;
+            return self.quantum_ops_to_bytemessage(lowered_ops);
+        }
+
+        self.operations_to_bytemessage(ops)
     }
 
     /// Convert already-materialized quantum ops into a `ByteMessage`.
@@ -697,6 +725,9 @@ impl QisEngine {
                             Angle64::from_radians(phi),
                             &[qubit],
                         );
+                    }
+                    QuantumOp::Idle(duration, qubit) => {
+                        builder.idle(duration, &[qubit]);
                     }
                     QuantumOp::CX(control, target) => {
                         builder.cx(&[(control, target)]);
@@ -760,6 +791,7 @@ impl Clone for QisEngine {
             runtime: dyn_clone::clone_box(&*self.runtime),
             current_operations: self.current_operations.clone(),
             num_physical_slots: self.num_physical_slots,
+            num_qubits_hint: self.num_qubits_hint,
             active_qubit_slots: self.active_qubit_slots.clone(),
             free_qubit_slots: self.free_qubit_slots.clone(),
             seen_program_qubits: self.seen_program_qubits.clone(),
@@ -1120,9 +1152,18 @@ impl ClassicalEngine for QisEngine {
         // return the physical-slot high-water mark instead. The runtime can
         // report its own baseline (e.g. from `allocated_qubits` metadata) and
         // we take the larger of the two.
-        let num_qubits = self.runtime.num_qubits().max(self.num_physical_slots);
+        let num_qubits = self
+            .runtime
+            .num_qubits()
+            .max(self.num_physical_slots)
+            .max(self.num_qubits_hint.unwrap_or(0));
         debug!("QisEngine: num_qubits() returning {num_qubits}");
         num_qubits
+    }
+
+    fn set_num_qubits_hint(&mut self, num_qubits: usize) {
+        self.num_qubits_hint = Some(num_qubits);
+        self.runtime.set_num_qubits(num_qubits);
     }
 
     fn set_seed(&mut self, seed: u64) {
@@ -1346,7 +1387,7 @@ impl ControlEngine for QisEngine {
                 // Track how many operations we're sending for simulation
                 self.simulated_op_count = ops.len();
                 if !ops.is_empty() {
-                    let commands = self.operations_to_bytemessage(&ops)?;
+                    let commands = self.lower_operations_to_bytemessage(&ops)?;
                     self.trace_operations_chunk(
                         "pending_start",
                         &ops,
@@ -1365,7 +1406,7 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let commands = self.operations_to_bytemessage(&final_ops)?;
+                    let commands = self.lower_operations_to_bytemessage(&final_ops)?;
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
@@ -1411,7 +1452,7 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let commands = self.operations_to_bytemessage(&final_ops)?;
+                    let commands = self.lower_operations_to_bytemessage(&final_ops)?;
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
@@ -1455,7 +1496,7 @@ impl ControlEngine for QisEngine {
                 if let Some(ops) = self.get_dynamic_operations() {
                     self.simulated_op_count += ops.len();
                     if !ops.is_empty() {
-                        let commands = self.operations_to_bytemessage(&ops)?;
+                        let commands = self.lower_operations_to_bytemessage(&ops)?;
                         self.trace_operations_chunk(
                             "pending_continue",
                             &ops,
@@ -1475,7 +1516,7 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let commands = self.operations_to_bytemessage(&final_ops)?;
+                    let commands = self.lower_operations_to_bytemessage(&final_ops)?;
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }

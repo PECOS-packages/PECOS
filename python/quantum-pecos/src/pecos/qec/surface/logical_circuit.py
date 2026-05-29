@@ -527,7 +527,7 @@ class LogicalCircuitBuilder:
         with keys "X" and "Z" mapping to ancilla (x, y) positions.
         These coordinates match the detector annotations in the Stim circuit.
 
-        Used as input to ``ObservableSubgraphDecoder``.
+        Used as input to ``LogicalSubgraphDecoder``.
         """
         result = []
         for ps in self._patches.values():
@@ -609,10 +609,10 @@ class LogicalCircuitBuilder:
         """Build a DemSampler and OSD decoder without any string round-trip.
 
         Returns:
-            Tuple of (DemSampler, ObservableSubgraphDecoder, dem_str).
+            Tuple of (DemSampler, LogicalSubgraphDecoder, dem_str).
             dem_str is also returned for compatibility with existing code.
         """
-        from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder, ObservableSubgraphDecoder
+        from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder, LogicalSubgraphDecoder
 
         tc = self.to_tick_circuit()
         dc = tc.to_dag_circuit()
@@ -642,7 +642,7 @@ class LogicalCircuitBuilder:
         dem_str = str(dem)
 
         sc = self.stab_coords()
-        decoder = ObservableSubgraphDecoder(dem_str, sc, inner_decoder)
+        decoder = LogicalSubgraphDecoder(dem_str, sc, inner_decoder)
 
         return sampler, decoder, dem_str
 
@@ -860,7 +860,7 @@ class LogicalCircuitBuilder:
         inner_decoder: str = "fusion_blossom_serial",
         use_stim_dem: bool = True,
     ) -> tuple[object, object]:
-        """Build an ObservableSubgraphDecoder for this circuit.
+        """Build an LogicalSubgraphDecoder for this circuit.
 
         Args:
             p1: Single-qubit depolarizing error rate.
@@ -872,10 +872,10 @@ class LogicalCircuitBuilder:
                 mechanisms). If False, use PECOS-native DEM pipeline.
 
         Returns:
-            Tuple of (stim.Circuit, ObservableSubgraphDecoder).
+            Tuple of (stim.Circuit, LogicalSubgraphDecoder).
         """
         import stim
-        from pecos_rslib.qec import ObservableSubgraphDecoder
+        from pecos_rslib.qec import LogicalSubgraphDecoder
 
         stim_str = self.to_stim(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
         circuit = stim.Circuit(stim_str)
@@ -887,7 +887,7 @@ class LogicalCircuitBuilder:
             dem_str = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
 
         sc = self.stab_coords()
-        decoder = ObservableSubgraphDecoder(dem_str, sc, inner_decoder)
+        decoder = LogicalSubgraphDecoder(dem_str, sc, inner_decoder)
         return circuit, decoder
 
 

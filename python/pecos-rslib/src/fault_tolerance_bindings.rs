@@ -2556,19 +2556,19 @@ fn create_observable_decoder(
             }
             Ok(Box::new(EnsembleDecoder::new(members)))
         }
-        // Per-observable subgraph decoder: requires stab_coords from Python.
+        // Per-logical-operator subgraph decoder: requires stab_coords from Python.
         // This is NOT callable from the string-based create_observable_decoder API.
-        // Use the Python ObservableSubgraphDecoder class directly instead.
-        s if s == "observable_subgraph" || s.starts_with("observable_subgraph:") => {
+        // Use the Python LogicalSubgraphDecoder class directly instead.
+        s if s == "logical_subgraph" || s.starts_with("logical_subgraph:") => {
             Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "observable_subgraph decoder requires stab_coords. \
-                 Use pecos_rslib.qec.ObservableSubgraphDecoder class directly.",
+                "logical_subgraph decoder requires stab_coords. \
+                 Use pecos_rslib.qec.LogicalSubgraphDecoder class directly.",
             ))
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
             "Unsupported decoder_type: {decoder_type}. \
              Supported: pymatching, tesseract, mwpf, pecos_uf (or pecos_uf:fast/balanced/accurate), \
-             observable_subgraph, ensemble:d1,d2,..., bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
+             logical_subgraph, ensemble:d1,d2,..., bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
         ))),
     }
 }
@@ -4410,9 +4410,9 @@ impl PyCssUfDecoder {
 // Observable Subgraph Decoder (Python class)
 // =============================================================================
 
-/// Per-observable subgraph decoder for transversal gates.
+/// Per-logical-operator subgraph decoder for transversal gates.
 ///
-/// Partitions a DEM into per-observable graphlike subgraphs using
+/// Partitions a DEM into per-logical-operator graphlike subgraphs using
 /// stabilizer coordinate information, then decodes each independently.
 ///
 /// Args:
@@ -4422,19 +4422,19 @@ impl PyCssUfDecoder {
 ///     `inner_decoder`: Inner decoder type string (default "`pecos_uf:fast`").
 ///
 /// Example:
-///     >>> decoder = `ObservableSubgraphDecoder`(
+///     >>> decoder = `LogicalSubgraphDecoder`(
 ///     ...     `dem_str`,
 ///     ...     [{"X": [(1,0), (3,1)], "Z": [(0,3), (1,1)]}],
 ///     ...     "`pecos_uf:fast`",
 ///     ... )
 ///     >>> obs = decoder.decode(syndrome)
-#[pyclass(name = "ObservableSubgraphDecoder", module = "pecos_rslib.qec")]
-pub struct PyObservableSubgraphDecoder {
-    inner: pecos_decoder_core::observable_subgraph::ObservableSubgraphDecoder,
+#[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
+pub struct PyLogicalSubgraphDecoder {
+    inner: pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder,
 }
 
 #[pymethods]
-impl PyObservableSubgraphDecoder {
+impl PyLogicalSubgraphDecoder {
     #[new]
     #[pyo3(signature = (dem, stab_coords, inner_decoder="pecos_uf:fast", max_time_radius=None))]
     fn new(
@@ -4443,7 +4443,7 @@ impl PyObservableSubgraphDecoder {
         inner_decoder: &str,
         max_time_radius: Option<i64>,
     ) -> PyResult<Self> {
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
         // Parse stab_coords from Python dicts
         let mut rust_stab_coords = Vec::with_capacity(stab_coords.len());
@@ -4462,7 +4462,7 @@ impl PyObservableSubgraphDecoder {
             });
         }
 
-        let inner = ObservableSubgraphDecoder::from_dem_windowed(
+        let inner = LogicalSubgraphDecoder::from_dem_windowed(
             dem,
             &rust_stab_coords,
             max_time_radius,
@@ -4551,7 +4551,7 @@ impl PyObservableSubgraphDecoder {
         num_workers: Option<usize>,
         max_time_radius: Option<i64>,
     ) -> PyResult<usize> {
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
         use rayon::prelude::*;
 
         // Parse stab_coords
@@ -4598,7 +4598,7 @@ impl PyObservableSubgraphDecoder {
                 .par_chunks(chunk_size.max(1))
                 .map(|chunk| {
                     // Build a fresh decoder for this worker
-                    let mut dec = ObservableSubgraphDecoder::from_dem_windowed(
+                    let mut dec = LogicalSubgraphDecoder::from_dem_windowed(
                         &dem_str,
                         &sc,
                         max_time_radius,
@@ -4655,7 +4655,7 @@ impl PyObservableSubgraphDecoder {
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<(usize, usize)> {
         use pecos_decoder_core::ghost_protocol::extract_ghost_edges_from_dem;
-        use pecos_decoder_core::observable_subgraph::QubitStabCoords;
+        use pecos_decoder_core::logical_subgraph::QubitStabCoords;
 
         let mut sc = Vec::with_capacity(stab_coords.len());
         for dict in &stab_coords {
@@ -4705,12 +4705,12 @@ impl PyObservableSubgraphDecoder {
 }
 
 // =============================================================================
-// Windowed OSD Decoder (Python class)
+// Windowed logical-subgraph decoding Decoder (Python class)
 // =============================================================================
 
 /// Windowed observable subgraph decoder for deep circuits.
 ///
-/// Splits the DEM into time windows, runs OSD within each window.
+/// Splits the DEM into time windows, runs logical-subgraph decoder within each window.
 /// Prevents the observing region from spanning the full circuit.
 ///
 /// Args:
@@ -4719,13 +4719,13 @@ impl PyObservableSubgraphDecoder {
 ///     `inner_decoder`: Inner MWPM decoder type.
 ///     step: Core window size in time steps.
 ///     buffer: Buffer size on each side (0 = non-overlapping).
-#[pyclass(name = "WindowedOsdDecoder", module = "pecos_rslib.qec")]
-pub struct PyWindowedOsdDecoder {
-    inner: pecos_decoder_core::windowed_osd::WindowedOsdDecoder,
+#[pyclass(name = "WindowedLogicalSubgraphDecoder", module = "pecos_rslib.qec")]
+pub struct PyWindowedLogicalSubgraphDecoder {
+    inner: pecos_decoder_core::logical_subgraph::windowed::WindowedLogicalSubgraphDecoder,
 }
 
 #[pymethods]
-impl PyWindowedOsdDecoder {
+impl PyWindowedLogicalSubgraphDecoder {
     #[new]
     #[pyo3(signature = (dem, stab_coords, inner_decoder="pymatching", step=8, buffer=4))]
     fn new(
@@ -4735,8 +4735,8 @@ impl PyWindowedOsdDecoder {
         step: usize,
         buffer: usize,
     ) -> PyResult<Self> {
-        use pecos_decoder_core::observable_subgraph::QubitStabCoords;
-        use pecos_decoder_core::windowed_osd::{WindowedOsdConfig, WindowedOsdDecoder};
+        use pecos_decoder_core::logical_subgraph::QubitStabCoords;
+        use pecos_decoder_core::logical_subgraph::windowed::{WindowedLogicalSubgraphConfig, WindowedLogicalSubgraphDecoder};
 
         let mut sc = Vec::with_capacity(stab_coords.len());
         for dict in &stab_coords {
@@ -4754,9 +4754,9 @@ impl PyWindowedOsdDecoder {
             });
         }
 
-        let config = WindowedOsdConfig { step, buffer };
+        let config = WindowedLogicalSubgraphConfig { step, buffer };
 
-        let inner = WindowedOsdDecoder::from_dem(dem, &sc, &config, |subgraph| {
+        let inner = WindowedLogicalSubgraphDecoder::from_dem(dem, &sc, &config, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
             let d = create_observable_decoder(&sub_dem, inner_decoder)
                 .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
@@ -4801,7 +4801,7 @@ impl PyWindowedOsdDecoder {
 // Logical Algorithm Decoder (Python class)
 // =============================================================================
 
-/// Decoder for logical quantum algorithms with per-segment OSD and
+/// Decoder for logical quantum algorithms with per-segment logical-subgraph decoder and
 /// Pauli frame propagation at transversal gate boundaries.
 ///
 /// Built from a descriptor dict produced by
@@ -4820,7 +4820,7 @@ impl PyLogicalAlgorithmDecoder {
     ///
     /// Args:
     ///     descriptor: Dict from ``LogicalCircuitBuilder.build_algorithm_descriptor()``.
-    ///     `inner_decoder`: Decoder type string for each segment's OSD inner decoder.
+    ///     `inner_decoder`: Decoder type string for each segment's logical-subgraph decoder inner decoder.
     #[new]
     #[pyo3(signature = (descriptor, inner_decoder="pymatching"))]
     fn new(
@@ -4830,9 +4830,9 @@ impl PyLogicalAlgorithmDecoder {
         use pecos_decoder_core::logical_algorithm::{
             AlgorithmDescriptor, BoundaryGate, LogicalAlgorithmDecoder, SegmentDescriptor,
         };
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
-        // Parse full DEM and stab_coords for full-circuit OSD
+        // Parse full DEM and stab_coords for full-circuit logical-subgraph decoder
         let full_dem: String = descriptor
             .get_item("full_dem")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
@@ -4874,8 +4874,8 @@ impl PyLogicalAlgorithmDecoder {
 
         let inner_str = inner_decoder.to_string();
 
-        // Build full-circuit OSD from the full DEM
-        let full_osd = ObservableSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
+        // Build full-circuit logical-subgraph decoder from the full DEM
+        let full_osd = LogicalSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
             let d = create_observable_decoder(&sub_dem, &inner_str)
                 .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
@@ -5044,8 +5044,8 @@ impl PyLogicalAlgorithmDecoder {
 /// Budget-aware decoder for logical quantum circuits.
 ///
 /// Selects decode strategy based on available reaction time:
-/// - ``"unlimited"``: full-circuit OSD (Clifford circuits, offline)
-/// - ``"windowed"``: default windowed OSD (~1ms reaction time)
+/// - ``"unlimited"``: full-circuit logical-subgraph decoder (Clifford circuits, offline)
+/// - ``"windowed"``: default windowed logical-subgraph decoder (~1ms reaction time)
 /// - ``"10ms"``, ``"1000us"``, etc.: explicit reaction time budget
 ///
 /// The reaction time is the time available at feed-forward decision
@@ -5076,7 +5076,7 @@ impl PyLogicalCircuitDecoder {
             AlgorithmDescriptor, BoundaryGate, FullCircuitStrategy, LogicalCircuitDecoder,
             SegmentDescriptor,
         };
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
         // Parse full DEM
         let full_dem: String = descriptor
@@ -5118,7 +5118,7 @@ impl PyLogicalCircuitDecoder {
         let num_qubits = rust_sc.len();
 
         let inner_str = inner_decoder.to_string();
-        let full_osd = ObservableSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
+        let full_osd = LogicalSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
             let d = create_observable_decoder(&sub_dem, &inner_str)
                 .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
@@ -5236,12 +5236,12 @@ impl PyLogicalCircuitDecoder {
         // Select strategy based on budget.
         let strategy: Box<dyn pecos_decoder_core::decode_budget::DecodeStrategy + Send + Sync> =
             if decode_budget.is_unlimited() {
-                // Unlimited: full-circuit OSD (maximum accuracy)
+                // Unlimited: full-circuit logical-subgraph decoder (maximum accuracy)
                 Box::new(FullCircuitStrategy::new(Box::new(full_osd)))
             } else {
                 // Windowed: per-subgraph sandwich decoding.
-                // Extract per-subgraph DEMs and detector maps from the full OSD.
-                use pecos_decoder_core::logical_algorithm::WindowedOsdStrategy;
+                // Extract per-subgraph DEMs and detector maps from the full logical-subgraph decoder.
+                use pecos_decoder_core::logical_algorithm::WindowedLogicalSubgraphStrategy;
 
                 let mut sub_dems = Vec::new();
                 let mut det_maps = Vec::new();
@@ -5262,7 +5262,7 @@ impl PyLogicalCircuitDecoder {
                     format!("windowed:step={d},buf=0")
                 };
 
-                let wosd = WindowedOsdStrategy::new(sub_dems, det_maps, |dem_str| {
+                let wosd = WindowedLogicalSubgraphStrategy::new(sub_dems, det_maps, |dem_str| {
                     let dec = create_observable_decoder(dem_str, &windowed_str)
                         .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
                     Ok(Box::new(SendWrapper(dec))
@@ -5561,8 +5561,8 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<PyCssUfDecoder>()?;
-    qec.add_class::<PyObservableSubgraphDecoder>()?;
-    qec.add_class::<PyWindowedOsdDecoder>()?;
+    qec.add_class::<PyLogicalSubgraphDecoder>()?;
+    qec.add_class::<PyWindowedLogicalSubgraphDecoder>()?;
     qec.add_class::<PyLogicalAlgorithmDecoder>()?;
     qec.add_class::<PyLogicalCircuitDecoder>()?;
     qec.add_class::<PyDecodeStats>()?;

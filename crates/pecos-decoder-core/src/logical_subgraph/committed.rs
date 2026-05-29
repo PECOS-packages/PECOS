@@ -10,9 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! OSD with software commitment for streaming decoding.
+//! logical-subgraph decoder with software commitment for streaming decoding.
 //!
-//! Wraps an `ObservableSubgraphDecoder` with per-detector commitment
+//! Wraps an `LogicalSubgraphDecoder` with per-detector commitment
 //! tracking. Committed detectors are masked during future decodes,
 //! implementing the "software commitment" concept from Cain et al.
 //! (arXiv:2505.13587).
@@ -23,7 +23,7 @@
 use crate::ObservableDecoder;
 use crate::decode_budget::{DecodeStrategy, DetectorRegion};
 use crate::errors::DecoderError;
-use crate::observable_subgraph::ObservableSubgraphDecoder;
+use crate::logical_subgraph::LogicalSubgraphDecoder;
 
 /// Observable subgraph decoder with software commitment.
 ///
@@ -34,9 +34,9 @@ use crate::observable_subgraph::ObservableSubgraphDecoder;
 ///
 /// The total correction is `committed_obs ^ active_obs`: the XOR
 /// of committed corrections and the latest active decode.
-pub struct CommittedOsdDecoder {
-    /// The underlying OSD (unchanged).
-    inner: ObservableSubgraphDecoder,
+pub struct CommittedLogicalSubgraphDecoder {
+    /// The underlying logical-subgraph decoder (unchanged).
+    inner: LogicalSubgraphDecoder,
     /// Per-detector commitment state. True = committed.
     committed: Vec<bool>,
     /// Accumulated observable correction from committed regions.
@@ -47,10 +47,10 @@ pub struct CommittedOsdDecoder {
     masked_syndrome: Vec<u8>,
 }
 
-impl CommittedOsdDecoder {
-    /// Wrap an existing OSD with commitment tracking.
+impl CommittedLogicalSubgraphDecoder {
+    /// Wrap an existing logical-subgraph decoder with commitment tracking.
     #[must_use]
-    pub fn new(inner: ObservableSubgraphDecoder, num_detectors: usize) -> Self {
+    pub fn new(inner: LogicalSubgraphDecoder, num_detectors: usize) -> Self {
         Self {
             inner,
             committed: vec![false; num_detectors],
@@ -63,7 +63,7 @@ impl CommittedOsdDecoder {
     /// Decode only uncommitted detectors.
     ///
     /// Committed detectors are masked to 0 before passing to the
-    /// inner OSD. Returns the correction for the active (uncommitted)
+    /// inner logical-subgraph decoder. Returns the correction for the active (uncommitted)
     /// region.
     pub fn decode_active(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         // Build masked syndrome: zero out committed detectors
@@ -123,7 +123,7 @@ impl CommittedOsdDecoder {
     }
 }
 
-impl ObservableDecoder for CommittedOsdDecoder {
+impl ObservableDecoder for CommittedLogicalSubgraphDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         // Full decode: committed XOR active
         let active = self.decode_active(syndrome)?;
@@ -131,7 +131,7 @@ impl ObservableDecoder for CommittedOsdDecoder {
     }
 }
 
-impl DecodeStrategy for CommittedOsdDecoder {
+impl DecodeStrategy for CommittedLogicalSubgraphDecoder {
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_active(syndrome)
     }
@@ -150,7 +150,7 @@ impl DecodeStrategy for CommittedOsdDecoder {
     }
 
     fn reset(&mut self) {
-        CommittedOsdDecoder::reset(self);
+        CommittedLogicalSubgraphDecoder::reset(self);
     }
 }
 

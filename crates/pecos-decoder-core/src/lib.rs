@@ -25,7 +25,6 @@
 pub mod adaptive;
 pub mod advanced;
 pub mod bp_matching;
-pub mod committed_osd;
 pub mod config;
 pub mod correlated_decoder;
 pub mod correlated_reweighting;
@@ -40,7 +39,7 @@ pub mod k_mwpm;
 pub mod logical_algorithm;
 pub mod matrix;
 pub mod multi_decoder;
-pub mod observable_subgraph;
+pub mod logical_subgraph;
 pub mod pauli_frame;
 pub mod perturbed;
 pub mod preprocessor;
@@ -48,7 +47,6 @@ pub mod results;
 pub mod streaming;
 pub mod telemetry;
 pub mod two_pass_decoder;
-pub mod windowed_osd;
 
 use ndarray::ArrayView1;
 

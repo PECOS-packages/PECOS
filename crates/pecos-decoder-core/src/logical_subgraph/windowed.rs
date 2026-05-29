@@ -12,7 +12,7 @@
 
 //! Windowed observable subgraph decoder.
 //!
-//! Splits a DEM into time windows, runs per-observable subgraph decoding
+//! Splits a DEM into time windows, runs per-logical-operator subgraph decoding
 //! within each window. This prevents the observing region from spanning
 //! the full circuit at deep depths, maintaining decoding accuracy.
 //!
@@ -27,26 +27,26 @@ use std::collections::BTreeMap;
 use crate::ObservableDecoder;
 use crate::dem::{DemCheckMatrix, DemMatchingGraph, MatchingEdge, parse_detector_coords};
 use crate::errors::DecoderError;
-use crate::observable_subgraph::{ObservableSubgraphDecoder, StabCoords};
+use crate::logical_subgraph::{LogicalSubgraphDecoder, StabCoords};
 
-/// Configuration for windowed OSD.
+/// Configuration for windowed logical-subgraph decoder.
 #[derive(Debug, Clone)]
-pub struct WindowedOsdConfig {
+pub struct WindowedLogicalSubgraphConfig {
     /// Core window size in time steps.
     pub step: usize,
     /// Buffer size on each side (0 = non-overlapping).
     pub buffer: usize,
 }
 
-impl Default for WindowedOsdConfig {
+impl Default for WindowedLogicalSubgraphConfig {
     fn default() -> Self {
         Self { step: 8, buffer: 4 }
     }
 }
 
-/// A single time window with its own OSD.
-pub struct OsdWindow {
-    decoder: ObservableSubgraphDecoder,
+/// A single time window with its own logical-subgraph decoder.
+pub struct LogicalSubgraphWindow {
+    decoder: LogicalSubgraphDecoder,
     /// Maps local detector index → global detector index.
     local_to_global: Vec<usize>,
     num_local: usize,
@@ -56,17 +56,17 @@ pub struct OsdWindow {
 
 /// Windowed observable subgraph decoder.
 ///
-/// Splits the DEM into time windows, each decoded with its own OSD.
+/// Splits the DEM into time windows, each decoded with its own logical-subgraph decoder.
 /// The observing region within each window is naturally bounded,
 /// preventing the scaling degradation seen at deep circuits.
-pub struct WindowedOsdDecoder {
-    pub windows: Vec<OsdWindow>,
+pub struct WindowedLogicalSubgraphDecoder {
+    pub windows: Vec<LogicalSubgraphWindow>,
     _num_detectors: usize,
     /// Reusable window syndrome buffer
     window_syn: Vec<u8>,
 }
 
-impl WindowedOsdDecoder {
+impl WindowedLogicalSubgraphDecoder {
     /// Build from a DEM string with time-based windowing.
     ///
     /// # Errors
@@ -75,7 +75,7 @@ impl WindowedOsdDecoder {
     pub fn from_dem<F>(
         dem: &str,
         stab_coords: &StabCoords,
-        config: &WindowedOsdConfig,
+        config: &WindowedLogicalSubgraphConfig,
         mut inner_factory: F,
     ) -> Result<Self, DecoderError>
     where
@@ -101,11 +101,11 @@ impl WindowedOsdDecoder {
         let max_t = det_time.values().copied().fold(f64::NEG_INFINITY, f64::max);
 
         if max_t <= min_t {
-            // Single time step or empty — just use full OSD
+            // Single time step or empty — just use full logical-subgraph decoder
             let full_osd =
-                ObservableSubgraphDecoder::from_dem(dem, stab_coords, &mut inner_factory)?;
+                LogicalSubgraphDecoder::from_dem(dem, stab_coords, &mut inner_factory)?;
             return Ok(Self {
-                windows: vec![OsdWindow {
+                windows: vec![LogicalSubgraphWindow {
                     decoder: full_osd,
                     local_to_global: (0..num_detectors).collect(),
                     num_local: num_detectors,
@@ -216,7 +216,7 @@ impl WindowedOsdDecoder {
             };
 
             // Build sub-DEM string with detector coordinate declarations.
-            // The OSD needs these to classify detectors by (qubit, stab_type).
+            // The logical-subgraph decoder needs these to classify detectors by (qubit, stab_type).
             let mut sub_dem_lines = Vec::new();
             for (local_id, &global_id) in local_to_global.iter().enumerate() {
                 // Find this detector's coordinates from the parsed coords
@@ -228,11 +228,11 @@ impl WindowedOsdDecoder {
             sub_dem_lines.push(graph_to_dem_string(&sub_graph));
             let sub_dem = sub_dem_lines.join("\n");
 
-            // Build OSD for this window using the sub-DEM
+            // Build logical-subgraph decoder for this window using the sub-DEM
             let window_osd =
-                ObservableSubgraphDecoder::from_dem(&sub_dem, stab_coords, &mut inner_factory)?;
+                LogicalSubgraphDecoder::from_dem(&sub_dem, stab_coords, &mut inner_factory)?;
 
-            windows.push(OsdWindow {
+            windows.push(LogicalSubgraphWindow {
                 decoder: window_osd,
                 local_to_global,
                 num_local,
@@ -250,7 +250,7 @@ impl WindowedOsdDecoder {
     }
 }
 
-impl ObservableDecoder for WindowedOsdDecoder {
+impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         let mut obs_mask = 0u64;
 

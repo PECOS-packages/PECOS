@@ -18,8 +18,8 @@
 //!
 //! # Decoding Modes
 //!
-//! - **Full-circuit**: Uses the full DEM's OSD for maximum accuracy.
-//!   Equivalent to `ObservableSubgraphDecoder` on the full circuit.
+//! - **Full-circuit**: Uses the full DEM's logical-subgraph decoder for maximum accuracy.
+//!   Equivalent to `LogicalSubgraphDecoder` on the full circuit.
 //! - **Per-segment** (future streaming): Each segment decoded independently
 //!   with buffer overlap at gate boundaries.
 
@@ -91,17 +91,17 @@ pub struct AlgorithmDescriptor {
 
 /// Decoder for logical quantum algorithms.
 ///
-/// Wraps a full-circuit decoder (OSD) with segment metadata. The
+/// Wraps a full-circuit decoder (logical-subgraph decoder) with segment metadata. The
 /// segment structure enables:
 /// - Tracking which gates occur at which point in the circuit
 /// - Pauli frame propagation for T-gate/measurement corrections
 /// - Future streaming mode with per-segment windowed decoding
 ///
 /// In the current implementation, `decode_shot` delegates to the
-/// full-circuit OSD for maximum accuracy. The segment structure is
+/// full-circuit logical-subgraph decoder for maximum accuracy. The segment structure is
 /// metadata for frame tracking and streaming (step 5).
 pub struct LogicalAlgorithmDecoder {
-    /// Full-circuit decoder (OSD on the complete DEM).
+    /// Full-circuit decoder (logical-subgraph decoder on the complete DEM).
     full_decoder: Box<dyn ObservableDecoder + Send + Sync>,
     /// Segment metadata for streaming/frame tracking.
     segments: Vec<SegmentDescriptor>,
@@ -114,7 +114,7 @@ pub struct LogicalAlgorithmDecoder {
 impl LogicalAlgorithmDecoder {
     /// Build from a full-circuit decoder and algorithm descriptor.
     ///
-    /// The `full_decoder` is typically an `ObservableSubgraphDecoder`
+    /// The `full_decoder` is typically an `LogicalSubgraphDecoder`
     /// built from the full circuit DEM.
     #[must_use]
     pub fn new(
@@ -213,7 +213,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 
 /// Streaming wrapper for `LogicalAlgorithmDecoder`.
 ///
-/// Buffers syndrome data round-by-round. The full-circuit OSD decodes
+/// Buffers syndrome data round-by-round. The full-circuit logical-subgraph decoder decodes
 /// the entire accumulated syndrome at `flush()` for maximum accuracy.
 ///
 /// The segment structure tracks which rounds belong to which segment.
@@ -257,7 +257,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 /// assert_eq!(obs, 1);
 /// ```
 pub struct StreamingLogicalDecoder {
-    /// The underlying batch decoder (full-circuit OSD).
+    /// The underlying batch decoder (full-circuit logical-subgraph decoder).
     inner: LogicalAlgorithmDecoder,
     /// Accumulated syndrome buffer (full circuit size).
     syndrome: Vec<u8>,
@@ -305,7 +305,7 @@ impl StreamingLogicalDecoder {
         self.rounds_fed += 1;
     }
 
-    /// Decode the accumulated syndrome using the full-circuit OSD.
+    /// Decode the accumulated syndrome using the full-circuit logical-subgraph decoder.
     ///
     /// Returns the observable correction mask. This is the final
     /// correction to apply to raw measurement outcomes.
@@ -395,7 +395,7 @@ use crate::decode_budget::{DecodeBudget, DecodeStrategy, DetectorRegion};
 ///
 /// - **Offline** (ion trap / simulation): `FullCircuitStrategy` — buffer
 ///   everything, decode at end. Maximum accuracy.
-/// - **Streaming** (neutral atom): `CommittedOsdStrategy` — decode and
+/// - **Streaming** (neutral atom): `CommittedLogicalSubgraphStrategy` — decode and
 ///   commit at segment boundaries. Bounded memory.
 /// - **Real-time** (superconducting): windowed UF with ghost protocol
 ///   (future).
@@ -457,7 +457,7 @@ impl LogicalCircuitDecoder {
 
     /// Decode a full shot (batch mode).
     ///
-    /// For offline/ion trap budgets: equivalent to full-circuit OSD.
+    /// For offline/ion trap budgets: equivalent to full-circuit logical-subgraph decoder.
     /// For streaming budgets: decodes and commits each segment.
     pub fn decode_shot(&mut self, full_syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.reset();
@@ -561,7 +561,7 @@ pub struct FullCircuitStrategy {
 }
 
 impl FullCircuitStrategy {
-    /// Wrap any `ObservableDecoder` (typically OSD).
+    /// Wrap any `ObservableDecoder` (typically logical-subgraph decoder).
     #[must_use]
     pub fn new(decoder: Box<dyn ObservableDecoder + Send + Sync>) -> Self {
         Self { inner: decoder }
@@ -588,18 +588,18 @@ impl DecodeStrategy for FullCircuitStrategy {
 }
 
 // ============================================================================
-// Strategy: Windowed OSD (neutral atom / medium budget)
+// Strategy: Windowed logical-subgraph decoding (neutral atom / medium budget)
 // ============================================================================
 
-/// Windowed OSD strategy: per-observable subgraph windowed decoding.
+/// Windowed logical-subgraph strategy: per-logical-operator subgraph windowed decoding.
 ///
 /// Each observable's subgraph is graphlike (no hyperedges). A windowed
 /// decoder (sandwich or plain PM) runs inside each subgraph with bounded
 /// latency. The full matching graph is pre-built; only syndrome routing
 /// and per-window matching are per-shot work.
 ///
-/// This achieves bounded-latency streaming with OSD-level accuracy.
-pub struct WindowedOsdStrategy {
+/// This achieves bounded-latency streaming with logical-subgraph decoder-level accuracy.
+pub struct WindowedLogicalSubgraphStrategy {
     /// Per-subgraph decoders (windowed or plain).
     subgraph_decoders: Vec<Box<dyn ObservableDecoder + Send + Sync>>,
     /// Per-subgraph detector maps: `subgraph_detector_maps`[i][local] = global.
@@ -610,7 +610,7 @@ pub struct WindowedOsdStrategy {
     _num_observables: usize,
 }
 
-impl WindowedOsdStrategy {
+impl WindowedLogicalSubgraphStrategy {
     /// Build from pre-extracted subgraph DEMs and detector maps.
     ///
     /// `subgraph_dems`: per-observable DEM strings (graphlike).
@@ -644,7 +644,7 @@ impl WindowedOsdStrategy {
     }
 }
 
-impl DecodeStrategy for WindowedOsdStrategy {
+impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         let mut obs_mask = 0u64;
 

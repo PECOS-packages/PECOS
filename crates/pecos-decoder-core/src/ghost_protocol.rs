@@ -135,9 +135,9 @@ pub struct GhostMessage {
 #[must_use]
 pub fn extract_ghost_edges_from_dem(
     dem_str: &str,
-    stab_coords: &crate::observable_subgraph::StabCoords,
+    stab_coords: &crate::logical_subgraph::StabCoords,
 ) -> Vec<GhostEdge> {
-    use crate::observable_subgraph::classify_detector;
+    use crate::logical_subgraph::classify_detector;
     use std::collections::BTreeMap;
 
     // Parse detector coordinates
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_extract_ghost_edges_from_synthetic_dem() {
-        use crate::observable_subgraph::QubitStabCoords;
+        use crate::logical_subgraph::QubitStabCoords;
 
         // Two qubits: qubit 0 has X-stab at (1,1) and Z-stab at (3,1),
         // qubit 1 has X-stab at (7,1) and Z-stab at (9,1).
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_extract_no_ghost_edges_graphlike_dem() {
-        use crate::observable_subgraph::QubitStabCoords;
+        use crate::logical_subgraph::QubitStabCoords;
 
         let stab_coords = vec![QubitStabCoords {
             x_positions: vec![(1.0, 1.0)],
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_extract_three_same_qubit_no_ghost() {
-        use crate::observable_subgraph::QubitStabCoords;
+        use crate::logical_subgraph::QubitStabCoords;
 
         let stab_coords = vec![QubitStabCoords {
             x_positions: vec![(1.0, 1.0), (1.0, 3.0)],

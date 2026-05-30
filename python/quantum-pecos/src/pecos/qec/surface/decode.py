@@ -92,6 +92,9 @@ class NoiseModel:
         p_idle: Idle noise rate per time unit (uniform depolarizing).
         t1: T1 relaxation time for idle noise (same units as idle duration).
         t2: T2 dephasing time (must satisfy t2 <= 2*t1).
+        p_idle_linear_rate: Stochastic Z-memory rate linear in idle duration.
+        p_idle_quadratic_rate: Stochastic Z-memory rate using
+            ``sin(rate * duration) ** 2``.
     """
 
     p1: float = 0.0
@@ -101,6 +104,8 @@ class NoiseModel:
     p_idle: float | None = None
     t1: float | None = None
     t2: float | None = None
+    p_idle_linear_rate: float | None = None
+    p_idle_quadratic_rate: float | None = None
 
     @staticmethod
     def uniform(physical_error_rate: float) -> NoiseModel:
@@ -117,6 +122,8 @@ class NoiseModel:
             and self.p_meas == 0.0
             and self.p_prep == 0.0
             and (self.p_idle is None or self.p_idle == 0.0)
+            and (self.p_idle_linear_rate is None or self.p_idle_linear_rate == 0.0)
+            and (self.p_idle_quadratic_rate is None or self.p_idle_quadratic_rate == 0.0)
         )
 
     @property
@@ -125,6 +132,10 @@ class NoiseModel:
         rates = [self.p1, self.p2, self.p_meas, self.p_prep]
         if self.p_idle is not None:
             rates.append(self.p_idle)
+        if self.p_idle_linear_rate is not None:
+            rates.append(self.p_idle_linear_rate)
+        if self.p_idle_quadratic_rate is not None:
+            rates.append(self.p_idle_quadratic_rate)
         return max(rates)
 
 
@@ -406,6 +417,22 @@ def _copy_surface_tick_circuit_metadata(source_tc: Any, target_tc: Any) -> None:
             target_tc.set_meta(key, value)
 
 
+def _runtime_idle_seconds_to_time_units(duration_seconds: float) -> Any:
+    """Convert runtime idle seconds into PECOS nanosecond time units."""
+    import math
+
+    from pecos_rslib import TimeUnits
+
+    if not math.isfinite(duration_seconds) or duration_seconds < 0.0:
+        msg = f"Idle duration must be finite and non-negative, got {duration_seconds!r}"
+        raise ValueError(msg)
+
+    units = round(duration_seconds * 1_000_000_000.0)
+    if duration_seconds > 0.0:
+        units = max(1, units)
+    return TimeUnits(units)
+
+
 def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any:
     """Replay traced QIS operations into a PECOS TickCircuit."""
     import heapq
@@ -502,6 +529,12 @@ def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any
         elif op_name == "RXY":
             theta, phi, program_id = tuple_args(payload, op_name, 3)
             tick.r1xy(float(theta), float(phi), [mapped_slot(int(program_id), op_name)])
+        elif op_name == "Idle":
+            duration, program_id = tuple_args(payload, op_name, 2)
+            tick.idle(
+                _runtime_idle_seconds_to_time_units(float(duration)),
+                [mapped_slot(int(program_id), op_name)],
+            )
         elif op_name == "CX":
             control, target = tuple_args(payload, op_name, 2)
             tick.cx([(mapped_slot(int(control), op_name), mapped_slot(int(target), op_name))])
@@ -614,6 +647,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
             gate_type = str(gate["gate_type"])
             qubits = [int(q) for q in gate.get("qubits", [])]
             angles = [float(theta) for theta in gate.get("angles", [])]
+            params = [float(param) for param in gate.get("params", [])]
             tick = tick_circuit.tick()
 
             if gate_type == "H":
@@ -634,6 +668,11 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
                 tick.tdg(qubits)
             elif gate_type == "PZ":
                 tick.pz(qubits)
+            elif gate_type == "Idle":
+                if len(params) != 1:
+                    msg = f"Lowered Idle gate expected one duration param, got {params!r}"
+                    raise ValueError(msg)
+                tick.idle(_runtime_idle_seconds_to_time_units(params[0]), qubits)
             elif gate_type == "MZ":
                 end = meas_cursor + len(qubits)
                 if end > len(meas_ids_in_order):
@@ -977,14 +1016,27 @@ def _uses_dedicated_idle_noise(
     p_idle: float | None,
     t1: float | None,
     t2: float | None,
+    p_idle_linear_rate: float | None = None,
+    p_idle_quadratic_rate: float | None = None,
 ) -> bool:
     """Return True when noise parameters require explicit idle locations."""
-    return (p_idle is not None and p_idle > 0.0) or (t1 is not None and t2 is not None)
+    return (
+        (p_idle is not None and p_idle > 0.0)
+        or (t1 is not None and t2 is not None)
+        or (p_idle_linear_rate is not None and p_idle_linear_rate > 0.0)
+        or (p_idle_quadratic_rate is not None and p_idle_quadratic_rate != 0.0)
+    )
 
 
 def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
     """Return True when this noise model requires explicit idle locations."""
-    return _uses_dedicated_idle_noise(p_idle=noise.p_idle, t1=noise.t1, t2=noise.t2)
+    return _uses_dedicated_idle_noise(
+        p_idle=noise.p_idle,
+        t1=noise.t1,
+        t2=noise.t2,
+        p_idle_linear_rate=noise.p_idle_linear_rate,
+        p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+    )
 
 
 @cache
@@ -1047,7 +1099,17 @@ def _dem_string_from_cached_surface_topology(
 
     dem = (
         DemBuilder(topology.influence_map)
-        .with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep, p_idle=noise.p_idle, t1=noise.t1, t2=noise.t2)
+        .with_noise(
+            noise.p1,
+            noise.p2,
+            noise.p_meas,
+            noise.p_prep,
+            p_idle=noise.p_idle,
+            t1=noise.t1,
+            t2=noise.t2,
+            p_idle_linear_rate=noise.p_idle_linear_rate,
+            p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+        )
         .with_num_measurements(topology.num_measurements)
         .with_measurement_order(list(topology.measurement_order))
         .with_detectors_json(topology.detectors_json)
@@ -1072,9 +1134,17 @@ def _cached_surface_native_dem_string(
     p_idle: float | None = None,
     t1: float | None = None,
     t2: float | None = None,
+    p_idle_linear_rate: float | None = None,
+    p_idle_quadratic_rate: float | None = None,
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
-    include_idle_gates = _uses_dedicated_idle_noise(p_idle=p_idle, t1=t1, t2=t2)
+    include_idle_gates = _uses_dedicated_idle_noise(
+        p_idle=p_idle,
+        t1=t1,
+        t2=t2,
+        p_idle_linear_rate=p_idle_linear_rate,
+        p_idle_quadratic_rate=p_idle_quadratic_rate,
+    )
     topology = _cached_surface_native_topology(
         patch_key,
         num_rounds,
@@ -1085,7 +1155,17 @@ def _cached_surface_native_dem_string(
     )
     return _dem_string_from_cached_surface_topology(
         topology,
-        NoiseModel(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep, p_idle=p_idle, t1=t1, t2=t2),
+        NoiseModel(
+            p1=p1,
+            p2=p2,
+            p_meas=p_meas,
+            p_prep=p_prep,
+            p_idle=p_idle,
+            t1=t1,
+            t2=t2,
+            p_idle_linear_rate=p_idle_linear_rate,
+            p_idle_quadratic_rate=p_idle_quadratic_rate,
+        ),
         decompose_errors=decompose_errors,
     )
 
@@ -1134,6 +1214,8 @@ def _build_native_sampler_from_cached_surface_topology(
             p_idle=noise.p_idle,
             t1=noise.t1,
             t2=noise.t2,
+            p_idle_linear_rate=noise.p_idle_linear_rate,
+            p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
         )
         # Remap sampling_model for NativeSampler dispatch
         sampling_model = "influence_dem"
@@ -1215,6 +1297,8 @@ def generate_circuit_level_dem_from_builder(
         p_idle=noise.p_idle,
         t1=noise.t1,
         t2=noise.t2,
+        p_idle_linear_rate=noise.p_idle_linear_rate,
+        p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
     )
 
 
@@ -2881,6 +2965,8 @@ def build_native_sampler(
             p_idle=noise.p_idle,
             t1=noise.t1,
             t2=noise.t2,
+            p_idle_linear_rate=noise.p_idle_linear_rate,
+            p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(

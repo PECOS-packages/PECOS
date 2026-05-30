@@ -63,6 +63,16 @@ def _flat_mz_ids(tc) -> list[int]:
     return ids
 
 
+def _flat_idle_gates(tc) -> list[tuple[list[int], float]]:
+    dag = tc.to_dag_circuit()
+    idles: list[tuple[list[int], float]] = []
+    for node_id in dag.nodes():
+        gate = dag.gate(node_id)
+        if gate is not None and gate.gate_type.name == "Idle":
+            idles.append((list(gate.qubits), float(gate.params[0])))
+    return idles
+
+
 def test_from_guppy_meas_ids_are_normalized_to_records() -> None:
     assert _dem_text(detectors_json='[{"id":0,"meas_ids":[0]}]') == _dem_text(
         detectors_json='[{"id":0,"records":[-1]}]',
@@ -149,6 +159,54 @@ def test_lowered_replay_fails_on_measurement_count_mismatch() -> None:
         _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
 
+def test_lowered_replay_preserves_runtime_idles() -> None:
+    chunks = [
+        {
+            "operations": [{"Quantum": {"H": 0}}],
+            "lowered_quantum_ops": [
+                {"gate_type": "Idle", "qubits": [0], "angles": [], "params": [20e-9]},
+                {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
+            ],
+        },
+    ]
+
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+    assert _flat_idle_gates(tc) == [([0], 20.0)]
+
+
+def test_lowered_runtime_idles_can_drive_memory_noise_dem() -> None:
+    from pecos.qec import DetectorErrorModel
+
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [0, 0]}}],
+            "lowered_quantum_ops": [
+                {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "Idle", "qubits": [0], "angles": [], "params": [20e-9]},
+                {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "params": []},
+            ],
+        },
+    ]
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
+    tc.set_meta("observables", "[]")
+    tc.set_meta("num_measurements", "1")
+
+    dem = DetectorErrorModel.from_circuit(
+        tc,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        p_idle_linear_rate=1.0e-3,
+    )
+
+    assert dem.num_contributions > 0
+
+
 def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
     """A trace where every quantum-carrying chunk is also lowered is accepted
     (this is the real Selene shape; the byte-identical regressions exercise it
@@ -215,6 +273,18 @@ def test_non_lowered_replay_preserves_non_sequential_result_ids() -> None:
     tc = _replay_qis_trace_into_tick_circuit(operations)
 
     assert _flat_mz_ids(tc) == [77, 3]
+
+
+def test_non_lowered_replay_preserves_idle_ops() -> None:
+    operations = [
+        {"AllocateQubit": {"id": 10}},
+        {"Quantum": {"Idle": [20e-9, 10]}},
+        {"Quantum": {"H": 10}},
+    ]
+
+    tc = _replay_qis_trace_into_tick_circuit(operations)
+
+    assert _flat_idle_gates(tc) == [([0], 20.0)]
 
 
 def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:

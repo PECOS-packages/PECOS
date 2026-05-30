@@ -59,6 +59,11 @@ class _DetectorErrorModelMixin:
         p2: float = 0.01,
         p_meas: float = 0.001,
         p_prep: float = 0.001,
+        p_idle: float | None = None,
+        t1: float | None = None,
+        t2: float | None = None,
+        p_idle_linear_rate: float | None = None,
+        p_idle_quadratic_rate: float | None = None,
         seed: int = 0,
     ) -> _RustDetectorErrorModel:
         """Build a circuit-level DEM from a Guppy program by tracing it.
@@ -129,6 +134,12 @@ class _DetectorErrorModelMixin:
             p2: Two-qubit gate depolarizing rate.
             p_meas: Measurement flip rate.
             p_prep: Preparation (reset) error rate.
+            p_idle: Optional uniform depolarizing idle-noise rate per idle duration.
+            t1: Optional T1 relaxation time for explicit idle gates.
+            t2: Optional T2 dephasing time for explicit idle gates.
+            p_idle_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
+            p_idle_quadratic_rate: Optional stochastic Z-memory rate using
+                ``sin(rate * duration) ** 2``.
             seed: Seed for the ideal trace run.
 
         Returns:
@@ -228,6 +239,11 @@ class _DetectorErrorModelMixin:
             p2=p2,
             p_meas=p_meas,
             p_prep=p_prep,
+            p_idle=p_idle,
+            t1=t1,
+            t2=t2,
+            p_idle_linear_rate=p_idle_linear_rate,
+            p_idle_quadratic_rate=p_idle_quadratic_rate,
         )
 
 

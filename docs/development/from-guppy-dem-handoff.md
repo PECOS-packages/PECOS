@@ -105,10 +105,11 @@ line.
 
 - Prefer the generic `from_guppy(...)` abstraction for future DEM construction
   rather than adding more surface-specific tracing plumbing.
-- Runtime plugins are intentionally generic: pass a Selene runtime plugin object
-  through `pecos.selene_engine(runtime)` or the higher-level
-  `runtime=...` arguments on traced Guppy/DEM helpers. Anduril should live in
-  downstream experiment projects, not as a PECOS dependency.
+- Runtime plugins are intentionally generic: pass any Selene-compatible runtime
+  plugin object through `pecos.selene_engine(runtime)` or the higher-level
+  `runtime=...` arguments on traced Guppy/DEM helpers. PECOS should depend only
+  on the public shape of those plugin objects; experiment-specific runtimes and
+  package sources belong in downstream projects.
 - Runtime-produced `Idle` gates are preserved in the QIS operation trace and
   replayed into QEC circuits as `TimeUnits` with the convention
   `1 TimeUnit = 1 ns`. They only affect DEMs when an idle-noise parameter such

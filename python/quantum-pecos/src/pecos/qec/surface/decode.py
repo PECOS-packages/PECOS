@@ -776,7 +776,13 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
             raise ValueError(msg)
 
 
-def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 0) -> Any:
+def trace_guppy_into_tick_circuit(
+    program: Any,
+    num_qubits: int,
+    *,
+    seed: int = 0,
+    runtime: object | None = None,
+) -> Any:
     """Trace a Guppy/QIS program's lowered Selene op stream into a ``TickCircuit``.
 
     Runs ``program`` under the Selene QIS engine with operation tracing enabled
@@ -797,6 +803,9 @@ def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 
         num_qubits: Number of qubits to allocate. QIS/HUGR programs require an
             explicit qubit count for trace capture.
         seed: Seed for the (ideal) trace run.
+        runtime: Optional Selene runtime selector/plugin. ``None`` selects the
+            default Selene runtime. Runtime plugin objects are passed through to
+            ``pecos.selene_engine(runtime)``.
 
     Returns:
         A ``TickCircuit`` with no detector/observable metadata attached; the
@@ -805,7 +814,11 @@ def trace_guppy_into_tick_circuit(program: Any, num_qubits: int, *, seed: int = 
     import pecos
 
     sim_builder = (
-        pecos.sim(program).classical(pecos.selene_engine()).quantum(pecos.stabilizer()).qubits(num_qubits).seed(seed)
+        pecos.sim(program)
+        .classical(pecos.selene_engine(runtime))
+        .quantum(pecos.stabilizer())
+        .qubits(num_qubits)
+        .seed(seed)
     )
     chunks = list(sim_builder.capture_operation_trace())
 
@@ -831,6 +844,7 @@ def _generate_traced_surface_tick_circuit(
     basis: str,
     *,
     ancilla_budget: int | None = None,
+    runtime: object | None = None,
 ) -> Any:
     """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit.
 
@@ -859,6 +873,7 @@ def _generate_traced_surface_tick_circuit(
         program,
         get_num_qubits(patch=patch, ancilla_budget=ancilla_budget),
         seed=0,
+        runtime=runtime,
     )
 
 
@@ -869,6 +884,7 @@ def _build_surface_tick_circuit_for_native_model(
     *,
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    runtime: object | None = None,
 ) -> Any:
     """Build the TickCircuit used by the native DEM and sampler paths."""
     from pecos.qec.surface.circuit_builder import (
@@ -895,6 +911,7 @@ def _build_surface_tick_circuit_for_native_model(
         num_rounds,
         basis,
         ancilla_budget=ancilla_budget,
+        runtime=runtime,
     )
     # Coarse sanity check: the traced and abstract circuits must agree on the
     # sequence of *measured qubit indices*. This catches gross drift (a dropped
@@ -935,6 +952,7 @@ def build_memory_circuit(
     basis: str = "Z",
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    runtime: object | None = None,
 ) -> Any:
     """Build the standard surface-code memory ``TickCircuit``.
 
@@ -951,6 +969,8 @@ def build_memory_circuit(
         ancilla_budget: Optional cap on simultaneously live ancillas.
         circuit_source: ``"abstract"`` for the native surface builder or
             ``"traced_qis"`` for the lowered traced QIS gate stream.
+        runtime: Optional Selene runtime selector/plugin used when
+            ``circuit_source="traced_qis"``.
 
     Returns:
         A Rust-backed ``TickCircuit`` with detector and observable metadata.
@@ -981,6 +1001,7 @@ def build_memory_circuit(
         basis,
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
+        runtime=runtime,
     )
 
 
@@ -1039,16 +1060,17 @@ def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
     )
 
 
-@cache
-def _cached_surface_native_topology(
+def _surface_native_topology(
     patch_key: tuple[int, int, str, bool],
     num_rounds: int,
     basis: str,
     ancilla_budget: int | None,
     circuit_source: Literal["abstract", "traced_qis"],
     include_idle_gates: bool,
+    *,
+    runtime: object | None = None,
 ) -> _CachedNativeSurfaceTopology:
-    """Cache topology-only native analysis shared across noise parameters."""
+    """Build topology-only native analysis shared across noise parameters."""
     import json
 
     from pecos.qec import DagFaultAnalyzer
@@ -1061,6 +1083,7 @@ def _cached_surface_native_topology(
         basis,
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
+        runtime=runtime,
     )
     if include_idle_gates:
         # Insert idle gates only when the requested noise model includes a
@@ -1085,6 +1108,26 @@ def _cached_surface_native_topology(
         num_measurements=num_measurements,
         num_detectors=len(json.loads(detectors_json)) if detectors_json else 0,
         num_observables=len(json.loads(observables_json)) if observables_json else 0,
+    )
+
+
+@cache
+def _cached_surface_native_topology(
+    patch_key: tuple[int, int, str, bool],
+    num_rounds: int,
+    basis: str,
+    ancilla_budget: int | None,
+    circuit_source: Literal["abstract", "traced_qis"],
+    include_idle_gates: bool,
+) -> _CachedNativeSurfaceTopology:
+    """Cache topology-only native analysis shared across noise parameters."""
+    return _surface_native_topology(
+        patch_key,
+        num_rounds,
+        basis,
+        ancilla_budget,
+        circuit_source,
+        include_idle_gates,
     )
 
 
@@ -1242,6 +1285,7 @@ def generate_circuit_level_dem_from_builder(
     decompose_errors: bool = False,
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    runtime: object | None = None,
 ) -> str:
     """Generate circuit-level DEM using PECOS native fault propagation.
 
@@ -1270,6 +1314,10 @@ def generate_circuit_level_dem_from_builder(
             ``"traced_qis"`` traces the lowered ideal Selene/QIS gate stream
             and replays that exact gate list into a TickCircuit before running
             native PECOS fault analysis.
+        runtime: Optional Selene runtime selector/plugin used when
+            ``circuit_source="traced_qis"``. Custom runtime topologies are not
+            kept in PECOS's in-process topology cache because plugin objects
+            can carry private mutable state.
 
     Returns:
         DEM string in standard format
@@ -1283,6 +1331,23 @@ def generate_circuit_level_dem_from_builder(
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
     patch_key = _surface_patch_cache_key(patch)
+    include_idle_gates = _noise_uses_dedicated_idle_noise(noise)
+    if runtime is not None:
+        topology = _surface_native_topology(
+            patch_key,
+            num_rounds,
+            basis.upper(),
+            ancilla_budget,
+            circuit_source,
+            include_idle_gates,
+            runtime=runtime,
+        )
+        return _dem_string_from_cached_surface_topology(
+            topology,
+            noise,
+            decompose_errors=decompose_errors,
+        )
+
     return _cached_surface_native_dem_string(
         patch_key,
         num_rounds,

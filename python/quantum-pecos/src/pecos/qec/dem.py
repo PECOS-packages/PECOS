@@ -64,6 +64,7 @@ class _DetectorErrorModelMixin:
         t2: float | None = None,
         p_idle_linear_rate: float | None = None,
         p_idle_quadratic_rate: float | None = None,
+        runtime: object | None = None,
         seed: int = 0,
     ) -> _RustDetectorErrorModel:
         """Build a circuit-level DEM from a Guppy program by tracing it.
@@ -140,6 +141,9 @@ class _DetectorErrorModelMixin:
             p_idle_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
             p_idle_quadratic_rate: Optional stochastic Z-memory rate using
                 ``sin(rate * duration) ** 2``.
+            runtime: Optional Selene runtime selector/plugin. ``None`` selects
+                the default Selene runtime. Runtime plugin objects are passed
+                through to ``pecos.selene_engine(runtime)``.
             seed: Seed for the ideal trace run.
 
         Returns:
@@ -201,7 +205,7 @@ class _DetectorErrorModelMixin:
                 )
                 raise ValueError(msg) from exc
 
-        tc = trace_guppy_into_tick_circuit(guppy, num_qubits, seed=seed)
+        tc = trace_guppy_into_tick_circuit(guppy, num_qubits, seed=seed, runtime=runtime)
 
         # Compilation passes required for traced QIS circuits before fault
         # analysis: normalize parameterized Clifford rotations to named gates

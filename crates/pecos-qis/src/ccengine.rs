@@ -1597,6 +1597,7 @@ mod tests {
         let ops = vec![
             Operation::AllocateQubit { id: 0 },
             QuantumOp::H(0).into(),
+            QuantumOp::Idle(20e-9, 0).into(),
             QuantumOp::Measure(0, 7).into(),
         ];
         let commands = engine
@@ -1619,17 +1620,89 @@ mod tests {
         assert_eq!(value["shot_index"], 1);
         assert_eq!(value["waiting_for_result_id"], 7);
         assert_eq!(value["current_shot_seed"], 123);
-        assert_eq!(value["num_operations"], 3);
+        assert_eq!(value["num_operations"], 4);
         assert_eq!(value["operations"][0]["AllocateQubit"]["id"], 0);
         assert_eq!(value["operations"][1]["Quantum"]["H"], 0);
+        assert_eq!(value["operations"][2]["Quantum"]["Idle"][0], 20e-9);
         assert_eq!(value["lowered_quantum_ops"][0]["gate_type"], "PZ");
         assert_eq!(value["lowered_quantum_ops"][1]["gate_type"], "H");
-        assert_eq!(value["lowered_quantum_ops"][2]["gate_type"], "MZ");
+        assert_eq!(value["lowered_quantum_ops"][2]["gate_type"], "Idle");
+        assert_eq!(value["lowered_quantum_ops"][2]["params"][0], 20e-9);
+        assert_eq!(value["lowered_quantum_ops"][3]["gate_type"], "MZ");
 
         let in_memory = collector.lock().expect("collector lock");
         assert_eq!(in_memory.len(), 1);
         assert_eq!(in_memory[0].stage, "unit_test");
         assert_eq!(in_memory[0].lowered_quantum_ops[0].gate_type, "PZ");
+        assert_eq!(in_memory[0].lowered_quantum_ops[2].gate_type, "Idle");
+        assert_eq!(in_memory[0].lowered_quantum_ops[2].params, vec![20e-9]);
+    }
+
+    #[derive(Clone, Default)]
+    struct IdleLoweringRuntime {
+        state: ClassicalState,
+    }
+
+    impl QisRuntime for IdleLoweringRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+
+        fn supports_operation_lowering(&self) -> bool {
+            true
+        }
+
+        fn lower_operations(&mut self, _operations: &[Operation]) -> RuntimeResult<Vec<QuantumOp>> {
+            Ok(vec![QuantumOp::Idle(20e-9, 0), QuantumOp::H(0)])
+        }
+    }
+
+    #[test]
+    fn test_operation_trace_chunk_includes_runtime_lowered_idles() {
+        let mut engine = QisEngine::with_runtime(Box::new(IdleLoweringRuntime::default()));
+        let collector: OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
+        engine.set_operation_trace_collector(collector.clone());
+        engine.begin_trace_shot();
+
+        let ops = vec![QuantumOp::H(0).into()];
+        let commands = engine
+            .lower_operations_to_bytemessage(&ops)
+            .expect("runtime lower ops to bytemessage");
+        engine.trace_operations_chunk("unit_test", &ops, None, Some(&commands));
+
+        let in_memory = collector.lock().expect("collector lock");
+        assert_eq!(in_memory.len(), 1);
+        assert_eq!(in_memory[0].lowered_quantum_ops[0].gate_type, "Idle");
+        assert_eq!(in_memory[0].lowered_quantum_ops[0].params, vec![20e-9]);
+        assert_eq!(in_memory[0].lowered_quantum_ops[0].qubits, vec![0]);
+        assert_eq!(in_memory[0].lowered_quantum_ops[1].gate_type, "H");
     }
 
     #[test]

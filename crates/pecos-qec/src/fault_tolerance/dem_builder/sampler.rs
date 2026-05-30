@@ -1451,9 +1451,7 @@ pub(crate) fn compute_location_probs_from_noise(
                 | GateType::RZZ => noise.p2,
                 GateType::Idle => {
                     if noise.uses_dedicated_idle_noise() {
-                        // Duration values are small integers; precision loss is not a concern.
-                        #[allow(clippy::cast_precision_loss)]
-                        let duration = loc.idle_duration.max(1) as f64;
+                        let duration = loc.idle_duration.max(0.0);
                         noise.idle_pauli_probs(duration).total()
                     } else {
                         0.0

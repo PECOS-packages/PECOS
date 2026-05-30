@@ -1541,6 +1541,18 @@ pub struct NoiseConfig {
     ///
     /// This is the EEG H-type noise model for idle gates. Default is 0.0.
     pub idle_rz: f64,
+    /// Stochastic Z-memory error rate linear in idle duration.
+    ///
+    /// This mirrors PECOS engine idle memory noise in a DEM-compatible Pauli
+    /// channel: each explicit `Idle(duration, q)` contributes an independent
+    /// Z fault with probability `p_idle_linear_rate * duration`.
+    pub p_idle_linear_rate: f64,
+    /// Stochastic Z-memory error rate for the quadratic idle term.
+    ///
+    /// This follows the incoherent PECOS engine convention for quadratic idle
+    /// dephasing: each explicit `Idle(duration, q)` contributes an independent
+    /// Z fault with probability `sin(p_idle_quadratic_rate * duration)^2`.
+    pub p_idle_quadratic_rate: f64,
 }
 
 /// Per-Pauli error probabilities for a single qubit.
@@ -1606,6 +1618,8 @@ impl Default for NoiseConfig {
             p1_weights: None,
             p2_weights: None,
             idle_rz: 0.0,
+            p_idle_linear_rate: 0.0,
+            p_idle_quadratic_rate: 0.0,
         }
     }
 }
@@ -1625,6 +1639,8 @@ impl NoiseConfig {
             p1_weights: None,
             p2_weights: None,
             idle_rz: 0.0,
+            p_idle_linear_rate: 0.0,
+            p_idle_quadratic_rate: 0.0,
         }
     }
 
@@ -1642,6 +1658,8 @@ impl NoiseConfig {
             p1_weights: None,
             p2_weights: None,
             idle_rz: 0.0,
+            p_idle_linear_rate: 0.0,
+            p_idle_quadratic_rate: 0.0,
         }
     }
 
@@ -1659,6 +1677,8 @@ impl NoiseConfig {
             p1_weights: None,
             p2_weights: None,
             idle_rz: 0.0,
+            p_idle_linear_rate: 0.0,
+            p_idle_quadratic_rate: 0.0,
         }
     }
 
@@ -1666,6 +1686,20 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_idle(mut self, p_idle: f64) -> Self {
         self.p_idle = p_idle;
+        self
+    }
+
+    /// Sets the linear stochastic Z-memory rate for explicit idle gates.
+    #[must_use]
+    pub fn set_idle_linear_rate(mut self, rate: f64) -> Self {
+        self.p_idle_linear_rate = rate.max(0.0);
+        self
+    }
+
+    /// Sets the quadratic stochastic Z-memory rate for explicit idle gates.
+    #[must_use]
+    pub fn set_idle_quadratic_rate(mut self, rate: f64) -> Self {
+        self.p_idle_quadratic_rate = rate;
         self
     }
 
@@ -1747,17 +1781,40 @@ impl NoiseConfig {
         self
     }
 
+    fn compose_z_fault(probs: PauliProbs, z_probability: f64) -> PauliProbs {
+        let z_probability = z_probability.clamp(0.0, 1.0);
+        if z_probability <= f64::EPSILON {
+            return probs;
+        }
+
+        let p_identity = (1.0 - probs.total()).max(0.0);
+        PauliProbs {
+            px: probs.px * (1.0 - z_probability) + probs.py * z_probability,
+            py: probs.py * (1.0 - z_probability) + probs.px * z_probability,
+            pz: probs.pz * (1.0 - z_probability) + p_identity * z_probability,
+        }
+    }
+
+    fn idle_memory_z_probability(&self, duration: f64) -> f64 {
+        let duration = duration.max(0.0);
+        let linear = (self.p_idle_linear_rate * duration).clamp(0.0, 1.0);
+        let quadratic = (self.p_idle_quadratic_rate * duration).sin().powi(2);
+
+        linear + quadratic - 2.0 * linear * quadratic
+    }
+
     /// Compute per-Pauli idle noise probabilities for a given duration.
     ///
     /// If T1/T2 are set, uses the Pauli-twirled model (biased noise).
     /// Otherwise, uses uniform depolarizing with `p_idle * duration`.
     #[must_use]
     pub fn idle_pauli_probs(&self, duration: f64) -> PauliProbs {
-        if let (Some(t1), Some(t2)) = (self.t1, self.t2) {
+        let probs = if let (Some(t1), Some(t2)) = (self.t1, self.t2) {
             PauliProbs::from_t1_t2(duration, t1, t2)
         } else {
             PauliProbs::depolarizing((self.p_idle * duration).min(1.0))
-        }
+        };
+        Self::compose_z_fault(probs, self.idle_memory_z_probability(duration))
     }
 
     /// Returns true when idle locations use the dedicated idle-noise model.
@@ -1765,7 +1822,10 @@ impl NoiseConfig {
     /// Otherwise `Idle` is a no-op for noise.
     #[must_use]
     pub fn uses_dedicated_idle_noise(&self) -> bool {
-        self.p_idle > 0.0 || matches!((self.t1, self.t2), (Some(_), Some(_)))
+        self.p_idle > 0.0
+            || matches!((self.t1, self.t2), (Some(_), Some(_)))
+            || self.p_idle_linear_rate > 0.0
+            || self.p_idle_quadratic_rate.abs() > f64::EPSILON
     }
 }
 

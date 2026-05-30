@@ -163,7 +163,23 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
-        build_dem_from_circuit(circuit, p1, p2, p_meas, p_prep)
+        build_dem_from_circuit(circuit, NoiseConfig::new(p1, p2, p_meas, p_prep))
+    }
+
+    /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and
+    /// full noise configuration.
+    ///
+    /// Reads detector/DEM output definitions from circuit metadata and returns
+    /// parser errors instead of dropping malformed metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector or observable metadata is malformed.
+    pub fn try_from_circuit_with_noise_config(
+        circuit: &pecos_quantum::DagCircuit,
+        noise: NoiseConfig,
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
+        build_dem_from_circuit(circuit, noise)
     }
 
     /// Build a `DetectorErrorModel` from a `TickCircuit` and noise.
@@ -202,7 +218,24 @@ impl<'a> DemBuilder<'a> {
         p_prep: f64,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
         let dag = pecos_quantum::DagCircuit::from(circuit);
-        build_dem_from_circuit(&dag, p1, p2, p_meas, p_prep)
+        build_dem_from_circuit(&dag, NoiseConfig::new(p1, p2, p_meas, p_prep))
+    }
+
+    /// Try to build a `DetectorErrorModel` from a `TickCircuit` and full noise
+    /// configuration.
+    ///
+    /// Converts to `DagCircuit` internally and returns parser errors instead
+    /// of dropping malformed metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector or observable metadata is malformed.
+    pub fn try_from_tick_circuit_with_noise_config(
+        circuit: &pecos_quantum::TickCircuit,
+        noise: NoiseConfig,
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
+        let dag = pecos_quantum::DagCircuit::from(circuit);
+        build_dem_from_circuit(&dag, noise)
     }
 
     /// Creates a new DEM builder from a fault influence map.
@@ -306,8 +339,7 @@ impl<'a> DemBuilder<'a> {
                 return rates;
             }
             if pg.base.uses_dedicated_idle_noise() {
-                #[allow(clippy::cast_precision_loss)]
-                let duration = loc.idle_duration.max(1) as f64;
+                let duration = loc.idle_duration.max(0.0);
                 let probs = pg.base.idle_pauli_probs(duration);
                 return [probs.px, probs.py, probs.pz];
             }
@@ -315,8 +347,7 @@ impl<'a> DemBuilder<'a> {
         }
 
         if self.noise.uses_dedicated_idle_noise() {
-            #[allow(clippy::cast_precision_loss)]
-            let duration = loc.idle_duration.max(1) as f64;
+            let duration = loc.idle_duration.max(0.0);
             let probs = self.noise.idle_pauli_probs(duration);
             return [probs.px, probs.py, probs.pz];
         }
@@ -1757,10 +1788,7 @@ fn extract_measurement_refs(
 /// Reads detector/DEM output definitions from circuit metadata attributes.
 fn build_dem_from_circuit(
     circuit: &pecos_quantum::DagCircuit,
-    p1: f64,
-    p2: f64,
-    p_meas: f64,
-    p_prep: f64,
+    noise: NoiseConfig,
 ) -> Result<DetectorErrorModel, DemBuilderError> {
     use crate::fault_tolerance::influence_builder::InfluenceBuilder;
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
@@ -1796,7 +1824,7 @@ fn build_dem_from_circuit(
         }
     });
 
-    let builder = DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep);
+    let builder = DemBuilder::new(&influence_map).with_noise_config(noise);
 
     let builder = if let Some(ref dj) = det_json {
         builder.with_detectors_json(dj)?

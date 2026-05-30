@@ -70,6 +70,31 @@ use pyo3::prelude::*;
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
 
+fn apply_idle_noise_options(
+    mut noise: NoiseConfig,
+    p_idle: Option<f64>,
+    t1: Option<f64>,
+    t2: Option<f64>,
+    idle_rz: Option<f64>,
+    p_idle_linear_rate: Option<f64>,
+    p_idle_quadratic_rate: Option<f64>,
+) -> NoiseConfig {
+    noise.p_idle = p_idle.unwrap_or(0.0);
+    if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
+        noise = noise.set_t1_t2(t1_val, t2_val);
+    }
+    if let Some(rz) = idle_rz {
+        noise = noise.set_idle_rz(rz);
+    }
+    if let Some(rate) = p_idle_linear_rate {
+        noise = noise.set_idle_linear_rate(rate);
+    }
+    if let Some(rate) = p_idle_quadratic_rate {
+        noise = noise.set_idle_quadratic_rate(rate);
+    }
+    noise
+}
+
 // Adapter for decoder factories that require `Send + Sync` trait objects.
 // Decoder implementations own their state; Python access remains GIL-mediated.
 struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
@@ -952,26 +977,42 @@ impl PyDetectorErrorModel {
     ///     >>> print(dem.to_string())
     ///     >>> sampler = dem.to_sampler()
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
+    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
         p1: f64,
         p2: f64,
         p_meas: f64,
         p_prep: f64,
+        p_idle: Option<f64>,
+        t1: Option<f64>,
+        t2: Option<f64>,
+        idle_rz: Option<f64>,
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
     ) -> PyResult<Self> {
         use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
 
+        let noise = apply_idle_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+        );
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
         {
-            let inner = DemBuilder::try_from_circuit(&dag.inner, p1, p2, p_meas, p_prep)
+            let inner = DemBuilder::try_from_circuit_with_noise_config(&dag.inner, noise)
                 .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             Ok(Self { inner })
         } else if let Ok(tc) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyTickCircuit>>()
         {
-            let inner = DemBuilder::try_from_tick_circuit(&tc.inner, p1, p2, p_meas, p_prep)
+            let inner = DemBuilder::try_from_tick_circuit_with_noise_config(&tc.inner, noise)
                 .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             Ok(Self { inner })
         } else {
@@ -1270,7 +1311,7 @@ impl PyDemBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -1282,16 +1323,18 @@ impl PyDemBuilder {
         t1: Option<f64>,
         t2: Option<f64>,
         idle_rz: Option<f64>,
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
     ) -> PyRefMut<'_, Self> {
-        let mut noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
-        noise.p_idle = p_idle.unwrap_or(0.0);
-        if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
-            noise = noise.set_t1_t2(t1_val, t2_val);
-        }
-        if let Some(rz) = idle_rz {
-            noise = noise.set_idle_rz(rz);
-        }
-        slf.noise = noise;
+        slf.noise = apply_idle_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+        );
         slf
     }
 
@@ -3135,7 +3178,8 @@ impl PyDemSampler {
     ///     >>> sampler = DemSampler.from_circuit(dag, p1=0.001, p2=0.01)
     ///     >>> sampler = DemSampler.from_circuit(tc, p2=0.01)  # TickCircuit also works
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, idle_rz=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
+    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
         p1: f64,
@@ -3143,13 +3187,21 @@ impl PyDemSampler {
         p_meas: f64,
         p_prep: f64,
         p_idle: Option<f64>,
+        t1: Option<f64>,
+        t2: Option<f64>,
         idle_rz: Option<f64>,
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
     ) -> PyResult<Self> {
-        let mut noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
-        noise.p_idle = p_idle.unwrap_or(0.0);
-        if let Some(rz) = idle_rz {
-            noise = noise.set_idle_rz(rz);
-        }
+        let noise = apply_idle_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+        );
 
         // Accept both DagCircuit and TickCircuit
         if let Ok(dag) =
@@ -3259,7 +3311,7 @@ impl PyDemSampler {
     ///
     /// The `observables` argument defines observables.
     #[staticmethod]
-    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None))]
+    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
@@ -3272,12 +3324,19 @@ impl PyDemSampler {
         p_idle: Option<f64>,
         t1: Option<f64>,
         t2: Option<f64>,
+        idle_rz: Option<f64>,
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
     ) -> PyResult<Self> {
-        let mut noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
-        noise.p_idle = p_idle.unwrap_or(0.0);
-        if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
-            noise = noise.set_t1_t2(t1_val, t2_val);
-        }
+        let noise = apply_idle_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+        );
         let inner = RustNewDemSamplerBuilder::new(&influence_map.inner)
             .with_noise_config(noise)
             .with_detectors(detectors, observables)
@@ -3730,7 +3789,7 @@ impl PyDemSamplerBuilder {
     }
 
     /// Set noise parameters.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -3742,16 +3801,18 @@ impl PyDemSamplerBuilder {
         t1: Option<f64>,
         t2: Option<f64>,
         idle_rz: Option<f64>,
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
     ) -> PyRefMut<'_, Self> {
-        let mut noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
-        noise.p_idle = p_idle.unwrap_or(0.0);
-        if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
-            noise = noise.set_t1_t2(t1_val, t2_val);
-        }
-        if let Some(rz) = idle_rz {
-            noise = noise.set_idle_rz(rz);
-        }
-        slf.noise = noise;
+        slf.noise = apply_idle_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+        );
         slf
     }
 

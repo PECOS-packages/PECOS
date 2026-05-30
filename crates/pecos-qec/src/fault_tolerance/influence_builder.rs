@@ -498,16 +498,12 @@ impl<'a> InfluenceBuilder<'a> {
                 //   Measurement: before. All others: after.
                 let before = is_measurement;
                 for &q in &qubits {
-                    // idle_duration() returns a non-negative integer stored as f64;
-                    // truncation and sign loss are not a concern.
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let idle_duration = gate.idle_duration() as u64;
                     locations.push(DagSpacetimeLocation {
                         node,
                         qubits: vec![q],
                         before,
                         gate_type: gate.gate_type,
-                        idle_duration,
+                        idle_duration: gate.idle_duration(),
                     });
                 }
             }

@@ -815,10 +815,7 @@ impl<'a> DemBuilder<'a> {
                             self.exact_replacement_branch_effect(context, *request, &label)?;
                     }
                 }
-                return Err(DemBuilderError::ConfigurationError(format!(
-                    "exact_branch_replay has circuit context and identified {} two-qubit replay request(s), but exact replacement-branch DEM emission is not implemented yet; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations",
-                    requests.len()
-                )));
+                return Ok(());
             }
             return Err(DemBuilderError::ConfigurationError(
                 "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
@@ -1013,6 +1010,13 @@ impl<'a> DemBuilder<'a> {
                     meas_to_observables,
                 );
             }
+            if self.noise.p2_replacement_approximation
+                == ReplacementBranchApproximation::ExactBranchReplay
+            {
+                self.process_two_qubit_exact_replacement_branches_source_tracked(
+                    loc1_idx, loc2_idx, dem,
+                );
+            }
         }
     }
 
@@ -1076,6 +1080,66 @@ impl<'a> DemBuilder<'a> {
                 loc2_meta,
                 dem,
                 Some(DirectSourceFamily::TwoLocationReplacementBranchImpact),
+            );
+        }
+    }
+
+    /// Processes starred two-qubit replacement branches by replaying the exact
+    /// omitted-gate branch against detector/observable metadata.
+    fn process_two_qubit_exact_replacement_branches_source_tracked(
+        &self,
+        loc1: usize,
+        loc2: usize,
+        dem: &mut DetectorErrorModel,
+    ) {
+        let Some(weights) = &self.noise.p2_weights else {
+            return;
+        };
+        if !weights.has_replacement_entries() {
+            return;
+        }
+
+        let context = self
+            .exact_branch_context
+            .expect("exact_branch_replay was validated with circuit context");
+        let loc1_meta = &self.influence_map.locations[loc1];
+        let loc2_meta = &self.influence_map.locations[loc2];
+        let request = ExactBranchReplayRequest {
+            gate_node: loc1_meta.node,
+            gate_type: loc1_meta.gate_type,
+            loc_indices: [loc1, loc2],
+        };
+
+        for (replacement_pauli, relative_probability) in weights.replacement_entries() {
+            if *relative_probability <= 0.0 {
+                continue;
+            }
+            let label = two_qubit_label_for_replay(replacement_pauli)
+                .expect("exact_branch_replay replacement Pauli was validated");
+            let (p1, p2) = two_qubit_label_to_pauli_indices(&label)
+                .expect("exact_branch_replay label must be a two-qubit Pauli");
+            let effect = self
+                .exact_replacement_branch_effect(context, request, &label)
+                .expect("exact_branch_replay effect was validated");
+            if effect.is_empty() {
+                continue;
+            }
+
+            let source_locations = [loc1, loc2];
+            let source_paulis = [Pauli::from_u8(p1), Pauli::from_u8(p2)];
+            let source_gate_types = [loc1_meta.gate_type, loc2_meta.gate_type];
+            let source_before_flags = [loc1_meta.before, loc2_meta.before];
+            dem.add_direct_contribution_with_source(
+                effect,
+                self.noise.p2 * *relative_probability,
+                SourceMetadata::new(
+                    &source_locations,
+                    &source_paulis,
+                    &source_gate_types,
+                    &source_before_flags,
+                )
+                .with_direct_source_family(DirectSourceFamily::TwoLocationExactReplacementBranch)
+                .with_replacement_branch(),
             );
         }
     }
@@ -3265,24 +3329,105 @@ mod tests {
     }
 
     #[test]
-    fn test_from_circuit_exact_branch_replay_attaches_context_but_still_rejects() {
+    fn test_from_circuit_exact_branch_replay_emits_omitted_gate_effect() {
         use crate::fault_tolerance::dem_builder::PauliWeights;
-        use pecos_core::pauli::Z;
-        use pecos_quantum::DagCircuit;
+        use pecos_core::PauliString;
+        use pecos_quantum::{Attribute, DagCircuit};
 
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
-        circuit.szz(&[(0, 1)]);
+        circuit.x(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.mz(&[1]);
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
 
         let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
-            .set_p2_weights(PauliWeights::with_replacement([], [(Z(0) & Z(1), 1.0)]))
+            .set_p2_weights(PauliWeights::with_replacement(
+                [],
+                [(PauliString::identity(), 1.0)],
+            ))
+            .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("exact branch replay should emit representable branch effects");
+
+        let contributions = dem.contributions_for_effect(&[0], &[]);
+        assert_eq!(contributions.len(), 1);
+        assert!((contributions[0].probability - 0.01).abs() < 1.0e-12);
+        assert!(contributions[0].replacement_branch);
+        assert_eq!(
+            contributions[0].direct_source_family,
+            Some(DirectSourceFamily::TwoLocationExactReplacementBranch)
+        );
+        assert!(
+            contributions[0]
+                .paulis
+                .iter()
+                .all(|pauli| *pauli == Pauli::I),
+            "omission-only replacement branch should be recorded as *II"
+        );
+    }
+
+    #[test]
+    fn test_from_circuit_exact_branch_replay_skips_empty_replacement_effect() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
+        use pecos_core::pauli::X;
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.x(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.mz(&[1]);
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+
+        let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement([], [(X(1), 1.0)]))
+            .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("exact branch replay should allow empty representable effects");
+
+        assert_eq!(dem.num_contributions(), 0);
+    }
+
+    #[test]
+    fn test_from_circuit_exact_branch_replay_rejects_dependency_changing_branch() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
+        use pecos_core::PauliString;
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.h(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.mz(&[1]);
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+
+        let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement(
+                [],
+                [(PauliString::identity(), 1.0)],
+            ))
             .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
 
         let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
-            .expect_err("exact branch replay must remain fail-loud until emission is implemented");
+            .expect_err("dependency-changing replacement branches must stay fail-loud");
 
         assert!(
-            err.to_string().contains("has circuit context"),
+            err.to_string().contains("not representable"),
             "unexpected error: {err}",
         );
     }

@@ -154,11 +154,14 @@ fn parse_replacement_approximation(
         "pauli_twirl_omitted_gate" | "pauli_twirl" | "twirl" => {
             Ok(ReplacementBranchApproximation::PauliTwirlOmittedGate)
         }
+        "branch_impact" | "replacement_branch_impact" | "impact" => {
+            Ok(ReplacementBranchApproximation::BranchImpact)
+        }
         "ignore_gate_removal" | "ignore_removal" | "post_gate" | "postgate" => {
             Ok(ReplacementBranchApproximation::IgnoreGateRemoval)
         }
         _ => Err(pyo3::exceptions::PyValueError::new_err(
-            "p2_replacement_approximation must be 'pauli_twirl_omitted_gate' or 'ignore_gate_removal'",
+            "p2_replacement_approximation must be 'pauli_twirl_omitted_gate', 'branch_impact', or 'ignore_gate_removal'",
         )),
     }
 }

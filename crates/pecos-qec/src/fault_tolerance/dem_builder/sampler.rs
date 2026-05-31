@@ -1351,19 +1351,12 @@ impl<'a> DemSamplerBuilder<'a> {
         }
 
         let mut builder = SamplingEngineBuilder::new(self.influence_map)
-            .with_noise(
-                self.noise.p1,
-                self.noise.p2,
-                self.noise.p_meas,
-                self.noise.p_prep,
-            )
+            .with_noise_config(self.noise.clone())
             .with_detector_records(detector_records)
             .with_observable_records(observable_records.clone());
 
         if let Some(per_gate) = self.per_gate {
             builder = builder.with_per_gate_noise(per_gate);
-        } else if self.noise.uses_dedicated_idle_noise() {
-            builder = builder.with_idle_noise_config(self.noise.clone());
         }
 
         if let Some(order) = self.measurement_order {

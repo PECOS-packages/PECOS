@@ -152,8 +152,10 @@ class _DetectorErrorModelMixin:
                 remains the total two-qubit error rate.
             p2_replacement_approximation: Approximation used for starred
                 replacement labels. ``"pauli_twirl_omitted_gate"`` convolves
-                with the omitted two-qubit gate's Pauli twirl; ``"ignore_gate_removal"``
-                treats starred entries like plain post-gate Pauli entries.
+                with the omitted two-qubit gate's Pauli twirl;
+                ``"branch_impact"`` evaluates starred entries as replacement
+                branch impacts; ``"ignore_gate_removal"`` treats starred
+                entries like plain post-gate Pauli entries.
             p_meas: Measurement flip rate.
             p_prep: Preparation (reset) error rate.
             p_idle: Optional uniform depolarizing idle-noise rate per idle duration.

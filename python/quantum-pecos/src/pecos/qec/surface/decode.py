@@ -99,8 +99,10 @@ class NoiseModel:
             error rate.
         p2_replacement_approximation: Approximation used for starred
             replacement labels. ``"pauli_twirl_omitted_gate"`` convolves with
-            the omitted two-qubit gate's Pauli twirl; ``"ignore_gate_removal"``
-            treats starred entries like plain post-gate Pauli entries.
+            the omitted two-qubit gate's Pauli twirl; ``"branch_impact"``
+            evaluates starred entries as replacement branch impacts;
+            ``"ignore_gate_removal"`` treats starred entries like plain
+            post-gate Pauli entries.
         p_meas: Measurement error rate.
         p_prep: Initialization error rate.
         p_idle: Idle noise rate per time unit (uniform depolarizing).

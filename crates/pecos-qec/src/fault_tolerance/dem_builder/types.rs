@@ -1427,6 +1427,10 @@ pub enum ReplacementBranchApproximation {
     /// gate's dagger. This is the default approximation for starred entries.
     #[default]
     PauliTwirlOmittedGate,
+    /// Evaluate replacement branches as their own fault branches after
+    /// convolving with the omitted gate's Pauli twirl, instead of folding them
+    /// into the ordinary post-gate two-qubit rate vector.
+    BranchImpact,
 }
 
 impl PauliWeights {
@@ -1542,13 +1546,7 @@ impl PauliWeights {
         let Ok(query_label) = two_qubit_pauli_label(pauli) else {
             return 0.0;
         };
-        let direct = self
-            .entries
-            .iter()
-            .filter_map(|(ps, weight)| {
-                (two_qubit_pauli_label(ps).ok()?.as_str() == query_label).then_some(*weight)
-            })
-            .sum::<f64>();
+        let direct = self.post_gate_two_qubit_weight_for(pauli);
 
         if approximation == ReplacementBranchApproximation::IgnoreGateRemoval {
             return direct
@@ -1561,27 +1559,53 @@ impl PauliWeights {
                     .sum::<f64>();
         }
 
-        let Some(twirl) = omitted_two_qubit_gate_pauli_twirl(gate_type) else {
-            return direct;
-        };
         direct
             + self
-                .replacement_entries
-                .iter()
-                .filter_map(|(ps, weight)| {
-                    let replacement_label = two_qubit_pauli_label(ps).ok()?;
-                    Some(
-                        twirl
-                            .iter()
-                            .filter_map(|(twirl_label, twirl_weight)| {
-                                (multiply_two_qubit_pauli_labels(&replacement_label, twirl_label)
-                                    == query_label)
-                                    .then_some(weight * twirl_weight)
-                            })
-                            .sum::<f64>(),
-                    )
-                })
-                .sum::<f64>()
+                .replacement_branch_impact_weights(gate_type)
+                .get(query_label.as_str())
+                .copied()
+                .unwrap_or(0.0)
+    }
+
+    /// Look up only the plain post-gate two-qubit Pauli weight.
+    #[must_use]
+    pub fn post_gate_two_qubit_weight_for(&self, pauli: &pecos_core::PauliString) -> f64 {
+        let Ok(query_label) = two_qubit_pauli_label(pauli) else {
+            return 0.0;
+        };
+        self.entries
+            .iter()
+            .filter_map(|(ps, weight)| {
+                (two_qubit_pauli_label(ps).ok()?.as_str() == query_label).then_some(*weight)
+            })
+            .sum::<f64>()
+    }
+
+    /// Effective non-identity branch-impact weights from replacement entries.
+    ///
+    /// Each starred replacement entry is convolved with the Pauli twirl of the
+    /// omitted ideal gate. Identity effects are omitted because DEM builders
+    /// only emit branches that flip detectors or logical observables.
+    #[must_use]
+    pub fn replacement_branch_impact_weights(&self, gate_type: GateType) -> BTreeMap<String, f64> {
+        let Some(twirl) = omitted_two_qubit_gate_pauli_twirl(gate_type) else {
+            return BTreeMap::new();
+        };
+        let mut weights = BTreeMap::new();
+        for (ps, replacement_weight) in &self.replacement_entries {
+            let Ok(replacement_label) = two_qubit_pauli_label(ps) else {
+                continue;
+            };
+            for (twirl_label, twirl_weight) in &twirl {
+                let effective_label =
+                    multiply_two_qubit_pauli_labels(&replacement_label, twirl_label);
+                if effective_label == "II" {
+                    continue;
+                }
+                *weights.entry(effective_label).or_insert(0.0) += replacement_weight * twirl_weight;
+            }
+        }
+        weights
     }
 
     /// Get all entries as `(PauliString, weight)` pairs.
@@ -5739,6 +5763,15 @@ mod tests {
         assert!(
             (weights.two_qubit_weight_for(
                 GateType::SZZ,
+                &(Y(0) & Y(1)),
+                ReplacementBranchApproximation::BranchImpact,
+            ) - 0.75 * 0.5)
+                .abs()
+                < 1e-12
+        );
+        assert!(
+            (weights.two_qubit_weight_for(
+                GateType::SZZ,
                 &(X(0) & X(1)),
                 ReplacementBranchApproximation::IgnoreGateRemoval,
             ) - 1.0)
@@ -5764,6 +5797,10 @@ mod tests {
             ) - 0.5)
                 .abs()
                 < 1e-12
+        );
+        assert_eq!(
+            replacement_omits_only.replacement_branch_impact_weights(GateType::SZZ),
+            BTreeMap::from([("ZZ".to_string(), 0.5)])
         );
 
         let cx_replacement_identity = PauliWeights::with_replacement([], [(Z(0) & X(1), 1.0)]);

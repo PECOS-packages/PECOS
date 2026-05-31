@@ -17,7 +17,8 @@
 
 use super::types::{
     DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, FaultMechanism,
-    NoiseConfig, PerGateTypeNoise, SourceMetadata, record_offset_to_absolute_index,
+    NoiseConfig, PerGateTypeNoise, ReplacementBranchApproximation, SourceMetadata,
+    record_offset_to_absolute_index,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
@@ -378,12 +379,19 @@ impl<'a> DemBuilder<'a> {
                 let flat = idx + 1;
                 let p1 = flat / 4;
                 let p2 = flat % 4;
-                self.noise.p2
-                    * weights.two_qubit_weight_for(
+                let pauli = pauli_pair_for_weight(p1, p2);
+                let weight = if self.noise.p2_replacement_approximation
+                    == ReplacementBranchApproximation::BranchImpact
+                {
+                    weights.post_gate_two_qubit_weight_for(&pauli)
+                } else {
+                    weights.two_qubit_weight_for(
                         loc1.gate_type,
-                        &pauli_pair_for_weight(p1, p2),
+                        &pauli,
                         self.noise.p2_replacement_approximation,
                     )
+                };
+                self.noise.p2 * weight
             });
         }
         [per_channel_probability(self.noise.p2, 15); 15]
@@ -841,6 +849,17 @@ impl<'a> DemBuilder<'a> {
                         meas_to_observables,
                     );
                 }
+                if self.noise.p2_replacement_approximation
+                    == ReplacementBranchApproximation::BranchImpact
+                {
+                    self.process_two_qubit_replacement_branch_impacts_source_tracked(
+                        pair[0],
+                        pair[1],
+                        dem,
+                        meas_to_detectors,
+                        meas_to_observables,
+                    );
+                }
             }
         }
     }
@@ -863,6 +882,39 @@ impl<'a> DemBuilder<'a> {
                 mechanism,
                 p,
                 SourceMetadata::new(&[loc_idx], &[Pauli::X], &[loc.gate_type], &[loc.before]),
+            );
+        }
+    }
+
+    /// Processes starred two-qubit replacement branches as explicit branch impacts.
+    fn process_two_qubit_replacement_branch_impacts_source_tracked(
+        &self,
+        loc1: usize,
+        loc2: usize,
+        dem: &mut DetectorErrorModel,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) {
+        let Some(weights) = &self.noise.p2_weights else {
+            return;
+        };
+        let loc1_meta = &self.influence_map.locations[loc1];
+        let branch_weights = weights.replacement_branch_impact_weights(loc1_meta.gate_type);
+        if branch_weights.is_empty() {
+            return;
+        }
+
+        let effects =
+            self.two_qubit_effect_table(loc1, loc2, meas_to_detectors, meas_to_observables);
+        let loc2_meta = &self.influence_map.locations[loc2];
+
+        for (label, relative_weight) in branch_weights {
+            let Some((p1, p2)) = two_qubit_label_to_pauli_indices(&label) else {
+                continue;
+            };
+            let prob = self.noise.p2 * relative_weight;
+            self.add_two_qubit_pauli_contribution(
+                loc1, loc2, p1, p2, prob, &effects, loc1_meta, loc2_meta, dem,
             );
         }
     }
@@ -980,19 +1032,47 @@ impl<'a> DemBuilder<'a> {
         let loc1_meta = &self.influence_map.locations[loc1];
         let loc2_meta = &self.influence_map.locations[loc2];
 
-        // Compute base effects for X and Z on each qubit
+        let effects =
+            self.two_qubit_effect_table(loc1, loc2, meas_to_detectors, meas_to_observables);
+
+        // Process all 15 non-trivial Pauli combinations
+        for p1 in 0u8..4 {
+            for p2 in 0u8..4 {
+                if p1 == 0 && p2 == 0 {
+                    continue; // Skip II
+                }
+
+                // Per-pair rate: index = 4*p1 + p2 - 1 (skipping II at idx 0).
+                let flat = 4 * (p1 as usize) + (p2 as usize);
+                let prob = rates[flat - 1];
+                if prob == 0.0 {
+                    continue;
+                }
+                self.add_two_qubit_pauli_contribution(
+                    loc1, loc2, p1, p2, prob, &effects, loc1_meta, loc2_meta, dem,
+                );
+            }
+        }
+    }
+
+    fn two_qubit_effect_table(
+        &self,
+        loc1: usize,
+        loc2: usize,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) -> [[FaultMechanism; 4]; 4] {
         let x1 = self.compute_mechanism(loc1, Pauli::X, meas_to_detectors, meas_to_observables);
         let z1 = self.compute_mechanism(loc1, Pauli::Z, meas_to_detectors, meas_to_observables);
         let x2 = self.compute_mechanism(loc2, Pauli::X, meas_to_detectors, meas_to_observables);
         let z2 = self.compute_mechanism(loc2, Pauli::Z, meas_to_detectors, meas_to_observables);
 
-        // Build effect table for all 16 Pauli combinations
         let get_single_effect = |p: u8, x: &FaultMechanism, z: &FaultMechanism| -> FaultMechanism {
             match p {
-                0 => FaultMechanism::new(), // I
-                1 => x.clone(),             // X
-                2 => x.xor(z),              // Y = X XOR Z
-                3 => z.clone(),             // Z
+                0 => FaultMechanism::new(),
+                1 => x.clone(),
+                2 => x.xor(z),
+                3 => z.clone(),
                 _ => unreachable!("Pauli index must be 0-3"),
             }
         };
@@ -1005,81 +1085,66 @@ impl<'a> DemBuilder<'a> {
                 effects[p1 as usize][p2 as usize] = e1.xor(&e2);
             }
         }
+        effects
+    }
 
-        // Process all 15 non-trivial Pauli combinations
-        for p1 in 0u8..4 {
-            for p2 in 0u8..4 {
-                if p1 == 0 && p2 == 0 {
-                    continue; // Skip II
-                }
+    #[allow(clippy::too_many_arguments)]
+    fn add_two_qubit_pauli_contribution(
+        &self,
+        loc1: usize,
+        loc2: usize,
+        p1: u8,
+        p2: u8,
+        prob: f64,
+        effects: &[[FaultMechanism; 4]; 4],
+        loc1_meta: &DagSpacetimeLocation,
+        loc2_meta: &DagSpacetimeLocation,
+        dem: &mut DetectorErrorModel,
+    ) {
+        let effect = &effects[p1 as usize][p2 as usize];
+        if effect.is_empty() {
+            return;
+        }
 
-                let effect = &effects[p1 as usize][p2 as usize];
-                if effect.is_empty() {
-                    continue;
-                }
+        let e1 = &effects[p1 as usize][0];
+        let e2 = &effects[0][p2 as usize];
 
-                // Per-pair rate: index = 4*p1 + p2 - 1 (skipping II at idx 0).
-                let flat = 4 * (p1 as usize) + (p2 as usize);
-                let prob = rates[flat - 1];
-                if prob == 0.0 {
-                    continue;
-                }
+        let graphlike_decomposable = effect.num_detectors() == 2
+            && effect.dem_outputs.is_empty()
+            && !e1.is_empty()
+            && !e2.is_empty()
+            && e1.num_detectors() <= 2
+            && e2.num_detectors() <= 2;
+        if graphlike_decomposable {
+            dem.mark_graphlike_decomposable(effect.detectors[0], effect.detectors[1]);
+        }
 
-                // Get component effects (P1I and IP2)
-                let e1 = &effects[p1 as usize][0]; // P1 on qubit 1, I on qubit 2
-                let e2 = &effects[0][p2 as usize]; // I on qubit 1, P2 on qubit 2
-
-                // Check if this is a "graphlike decomposable" source:
-                // - Combined effect has exactly 2 detectors and no dem_outputs
-                // - Both component effects are non-empty
-                // - Both component effects are graphlike (≤2 detectors)
-                let graphlike_decomposable = effect.num_detectors() == 2
-                    && effect.dem_outputs.is_empty()
-                    && !e1.is_empty()
-                    && !e2.is_empty()
-                    && e1.num_detectors() <= 2
-                    && e2.num_detectors() <= 2;
-                if graphlike_decomposable {
-                    dem.mark_graphlike_decomposable(effect.detectors[0], effect.detectors[1]);
-                }
-
-                // Check for intra-channel decomposition (Y-containing cases)
-                if let Some((a1, a2, b1, b2)) = get_y_decomposition(p1, p2) {
-                    // Y-containing channels can be decomposable if both their X and Z
-                    // components have non-empty, distinct effects. Otherwise they
-                    // produce the effect directly without decomposition.
-                    let e_a = &effects[a1 as usize][a2 as usize];
-                    let e_b = &effects[b1 as usize][b2 as usize];
-
-                    // Only truly decomposable if both components are non-empty and different.
-                    // add_y_decomposed_contribution handles routing to Direct when appropriate.
-                    dem.add_y_decomposed_contribution_with_source(
-                        e_a,
-                        e_b,
-                        prob,
-                        SourceMetadata::new(
-                            &[loc1, loc2],
-                            &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
-                            &[loc1_meta.gate_type, loc2_meta.gate_type],
-                            &[loc1_meta.before, loc2_meta.before],
-                        ),
-                    );
-                } else {
-                    // Non-Y channel (XI, IX, ZI, IZ, XX, XZ, ZX, ZZ)
-                    // These are always direct sources.
-                    dem.add_direct_contribution_with_source_components(
-                        effect.clone(),
-                        prob,
-                        SourceMetadata::new(
-                            &[loc1, loc2],
-                            &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
-                            &[loc1_meta.gate_type, loc2_meta.gate_type],
-                            &[loc1_meta.before, loc2_meta.before],
-                        ),
-                        DirectSourceComponents::new(e1, e2),
-                    );
-                }
-            }
+        if let Some((a1, a2, b1, b2)) = get_y_decomposition(p1, p2) {
+            let e_a = &effects[a1 as usize][a2 as usize];
+            let e_b = &effects[b1 as usize][b2 as usize];
+            dem.add_y_decomposed_contribution_with_source(
+                e_a,
+                e_b,
+                prob,
+                SourceMetadata::new(
+                    &[loc1, loc2],
+                    &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
+                    &[loc1_meta.gate_type, loc2_meta.gate_type],
+                    &[loc1_meta.before, loc2_meta.before],
+                ),
+            );
+        } else {
+            dem.add_direct_contribution_with_source_components(
+                effect.clone(),
+                prob,
+                SourceMetadata::new(
+                    &[loc1, loc2],
+                    &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
+                    &[loc1_meta.gate_type, loc2_meta.gate_type],
+                    &[loc1_meta.before, loc2_meta.before],
+                ),
+                DirectSourceComponents::new(e1, e2),
+            );
         }
     }
 
@@ -1302,6 +1367,23 @@ fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
         paulis.push((pa2, pecos_core::QubitId::from(1usize)));
     }
     pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
+}
+
+fn two_qubit_label_to_pauli_indices(label: &str) -> Option<(u8, u8)> {
+    let mut chars = label.chars();
+    let p1 = pauli_label_to_index(chars.next()?)?;
+    let p2 = pauli_label_to_index(chars.next()?)?;
+    chars.next().is_none().then_some((p1, p2))
+}
+
+fn pauli_label_to_index(label: char) -> Option<u8> {
+    match label {
+        'I' => Some(0),
+        'X' => Some(1),
+        'Y' => Some(2),
+        'Z' => Some(3),
+        _ => None,
+    }
 }
 
 /// Computes the per-error probability for independent error channels.

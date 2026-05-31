@@ -1410,8 +1410,23 @@ impl std::error::Error for PecosDemMetadataError {}
 /// ```
 #[derive(Debug, Clone)]
 pub struct PauliWeights {
-    /// (`PauliString`, weight) pairs. Weights must sum to ~1.0.
+    /// Post-gate (`PauliString`, weight) pairs.
     entries: Vec<(pecos_core::PauliString, f64)>,
+    /// Replacement (`PauliString`, weight) pairs. These omit the ideal gate before
+    /// applying the stored Pauli.
+    replacement_entries: Vec<(pecos_core::PauliString, f64)>,
+}
+
+/// Approximation used for replacement two-qubit fault branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReplacementBranchApproximation {
+    /// Ignore the omitted ideal gate and treat replacement entries like post-gate
+    /// Pauli entries. Useful as a baseline comparison.
+    IgnoreGateRemoval,
+    /// Convolve replacement entries with the Pauli twirl of the omitted ideal
+    /// gate's dagger. This is the default approximation for starred entries.
+    #[default]
+    PauliTwirlOmittedGate,
 }
 
 impl PauliWeights {
@@ -1423,16 +1438,40 @@ impl PauliWeights {
     ///
     /// Panics if weights don't sum to ~1.0 or if any weight is negative.
     pub fn new(entries: impl IntoIterator<Item = (pecos_core::PauliString, f64)>) -> Self {
+        Self::with_replacement(entries, std::iter::empty())
+    }
+
+    /// Create from post-gate and replacement branch entries.
+    ///
+    /// Replacement entries model branches where the ideal two-qubit gate is omitted
+    /// and the entry Pauli is applied instead. The combined post-gate and replacement
+    /// branch weights must sum to ~1.0.
+    ///
+    /// # Panics
+    ///
+    /// Panics if weights don't sum to ~1.0 or if any weight is negative.
+    pub fn with_replacement(
+        entries: impl IntoIterator<Item = (pecos_core::PauliString, f64)>,
+        replacement_entries: impl IntoIterator<Item = (pecos_core::PauliString, f64)>,
+    ) -> Self {
         let entries: Vec<_> = entries.into_iter().collect();
-        let sum: f64 = entries.iter().map(|(_, w)| w).sum();
+        let replacement_entries: Vec<_> = replacement_entries.into_iter().collect();
+        let sum: f64 = entries
+            .iter()
+            .chain(replacement_entries.iter())
+            .map(|(_, w)| w)
+            .sum();
         assert!(
             (sum - 1.0).abs() < 1e-6,
             "PauliWeights must sum to 1.0, got {sum}"
         );
-        for (ps, w) in &entries {
+        for (ps, w) in entries.iter().chain(replacement_entries.iter()) {
             assert!(*w >= 0.0, "Weight for {ps} must be non-negative, got {w}");
         }
-        Self { entries }
+        Self {
+            entries,
+            replacement_entries,
+        }
     }
 
     /// Uniform weights for single-qubit gates: X, Y, Z each with 1/3.
@@ -1441,6 +1480,7 @@ impl PauliWeights {
         use pecos_core::pauli::{X, Y, Z};
         Self {
             entries: vec![(X(0), 1.0 / 3.0), (Y(0), 1.0 / 3.0), (Z(0), 1.0 / 3.0)],
+            replacement_entries: Vec::new(),
         }
     }
 
@@ -1467,6 +1507,7 @@ impl PauliWeights {
                 (Z(0) & Y(1), w),
                 (Z(0) & Z(1), w),
             ],
+            replacement_entries: Vec::new(),
         }
     }
 
@@ -1484,10 +1525,75 @@ impl PauliWeights {
             .map_or(0.0, |(_, w)| *w)
     }
 
+    /// Look up the effective two-qubit Pauli weight for a specific gate.
+    ///
+    /// Plain entries contribute directly. Replacement entries first convolve with
+    /// the Pauli twirl of the omitted gate, so `*II` on `SZZ` contributes half
+    /// `II` and half `ZZ`, while `*XX` on `SZZ` contributes half `XX` and half
+    /// `YY`. The identity component is intentionally not returned by callers that
+    /// query only non-identity Pauli labels.
+    #[must_use]
+    pub fn two_qubit_weight_for(
+        &self,
+        gate_type: GateType,
+        pauli: &pecos_core::PauliString,
+        approximation: ReplacementBranchApproximation,
+    ) -> f64 {
+        let Ok(query_label) = two_qubit_pauli_label(pauli) else {
+            return 0.0;
+        };
+        let direct = self
+            .entries
+            .iter()
+            .filter_map(|(ps, weight)| {
+                (two_qubit_pauli_label(ps).ok()?.as_str() == query_label).then_some(*weight)
+            })
+            .sum::<f64>();
+
+        if approximation == ReplacementBranchApproximation::IgnoreGateRemoval {
+            return direct
+                + self
+                    .replacement_entries
+                    .iter()
+                    .filter_map(|(ps, weight)| {
+                        (two_qubit_pauli_label(ps).ok()?.as_str() == query_label).then_some(*weight)
+                    })
+                    .sum::<f64>();
+        }
+
+        let Some(twirl) = omitted_two_qubit_gate_pauli_twirl(gate_type) else {
+            return direct;
+        };
+        direct
+            + self
+                .replacement_entries
+                .iter()
+                .filter_map(|(ps, weight)| {
+                    let replacement_label = two_qubit_pauli_label(ps).ok()?;
+                    Some(
+                        twirl
+                            .iter()
+                            .filter_map(|(twirl_label, twirl_weight)| {
+                                (multiply_two_qubit_pauli_labels(&replacement_label, twirl_label)
+                                    == query_label)
+                                    .then_some(weight * twirl_weight)
+                            })
+                            .sum::<f64>(),
+                    )
+                })
+                .sum::<f64>()
+    }
+
     /// Get all entries as `(PauliString, weight)` pairs.
     #[must_use]
     pub fn entries(&self) -> &[(pecos_core::PauliString, f64)] {
         &self.entries
+    }
+
+    /// Get replacement entries as `(PauliString, weight)` pairs.
+    #[must_use]
+    pub fn replacement_entries(&self) -> &[(pecos_core::PauliString, f64)] {
+        &self.replacement_entries
     }
 }
 
@@ -1495,6 +1601,37 @@ impl<const N: usize> From<[(pecos_core::PauliString, f64); N]> for PauliWeights 
     fn from(entries: [(pecos_core::PauliString, f64); N]) -> Self {
         Self::new(entries)
     }
+}
+
+/// Return the Pauli-twirled channel for omitting a supported two-qubit Clifford gate.
+///
+/// Some physical error models have *replacement* fault branches: when the branch
+/// fires, the intended gate is not applied and the branch operation is applied
+/// instead. A DEM built in the ideal-circuit frame can approximate that missing
+/// operation by convolving the replacement branch with the Pauli twirl of the
+/// omitted gate's inverse. Clifford gates and their adjoints have the same
+/// Pauli-twirl probabilities, so this helper returns the distribution in terms
+/// of two-qubit Pauli labels, including `"II"` when present.
+///
+/// This helper is intentionally parameter-free and device-agnostic. Callers
+/// remain responsible for deciding which fault branches are replacement
+/// branches, how leakage symbols are projected, and how branch probabilities are
+/// scaled.
+#[must_use]
+pub fn omitted_two_qubit_gate_pauli_twirl(
+    gate_type: GateType,
+) -> Option<BTreeMap<&'static str, f64>> {
+    let entries: &[(&str, f64)] = match gate_type {
+        GateType::CX => &[("II", 0.25), ("IX", 0.25), ("ZI", 0.25), ("ZX", 0.25)],
+        GateType::CY => &[("II", 0.25), ("IY", 0.25), ("ZI", 0.25), ("ZY", 0.25)],
+        GateType::CZ => &[("II", 0.25), ("IZ", 0.25), ("ZI", 0.25), ("ZZ", 0.25)],
+        GateType::SWAP => &[("II", 0.25), ("XX", 0.25), ("YY", 0.25), ("ZZ", 0.25)],
+        GateType::SXX | GateType::SXXdg => &[("II", 0.5), ("XX", 0.5)],
+        GateType::SYY | GateType::SYYdg => &[("II", 0.5), ("YY", 0.5)],
+        GateType::SZZ | GateType::SZZdg => &[("II", 0.5), ("ZZ", 0.5)],
+        _ => return None,
+    };
+    Some(entries.iter().copied().collect())
 }
 
 /// Noise model configuration for circuit-level fault analysis.
@@ -1532,6 +1669,8 @@ pub struct NoiseConfig {
     /// Maps each two-qubit Pauli fault to its relative probability. Must sum to ~1.0.
     /// Default (None) = uniform depolarizing.
     pub p2_weights: Option<PauliWeights>,
+    /// Approximation used for replacement two-qubit entries in `p2_weights`.
+    pub p2_replacement_approximation: ReplacementBranchApproximation,
     /// Coherent idle RZ rotation angle per time unit.
     ///
     /// When set (> 0), idle gates contribute a coherent Z rotation in addition
@@ -1628,6 +1767,7 @@ impl Default for NoiseConfig {
             t2: None,
             p1_weights: None,
             p2_weights: None,
+            p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
@@ -1653,6 +1793,7 @@ impl NoiseConfig {
             t2: None,
             p1_weights: None,
             p2_weights: None,
+            p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
@@ -1676,6 +1817,7 @@ impl NoiseConfig {
             t2: None,
             p1_weights: None,
             p2_weights: None,
+            p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
@@ -1699,6 +1841,7 @@ impl NoiseConfig {
             t2: None,
             p1_weights: None,
             p2_weights: None,
+            p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
@@ -1799,6 +1942,16 @@ impl NoiseConfig {
     #[must_use]
     pub fn set_p2_weights(mut self, weights: PauliWeights) -> Self {
         self.p2_weights = Some(weights);
+        self
+    }
+
+    /// Sets how replacement entries in `p2_weights` are approximated.
+    #[must_use]
+    pub fn set_p2_replacement_approximation(
+        mut self,
+        approximation: ReplacementBranchApproximation,
+    ) -> Self {
+        self.p2_replacement_approximation = approximation;
         self
     }
 
@@ -1925,6 +2078,43 @@ impl NoiseConfig {
 /// E.g., X(3) & Z(7) -> [X, Z], same as X(0) & Z(1) -> [X, Z].
 fn pauli_pattern(ps: &pecos_core::PauliString) -> Vec<pecos_core::Pauli> {
     ps.paulis().iter().map(|&(p, _)| p).collect()
+}
+
+fn two_qubit_pauli_label(ps: &pecos_core::PauliString) -> Result<String, String> {
+    let mut chars = ['I', 'I'];
+    for &(pauli, qubit) in ps.paulis() {
+        let idx = qubit.index();
+        if idx >= 2 {
+            return Err(format!(
+                "two-qubit Pauli weights only support qubit indices 0 and 1, got {idx}"
+            ));
+        }
+        chars[idx] = match pauli {
+            pecos_core::Pauli::I => 'I',
+            pecos_core::Pauli::X => 'X',
+            pecos_core::Pauli::Y => 'Y',
+            pecos_core::Pauli::Z => 'Z',
+        };
+    }
+    Ok(chars.iter().collect())
+}
+
+fn multiply_two_qubit_pauli_labels(left: &str, right: &str) -> String {
+    left.chars()
+        .zip(right.chars())
+        .map(|(a, b)| multiply_pauli_labels(a, b))
+        .collect()
+}
+
+fn multiply_pauli_labels(left: char, right: char) -> char {
+    match (left, right) {
+        ('I', p) | (p, 'I') => p,
+        ('X', 'X') | ('Y', 'Y') | ('Z', 'Z') => 'I',
+        ('X', 'Y') | ('Y', 'X') => 'Z',
+        ('X', 'Z') | ('Z', 'X') => 'Y',
+        ('Y', 'Z') | ('Z', 'Y') => 'X',
+        _ => unreachable!("validated Pauli labels contain only I/X/Y/Z"),
+    }
 }
 
 fn pecos_metadata_dem_output_value(target: &DemOutput) -> serde_json::Value {
@@ -5492,6 +5682,108 @@ mod tests {
         assert_eq!(
             contribution.direct_source_family,
             Some(DirectSourceFamily::SingleLocationY)
+        );
+    }
+
+    #[test]
+    fn test_omitted_two_qubit_gate_pauli_twirl_for_spp_gates() {
+        let szz = omitted_two_qubit_gate_pauli_twirl(GateType::SZZ).expect("SZZ is supported");
+        let szzdg =
+            omitted_two_qubit_gate_pauli_twirl(GateType::SZZdg).expect("SZZdg is supported");
+
+        assert_eq!(szz, BTreeMap::from([("II", 0.5), ("ZZ", 0.5)]));
+        assert_eq!(szzdg, szz);
+    }
+
+    #[test]
+    fn test_omitted_two_qubit_gate_pauli_twirl_for_entanglers() {
+        assert_eq!(
+            omitted_two_qubit_gate_pauli_twirl(GateType::CX).expect("CX is supported"),
+            BTreeMap::from([("II", 0.25), ("IX", 0.25), ("ZI", 0.25), ("ZX", 0.25)]),
+        );
+        assert_eq!(
+            omitted_two_qubit_gate_pauli_twirl(GateType::CZ).expect("CZ is supported"),
+            BTreeMap::from([("II", 0.25), ("IZ", 0.25), ("ZI", 0.25), ("ZZ", 0.25)]),
+        );
+        assert_eq!(
+            omitted_two_qubit_gate_pauli_twirl(GateType::SWAP).expect("SWAP is supported"),
+            BTreeMap::from([("II", 0.25), ("XX", 0.25), ("YY", 0.25), ("ZZ", 0.25)]),
+        );
+        assert!(omitted_two_qubit_gate_pauli_twirl(GateType::RZZ).is_none());
+    }
+
+    #[test]
+    fn test_two_qubit_replacement_weight_convolves_with_omitted_gate_twirl() {
+        use pecos_core::pauli::{X, Y, Z};
+
+        let weights = PauliWeights::with_replacement([(X(0) & X(1), 0.25)], [(X(0) & X(1), 0.75)]);
+
+        assert!(
+            (weights.two_qubit_weight_for(
+                GateType::SZZ,
+                &(X(0) & X(1)),
+                ReplacementBranchApproximation::PauliTwirlOmittedGate,
+            ) - (0.25 + 0.75 * 0.5))
+                .abs()
+                < 1e-12
+        );
+        assert!(
+            (weights.two_qubit_weight_for(
+                GateType::SZZ,
+                &(Y(0) & Y(1)),
+                ReplacementBranchApproximation::PauliTwirlOmittedGate,
+            ) - 0.75 * 0.5)
+                .abs()
+                < 1e-12
+        );
+        assert!(
+            (weights.two_qubit_weight_for(
+                GateType::SZZ,
+                &(X(0) & X(1)),
+                ReplacementBranchApproximation::IgnoreGateRemoval,
+            ) - 1.0)
+                .abs()
+                < 1e-12
+        );
+
+        let replacement_omits_only = PauliWeights::with_replacement(
+            [],
+            [(
+                pecos_core::PauliString::with_phase_and_paulis(
+                    pecos_core::QuarterPhase::PlusOne,
+                    Vec::new(),
+                ),
+                1.0,
+            )],
+        );
+        assert!(
+            (replacement_omits_only.two_qubit_weight_for(
+                GateType::SZZ,
+                &(Z(0) & Z(1)),
+                ReplacementBranchApproximation::PauliTwirlOmittedGate,
+            ) - 0.5)
+                .abs()
+                < 1e-12
+        );
+
+        let cx_replacement_identity = PauliWeights::with_replacement([], [(Z(0) & X(1), 1.0)]);
+        assert!(
+            (cx_replacement_identity.two_qubit_weight_for(
+                GateType::CX,
+                &(Z(0) & X(1)),
+                ReplacementBranchApproximation::PauliTwirlOmittedGate,
+            ) - 0.25)
+                .abs()
+                < 1e-12
+        );
+        assert!(
+            (cx_replacement_identity.two_qubit_weight_for(
+                GateType::CX,
+                &Z(0),
+                ReplacementBranchApproximation::PauliTwirlOmittedGate,
+            ) - 0.25)
+                .abs()
+                < 1e-12
         );
     }
 }

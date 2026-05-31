@@ -61,6 +61,7 @@ class _DetectorErrorModelMixin:
         p1: float = 0.001,
         p2: float = 0.01,
         p2_weights: P2Weights | None = None,
+        p2_replacement_approximation: str | None = None,
         p_meas: float = 0.001,
         p_prep: float = 0.001,
         p_idle: float | None = None,
@@ -143,9 +144,16 @@ class _DetectorErrorModelMixin:
                 circuit; if given, it must match the traced count.
             p1: Single-qubit gate depolarizing rate.
             p2: Two-qubit gate depolarizing rate.
-            p2_weights: Optional relative probabilities over the 15 non-identity
-                two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum
-                to 1.0; ``p2`` remains the total two-qubit error rate.
+            p2_weights: Optional relative probabilities over two-qubit Pauli
+                error labels. Plain labels such as ``"XX"`` are post-gate
+                Pauli branches; labels prefixed by ``"*"`` such as ``"*XX"``
+                are replacement branches that omit the ideal two-qubit gate
+                before applying the Pauli. Values must sum to 1.0; ``p2``
+                remains the total two-qubit error rate.
+            p2_replacement_approximation: Approximation used for starred
+                replacement labels. ``"pauli_twirl_omitted_gate"`` convolves
+                with the omitted two-qubit gate's Pauli twirl; ``"ignore_gate_removal"``
+                treats starred entries like plain post-gate Pauli entries.
             p_meas: Measurement flip rate.
             p_prep: Preparation (reset) error rate.
             p_idle: Optional uniform depolarizing idle-noise rate per idle duration.
@@ -262,6 +270,7 @@ class _DetectorErrorModelMixin:
             p1=p1,
             p2=p2,
             p2_weights=p2_weights,
+            p2_replacement_approximation=p2_replacement_approximation,
             p_meas=p_meas,
             p_prep=p_prep,
             p_idle=p_idle,

@@ -91,9 +91,16 @@ class NoiseModel:
     Attributes:
         p1: Single-qubit gate error rate.
         p2: Two-qubit gate error rate.
-        p2_weights: Optional relative probabilities over the 15 non-identity
-            two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
-            1.0; ``p2`` remains the total two-qubit error rate.
+        p2_weights: Optional relative probabilities over two-qubit Pauli error
+            labels. Plain labels such as ``"XX"`` are post-gate Pauli branches;
+            labels prefixed by ``"*"`` such as ``"*XX"`` are replacement
+            branches that omit the ideal two-qubit gate before applying the
+            Pauli. Values must sum to 1.0; ``p2`` remains the total two-qubit
+            error rate.
+        p2_replacement_approximation: Approximation used for starred
+            replacement labels. ``"pauli_twirl_omitted_gate"`` convolves with
+            the omitted two-qubit gate's Pauli twirl; ``"ignore_gate_removal"``
+            treats starred entries like plain post-gate Pauli entries.
         p_meas: Measurement error rate.
         p_prep: Initialization error rate.
         p_idle: Idle noise rate per time unit (uniform depolarizing).
@@ -112,6 +119,7 @@ class NoiseModel:
     p1: float = 0.0
     p2: float = 0.0
     p2_weights: P2Weights | None = None
+    p2_replacement_approximation: str | None = None
     p_meas: float = 0.0
     p_prep: float = 0.0
     p_idle: float | None = None
@@ -1341,6 +1349,7 @@ def _dem_string_from_cached_surface_topology(
             p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
             p2_weights=_p2_weights_dict(noise.p2_weights),
+            p2_replacement_approximation=noise.p2_replacement_approximation,
         )
         .with_num_measurements(topology.num_measurements)
         .with_measurement_order(list(topology.measurement_order))
@@ -1364,6 +1373,7 @@ def _cached_surface_native_dem_string(
     p_prep: float,
     decompose_errors: bool,
     p2_weights: tuple[tuple[str, float], ...] | None = None,
+    p2_replacement_approximation: str | None = None,
     p_idle: float | None = None,
     t1: float | None = None,
     t2: float | None = None,
@@ -1404,6 +1414,7 @@ def _cached_surface_native_dem_string(
             p1=p1,
             p2=p2,
             p2_weights=p2_weights,
+            p2_replacement_approximation=p2_replacement_approximation,
             p_meas=p_meas,
             p_prep=p_prep,
             p_idle=p_idle,
@@ -1475,6 +1486,7 @@ def _build_native_sampler_from_cached_surface_topology(
             p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
             p2_weights=_p2_weights_dict(noise.p2_weights),
+            p2_replacement_approximation=noise.p2_replacement_approximation,
         )
         # Remap sampling_model for NativeSampler dispatch
         sampling_model = "influence_dem"
@@ -1576,6 +1588,7 @@ def generate_circuit_level_dem_from_builder(
         noise.p_prep,
         decompose_errors=decompose_errors,
         p2_weights=noise.p2_weights,
+        p2_replacement_approximation=noise.p2_replacement_approximation,
         p_idle=noise.p_idle,
         t1=noise.t1,
         t2=noise.t2,
@@ -3251,6 +3264,7 @@ def build_native_sampler(
             noise.p_prep,
             decompose_errors=True,
             p2_weights=noise.p2_weights,
+            p2_replacement_approximation=noise.p2_replacement_approximation,
             p_idle=noise.p_idle,
             t1=noise.t1,
             t2=noise.t2,

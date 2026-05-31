@@ -100,6 +100,7 @@ pub use types::{
     ContributionRenderSummary, DecomposedFault, DemOutput, DetectorDef, DetectorErrorModel,
     DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, MeasurementMechanism,
     MeasurementNoiseModel, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights,
-    PecosDemMetadataError, PerGateTypeNoise, TwoDetectorDirectRenderPolicy, combine_probabilities,
+    PecosDemMetadataError, PerGateTypeNoise, ReplacementBranchApproximation,
+    TwoDetectorDirectRenderPolicy, combine_probabilities, omitted_two_qubit_gate_pauli_twirl,
     record_offset_to_absolute_index,
 };

@@ -378,7 +378,12 @@ impl<'a> DemBuilder<'a> {
                 let flat = idx + 1;
                 let p1 = flat / 4;
                 let p2 = flat % 4;
-                self.noise.p2 * weights.weight_for(&pauli_pair_for_weight(p1, p2))
+                self.noise.p2
+                    * weights.two_qubit_weight_for(
+                        loc1.gate_type,
+                        &pauli_pair_for_weight(p1, p2),
+                        self.noise.p2_replacement_approximation,
+                    )
             });
         }
         [per_channel_probability(self.noise.p2, 15); 15]

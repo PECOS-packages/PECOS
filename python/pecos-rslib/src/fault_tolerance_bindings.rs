@@ -52,7 +52,7 @@ use pecos_qec::fault_tolerance::dem_builder::{
     DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
     EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
     FaultSourceType as RustFaultSourceType, NoiseConfig, PAULI_2Q_ORDER,
-    ParsedDem as RustParsedDem, PauliWeights,
+    ParsedDem as RustParsedDem, PauliWeights, ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
@@ -76,12 +76,18 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
     use pecos_core::pauli::{X, Y, Z};
 
     let mut entries = Vec::with_capacity(weights.len());
+    let mut replacement_entries = Vec::new();
     let mut sum = 0.0;
     for (label, weight) in weights {
         let label = label.trim().to_ascii_uppercase();
-        if !PAULI_2Q_ORDER.contains(&label.as_str()) {
+        let (replacement, label) = match label.strip_prefix('*') {
+            Some(stripped) => (true, stripped.to_string()),
+            None => (false, label),
+        };
+        let replacement_identity = replacement && label == "II";
+        if !replacement_identity && !PAULI_2Q_ORDER.contains(&label.as_str()) {
             let msg = format!(
-                "p2_weights keys must be one of {:?}, got {label:?}",
+                "p2_weights keys must be one of {:?} or prefixed with '*' for replacement branches, got {label:?}",
                 PAULI_2Q_ORDER
             );
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
@@ -107,19 +113,54 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
                 (Some(existing), Some(term)) => Some(existing & term),
             };
         }
-        let Some(pauli) = pauli else {
+        let pauli = if let Some(pauli) = pauli {
+            pauli
+        } else if replacement {
+            pecos_core::PauliString::with_phase_and_paulis(
+                pecos_core::QuarterPhase::PlusOne,
+                Vec::new(),
+            )
+        } else {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "p2_weights cannot contain the identity pair 'II'",
+                "plain p2_weights cannot contain identity pair 'II'; use '*II' for a replacement branch that only omits the gate",
             ));
         };
         sum += weight;
-        entries.push((pauli, weight));
+        if replacement {
+            replacement_entries.push((pauli, weight));
+        } else {
+            entries.push((pauli, weight));
+        }
     }
     if (sum - 1.0).abs() >= 1.0e-6 {
         let msg = format!("p2_weights relative probabilities must sum to 1.0, got {sum}");
         return Err(pyo3::exceptions::PyValueError::new_err(msg));
     }
-    Ok(PauliWeights::new(entries))
+    Ok(PauliWeights::with_replacement(entries, replacement_entries))
+}
+
+fn parse_replacement_approximation(
+    value: Option<String>,
+) -> PyResult<ReplacementBranchApproximation> {
+    let Some(value) = value else {
+        return Ok(ReplacementBranchApproximation::default());
+    };
+    match value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_")
+        .as_str()
+    {
+        "pauli_twirl_omitted_gate" | "pauli_twirl" | "twirl" => {
+            Ok(ReplacementBranchApproximation::PauliTwirlOmittedGate)
+        }
+        "ignore_gate_removal" | "ignore_removal" | "post_gate" | "postgate" => {
+            Ok(ReplacementBranchApproximation::IgnoreGateRemoval)
+        }
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "p2_replacement_approximation must be 'pauli_twirl_omitted_gate' or 'ignore_gate_removal'",
+        )),
+    }
 }
 
 fn apply_noise_options(
@@ -137,6 +178,7 @@ fn apply_noise_options(
     p_idle_y_quadratic_rate: Option<f64>,
     p_idle_z_quadratic_rate: Option<f64>,
     p2_weights: Option<BTreeMap<String, f64>>,
+    p2_replacement_approximation: Option<String>,
 ) -> PyResult<NoiseConfig> {
     noise.p_idle = p_idle.unwrap_or(0.0);
     if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
@@ -172,6 +214,9 @@ fn apply_noise_options(
     if let Some(weights) = p2_weights {
         noise = noise.set_p2_weights(parse_p2_weights(weights)?);
     }
+    noise = noise.set_p2_replacement_approximation(parse_replacement_approximation(
+        p2_replacement_approximation,
+    )?);
     Ok(noise)
 }
 
@@ -1057,7 +1102,7 @@ impl PyDetectorErrorModel {
     ///     >>> print(dem.to_string())
     ///     >>> sampler = dem.to_sampler()
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None, p2_replacement_approximation=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
@@ -1078,6 +1123,7 @@ impl PyDetectorErrorModel {
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
         p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
     ) -> PyResult<Self> {
         use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
 
@@ -1096,6 +1142,7 @@ impl PyDetectorErrorModel {
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
             p2_weights,
+            p2_replacement_approximation,
         )?;
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
@@ -1405,7 +1452,7 @@ impl PyDemBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None, p2_replacement_approximation=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -1426,6 +1473,7 @@ impl PyDemBuilder {
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
         p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
     ) -> PyResult<PyRefMut<'_, Self>> {
         slf.noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
@@ -1442,6 +1490,7 @@ impl PyDemBuilder {
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
             p2_weights,
+            p2_replacement_approximation,
         )?;
         Ok(slf)
     }
@@ -3286,7 +3335,7 @@ impl PyDemSampler {
     ///     >>> sampler = DemSampler.from_circuit(dag, p1=0.001, p2=0.01)
     ///     >>> sampler = DemSampler.from_circuit(tc, p2=0.01)  # TickCircuit also works
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None, p2_replacement_approximation=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
@@ -3307,6 +3356,7 @@ impl PyDemSampler {
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
         p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
     ) -> PyResult<Self> {
         let noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
@@ -3323,6 +3373,7 @@ impl PyDemSampler {
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
             p2_weights,
+            p2_replacement_approximation,
         )?;
 
         // Accept both DagCircuit and TickCircuit
@@ -3433,7 +3484,7 @@ impl PyDemSampler {
     ///
     /// The `observables` argument defines observables.
     #[staticmethod]
-    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
+    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None, p2_replacement_approximation=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
@@ -3456,6 +3507,7 @@ impl PyDemSampler {
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
         p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
     ) -> PyResult<Self> {
         let noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
@@ -3472,6 +3524,7 @@ impl PyDemSampler {
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
             p2_weights,
+            p2_replacement_approximation,
         )?;
         let inner = RustNewDemSamplerBuilder::new(&influence_map.inner)
             .with_noise_config(noise)
@@ -3925,7 +3978,7 @@ impl PyDemSamplerBuilder {
     }
 
     /// Set noise parameters.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None, p2_replacement_approximation=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -3946,6 +3999,7 @@ impl PyDemSamplerBuilder {
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
         p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
     ) -> PyResult<PyRefMut<'_, Self>> {
         slf.noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
@@ -3962,6 +4016,7 @@ impl PyDemSamplerBuilder {
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
             p2_weights,
+            p2_replacement_approximation,
         )?;
         Ok(slf)
     }

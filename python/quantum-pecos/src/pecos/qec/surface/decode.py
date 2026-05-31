@@ -220,6 +220,7 @@ class DecodingResult:
 class _CachedNativeSurfaceTopology:
     """Topology-only native model data reused across noise configurations."""
 
+    dag_circuit: Any
     influence_map: Any
     detectors_json: str
     observables_json: str
@@ -1296,6 +1297,7 @@ def _surface_native_topology(
     num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
 
     return _CachedNativeSurfaceTopology(
+        dag_circuit=dag,
         influence_map=influence_map,
         detectors_json=detectors_json,
         observables_json=observables_json,
@@ -1356,6 +1358,7 @@ def _dem_string_from_cached_surface_topology(
             p2_weights=_p2_weights_dict(noise.p2_weights),
             p2_replacement_approximation=noise.p2_replacement_approximation,
         )
+        .with_exact_branch_replay_circuit(topology.dag_circuit)
         .with_num_measurements(topology.num_measurements)
         .with_measurement_order(list(topology.measurement_order))
         .with_detectors_json(topology.detectors_json)

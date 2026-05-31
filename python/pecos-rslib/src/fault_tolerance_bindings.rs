@@ -1432,6 +1432,7 @@ pub struct PyDemBuilder {
     observables_json: Option<String>,
     num_measurements: Option<usize>,
     measurement_order: Option<Vec<usize>>,
+    exact_branch_circuit: Option<DagCircuit>,
 }
 
 #[pymethods]
@@ -1449,6 +1450,7 @@ impl PyDemBuilder {
             observables_json: None,
             num_measurements: None,
             measurement_order: None,
+            exact_branch_circuit: None,
         }
     }
 
@@ -1564,6 +1566,20 @@ impl PyDemBuilder {
         slf
     }
 
+    /// Attach the original circuit for exact replacement-branch replay.
+    ///
+    /// This is only needed when using `p2_replacement_approximation="exact_branch_replay"`
+    /// with starred p2 replacement branches. The influence map still determines
+    /// ordinary Pauli propagation; the circuit context lets PECOS replay the
+    /// omitted-gate branch and fail loudly if it is not DEM-representable.
+    fn with_exact_branch_replay_circuit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        circuit: &crate::dag_circuit_bindings::PyDagCircuit,
+    ) -> PyRefMut<'py, Self> {
+        slf.exact_branch_circuit = Some(circuit.inner.clone());
+        slf
+    }
+
     /// Build the Detector Error Model.
     ///
     /// Returns:
@@ -1576,6 +1592,10 @@ impl PyDemBuilder {
     fn build(&self) -> PyResult<PyDetectorErrorModel> {
         let mut builder =
             RustDemBuilder::new(&self.influence_map).with_noise_config(self.noise.clone());
+
+        if let Some(ref circuit) = self.exact_branch_circuit {
+            builder = builder.with_exact_branch_replay_context(circuit);
+        }
 
         if let Some(num) = self.num_measurements {
             builder = builder.with_num_measurements(num);

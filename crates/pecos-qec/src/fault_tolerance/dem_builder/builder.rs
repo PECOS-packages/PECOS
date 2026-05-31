@@ -290,7 +290,11 @@ impl<'a> DemBuilder<'a> {
         self
     }
 
-    fn with_exact_branch_replay_context(mut self, circuit: &'a pecos_quantum::DagCircuit) -> Self {
+    #[must_use]
+    pub fn with_exact_branch_replay_context(
+        mut self,
+        circuit: &'a pecos_quantum::DagCircuit,
+    ) -> Self {
         self.exact_branch_context = Some(ExactBranchReplayContext { circuit });
         self
     }

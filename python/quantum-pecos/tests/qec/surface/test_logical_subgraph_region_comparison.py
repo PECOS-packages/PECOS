@@ -241,5 +241,45 @@ def test_bp_inner_is_lower_ler_default():
     assert abs(bp_ler - exact_ler) <= 0.0005, f"bp={bp_ler:.5f} exact={exact_ler:.5f}"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN BUG: LogicalSubgraphDecoder does not achieve distance suppression past "
+        "d~3. It builds each subgraph by PROJECTING undecomposed hyperedges (Y / "
+        "correlated errors, ~50-70% of mechanisms) onto the region, instead of "
+        "decomposing them into matching-optimal graphlike edges (a 2-det edge plus "
+        "boundary edges) the way stim's decompose_errors / lomatching's "
+        "get_circuit_subgraph does. The observing region is correct (matches lomatching "
+        "exactly at d=3/5/7) but the edges are wrong, so MWPM cannot suppress. lomatching "
+        "MoMatching drives memory LER to 0 at d=7 on the same circuits; PECOS does not. "
+        "Fix = port matching-oriented hyperedge decomposition into subgraph construction. "
+        "See pecos-docs/design/logical-subgraph-backprop-region-builder.md. When the fix "
+        "lands this xfail flips to a pass (strict) -- remove the marker then."
+    ),
+)
+def test_distance_suppression_memory():
+    """A fault-tolerant decoder must drive LER DOWN as code distance grows below
+    threshold. This guards against the hyperedge-decomposition bug regressing
+    further and turns green the moment the fix is in."""
+
+    def mem_ler(d, p, n, seed):
+        patch = SurfacePatch.create(d)
+        b = LogicalCircuitBuilder()
+        b.add_patch(patch, "A")
+        b.add_memory("A", d, "Z")
+        dem = b.build_dem(p1=p, p2=p, p_meas=p)
+        sc = b.stab_coords()
+        batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=seed)
+        return LogicalSubgraphDecoder(dem, sc).decode_count(batch) / n
+
+    p, n = 0.001, 60000
+    ler_d3 = mem_ler(3, p, n, seed=1)
+    ler_d5 = mem_ler(5, p, n, seed=1)
+    # Below threshold, d=5 must beat d=3 by a clear margin (lomatching: ~13x).
+    assert ler_d5 < ler_d3 * 0.7, (
+        f"no distance suppression: d3={ler_d3:.5f} d5={ler_d5:.5f}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

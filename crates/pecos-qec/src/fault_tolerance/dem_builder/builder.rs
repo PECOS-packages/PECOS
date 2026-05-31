@@ -112,6 +112,20 @@ pub struct DemBuilder<'a> {
     /// Optional measurement order: maps `TickCircuit` measurement index -> qubit.
     /// This allows proper mapping between record offsets and influence map indices.
     measurement_order: Option<Vec<usize>>,
+    /// Optional circuit context for future exact replacement-branch replay.
+    exact_branch_context: Option<ExactBranchReplayContext<'a>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExactBranchReplayContext<'a> {
+    circuit: &'a pecos_quantum::DagCircuit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExactBranchReplayRequest {
+    gate_node: usize,
+    gate_type: GateType,
+    loc_indices: [usize; 2],
 }
 
 impl<'a> DemBuilder<'a> {
@@ -250,6 +264,7 @@ impl<'a> DemBuilder<'a> {
             observables: Vec::new(),
             num_measurements: influence_map.measurements.len(),
             measurement_order: None,
+            exact_branch_context: None,
         }
     }
 
@@ -264,6 +279,11 @@ impl<'a> DemBuilder<'a> {
     #[must_use]
     pub fn with_noise_config(mut self, noise: NoiseConfig) -> Self {
         self.noise = noise;
+        self
+    }
+
+    fn with_exact_branch_replay_context(mut self, circuit: &'a pecos_quantum::DagCircuit) -> Self {
+        self.exact_branch_context = Some(ExactBranchReplayContext { circuit });
         self
     }
 
@@ -734,6 +754,14 @@ impl<'a> DemBuilder<'a> {
             == ReplacementBranchApproximation::ExactBranchReplay
             && has_replacement_branches
         {
+            if let Some(context) = self.exact_branch_context {
+                let requests =
+                    context.replacement_branch_requests(&self.influence_map.locations)?;
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay has circuit context and identified {} two-qubit replay request(s), but exact replacement-branch DEM emission is not implemented yet; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations",
+                    requests.len()
+                )));
+            }
             return Err(DemBuilderError::ConfigurationError(
                 "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
                     .to_string(),
@@ -1921,6 +1949,52 @@ fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[us
         .collect()
 }
 
+impl ExactBranchReplayContext<'_> {
+    fn replacement_branch_requests(
+        &self,
+        locations: &[DagSpacetimeLocation],
+    ) -> Result<Vec<ExactBranchReplayRequest>, DemBuilderError> {
+        let mut requests = Vec::new();
+        for [loc1_idx, loc2_idx] in two_qubit_after_location_pairs(locations) {
+            let loc1 = &locations[loc1_idx];
+            let loc2 = &locations[loc2_idx];
+            if loc1.node != loc2.node {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay expected paired two-qubit locations to share a node, got {} and {}",
+                    loc1.node, loc2.node
+                )));
+            }
+            if loc1.gate_type != loc2.gate_type {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay expected paired two-qubit locations at node {} to share a gate type, got {:?} and {:?}",
+                    loc1.node, loc1.gate_type, loc2.gate_type
+                )));
+            }
+            let branch = circuit_with_omitted_two_qubit_gate(self.circuit, loc1.node)?;
+            let replacement = branch
+                .gate(loc1.node)
+                .expect("omitted branch preserves the original gate node");
+            if !loc1
+                .qubits
+                .iter()
+                .chain(loc2.qubits.iter())
+                .all(|qubit| replacement.qubits.contains(qubit))
+            {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay location qubits at node {} are not all present in the omitted branch gate",
+                    loc1.node
+                )));
+            }
+            requests.push(ExactBranchReplayRequest {
+                gate_node: loc1.node,
+                gate_type: loc1.gate_type,
+                loc_indices: [loc1_idx, loc2_idx],
+            });
+        }
+        Ok(requests)
+    }
+}
+
 // ============================================================================
 // Convenience: build DEM from circuit (free function to handle lifetimes)
 // ============================================================================
@@ -1966,7 +2040,9 @@ fn build_dem_from_circuit(
         }
     });
 
-    let builder = DemBuilder::new(&influence_map).with_noise_config(noise);
+    let builder = DemBuilder::new(&influence_map)
+        .with_noise_config(noise)
+        .with_exact_branch_replay_context(circuit);
 
     let builder = if let Some(ref dj) = det_json {
         builder.with_detectors_json(dj)?
@@ -2000,7 +2076,6 @@ fn build_dem_from_circuit(
 /// Replacing the selected node by batched identities preserves the node id,
 /// qubit wires, and topological context while making the operation itself a
 /// no-op on every qubit carried by the original gate.
-#[cfg(test)]
 fn circuit_with_omitted_two_qubit_gate(
     circuit: &pecos_quantum::DagCircuit,
     node: usize,
@@ -2863,6 +2938,29 @@ mod tests {
     }
 
     #[test]
+    fn test_from_circuit_exact_branch_replay_attaches_context_but_still_rejects() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
+        use pecos_core::pauli::Z;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.szz(&[(0, 1)]);
+
+        let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement([], [(Z(0) & Z(1), 1.0)]))
+            .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect_err("exact branch replay must remain fail-loud until emission is implemented");
+
+        assert!(
+            err.to_string().contains("has circuit context"),
+            "unexpected error: {err}",
+        );
+    }
+
+    #[test]
     fn test_circuit_with_omitted_two_qubit_gate_preserves_wiring() {
         use pecos_core::{Gate, QubitId};
         use pecos_quantum::DagCircuit;
@@ -2899,6 +2997,35 @@ mod tests {
             Some(meas1)
         );
         assert_eq!(branch.topological_order(), circuit.topological_order());
+    }
+
+    #[test]
+    fn test_exact_branch_replay_context_collects_two_qubit_requests() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(1)]));
+        let entangler = circuit.add_gate_auto_wire(Gate::szz(&[(QubitId(0), QubitId(1))]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
+
+        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let requests = ExactBranchReplayContext { circuit: &circuit }
+            .replacement_branch_requests(&influence_map.locations)
+            .expect("two-qubit branch requests should be recoverable");
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].gate_node, entangler);
+        assert_eq!(requests[0].gate_type, GateType::SZZ);
+        let loc_qubits: Vec<_> = requests[0]
+            .loc_indices
+            .iter()
+            .flat_map(|&idx| influence_map.locations[idx].qubits.iter().copied())
+            .collect();
+        assert_eq!(loc_qubits, vec![QubitId(0), QubitId(1)]);
     }
 
     #[test]

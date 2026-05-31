@@ -1546,13 +1546,24 @@ pub struct NoiseConfig {
     /// This mirrors PECOS engine idle memory noise in a DEM-compatible Pauli
     /// channel: each explicit `Idle(duration, q)` contributes an independent
     /// Z fault with probability `p_idle_linear_rate * duration`.
+    ///
+    /// This is the legacy Z-axis alias for `p_idle_z_linear_rate`.
     pub p_idle_linear_rate: f64,
     /// Stochastic Z-memory error rate for the quadratic idle term.
     ///
-    /// This follows the incoherent PECOS engine convention for quadratic idle
-    /// dephasing: each explicit `Idle(duration, q)` contributes an independent
-    /// Z fault with probability `sin(p_idle_quadratic_rate * duration)^2`.
+    /// Each explicit `Idle(duration, q)` contributes a Z-fault probability
+    /// term `p_idle_quadratic_rate * duration^2`.
+    ///
+    /// This is the legacy Z-axis alias for `p_idle_z_quadratic_rate`.
     pub p_idle_quadratic_rate: f64,
+    /// Stochastic X-memory error rate linear in idle duration.
+    pub p_idle_x_linear_rate: f64,
+    /// Stochastic Y-memory error rate linear in idle duration.
+    pub p_idle_y_linear_rate: f64,
+    /// Stochastic X-memory error rate quadratic in idle duration.
+    pub p_idle_x_quadratic_rate: f64,
+    /// Stochastic Y-memory error rate quadratic in idle duration.
+    pub p_idle_y_quadratic_rate: f64,
 }
 
 /// Per-Pauli error probabilities for a single qubit.
@@ -1620,6 +1631,10 @@ impl Default for NoiseConfig {
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
+            p_idle_x_linear_rate: 0.0,
+            p_idle_y_linear_rate: 0.0,
+            p_idle_x_quadratic_rate: 0.0,
+            p_idle_y_quadratic_rate: 0.0,
         }
     }
 }
@@ -1641,6 +1656,10 @@ impl NoiseConfig {
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
+            p_idle_x_linear_rate: 0.0,
+            p_idle_y_linear_rate: 0.0,
+            p_idle_x_quadratic_rate: 0.0,
+            p_idle_y_quadratic_rate: 0.0,
         }
     }
 
@@ -1660,6 +1679,10 @@ impl NoiseConfig {
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
+            p_idle_x_linear_rate: 0.0,
+            p_idle_y_linear_rate: 0.0,
+            p_idle_x_quadratic_rate: 0.0,
+            p_idle_y_quadratic_rate: 0.0,
         }
     }
 
@@ -1679,6 +1702,10 @@ impl NoiseConfig {
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
+            p_idle_x_linear_rate: 0.0,
+            p_idle_y_linear_rate: 0.0,
+            p_idle_x_quadratic_rate: 0.0,
+            p_idle_y_quadratic_rate: 0.0,
         }
     }
 
@@ -1699,7 +1726,30 @@ impl NoiseConfig {
     /// Sets the quadratic stochastic Z-memory rate for explicit idle gates.
     #[must_use]
     pub fn set_idle_quadratic_rate(mut self, rate: f64) -> Self {
-        self.p_idle_quadratic_rate = rate;
+        self.p_idle_quadratic_rate = rate.max(0.0);
+        self
+    }
+
+    /// Sets the linear stochastic Pauli-memory rates for explicit idle gates.
+    #[must_use]
+    pub fn set_idle_pauli_linear_rates(mut self, px_rate: f64, py_rate: f64, pz_rate: f64) -> Self {
+        self.p_idle_x_linear_rate = px_rate.max(0.0);
+        self.p_idle_y_linear_rate = py_rate.max(0.0);
+        self.p_idle_linear_rate = pz_rate.max(0.0);
+        self
+    }
+
+    /// Sets the quadratic stochastic Pauli-memory rates for explicit idle gates.
+    #[must_use]
+    pub fn set_idle_pauli_quadratic_rates(
+        mut self,
+        px_rate: f64,
+        py_rate: f64,
+        pz_rate: f64,
+    ) -> Self {
+        self.p_idle_x_quadratic_rate = px_rate.max(0.0);
+        self.p_idle_y_quadratic_rate = py_rate.max(0.0);
+        self.p_idle_quadratic_rate = pz_rate.max(0.0);
         self
     }
 
@@ -1781,26 +1831,62 @@ impl NoiseConfig {
         self
     }
 
-    fn compose_z_fault(probs: PauliProbs, z_probability: f64) -> PauliProbs {
-        let z_probability = z_probability.clamp(0.0, 1.0);
-        if z_probability <= f64::EPSILON {
+    fn idle_memory_probability(linear_rate: f64, quadratic_rate: f64, duration: f64) -> f64 {
+        let duration = duration.max(0.0);
+        (linear_rate.max(0.0) * duration + quadratic_rate.max(0.0) * duration * duration)
+            .clamp(0.0, 1.0)
+    }
+
+    /// Dedicated idle-memory Pauli probabilities for `Idle(duration, q)`.
+    #[must_use]
+    pub fn idle_memory_pauli_probs(&self, duration: f64) -> PauliProbs {
+        let mut probs = PauliProbs {
+            px: Self::idle_memory_probability(
+                self.p_idle_x_linear_rate,
+                self.p_idle_x_quadratic_rate,
+                duration,
+            ),
+            py: Self::idle_memory_probability(
+                self.p_idle_y_linear_rate,
+                self.p_idle_y_quadratic_rate,
+                duration,
+            ),
+            pz: Self::idle_memory_probability(
+                self.p_idle_linear_rate,
+                self.p_idle_quadratic_rate,
+                duration,
+            ),
+        };
+        let total = probs.total();
+        if total > 1.0 {
+            probs.px /= total;
+            probs.py /= total;
+            probs.pz /= total;
+        }
+        probs
+    }
+
+    fn compose_pauli_channel(probs: PauliProbs, channel: PauliProbs) -> PauliProbs {
+        if channel.total() <= f64::EPSILON {
             return probs;
         }
 
         let p_identity = (1.0 - probs.total()).max(0.0);
+        let c_identity = (1.0 - channel.total()).max(0.0);
         PauliProbs {
-            px: probs.px * (1.0 - z_probability) + probs.py * z_probability,
-            py: probs.py * (1.0 - z_probability) + probs.px * z_probability,
-            pz: probs.pz * (1.0 - z_probability) + p_identity * z_probability,
+            px: p_identity * channel.px
+                + probs.px * c_identity
+                + probs.py * channel.pz
+                + probs.pz * channel.py,
+            py: p_identity * channel.py
+                + probs.py * c_identity
+                + probs.px * channel.pz
+                + probs.pz * channel.px,
+            pz: p_identity * channel.pz
+                + probs.pz * c_identity
+                + probs.px * channel.py
+                + probs.py * channel.px,
         }
-    }
-
-    fn idle_memory_z_probability(&self, duration: f64) -> f64 {
-        let duration = duration.max(0.0);
-        let linear = (self.p_idle_linear_rate * duration).clamp(0.0, 1.0);
-        let quadratic = (self.p_idle_quadratic_rate * duration).sin().powi(2);
-
-        linear + quadratic - 2.0 * linear * quadratic
     }
 
     /// Compute per-Pauli idle noise probabilities for a given duration.
@@ -1814,7 +1900,7 @@ impl NoiseConfig {
         } else {
             PauliProbs::depolarizing((self.p_idle * duration).min(1.0))
         };
-        Self::compose_z_fault(probs, self.idle_memory_z_probability(duration))
+        Self::compose_pauli_channel(probs, self.idle_memory_pauli_probs(duration))
     }
 
     /// Returns true when idle locations use the dedicated idle-noise model.
@@ -1826,6 +1912,10 @@ impl NoiseConfig {
             || matches!((self.t1, self.t2), (Some(_), Some(_)))
             || self.p_idle_linear_rate > 0.0
             || self.p_idle_quadratic_rate.abs() > f64::EPSILON
+            || self.p_idle_x_linear_rate > 0.0
+            || self.p_idle_y_linear_rate > 0.0
+            || self.p_idle_x_quadratic_rate > 0.0
+            || self.p_idle_y_quadratic_rate > 0.0
     }
 }
 

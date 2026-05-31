@@ -222,7 +222,7 @@ fn linear_memory_z_noise_uses_idle_duration_in_dem() {
 }
 
 #[test]
-fn idle_memory_z_probabilities_match_linear_and_quadratic_model() {
+fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
     let linear = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
         .set_idle_linear_rate(1.0e-3)
         .idle_pauli_probs(20.0);
@@ -231,11 +231,19 @@ fn idle_memory_z_probabilities_match_linear_and_quadratic_model() {
     assert!((linear.pz - 0.02).abs() < 1e-15);
 
     let quadratic = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
-        .set_idle_quadratic_rate(0.5)
+        .set_idle_quadratic_rate(0.1)
         .idle_pauli_probs(2.0);
     assert_eq!(quadratic.px, 0.0);
     assert_eq!(quadratic.py, 0.0);
-    assert!((quadratic.pz - 1.0_f64.sin().powi(2)).abs() < 1e-15);
+    assert!((quadratic.pz - 0.4).abs() < 1e-15);
+
+    let pauli = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_pauli_linear_rates(1.0e-3, 2.0e-3, 3.0e-3)
+        .set_idle_pauli_quadratic_rates(1.0e-4, 2.0e-4, 3.0e-4)
+        .idle_memory_pauli_probs(10.0);
+    assert!((pauli.px - 0.02).abs() < 1e-15);
+    assert!((pauli.py - 0.04).abs() < 1e-15);
+    assert!((pauli.pz - 0.06).abs() < 1e-15);
 }
 
 #[test]

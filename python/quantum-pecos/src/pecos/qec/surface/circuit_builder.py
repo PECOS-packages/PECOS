@@ -21,6 +21,9 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, TypedDict
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 # `_batched_stabilizers` and `_normalize_ancilla_budget` are imported from
 # the shared `_ancilla_batching` helper so this builder and the Guppy
 # emitter (`pecos.guppy.surface`) compute identical batches by
@@ -1723,6 +1726,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     *,
     p1: float = 0.01,
     p2: float = 0.01,
+    p2_weights: Mapping[str, float] | None = None,
     p_meas: float = 0.01,
     p_prep: float = 0.01,
 ) -> str:
@@ -1739,6 +1743,9 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         tc: TickCircuit with detector/observable metadata
         p1: Single-qubit depolarizing error rate
         p2: Two-qubit depolarizing error rate
+        p2_weights: Optional relative probabilities over the 15 non-identity
+            two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
+            1.0; ``p2`` remains the total two-qubit error rate.
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
 
@@ -1910,9 +1917,34 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     # Single-qubit Paulis for depolarizing noise
     single_paulis = ["X", "Y", "Z"]
     # Two-qubit Paulis (non-identity on at least one qubit)
-    two_paulis = [
-        (p1, p2) for p1 in ["I", "X", "Y", "Z"] for p2 in ["I", "X", "Y", "Z"] if not (p1 == "I" and p2 == "I")
-    ]
+    two_pauli_labels = tuple(
+        f"{p_ctrl}{p_targ}"
+        for p_ctrl in ("I", "X", "Y", "Z")
+        for p_targ in ("I", "X", "Y", "Z")
+        if not (p_ctrl == "I" and p_targ == "I")
+    )
+    if p2_weights is None:
+        two_paulis = tuple((label[0], label[1], 1.0 / 15.0) for label in two_pauli_labels)
+    else:
+        from math import isfinite
+
+        weights = {str(label).upper(): float(weight) for label, weight in p2_weights.items()}
+        unknown_labels = sorted(set(weights) - set(two_pauli_labels))
+        if unknown_labels:
+            message = f"p2_weights contains invalid Pauli labels: {unknown_labels}"
+            raise ValueError(message)
+        if any(not isfinite(weight) or weight < 0.0 for weight in weights.values()):
+            message = "p2_weights values must be finite and non-negative"
+            raise ValueError(message)
+        weight_sum = sum(weights.values())
+        if abs(weight_sum - 1.0) >= 1.0e-6:
+            message = f"p2_weights relative probabilities must sum to 1.0, got {weight_sum}"
+            raise ValueError(message)
+        two_paulis = tuple(
+            (label[0], label[1], weight)
+            for label, weight in sorted(weights.items())
+            if weight > 0.0
+        )
 
     # Process each gate as a potential error location
     for op_idx, (_tick_idx, gate_name, qubits, meas_idx) in enumerate(circuit_ops):
@@ -1936,7 +1968,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         elif gate_name == "CX" and p2 > 0:
             # Two-qubit gate error: depolarizing (each Pauli pair with prob p2/15)
             ctrl, targ = qubits[0], qubits[1]
-            for p_ctrl, p_targ in two_paulis:
+            for p_ctrl, p_targ, relative_probability in two_paulis:
                 frame = {}
                 if p_ctrl != "I":
                     frame[ctrl] = p_ctrl
@@ -1945,7 +1977,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
                 dets, obs = simulate_error(op_idx + 1, frame)
                 if dets or obs:
                     key = (frozenset(dets), frozenset(obs))
-                    error_mechanisms[key] += p2 / 15
+                    error_mechanisms[key] += p2 * relative_probability
 
         elif gate_name == "MZ" and p_meas > 0:
             # Measurement error: bit flip (affects this measurement directly)
@@ -2137,6 +2169,7 @@ def generate_dem_from_tick_circuit(
     *,
     p1: float = 0.01,
     p2: float = 0.01,
+    p2_weights: Mapping[str, float] | None = None,
     p_meas: float = 0.01,
     p_prep: float = 0.01,
     p_idle: float | None = None,
@@ -2144,6 +2177,12 @@ def generate_dem_from_tick_circuit(
     t2: float | None = None,
     p_idle_linear_rate: float | None = None,
     p_idle_quadratic_rate: float | None = None,
+    p_idle_x_linear_rate: float | None = None,
+    p_idle_y_linear_rate: float | None = None,
+    p_idle_z_linear_rate: float | None = None,
+    p_idle_x_quadratic_rate: float | None = None,
+    p_idle_y_quadratic_rate: float | None = None,
+    p_idle_z_quadratic_rate: float | None = None,
     decompose_errors: bool = True,
     maximal_decomposition: bool = False,
 ) -> str:
@@ -2169,15 +2208,25 @@ def generate_dem_from_tick_circuit(
         tc: TickCircuit with detector/observable metadata (required)
         p1: Single-qubit depolarizing error rate
         p2: Two-qubit depolarizing error rate
+        p2_weights: Optional relative probabilities over the 15 non-identity
+            two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
+            1.0; ``p2`` remains the total two-qubit error rate.
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
         p_idle: Optional idle noise rate per explicit idle-gate time unit.
             The caller is responsible for inserting idle gates where needed.
         t1: Optional T1 relaxation time for explicit idle gates.
         t2: Optional T2 dephasing time for explicit idle gates.
-        p_idle_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
-        p_idle_quadratic_rate: Optional stochastic Z-memory rate using
-            ``sin(rate * duration) ** 2``.
+        p_idle_linear_rate: Optional legacy alias for stochastic Z-memory rate
+            linear in idle duration.
+        p_idle_quadratic_rate: Optional legacy alias for stochastic Z-memory rate
+            quadratic in idle duration.
+        p_idle_x_linear_rate: Optional stochastic X-memory rate linear in idle duration.
+        p_idle_y_linear_rate: Optional stochastic Y-memory rate linear in idle duration.
+        p_idle_z_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
+        p_idle_x_quadratic_rate: Optional stochastic X-memory rate quadratic in idle duration.
+        p_idle_y_quadratic_rate: Optional stochastic Y-memory rate quadratic in idle duration.
+        p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
         decompose_errors: If True (default), decompose hyperedge errors into
             graphlike components using the `^` separator. Set to False to
             output raw hyperedges. Ignored if maximal_decomposition=True.
@@ -2217,11 +2266,18 @@ def generate_dem_from_tick_circuit(
         p2,
         p_meas,
         p_prep,
+        p2_weights=p2_weights,
         p_idle=p_idle,
         t1=t1,
         t2=t2,
         p_idle_linear_rate=p_idle_linear_rate,
         p_idle_quadratic_rate=p_idle_quadratic_rate,
+        p_idle_x_linear_rate=p_idle_x_linear_rate,
+        p_idle_y_linear_rate=p_idle_y_linear_rate,
+        p_idle_z_linear_rate=p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
     )
     builder.with_num_measurements(num_measurements)
     builder.with_measurement_order(measurement_order)

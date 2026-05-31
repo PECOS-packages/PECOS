@@ -36,9 +36,12 @@ directly to ``from_circuit`` / ``DemSampler.from_circuit`` /
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
+
+P2Weights = Mapping[str, float]
 
 
 class _DetectorErrorModelMixin:
@@ -57,6 +60,7 @@ class _DetectorErrorModelMixin:
         num_measurements: int | None = None,
         p1: float = 0.001,
         p2: float = 0.01,
+        p2_weights: P2Weights | None = None,
         p_meas: float = 0.001,
         p_prep: float = 0.001,
         p_idle: float | None = None,
@@ -64,6 +68,12 @@ class _DetectorErrorModelMixin:
         t2: float | None = None,
         p_idle_linear_rate: float | None = None,
         p_idle_quadratic_rate: float | None = None,
+        p_idle_x_linear_rate: float | None = None,
+        p_idle_y_linear_rate: float | None = None,
+        p_idle_z_linear_rate: float | None = None,
+        p_idle_x_quadratic_rate: float | None = None,
+        p_idle_y_quadratic_rate: float | None = None,
+        p_idle_z_quadratic_rate: float | None = None,
         runtime: object | None = None,
         seed: int = 0,
     ) -> _RustDetectorErrorModel:
@@ -133,14 +143,24 @@ class _DetectorErrorModelMixin:
                 circuit; if given, it must match the traced count.
             p1: Single-qubit gate depolarizing rate.
             p2: Two-qubit gate depolarizing rate.
+            p2_weights: Optional relative probabilities over the 15 non-identity
+                two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum
+                to 1.0; ``p2`` remains the total two-qubit error rate.
             p_meas: Measurement flip rate.
             p_prep: Preparation (reset) error rate.
             p_idle: Optional uniform depolarizing idle-noise rate per idle duration.
             t1: Optional T1 relaxation time for explicit idle gates.
             t2: Optional T2 dephasing time for explicit idle gates.
-            p_idle_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
-            p_idle_quadratic_rate: Optional stochastic Z-memory rate using
-                ``sin(rate * duration) ** 2``.
+            p_idle_linear_rate: Optional legacy alias for stochastic Z-memory rate
+                linear in idle duration.
+            p_idle_quadratic_rate: Optional legacy alias for stochastic Z-memory rate
+                quadratic in idle duration.
+            p_idle_x_linear_rate: Optional stochastic X-memory rate linear in idle duration.
+            p_idle_y_linear_rate: Optional stochastic Y-memory rate linear in idle duration.
+            p_idle_z_linear_rate: Optional stochastic Z-memory rate linear in idle duration.
+            p_idle_x_quadratic_rate: Optional stochastic X-memory rate quadratic in idle duration.
+            p_idle_y_quadratic_rate: Optional stochastic Y-memory rate quadratic in idle duration.
+            p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
             runtime: Optional Selene runtime selector/plugin. ``None`` selects
                 the default Selene runtime. Runtime plugin objects are passed
                 through to ``pecos.selene_engine(runtime)``.
@@ -241,6 +261,7 @@ class _DetectorErrorModelMixin:
             tc,
             p1=p1,
             p2=p2,
+            p2_weights=p2_weights,
             p_meas=p_meas,
             p_prep=p_prep,
             p_idle=p_idle,
@@ -248,6 +269,12 @@ class _DetectorErrorModelMixin:
             t2=t2,
             p_idle_linear_rate=p_idle_linear_rate,
             p_idle_quadratic_rate=p_idle_quadratic_rate,
+            p_idle_x_linear_rate=p_idle_x_linear_rate,
+            p_idle_y_linear_rate=p_idle_y_linear_rate,
+            p_idle_z_linear_rate=p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
         )
 
 

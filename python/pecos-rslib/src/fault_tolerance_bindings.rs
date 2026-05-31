@@ -51,7 +51,8 @@ use pecos_qec::fault_tolerance::dem_builder::{
     DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
     DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
     EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
-    FaultSourceType as RustFaultSourceType, NoiseConfig, ParsedDem as RustParsedDem,
+    FaultSourceType as RustFaultSourceType, NoiseConfig, PAULI_2Q_ORDER,
+    ParsedDem as RustParsedDem, PauliWeights,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
@@ -66,11 +67,62 @@ use pecos_quantum::DagCircuit;
 use pecos_quantum::QubitId;
 use pyo3::Py;
 use pyo3::prelude::*;
+use std::collections::BTreeMap;
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
 
-fn apply_idle_noise_options(
+fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
+    use pecos_core::pauli::{X, Y, Z};
+
+    let mut entries = Vec::with_capacity(weights.len());
+    let mut sum = 0.0;
+    for (label, weight) in weights {
+        let label = label.trim().to_ascii_uppercase();
+        if !PAULI_2Q_ORDER.contains(&label.as_str()) {
+            let msg = format!(
+                "p2_weights keys must be one of {:?}, got {label:?}",
+                PAULI_2Q_ORDER
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        if !weight.is_finite() || weight < 0.0 {
+            let msg =
+                format!("p2_weights[{label:?}] must be finite and non-negative, got {weight}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        let mut pauli = None;
+        for (qubit, ch) in label.chars().enumerate() {
+            let term = match ch {
+                'I' => None,
+                'X' => Some(X(qubit)),
+                'Y' => Some(Y(qubit)),
+                'Z' => Some(Z(qubit)),
+                _ => unreachable!("validated p2_weights label contains only I/X/Y/Z"),
+            };
+            pauli = match (pauli, term) {
+                (None, None) => None,
+                (Some(existing), None) => Some(existing),
+                (None, Some(term)) => Some(term),
+                (Some(existing), Some(term)) => Some(existing & term),
+            };
+        }
+        let Some(pauli) = pauli else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "p2_weights cannot contain the identity pair 'II'",
+            ));
+        };
+        sum += weight;
+        entries.push((pauli, weight));
+    }
+    if (sum - 1.0).abs() >= 1.0e-6 {
+        let msg = format!("p2_weights relative probabilities must sum to 1.0, got {sum}");
+        return Err(pyo3::exceptions::PyValueError::new_err(msg));
+    }
+    Ok(PauliWeights::new(entries))
+}
+
+fn apply_noise_options(
     mut noise: NoiseConfig,
     p_idle: Option<f64>,
     t1: Option<f64>,
@@ -78,7 +130,14 @@ fn apply_idle_noise_options(
     idle_rz: Option<f64>,
     p_idle_linear_rate: Option<f64>,
     p_idle_quadratic_rate: Option<f64>,
-) -> NoiseConfig {
+    p_idle_x_linear_rate: Option<f64>,
+    p_idle_y_linear_rate: Option<f64>,
+    p_idle_z_linear_rate: Option<f64>,
+    p_idle_x_quadratic_rate: Option<f64>,
+    p_idle_y_quadratic_rate: Option<f64>,
+    p_idle_z_quadratic_rate: Option<f64>,
+    p2_weights: Option<BTreeMap<String, f64>>,
+) -> PyResult<NoiseConfig> {
     noise.p_idle = p_idle.unwrap_or(0.0);
     if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
         noise = noise.set_t1_t2(t1_val, t2_val);
@@ -92,7 +151,28 @@ fn apply_idle_noise_options(
     if let Some(rate) = p_idle_quadratic_rate {
         noise = noise.set_idle_quadratic_rate(rate);
     }
-    noise
+    if let Some(rate) = p_idle_x_linear_rate {
+        noise.p_idle_x_linear_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_y_linear_rate {
+        noise.p_idle_y_linear_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_z_linear_rate {
+        noise.p_idle_linear_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_x_quadratic_rate {
+        noise.p_idle_x_quadratic_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_y_quadratic_rate {
+        noise.p_idle_y_quadratic_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_z_quadratic_rate {
+        noise.p_idle_quadratic_rate = rate.max(0.0);
+    }
+    if let Some(weights) = p2_weights {
+        noise = noise.set_p2_weights(parse_p2_weights(weights)?);
+    }
+    Ok(noise)
 }
 
 // Adapter for decoder factories that require `Send + Sync` trait objects.
@@ -977,7 +1057,7 @@ impl PyDetectorErrorModel {
     ///     >>> print(dem.to_string())
     ///     >>> sampler = dem.to_sampler()
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
@@ -991,10 +1071,17 @@ impl PyDetectorErrorModel {
         idle_rz: Option<f64>,
         p_idle_linear_rate: Option<f64>,
         p_idle_quadratic_rate: Option<f64>,
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p2_weights: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
         use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
 
-        let noise = apply_idle_noise_options(
+        let noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
             p_idle,
             t1,
@@ -1002,7 +1089,14 @@ impl PyDetectorErrorModel {
             idle_rz,
             p_idle_linear_rate,
             p_idle_quadratic_rate,
-        );
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p2_weights,
+        )?;
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
         {
@@ -1311,7 +1405,7 @@ impl PyDemBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -1325,8 +1419,15 @@ impl PyDemBuilder {
         idle_rz: Option<f64>,
         p_idle_linear_rate: Option<f64>,
         p_idle_quadratic_rate: Option<f64>,
-    ) -> PyRefMut<'_, Self> {
-        slf.noise = apply_idle_noise_options(
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p2_weights: Option<BTreeMap<String, f64>>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        slf.noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
             p_idle,
             t1,
@@ -1334,8 +1435,15 @@ impl PyDemBuilder {
             idle_rz,
             p_idle_linear_rate,
             p_idle_quadratic_rate,
-        );
-        slf
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p2_weights,
+        )?;
+        Ok(slf)
     }
 
     /// Set the detector definitions from JSON.
@@ -3178,7 +3286,7 @@ impl PyDemSampler {
     ///     >>> sampler = DemSampler.from_circuit(dag, p1=0.001, p2=0.01)
     ///     >>> sampler = DemSampler.from_circuit(tc, p2=0.01)  # TickCircuit also works
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
@@ -3192,8 +3300,15 @@ impl PyDemSampler {
         idle_rz: Option<f64>,
         p_idle_linear_rate: Option<f64>,
         p_idle_quadratic_rate: Option<f64>,
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p2_weights: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
-        let noise = apply_idle_noise_options(
+        let noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
             p_idle,
             t1,
@@ -3201,7 +3316,14 @@ impl PyDemSampler {
             idle_rz,
             p_idle_linear_rate,
             p_idle_quadratic_rate,
-        );
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p2_weights,
+        )?;
 
         // Accept both DagCircuit and TickCircuit
         if let Ok(dag) =
@@ -3311,7 +3433,7 @@ impl PyDemSampler {
     ///
     /// The `observables` argument defines observables.
     #[staticmethod]
-    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
+    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
@@ -3327,8 +3449,15 @@ impl PyDemSampler {
         idle_rz: Option<f64>,
         p_idle_linear_rate: Option<f64>,
         p_idle_quadratic_rate: Option<f64>,
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p2_weights: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
-        let noise = apply_idle_noise_options(
+        let noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
             p_idle,
             t1,
@@ -3336,7 +3465,14 @@ impl PyDemSampler {
             idle_rz,
             p_idle_linear_rate,
             p_idle_quadratic_rate,
-        );
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p2_weights,
+        )?;
         let inner = RustNewDemSamplerBuilder::new(&influence_map.inner)
             .with_noise_config(noise)
             .with_detectors(detectors, observables)
@@ -3789,7 +3925,7 @@ impl PyDemSamplerBuilder {
     }
 
     /// Set noise parameters.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p2_weights=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -3803,8 +3939,15 @@ impl PyDemSamplerBuilder {
         idle_rz: Option<f64>,
         p_idle_linear_rate: Option<f64>,
         p_idle_quadratic_rate: Option<f64>,
-    ) -> PyRefMut<'_, Self> {
-        slf.noise = apply_idle_noise_options(
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p2_weights: Option<BTreeMap<String, f64>>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        slf.noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
             p_idle,
             t1,
@@ -3812,8 +3955,15 @@ impl PyDemSamplerBuilder {
             idle_rz,
             p_idle_linear_rate,
             p_idle_quadratic_rate,
-        );
-        slf
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p2_weights,
+        )?;
+        Ok(slf)
     }
 
     /// Set detector definitions from JSON.

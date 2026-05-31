@@ -207,6 +207,87 @@ def test_lowered_runtime_idles_can_drive_memory_noise_dem() -> None:
     assert dem.num_contributions > 0
 
 
+def test_lowered_runtime_idles_accept_axis_memory_noise_dem() -> None:
+    from pecos.qec import DetectorErrorModel
+
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [0, 0]}}],
+            "lowered_quantum_ops": [
+                {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "Idle", "qubits": [0], "angles": [], "params": [10e-9]},
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "params": []},
+            ],
+        },
+    ]
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
+    tc.set_meta("observables", "[]")
+    tc.set_meta("num_measurements", "1")
+
+    dem = DetectorErrorModel.from_circuit(
+        tc,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        p_idle_x_linear_rate=1.0e-3,
+        p_idle_y_quadratic_rate=1.0e-4,
+    )
+
+    assert dem.num_contributions > 0
+
+
+def test_from_circuit_accepts_biased_p2_weights() -> None:
+    from pecos.qec import DetectorErrorModel
+
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [1, 0]}}],
+            "lowered_quantum_ops": [
+                {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "PZ", "qubits": [1], "angles": [], "params": []},
+                {"gate_type": "CX", "qubits": [0, 1], "angles": [], "params": []},
+                {"gate_type": "MZ", "qubits": [1], "angles": [], "params": []},
+            ],
+        },
+    ]
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
+    tc.set_meta("observables", "[]")
+    tc.set_meta("num_measurements", "1")
+    pauli_labels = (
+        "IX",
+        "IY",
+        "IZ",
+        "XI",
+        "XX",
+        "XY",
+        "XZ",
+        "YI",
+        "YX",
+        "YY",
+        "YZ",
+        "ZI",
+        "ZX",
+        "ZY",
+        "ZZ",
+    )
+    weights = dict.fromkeys(pauli_labels, 0.0)
+    weights["IX"] = 1.0
+
+    dem = DetectorErrorModel.from_circuit(
+        tc,
+        p1=0.0,
+        p2=0.01,
+        p2_weights=weights,
+        p_meas=0.0,
+        p_prep=0.0,
+    )
+
+    assert dem.num_contributions > 0
+
+
 def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
     """A trace where every quantum-carrying chunk is also lowered is accepted
     (this is the real Selene shape; the byte-identical regressions exercise it

@@ -43,6 +43,7 @@ For circuit-level decoding with MWPM:
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import cache
@@ -55,6 +56,9 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
+
+
+P2Weights = Mapping[str, float] | Sequence[tuple[str, float]]
 
 
 def _validate_probability(name: str, value: float) -> float:
@@ -87,18 +91,27 @@ class NoiseModel:
     Attributes:
         p1: Single-qubit gate error rate.
         p2: Two-qubit gate error rate.
+        p2_weights: Optional relative probabilities over the 15 non-identity
+            two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
+            1.0; ``p2`` remains the total two-qubit error rate.
         p_meas: Measurement error rate.
         p_prep: Initialization error rate.
         p_idle: Idle noise rate per time unit (uniform depolarizing).
         t1: T1 relaxation time for idle noise (same units as idle duration).
         t2: T2 dephasing time (must satisfy t2 <= 2*t1).
-        p_idle_linear_rate: Stochastic Z-memory rate linear in idle duration.
-        p_idle_quadratic_rate: Stochastic Z-memory rate using
-            ``sin(rate * duration) ** 2``.
+        p_idle_linear_rate: Legacy alias for stochastic Z-memory rate linear in idle duration.
+        p_idle_quadratic_rate: Legacy alias for stochastic Z-memory rate quadratic in idle duration.
+        p_idle_x_linear_rate: Stochastic X-memory rate linear in idle duration.
+        p_idle_y_linear_rate: Stochastic Y-memory rate linear in idle duration.
+        p_idle_z_linear_rate: Stochastic Z-memory rate linear in idle duration.
+        p_idle_x_quadratic_rate: Stochastic X-memory rate quadratic in idle duration.
+        p_idle_y_quadratic_rate: Stochastic Y-memory rate quadratic in idle duration.
+        p_idle_z_quadratic_rate: Stochastic Z-memory rate quadratic in idle duration.
     """
 
     p1: float = 0.0
     p2: float = 0.0
+    p2_weights: P2Weights | None = None
     p_meas: float = 0.0
     p_prep: float = 0.0
     p_idle: float | None = None
@@ -106,6 +119,38 @@ class NoiseModel:
     t2: float | None = None
     p_idle_linear_rate: float | None = None
     p_idle_quadratic_rate: float | None = None
+    p_idle_x_linear_rate: float | None = None
+    p_idle_y_linear_rate: float | None = None
+    p_idle_z_linear_rate: float | None = None
+    p_idle_x_quadratic_rate: float | None = None
+    p_idle_y_quadratic_rate: float | None = None
+    p_idle_z_quadratic_rate: float | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize cache-sensitive inputs after dataclass initialization."""
+        self.p2_weights = _normalize_p2_weights(self.p2_weights)
+
+    @property
+    def effective_p_idle_z_linear_rate(self) -> float | None:
+        """Z-axis linear idle rate, accepting the legacy alias."""
+        return self.p_idle_z_linear_rate if self.p_idle_z_linear_rate is not None else self.p_idle_linear_rate
+
+    @property
+    def effective_p_idle_z_quadratic_rate(self) -> float | None:
+        """Z-axis quadratic idle rate, accepting the legacy alias."""
+        return self.p_idle_z_quadratic_rate if self.p_idle_z_quadratic_rate is not None else self.p_idle_quadratic_rate
+
+    @property
+    def idle_memory_rates(self) -> tuple[float | None, ...]:
+        """All dedicated Pauli idle-memory rates that require explicit idles."""
+        return (
+            self.p_idle_x_linear_rate,
+            self.p_idle_y_linear_rate,
+            self.effective_p_idle_z_linear_rate,
+            self.p_idle_x_quadratic_rate,
+            self.p_idle_y_quadratic_rate,
+            self.effective_p_idle_z_quadratic_rate,
+        )
 
     @staticmethod
     def uniform(physical_error_rate: float) -> NoiseModel:
@@ -122,8 +167,7 @@ class NoiseModel:
             and self.p_meas == 0.0
             and self.p_prep == 0.0
             and (self.p_idle is None or self.p_idle == 0.0)
-            and (self.p_idle_linear_rate is None or self.p_idle_linear_rate == 0.0)
-            and (self.p_idle_quadratic_rate is None or self.p_idle_quadratic_rate == 0.0)
+            and all(rate is None or rate == 0.0 for rate in self.idle_memory_rates)
         )
 
     @property
@@ -132,11 +176,20 @@ class NoiseModel:
         rates = [self.p1, self.p2, self.p_meas, self.p_prep]
         if self.p_idle is not None:
             rates.append(self.p_idle)
-        if self.p_idle_linear_rate is not None:
-            rates.append(self.p_idle_linear_rate)
-        if self.p_idle_quadratic_rate is not None:
-            rates.append(self.p_idle_quadratic_rate)
+        rates.extend(rate for rate in self.idle_memory_rates if rate is not None)
         return max(rates)
+
+
+def _normalize_p2_weights(p2_weights: P2Weights | None) -> tuple[tuple[str, float], ...] | None:
+    if p2_weights is None:
+        return None
+    items = p2_weights.items() if isinstance(p2_weights, Mapping) else p2_weights
+    return tuple(sorted((str(label).upper(), float(weight)) for label, weight in items))
+
+
+def _p2_weights_dict(p2_weights: P2Weights | None) -> dict[str, float] | None:
+    normalized = _normalize_p2_weights(p2_weights)
+    return None if normalized is None else dict(normalized)
 
 
 @dataclass
@@ -1039,6 +1092,12 @@ def _uses_dedicated_idle_noise(
     t2: float | None,
     p_idle_linear_rate: float | None = None,
     p_idle_quadratic_rate: float | None = None,
+    p_idle_x_linear_rate: float | None = None,
+    p_idle_y_linear_rate: float | None = None,
+    p_idle_z_linear_rate: float | None = None,
+    p_idle_x_quadratic_rate: float | None = None,
+    p_idle_y_quadratic_rate: float | None = None,
+    p_idle_z_quadratic_rate: float | None = None,
 ) -> bool:
     """Return True when noise parameters require explicit idle locations."""
     return (
@@ -1046,6 +1105,17 @@ def _uses_dedicated_idle_noise(
         or (t1 is not None and t2 is not None)
         or (p_idle_linear_rate is not None and p_idle_linear_rate > 0.0)
         or (p_idle_quadratic_rate is not None and p_idle_quadratic_rate != 0.0)
+        or any(
+            rate is not None and rate > 0.0
+            for rate in (
+                p_idle_x_linear_rate,
+                p_idle_y_linear_rate,
+                p_idle_z_linear_rate,
+                p_idle_x_quadratic_rate,
+                p_idle_y_quadratic_rate,
+                p_idle_z_quadratic_rate,
+            )
+        )
     )
 
 
@@ -1057,6 +1127,12 @@ def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
         t2=noise.t2,
         p_idle_linear_rate=noise.p_idle_linear_rate,
         p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+        p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
+        p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
+        p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
     )
 
 
@@ -1152,6 +1228,13 @@ def _dem_string_from_cached_surface_topology(
             t2=noise.t2,
             p_idle_linear_rate=noise.p_idle_linear_rate,
             p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+            p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
+            p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
+            p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+            p2_weights=_p2_weights_dict(noise.p2_weights),
         )
         .with_num_measurements(topology.num_measurements)
         .with_measurement_order(list(topology.measurement_order))
@@ -1174,11 +1257,18 @@ def _cached_surface_native_dem_string(
     p_meas: float,
     p_prep: float,
     decompose_errors: bool,
+    p2_weights: tuple[tuple[str, float], ...] | None = None,
     p_idle: float | None = None,
     t1: float | None = None,
     t2: float | None = None,
     p_idle_linear_rate: float | None = None,
     p_idle_quadratic_rate: float | None = None,
+    p_idle_x_linear_rate: float | None = None,
+    p_idle_y_linear_rate: float | None = None,
+    p_idle_z_linear_rate: float | None = None,
+    p_idle_x_quadratic_rate: float | None = None,
+    p_idle_y_quadratic_rate: float | None = None,
+    p_idle_z_quadratic_rate: float | None = None,
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
     include_idle_gates = _uses_dedicated_idle_noise(
@@ -1187,6 +1277,12 @@ def _cached_surface_native_dem_string(
         t2=t2,
         p_idle_linear_rate=p_idle_linear_rate,
         p_idle_quadratic_rate=p_idle_quadratic_rate,
+        p_idle_x_linear_rate=p_idle_x_linear_rate,
+        p_idle_y_linear_rate=p_idle_y_linear_rate,
+        p_idle_z_linear_rate=p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
     )
     topology = _cached_surface_native_topology(
         patch_key,
@@ -1201,6 +1297,7 @@ def _cached_surface_native_dem_string(
         NoiseModel(
             p1=p1,
             p2=p2,
+            p2_weights=p2_weights,
             p_meas=p_meas,
             p_prep=p_prep,
             p_idle=p_idle,
@@ -1208,6 +1305,12 @@ def _cached_surface_native_dem_string(
             t2=t2,
             p_idle_linear_rate=p_idle_linear_rate,
             p_idle_quadratic_rate=p_idle_quadratic_rate,
+            p_idle_x_linear_rate=p_idle_x_linear_rate,
+            p_idle_y_linear_rate=p_idle_y_linear_rate,
+            p_idle_z_linear_rate=p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
         ),
         decompose_errors=decompose_errors,
     )
@@ -1259,6 +1362,13 @@ def _build_native_sampler_from_cached_surface_topology(
             t2=noise.t2,
             p_idle_linear_rate=noise.p_idle_linear_rate,
             p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+            p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
+            p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
+            p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+            p2_weights=_p2_weights_dict(noise.p2_weights),
         )
         # Remap sampling_model for NativeSampler dispatch
         sampling_model = "influence_dem"
@@ -1359,11 +1469,18 @@ def generate_circuit_level_dem_from_builder(
         noise.p_meas,
         noise.p_prep,
         decompose_errors=decompose_errors,
+        p2_weights=noise.p2_weights,
         p_idle=noise.p_idle,
         t1=noise.t1,
         t2=noise.t2,
         p_idle_linear_rate=noise.p_idle_linear_rate,
         p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+        p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
+        p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
+        p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
     )
 
 
@@ -3027,11 +3144,18 @@ def build_native_sampler(
             noise.p_meas,
             noise.p_prep,
             decompose_errors=True,
+            p2_weights=noise.p2_weights,
             p_idle=noise.p_idle,
             t1=noise.t1,
             t2=noise.t2,
             p_idle_linear_rate=noise.p_idle_linear_rate,
             p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+            p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
+            p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
+            p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(

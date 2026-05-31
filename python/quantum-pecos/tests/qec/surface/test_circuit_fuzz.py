@@ -849,15 +849,15 @@ class TestLogicalSubgraphAccuracy:
         # logical-subgraph decoder with FB
         sc = b.stab_coords()
         decoder = LogicalSubgraphDecoder(dem_str, sc, "fusion_blossom_serial")
-        lsd_errors = sum(
+        subgraph_errors = sum(
             1
             for i in range(20000)
             if decoder.decode(det_events[i].tolist()) != sum((1 << j) for j in range(obs_flips.shape[1]) if obs_flips[i, j])
         )
-        lsd_ler = lsd_errors / 20000
+        subgraph_ler = subgraph_errors / 20000
 
         # logical-subgraph decoder should be at least as good (usually much better)
-        assert lsd_ler <= naive_ler * 1.5 + 0.001, f"logical-subgraph decoder ({lsd_ler:.5f}) much worse than naive ({naive_ler:.5f})"
+        assert subgraph_ler <= naive_ler * 1.5 + 0.001, f"logical-subgraph decoder ({subgraph_ler:.5f}) much worse than naive ({naive_ler:.5f})"
 
 
 # ---------------------------------------------------------------------------

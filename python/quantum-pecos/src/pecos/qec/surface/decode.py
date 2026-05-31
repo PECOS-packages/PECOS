@@ -453,8 +453,16 @@ def generate_surface_code_dem(
     return "\n".join(lines)
 
 
-def _copy_surface_tick_circuit_metadata(source_tc: Any, target_tc: Any) -> None:
+def _copy_surface_tick_circuit_metadata(
+    source_tc: Any,
+    target_tc: Any,
+    *,
+    measurement_index_remap: dict[int, int] | None = None,
+) -> None:
     """Copy the surface-level metadata needed by the native DEM/sampler builders."""
+    num_measurements_text = source_tc.get_meta("num_measurements")
+    num_measurements = int(num_measurements_text) if num_measurements_text is not None else None
+
     for key in (
         "basis",
         "detectors",
@@ -467,7 +475,87 @@ def _copy_surface_tick_circuit_metadata(source_tc: Any, target_tc: Any) -> None:
     ):
         value = source_tc.get_meta(key)
         if value is not None:
+            if measurement_index_remap is not None and key in (
+                "detectors",
+                "observables",
+                "detector_descriptors",
+                "observable_descriptors",
+            ):
+                if num_measurements is None:
+                    msg = "Cannot remap surface metadata without num_measurements"
+                    raise ValueError(msg)
+                value = _remap_surface_record_metadata_json(
+                    value,
+                    measurement_index_remap=measurement_index_remap,
+                    num_measurements=num_measurements,
+                )
             target_tc.set_meta(key, value)
+
+
+def _measurement_index_remap_for_orders(
+    abstract_measurement_order: list[int],
+    traced_measurement_order: list[int],
+) -> dict[int, int]:
+    """Map abstract record indices to runtime-traced record indices.
+
+    The detector metadata is generated from the abstract surface schedule, but
+    a runtime may legally reorder measurement operations while preserving the
+    same measured qubit occurrences. This helper binds each measurement by
+    ``(qubit, occurrence_count_for_that_qubit)`` so metadata can follow a pure
+    scheduling reorder without accepting dropped/extra/wrong measurements.
+    """
+    from collections import Counter, defaultdict
+
+    if len(abstract_measurement_order) != len(traced_measurement_order) or Counter(
+        abstract_measurement_order,
+    ) != Counter(traced_measurement_order):
+        msg = (
+            "Traced and abstract surface circuits disagree on the measured-qubit "
+            "multiset; refusing to remap detector/observable metadata"
+        )
+        raise ValueError(msg)
+
+    traced_occurrences: dict[tuple[int, int], int] = {}
+    traced_counts: defaultdict[int, int] = defaultdict(int)
+    for traced_index, qubit in enumerate(traced_measurement_order):
+        occurrence = traced_counts[qubit]
+        traced_occurrences[(qubit, occurrence)] = traced_index
+        traced_counts[qubit] += 1
+
+    remap: dict[int, int] = {}
+    abstract_counts: defaultdict[int, int] = defaultdict(int)
+    for abstract_index, qubit in enumerate(abstract_measurement_order):
+        occurrence = abstract_counts[qubit]
+        remap[abstract_index] = traced_occurrences[(qubit, occurrence)]
+        abstract_counts[qubit] += 1
+
+    return remap
+
+
+def _remap_surface_record_metadata_json(
+    metadata_json: str,
+    *,
+    measurement_index_remap: dict[int, int],
+    num_measurements: int,
+) -> str:
+    """Remap negative ``records`` offsets inside detector/observable metadata."""
+    import json
+
+    entries = json.loads(metadata_json)
+    for entry in entries:
+        records = entry.get("records")
+        if records is None:
+            continue
+        remapped_records = []
+        for record in records:
+            abstract_index = num_measurements + int(record)
+            if abstract_index not in measurement_index_remap:
+                msg = f"Surface metadata record {record!r} is out of range for remapping"
+                raise ValueError(msg)
+            traced_index = measurement_index_remap[abstract_index]
+            remapped_records.append(traced_index - num_measurements)
+        entry["records"] = remapped_records
+    return json.dumps(entries)
 
 
 def _runtime_idle_seconds_to_time_units(duration_seconds: float) -> Any:
@@ -966,13 +1054,15 @@ def _build_surface_tick_circuit_for_native_model(
         ancilla_budget=ancilla_budget,
         runtime=runtime,
     )
-    # Coarse sanity check: the traced and abstract circuits must agree on the
-    # sequence of *measured qubit indices*. This catches gross drift (a dropped
-    # or added measurement, a wrong-qubit measurement, a different schedule
-    # shape). It is NOT an identity-level check: `_extract_measurement_order`
-    # returns physical qubit indices, and under ancilla reuse the same physical
-    # qubit appears in many measurements -- so two different stabilizer
-    # orderings can produce an identical qubit-index sequence and pass here.
+    # Coarse sanity check: the traced and abstract circuits must either agree
+    # on measured-qubit order or be remappable by measured-qubit occurrence.
+    # This catches gross drift (a dropped/added/wrong-qubit measurement) while
+    # allowing runtimes that preserve stabilizer identity but schedule
+    # measurements in a different order. It is NOT an identity-level check:
+    # `_extract_measurement_order` returns physical qubit indices, and under
+    # ancilla reuse the same physical qubit appears in many measurements -- so
+    # two different stabilizer orderings can produce an identical qubit-index
+    # sequence and pass here.
     # There is no independent stabilizer-identity oracle in the stack today:
     # the detector/observable record offsets are the production binding (not a
     # validator), and the byte-identical traced-vs-traced DEM regression shares
@@ -983,16 +1073,32 @@ def _build_surface_tick_circuit_for_native_model(
     # replayed TickCircuit does not currently carry (future work).
     traced_measurement_order = _extract_measurement_order(traced_tc)
     abstract_measurement_order = _extract_measurement_order(abstract_tc)
+    measurement_index_remap = None
     if traced_measurement_order != abstract_measurement_order:
-        msg = (
-            "Traced and abstract surface circuits disagree on the measured-qubit "
-            "sequence (a dropped/added/wrong-qubit measurement or a different "
-            "schedule shape); refusing to build a native DEM/sampler from a "
-            "circuit that does not match the abstract detector/observable metadata"
-        )
-        raise ValueError(msg)
+        try:
+            measurement_index_remap = _measurement_index_remap_for_orders(
+                abstract_measurement_order,
+                traced_measurement_order,
+            )
+        except ValueError as exc:
+            msg = (
+                "Traced and abstract surface circuits disagree on the measured-qubit "
+                "sequence (a dropped/added/wrong-qubit measurement or a different "
+                "schedule shape); refusing to build a native DEM/sampler from a "
+                "circuit that does not match the abstract detector/observable metadata"
+            )
+            raise ValueError(msg) from exc
 
-    _copy_surface_tick_circuit_metadata(abstract_tc, traced_tc)
+    if measurement_index_remap is None:
+        _copy_surface_tick_circuit_metadata(abstract_tc, traced_tc)
+    else:
+        _copy_surface_tick_circuit_metadata(
+            abstract_tc,
+            traced_tc,
+            measurement_index_remap=measurement_index_remap,
+        )
+        traced_tc.set_meta("surface_metadata_record_binding", "runtime_measurement_order")
+
     traced_tc.set_meta("circuit_source", circuit_source)
     return traced_tc
 

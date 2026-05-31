@@ -3,6 +3,8 @@
 
 """Regression tests for the Guppy-to-DEM convenience path."""
 
+import json
+
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import result
@@ -12,7 +14,9 @@ from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import (
     _build_surface_tick_circuit_for_native_model,
+    _measurement_index_remap_for_orders,
     _reject_partially_lowered_trace,
+    _remap_surface_record_metadata_json,
     _replay_lowered_qis_trace_into_tick_circuit,
     _replay_qis_trace_into_tick_circuit,
 )
@@ -731,6 +735,37 @@ def test_copy_surface_metadata_propagates_descriptors() -> None:
     # Sanity: the seeded descriptors are non-trivial (real content was copied).
     assert len(det_desc) > 0
     assert len(obs_desc) > 0
+
+
+def test_surface_metadata_records_remap_to_runtime_measurement_order() -> None:
+    remap = _measurement_index_remap_for_orders(
+        [0, 1, 0, 2],
+        [1, 0, 2, 0],
+    )
+    assert remap == {0: 1, 1: 0, 2: 3, 3: 2}
+
+    metadata = json.dumps(
+        [
+            {"id": 0, "records": [-4, -2]},
+            {"id": 1, "records": [-3]},
+        ],
+    )
+    remapped = json.loads(
+        _remap_surface_record_metadata_json(
+            metadata,
+            measurement_index_remap=remap,
+            num_measurements=4,
+        ),
+    )
+    assert remapped == [
+        {"id": 0, "records": [-3, -1]},
+        {"id": 1, "records": [-4]},
+    ]
+
+
+def test_surface_metadata_record_remap_rejects_measurement_drift() -> None:
+    with pytest.raises(ValueError, match="measured-qubit multiset"):
+        _measurement_index_remap_for_orders([0, 1, 0], [0, 1, 2])
 
 
 def test_surface_module_cache_collapses_unconstrained_budget_forms() -> None:

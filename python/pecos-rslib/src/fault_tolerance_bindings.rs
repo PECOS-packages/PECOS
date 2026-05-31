@@ -4435,8 +4435,13 @@ pub struct PyLogicalSubgraphDecoder {
 
 #[pymethods]
 impl PyLogicalSubgraphDecoder {
+    // Default inner is `pecos_uf:bp` (native union-find + belief propagation): it
+    // reaches exact-MWPM LER -- ~13-26% lower than `pecos_uf:fast`, the gap
+    // growing with code distance -- at ~3x the speed of pymatching, with no
+    // external decoder dependency. See
+    // pecos-docs/design/logical-subgraph-backprop-region-builder.md.
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="pecos_uf:fast", max_time_radius=None))]
+    #[pyo3(signature = (dem, stab_coords, inner_decoder="pecos_uf:bp", max_time_radius=None))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
@@ -4487,7 +4492,7 @@ impl PyLogicalSubgraphDecoder {
     /// construction (e.g. the paper's back-propagation / detecting-region set)
     /// and decode with the same machinery for direct comparison.
     #[staticmethod]
-    #[pyo3(signature = (dem, membership, inner_decoder="pecos_uf:fast"))]
+    #[pyo3(signature = (dem, membership, inner_decoder="pecos_uf:bp"))]
     fn from_membership(
         dem: &str,
         membership: Vec<Vec<usize>>,

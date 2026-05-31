@@ -212,5 +212,34 @@ def test_coordinate_beats_backprop_seeded_groupfill():
     )
 
 
+def test_bp_inner_is_lower_ler_default():
+    """The default inner decoder is the native UF+BP (`pecos_uf:bp`), which
+    reaches exact-MWPM accuracy and decodes with lower LER than the older
+    `pecos_uf:fast` union-find. The gap grows with distance; assert it at d=3."""
+    b = _cx_circuit()
+    dem = b.build_dem(p1=0.002, p2=0.002, p_meas=0.002)
+    sc = b.stab_coords()
+
+    n = 40000
+    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=4)
+
+    default = LogicalSubgraphDecoder(dem, sc)  # no inner -> the new default
+    bp = LogicalSubgraphDecoder(dem, sc, "pecos_uf:bp")
+    fast = LogicalSubgraphDecoder(dem, sc, "pecos_uf:fast")
+    exact = LogicalSubgraphDecoder(dem, sc, "pymatching")
+
+    default_ler = default.decode_count(batch) / n
+    bp_ler = bp.decode_count(batch) / n
+    fast_ler = fast.decode_count(batch) / n
+    exact_ler = exact.decode_count(batch) / n
+
+    # The default IS pecos_uf:bp.
+    assert default_ler == bp_ler
+    # BP inner beats the old fast default...
+    assert bp_ler < fast_ler, f"bp={bp_ler:.5f} fast={fast_ler:.5f}"
+    # ...and matches exact MWPM (native UF+BP reaches the optimum on graphlike subgraphs).
+    assert abs(bp_ler - exact_ler) <= 0.0005, f"bp={bp_ler:.5f} exact={exact_ler:.5f}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

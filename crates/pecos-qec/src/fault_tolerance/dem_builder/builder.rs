@@ -22,7 +22,9 @@ use super::types::{
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
+use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
+use pecos_simulators::symbolic_sparse_stab::MeasurementHistory;
 use smallvec::SmallVec;
 use std::collections::BTreeMap;
 
@@ -126,6 +128,12 @@ struct ExactBranchReplayRequest {
     gate_node: usize,
     gate_type: GateType,
     loc_indices: [usize; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MeasurementParityExpression {
+    dependencies: BitSet,
+    flip: bool,
 }
 
 impl<'a> DemBuilder<'a> {
@@ -603,6 +611,38 @@ impl<'a> DemBuilder<'a> {
             .collect()
     }
 
+    fn measurement_indices_from_refs(
+        &self,
+        records: &[i32],
+        meas_ids: &[usize],
+    ) -> Result<Vec<usize>, DemBuilderError> {
+        if !records.is_empty() {
+            return records
+                .iter()
+                .map(|&rec| {
+                    record_offset_to_absolute_index(self.num_measurements, rec).ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "record offset {rec} is out of range for a circuit with {} measurement(s)",
+                            self.num_measurements
+                        ))
+                    })
+                })
+                .collect();
+        }
+
+        meas_ids
+            .iter()
+            .map(|&meas_id| {
+                self.resolve_meas_id_to_tc_index(meas_id).ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "meas_id {meas_id} is not present in the circuit's {} measurement(s)",
+                        self.num_measurements
+                    ))
+                })
+            })
+            .collect()
+    }
+
     /// Validates metadata refs, then builds the Detector Error Model.
     ///
     /// This is the fail-loud entry point. Every path that ingests
@@ -759,9 +799,21 @@ impl<'a> DemBuilder<'a> {
             if let Some(context) = self.exact_branch_context {
                 let requests =
                     context.replacement_branch_requests(&self.influence_map.locations)?;
+                let weights = self
+                    .noise
+                    .p2_weights
+                    .as_ref()
+                    .expect("replacement entries exist");
                 for request in &requests {
                     let _branch_locs = context
                         .omitted_branch_location_pair(*request, &self.influence_map.locations)?;
+                    let _omitted_effect =
+                        self.exact_omitted_branch_base_effect(context, *request)?;
+                    for (replacement_pauli, _weight) in weights.replacement_entries() {
+                        let label = two_qubit_label_for_replay(replacement_pauli)?;
+                        let _replacement_effect =
+                            self.exact_replacement_branch_effect(context, *request, &label)?;
+                    }
                 }
                 return Err(DemBuilderError::ConfigurationError(format!(
                     "exact_branch_replay has circuit context and identified {} two-qubit replay request(s), but exact replacement-branch DEM emission is not implemented yet; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations",
@@ -774,6 +826,75 @@ impl<'a> DemBuilder<'a> {
             ));
         }
         Ok(())
+    }
+
+    fn exact_omitted_branch_base_effect(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        request: ExactBranchReplayRequest,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
+
+        for detector in &self.detectors {
+            let indices =
+                self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)?;
+            if context.omitted_branch_flips_measurement_parity(request, &indices)? {
+                xor_toggle_4(&mut triggered_dets, detector.id);
+            }
+        }
+
+        for observable in &self.observables {
+            let indices =
+                self.measurement_indices_from_refs(&observable.records, &observable.meas_ids)?;
+            if context.omitted_branch_flips_measurement_parity(request, &indices)? {
+                xor_toggle_2(&mut triggered_obs, observable.id);
+            }
+        }
+
+        triggered_dets.sort_unstable();
+        triggered_obs.sort_unstable();
+        Ok(FaultMechanism::from_sorted_with_tracked_paulis(
+            triggered_dets,
+            triggered_obs,
+            SmallVec::new(),
+        ))
+    }
+
+    fn exact_replacement_branch_effect(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        request: ExactBranchReplayRequest,
+        replacement_pauli_label: &str,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+
+        let (p1, p2) = two_qubit_label_to_pauli_indices(replacement_pauli_label).ok_or_else(|| {
+            DemBuilderError::ConfigurationError(format!(
+                "exact_branch_replay replacement Pauli label {replacement_pauli_label:?} is not a two-qubit Pauli label"
+            ))
+        })?;
+        let base_effect = self.exact_omitted_branch_base_effect(context, request)?;
+        if p1 == 0 && p2 == 0 {
+            return Ok(base_effect);
+        }
+
+        let branch = circuit_with_omitted_two_qubit_gate(context.circuit, request.gate_node)?;
+        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
+        let branch_locs = identity_location_pair_for_request(
+            request,
+            &self.influence_map.locations,
+            &branch_map.locations,
+        )?;
+        let (meas_to_detectors, meas_to_observables) = self.build_measurement_mappings();
+        let branch_effects = Self::two_qubit_effect_table_for_map(
+            &branch_map,
+            branch_locs[0],
+            branch_locs[1],
+            &meas_to_detectors,
+            &meas_to_observables,
+        );
+        Ok(base_effect.xor(&branch_effects[p1 as usize][p2 as usize]))
     }
 
     fn num_influence_dem_outputs(&self) -> usize {
@@ -1128,6 +1249,63 @@ impl<'a> DemBuilder<'a> {
         effects
     }
 
+    fn two_qubit_effect_table_for_map(
+        influence_map: &DagFaultInfluenceMap,
+        loc1: usize,
+        loc2: usize,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) -> [[FaultMechanism; 4]; 4] {
+        let x1 = Self::compute_mechanism_for_map(
+            influence_map,
+            loc1,
+            Pauli::X,
+            meas_to_detectors,
+            meas_to_observables,
+        );
+        let z1 = Self::compute_mechanism_for_map(
+            influence_map,
+            loc1,
+            Pauli::Z,
+            meas_to_detectors,
+            meas_to_observables,
+        );
+        let x2 = Self::compute_mechanism_for_map(
+            influence_map,
+            loc2,
+            Pauli::X,
+            meas_to_detectors,
+            meas_to_observables,
+        );
+        let z2 = Self::compute_mechanism_for_map(
+            influence_map,
+            loc2,
+            Pauli::Z,
+            meas_to_detectors,
+            meas_to_observables,
+        );
+
+        let get_single_effect = |p: u8, x: &FaultMechanism, z: &FaultMechanism| -> FaultMechanism {
+            match p {
+                0 => FaultMechanism::new(),
+                1 => x.clone(),
+                2 => x.xor(z),
+                3 => z.clone(),
+                _ => unreachable!("Pauli index must be 0-3"),
+            }
+        };
+
+        let mut effects: [[FaultMechanism; 4]; 4] = Default::default();
+        for p1 in 0..4u8 {
+            for p2 in 0..4u8 {
+                let e1 = get_single_effect(p1, &x1, &z1);
+                let e2 = get_single_effect(p2, &x2, &z2);
+                effects[p1 as usize][p2 as usize] = e1.xor(&e2);
+            }
+        }
+        effects
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn add_two_qubit_pauli_contribution(
         &self,
@@ -1328,26 +1506,34 @@ impl<'a> DemBuilder<'a> {
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) -> FaultMechanism {
+        Self::compute_mechanism_for_map(
+            self.influence_map,
+            loc_idx,
+            pauli,
+            meas_to_detectors,
+            meas_to_observables,
+        )
+    }
+
+    fn compute_mechanism_for_map(
+        influence_map: &DagFaultInfluenceMap,
+        loc_idx: usize,
+        pauli: Pauli,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) -> FaultMechanism {
         // Get the measurement indices that this fault flips
-        let rust_dets = self
-            .influence_map
-            .get_detector_indices(loc_idx, pauli.as_u8());
+        let rust_dets = influence_map.get_detector_indices(loc_idx, pauli.as_u8());
 
         // Convert to pre-defined detector IDs using XOR
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
         let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
         let mut triggered_tracked_paulis: SmallVec<[u32; 2]> = SmallVec::new();
 
-        for dem_output_idx in self
-            .influence_map
-            .get_observable_indices(loc_idx, pauli.as_u8())
-        {
+        for dem_output_idx in influence_map.get_observable_indices(loc_idx, pauli.as_u8()) {
             xor_toggle_2(&mut triggered_obs, dem_output_idx);
         }
-        for tracked_pauli_idx in self
-            .influence_map
-            .get_tracked_pauli_indices(loc_idx, pauli.as_u8())
-        {
+        for tracked_pauli_idx in influence_map.get_tracked_pauli_indices(loc_idx, pauli.as_u8()) {
             xor_toggle_2(&mut triggered_tracked_paulis, tracked_pauli_idx);
         }
 
@@ -1425,6 +1611,35 @@ fn two_qubit_label_to_pauli_indices(label: &str) -> Option<(u8, u8)> {
     let p1 = pauli_label_to_index(chars.next()?)?;
     let p2 = pauli_label_to_index(chars.next()?)?;
     chars.next().is_none().then_some((p1, p2))
+}
+
+fn two_qubit_label_for_replay(pauli: &pecos_core::PauliString) -> Result<String, DemBuilderError> {
+    let mut label = String::with_capacity(2);
+    for qubit in [0, 1] {
+        label.push(pauli_index_to_label(match pauli.get(qubit) {
+            pecos_core::Pauli::I => 0,
+            pecos_core::Pauli::X => 1,
+            pecos_core::Pauli::Y => 2,
+            pecos_core::Pauli::Z => 3,
+        }));
+    }
+    if pauli.qubits().into_iter().any(|qubit| qubit > 1) {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "exact_branch_replay replacement Pauli {} is not supported by the two-qubit replay path",
+            pauli.to_sparse_str()
+        )));
+    }
+    Ok(label)
+}
+
+fn pauli_index_to_label(index: u8) -> char {
+    match index {
+        0 => 'I',
+        1 => 'X',
+        2 => 'Y',
+        3 => 'Z',
+        _ => unreachable!("Pauli index must be 0-3"),
+    }
 }
 
 fn pauli_label_to_index(label: char) -> Option<u8> {
@@ -2011,6 +2226,51 @@ impl ExactBranchReplayContext<'_> {
         let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
         identity_location_pair_for_request(request, original_locations, &branch_map.locations)
     }
+
+    fn omitted_branch_flips_measurement_parity(
+        &self,
+        request: ExactBranchReplayRequest,
+        measurement_indices: &[usize],
+    ) -> Result<bool, DemBuilderError> {
+        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
+
+        let ideal_info = InfluenceBuilder::new(self.circuit).run_symbolic_simulation();
+        let branch = circuit_with_omitted_two_qubit_gate(self.circuit, request.gate_node)?;
+        let branch_info = InfluenceBuilder::new(&branch).run_symbolic_simulation();
+
+        let ideal =
+            measurement_parity_expression(&ideal_info.history, measurement_indices, "ideal")?;
+        let branch =
+            measurement_parity_expression(&branch_info.history, measurement_indices, "branch")?;
+        if ideal.dependencies != branch.dependencies {
+            return Err(DemBuilderError::ConfigurationError(format!(
+                "exact_branch_replay omitted gate at node {} changes measurement dependencies for parity {:?}; this branch is not representable as a single deterministic DEM event",
+                request.gate_node, measurement_indices
+            )));
+        }
+        Ok(ideal.flip ^ branch.flip)
+    }
+}
+
+fn measurement_parity_expression(
+    history: &MeasurementHistory,
+    measurement_indices: &[usize],
+    history_label: &str,
+) -> Result<MeasurementParityExpression, DemBuilderError> {
+    let mut dependencies = BitSet::new();
+    let mut flip = false;
+
+    for &measurement_idx in measurement_indices {
+        let result = history.get(measurement_idx).ok_or_else(|| {
+            DemBuilderError::ConfigurationError(format!(
+                "exact_branch_replay {history_label} history has no measurement {measurement_idx}"
+            ))
+        })?;
+        dependencies.symmetric_difference_update(&result.outcome);
+        flip ^= result.flip;
+    }
+
+    Ok(MeasurementParityExpression { dependencies, flip })
 }
 
 fn identity_location_pair_for_request(
@@ -3098,6 +3358,77 @@ mod tests {
             .flat_map(|&idx| influence_map.locations[idx].qubits.iter().copied())
             .collect();
         assert_eq!(loc_qubits, vec![QubitId(0), QubitId(1)]);
+    }
+
+    #[test]
+    fn test_exact_branch_replay_base_effect_detects_deterministic_omitted_gate_flip() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.x(&[0]);
+        let entangler = circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 1)]));
+        circuit.mz(&[1]);
+
+        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let context = ExactBranchReplayContext { circuit: &circuit };
+        let request = context
+            .replacement_branch_requests(&influence_map.locations)
+            .unwrap()
+            .into_iter()
+            .find(|request| request.gate_node == entangler)
+            .expect("CX request should be present");
+
+        let builder = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
+            .unwrap()
+            .with_num_measurements(1);
+        let effect = builder
+            .exact_omitted_branch_base_effect(context, request)
+            .expect("omitting this CX only flips a deterministic measurement parity");
+
+        assert_eq!(effect.detectors.as_slice(), &[0]);
+        assert!(effect.dem_outputs.is_empty());
+    }
+
+    #[test]
+    fn test_exact_branch_replay_replacement_pauli_combines_with_omitted_gate_effect() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.x(&[0]);
+        let entangler = circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 1)]));
+        circuit.mz(&[1]);
+
+        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let context = ExactBranchReplayContext { circuit: &circuit };
+        let request = context
+            .replacement_branch_requests(&influence_map.locations)
+            .unwrap()
+            .into_iter()
+            .find(|request| request.gate_node == entangler)
+            .expect("CX request should be present");
+
+        let builder = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
+            .unwrap()
+            .with_num_measurements(1);
+
+        let omitted_only = builder
+            .exact_replacement_branch_effect(context, request, "II")
+            .expect("omission-only branch should be deterministic here");
+        assert_eq!(omitted_only.detectors.as_slice(), &[0]);
+
+        let omitted_then_target_x = builder
+            .exact_replacement_branch_effect(context, request, "IX")
+            .expect("replacement X on the target should be deterministic here");
+        assert!(
+            omitted_then_target_x.is_empty(),
+            "target X after omitted CX restores the ideal target measurement"
+        );
     }
 
     #[test]

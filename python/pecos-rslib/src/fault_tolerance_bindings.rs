@@ -1058,6 +1058,9 @@ fn contribution_record_to_pydict(
             RustDirectSourceFamily::TwoLocationReplacementBranchImpact => {
                 "TwoLocationReplacementBranchImpact"
             }
+            RustDirectSourceFamily::TwoLocationExactReplacementBranch => {
+                "TwoLocationExactReplacementBranch"
+            }
             RustDirectSourceFamily::Other => "Other",
         };
         dict.set_item("direct_source_family", family_label)?;

@@ -250,7 +250,7 @@ impl<'a> InfluenceBuilder<'a> {
     }
 
     /// Run symbolic simulation to get measurement correlations.
-    fn run_symbolic_simulation(&self) -> MeasurementInfo {
+    pub(crate) fn run_symbolic_simulation(&self) -> MeasurementInfo {
         let topo_order = self.dag.topological_order();
 
         // Determine number of qubits from the circuit
@@ -862,11 +862,11 @@ impl<'a> InfluenceBuilder<'a> {
 }
 
 /// Information about measurements from symbolic simulation.
-struct MeasurementInfo {
-    history: pecos_simulators::symbolic_sparse_stab::MeasurementHistory,
-    node_to_meas_idx: Vec<Option<usize>>,
+pub(crate) struct MeasurementInfo {
+    pub(crate) history: pecos_simulators::symbolic_sparse_stab::MeasurementHistory,
+    pub(crate) node_to_meas_idx: Vec<Option<usize>>,
     #[allow(dead_code)]
-    num_measurements: usize,
+    pub(crate) num_measurements: usize,
 }
 
 /// Definition of a detector as XOR of measurements.

@@ -129,6 +129,9 @@ pub enum DirectSourceFamily {
     /// Two-location direct source produced by a replacement-branch projection.
     TwoLocationReplacementBranchImpact,
 
+    /// Two-location direct source produced by exact replacement-branch replay.
+    TwoLocationExactReplacementBranch,
+
     /// Fallback for other direct-source shapes.
     Other,
 }
@@ -3578,6 +3581,9 @@ impl DetectorErrorModel {
                 DirectSourceFamily::TwoLocationOneSidedComponent => "TwoLocationOneSidedComponent",
                 DirectSourceFamily::TwoLocationReplacementBranchImpact => {
                     "TwoLocationReplacementBranchImpact"
+                }
+                DirectSourceFamily::TwoLocationExactReplacementBranch => {
+                    "TwoLocationExactReplacementBranch"
                 }
                 DirectSourceFamily::Other => "Other",
             }

@@ -761,9 +761,6 @@ impl<'a> DemBuilder<'a> {
     ) {
         let locations = &self.influence_map.locations;
 
-        // Group CX locations by node for two-qubit gate processing
-        let mut cx_groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
                 GateType::PZ | GateType::QAlloc
@@ -786,23 +783,7 @@ impl<'a> DemBuilder<'a> {
                         meas_to_observables,
                     );
                 }
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ
-                    if !loc.before =>
-                {
-                    cx_groups.entry(loc.node).or_default().push(loc_idx);
-                }
+                gate_type if is_two_qubit_noise_gate(gate_type) && !loc.before => {}
                 GateType::H
                 | GateType::F
                 | GateType::Fdg
@@ -852,35 +833,30 @@ impl<'a> DemBuilder<'a> {
         }
 
         // Process two-qubit gates.
-        for (_, loc_indices) in cx_groups {
-            for pair in loc_indices.chunks(2) {
-                if pair.len() != 2 {
-                    continue;
-                }
-                let loc1 = &locations[pair[0]];
-                let loc2 = &locations[pair[1]];
-                let rates = self.rates_2q_for_locs(loc1, loc2);
-                if rates.iter().any(|r| *r > 0.0) {
-                    self.process_two_qubit_fault_source_tracked(
-                        pair[0],
-                        pair[1],
-                        rates,
-                        dem,
-                        meas_to_detectors,
-                        meas_to_observables,
-                    );
-                }
-                if self.noise.p2_replacement_approximation
-                    == ReplacementBranchApproximation::BranchImpact
-                {
-                    self.process_two_qubit_replacement_branch_impacts_source_tracked(
-                        pair[0],
-                        pair[1],
-                        dem,
-                        meas_to_detectors,
-                        meas_to_observables,
-                    );
-                }
+        for [loc1_idx, loc2_idx] in two_qubit_after_location_pairs(locations) {
+            let loc1 = &locations[loc1_idx];
+            let loc2 = &locations[loc2_idx];
+            let rates = self.rates_2q_for_locs(loc1, loc2);
+            if rates.iter().any(|r| *r > 0.0) {
+                self.process_two_qubit_fault_source_tracked(
+                    loc1_idx,
+                    loc2_idx,
+                    rates,
+                    dem,
+                    meas_to_detectors,
+                    meas_to_observables,
+                );
+            }
+            if self.noise.p2_replacement_approximation
+                == ReplacementBranchApproximation::BranchImpact
+            {
+                self.process_two_qubit_replacement_branch_impacts_source_tracked(
+                    loc1_idx,
+                    loc2_idx,
+                    dem,
+                    meas_to_detectors,
+                    meas_to_observables,
+                );
             }
         }
     }
@@ -1907,6 +1883,44 @@ fn extract_measurement_refs(
     Ok((records, meas_ids))
 }
 
+fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::CX
+            | GateType::CZ
+            | GateType::CY
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SWAP
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+    )
+}
+
+fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[usize; 2]> {
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (loc_idx, loc) in locations.iter().enumerate() {
+        if is_two_qubit_noise_gate(loc.gate_type) && !loc.before {
+            groups.entry(loc.node).or_default().push(loc_idx);
+        }
+    }
+
+    groups
+        .into_values()
+        .flat_map(|loc_indices| {
+            loc_indices
+                .chunks_exact(2)
+                .map(|pair| [pair[0], pair[1]])
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 // ============================================================================
 // Convenience: build DEM from circuit (free function to handle lifetimes)
 // ============================================================================
@@ -1977,6 +1991,36 @@ fn build_dem_from_circuit(
     };
 
     builder.try_build()
+}
+
+/// Return a branch circuit where one ideal two-qubit gate has been omitted.
+///
+/// Replacement-branch exact replay needs to evaluate "the hardware branch did
+/// not apply this entangler" without disturbing the surrounding DAG wiring.
+/// Replacing the selected node by batched identities preserves the node id,
+/// qubit wires, and topological context while making the operation itself a
+/// no-op on every qubit carried by the original gate.
+#[cfg(test)]
+fn circuit_with_omitted_two_qubit_gate(
+    circuit: &pecos_quantum::DagCircuit,
+    node: usize,
+) -> Result<pecos_quantum::DagCircuit, DemBuilderError> {
+    let original = circuit.gate(node).ok_or_else(|| {
+        DemBuilderError::ConfigurationError(format!(
+            "cannot omit gate at node {node}: no such gate node exists"
+        ))
+    })?;
+    if !original.gate_type.is_two_qubit() {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "cannot omit gate at node {node}: {:?} is not a two-qubit gate",
+            original.gate_type
+        )));
+    }
+
+    let mut branch = circuit.clone();
+    let replacement = pecos_core::Gate::simple(GateType::I, original.qubits.clone());
+    *branch.gate_mut(node).expect("gate existed before clone") = replacement;
+    Ok(branch)
 }
 
 fn observable_records_from_annotations(
@@ -2816,6 +2860,63 @@ mod tests {
                 .contains("circuit-aware exact branch provider"),
             "unexpected error: {err}",
         );
+    }
+
+    #[test]
+    fn test_circuit_with_omitted_two_qubit_gate_preserves_wiring() {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        let prep0 = circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        let prep1 = circuit.add_gate_auto_wire(Gate::pz(&[QubitId(1)]));
+        let entangler = circuit.add_gate_auto_wire(Gate::szz(&[(QubitId(0), QubitId(1))]));
+        let meas0 = circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
+        let meas1 = circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
+
+        let branch = circuit_with_omitted_two_qubit_gate(&circuit, entangler)
+            .expect("two-qubit entangler can be omitted");
+
+        assert_eq!(circuit.gate(entangler).unwrap().gate_type, GateType::SZZ);
+        let replacement = branch.gate(entangler).unwrap();
+        assert_eq!(replacement.gate_type, GateType::I);
+        assert_eq!(replacement.qubits.as_slice(), &[QubitId(0), QubitId(1)]);
+
+        assert_eq!(
+            branch.predecessor_on_qubit(entangler, QubitId(0)),
+            Some(prep0)
+        );
+        assert_eq!(
+            branch.predecessor_on_qubit(entangler, QubitId(1)),
+            Some(prep1)
+        );
+        assert_eq!(
+            branch.successor_on_qubit(entangler, QubitId(0)),
+            Some(meas0)
+        );
+        assert_eq!(
+            branch.successor_on_qubit(entangler, QubitId(1)),
+            Some(meas1)
+        );
+        assert_eq!(branch.topological_order(), circuit.topological_order());
+    }
+
+    #[test]
+    fn test_circuit_with_omitted_two_qubit_gate_rejects_bad_nodes() {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        let prep = circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+
+        assert!(matches!(
+            circuit_with_omitted_two_qubit_gate(&circuit, prep),
+            Err(DemBuilderError::ConfigurationError(_))
+        ));
+        assert!(matches!(
+            circuit_with_omitted_two_qubit_gate(&circuit, prep + 1),
+            Err(DemBuilderError::ConfigurationError(_))
+        ));
     }
 
     #[test]

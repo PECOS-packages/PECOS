@@ -56,6 +56,60 @@ def _coflip_membership_from_dem(dem_str: str, num_observables: int) -> list[list
     return [sorted(r) for r in regions]
 
 
+def _groupfill_membership(dem_str: str, stab_coords, *, seed_all: bool) -> list[list[int]]:
+    """Coordinate group-fill membership, parameterized by the seed rule.
+
+    ``seed_all=False`` seeds only 1-detector boundary edges (the shipping
+    coordinate path / lomatching). ``seed_all=True`` seeds from every detector of
+    any O-flipping mechanism (the back-propagation / detecting-region crossings),
+    then group-fills the same way -- a strictly broader region.
+    """
+    from collections import defaultdict
+
+    det_coords: dict[int, tuple[float, ...]] = {}
+    mechs: list[tuple[list[int], list[int]]] = []
+    for raw in dem_str.splitlines():
+        ln = raw.strip()
+        if ln.startswith("detector("):
+            coords = tuple(float(x) for x in ln[ln.index("(") + 1 : ln.index(")")].split(","))
+            for t in ln[ln.index(")") + 1 :].split():
+                if t.startswith("D"):
+                    det_coords[int(t[1:])] = coords
+        elif ln.startswith("error("):
+            toks = ln[ln.index(")") + 1 :].split()
+            mechs.append(
+                ([int(t[1:]) for t in toks if t.startswith("D")],
+                 [int(t[1:]) for t in toks if t.startswith("L")]),
+            )
+
+    coords_to_stab: dict[tuple, tuple[int, str]] = {}
+    for li, q in enumerate(stab_coords):
+        for st in ("X", "Z"):
+            for c in q[st]:
+                coords_to_stab[tuple(map(float, c))] = (li, st)
+
+    det_group: dict[int, tuple] = {}
+    group_dets: dict[tuple, list[int]] = defaultdict(list)
+    for d, c in det_coords.items():
+        spatial, time = c[:-1], c[-1]
+        if spatial in coords_to_stab:
+            li, st = coords_to_stab[spatial]
+            det_group[d] = (li, st, time)
+            group_dets[(li, st, time)].append(d)
+
+    nobs = 1 + max((o for _, obs in mechs for o in obs), default=-1)
+    seeds: list[set] = [set() for _ in range(nobs)]
+    for dets, obs in mechs:
+        if not obs:
+            continue
+        seed_dets = dets if (seed_all or len(dets) == 1) else []
+        for o in obs:
+            for d in seed_dets:
+                if d in det_group:
+                    seeds[o].add(det_group[d])
+    return [sorted({d for g in seeds[o] for d in group_dets[g]}) for o in range(nobs)]
+
+
 def _cx_circuit():
     patch = SurfacePatch.create(distance=3)
     nq = patch.geometry.num_data + patch.geometry.num_ancilla
@@ -114,6 +168,47 @@ def test_coordinate_region_beats_raw_backprop_region():
     assert coord_ler * 5 < backprop_ler, (
         f"expected a large gap (group-fill essential): "
         f"coord={coord_ler:.5f} backprop={backprop_ler:.5f}"
+    )
+
+
+def test_coordinate_seeding_reproduces_shipping_path():
+    """The group-fill helper with boundary-edge seeding reproduces the shipping
+    coordinate membership exactly (validates the helper used for the broader
+    back-prop comparison)."""
+    b = _cx_circuit()
+    dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    sc = b.stab_coords()
+    coord = LogicalSubgraphDecoder(dem, sc, "pecos_uf:fast")
+    helper = _groupfill_membership(dem, sc, seed_all=False)
+    assert helper == [sorted(r) for r in coord.observing_regions()]
+
+
+def test_coordinate_beats_backprop_seeded_groupfill():
+    """The faithful 'next step': seed the same group-fill from the operator's
+    back-propagation crossings (all O-flipping mechanism detectors) instead of
+    boundary edges. It is strictly broader than the coordinate region and
+    decodes worse -- confirming the boundary-edge seeding IS the right (faithful)
+    back-propagation region, and broadening hurts."""
+    b = _cx_circuit()
+    dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    sc = b.stab_coords()
+
+    coord_membership = _groupfill_membership(dem, sc, seed_all=False)
+    backprop_membership = _groupfill_membership(dem, sc, seed_all=True)
+
+    # Coordinate region is a strict subset of the back-prop-seeded region.
+    for c, bp in zip(coord_membership, backprop_membership, strict=True):
+        assert set(c) <= set(bp)
+    assert sum(len(bp) for bp in backprop_membership) > sum(len(c) for c in coord_membership)
+
+    n = 20000
+    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=13)
+    coord = LogicalSubgraphDecoder.from_membership(dem, coord_membership, "pecos_uf:fast")
+    backprop = LogicalSubgraphDecoder.from_membership(dem, backprop_membership, "pecos_uf:fast")
+    coord_ler = coord.decode_count(batch) / n
+    backprop_ler = backprop.decode_count(batch) / n
+    assert coord_ler < backprop_ler, (
+        f"coord={coord_ler:.5f} backprop-seeds={backprop_ler:.5f}"
     )
 
 

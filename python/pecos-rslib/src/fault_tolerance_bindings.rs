@@ -4634,6 +4634,15 @@ impl PyLogicalSubgraphDecoder {
             .collect()
     }
 
+    /// Per-observable observing regions: a list (one entry per observable) of
+    /// sorted full-DEM detector ids in that observable's subgraph.
+    ///
+    /// Exposed for differential testing against reference implementations such
+    /// as `lomatching.get_detector_indices_for_subgraphs`.
+    fn observing_regions(&self) -> Vec<Vec<usize>> {
+        self.inner.observing_regions()
+    }
+
     /// Diagnostics: (`num_edges`, `skipped_hyperedges`) for each subgraph.
     fn subgraph_diagnostics(&self) -> Vec<(usize, usize)> {
         (0..self.inner.num_observables())

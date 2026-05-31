@@ -4435,13 +4435,16 @@ pub struct PyLogicalSubgraphDecoder {
 
 #[pymethods]
 impl PyLogicalSubgraphDecoder {
-    // Default inner is `pecos_uf:bp` (native union-find + belief propagation): it
-    // reaches exact-MWPM LER -- ~13-26% lower than `pecos_uf:fast`, the gap
-    // growing with code distance -- at ~3x the speed of pymatching, with no
-    // external decoder dependency. See
+    // Default inner is `fusion_blossom_serial` (exact MWPM): it achieves
+    // distance suppression (LER drops with code distance), matching lomatching
+    // exactly (memory d=7 -> 0 logical errors). The native union-find inners
+    // (`pecos_uf:fast`, `pecos_uf:bp`) decode WELL at d=3 but DO NOT suppress at
+    // d>=5 -- a bug in the union-find decoder, not the subgraph construction
+    // (region + edge topology are correct, == lomatching). Correctness is
+    // non-negotiable here, so the default must be an exact MWPM inner. See
     // pecos-docs/design/logical-subgraph-backprop-region-builder.md.
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="pecos_uf:bp", max_time_radius=None))]
+    #[pyo3(signature = (dem, stab_coords, inner_decoder="fusion_blossom_serial", max_time_radius=None))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
@@ -4492,7 +4495,7 @@ impl PyLogicalSubgraphDecoder {
     /// construction (e.g. the paper's back-propagation / detecting-region set)
     /// and decode with the same machinery for direct comparison.
     #[staticmethod]
-    #[pyo3(signature = (dem, membership, inner_decoder="pecos_uf:bp"))]
+    #[pyo3(signature = (dem, membership, inner_decoder="fusion_blossom_serial"))]
     fn from_membership(
         dem: &str,
         membership: Vec<Vec<usize>>,

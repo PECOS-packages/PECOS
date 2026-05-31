@@ -212,72 +212,47 @@ def test_coordinate_beats_backprop_seeded_groupfill():
     )
 
 
-def test_bp_inner_is_lower_ler_default():
-    """The default inner decoder is the native UF+BP (`pecos_uf:bp`), which
-    reaches exact-MWPM accuracy and decodes with lower LER than the older
-    `pecos_uf:fast` union-find. The gap grows with distance; assert it at d=3."""
-    b = _cx_circuit()
-    dem = b.build_dem(p1=0.002, p2=0.002, p_meas=0.002)
+def _mem_ler(d, p, n, seed, inner=None):
+    patch = SurfacePatch.create(d)
+    b = LogicalCircuitBuilder()
+    b.add_patch(patch, "A")
+    b.add_memory("A", d, "Z")
+    dem = b.build_dem(p1=p, p2=p, p_meas=p)
     sc = b.stab_coords()
-
-    n = 40000
-    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=4)
-
-    default = LogicalSubgraphDecoder(dem, sc)  # no inner -> the new default
-    bp = LogicalSubgraphDecoder(dem, sc, "pecos_uf:bp")
-    fast = LogicalSubgraphDecoder(dem, sc, "pecos_uf:fast")
-    exact = LogicalSubgraphDecoder(dem, sc, "pymatching")
-
-    default_ler = default.decode_count(batch) / n
-    bp_ler = bp.decode_count(batch) / n
-    fast_ler = fast.decode_count(batch) / n
-    exact_ler = exact.decode_count(batch) / n
-
-    # The default IS pecos_uf:bp.
-    assert default_ler == bp_ler
-    # BP inner beats the old fast default...
-    assert bp_ler < fast_ler, f"bp={bp_ler:.5f} fast={fast_ler:.5f}"
-    # ...and matches exact MWPM (native UF+BP reaches the optimum on graphlike subgraphs).
-    assert abs(bp_ler - exact_ler) <= 0.0005, f"bp={bp_ler:.5f} exact={exact_ler:.5f}"
+    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=seed)
+    dec = LogicalSubgraphDecoder(dem, sc) if inner is None else LogicalSubgraphDecoder(dem, sc, inner)
+    return dec.decode_count(batch) / n
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BUG: LogicalSubgraphDecoder does not achieve distance suppression past "
-        "d~3. It builds each subgraph by PROJECTING undecomposed hyperedges (Y / "
-        "correlated errors, ~50-70% of mechanisms) onto the region, instead of "
-        "decomposing them into matching-optimal graphlike edges (a 2-det edge plus "
-        "boundary edges) the way stim's decompose_errors / lomatching's "
-        "get_circuit_subgraph does. The observing region is correct (matches lomatching "
-        "exactly at d=3/5/7) but the edges are wrong, so MWPM cannot suppress. lomatching "
-        "MoMatching drives memory LER to 0 at d=7 on the same circuits; PECOS does not. "
-        "Fix = port matching-oriented hyperedge decomposition into subgraph construction. "
-        "See pecos-docs/design/logical-subgraph-backprop-region-builder.md. When the fix "
-        "lands this xfail flips to a pass (strict) -- remove the marker then."
-    ),
-)
 def test_distance_suppression_memory():
     """A fault-tolerant decoder must drive LER DOWN as code distance grows below
-    threshold. This guards against the hyperedge-decomposition bug regressing
-    further and turns green the moment the fix is in."""
-
-    def mem_ler(d, p, n, seed):
-        patch = SurfacePatch.create(d)
-        b = LogicalCircuitBuilder()
-        b.add_patch(patch, "A")
-        b.add_memory("A", d, "Z")
-        dem = b.build_dem(p1=p, p2=p, p_meas=p)
-        sc = b.stab_coords()
-        batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=seed)
-        return LogicalSubgraphDecoder(dem, sc).decode_count(batch) / n
-
+    threshold. The default inner (exact MWPM, fusion_blossom) suppresses,
+    matching lomatching (d=7 -> 0). Guards against the default reverting to a
+    non-suppressing inner."""
     p, n = 0.001, 60000
-    ler_d3 = mem_ler(3, p, n, seed=1)
-    ler_d5 = mem_ler(5, p, n, seed=1)
+    ler_d3 = _mem_ler(3, p, n, seed=1)
+    ler_d5 = _mem_ler(5, p, n, seed=1)
     # Below threshold, d=5 must beat d=3 by a clear margin (lomatching: ~13x).
     assert ler_d5 < ler_d3 * 0.7, (
-        f"no distance suppression: d3={ler_d3:.5f} d5={ler_d5:.5f}"
+        f"no distance suppression with default inner: d3={ler_d3:.5f} d5={ler_d5:.5f}"
+    )
+
+
+def test_native_union_find_inner_does_not_suppress():
+    """KNOWN BUG (separately tracked): PECOS's native union-find inner decoders
+    (`pecos_uf:*`) decode well at d=3 but do NOT achieve distance suppression at
+    d>=5 -- which is why the LogicalSubgraphDecoder default is exact MWPM, not
+    `pecos_uf`. The subgraph region + edge topology are correct (== lomatching);
+    the failure is in the UF decoder itself. This pins the bug; when UF is fixed
+    (d=5 LER < d=3), this assertion flips and the test should be updated.
+    See pecos-docs/design/logical-subgraph-backprop-region-builder.md."""
+    p, n = 0.001, 60000
+    uf_d3 = _mem_ler(3, p, n, seed=1, inner="pecos_uf:bp")
+    uf_d5 = _mem_ler(5, p, n, seed=1, inner="pecos_uf:bp")
+    # Currently the UF inner does NOT suppress: d=5 is not meaningfully below d=3.
+    assert uf_d5 >= uf_d3 * 0.7, (
+        f"union-find inner now suppresses (d3={uf_d3:.5f} d5={uf_d5:.5f}) -- "
+        "UF bug appears fixed; update this test and reconsider the default inner."
     )
 
 

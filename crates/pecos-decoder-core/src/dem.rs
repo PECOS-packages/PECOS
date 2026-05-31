@@ -200,6 +200,139 @@ pub mod utils {
     }
 }
 
+/// Sparse parse of a DEM: the error mechanisms plus detector coordinates,
+/// without the dense matrices of [`DemCheckMatrix`].
+///
+/// Each `error(p) ...` line becomes one `(probability, detector_ids,
+/// observable_ids)` entry. Decomposed mechanisms (`D0 ^ D1`) are XOR-combined;
+/// graphlike mechanisms keep their DEM token order. `detector(x, y, t) D_i`
+/// declarations are collected into `detector_coords`.
+///
+/// Parsing runs once at decoder construction (never in a decode hot loop), so
+/// this is plain line-based parsing — a byte-level variant was profiled and
+/// gave no measurable speedup over this.
+///
+/// # Example
+///
+/// ```
+/// use pecos_decoder_core::dem::SparseDem;
+///
+/// let dem = "detector(1, 0, 0) D0\nerror(0.01) D0 D1 L0\nerror(0.02) D1";
+/// let sdem = SparseDem::from_dem_str(dem).unwrap();
+/// assert_eq!(sdem.num_detectors, 2);
+/// assert_eq!(sdem.num_observables, 1);
+/// assert_eq!(sdem.mechanisms.len(), 2);
+/// ```
+#[derive(Debug, Clone)]
+pub struct SparseDem {
+    /// Per-mechanism: `(probability, detector_ids, observable_ids)`.
+    pub mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
+    /// Detector id → coordinates (spatial + time), from `detector(...)` lines.
+    pub detector_coords: std::collections::BTreeMap<usize, Vec<f64>>,
+    /// Number of detectors: max detector id + 1, across both mechanisms and
+    /// `detector(...)` declarations (0 if none).
+    pub num_detectors: usize,
+    /// Number of observables: max observable id + 1 (0 if none).
+    pub num_observables: usize,
+}
+
+impl SparseDem {
+    /// Parse a DEM string into its sparse mechanism + coordinate form.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if an `error(...)` line is malformed.
+    pub fn from_dem_str(dem: &str) -> Result<Self, DecoderError> {
+        let mut mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)> = Vec::new();
+        let mut detector_coords = std::collections::BTreeMap::new();
+        let mut max_detector: Option<u32> = None;
+        let mut max_observable: Option<u32> = None;
+
+        for line in dem.lines() {
+            let line = line.trim();
+
+            if let Some(rest) = line.strip_prefix("error(") {
+                let close = rest.find(')').ok_or_else(|| {
+                    DecoderError::InvalidConfiguration("Missing ) in error line".into())
+                })?;
+                let probability: f64 = rest[..close].parse().map_err(|_| {
+                    DecoderError::InvalidConfiguration(format!(
+                        "Invalid probability: {}",
+                        &rest[..close]
+                    ))
+                })?;
+                let tokens = &rest[close + 1..];
+
+                let (detectors, observables) = if tokens.contains('^') {
+                    // Decomposed mechanism: XOR-combine components into sorted sets.
+                    let mut det_set = std::collections::BTreeSet::new();
+                    let mut obs_set = std::collections::BTreeSet::new();
+                    for token in tokens.split('^').flat_map(str::split_whitespace) {
+                        if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            if !det_set.remove(&d) {
+                                det_set.insert(d);
+                            }
+                            max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                        } else if let Some(l) =
+                            token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            if !obs_set.remove(&l) {
+                                obs_set.insert(l);
+                            }
+                            max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                        }
+                    }
+                    (
+                        det_set.into_iter().collect(),
+                        obs_set.into_iter().collect(),
+                    )
+                } else {
+                    // Graphlike mechanism: keep DEM token order.
+                    let mut detectors = Vec::new();
+                    let mut observables = Vec::new();
+                    for token in tokens.split_whitespace() {
+                        if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            detectors.push(d);
+                            max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                        } else if let Some(l) =
+                            token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            observables.push(l);
+                            max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                        }
+                    }
+                    (detectors, observables)
+                };
+
+                mechanisms.push((probability, detectors, observables));
+            } else if let Some(rest) = line.strip_prefix("detector(") {
+                let Some(close) = rest.find(')') else {
+                    continue;
+                };
+                let coords: Vec<f64> = rest[..close]
+                    .split(',')
+                    .filter_map(|s| s.trim().parse().ok())
+                    .collect();
+                for token in rest[close + 1..].split_whitespace() {
+                    if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok()) {
+                        detector_coords.insert(d as usize, coords.clone());
+                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            mechanisms,
+            detector_coords,
+            num_detectors: max_detector.map_or(0, |m| m as usize + 1),
+            num_observables: max_observable.map_or(0, |m| m as usize + 1),
+        })
+    }
+}
+
 /// Check matrix representation extracted from a Detector Error Model.
 ///
 /// Converts a DEM string into the matrices needed by check-matrix-based

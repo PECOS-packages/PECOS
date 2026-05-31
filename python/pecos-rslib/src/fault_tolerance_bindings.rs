@@ -4479,6 +4479,34 @@ impl PyLogicalSubgraphDecoder {
         Ok(Self { inner })
     }
 
+    /// Build from a precomputed per-observable detector membership instead of
+    /// from `stab_coords`.
+    ///
+    /// `membership` is a list (one entry per observable) of full-DEM detector
+    /// ids. This lets callers supply an alternative observing-region
+    /// construction (e.g. the paper's back-propagation / detecting-region set)
+    /// and decode with the same machinery for direct comparison.
+    #[staticmethod]
+    #[pyo3(signature = (dem, membership, inner_decoder="pecos_uf:fast"))]
+    fn from_membership(
+        dem: &str,
+        membership: Vec<Vec<usize>>,
+        inner_decoder: &str,
+    ) -> PyResult<Self> {
+        use pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder;
+
+        let inner = LogicalSubgraphDecoder::from_membership(dem, &membership, |subgraph| {
+            let sub_dem = subgraph_to_dem_string(subgraph);
+            let decoder = create_observable_decoder(&sub_dem, inner_decoder)
+                .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
+            Ok(Box::new(SendWrapper(decoder))
+                as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
+        })
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+        Ok(Self { inner })
+    }
+
     /// Decode a syndrome and return observable flip predictions.
     fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<u64> {
         use pecos_decoder_core::ObservableDecoder;

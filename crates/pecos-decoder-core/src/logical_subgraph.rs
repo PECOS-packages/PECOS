@@ -500,6 +500,48 @@ impl LogicalSubgraphDecoder {
         })
     }
 
+    /// Build from a precomputed per-observable detector membership instead of
+    /// from `stab_coords`.
+    ///
+    /// The membership may come from ANY region source — the coordinate path
+    /// ([`coordinate_membership_from_dem`]) or a back-propagation / detecting-
+    /// region source. This is the entry point for comparing alternative
+    /// observing-region constructions (e.g. the paper's back-propagation region
+    /// vs the coordinate group-fill) on the same DEM and decoders.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DEM is malformed, the membership has more than 64
+    /// entries, or the factory fails.
+    pub fn from_membership<F>(
+        dem: &str,
+        membership: &[Vec<usize>],
+        mut factory: F,
+    ) -> Result<Self, DecoderError>
+    where
+        F: FnMut(
+            &DemMatchingGraph,
+        ) -> Result<Box<dyn ObservableDecoder + Send + Sync>, DecoderError>,
+    {
+        let sdem = SparseDem::from_dem_str(dem)?;
+        let subgraphs = subgraphs_from_membership(&sdem, membership)?;
+        let num_observables = subgraphs.len();
+
+        let mut decoders = Vec::with_capacity(subgraphs.len());
+        let mut sub_syndromes = Vec::with_capacity(subgraphs.len());
+        for sg in &subgraphs {
+            decoders.push(factory(&sg.graph)?);
+            sub_syndromes.push(vec![0u8; sg.detector_map.len()]);
+        }
+
+        Ok(Self {
+            subgraphs,
+            decoders,
+            num_observables,
+            sub_syndromes,
+        })
+    }
+
     /// Number of observables.
     #[must_use]
     pub fn num_observables(&self) -> usize {

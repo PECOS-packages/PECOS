@@ -402,6 +402,8 @@ impl<'a> DemBuilder<'a> {
                 let pauli = pauli_pair_for_weight(p1, p2);
                 let weight = if self.noise.p2_replacement_approximation
                     == ReplacementBranchApproximation::BranchImpact
+                    || self.noise.p2_replacement_approximation
+                        == ReplacementBranchApproximation::ExactBranchReplay
                 {
                     weights.post_gate_two_qubit_weight_for(&pauli)
                 } else {
@@ -757,6 +759,10 @@ impl<'a> DemBuilder<'a> {
             if let Some(context) = self.exact_branch_context {
                 let requests =
                     context.replacement_branch_requests(&self.influence_map.locations)?;
+                for request in &requests {
+                    let _branch_locs = context
+                        .omitted_branch_location_pair(*request, &self.influence_map.locations)?;
+                }
                 return Err(DemBuilderError::ConfigurationError(format!(
                     "exact_branch_replay has circuit context and identified {} two-qubit replay request(s), but exact replacement-branch DEM emission is not implemented yet; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations",
                     requests.len()
@@ -1993,6 +1999,67 @@ impl ExactBranchReplayContext<'_> {
         }
         Ok(requests)
     }
+
+    fn omitted_branch_location_pair(
+        &self,
+        request: ExactBranchReplayRequest,
+        original_locations: &[DagSpacetimeLocation],
+    ) -> Result<[usize; 2], DemBuilderError> {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+
+        let branch = circuit_with_omitted_two_qubit_gate(self.circuit, request.gate_node)?;
+        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
+        identity_location_pair_for_request(request, original_locations, &branch_map.locations)
+    }
+}
+
+fn identity_location_pair_for_request(
+    request: ExactBranchReplayRequest,
+    original_locations: &[DagSpacetimeLocation],
+    branch_locations: &[DagSpacetimeLocation],
+) -> Result<[usize; 2], DemBuilderError> {
+    let [orig_loc1, orig_loc2] = request.loc_indices;
+    let expected_qubits = [
+        *original_locations
+            .get(orig_loc1)
+            .and_then(|loc| loc.qubits.first())
+            .ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay original location {orig_loc1} has no qubit"
+                ))
+            })?,
+        *original_locations
+            .get(orig_loc2)
+            .and_then(|loc| loc.qubits.first())
+            .ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay original location {orig_loc2} has no qubit"
+                ))
+            })?,
+    ];
+
+    let mut pair = [usize::MAX; 2];
+    for (branch_idx, branch_loc) in branch_locations.iter().enumerate() {
+        if branch_loc.node != request.gate_node
+            || branch_loc.before
+            || branch_loc.gate_type != GateType::I
+        {
+            continue;
+        }
+        if branch_loc.qubits.first() == Some(&expected_qubits[0]) {
+            pair[0] = branch_idx;
+        } else if branch_loc.qubits.first() == Some(&expected_qubits[1]) {
+            pair[1] = branch_idx;
+        }
+    }
+
+    if pair.contains(&usize::MAX) {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "exact_branch_replay could not find identity branch locations for omitted gate node {} on qubits {:?}",
+            request.gate_node, expected_qubits
+        )));
+    }
+    Ok(pair)
 }
 
 // ============================================================================
@@ -3020,6 +3087,11 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].gate_node, entangler);
         assert_eq!(requests[0].gate_type, GateType::SZZ);
+        let branch_pair = (ExactBranchReplayContext { circuit: &circuit })
+            .omitted_branch_location_pair(requests[0], &influence_map.locations)
+            .expect("omitted branch identity locations should be recoverable");
+        assert_ne!(branch_pair[0], branch_pair[1]);
+
         let loc_qubits: Vec<_> = requests[0]
             .loc_indices
             .iter()

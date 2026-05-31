@@ -101,9 +101,9 @@ class NoiseModel:
             replacement labels. ``"pauli_twirl_omitted_gate"`` convolves with
             the omitted two-qubit gate's Pauli twirl; ``"branch_impact"``
             evaluates starred entries as replacement branch impacts;
-            ``"exact_branch_replay"`` is reserved for a future circuit-aware
-            exact replay provider and currently fails loudly for starred
-            entries;
+            ``"exact_branch_replay"`` uses the traced circuit context to replay
+            omitted-gate branches at concrete two-qubit gate locations and
+            fails loudly when a branch is not DEM-representable;
             ``"ignore_gate_removal"`` treats starred entries like plain
             post-gate Pauli entries.
         p_meas: Measurement error rate.

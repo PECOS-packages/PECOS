@@ -262,6 +262,19 @@ impl SparseDem {
         for line in dem.lines() {
             let line = line.trim();
 
+            // This is a flat, single-pass parser: it does not expand `repeat`
+            // blocks or apply `shift_detectors`. Silently mis-parsing those would
+            // corrupt detector ids, so refuse them and tell the caller to flatten
+            // (e.g. stim's `DetectorErrorModel.flattened()`).
+            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
+                return Err(DecoderError::InvalidConfiguration(
+                    "SparseDem requires a flattened DEM: `repeat` / `shift_detectors` \
+                     are not supported. Flatten the DEM first (e.g. stim's \
+                     DetectorErrorModel.flattened())."
+                        .into(),
+                ));
+            }
+
             if let Some(rest) = line.strip_prefix("error(") {
                 let close = rest.find(')').ok_or_else(|| {
                     DecoderError::InvalidConfiguration("Missing ) in error line".into())
@@ -421,6 +434,13 @@ impl DemCheckMatrix {
                     }
                 }
                 continue;
+            }
+            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
+                return Err(DecoderError::InvalidConfiguration(
+                    "DemCheckMatrix requires a flattened DEM: `repeat` / \
+                     `shift_detectors` are not supported. Flatten the DEM first."
+                        .into(),
+                ));
             }
             if !line.starts_with("error(") {
                 // Skip non-error lines (detector, etc.)
@@ -612,6 +632,13 @@ impl DemMatchingGraph {
                     }
                 }
                 continue;
+            }
+            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
+                return Err(DecoderError::InvalidConfiguration(
+                    "DemMatchingGraph requires a flattened DEM: `repeat` / \
+                     `shift_detectors` are not supported. Flatten the DEM first."
+                        .into(),
+                ));
             }
             if line.is_empty() || line.starts_with('#') || !line.starts_with("error(") {
                 continue;
@@ -1056,6 +1083,19 @@ mod tests {
 
         let (_dets, obs) = utils::parse_dem_metadata(dem).unwrap();
         assert_eq!(obs, 2, "parse_dem_metadata must count L1");
+    }
+
+    #[test]
+    fn test_non_flattened_dem_rejected() {
+        // repeat blocks and shift_detectors would corrupt detector ids if parsed
+        // line-by-line; all parsers must refuse rather than silently mis-parse.
+        let repeat_dem = "repeat 3 {\n    error(0.01) D0 L0\n    shift_detectors 1\n}\n";
+        assert!(SparseDem::from_dem_str(repeat_dem).is_err());
+        assert!(DemCheckMatrix::from_dem_str(repeat_dem).is_err());
+        assert!(DemMatchingGraph::from_dem_str(repeat_dem).is_err());
+
+        let shift_dem = "error(0.01) D0 L0\nshift_detectors 1\nerror(0.01) D0 L0\n";
+        assert!(SparseDem::from_dem_str(shift_dem).is_err());
     }
 
     #[test]

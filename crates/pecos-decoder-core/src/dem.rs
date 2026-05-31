@@ -148,6 +148,17 @@ pub mod utils {
                         }
                     }
                 }
+                "logical_observable" => {
+                    // Declared observable with no flipping mechanism (Stim emits
+                    // these for deterministic logicals) still counts.
+                    for part in &parts[1..] {
+                        if let Some(l_str) = part.strip_prefix('L')
+                            && let Ok(l) = l_str.parse::<usize>()
+                        {
+                            observables.insert(l);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -321,6 +332,16 @@ impl SparseDem {
                         max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
                     }
                 }
+            } else if let Some(rest) = line.strip_prefix("logical_observable") {
+                // Stim emits `logical_observable Lk` for observables that no
+                // error mechanism flips (deterministic / unflipped logicals).
+                // Honour the declared count so a trailing unflipped observable
+                // is not silently dropped from `num_observables`.
+                for token in rest.split_whitespace() {
+                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
+                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                    }
+                }
             }
         }
 
@@ -392,8 +413,17 @@ impl DemCheckMatrix {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
+            if let Some(rest) = line.strip_prefix("logical_observable") {
+                // Count declared observables that no mechanism flips.
+                for token in rest.split_whitespace() {
+                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
+                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                    }
+                }
+                continue;
+            }
             if !line.starts_with("error(") {
-                // Skip non-error lines (detector, logical_observable, etc.)
+                // Skip non-error lines (detector, etc.)
                 continue;
             }
 
@@ -574,6 +604,15 @@ impl DemMatchingGraph {
 
         for line in dem.lines() {
             let line = line.trim();
+            if let Some(rest) = line.strip_prefix("logical_observable") {
+                // Count declared observables that no mechanism flips.
+                for token in rest.split_whitespace() {
+                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
+                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                    }
+                }
+                continue;
+            }
             if line.is_empty() || line.starts_with('#') || !line.starts_with("error(") {
                 continue;
             }
@@ -997,6 +1036,26 @@ mod tests {
         let (detectors, observables) = utils::parse_dem_metadata(dem).unwrap();
         assert_eq!(detectors, 5); // D0 through D4
         assert_eq!(observables, 2); // L0 and L1
+    }
+
+    #[test]
+    fn test_logical_observable_declaration_counts() {
+        // L1 has no flipping mechanism; Stim emits `logical_observable L1`.
+        // All parsers must still count it so the trailing observable is not
+        // silently dropped.
+        let dem = "error(0.01) D0 L0\ndetector(0, 0, 0) D0\nlogical_observable L1\n";
+
+        let sdem = SparseDem::from_dem_str(dem).unwrap();
+        assert_eq!(sdem.num_observables, 2, "SparseDem must count L1");
+
+        let dcm = DemCheckMatrix::from_dem_str(dem).unwrap();
+        assert_eq!(dcm.num_observables, 2, "DemCheckMatrix must count L1");
+
+        let graph = DemMatchingGraph::from_dem_str(dem).unwrap();
+        assert_eq!(graph.num_observables, 2, "DemMatchingGraph must count L1");
+
+        let (_dets, obs) = utils::parse_dem_metadata(dem).unwrap();
+        assert_eq!(obs, 2, "parse_dem_metadata must count L1");
     }
 
     #[test]

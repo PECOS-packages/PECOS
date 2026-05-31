@@ -126,6 +126,9 @@ pub enum DirectSourceFamily {
     /// Two-location direct source where exactly one component is non-empty.
     TwoLocationOneSidedComponent,
 
+    /// Two-location direct source produced by a replacement-branch projection.
+    TwoLocationReplacementBranchImpact,
+
     /// Fallback for other direct-source shapes.
     Other,
 }
@@ -168,6 +171,10 @@ pub struct FaultContribution {
     /// currently recorded for direct two-qubit channel sources to aid decomposition
     /// analysis without changing emitted DEM behavior.
     pub direct_component_effects: Option<(FaultMechanism, FaultMechanism)>,
+
+    /// True when this contribution came from a replacement branch rather than
+    /// ordinary post-gate Pauli noise.
+    pub replacement_branch: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -176,6 +183,8 @@ pub(crate) struct SourceMetadata<'a, Index> {
     paulis: &'a [Pauli],
     gate_types: &'a [GateType],
     before_flags: &'a [bool],
+    direct_source_family_override: Option<DirectSourceFamily>,
+    replacement_branch: bool,
 }
 
 impl<'a, Index> SourceMetadata<'a, Index> {
@@ -190,7 +199,19 @@ impl<'a, Index> SourceMetadata<'a, Index> {
             paulis,
             gate_types,
             before_flags,
+            direct_source_family_override: None,
+            replacement_branch: false,
         }
+    }
+
+    pub(crate) const fn with_direct_source_family(mut self, family: DirectSourceFamily) -> Self {
+        self.direct_source_family_override = Some(family);
+        self
+    }
+
+    pub(crate) const fn with_replacement_branch(mut self) -> Self {
+        self.replacement_branch = true;
+        self
     }
 }
 
@@ -254,6 +275,7 @@ impl FaultContribution {
             source_before_flags: SmallVec::new(),
             direct_source_family: None,
             direct_component_effects: None,
+            replacement_branch: false,
         }
     }
 
@@ -275,12 +297,11 @@ impl FaultContribution {
             paulis: source.paulis.iter().copied().collect(),
             source_gate_types: source.gate_types.iter().copied().collect(),
             source_before_flags: source.before_flags.iter().copied().collect(),
-            direct_source_family: Self::classify_direct_source_family(
-                source.location_indices,
-                source.paulis,
-                None,
-            ),
+            direct_source_family: source.direct_source_family_override.or_else(|| {
+                Self::classify_direct_source_family(source.location_indices, source.paulis, None)
+            }),
             direct_component_effects: None,
+            replacement_branch: source.replacement_branch,
         }
     }
 
@@ -311,12 +332,15 @@ impl FaultContribution {
             paulis: source.paulis.iter().copied().collect(),
             source_gate_types: source.gate_types.iter().copied().collect(),
             source_before_flags: source.before_flags.iter().copied().collect(),
-            direct_source_family: Self::classify_direct_source_family(
-                source.location_indices,
-                source.paulis,
-                Some((components.first, components.second)),
-            ),
+            direct_source_family: source.direct_source_family_override.or_else(|| {
+                Self::classify_direct_source_family(
+                    source.location_indices,
+                    source.paulis,
+                    Some((components.first, components.second)),
+                )
+            }),
             direct_component_effects: Some((components.first.clone(), components.second.clone())),
+            replacement_branch: source.replacement_branch,
         }
     }
 
@@ -346,6 +370,7 @@ impl FaultContribution {
             source_before_flags: SmallVec::new(),
             direct_source_family: None,
             direct_component_effects: None,
+            replacement_branch: false,
         }
     }
 
@@ -376,6 +401,7 @@ impl FaultContribution {
             source_before_flags: source.before_flags.iter().copied().collect(),
             direct_source_family: None,
             direct_component_effects: None,
+            replacement_branch: source.replacement_branch,
         }
     }
 
@@ -1164,6 +1190,21 @@ fn convert_location_indices(location_indices: &[usize]) -> SmallVec<[u32; 2]> {
         .collect()
 }
 
+fn converted_source_metadata<'a>(
+    source: SourceMetadata<'a, usize>,
+    location_indices: &'a [u32],
+) -> SourceMetadata<'a, u32> {
+    let mut converted = SourceMetadata::new(
+        location_indices,
+        source.paulis,
+        source.gate_types,
+        source.before_flags,
+    );
+    converted.direct_source_family_override = source.direct_source_family_override;
+    converted.replacement_branch = source.replacement_branch;
+    converted
+}
+
 /// Converts a DEM measurement-record offset to an absolute measurement index.
 ///
 /// Negative offsets count backward from the end of the measurement record
@@ -1427,10 +1468,42 @@ pub enum ReplacementBranchApproximation {
     /// gate's dagger. This is the default approximation for starred entries.
     #[default]
     PauliTwirlOmittedGate,
-    /// Evaluate replacement branches as their own fault branches after
-    /// convolving with the omitted gate's Pauli twirl, instead of folding them
-    /// into the ordinary post-gate two-qubit rate vector.
+    /// Evaluate Pauli-projected replacement branches as their own contribution
+    /// streams after convolving with the omitted gate's Pauli twirl, instead of
+    /// folding them into the ordinary post-gate two-qubit rate vector.
+    ///
+    /// This preserves replacement-branch provenance in contribution metadata,
+    /// but it is still a Pauli projection rather than exact non-Pauli branch
+    /// replay.
     BranchImpact,
+    /// Request exact replay of replacement branches against the circuit.
+    ///
+    /// This mode is intentionally fail-loud until a circuit-aware replay
+    /// provider is attached. A replacement branch can be a non-Pauli Clifford
+    /// effect in the ideal-circuit frame, which standard DEM rows cannot always
+    /// represent as one deterministic Pauli-like event.
+    ExactBranchReplay,
+}
+
+/// A single Pauli-projected impact term produced by a replacement branch.
+///
+/// This is intentionally an intermediate representation rather than a final
+/// DEM contribution. It preserves the expanded branch term until the builder
+/// can evaluate the term against detector/observable metadata. Today the
+/// projection comes from the Pauli twirl of the omitted two-qubit Clifford
+/// gate. A future exact replay implementation should attach the same
+/// replacement-branch contribution metadata, but may need to bypass this
+/// Pauli-projected shape when the branch is not representable as a Pauli fault.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplacementBranchImpact {
+    /// Replacement branch Pauli label before omitted-gate projection.
+    pub replacement_pauli_label: String,
+    /// Pauli-twirl term for the omitted ideal gate.
+    pub omitted_gate_twirl_label: String,
+    /// Non-identity two-qubit Pauli label (`IX` through `ZZ`) to evaluate.
+    pub pauli_label: String,
+    /// Relative probability mass for this projected branch term.
+    pub relative_probability: f64,
 }
 
 impl PauliWeights {
@@ -1561,10 +1634,11 @@ impl PauliWeights {
 
         direct
             + self
-                .replacement_branch_impact_weights(gate_type)
-                .get(query_label.as_str())
-                .copied()
-                .unwrap_or(0.0)
+                .replacement_branch_impacts(gate_type)
+                .into_iter()
+                .filter(|impact| impact.pauli_label == query_label)
+                .map(|impact| impact.relative_probability)
+                .sum::<f64>()
     }
 
     /// Look up only the plain post-gate two-qubit Pauli weight.
@@ -1581,17 +1655,20 @@ impl PauliWeights {
             .sum::<f64>()
     }
 
-    /// Effective non-identity branch-impact weights from replacement entries.
+    /// Non-identity branch-impact terms from replacement entries.
     ///
     /// Each starred replacement entry is convolved with the Pauli twirl of the
-    /// omitted ideal gate. Identity effects are omitted because DEM builders
-    /// only emit branches that flip detectors or logical observables.
+    /// omitted ideal gate. The returned terms are deliberately not aggregated:
+    /// the builder should evaluate each branch term as a separate contribution
+    /// before the DEM's normal contribution grouping combines equivalent
+    /// detector/logical effects. Identity effects are omitted because DEM
+    /// builders only emit branches that flip detectors or logical observables.
     #[must_use]
-    pub fn replacement_branch_impact_weights(&self, gate_type: GateType) -> BTreeMap<String, f64> {
+    pub fn replacement_branch_impacts(&self, gate_type: GateType) -> Vec<ReplacementBranchImpact> {
         let Some(twirl) = omitted_two_qubit_gate_pauli_twirl(gate_type) else {
-            return BTreeMap::new();
+            return Vec::new();
         };
-        let mut weights = BTreeMap::new();
+        let mut impacts = Vec::new();
         for (ps, replacement_weight) in &self.replacement_entries {
             let Ok(replacement_label) = two_qubit_pauli_label(ps) else {
                 continue;
@@ -1602,8 +1679,26 @@ impl PauliWeights {
                 if effective_label == "II" {
                     continue;
                 }
-                *weights.entry(effective_label).or_insert(0.0) += replacement_weight * twirl_weight;
+                impacts.push(ReplacementBranchImpact {
+                    replacement_pauli_label: replacement_label.clone(),
+                    omitted_gate_twirl_label: (*twirl_label).to_string(),
+                    pauli_label: effective_label,
+                    relative_probability: replacement_weight * twirl_weight,
+                });
             }
+        }
+        impacts
+    }
+
+    /// Effective non-identity branch-impact weights from replacement entries.
+    ///
+    /// This is a convenience aggregation for callers that do not need source
+    /// branch identity.
+    #[must_use]
+    pub fn replacement_branch_impact_weights(&self, gate_type: GateType) -> BTreeMap<String, f64> {
+        let mut weights = BTreeMap::new();
+        for impact in self.replacement_branch_impacts(gate_type) {
+            *weights.entry(impact.pauli_label).or_insert(0.0) += impact.relative_probability;
         }
         weights
     }
@@ -1618,6 +1713,12 @@ impl PauliWeights {
     #[must_use]
     pub fn replacement_entries(&self) -> &[(pecos_core::PauliString, f64)] {
         &self.replacement_entries
+    }
+
+    /// Whether this weight table contains starred replacement branches.
+    #[must_use]
+    pub fn has_replacement_entries(&self) -> bool {
+        !self.replacement_entries.is_empty()
     }
 }
 
@@ -3475,6 +3576,9 @@ impl DetectorErrorModel {
                 DirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",
                 DirectSourceFamily::TwoLocationComponent => "TwoLocationComponent",
                 DirectSourceFamily::TwoLocationOneSidedComponent => "TwoLocationOneSidedComponent",
+                DirectSourceFamily::TwoLocationReplacementBranchImpact => {
+                    "TwoLocationReplacementBranchImpact"
+                }
                 DirectSourceFamily::Other => "Other",
             }
         }
@@ -3620,12 +3724,7 @@ impl DetectorErrorModel {
             .push(FaultContribution::direct_with_source(
                 effect,
                 probability,
-                SourceMetadata::new(
-                    &location_indices,
-                    source.paulis,
-                    source.gate_types,
-                    source.before_flags,
-                ),
+                converted_source_metadata(source, &location_indices),
             ));
     }
 
@@ -3646,12 +3745,7 @@ impl DetectorErrorModel {
             .push(FaultContribution::direct_with_source_components(
                 effect,
                 probability,
-                SourceMetadata::new(
-                    &location_indices,
-                    source.paulis,
-                    source.gate_types,
-                    source.before_flags,
-                ),
+                converted_source_metadata(source, &location_indices),
                 components,
             ));
     }
@@ -3731,12 +3825,7 @@ impl DetectorErrorModel {
                 x_effect,
                 z_effect,
                 probability,
-                SourceMetadata::new(
-                    &location_indices,
-                    source.paulis,
-                    source.gate_types,
-                    source.before_flags,
-                ),
+                converted_source_metadata(source, &location_indices),
             ));
     }
 
@@ -5683,6 +5772,55 @@ mod tests {
     }
 
     #[test]
+    fn test_replacement_branch_source_metadata_is_preserved() {
+        let effect = FaultMechanism::from_unsorted([7, 11], std::iter::empty());
+        let first = effect.clone();
+        let second = FaultMechanism::new();
+
+        let contribution = FaultContribution::direct_with_source_components(
+            effect,
+            0.01,
+            SourceMetadata::new(
+                &[3, 4],
+                &[Pauli::Z, Pauli::I],
+                &[GateType::SZZ, GateType::SZZ],
+                &[false, false],
+            )
+            .with_direct_source_family(DirectSourceFamily::TwoLocationReplacementBranchImpact)
+            .with_replacement_branch(),
+            DirectSourceComponents::new(&first, &second),
+        );
+
+        assert!(contribution.replacement_branch);
+        assert_eq!(
+            contribution.direct_source_family,
+            Some(DirectSourceFamily::TwoLocationReplacementBranchImpact)
+        );
+
+        let mut dem = DetectorErrorModel::new();
+        dem.add_direct_contribution_with_source_components(
+            FaultMechanism::from_unsorted([7, 11], std::iter::empty()),
+            0.02,
+            SourceMetadata::new(
+                &[3usize, 4usize],
+                &[Pauli::Z, Pauli::I],
+                &[GateType::SZZ, GateType::SZZ],
+                &[false, false],
+            )
+            .with_direct_source_family(DirectSourceFamily::TwoLocationReplacementBranchImpact)
+            .with_replacement_branch(),
+            DirectSourceComponents::new(&first, &second),
+        );
+        let contributions = dem.contributions_for_effect(&[7, 11], &[]);
+        assert_eq!(contributions.len(), 1);
+        assert!(contributions[0].replacement_branch);
+        assert_eq!(
+            contributions[0].direct_source_family,
+            Some(DirectSourceFamily::TwoLocationReplacementBranchImpact)
+        );
+    }
+
+    #[test]
     fn test_add_y_decomposed_contribution_with_source_routes_metadata_to_direct() {
         let mut dem = DetectorErrorModel::new();
         let x = FaultMechanism::new();
@@ -5801,6 +5939,15 @@ mod tests {
         assert_eq!(
             replacement_omits_only.replacement_branch_impact_weights(GateType::SZZ),
             BTreeMap::from([("ZZ".to_string(), 0.5)])
+        );
+        assert_eq!(
+            replacement_omits_only.replacement_branch_impacts(GateType::SZZ),
+            vec![ReplacementBranchImpact {
+                replacement_pauli_label: "II".to_string(),
+                omitted_gate_twirl_label: "ZZ".to_string(),
+                pauli_label: "ZZ".to_string(),
+                relative_probability: 0.5,
+            }],
         );
 
         let cx_replacement_identity = PauliWeights::with_replacement([], [(Z(0) & X(1), 1.0)]);

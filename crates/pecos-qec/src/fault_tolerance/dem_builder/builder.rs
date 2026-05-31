@@ -16,8 +16,8 @@
 //! influence maps and detector/DEM-output metadata.
 
 use super::types::{
-    DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, FaultMechanism,
-    NoiseConfig, PerGateTypeNoise, ReplacementBranchApproximation, SourceMetadata,
+    DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, DirectSourceFamily,
+    FaultMechanism, NoiseConfig, PerGateTypeNoise, ReplacementBranchApproximation, SourceMetadata,
     record_offset_to_absolute_index,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
@@ -641,6 +641,7 @@ impl<'a> DemBuilder<'a> {
     pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         self.validate_measurement_count()?;
         self.validate_metadata_refs()?;
+        self.validate_replacement_branch_approximation()?;
         Ok(self.build())
     }
 
@@ -655,6 +656,8 @@ impl<'a> DemBuilder<'a> {
     /// circuit-derived metadata must use [`Self::try_build`] instead.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
+        self.validate_replacement_branch_approximation()
+            .expect("invalid DEM replacement branch approximation");
         let num_influence_dem_outputs = self
             .num_influence_dem_outputs()
             .max(self.influence_map.dem_output_metadata.len());
@@ -719,6 +722,24 @@ impl<'a> DemBuilder<'a> {
         );
 
         dem
+    }
+
+    fn validate_replacement_branch_approximation(&self) -> Result<(), DemBuilderError> {
+        let has_replacement_branches = self
+            .noise
+            .p2_weights
+            .as_ref()
+            .is_some_and(|weights| weights.has_replacement_entries());
+        if self.noise.p2_replacement_approximation
+            == ReplacementBranchApproximation::ExactBranchReplay
+            && has_replacement_branches
+        {
+            return Err(DemBuilderError::ConfigurationError(
+                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn num_influence_dem_outputs(&self) -> usize {
@@ -899,8 +920,8 @@ impl<'a> DemBuilder<'a> {
             return;
         };
         let loc1_meta = &self.influence_map.locations[loc1];
-        let branch_weights = weights.replacement_branch_impact_weights(loc1_meta.gate_type);
-        if branch_weights.is_empty() {
+        let branch_impacts = weights.replacement_branch_impacts(loc1_meta.gate_type);
+        if branch_impacts.is_empty() {
             return;
         }
 
@@ -908,13 +929,22 @@ impl<'a> DemBuilder<'a> {
             self.two_qubit_effect_table(loc1, loc2, meas_to_detectors, meas_to_observables);
         let loc2_meta = &self.influence_map.locations[loc2];
 
-        for (label, relative_weight) in branch_weights {
-            let Some((p1, p2)) = two_qubit_label_to_pauli_indices(&label) else {
+        for impact in branch_impacts {
+            let Some((p1, p2)) = two_qubit_label_to_pauli_indices(&impact.pauli_label) else {
                 continue;
             };
-            let prob = self.noise.p2 * relative_weight;
+            let prob = self.noise.p2 * impact.relative_probability;
             self.add_two_qubit_pauli_contribution(
-                loc1, loc2, p1, p2, prob, &effects, loc1_meta, loc2_meta, dem,
+                loc1,
+                loc2,
+                p1,
+                p2,
+                prob,
+                &effects,
+                loc1_meta,
+                loc2_meta,
+                dem,
+                Some(DirectSourceFamily::TwoLocationReplacementBranchImpact),
             );
         }
     }
@@ -1049,7 +1079,7 @@ impl<'a> DemBuilder<'a> {
                     continue;
                 }
                 self.add_two_qubit_pauli_contribution(
-                    loc1, loc2, p1, p2, prob, &effects, loc1_meta, loc2_meta, dem,
+                    loc1, loc2, p1, p2, prob, &effects, loc1_meta, loc2_meta, dem, None,
                 );
             }
         }
@@ -1100,6 +1130,7 @@ impl<'a> DemBuilder<'a> {
         loc1_meta: &DagSpacetimeLocation,
         loc2_meta: &DagSpacetimeLocation,
         dem: &mut DetectorErrorModel,
+        direct_source_family: Option<DirectSourceFamily>,
     ) {
         let effect = &effects[p1 as usize][p2 as usize];
         if effect.is_empty() {
@@ -1119,30 +1150,40 @@ impl<'a> DemBuilder<'a> {
             dem.mark_graphlike_decomposable(effect.detectors[0], effect.detectors[1]);
         }
 
+        let source_locations = [loc1, loc2];
+        let source_paulis = [Pauli::from_u8(p1), Pauli::from_u8(p2)];
+        let source_gate_types = [loc1_meta.gate_type, loc2_meta.gate_type];
+        let source_before_flags = [loc1_meta.before, loc2_meta.before];
+
         if let Some((a1, a2, b1, b2)) = get_y_decomposition(p1, p2) {
             let e_a = &effects[a1 as usize][a2 as usize];
             let e_b = &effects[b1 as usize][b2 as usize];
-            dem.add_y_decomposed_contribution_with_source(
-                e_a,
-                e_b,
-                prob,
-                SourceMetadata::new(
-                    &[loc1, loc2],
-                    &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
-                    &[loc1_meta.gate_type, loc2_meta.gate_type],
-                    &[loc1_meta.before, loc2_meta.before],
-                ),
+            let mut source = SourceMetadata::new(
+                &source_locations,
+                &source_paulis,
+                &source_gate_types,
+                &source_before_flags,
             );
+            if direct_source_family.is_some() {
+                source = source.with_replacement_branch();
+            }
+            dem.add_y_decomposed_contribution_with_source(e_a, e_b, prob, source);
         } else {
+            let mut source = SourceMetadata::new(
+                &source_locations,
+                &source_paulis,
+                &source_gate_types,
+                &source_before_flags,
+            );
+            if let Some(family) = direct_source_family {
+                source = source
+                    .with_direct_source_family(family)
+                    .with_replacement_branch();
+            }
             dem.add_direct_contribution_with_source_components(
                 effect.clone(),
                 prob,
-                SourceMetadata::new(
-                    &[loc1, loc2],
-                    &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
-                    &[loc1_meta.gate_type, loc2_meta.gate_type],
-                    &[loc1_meta.before, loc2_meta.before],
-                ),
+                source,
                 DirectSourceComponents::new(e1, e2),
             );
         }
@@ -2129,12 +2170,15 @@ pub fn resolve_result_tags(
 pub enum DemBuilderError {
     /// JSON parsing error.
     ParseError(String),
+    /// Invalid DEM builder configuration.
+    ConfigurationError(String),
 }
 
 impl std::fmt::Display for DemBuilderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ParseError(msg) => write!(f, "DEM builder parse error: {msg}"),
+            Self::ConfigurationError(msg) => write!(f, "DEM builder configuration error: {msg}"),
         }
     }
 }
@@ -2748,6 +2792,29 @@ mod tests {
                 .try_build()
                 .is_ok(),
             "empty influence map must keep the declarative-count escape hatch"
+        );
+    }
+
+    #[test]
+    fn test_try_build_rejects_exact_branch_replay_without_provider() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
+        use pecos_core::pauli::Z;
+
+        let influence_map = DagFaultInfluenceMap::with_capacity(0);
+        let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement([], [(Z(0) & Z(1), 1.0)]))
+            .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+
+        let err = DemBuilder::new(&influence_map)
+            .with_noise_config(noise)
+            .try_build()
+            .expect_err("exact branch replay must fail loud without an exact provider");
+
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string()
+                .contains("circuit-aware exact branch provider"),
+            "unexpected error: {err}",
         );
     }
 

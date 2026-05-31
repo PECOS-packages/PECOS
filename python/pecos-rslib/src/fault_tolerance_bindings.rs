@@ -157,11 +157,14 @@ fn parse_replacement_approximation(
         "branch_impact" | "replacement_branch_impact" | "impact" => {
             Ok(ReplacementBranchApproximation::BranchImpact)
         }
+        "exact_branch_replay" | "exact_replay" | "exact_branch" | "exact" => {
+            Ok(ReplacementBranchApproximation::ExactBranchReplay)
+        }
         "ignore_gate_removal" | "ignore_removal" | "post_gate" | "postgate" => {
             Ok(ReplacementBranchApproximation::IgnoreGateRemoval)
         }
         _ => Err(pyo3::exceptions::PyValueError::new_err(
-            "p2_replacement_approximation must be 'pauli_twirl_omitted_gate', 'branch_impact', or 'ignore_gate_removal'",
+            "p2_replacement_approximation must be 'pauli_twirl_omitted_gate', 'branch_impact', 'exact_branch_replay', or 'ignore_gate_removal'",
         )),
     }
 }
@@ -1052,10 +1055,14 @@ fn contribution_record_to_pydict(
             RustDirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",
             RustDirectSourceFamily::TwoLocationComponent => "TwoLocationComponent",
             RustDirectSourceFamily::TwoLocationOneSidedComponent => "TwoLocationOneSidedComponent",
+            RustDirectSourceFamily::TwoLocationReplacementBranchImpact => {
+                "TwoLocationReplacementBranchImpact"
+            }
             RustDirectSourceFamily::Other => "Other",
         };
         dict.set_item("direct_source_family", family_label)?;
     }
+    dict.set_item("replacement_branch", contribution.replacement_branch)?;
 
     match contribution.source_type {
         RustFaultSourceType::Direct => {

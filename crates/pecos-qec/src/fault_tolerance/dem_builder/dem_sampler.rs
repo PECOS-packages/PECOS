@@ -2000,6 +2000,16 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Build the [`SamplingEngine`].
     #[must_use]
     pub fn build(self) -> SamplingEngine {
+        if self.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
+            && self
+                .p2_weights
+                .as_ref()
+                .is_some_and(|weights| weights.has_replacement_entries())
+        {
+            panic!(
+                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+            );
+        }
         let num_detectors = self.detector_records.len();
         let influence_observable_ids = self.influence_map.observable_ids();
         let num_influence_observables = self.influence_map.num_observables();

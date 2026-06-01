@@ -26,7 +26,9 @@ use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
 use pecos_simulators::symbolic_sparse_stab::MeasurementHistory;
 use smallvec::SmallVec;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 // ============================================================================
 // JSON Parsing Types
@@ -116,11 +118,21 @@ pub struct DemBuilder<'a> {
     measurement_order: Option<Vec<usize>>,
     /// Optional circuit context for future exact replacement-branch replay.
     exact_branch_context: Option<ExactBranchReplayContext<'a>>,
+    /// Ideal symbolic measurement history shared by exact branch replays.
+    exact_ideal_history_cache: RefCell<Option<Rc<MeasurementHistory>>>,
+    /// Per-gate cache for exact replacement-branch replay effects.
+    exact_branch_cache: RefCell<BTreeMap<usize, ExactBranchReplayAnalysis>>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ExactBranchReplayContext<'a> {
     circuit: &'a pecos_quantum::DagCircuit,
+}
+
+#[derive(Debug, Clone)]
+struct ExactBranchReplayAnalysis {
+    base_effect: FaultMechanism,
+    branch_effects: [[FaultMechanism; 4]; 4],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,7 +285,13 @@ impl<'a> DemBuilder<'a> {
             num_measurements: influence_map.measurements.len(),
             measurement_order: None,
             exact_branch_context: None,
+            exact_ideal_history_cache: RefCell::new(None),
+            exact_branch_cache: RefCell::new(BTreeMap::new()),
         }
+    }
+
+    fn clear_exact_branch_cache(&mut self) {
+        self.exact_branch_cache.get_mut().clear();
     }
 
     /// Sets the noise configuration from individual parameters.
@@ -296,6 +314,8 @@ impl<'a> DemBuilder<'a> {
         circuit: &'a pecos_quantum::DagCircuit,
     ) -> Self {
         self.exact_branch_context = Some(ExactBranchReplayContext { circuit });
+        self.exact_ideal_history_cache.get_mut().take();
+        self.clear_exact_branch_cache();
         self
     }
 
@@ -435,6 +455,7 @@ impl<'a> DemBuilder<'a> {
     #[must_use]
     pub fn with_num_measurements(mut self, num: usize) -> Self {
         self.num_measurements = num;
+        self.clear_exact_branch_cache();
         self
     }
 
@@ -459,6 +480,7 @@ impl<'a> DemBuilder<'a> {
     #[must_use]
     pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
+        self.clear_exact_branch_cache();
         self
     }
 
@@ -479,6 +501,7 @@ impl<'a> DemBuilder<'a> {
     /// Returns an error if the JSON is malformed.
     pub fn with_detectors_json(mut self, json: &str) -> Result<Self, DemBuilderError> {
         self.detectors = parse_detectors_json(json)?;
+        self.clear_exact_branch_cache();
         Ok(self)
     }
 
@@ -494,6 +517,7 @@ impl<'a> DemBuilder<'a> {
     /// Returns an error if the JSON is malformed.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, DemBuilderError> {
         self.observables = parse_observables_json(json)?;
+        self.clear_exact_branch_cache();
         Ok(self)
     }
 
@@ -510,6 +534,7 @@ impl<'a> DemBuilder<'a> {
                 meas_ids: Vec::new(),
             })
             .collect();
+        self.clear_exact_branch_cache();
         self
     }
 
@@ -809,10 +834,6 @@ impl<'a> DemBuilder<'a> {
                     .as_ref()
                     .expect("replacement entries exist");
                 for request in &requests {
-                    let _branch_locs = context
-                        .omitted_branch_location_pair(*request, &self.influence_map.locations)?;
-                    let _omitted_effect =
-                        self.exact_omitted_branch_base_effect(context, *request)?;
                     for (replacement_pauli, _weight) in weights.replacement_entries() {
                         let label = two_qubit_label_for_replay(replacement_pauli)?;
                         let _replacement_effect =
@@ -829,18 +850,38 @@ impl<'a> DemBuilder<'a> {
         Ok(())
     }
 
+    #[cfg(test)]
     fn exact_omitted_branch_base_effect(
         &self,
         context: ExactBranchReplayContext<'_>,
         request: ExactBranchReplayRequest,
     ) -> Result<FaultMechanism, DemBuilderError> {
+        let branch = circuit_with_omitted_two_qubit_gate(context.circuit, request.gate_node)?;
+        self.exact_omitted_branch_base_effect_for_branch(context, request, &branch)
+    }
+
+    fn exact_omitted_branch_base_effect_for_branch(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        request: ExactBranchReplayRequest,
+        branch: &pecos_quantum::DagCircuit,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
+
+        let ideal_history = self.exact_ideal_measurement_history(context);
+        let branch_info = InfluenceBuilder::new(branch).run_symbolic_simulation();
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
         let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
 
         for detector in &self.detectors {
             let indices =
                 self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)?;
-            if context.omitted_branch_flips_measurement_parity(request, &indices)? {
+            if omitted_branch_flips_measurement_parity_from_histories(
+                request,
+                ideal_history.as_ref(),
+                &branch_info.history,
+                &indices,
+            )? {
                 xor_toggle_4(&mut triggered_dets, detector.id);
             }
         }
@@ -848,7 +889,12 @@ impl<'a> DemBuilder<'a> {
         for observable in &self.observables {
             let indices =
                 self.measurement_indices_from_refs(&observable.records, &observable.meas_ids)?;
-            if context.omitted_branch_flips_measurement_parity(request, &indices)? {
+            if omitted_branch_flips_measurement_parity_from_histories(
+                request,
+                ideal_history.as_ref(),
+                &branch_info.history,
+                &indices,
+            )? {
                 xor_toggle_2(&mut triggered_obs, observable.id);
             }
         }
@@ -862,25 +908,44 @@ impl<'a> DemBuilder<'a> {
         ))
     }
 
-    fn exact_replacement_branch_effect(
+    fn exact_ideal_measurement_history(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+    ) -> Rc<MeasurementHistory> {
+        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
+
+        if let Some(cached) = self.exact_ideal_history_cache.borrow().as_ref().cloned() {
+            return cached;
+        }
+
+        let history = Rc::new(
+            InfluenceBuilder::new(context.circuit)
+                .run_symbolic_simulation()
+                .history,
+        );
+        *self.exact_ideal_history_cache.borrow_mut() = Some(history.clone());
+        history
+    }
+
+    fn exact_branch_analysis(
         &self,
         context: ExactBranchReplayContext<'_>,
         request: ExactBranchReplayRequest,
-        replacement_pauli_label: &str,
-    ) -> Result<FaultMechanism, DemBuilderError> {
+    ) -> Result<ExactBranchReplayAnalysis, DemBuilderError> {
         use crate::fault_tolerance::propagator::DagFaultAnalyzer;
 
-        let (p1, p2) = two_qubit_label_to_pauli_indices(replacement_pauli_label).ok_or_else(|| {
-            DemBuilderError::ConfigurationError(format!(
-                "exact_branch_replay replacement Pauli label {replacement_pauli_label:?} is not a two-qubit Pauli label"
-            ))
-        })?;
-        let base_effect = self.exact_omitted_branch_base_effect(context, request)?;
-        if p1 == 0 && p2 == 0 {
-            return Ok(base_effect);
+        if let Some(cached) = self
+            .exact_branch_cache
+            .borrow()
+            .get(&request.gate_node)
+            .cloned()
+        {
+            return Ok(cached);
         }
 
         let branch = circuit_with_omitted_two_qubit_gate(context.circuit, request.gate_node)?;
+        let base_effect =
+            self.exact_omitted_branch_base_effect_for_branch(context, request, &branch)?;
         let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
         let branch_locs = identity_location_pair_for_request(
             request,
@@ -895,7 +960,35 @@ impl<'a> DemBuilder<'a> {
             &meas_to_detectors,
             &meas_to_observables,
         );
-        Ok(base_effect.xor(&branch_effects[p1 as usize][p2 as usize]))
+        let analysis = ExactBranchReplayAnalysis {
+            base_effect,
+            branch_effects,
+        };
+        self.exact_branch_cache
+            .borrow_mut()
+            .insert(request.gate_node, analysis.clone());
+        Ok(analysis)
+    }
+
+    fn exact_replacement_branch_effect(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        request: ExactBranchReplayRequest,
+        replacement_pauli_label: &str,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        let (p1, p2) = two_qubit_label_to_pauli_indices(replacement_pauli_label).ok_or_else(|| {
+            DemBuilderError::ConfigurationError(format!(
+                "exact_branch_replay replacement Pauli label {replacement_pauli_label:?} is not a two-qubit Pauli label"
+            ))
+        })?;
+        let analysis = self.exact_branch_analysis(context, request)?;
+        if p1 == 0 && p2 == 0 {
+            return Ok(analysis.base_effect);
+        }
+
+        Ok(analysis
+            .base_effect
+            .xor(&analysis.branch_effects[p1 as usize][p2 as usize]))
     }
 
     fn num_influence_dem_outputs(&self) -> usize {
@@ -2259,10 +2352,12 @@ impl ExactBranchReplayContext<'_> {
                     loc1.node, loc1.gate_type, loc2.gate_type
                 )));
             }
-            let branch = circuit_with_omitted_two_qubit_gate(self.circuit, loc1.node)?;
-            let replacement = branch
-                .gate(loc1.node)
-                .expect("omitted branch preserves the original gate node");
+            let replacement = self.circuit.gate(loc1.node).ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay expected an original gate at node {}",
+                    loc1.node
+                ))
+            })?;
             if !loc1
                 .qubits
                 .iter()
@@ -2283,6 +2378,7 @@ impl ExactBranchReplayContext<'_> {
         Ok(requests)
     }
 
+    #[cfg(test)]
     fn omitted_branch_location_pair(
         &self,
         request: ExactBranchReplayRequest,
@@ -2294,30 +2390,23 @@ impl ExactBranchReplayContext<'_> {
         let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
         identity_location_pair_for_request(request, original_locations, &branch_map.locations)
     }
+}
 
-    fn omitted_branch_flips_measurement_parity(
-        &self,
-        request: ExactBranchReplayRequest,
-        measurement_indices: &[usize],
-    ) -> Result<bool, DemBuilderError> {
-        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
-
-        let ideal_info = InfluenceBuilder::new(self.circuit).run_symbolic_simulation();
-        let branch = circuit_with_omitted_two_qubit_gate(self.circuit, request.gate_node)?;
-        let branch_info = InfluenceBuilder::new(&branch).run_symbolic_simulation();
-
-        let ideal =
-            measurement_parity_expression(&ideal_info.history, measurement_indices, "ideal")?;
-        let branch =
-            measurement_parity_expression(&branch_info.history, measurement_indices, "branch")?;
-        if ideal.dependencies != branch.dependencies {
-            return Err(DemBuilderError::ConfigurationError(format!(
-                "exact_branch_replay omitted gate at node {} changes measurement dependencies for parity {:?}; this branch is not representable as a single deterministic DEM event",
-                request.gate_node, measurement_indices
-            )));
-        }
-        Ok(ideal.flip ^ branch.flip)
+fn omitted_branch_flips_measurement_parity_from_histories(
+    request: ExactBranchReplayRequest,
+    ideal_history: &MeasurementHistory,
+    branch_history: &MeasurementHistory,
+    measurement_indices: &[usize],
+) -> Result<bool, DemBuilderError> {
+    let ideal = measurement_parity_expression(ideal_history, measurement_indices, "ideal")?;
+    let branch = measurement_parity_expression(branch_history, measurement_indices, "branch")?;
+    if ideal.dependencies != branch.dependencies {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "exact_branch_replay omitted gate at node {} changes measurement dependencies for parity {:?}; this branch is not representable as a single deterministic DEM event",
+            request.gate_node, measurement_indices
+        )));
     }
+    Ok(ideal.flip ^ branch.flip)
 }
 
 fn measurement_parity_expression(
@@ -3570,6 +3659,8 @@ mod tests {
             .exact_replacement_branch_effect(context, request, "II")
             .expect("omission-only branch should be deterministic here");
         assert_eq!(omitted_only.detectors.as_slice(), &[0]);
+        assert!(builder.exact_ideal_history_cache.borrow().is_some());
+        assert_eq!(builder.exact_branch_cache.borrow().len(), 1);
 
         let omitted_then_target_x = builder
             .exact_replacement_branch_effect(context, request, "IX")
@@ -3578,6 +3669,10 @@ mod tests {
             omitted_then_target_x.is_empty(),
             "target X after omitted CX restores the ideal target measurement"
         );
+        assert_eq!(builder.exact_branch_cache.borrow().len(), 1);
+
+        let builder = builder.with_detectors_json("[]").unwrap();
+        assert!(builder.exact_branch_cache.borrow().is_empty());
     }
 
     #[test]

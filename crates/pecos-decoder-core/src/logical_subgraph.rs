@@ -50,7 +50,6 @@
 //! - This preserves the graphlike property of each subgraph
 
 pub mod committed;
-pub mod windowed;
 
 use std::collections::{BTreeMap, BTreeSet};
 

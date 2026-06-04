@@ -104,6 +104,7 @@ pub use pecos_uf_decoder::{
     BpSchedule as UfBpSchedule, BpUfConfig, BpUfDecoder, CssUfDecoder, OverlappingWindowedDecoder,
     QubitEdgeMapping, SandwichWindowedDecoder, StreamingWindowedDecoder, UfDecoder,
     UfDecoderConfig, WindowedConfig, WindowedDecoder,
+    WindowedLogicalSubgraphDecoder,
 };
 
 // Re-export Relay BP decoder when feature is enabled

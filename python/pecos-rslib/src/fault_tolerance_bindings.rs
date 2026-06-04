@@ -4483,13 +4483,14 @@ impl PyCssUfDecoder {
 ///     dem: DEM string with detector coordinate declarations.
 ///     `stab_coords`: List of dicts, one per logical qubit. Each dict has
 ///         keys "X" and "Z" mapping to lists of (x, y) ancilla coordinates.
-///     `inner_decoder`: Inner decoder type string (default "`pecos_uf:fast`").
+///     `inner_decoder`: Inner decoder type string (default "`pecos_uf:bp`",
+///         native belief-propagation + union-find).
 ///
 /// Example:
 ///     >>> decoder = `LogicalSubgraphDecoder`(
 ///     ...     `dem_str`,
 ///     ...     [{"X": [(1,0), (3,1)], "Z": [(0,3), (1,1)]}],
-///     ...     "`pecos_uf:fast`",
+///     ...     "`pecos_uf:bp`",
 ///     ... )
 ///     >>> obs = decoder.decode(syndrome)
 #[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
@@ -4823,30 +4824,33 @@ impl PyLogicalSubgraphDecoder {
 /// Splits the DEM into time windows, runs logical-subgraph decoder within each window.
 /// Prevents the observing region from spanning the full circuit.
 ///
+/// Partitions the DEM per observable, then windows each subgraph with proper
+/// sliding-window core-commit (only correction edges whose both endpoints lie
+/// in a window's core are committed). The inner decoder is the native
+/// edge-tracking union-find decoder, which core-commit requires.
+///
 /// Args:
 ///     dem: DEM string.
 ///     `stab_coords`: Stabilizer coordinates per logical qubit.
-///     `inner_decoder`: Inner MWPM decoder type.
 ///     step: Core window size in time steps.
-///     buffer: Buffer size on each side (0 = non-overlapping).
+///     buffer: Buffer size on each side for matching context (0 =
+///         non-overlapping; recommend ~code distance).
 #[pyclass(name = "WindowedLogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyWindowedLogicalSubgraphDecoder {
-    inner: pecos_decoder_core::logical_subgraph::windowed::WindowedLogicalSubgraphDecoder,
+    inner: pecos_decoders::WindowedLogicalSubgraphDecoder,
 }
 
 #[pymethods]
 impl PyWindowedLogicalSubgraphDecoder {
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="pymatching", step=8, buffer=4))]
+    #[pyo3(signature = (dem, stab_coords, step=8, buffer=4))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
-        inner_decoder: &str,
         step: usize,
         buffer: usize,
     ) -> PyResult<Self> {
         use pecos_decoder_core::logical_subgraph::QubitStabCoords;
-        use pecos_decoder_core::logical_subgraph::windowed::{WindowedLogicalSubgraphConfig, WindowedLogicalSubgraphDecoder};
 
         let mut sc = Vec::with_capacity(stab_coords.len());
         for dict in &stab_coords {
@@ -4864,16 +4868,15 @@ impl PyWindowedLogicalSubgraphDecoder {
             });
         }
 
-        let config = WindowedLogicalSubgraphConfig { step, buffer };
+        let config = pecos_decoders::WindowedConfig {
+            step_size: step,
+            buffer_size: buffer,
+            ..Default::default()
+        };
 
-        let inner = WindowedLogicalSubgraphDecoder::from_dem(dem, &sc, &config, |subgraph| {
-            let sub_dem = subgraph_to_dem_string(subgraph);
-            let d = create_observable_decoder(&sub_dem, inner_decoder)
-                .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
-            Ok(Box::new(SendWrapper(d))
-                as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
-        })
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let inner =
+            pecos_decoders::WindowedLogicalSubgraphDecoder::from_dem(dem, &sc, None, config)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         Ok(Self { inner })
     }
@@ -4903,7 +4906,7 @@ impl PyWindowedLogicalSubgraphDecoder {
     }
 
     fn num_windows(&self) -> usize {
-        self.inner.windows.len()
+        self.inner.num_windows()
     }
 }
 

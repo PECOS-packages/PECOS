@@ -456,8 +456,9 @@ impl UfDecoder {
             let root = component[di];
 
             if comp_size[root] == 1 {
-                // Isolated defect: match to boundary.
-                obs_mask ^= self.predecode_single(defect_list[di]);
+                // Isolated defect: provably optimal only if its lightest edge
+                // is a direct boundary edge; otherwise fall through (`?`).
+                obs_mask ^= self.predecode_single(defect_list[di])?;
                 handled[di] = true;
             } else if comp_size[root] == 2 {
                 // Find the other defect in this component.
@@ -473,61 +474,56 @@ impl UfDecoder {
                 let d0 = defect_list[di];
                 let d1 = defect_list[ni];
 
-                // Find lightest direct edge and lightest boundary alternatives.
-                let mut direct_w = f64::INFINITY;
-                let mut direct_obs = 0u64;
-                for &(e, nbr) in self.adj(d0 as usize) {
-                    if nbr == d1 && self.edges[e].weight < direct_w {
-                        direct_w = self.edges[e].weight;
-                        direct_obs = self.edges[e].obs_mask;
+                // Pairing the two defects directly is provably the global
+                // minimum-weight correction ONLY when the shared edge is the
+                // lightest incident edge of BOTH defects (a "mutually nearest"
+                // adjacent pair -- the signature of a single bulk fault):
+                //   - any d0-d1 path costs >= each defect's lightest edge, so
+                //     the direct edge is the cheapest pairing, and
+                //   - any split to the boundary costs >= lb0 + lb1 = 2*direct_w
+                //     > direct_w.
+                // In every other case the boundary route (possibly a
+                // logical-flipping bulk path) may be cheaper, so we fall through
+                // to the full decoder rather than guess from direct edges alone.
+                let e0 = self.adj(d0 as usize).first().copied();
+                let e1 = self.adj(d1 as usize).first().copied();
+                match (e0, e1) {
+                    (Some((edge_idx, nbr0)), Some((_, nbr1))) if nbr0 == d1 && nbr1 == d0 => {
+                        obs_mask ^= self.edges[edge_idx].obs_mask;
+                        handled[di] = true;
+                        handled[ni] = true;
                     }
+                    _ => return None,
                 }
-
-                let mut b0_w = f64::INFINITY;
-                let mut b0_obs = 0u64;
-                for &(e, nbr) in self.adj(d0 as usize) {
-                    if nbr == boundary && self.edges[e].weight < b0_w {
-                        b0_w = self.edges[e].weight;
-                        b0_obs = self.edges[e].obs_mask;
-                    }
-                }
-
-                let mut b1_w = f64::INFINITY;
-                let mut b1_obs = 0u64;
-                for &(e, nbr) in self.adj(d1 as usize) {
-                    if nbr == boundary && self.edges[e].weight < b1_w {
-                        b1_w = self.edges[e].weight;
-                        b1_obs = self.edges[e].obs_mask;
-                    }
-                }
-
-                // Pick min-weight correction.
-                if direct_w <= b0_w + b1_w {
-                    obs_mask ^= direct_obs;
-                } else {
-                    obs_mask ^= b0_obs ^ b1_obs;
-                }
-
-                handled[di] = true;
-                handled[ni] = true;
             }
         }
 
         Some(obs_mask)
     }
 
-    /// Predecode: single defect matches to boundary.
-    fn predecode_single(&self, defect: u32) -> u64 {
+    /// Predecode an isolated single defect, if it is provably optimal.
+    ///
+    /// The optimal correction for an isolated defect is the minimum-weight path
+    /// to the boundary, whose weight is at least that of the defect's lightest
+    /// incident edge (adjacency is sorted by weight, so that is `adj[0]`). The
+    /// predecoder can therefore resolve it cheaply ONLY when the lightest edge
+    /// goes directly to the boundary -- then that single edge IS the optimal
+    /// path. Otherwise the optimal path routes through the bulk (and may flip an
+    /// observable that a direct boundary edge would miss), so we return `None`
+    /// and fall through to the full decoder.
+    ///
+    /// (Returning a direct boundary edge that is not the lightest -- or `0` when
+    /// no direct boundary edge exists -- was the historical bug that broke
+    /// distance suppression: e.g. a bulk defect whose min-weight correction is a
+    /// logical-flipping path was silently decoded as no-flip.)
+    fn predecode_single(&self, defect: u32) -> Option<u64> {
         let boundary = self.num_detectors as u32;
-        // Find the lightest boundary edge from this defect.
-        // Adjacency is sorted by weight, so iterate and pick first boundary edge.
-        for &(edge_idx, neighbor) in self.adj(defect as usize) {
-            if neighbor == boundary {
-                return self.edges[edge_idx].obs_mask;
-            }
+        let &(edge_idx, neighbor) = self.adj(defect as usize).first()?;
+        if neighbor == boundary {
+            Some(self.edges[edge_idx].obs_mask)
+        } else {
+            None
         }
-        // No boundary edge found (shouldn't happen for valid surface codes).
-        0
     }
 
     /// Returns true if a cluster (given by its root) still needs to grow.
@@ -957,6 +953,29 @@ impl UfDecoder {
     #[must_use]
     pub fn edge_obs_mask(&self, edge_idx: usize) -> u64 {
         self.edges.get(edge_idx).map_or(0, |e| e.obs_mask)
+    }
+
+    /// Debug: decode forcing the full grow+peel path (bypassing the
+    /// predecoder), returning the observable mask and the correction edges as
+    /// `(node1, node2, obs_mask, weight)`. For diagnostics and tests.
+    pub fn decode_full_with_correction(&mut self, syndrome: &[u8]) -> (u64, Vec<(u32, u32, u64, f64)>) {
+        self.reset();
+        for (i, &v) in syndrome.iter().enumerate() {
+            if v != 0 && i < self.num_detectors {
+                self.parity[i] = true;
+                self.is_defect[i] = true;
+            }
+        }
+        self.grow_clusters();
+        let (obs, edge_idxs) = self.peel_correction_with_edges();
+        let edges = edge_idxs
+            .iter()
+            .map(|&i| {
+                let e = &self.edges[i];
+                (e.node1, e.node2, e.obs_mask, e.weight)
+            })
+            .collect();
+        (obs, edges)
     }
 
     /// Get node1 of an edge.

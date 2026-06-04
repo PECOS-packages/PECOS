@@ -2768,6 +2768,30 @@ impl PySampleBatch {
         Ok(errors)
     }
 
+    /// Decode every shot and return the predicted observable mask per shot.
+    ///
+    /// Mirrors `decode_count` but returns the raw per-shot predictions instead
+    /// of an aggregate error count, so callers can localize disagreements
+    /// against a reference decoder.
+    ///
+    /// Args:
+    ///     dem: DEM string for the decoder.
+    ///     `decoder_type`: Decoder type string.
+    ///
+    /// Returns:
+    ///     List of predicted observable masks, one per shot.
+    #[pyo3(signature = (dem, decoder_type="pymatching"))]
+    fn decode_each(&self, dem: &str, decoder_type: &str) -> PyResult<Vec<u64>> {
+        let mut decoder = create_observable_decoder(dem, decoder_type)?;
+        let mut predictions = Vec::with_capacity(self.num_shots);
+        let mut syndrome = vec![0u8; self.num_detectors];
+        for i in 0..self.num_shots {
+            self.extract_syndrome(i, &mut syndrome);
+            predictions.push(decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX));
+        }
+        Ok(predictions)
+    }
+
     /// Parallel decode: distributes samples across rayon workers.
     ///
     /// Each worker creates its own decoder instance. Faster for slow decoders.
@@ -4309,6 +4333,46 @@ fn assert_dems_equivalent(
 }
 
 // =============================================================================
+// UF debug wrapper (diagnostics only)
+// =============================================================================
+
+/// Debug wrapper over the matching-graph Union-Find decoder.
+///
+/// Exposes the full grow+peel correction (bypassing the predecoder) so tests
+/// can inspect exactly which edges UF commits and compare against MWPM.
+#[pyclass(name = "_UfDebug", module = "pecos_rslib.qec")]
+pub struct PyUfDebug {
+    inner: pecos_decoders::UfDecoder,
+}
+
+#[pymethods]
+impl PyUfDebug {
+    #[new]
+    #[pyo3(signature = (dem, config="fast"))]
+    fn new(dem: &str, config: &str) -> PyResult<Self> {
+        let cfg = match config {
+            "fast" => pecos_decoders::UfDecoderConfig::fast(),
+            "balanced" => pecos_decoders::UfDecoderConfig::balanced(),
+            "windowed" => pecos_decoders::UfDecoderConfig::windowed(),
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown UF config: {other}"
+                )));
+            }
+        };
+        let inner = pecos_decoders::UfDecoder::from_dem(dem, cfg)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Decode forcing the full grow+peel path (no predecoder). Returns
+    /// `(obs_mask, [(node1, node2, obs_mask, weight), ...])`.
+    fn decode_full(&mut self, syndrome: Vec<u8>) -> (u64, Vec<(u32, u32, u64, f64)>) {
+        self.inner.decode_full_with_correction(&syndrome)
+    }
+}
+
+// =============================================================================
 // CSS UF Decoder (UIUF)
 // =============================================================================
 
@@ -4435,16 +4499,17 @@ pub struct PyLogicalSubgraphDecoder {
 
 #[pymethods]
 impl PyLogicalSubgraphDecoder {
-    // Default inner is `fusion_blossom_serial` (exact MWPM): it achieves
-    // distance suppression (LER drops with code distance), matching lomatching
-    // exactly (memory d=7 -> 0 logical errors). The native union-find inners
-    // (`pecos_uf:fast`, `pecos_uf:bp`) decode WELL at d=3 but DO NOT suppress at
-    // d>=5 -- a bug in the union-find decoder, not the subgraph construction
-    // (region + edge topology are correct, == lomatching). Correctness is
-    // non-negotiable here, so the default must be an exact MWPM inner. See
+    // Default inner is `pecos_uf:bp` (native belief-propagation + union-find):
+    // dependency-free, fast, and it achieves distance suppression (LER drops with
+    // code distance), tracking exact MWPM closely. The native UF previously did
+    // NOT suppress at d>=5, so the default was temporarily exact MWPM
+    // (`fusion_blossom_serial`); that UF bug -- a predecoder that mis-decoded
+    // isolated defects whose min-weight correction is a bulk path to the boundary
+    // -- has been fixed (predecoder now falls through to the full grow+peel
+    // decoder unless provably optimal). See
     // pecos-docs/design/logical-subgraph-backprop-region-builder.md.
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="fusion_blossom_serial", max_time_radius=None))]
+    #[pyo3(signature = (dem, stab_coords, inner_decoder="pecos_uf:bp", max_time_radius=None))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
@@ -4495,7 +4560,7 @@ impl PyLogicalSubgraphDecoder {
     /// construction (e.g. the paper's back-propagation / detecting-region set)
     /// and decode with the same machinery for direct comparison.
     #[staticmethod]
-    #[pyo3(signature = (dem, membership, inner_decoder="fusion_blossom_serial"))]
+    #[pyo3(signature = (dem, membership, inner_decoder="pecos_uf:bp"))]
     fn from_membership(
         dem: &str,
         membership: Vec<Vec<usize>>,
@@ -5606,6 +5671,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<PyCssUfDecoder>()?;
+    qec.add_class::<PyUfDebug>()?;
     qec.add_class::<PyLogicalSubgraphDecoder>()?;
     qec.add_class::<PyWindowedLogicalSubgraphDecoder>()?;
     qec.add_class::<PyLogicalAlgorithmDecoder>()?;

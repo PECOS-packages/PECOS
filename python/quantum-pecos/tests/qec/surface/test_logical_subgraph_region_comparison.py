@@ -34,7 +34,11 @@ from __future__ import annotations
 
 import pytest
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
+from pecos_rslib.qec import (
+    LogicalSubgraphDecoder,
+    ParsedDem,
+    WindowedLogicalSubgraphDecoder,
+)
 
 
 def _coflip_membership_from_dem(dem_str: str, num_observables: int) -> list[list[int]]:
@@ -226,9 +230,9 @@ def _mem_ler(d, p, n, seed, inner=None):
 
 def test_distance_suppression_memory():
     """A fault-tolerant decoder must drive LER DOWN as code distance grows below
-    threshold. The default inner (exact MWPM, fusion_blossom) suppresses,
-    matching lomatching (d=7 -> 0). Guards against the default reverting to a
-    non-suppressing inner."""
+    threshold. The default inner (`pecos_uf:bp`, native BP + union-find)
+    suppresses, tracking exact MWPM / lomatching (d=7 -> 0). Guards against the
+    default reverting to a non-suppressing inner."""
     p, n = 0.001, 60000
     ler_d3 = _mem_ler(3, p, n, seed=1)
     ler_d5 = _mem_ler(5, p, n, seed=1)
@@ -238,21 +242,71 @@ def test_distance_suppression_memory():
     )
 
 
-def test_native_union_find_inner_does_not_suppress():
-    """KNOWN BUG (separately tracked): PECOS's native union-find inner decoders
-    (`pecos_uf:*`) decode well at d=3 but do NOT achieve distance suppression at
-    d>=5 -- which is why the LogicalSubgraphDecoder default is exact MWPM, not
-    `pecos_uf`. The subgraph region + edge topology are correct (== lomatching);
-    the failure is in the UF decoder itself. This pins the bug; when UF is fixed
-    (d=5 LER < d=3), this assertion flips and the test should be updated.
+def test_native_union_find_inner_suppresses():
+    """PECOS's native union-find inner decoders (`pecos_uf:*`) achieve distance
+    suppression, as a fault-tolerant decoder must.
+
+    This previously did NOT hold: the UF predecoder mis-decoded isolated defects
+    whose minimum-weight correction is a bulk *path* to the boundary (it only
+    looked at direct boundary edges, returning a no-flip / wrong-edge result),
+    which broke suppression at d>=5. Fixed by making the predecoder fall through
+    to the full grow+peel decoder whenever its shortcut is not provably optimal
+    (see `predecode_single` / size-2 handling in pecos-uf-decoder). The full
+    decoder finds the logical-flipping path and suppresses.
     See pecos-docs/design/logical-subgraph-backprop-region-builder.md."""
     p, n = 0.001, 60000
     uf_d3 = _mem_ler(3, p, n, seed=1, inner="pecos_uf:bp")
     uf_d5 = _mem_ler(5, p, n, seed=1, inner="pecos_uf:bp")
-    # Currently the UF inner does NOT suppress: d=5 is not meaningfully below d=3.
-    assert uf_d5 >= uf_d3 * 0.7, (
-        f"union-find inner now suppresses (d3={uf_d3:.5f} d5={uf_d5:.5f}) -- "
-        "UF bug appears fixed; update this test and reconsider the default inner."
+    # Below threshold, d=5 must beat d=3 by a clear margin.
+    assert uf_d5 < uf_d3 * 0.7, (
+        f"union-find inner no longer suppresses: d3={uf_d3:.5f} d5={uf_d5:.5f}"
+    )
+
+
+def _windowed_mem_ler(d, rounds, p, n, seed, step, buffer):
+    patch = SurfacePatch.create(d)
+    b = LogicalCircuitBuilder()
+    b.add_patch(patch, "A")
+    b.add_memory("A", rounds, "Z")
+    dem = b.build_dem(p1=p, p2=p, p_meas=p)
+    sc = b.stab_coords()
+    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=seed)
+    dec = WindowedLogicalSubgraphDecoder(dem, sc, "pymatching", step, buffer)
+    return dec.decode_count(batch) / n, dec.num_windows()
+
+
+def test_windowed_logical_subgraph_does_not_suppress():
+    """KNOWN BUG (separately tracked): the windowed logical-subgraph decoder
+    does NOT achieve distance suppression -- it ANTI-suppresses (LER grows with
+    d) and is ~40-100x worse than the non-windowed decoder on the same DEM and
+    same exact-MWPM inner.
+
+    Root cause is a windowing-correctness bug, not the inner decoder: each window
+    independently decodes and XORs its *full-window* observable correction, with
+    NO core-commit (the ``_is_core`` field in windowed.rs is computed but never
+    used) and no handling for error chains that cross a window boundary. A
+    measurement-error chain spanning a boundary becomes two separate boundary
+    defects -- each window pairs it to its own boundary and spuriously flips the
+    observable. Overlap (``buffer>0``) makes it worse, not better, because
+    overlap-region corrections are XORed twice.
+
+    The proper fix is a sliding-window core-commit scheme (decode with buffer
+    context, commit only core-region corrections), plus the time-like-snake
+    handling from arXiv:2505.13599 (synchronized resets / shortcut edges). Until
+    then, use the non-windowed ``LogicalSubgraphDecoder``. This pins the bug;
+    when windowing is fixed (windowed LER suppresses with d), this assertion
+    flips and the test should be updated.
+    See pecos-docs/design/logical-subgraph-backprop-region-builder.md."""
+    p, n, rounds, step = 0.001, 80000, 24, 4
+    ler_d3, nwin = _windowed_mem_ler(3, rounds, p, n, seed=1, step=step, buffer=0)
+    ler_d5, _ = _windowed_mem_ler(5, rounds, p, n, seed=1, step=step, buffer=0)
+    # Sanity: the circuit is deep enough to actually exercise windowing.
+    assert nwin > 1, f"probe degenerated to a single window (nwin={nwin})"
+    # Currently windowing does NOT suppress: d=5 is no better than d=3 (in fact
+    # worse). When this flips, the windowed path has been fixed.
+    assert ler_d5 >= ler_d3 * 0.7, (
+        f"windowed logical-subgraph now suppresses (d3={ler_d3:.5f} "
+        f"d5={ler_d5:.5f}) -- windowing bug appears fixed; update this test."
     )
 
 

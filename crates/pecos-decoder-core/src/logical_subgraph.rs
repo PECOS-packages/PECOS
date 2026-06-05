@@ -50,6 +50,7 @@
 //! - This preserves the graphlike property of each subgraph
 
 pub mod committed;
+pub mod window_plan;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -551,6 +552,22 @@ impl LogicalSubgraphDecoder {
     #[must_use]
     pub fn subgraph(&self, obs_idx: usize) -> Option<&LogicalSubgraph> {
         self.subgraphs.get(obs_idx)
+    }
+
+    /// Build a coord-preserving per-observable window plan from these subgraphs
+    /// and the full-DEM detector coordinates (indexed by global detector id).
+    ///
+    /// Subgraph matching graphs drop detector coordinates, so the windowed
+    /// decoders need the full-DEM coords re-injected to time-window correctly.
+    /// The plan also reports whether real windowing would happen or it
+    /// degenerates to a single-window full decode (see
+    /// [`window_plan::LogicalSubgraphWindowPlan`]).
+    #[must_use]
+    pub fn window_plan(
+        &self,
+        full_coords: &[Option<Vec<f64>>],
+    ) -> window_plan::LogicalSubgraphWindowPlan {
+        window_plan::LogicalSubgraphWindowPlan::new(&self.subgraphs, full_coords)
     }
 
     /// Per-observable observing regions: entry `k` is the sorted full-DEM

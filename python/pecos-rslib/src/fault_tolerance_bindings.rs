@@ -5173,16 +5173,26 @@ impl PyLogicalAlgorithmDecoder {
 #[pyclass(name = "LogicalCircuitDecoder", module = "pecos_rslib.qec")]
 pub struct PyLogicalCircuitDecoder {
     inner: pecos_decoder_core::logical_algorithm::LogicalCircuitDecoder,
+    /// How the decode actually windows: "unlimited" (full circuit),
+    /// "full_fallback" (per-observable full decode behind a windowed budget),
+    /// or "real_windowed" (genuine sliding-window; not yet enabled).
+    effective_windowing: String,
+    /// Per-observable window count actually used (1 == full decode).
+    actual_num_windows: Vec<usize>,
+    /// Whether genuine time-windowing is *possible* for this circuit (deep
+    /// enough), independent of whether it is enabled. False for "unlimited".
+    can_window: bool,
 }
 
 #[pymethods]
 impl PyLogicalCircuitDecoder {
     #[new]
-    #[pyo3(signature = (descriptor, budget="unlimited", inner_decoder="pymatching"))]
+    #[pyo3(signature = (descriptor, budget="unlimited", inner_decoder="pymatching", strict=false))]
     fn new(
         descriptor: &pyo3::Bound<'_, pyo3::types::PyDict>,
         budget: &str,
         inner_decoder: &str,
+        strict: bool,
     ) -> PyResult<Self> {
         use pecos_decoder_core::decode_budget::DecodeBudget;
         use pecos_decoder_core::logical_algorithm::{
@@ -5347,36 +5357,54 @@ impl PyLogicalCircuitDecoder {
         };
 
         // Select strategy based on budget.
+        let mut effective_windowing = String::from("unlimited");
+        let mut actual_num_windows: Vec<usize> = Vec::new();
+        let mut can_window = false;
         let strategy: Box<dyn pecos_decoder_core::decode_budget::DecodeStrategy + Send + Sync> =
             if decode_budget.is_unlimited() {
                 // Unlimited: full-circuit logical-subgraph decoder (maximum accuracy)
                 Box::new(FullCircuitStrategy::new(Box::new(full_osd)))
             } else {
-                // Windowed: per-subgraph sandwich decoding.
-                // Extract per-subgraph DEMs and detector maps from the full logical-subgraph decoder.
+                // A bounded-latency ("windowed") budget was requested. Genuine
+                // per-observable sliding-window LOM decoding does not yet
+                // suppress (the windowed-LOM time-like-snake limitation; needs
+                // the anti-snake machinery), so we do an EXPLICIT full-decode
+                // fallback per observable -- accurate, but NOT bounded latency --
+                // and surface that honestly via `effective_windowing()` /
+                // `actual_num_windows()`. No silent fallback. `strict=True` turns
+                // the unmet latency budget into a hard error.
                 use pecos_decoder_core::logical_algorithm::WindowedLogicalSubgraphStrategy;
+                use pecos_decoder_core::logical_subgraph::window_plan::EffectiveWindowing;
 
-                let mut sub_dems = Vec::new();
-                let mut det_maps = Vec::new();
-                for i in 0..full_osd.num_observables() {
-                    if let Some(sg) = full_osd.subgraph(i) {
-                        sub_dems.push(subgraph_to_dem_string(&sg.graph));
-                        det_maps.push(sg.detector_map.clone());
-                    }
+                // Coord-preserving window plan (reports whether real windowing is
+                // even possible for this circuit depth).
+                let full_coords = pecos_decoder_core::DemMatchingGraph::from_dem_str(&full_dem)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+                    .detector_coords;
+                let plan = full_osd.window_plan(&full_coords);
+                let step = decode_budget.code_distance.max(1);
+                can_window = plan.effective_windowing(step) == EffectiveWindowing::RealWindowed;
+
+                if strict {
+                    return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "bounded-latency ('windowed') budget requested with strict=True, \
+                         but accurate windowed logical-subgraph decoding is not yet \
+                         available (windowed-LOM anti-snake machinery pending). It would \
+                         fall back to a full per-observable decode (unbounded latency). \
+                         Use budget='unlimited', or pass strict=False to accept the \
+                         full-decode fallback."
+                            .to_string(),
+                    ));
                 }
 
-                let d = decode_budget.code_distance;
-                let buf = decode_budget.overlap_rounds.min(d * 2); // cap at 2d
-                let windowed_str = if buf > 0 {
-                    format!("windowed:step={d},buf={buf},wmax=2.5")
-                } else {
-                    // No overlap: use plain PM (faster, but accuracy limited
-                    // to non-overlapping windowed matching)
-                    format!("windowed:step={d},buf=0")
-                };
+                let sub_dems = plan.sub_dems();
+                let det_maps = plan.detector_maps();
+                effective_windowing = String::from("full_fallback");
+                actual_num_windows = vec![1usize; sub_dems.len()];
 
+                let fallback_inner = inner_decoder.to_string();
                 let wosd = WindowedLogicalSubgraphStrategy::new(sub_dems, det_maps, |dem_str| {
-                    let dec = create_observable_decoder(dem_str, &windowed_str)
+                    let dec = create_observable_decoder(dem_str, &fallback_inner)
                         .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
                     Ok(Box::new(SendWrapper(dec))
                         as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
@@ -5387,7 +5415,37 @@ impl PyLogicalCircuitDecoder {
             };
 
         let inner = LogicalCircuitDecoder::new(algo_desc, strategy, decode_budget, num_qubits);
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            effective_windowing,
+            actual_num_windows,
+            can_window,
+        })
+    }
+
+    /// How the decode actually windows: ``"unlimited"`` (full-circuit decode),
+    /// ``"full_fallback"`` (per-observable full decode behind a windowed
+    /// budget -- accurate but NOT bounded latency), or ``"real_windowed"``
+    /// (genuine sliding-window; not yet enabled pending the windowed-LOM
+    /// anti-snake machinery). Lets callers/tests assert the effective mode
+    /// instead of trusting a silent fallback.
+    #[getter]
+    fn effective_windowing(&self) -> &str {
+        &self.effective_windowing
+    }
+
+    /// Per-observable window count actually used (``1`` == full decode). Empty
+    /// for the unlimited budget.
+    #[getter]
+    fn actual_num_windows(&self) -> Vec<usize> {
+        self.actual_num_windows.clone()
+    }
+
+    /// Whether genuine time-windowing is *possible* for this circuit (deep
+    /// enough), independent of whether it is enabled. ``False`` for unlimited.
+    #[getter]
+    fn can_window(&self) -> bool {
+        self.can_window
     }
 
     /// Decode a single syndrome.

@@ -680,7 +680,13 @@ impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
     }
 
     fn commit(&mut self, _region: &DetectorRegion) -> Result<u64, DecoderError> {
-        // Commitment is handled internally by the windowed inner decoders
+        // NOTE (abstraction caveat): this strategy is currently a *batch* decoder
+        // exposed through the streaming `DecodeStrategy` trait. It decodes the
+        // whole syndrome in one `decode()` call; per-observable subgraph windowing
+        // (when enabled) is handled inside each inner decoder, not via incremental
+        // region commits. So `commit()` is intentionally a no-op and
+        // `committed_obs()` returns 0. Real streaming commit semantics are a
+        // follow-up (see the windowed logical-subgraph proper-solution design).
         Ok(0)
     }
 

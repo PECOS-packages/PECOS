@@ -35,10 +35,10 @@
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::logical_subgraph::window_plan::LogicalSubgraphWindowPlan;
 use pecos_decoder_core::logical_subgraph::{
-    LogicalSubgraph, MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
+    MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
 };
-use std::fmt::Write as _;
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
 use crate::windowed::{OverlappingWindowedDecoder, WindowedConfig};
@@ -85,27 +85,26 @@ impl WindowedLogicalSubgraphDecoder {
     ) -> Result<Self, DecoderError> {
         let parts = partition_dem_by_logical_windowed(dem, stab_coords, max_time_radius)?;
 
-        // Subgraph graphs do not carry detector coordinates, but the time-based
-        // windowing needs them. Pull them from the full DEM and inject (mapped
-        // to subgraph-local indices) when serializing each sub-DEM.
+        // Shared coord-preserving plan: subgraph graphs carry no detector
+        // coordinates, so the plan re-injects the full-DEM coords (mapped to
+        // subgraph-local indices) into each sub-DEM, giving the time-based
+        // windowing real detector times. Empty-region observables are dropped.
         let full_coords = DemMatchingGraph::from_dem_str(dem)?.detector_coords;
+        let plan = LogicalSubgraphWindowPlan::new(&parts, &full_coords);
 
-        let mut subgraphs = Vec::with_capacity(parts.len());
+        let mut subgraphs = Vec::with_capacity(plan.num_observables());
         let mut max_local = 0usize;
-        for part in parts {
-            if part.detector_map.is_empty() {
-                // Observable with an empty region never flips: contributes 0.
-                continue;
-            }
-            let sub_dem = subgraph_to_dem_string(&part, &full_coords);
-            let decoder = OverlappingWindowedDecoder::from_dem(&sub_dem, window_config, |wdem| {
-                UfDecoder::from_dem(wdem, UfDecoderConfig::windowed())
-            })?;
-            max_local = max_local.max(part.graph.num_detectors);
+        for entry in plan.entries() {
+            let decoder =
+                OverlappingWindowedDecoder::from_dem(&entry.sub_dem, window_config, |wdem| {
+                    UfDecoder::from_dem(wdem, UfDecoderConfig::windowed())
+                })?;
+            let num_local = entry.detector_map.len();
+            max_local = max_local.max(num_local);
             subgraphs.push(SubgraphWindowed {
-                observable_idx: part.observable_idx,
-                detector_map: part.detector_map,
-                num_local: part.graph.num_detectors,
+                observable_idx: entry.observable_idx,
+                detector_map: entry.detector_map.clone(),
+                num_local,
                 decoder,
             });
         }
@@ -150,30 +149,4 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
         }
         Ok(obs_mask)
     }
-}
-
-/// Serialize a subgraph back to a DEM string: detector coordinate lines (mapped
-/// from the full DEM via `detector_map`) plus error lines. The coordinate lines
-/// let [`OverlappingWindowedDecoder::from_dem`] derive per-detector times for
-/// the windowing.
-fn subgraph_to_dem_string(part: &LogicalSubgraph, full_coords: &[Option<Vec<f64>>]) -> String {
-    let mut s = String::new();
-    for (local, &global) in part.detector_map.iter().enumerate() {
-        if let Some(Some(coords)) = full_coords.get(global) {
-            let coord_str: Vec<String> = coords.iter().map(|c| format!("{c}")).collect();
-            let _ = writeln!(s, "detector({}) D{local}", coord_str.join(", "));
-        }
-    }
-    for edge in &part.graph.edges {
-        let _ = write!(s, "error({})", edge.probability);
-        let _ = write!(s, " D{}", edge.node1);
-        if let Some(n2) = edge.node2 {
-            let _ = write!(s, " D{n2}");
-        }
-        for &obs in &edge.observables {
-            let _ = write!(s, " L{obs}");
-        }
-        let _ = writeln!(s);
-    }
-    s
 }

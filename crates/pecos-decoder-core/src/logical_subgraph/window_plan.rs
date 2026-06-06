@@ -144,10 +144,19 @@ impl LogicalSubgraphWindowPlan {
         self.entries.iter().map(|e| e.detector_map.clone()).collect()
     }
 
-    /// Number of time windows observable `i` would use at `step` rounds per
-    /// window. Mirrors the core-window loop in the sliding-window decoders
-    /// (`t_start` from 0 by `step` while `< total_t`, `total_t = max_time + 1`),
-    /// counting only windows that contain at least one detector.
+    /// Estimated number of time windows observable `i` would use at `step`
+    /// rounds per window.
+    ///
+    /// This is an ESTIMATE, not a guaranteed match of the exact window count an
+    /// `OverlappingWindowedDecoder` builds: it counts core ranges that contain a
+    /// detector and ignores the buffer overlap, and it requires an explicit
+    /// `step` (the real decoder auto-derives `step` from the graph when none is
+    /// given). It is sufficient for the load-bearing use here -- the
+    /// [`Self::effective_windowing`] FullFallback-vs-RealWindowed *boolean*,
+    /// which depends only on `total_t` vs `step`, not on buffer details. Exact
+    /// counts should single-source the decoder's own loop (a Layer C item when
+    /// the windowing construction is revisited; see the proper-solution design
+    /// doc).
     #[must_use]
     pub fn window_count(&self, i: usize, step: usize) -> usize {
         self.entries

@@ -373,6 +373,17 @@ impl UfDecoder {
     /// predecoding them individually gives the same result as joint decoding.
     #[must_use]
     pub fn predecode_clusters(&self, syndrome: &[u8]) -> Option<u64> {
+        // Invariant the shortcut proofs rely on: edge weights are non-negative
+        // (true for `ln((1-p)/p)` when p < 0.5, i.e. real sub-threshold error
+        // priors). With a negative weight the "lightest edge is the min-weight
+        // correction" / "direct pair <= split" arguments break. Asserted in
+        // debug builds; if it ever fires, the predecoder must be disabled for
+        // that graph (the full decoder handles negative weights correctly).
+        debug_assert!(
+            self.edges.iter().all(|e| e.weight >= 0.0),
+            "predecoder requires non-negative edge weights (p < 0.5)"
+        );
+
         let boundary = self.num_detectors as u32;
 
         // Mark defects.
@@ -953,29 +964,6 @@ impl UfDecoder {
     #[must_use]
     pub fn edge_obs_mask(&self, edge_idx: usize) -> u64 {
         self.edges.get(edge_idx).map_or(0, |e| e.obs_mask)
-    }
-
-    /// Debug: decode forcing the full grow+peel path (bypassing the
-    /// predecoder), returning the observable mask and the correction edges as
-    /// `(node1, node2, obs_mask, weight)`. For diagnostics and tests.
-    pub fn decode_full_with_correction(&mut self, syndrome: &[u8]) -> (u64, Vec<(u32, u32, u64, f64)>) {
-        self.reset();
-        for (i, &v) in syndrome.iter().enumerate() {
-            if v != 0 && i < self.num_detectors {
-                self.parity[i] = true;
-                self.is_defect[i] = true;
-            }
-        }
-        self.grow_clusters();
-        let (obs, edge_idxs) = self.peel_correction_with_edges();
-        let edges = edge_idxs
-            .iter()
-            .map(|&i| {
-                let e = &self.edges[i];
-                (e.node1, e.node2, e.obs_mask, e.weight)
-            })
-            .collect();
-        (obs, edges)
     }
 
     /// Get node1 of an edge.

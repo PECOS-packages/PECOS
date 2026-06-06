@@ -2787,7 +2787,12 @@ impl PySampleBatch {
         let mut syndrome = vec![0u8; self.num_detectors];
         for i in 0..self.num_shots {
             self.extract_syndrome(i, &mut syndrome);
-            predictions.push(decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX));
+            // Propagate a decode failure rather than masking it as a sentinel
+            // observable value (which would read as a spurious disagreement).
+            let predicted = decoder
+                .decode_to_observables(&syndrome)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            predictions.push(predicted);
         }
         Ok(predictions)
     }
@@ -4333,46 +4338,6 @@ fn assert_dems_equivalent(
 }
 
 // =============================================================================
-// UF debug wrapper (diagnostics only)
-// =============================================================================
-
-/// Debug wrapper over the matching-graph Union-Find decoder.
-///
-/// Exposes the full grow+peel correction (bypassing the predecoder) so tests
-/// can inspect exactly which edges UF commits and compare against MWPM.
-#[pyclass(name = "_UfDebug", module = "pecos_rslib.qec")]
-pub struct PyUfDebug {
-    inner: pecos_decoders::UfDecoder,
-}
-
-#[pymethods]
-impl PyUfDebug {
-    #[new]
-    #[pyo3(signature = (dem, config="fast"))]
-    fn new(dem: &str, config: &str) -> PyResult<Self> {
-        let cfg = match config {
-            "fast" => pecos_decoders::UfDecoderConfig::fast(),
-            "balanced" => pecos_decoders::UfDecoderConfig::balanced(),
-            "windowed" => pecos_decoders::UfDecoderConfig::windowed(),
-            other => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unknown UF config: {other}"
-                )));
-            }
-        };
-        let inner = pecos_decoders::UfDecoder::from_dem(dem, cfg)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        Ok(Self { inner })
-    }
-
-    /// Decode forcing the full grow+peel path (no predecoder). Returns
-    /// `(obs_mask, [(node1, node2, obs_mask, weight), ...])`.
-    fn decode_full(&mut self, syndrome: Vec<u8>) -> (u64, Vec<(u32, u32, u64, f64)>) {
-        self.inner.decode_full_with_correction(&syndrome)
-    }
-}
-
-// =============================================================================
 // CSS UF Decoder (UIUF)
 // =============================================================================
 
@@ -5385,30 +5350,47 @@ impl PyLogicalCircuitDecoder {
                 let step = decode_budget.code_distance.max(1);
                 can_window = plan.effective_windowing(step) == EffectiveWindowing::RealWindowed;
 
-                if strict {
+                // `strict` rejects only when genuine windowing was POSSIBLE (the
+                // circuit is deep enough) but is being skipped. When `!can_window`
+                // the circuit is a single window anyway, so a full decode IS the
+                // bounded-latency answer -- no degradation to reject.
+                if strict && can_window {
                     return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                         "bounded-latency ('windowed') budget requested with strict=True, \
                          but accurate windowed logical-subgraph decoding is not yet \
-                         available (windowed-LOM anti-snake machinery pending). It would \
-                         fall back to a full per-observable decode (unbounded latency). \
-                         Use budget='unlimited', or pass strict=False to accept the \
-                         full-decode fallback."
+                         available (windowed-LOM anti-snake machinery pending). This \
+                         circuit is deep enough to time-window (can_window=True), so a \
+                         full per-observable decode would forgo the requested latency \
+                         bound. Use budget='unlimited', or pass strict=False to accept \
+                         the full-decode fallback."
                             .to_string(),
                     ));
                 }
 
                 let sub_dems = plan.sub_dems();
                 let det_maps = plan.detector_maps();
-                effective_windowing = String::from("full_fallback");
+                let obs_indices: Vec<usize> =
+                    plan.entries().iter().map(|e| e.observable_idx).collect();
+                // The fallback runs a full (non-windowed) inner per observable, so
+                // the actual window count is 1 each by construction. (The Layer C
+                // real-windowed path must instead derive these from the windowed
+                // inners.) The label is single-sourced from the plan's enum.
+                effective_windowing = EffectiveWindowing::FullFallback.as_str().to_string();
                 actual_num_windows = vec![1usize; sub_dems.len()];
 
                 let fallback_inner = inner_decoder.to_string();
-                let wosd = WindowedLogicalSubgraphStrategy::new(sub_dems, det_maps, |dem_str| {
-                    let dec = create_observable_decoder(dem_str, &fallback_inner)
-                        .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
-                    Ok(Box::new(SendWrapper(dec))
-                        as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
-                })
+                let wosd = WindowedLogicalSubgraphStrategy::new(
+                    sub_dems,
+                    det_maps,
+                    obs_indices,
+                    |dem_str| {
+                        let dec = create_observable_decoder(dem_str, &fallback_inner).map_err(
+                            |e| pecos_decoders::DecoderError::InternalError(e.to_string()),
+                        )?;
+                        Ok(Box::new(SendWrapper(dec))
+                            as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
+                    },
+                )
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
                 Box::new(wosd)
@@ -5732,7 +5714,6 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<PyCssUfDecoder>()?;
-    qec.add_class::<PyUfDebug>()?;
     qec.add_class::<PyLogicalSubgraphDecoder>()?;
     qec.add_class::<PyWindowedLogicalSubgraphDecoder>()?;
     qec.add_class::<PyLogicalAlgorithmDecoder>()?;

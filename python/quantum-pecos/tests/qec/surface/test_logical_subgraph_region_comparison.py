@@ -360,5 +360,19 @@ def test_windowed_logical_subgraph_known_limitation_no_full_suppression():
     )
 
 
+def test_decode_each_matches_decode_count():
+    """`SampleBatch.decode_each` returns per-shot predictions consistent with the
+    aggregate `decode_count` -- it is the per-shot primitive used to localize
+    where two decoders disagree."""
+    b = _cx_circuit()
+    dem = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
+    n = 3000
+    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=5)
+    preds = batch.decode_each(dem, "pecos_uf:bp")
+    assert len(preds) == n
+    wrong = sum(1 for i, p in enumerate(preds) if p != batch.get_observable_mask(i))
+    assert wrong == batch.decode_count(dem, "pecos_uf:bp")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

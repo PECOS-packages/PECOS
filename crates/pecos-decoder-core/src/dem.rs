@@ -103,12 +103,26 @@ pub mod utils {
     /// Returns [`DecoderError`] if the DEM format is invalid
     pub fn parse_dem_metadata(dem: &str) -> Result<(usize, usize), DecoderError> {
         let mut max_detector = None;
-        let mut observables = std::collections::BTreeSet::new();
+        // Count as `max index + 1` (not distinct-id count) to match the other
+        // parsers (`SparseDem`, `DemCheckMatrix`, `DemMatchingGraph`) and to size
+        // index-addressed buffers correctly when ids are non-contiguous
+        // (e.g. only `L2` present -> 3 observables, not 1).
+        let mut max_observable: Option<usize> = None;
 
         for line in dem.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
+            }
+
+            // This is a flat single-pass counter; reject loop/offset commands
+            // rather than miscounting them (same contract as the other parsers).
+            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
+                return Err(DecoderError::InvalidConfiguration(
+                    "parse_dem_metadata requires a flattened DEM: `repeat` / \
+                     `shift_detectors` are not supported. Flatten the DEM first."
+                        .into(),
+                ));
             }
 
             let parts: Vec<&str> = line.split_whitespace().collect();
@@ -124,8 +138,10 @@ pub mod utils {
             };
 
             match command {
-                "error" => {
-                    // Parse error line for detector and observable indices
+                // `error` and `logical_observable` both contribute observable
+                // ids; `logical_observable` declares deterministic logicals that
+                // Stim emits with no flipping mechanism but still count.
+                "error" | "logical_observable" => {
                     for part in &parts[1..] {
                         if let Some(d_str) = part.strip_prefix('D') {
                             if let Ok(d) = d_str.parse::<usize>() {
@@ -134,7 +150,7 @@ pub mod utils {
                         } else if let Some(l_str) = part.strip_prefix('L')
                             && let Ok(l) = l_str.parse::<usize>()
                         {
-                            observables.insert(l);
+                            max_observable = Some(max_observable.map_or(l, |m: usize| m.max(l)));
                         }
                     }
                 }
@@ -148,23 +164,12 @@ pub mod utils {
                         }
                     }
                 }
-                "logical_observable" => {
-                    // Declared observable with no flipping mechanism (Stim emits
-                    // these for deterministic logicals) still counts.
-                    for part in &parts[1..] {
-                        if let Some(l_str) = part.strip_prefix('L')
-                            && let Ok(l) = l_str.parse::<usize>()
-                        {
-                            observables.insert(l);
-                        }
-                    }
-                }
                 _ => {}
             }
         }
 
         let detector_count = max_detector.map_or(0, |m| m + 1);
-        let observable_count = observables.len();
+        let observable_count = max_observable.map_or(0, |m| m + 1);
 
         Ok((detector_count, observable_count))
     }
@@ -1086,6 +1091,17 @@ mod tests {
     }
 
     #[test]
+    fn test_parser_observable_count_is_max_plus_one_for_noncontiguous_ids() {
+        // Only L2 present: index-addressed buffers need 3 slots, not 1. All
+        // parsers must agree on `max + 1`, not distinct-id count.
+        let dem = "error(0.01) D0 L2\ndetector(0,0,0) D0\n";
+        assert_eq!(DemMatchingGraph::from_dem_str(dem).unwrap().num_observables, 3);
+        assert_eq!(DemCheckMatrix::from_dem_str(dem).unwrap().num_observables, 3);
+        let (_d, obs) = utils::parse_dem_metadata(dem).unwrap();
+        assert_eq!(obs, 3, "parse_dem_metadata must agree (max+1, not distinct count)");
+    }
+
+    #[test]
     fn test_non_flattened_dem_rejected() {
         // repeat blocks and shift_detectors would corrupt detector ids if parsed
         // line-by-line; all parsers must refuse rather than silently mis-parse.
@@ -1093,9 +1109,11 @@ mod tests {
         assert!(SparseDem::from_dem_str(repeat_dem).is_err());
         assert!(DemCheckMatrix::from_dem_str(repeat_dem).is_err());
         assert!(DemMatchingGraph::from_dem_str(repeat_dem).is_err());
+        assert!(utils::parse_dem_metadata(repeat_dem).is_err());
 
         let shift_dem = "error(0.01) D0 L0\nshift_detectors 1\nerror(0.01) D0 L0\n";
         assert!(SparseDem::from_dem_str(shift_dem).is_err());
+        assert!(utils::parse_dem_metadata(shift_dem).is_err());
     }
 
     #[test]

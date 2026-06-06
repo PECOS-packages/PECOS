@@ -224,6 +224,16 @@ impl UfDecoder {
             temp_adj[n2 as usize].push((idx, n1));
         }
 
+        // Construction-time invariant: edge weights are non-negative (true for
+        // `ln((1-p)/p)` when p < 0.5, i.e. real sub-threshold priors). The
+        // predecoder's shortcut proofs ("lightest edge is the min-weight
+        // correction", "direct pair <= boundary split") depend on it; a negative
+        // weight would silently break them. Checked once here, not per shot.
+        debug_assert!(
+            edges.iter().all(|e| e.weight >= 0.0),
+            "UfDecoder requires non-negative edge weights (error priors p < 0.5)"
+        );
+
         // Sort each node's adjacency by weight (lightest first).
         for adj in &mut temp_adj {
             adj.sort_by(|a, b| {
@@ -373,17 +383,6 @@ impl UfDecoder {
     /// predecoding them individually gives the same result as joint decoding.
     #[must_use]
     pub fn predecode_clusters(&self, syndrome: &[u8]) -> Option<u64> {
-        // Invariant the shortcut proofs rely on: edge weights are non-negative
-        // (true for `ln((1-p)/p)` when p < 0.5, i.e. real sub-threshold error
-        // priors). With a negative weight the "lightest edge is the min-weight
-        // correction" / "direct pair <= split" arguments break. Asserted in
-        // debug builds; if it ever fires, the predecoder must be disabled for
-        // that graph (the full decoder handles negative weights correctly).
-        debug_assert!(
-            self.edges.iter().all(|e| e.weight >= 0.0),
-            "predecoder requires non-negative edge weights (p < 0.5)"
-        );
-
         let boundary = self.num_detectors as u32;
 
         // Mark defects.

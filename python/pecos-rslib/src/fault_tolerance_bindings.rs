@@ -5142,7 +5142,8 @@ pub struct PyLogicalCircuitDecoder {
     /// "full_fallback" (per-observable full decode behind a windowed budget),
     /// or "real_windowed" (genuine sliding-window; not yet enabled).
     effective_windowing: String,
-    /// Per-observable window count actually used (1 == full decode).
+    /// Window count actually used, one entry per non-empty subgraph (1 == full
+    /// decode); not indexed by global observable id.
     actual_num_windows: Vec<usize>,
     /// Whether genuine time-windowing is *possible* for this circuit (deep
     /// enough), independent of whether it is enabled. False for "unlimited".
@@ -5416,8 +5417,10 @@ impl PyLogicalCircuitDecoder {
         &self.effective_windowing
     }
 
-    /// Per-observable window count actually used (``1`` == full decode). Empty
-    /// for the unlimited budget.
+    /// Window count actually used, one entry per *non-empty* subgraph in
+    /// surviving-subgraph order (empty-region observables are dropped, so this
+    /// is not indexed by global observable id). ``1`` == full decode. All ``1``
+    /// in the current full-fallback path; empty for the unlimited budget.
     #[getter]
     fn actual_num_windows(&self) -> Vec<usize> {
         self.actual_num_windows.clone()

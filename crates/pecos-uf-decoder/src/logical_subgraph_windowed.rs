@@ -24,7 +24,7 @@
 //! decoding: every window is decoded with a buffer for matching context, but
 //! only correction edges whose BOTH endpoints lie in the window core are
 //! committed (Tan et al., arXiv:2209.09219). The per-observable committed
-//! observable flips are XORed.
+//! observable flips are XOR-combined.
 //!
 //! An earlier implementation windowed the full DEM first and then ran a subgraph
 //! decoder per window, combining by a naive full-window observable XOR with no
@@ -59,7 +59,7 @@ struct SubgraphWindowed {
 ///
 /// Partitions the DEM per observable, then windows each subgraph with an
 /// [`OverlappingWindowedDecoder`] (sliding-window core-commit). Per-observable
-/// committed observable flips are XORed into the final mask.
+/// committed observable flips are XOR-combined into the final mask.
 pub struct WindowedLogicalSubgraphDecoder {
     subgraphs: Vec<SubgraphWindowed>,
     /// Reusable subgraph-local syndrome buffer (sized to the largest subgraph).
@@ -141,7 +141,14 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
                 };
             }
             // The subgraph decodes a single observable as its local bit 0; map
-            // that back to this observable's global bit.
+            // that back to this observable's global bit. `observable_idx < 64` is
+            // guaranteed upstream (`subgraphs_from_membership` rejects >64
+            // observables); assert it locally where the u64 shift consumes it.
+            debug_assert!(
+                sg.observable_idx < 64,
+                "observable index {} exceeds u64 observable-mask capacity",
+                sg.observable_idx
+            );
             let sub_obs = sg.decoder.decode_to_observables(&self.local_syn[..n])?;
             if sub_obs & 1 != 0 {
                 obs_mask |= 1u64 << sg.observable_idx;

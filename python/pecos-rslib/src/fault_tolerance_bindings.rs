@@ -4468,20 +4468,31 @@ impl PyCssUfDecoder {
 #[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyLogicalSubgraphDecoder {
     inner: pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder,
+    /// The inner per-observable decoder backend selected at construction
+    /// (e.g. `"fusion_blossom_serial"`). `decode_count_parallel` reuses this so
+    /// the parallel workers match the serial path unless the caller overrides.
+    inner_decoder: String,
 }
 
 #[pymethods]
 impl PyLogicalSubgraphDecoder {
-    // Default inner is `fusion_blossom_serial` (exact MWPM, bundled). MEASURED
-    // accuracy/speed tradeoff (memory vs transversal algorithms, d=3..7, p=0.001)
-    // picks it: it is accurate AND fast across distances, whereas the native
-    // `pecos_uf:bp` -- competitive on memory and at d=3 -- is BOTH less accurate
-    // and slower at higher distance / multi-observable circuits (its grow+peel
-    // matching blows up at high d, e.g. d=7 transversal-CX: ~12.5s vs fusion
-    // ~1.9s, and ~2-5x higher LER at d=5/7). `pecos_uf:bp` remains the right pick
-    // for the pure-native, dependency-free path (and it does achieve distance
-    // suppression -- the predecoder bug that broke it at d>=5 is fixed).
-    // `belief_matching` matches fusion's accuracy but is slower. See
+    // Default inner is `fusion_blossom_serial`: a POLICY choice of accuracy-first
+    // exact MWPM, bundled by default. It is exact minimum-weight matching on each
+    // per-observable subgraph, so it cannot be beaten on that projected graph, and
+    // it ships with PECOS (no optional dependency to install).
+    //
+    // A spot benchmark (memory + transversal-CX, d=3..7, p=0.001, n=30k, SINGLE
+    // SEED) is consistent with this: fusion is at least as accurate as the native
+    // `pecos_uf:bp` everywhere and markedly faster at depth (e.g. d=7 transversal-CX
+    // ~1.9s vs ~12.5s). But that table is UNDER-POWERED to prove a long-term
+    // default -- single seed, single p, point LERs with overlapping confidence
+    // intervals. Treat it as supporting evidence, not proof; a proper threshold/CI
+    // sweep is a tracked benchmark TODO. The default rests on the policy above.
+    //
+    // `pecos_uf:bp` remains the right pick for the pure-native, dependency-free
+    // path (it does achieve distance suppression -- the predecoder bug that broke
+    // it at d>=5 is fixed). `belief_matching` matched fusion's accuracy in the spot
+    // benchmark but was slower. See
     // pecos-docs/design/lomatching-paper-additional-learnings.md and
     // logical-subgraph-backprop-region-builder.md.
     #[new]
@@ -4525,7 +4536,10 @@ impl PyLogicalSubgraphDecoder {
         )
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            inner_decoder: inner_decoder.to_string(),
+        })
     }
 
     /// Build from a precomputed per-observable detector membership instead of
@@ -4553,7 +4567,10 @@ impl PyLogicalSubgraphDecoder {
         })
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            inner_decoder: inner_decoder.to_string(),
+        })
     }
 
     /// Decode a syndrome and return observable flip predictions.
@@ -4567,6 +4584,15 @@ impl PyLogicalSubgraphDecoder {
     /// Number of observables this decoder handles.
     fn num_observables(&self) -> usize {
         self.inner.num_observables()
+    }
+
+    /// The inner per-observable decoder backend selected at construction.
+    ///
+    /// `decode_count_parallel` reuses this unless the caller overrides it, so
+    /// the serial and parallel paths agree by default.
+    #[getter]
+    fn inner_decoder(&self) -> &str {
+        &self.inner_decoder
     }
 
     /// Decode a batch of syndromes and return observable predictions.
@@ -4617,14 +4643,16 @@ impl PyLogicalSubgraphDecoder {
     /// Decode a `SampleBatch` in parallel using rayon.
     ///
     /// Creates per-worker decoder instances to avoid lock contention.
-    /// Requires the DEM string and inner decoder type for reconstruction.
-    #[pyo3(signature = (batch, dem, stab_coords, inner_decoder="pymatching", num_workers=None, max_time_radius=None))]
+    /// Requires the DEM string for reconstruction. `inner_decoder` defaults to
+    /// the backend selected at construction (so the parallel path matches the
+    /// serial `decode_count` path); pass an explicit value only to override it.
+    #[pyo3(signature = (batch, dem, stab_coords, inner_decoder=None, num_workers=None, max_time_radius=None))]
     fn decode_count_parallel(
         &self,
         batch: &PySampleBatch,
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
-        inner_decoder: &str,
+        inner_decoder: Option<&str>,
         num_workers: Option<usize>,
         max_time_radius: Option<i64>,
     ) -> PyResult<usize> {
@@ -4649,7 +4677,9 @@ impl PyLogicalSubgraphDecoder {
         }
 
         let dem_str = dem.to_string();
-        let inner_str = inner_decoder.to_string();
+        // Reuse the backend chosen at construction unless the caller overrides,
+        // so parallel workers decode identically to the serial path.
+        let inner_str = inner_decoder.unwrap_or(self.inner_decoder.as_str()).to_string();
         let n = batch.num_shots;
 
         // Materialize row-major data for parallel decode.

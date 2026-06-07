@@ -270,6 +270,45 @@ def test_native_bp_uf_inner_suppresses():
     )
 
 
+def _mem_dem_batch(d, p, n, seed):
+    """Build a memory DEM + stab_coords + a sample batch (shared fixture for the
+    non-stochastic default/parallel regressions below)."""
+    patch = SurfacePatch.create(d)
+    b = LogicalCircuitBuilder()
+    b.add_patch(patch, "A")
+    b.add_memory("A", d, "Z")
+    dem = b.build_dem(p1=p, p2=p, p_meas=p)
+    sc = b.stab_coords()
+    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=seed)
+    return dem, sc, batch
+
+
+def test_default_inner_is_fusion_blossom_serial():
+    """Pin the constructor default backend deterministically (no stochastic LER
+    margin): the default-built decoder reports ``fusion_blossom_serial`` as its
+    inner, and decodes identically to one built with that inner explicitly.
+    Guards the default-flip decision recorded in
+    pecos-docs/design/lomatching-paper-additional-learnings.md."""
+    dem, sc, batch = _mem_dem_batch(5, p=0.003, n=4000, seed=7)
+    default = LogicalSubgraphDecoder(dem, sc)
+    explicit = LogicalSubgraphDecoder(dem, sc, "fusion_blossom_serial")
+    assert default.inner_decoder == "fusion_blossom_serial"
+    assert default.decode_count(batch) == explicit.decode_count(batch)
+
+
+def test_decode_count_parallel_matches_serial_default():
+    """Finding #1 regression: `decode_count_parallel` must reuse the inner
+    backend chosen at construction (not silently fall back to a different
+    default), so the parallel path agrees with the serial `decode_count` on the
+    same shots. Previously the parallel helper defaulted to `pymatching`
+    regardless of the constructor's inner."""
+    dem, sc, batch = _mem_dem_batch(5, p=0.003, n=4000, seed=11)
+    dec = LogicalSubgraphDecoder(dem, sc)
+    serial = dec.decode_count(batch)
+    parallel = dec.decode_count_parallel(batch, dem, sc)
+    assert serial == parallel
+
+
 def _windowed_mem_ler(d, rounds, p, n, seed, step, buffer):
     patch = SurfacePatch.create(d)
     b = LogicalCircuitBuilder()

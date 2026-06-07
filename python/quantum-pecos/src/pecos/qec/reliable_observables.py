@@ -25,10 +25,16 @@ This module computes that reliable set: build the anticommutation matrix
 take its right null space over GF(2). Each null vector is a combination of raw
 observables that commutes with *every* reset -- i.e. a reliable observable.
 
-Status: prototype / proof-of-concept. Dependency-free (own GF(2) null space, no
-``galois``). The eventual production path would compute the null space via
-pecos-num's GF(2) and feed the reliable set into the logical-subgraph decoder
-front-end. See ``pecos-docs/design/lomatching-paper-additional-learnings.md``.
+Status: prototype / proof-of-concept -- NOT part of the supported ``pecos.qec``
+API. It is deliberately *not* re-exported by ``pecos.qec.__init__`` (importing
+``pecos.qec`` does not pull it in). QUARANTINE: this module imports ``stim`` at
+module load and uses ``stim.Circuit.detecting_regions`` at runtime, which
+violates the project rule that externals (stim, numpy, ...) are dev/test oracles,
+never on a runtime path. Do NOT import this on any decode path. A production
+version must compute observing regions natively (pecos-eeg / EEG-Heisenberg) and
+the GF(2) null space via pecos-num. It is also currently a no-op on the circuits
+PECOS emits today (every observable is already reliable). See
+``pecos-docs/design/lomatching-paper-additional-learnings.md``.
 """
 
 from __future__ import annotations

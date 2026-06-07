@@ -230,9 +230,9 @@ def _mem_ler(d, p, n, seed, inner=None):
 
 def test_distance_suppression_memory():
     """A fault-tolerant decoder must drive LER DOWN as code distance grows below
-    threshold. The default inner (`pecos_uf:bp`, native BP + union-find)
-    suppresses, tracking exact MWPM / lomatching (d=7 -> 0). Guards against the
-    default reverting to a non-suppressing inner."""
+    threshold. The default inner (`fusion_blossom_serial`, exact MWPM) suppresses,
+    matching lomatching (d=7 -> 0). Guards against the default reverting to a
+    non-suppressing inner."""
     p, n = 0.001, 60000
     ler_d3 = _mem_ler(3, p, n, seed=1)
     ler_d5 = _mem_ler(5, p, n, seed=1)
@@ -242,9 +242,12 @@ def test_distance_suppression_memory():
     )
 
 
-def test_default_inner_bp_uf_suppresses():
-    """The default native inner decoder (`pecos_uf:bp`, belief-propagation +
-    union-find) achieves distance suppression, as a fault-tolerant decoder must.
+def test_native_bp_uf_inner_suppresses():
+    """The native `pecos_uf:bp` inner (belief-propagation + union-find) achieves
+    distance suppression, as a fault-tolerant decoder must. (It is the
+    dependency-free native option; the decoder *default* is exact MWPM
+    `fusion_blossom_serial`, which is more accurate and faster at depth -- see
+    pecos-docs/design/lomatching-paper-additional-learnings.md.)
 
     Context: the UF predecoder used to mis-decode isolated defects whose
     minimum-weight correction is a bulk *path* to the boundary (it only looked at
@@ -253,11 +256,10 @@ def test_default_inner_bp_uf_suppresses():
     the full grow+peel decoder unless its shortcut is provably optimal (see
     `predecode_single` / size-2 handling in pecos-uf-decoder).
 
-    NOTE: this validates the *default* inner `pecos_uf:bp`, which suppresses
-    robustly (tracks exact MWPM). Pure `pecos_uf:fast` (no belief propagation) was
-    also improved by the predecoder fix but its full grow+peel heuristic does NOT
-    robustly suppress at depth -- a separate, lesser weakness, which is why the
-    default is `pecos_uf:bp`, not `pecos_uf:fast`.
+    NOTE: pure `pecos_uf:fast` (no belief propagation) was also improved by the
+    predecoder fix but its full grow+peel heuristic does NOT robustly suppress at
+    depth -- a separate, lesser weakness, which is why the native option is
+    `pecos_uf:bp`, not `pecos_uf:fast`.
     See pecos-docs/design/logical-subgraph-backprop-region-builder.md."""
     p, n = 0.001, 60000
     uf_d3 = _mem_ler(3, p, n, seed=1, inner="pecos_uf:bp")

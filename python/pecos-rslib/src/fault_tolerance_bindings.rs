@@ -4448,14 +4448,21 @@ impl PyCssUfDecoder {
 ///     dem: DEM string with detector coordinate declarations.
 ///     `stab_coords`: List of dicts, one per logical qubit. Each dict has
 ///         keys "X" and "Z" mapping to lists of (x, y) ancilla coordinates.
-///     `inner_decoder`: Inner decoder type string (default "`pecos_uf:bp`",
-///         native belief-propagation + union-find).
+///     `inner_decoder`: Inner decoder type string (default
+///         "`fusion_blossom_serial`", exact MWPM -- accurate and fast across
+///         distances, bundled). The best choice is circuit-dependent:
+///         `pecos_uf:bp` (PECOS-native belief-propagation + union-find,
+///         dependency-free) is competitive on memory and at small distance and is
+///         the right pick when you want the pure-native path, but its grow+peel
+///         matching is both LESS accurate and SLOWER at higher distance /
+///         multi-observable circuits. `belief_matching` matches fusion's accuracy
+///         but is slower.
 ///
 /// Example:
 ///     >>> decoder = `LogicalSubgraphDecoder`(
 ///     ...     `dem_str`,
 ///     ...     [{"X": [(1,0), (3,1)], "Z": [(0,3), (1,1)]}],
-///     ...     "`pecos_uf:bp`",
+///     ...     "`fusion_blossom_serial`",
 ///     ... )
 ///     >>> obs = decoder.decode(syndrome)
 #[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
@@ -4465,17 +4472,20 @@ pub struct PyLogicalSubgraphDecoder {
 
 #[pymethods]
 impl PyLogicalSubgraphDecoder {
-    // Default inner is `pecos_uf:bp` (native belief-propagation + union-find):
-    // dependency-free, fast, and it achieves distance suppression (LER drops with
-    // code distance), tracking exact MWPM closely. The native UF previously did
-    // NOT suppress at d>=5, so the default was temporarily exact MWPM
-    // (`fusion_blossom_serial`); that UF bug -- a predecoder that mis-decoded
-    // isolated defects whose min-weight correction is a bulk path to the boundary
-    // -- has been fixed (predecoder now falls through to the full grow+peel
-    // decoder unless provably optimal). See
-    // pecos-docs/design/logical-subgraph-backprop-region-builder.md.
+    // Default inner is `fusion_blossom_serial` (exact MWPM, bundled). MEASURED
+    // accuracy/speed tradeoff (memory vs transversal algorithms, d=3..7, p=0.001)
+    // picks it: it is accurate AND fast across distances, whereas the native
+    // `pecos_uf:bp` -- competitive on memory and at d=3 -- is BOTH less accurate
+    // and slower at higher distance / multi-observable circuits (its grow+peel
+    // matching blows up at high d, e.g. d=7 transversal-CX: ~12.5s vs fusion
+    // ~1.9s, and ~2-5x higher LER at d=5/7). `pecos_uf:bp` remains the right pick
+    // for the pure-native, dependency-free path (and it does achieve distance
+    // suppression -- the predecoder bug that broke it at d>=5 is fixed).
+    // `belief_matching` matches fusion's accuracy but is slower. See
+    // pecos-docs/design/lomatching-paper-additional-learnings.md and
+    // logical-subgraph-backprop-region-builder.md.
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="pecos_uf:bp", max_time_radius=None))]
+    #[pyo3(signature = (dem, stab_coords, inner_decoder="fusion_blossom_serial", max_time_radius=None))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
@@ -4526,7 +4536,7 @@ impl PyLogicalSubgraphDecoder {
     /// construction (e.g. the paper's back-propagation / detecting-region set)
     /// and decode with the same machinery for direct comparison.
     #[staticmethod]
-    #[pyo3(signature = (dem, membership, inner_decoder="pecos_uf:bp"))]
+    #[pyo3(signature = (dem, membership, inner_decoder="fusion_blossom_serial"))]
     fn from_membership(
         dem: &str,
         membership: Vec<Vec<usize>>,

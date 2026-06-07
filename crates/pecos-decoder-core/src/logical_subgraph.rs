@@ -366,7 +366,17 @@ pub fn subgraphs_from_membership(
         }
 
         // Build detector mapping (full DEM id -> subgraph-local index).
+        // Validate caller-provided ids first: an out-of-range id would index
+        // past `inverse_map` and panic, so return a decoder error instead.
         let detector_map: Vec<usize> = detectors.clone();
+        if let Some(&bad) = detector_map.iter().find(|&&d| d >= sdem.num_detectors) {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "subgraphs_from_membership: observable {obs_idx} membership references \
+                 detector {bad}, but the DEM has only {} detectors (D0..D{})",
+                sdem.num_detectors,
+                sdem.num_detectors.saturating_sub(1),
+            )));
+        }
         let mut inverse_map = vec![None; sdem.num_detectors];
         for (sub_idx, &full_idx) in detector_map.iter().enumerate() {
             inverse_map[full_idx] = Some(sub_idx);
@@ -893,6 +903,13 @@ mod tests {
         let big: Vec<Vec<usize>> = (0..65).map(|_| Vec::new()).collect();
         assert!(matches!(
             subgraphs_from_membership(&sdem, &big),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
+
+        // An out-of-range membership detector id must error, not panic
+        // (the DEM has 2 detectors D0,D1; detector 5 is past `inverse_map`).
+        assert!(matches!(
+            subgraphs_from_membership(&sdem, &vec![vec![5usize]]),
             Err(DecoderError::InvalidConfiguration(_))
         ));
     }

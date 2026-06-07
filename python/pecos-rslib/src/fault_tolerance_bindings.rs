@@ -4754,10 +4754,15 @@ impl PyLogicalSubgraphDecoder {
         Ok((edges.len(), num_qubits))
     }
 
-    /// Get the per-subgraph DEM strings (graphlike, suitable for windowed decoding).
+    /// Get the per-subgraph DEM strings (graphlike, local detector IDs 0..N).
     ///
-    /// Each string is a DEM with local detector IDs (0..N) that can be
-    /// passed to windowed or sandwich decoders.
+    /// NOTE: these strings carry NO `detector(...)` coordinate lines (subgraph
+    /// graphs drop coordinates), so they are NOT suitable for *time-windowed*
+    /// decoding -- a windowed decoder would see no detector times and collapse to
+    /// a single window. For windowing, use the coord-preserving
+    /// `LogicalSubgraphWindowPlan` path (the `WindowedLogicalSubgraphDecoder` /
+    /// logical-circuit windowed budget already do). These strings are fine for
+    /// full (non-windowed) per-subgraph decoding.
     fn subgraph_dems(&self) -> Vec<String> {
         (0..self.inner.num_observables())
             .map(|i| {
@@ -5290,10 +5295,24 @@ impl PyLogicalCircuitDecoder {
 
         // Select budget: "unlimited" for full-circuit, "windowed" for
         // bounded-latency, or a cycle time in microseconds like "1000us".
-        let mut distance = 0usize;
-        while distance.saturating_mul(distance) < num_qubits {
-            distance += 1;
-        }
+        //
+        // Use the REAL physical code distance from the descriptor (used for the
+        // windowing step / latency bound). `num_qubits = rust_sc.len()` is the
+        // number of logical patches, NOT a distance -- deriving distance from it
+        // (e.g. sqrt) is wrong (a single d=7 patch would yield distance 1 and
+        // make `can_window`/`strict` dishonest). Fall back to the old patch-count
+        // heuristic only for legacy descriptors that predate the `distance` field.
+        let distance: usize = descriptor
+            .get_item("distance")?
+            .and_then(|v| v.extract::<usize>().ok())
+            .filter(|&d| d > 0)
+            .unwrap_or_else(|| {
+                let mut d = 0usize;
+                while d.saturating_mul(d) < num_qubits {
+                    d += 1;
+                }
+                d.max(1)
+            });
         let decode_budget = match budget {
             "unlimited" | "offline" => DecodeBudget::unlimited(),
             "windowed" => {

@@ -66,6 +66,19 @@ def test_strict_windowed_budget_hard_errors():
         LogicalCircuitDecoder(desc, budget="windowed", strict=True)
 
 
+def test_strict_accepts_shallow_circuit_using_real_distance():
+    """`can_window`/`strict` must use the REAL physical code distance from the
+    descriptor, not a fake distance derived from the patch count. A single d=5
+    patch with only 2 rounds is one window at step=d=5, so strict=True must NOT
+    reject and can_window must be False. (The prior code derived distance=1 from
+    the 1-patch count and wrongly reported real windowing / rejected.)"""
+    desc = _memory_descriptor(5, 2)
+    assert desc["distance"] == 5
+    dec = LogicalCircuitDecoder(desc, budget="windowed", strict=True)  # must not raise
+    assert dec.can_window is False
+    assert dec.effective_windowing == "full_fallback"
+
+
 def test_windowed_full_fallback_still_decodes():
     """The full-fallback path is still a working decoder (accurate per-observable
     decode), not a stub."""

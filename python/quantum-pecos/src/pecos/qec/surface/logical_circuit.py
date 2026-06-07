@@ -836,6 +836,14 @@ class LogicalCircuitBuilder:
 
             seg_dems.append("\n".join(lines))
 
+        # Physical code distance for latency/windowing decisions. With multiple
+        # patches use the minimum (the weakest bound governs latency). This is the
+        # real surface-code distance, NOT a count of logical patches.
+        distance = min(
+            (min(ps.patch.geometry.dx, ps.patch.geometry.dz) for ps in self._patches.values()),
+            default=0,
+        )
+
         return {
             "segments": [
                 {
@@ -848,6 +856,7 @@ class LogicalCircuitBuilder:
             "boundary_gates": boundary_gates,
             "num_observables": num_patches * 2,
             "full_dem": full_dem,
+            "distance": distance,
         }
 
     def build_decoder(

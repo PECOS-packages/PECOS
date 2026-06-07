@@ -130,9 +130,15 @@ pub mod utils {
                 continue;
             }
 
-            // Handle commands with probability parameters like "error(0.01)"
+            // Normalize commands that carry parenthesized parameters:
+            // `error(0.01) ...` and `detector(x,y,t) Dk` (Stim always parenthesizes
+            // detector coordinates, so a literal `parts[0] == "detector"` check
+            // would miss every real declaration and undercount detectors that are
+            // declared but never referenced by an error mechanism).
             let command = if parts[0].starts_with("error(") {
                 "error"
+            } else if parts[0].starts_with("detector(") {
+                "detector"
             } else {
                 parts[0]
             };
@@ -447,8 +453,22 @@ impl DemCheckMatrix {
                         .into(),
                 ));
             }
+            if let Some(rest) = line.strip_prefix("detector(") {
+                // Count the declared detector id, which may not be referenced by
+                // any error mechanism. All parsers agree on
+                // `max(declared, error-referenced) + 1`.
+                if let Some(close) = rest.find(')') {
+                    for token in rest[close + 1..].split_whitespace() {
+                        if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                        }
+                    }
+                }
+                continue;
+            }
             if !line.starts_with("error(") {
-                // Skip non-error lines (detector, etc.)
+                // Skip other non-error lines (logical_observable handled above).
                 continue;
             }
 
@@ -644,6 +664,20 @@ impl DemMatchingGraph {
                      `shift_detectors` are not supported. Flatten the DEM first."
                         .into(),
                 ));
+            }
+            if let Some(rest) = line.strip_prefix("detector(") {
+                // Count the declared detector id (may not be error-referenced) so
+                // `num_detectors` matches the other parsers and its coordinate is
+                // not later dropped from `detector_coords`.
+                if let Some(close) = rest.find(')') {
+                    for token in rest[close + 1..].split_whitespace() {
+                        if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                        }
+                    }
+                }
+                continue;
             }
             if line.is_empty() || line.starts_with('#') || !line.starts_with("error(") {
                 continue;
@@ -1088,6 +1122,19 @@ mod tests {
 
         let (_dets, obs) = utils::parse_dem_metadata(dem).unwrap();
         assert_eq!(obs, 2, "parse_dem_metadata must count L1");
+    }
+
+    #[test]
+    fn test_parsers_count_declared_but_unreferenced_detectors() {
+        // A detector declared via `detector(coords) Dk` but never referenced by
+        // an error mechanism must still count (max declared id + 1). All four
+        // parsers must agree; index-addressed buffers depend on it.
+        let dem = "detector(0, 0, 0) D2\nlogical_observable L0\n";
+        assert_eq!(SparseDem::from_dem_str(dem).unwrap().num_detectors, 3);
+        assert_eq!(DemCheckMatrix::from_dem_str(dem).unwrap().num_detectors, 3);
+        assert_eq!(DemMatchingGraph::from_dem_str(dem).unwrap().num_detectors, 3);
+        let (dets, _obs) = utils::parse_dem_metadata(dem).unwrap();
+        assert_eq!(dets, 3, "parse_dem_metadata must count declared detector D2");
     }
 
     #[test]

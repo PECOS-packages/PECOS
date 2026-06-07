@@ -572,6 +572,93 @@ def _remap_surface_record_metadata_json(
     return json.dumps(entries)
 
 
+def _surface_runtime_measurement_remap_from_result_traces(
+    patch: SurfacePatch,
+    num_rounds: int,
+    result_traces: list[dict[str, Any]],
+) -> dict[int, int]:
+    """Map abstract surface measurement indices to runtime ``result_id``s.
+
+    The generated surface Guppy emits scalar ``result("sx*/sz*:meas:N", bit)``
+    calls for stabilizer measurements and one ``result("final", array(...))``
+    call for data readout. Those tags survive runtime scheduling changes and
+    are the stable detector/observable anchor. Aggregate ``synx``/``synz`` tags
+    are deliberately ignored because they reread existing futures.
+    """
+    import re
+    from collections import defaultdict
+
+    syndrome_per_round = len(patch.geometry.x_stabilizers) + len(patch.geometry.z_stabilizers)
+    expected_syndrome_measurements = syndrome_per_round * num_rounds
+    expected_measurements = expected_syndrome_measurements + patch.geometry.num_data
+
+    scalar_tag_re = re.compile(r"^s[xz]\d+:meas:(\d+)$")
+    occurrence_by_tag: defaultdict[str, int] = defaultdict(int)
+    remap: dict[int, int] = {}
+    final_seen = False
+
+    for trace in result_traces:
+        name = trace.get("name")
+        result_ids = trace.get("result_ids") or []
+        values = trace.get("values") or []
+        if not isinstance(name, str):
+            continue
+
+        match = scalar_tag_re.match(name)
+        if match is not None:
+            if len(result_ids) != 1 or len(values) != 1:
+                msg = f"Surface scalar result tag {name!r} must map to exactly one measurement result"
+                raise ValueError(msg)
+            meas_in_round = int(match.group(1))
+            if not 0 <= meas_in_round < syndrome_per_round:
+                msg = (
+                    f"Surface scalar result tag {name!r} has per-round measurement index "
+                    f"{meas_in_round}, outside [0, {syndrome_per_round})"
+                )
+                raise ValueError(msg)
+            round_index = occurrence_by_tag[name]
+            occurrence_by_tag[name] += 1
+            if round_index >= num_rounds:
+                msg = f"Surface scalar result tag {name!r} appears more than {num_rounds} round(s)"
+                raise ValueError(msg)
+            abstract_index = round_index * syndrome_per_round + meas_in_round
+            remap[abstract_index] = int(result_ids[0])
+        elif name == "final":
+            if final_seen:
+                msg = "Surface traced result provenance has more than one final data result"
+                raise ValueError(msg)
+            final_seen = True
+            if len(result_ids) != patch.geometry.num_data or len(values) != patch.geometry.num_data:
+                msg = (
+                    "Surface final result tag must map to exactly "
+                    f"{patch.geometry.num_data} data measurements"
+                )
+                raise ValueError(msg)
+            for offset, result_id in enumerate(result_ids):
+                remap[expected_syndrome_measurements + offset] = int(result_id)
+
+    if len(remap) != expected_measurements:
+        missing = sorted(set(range(expected_measurements)) - set(remap))
+        msg = (
+            "Runtime trace did not provide complete surface result-tag provenance: "
+            f"mapped {len(remap)}/{expected_measurements} measurements"
+        )
+        if missing:
+            msg += f"; first missing abstract measurement index {missing[0]}"
+        raise ValueError(msg)
+
+    runtime_ids = sorted(remap.values())
+    if runtime_ids != list(range(expected_measurements)):
+        msg = (
+            "Runtime result-tag provenance is not a dense measurement-id range "
+            f"0..{expected_measurements - 1}; got first/last "
+            f"{runtime_ids[:3]}...{runtime_ids[-3:]}"
+        )
+        raise ValueError(msg)
+
+    return remap
+
+
 def _runtime_idle_seconds_to_time_units(duration_seconds: float) -> Any:
     """Convert runtime idle seconds into PECOS nanosecond time units."""
     import math
@@ -931,6 +1018,58 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
             raise ValueError(msg)
 
 
+def _replay_qis_trace_chunks_into_tick_circuit(chunks: list[dict[str, Any]]) -> Any:
+    """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
+    if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
+        _reject_partially_lowered_trace(chunks)
+        return _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+    operations: list[dict[str, Any]] = []
+    for chunk in chunks:
+        operations.extend(list(chunk.get("operations", [])))
+    return _replay_qis_trace_into_tick_circuit(operations)
+
+
+def named_result_traces_from_operation_trace(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return runtime `result(...)` provenance records from operation trace chunks."""
+    traces: list[dict[str, Any]] = []
+    for chunk in chunks:
+        traces.extend(trace for trace in (chunk.get("named_result_traces") or []) if isinstance(trace, dict))
+    return traces
+
+
+def capture_guppy_operation_trace(
+    program: Any,
+    num_qubits: int,
+    *,
+    seed: int = 0,
+    runtime: object | None = None,
+) -> list[dict[str, Any]]:
+    """Capture a Guppy/QIS program's Selene operation trace chunks."""
+    import pecos
+
+    sim_builder = (
+        pecos.sim(program)
+        .classical(pecos.selene_engine(runtime))
+        .quantum(pecos.stabilizer())
+        .qubits(num_qubits)
+        .seed(seed)
+    )
+    return list(sim_builder.capture_operation_trace())
+
+
+def trace_guppy_into_tick_circuit_with_result_traces(
+    program: Any,
+    num_qubits: int,
+    *,
+    seed: int = 0,
+    runtime: object | None = None,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Trace a Guppy/QIS program into a ``TickCircuit`` plus result-tag provenance."""
+    chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
+    return _replay_qis_trace_chunks_into_tick_circuit(chunks), named_result_traces_from_operation_trace(chunks)
+
+
 def trace_guppy_into_tick_circuit(
     program: Any,
     num_qubits: int,
@@ -966,31 +1105,8 @@ def trace_guppy_into_tick_circuit(
         A ``TickCircuit`` with no detector/observable metadata attached; the
         caller supplies that.
     """
-    import pecos
-
-    sim_builder = (
-        pecos.sim(program)
-        .classical(pecos.selene_engine(runtime))
-        .quantum(pecos.stabilizer())
-        .qubits(num_qubits)
-        .seed(seed)
-    )
-    chunks = list(sim_builder.capture_operation_trace())
-
-    # Selene lowers QIS gates into per-chunk `lowered_quantum_ops` (the gate
-    # shape actually executed; e.g. cx -> RZZ + rotations). When any chunk is
-    # lowered we replay from those, but first reject a mixed/partially-lowered
-    # trace that would silently drop a chunk's raw gates (see
-    # `_reject_partially_lowered_trace`).
-    if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
-        _reject_partially_lowered_trace(chunks)
-        return _replay_lowered_qis_trace_into_tick_circuit(chunks)
-
-    # No chunk was lowered: replay the uniformly-raw QIS operation stream.
-    operations: list[dict[str, Any]] = []
-    for chunk in chunks:
-        operations.extend(list(chunk.get("operations", [])))
-    return _replay_qis_trace_into_tick_circuit(operations)
+    chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
+    return _replay_qis_trace_chunks_into_tick_circuit(chunks)
 
 
 def _generate_traced_surface_tick_circuit(
@@ -1015,6 +1131,25 @@ def _generate_traced_surface_tick_circuit(
     traced faithfully rather than silently substituting the default rotated
     patch of the same distance.
     """
+    tc, _ = _generate_traced_surface_tick_circuit_with_result_traces(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        runtime=runtime,
+    )
+    return tc
+
+
+def _generate_traced_surface_tick_circuit_with_result_traces(
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str,
+    *,
+    ancilla_budget: int | None = None,
+    runtime: object | None = None,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
     from pecos.guppy import get_num_qubits
     from pecos.guppy.surface import generate_memory_experiment
 
@@ -1024,7 +1159,7 @@ def _generate_traced_surface_tick_circuit(
         basis,
         ancilla_budget=ancilla_budget,
     )
-    return trace_guppy_into_tick_circuit(
+    return trace_guppy_into_tick_circuit_with_result_traces(
         program,
         get_num_qubits(patch=patch, ancilla_budget=ancilla_budget),
         seed=0,
@@ -1061,57 +1196,43 @@ def _build_surface_tick_circuit_for_native_model(
         msg = f"Unknown circuit_source {circuit_source!r}"
         raise ValueError(msg)
 
-    traced_tc = _generate_traced_surface_tick_circuit(
+    traced_tc, result_traces = _generate_traced_surface_tick_circuit_with_result_traces(
         patch,
         num_rounds,
         basis,
         ancilla_budget=ancilla_budget,
         runtime=runtime,
     )
-    # Coarse sanity check: the traced and abstract circuits must either agree
-    # on measured-qubit order or be remappable by measured-qubit occurrence.
-    # This catches gross drift (a dropped/added/wrong-qubit measurement) while
-    # allowing runtimes that preserve stabilizer identity but schedule
-    # measurements in a different order. It is NOT an identity-level check:
-    # `_extract_measurement_order` returns physical qubit indices, and under
-    # ancilla reuse the same physical qubit appears in many measurements -- so
-    # two different stabilizer orderings can produce an identical qubit-index
-    # sequence and pass here.
-    # There is no independent stabilizer-identity oracle in the stack today:
-    # the detector/observable record offsets are the production binding (not a
-    # validator), and the byte-identical traced-vs-traced DEM regression shares
-    # the same shared batching policy on both sides (so it cannot catch a
-    # policy bug). The current safeguards against identity drift are the shared
-    # `batched_stabilizers` source-of-truth and the source-level CX-emission
-    # pins; a true identity check here would need stabilizer provenance the
-    # replayed TickCircuit does not currently carry (future work).
+
+    measurement_index_remap = _surface_runtime_measurement_remap_from_result_traces(
+        patch,
+        num_rounds,
+        result_traces,
+    )
+    _copy_surface_tick_circuit_metadata(
+        abstract_tc,
+        traced_tc,
+        measurement_index_remap=measurement_index_remap,
+    )
+    traced_tc.set_meta("surface_metadata_record_binding", "runtime_result_tags")
+
+    # Coarse sanity check: detector metadata is bound by runtime result tags,
+    # but still reject traces with dropped/extra/wrong measured physical qubits.
     traced_measurement_order = _extract_measurement_order(traced_tc)
     abstract_measurement_order = _extract_measurement_order(abstract_tc)
-    measurement_index_remap = None
-    if traced_measurement_order != abstract_measurement_order:
-        try:
-            measurement_index_remap = _measurement_index_remap_for_orders(
-                abstract_measurement_order,
-                traced_measurement_order,
-            )
-        except ValueError as exc:
-            msg = (
-                "Traced and abstract surface circuits disagree on the measured-qubit "
-                "sequence (a dropped/added/wrong-qubit measurement or a different "
-                "schedule shape); refusing to build a native DEM/sampler from a "
-                "circuit that does not match the abstract detector/observable metadata"
-            )
-            raise ValueError(msg) from exc
-
-    if measurement_index_remap is None:
-        _copy_surface_tick_circuit_metadata(abstract_tc, traced_tc)
-    else:
-        _copy_surface_tick_circuit_metadata(
-            abstract_tc,
-            traced_tc,
-            measurement_index_remap=measurement_index_remap,
+    try:
+        _measurement_index_remap_for_orders(
+            abstract_measurement_order,
+            traced_measurement_order,
         )
-        traced_tc.set_meta("surface_metadata_record_binding", "runtime_measurement_order")
+    except ValueError as exc:
+        msg = (
+            "Traced and abstract surface circuits disagree on the measured-qubit "
+            "multiset (a dropped/added/wrong-qubit measurement); refusing to "
+            "build a native DEM/sampler from a circuit that does not match the "
+            "surface memory experiment"
+        )
+        raise ValueError(msg) from exc
 
     traced_tc.set_meta("circuit_source", circuit_source)
     return traced_tc
@@ -1337,28 +1458,35 @@ def _dem_string_from_cached_surface_topology(
     """Build a DEM string from cached topology and fresh noise parameters."""
     from pecos.qec import DemBuilder
 
+    noise_kwargs = {
+        "p_idle": noise.p_idle,
+        "t1": noise.t1,
+        "t2": noise.t2,
+        "p_idle_linear_rate": noise.p_idle_linear_rate,
+        "p_idle_quadratic_rate": noise.p_idle_quadratic_rate,
+        "p_idle_x_linear_rate": noise.p_idle_x_linear_rate,
+        "p_idle_y_linear_rate": noise.p_idle_y_linear_rate,
+        "p_idle_z_linear_rate": noise.p_idle_z_linear_rate,
+        "p_idle_x_quadratic_rate": noise.p_idle_x_quadratic_rate,
+        "p_idle_y_quadratic_rate": noise.p_idle_y_quadratic_rate,
+        "p_idle_z_quadratic_rate": noise.p_idle_z_quadratic_rate,
+        "p2_weights": _p2_weights_dict(noise.p2_weights),
+    }
+    if noise.p2_replacement_approximation is not None:
+        noise_kwargs["p2_replacement_approximation"] = noise.p2_replacement_approximation
+
+    builder = DemBuilder(topology.influence_map).with_noise(
+        noise.p1,
+        noise.p2,
+        noise.p_meas,
+        noise.p_prep,
+        **noise_kwargs,
+    )
+    if hasattr(builder, "with_exact_branch_replay_circuit"):
+        builder = builder.with_exact_branch_replay_circuit(topology.dag_circuit)
+
     dem = (
-        DemBuilder(topology.influence_map)
-        .with_noise(
-            noise.p1,
-            noise.p2,
-            noise.p_meas,
-            noise.p_prep,
-            p_idle=noise.p_idle,
-            t1=noise.t1,
-            t2=noise.t2,
-            p_idle_linear_rate=noise.p_idle_linear_rate,
-            p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-            p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-            p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-            p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-            p2_weights=_p2_weights_dict(noise.p2_weights),
-            p2_replacement_approximation=noise.p2_replacement_approximation,
-        )
-        .with_exact_branch_replay_circuit(topology.dag_circuit)
+        builder
         .with_num_measurements(topology.num_measurements)
         .with_measurement_order(list(topology.measurement_order))
         .with_detectors_json(topology.detectors_json)

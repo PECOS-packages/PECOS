@@ -3,6 +3,17 @@
 //! This module defines the quantum operations that can be collected by the interface
 //! and later executed by a runtime.
 
+/// Runtime provenance for a named `result(...)` output.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NamedResultTrace {
+    /// Name passed to `result(name, value)`.
+    pub name: String,
+    /// Boolean values emitted for this result call.
+    pub values: Vec<bool>,
+    /// Runtime measurement result IDs read to produce `values`, in element order.
+    pub result_ids: Vec<usize>,
+}
+
 /// High-level quantum operations that include both QIS and control flow
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Operation {

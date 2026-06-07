@@ -66,6 +66,10 @@ pub struct ExecutionContext {
     pub measurement_results: Mutex<Vec<Option<bool>>>,
     /// Storage for named results from `print_bool`/`print_bool_arr` (e.g., "synx", "final")
     pub named_results: Mutex<BTreeMap<String, Vec<bool>>>,
+    /// Runtime provenance for each `result(...)` output call.
+    pub named_result_traces: Mutex<Vec<NamedResultTrace>>,
+    /// Result IDs read since the last named output consumed them.
+    pub pending_result_reads: Mutex<Vec<usize>>,
 }
 
 impl ExecutionContext {
@@ -80,6 +84,8 @@ impl ExecutionContext {
             pending_ops: Mutex::new(Vec::new()),
             measurement_results: Mutex::new(Vec::new()),
             named_results: Mutex::new(BTreeMap::new()),
+            named_result_traces: Mutex::new(Vec::new()),
+            pending_result_reads: Mutex::new(Vec::new()),
         }
     }
 
@@ -100,6 +106,53 @@ impl ExecutionContext {
         }
         if let Ok(mut named) = self.named_results.lock() {
             named.clear();
+        }
+        if let Ok(mut traces) = self.named_result_traces.lock() {
+            traces.clear();
+        }
+        if let Ok(mut reads) = self.pending_result_reads.lock() {
+            reads.clear();
+        }
+    }
+
+    /// Record that program execution read a runtime measurement result.
+    pub fn record_result_read(&self, result_id: usize) {
+        if let Ok(mut reads) = self.pending_result_reads.lock() {
+            reads.push(result_id);
+        } else {
+            log::error!("ExecutionContext::record_result_read failed to acquire lock");
+        }
+    }
+
+    fn take_result_reads(&self, count: usize) -> Vec<usize> {
+        if count == 0 {
+            return Vec::new();
+        }
+        let Ok(mut reads) = self.pending_result_reads.lock() else {
+            log::error!("ExecutionContext::take_result_reads failed to acquire lock");
+            return Vec::new();
+        };
+        if reads.len() < count {
+            log::warn!(
+                "Named result output expected {count} result read(s), but only {} were recorded",
+                reads.len()
+            );
+            return Vec::new();
+        }
+        reads.drain(..count).collect()
+    }
+
+    fn store_named_result_trace(&self, name: &str, values: &[bool], result_ids: Vec<usize>) {
+        if let Ok(mut traces) = self.named_result_traces.lock() {
+            traces.push(NamedResultTrace {
+                name: name.to_string(),
+                values: values.to_vec(),
+                result_ids,
+            });
+        } else {
+            log::error!(
+                "ExecutionContext::store_named_result_trace failed to acquire lock for '{name}'"
+            );
         }
     }
 
@@ -122,6 +175,8 @@ impl ExecutionContext {
                 "ExecutionContext::store_named_bool: thread {thread_id:?} failed to acquire lock for '{name}'"
             );
         }
+        let result_ids = self.take_result_reads(1);
+        self.store_named_result_trace(name, &[value], result_ids);
     }
 
     /// Store a named result array (multiple bool values)
@@ -130,12 +185,23 @@ impl ExecutionContext {
             let entry = named.entry(name.to_string()).or_default();
             entry.extend_from_slice(values);
         }
+        let result_ids = self.take_result_reads(values.len());
+        self.store_named_result_trace(name, values, result_ids);
     }
 
     /// Get all named results (returns a clone)
     #[must_use]
     pub fn get_named_results(&self) -> BTreeMap<String, Vec<bool>> {
         self.named_results
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    /// Get all named result provenance records (returns a clone)
+    #[must_use]
+    pub fn get_named_result_traces(&self) -> Vec<NamedResultTrace> {
+        self.named_result_traces
             .lock()
             .map(|guard| guard.clone())
             .unwrap_or_default()
@@ -201,7 +267,9 @@ fn get_execution_context() -> Option<*mut ExecutionContext> {
 }
 
 // Re-export all types from pecos-qis-ffi-types
-pub use pecos_qis_ffi_types::{Operation, OperationCollector, OperationList, QuantumOp};
+pub use pecos_qis_ffi_types::{
+    NamedResultTrace, Operation, OperationCollector, OperationList, QuantumOp,
+};
 
 /// Type alias for the quantum executor callback
 ///
@@ -745,10 +813,49 @@ pub extern "C" fn pecos_get_named_results_json() -> *mut std::ffi::c_char {
     }
 }
 
+/// Get named result runtime provenance from execution context as JSON.
+///
+/// Returns a pointer to a heap-allocated null-terminated JSON string containing
+/// records of `result(...)` calls with the measurement result IDs used to
+/// produce each output value.
+///
+/// The caller must free the returned string using `pecos_free_named_results_json`.
+/// Returns null if no context is registered or traces are empty.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_get_named_result_traces_json() -> *mut std::ffi::c_char {
+    let Some(ctx) = get_execution_context() else {
+        return std::ptr::null_mut();
+    };
+
+    // SAFETY: Context is valid for duration of execution
+    let ctx = unsafe { &*ctx };
+    let traces = ctx.get_named_result_traces();
+    if traces.is_empty() {
+        return std::ptr::null_mut();
+    }
+
+    let json = match serde_json::to_string(&traces) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("pecos_get_named_result_traces_json: serialization error: {e}");
+            return std::ptr::null_mut();
+        }
+    };
+
+    match std::ffi::CString::new(json) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(e) => {
+            log::error!("pecos_get_named_result_traces_json: CString error: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Free a JSON string allocated by `pecos_get_named_results_json`
 ///
 /// # Safety
-/// The pointer must have been allocated by `pecos_get_named_results_json`.
+/// The pointer must have been allocated by `pecos_get_named_results_json` or
+/// `pecos_get_named_result_traces_json`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_free_named_results_json(ptr: *mut std::ffi::c_char) {
     if !ptr.is_null() {

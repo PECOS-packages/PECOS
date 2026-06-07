@@ -19,6 +19,8 @@ from pecos.qec.surface.decode import (
     _remap_surface_record_metadata_json,
     _replay_lowered_qis_trace_into_tick_circuit,
     _replay_qis_trace_into_tick_circuit,
+    _surface_runtime_measurement_remap_from_result_traces,
+    trace_guppy_into_tick_circuit_with_result_traces,
 )
 
 
@@ -761,6 +763,43 @@ def test_surface_metadata_records_remap_to_runtime_measurement_order() -> None:
         {"id": 0, "records": [-3, -1]},
         {"id": 1, "records": [-4]},
     ]
+
+
+def test_surface_metadata_records_remap_to_runtime_result_tags() -> None:
+    patch = SurfacePatch.create(distance=3)
+    program = make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2)
+    _, result_traces = trace_guppy_into_tick_circuit_with_result_traces(
+        program,
+        get_num_qubits(3, ancilla_budget=2),
+        seed=0,
+    )
+
+    remap = _surface_runtime_measurement_remap_from_result_traces(
+        patch,
+        2,
+        result_traces,
+    )
+
+    assert len(remap) == 25  # 2 rounds * 8 stabilizers + 9 final data measurements
+    assert sorted(remap) == list(range(25))
+    assert sorted(remap.values()) == list(range(25))
+
+
+def test_traced_surface_metadata_uses_runtime_result_tags() -> None:
+    patch = SurfacePatch.create(distance=3)
+    traced_tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+    )
+
+    assert traced_tc.get_meta("surface_metadata_record_binding") == "runtime_result_tags"
+    assert traced_tc.get_meta("circuit_source") == "traced_qis"
+    assert int(traced_tc.get_meta("num_measurements")) == 25
+    assert len(json.loads(traced_tc.get_meta("detectors"))) > 0
+    assert len(json.loads(traced_tc.get_meta("observables"))) == 1
 
 
 def test_surface_metadata_record_remap_rejects_measurement_drift() -> None:

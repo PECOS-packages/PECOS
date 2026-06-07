@@ -178,6 +178,30 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
     assert trace[0]["lowered_quantum_ops"]
 
 
+def test_capture_operation_trace_includes_named_result_provenance() -> None:
+    """Trace capture must preserve result(...) -> measurement-id provenance."""
+    import pecos
+    from pecos.qec.surface.decode import named_result_traces_from_operation_trace
+
+    _require_selene_runtime()
+
+    trace = (
+        pecos.sim(make_tiny_x_syndrome_memory(1))
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(2)
+        .seed(123)
+        .capture_operation_trace()
+    )
+
+    named_traces = named_result_traces_from_operation_trace(trace)
+    names = {trace["name"] for trace in named_traces}
+    assert {"synx", "final"} <= names
+    assert any(chunk.get("stage") == "named_results" for chunk in trace)
+    for named_trace in named_traces:
+        assert len(named_trace["result_ids"]) == len(named_trace["values"])
+
+
 def _collect_selene_named_results(
     instance: object,
     *,

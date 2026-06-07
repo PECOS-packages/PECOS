@@ -273,6 +273,17 @@ pub trait DynamicSyncHandle: Send + Sync {
     fn get_named_results(
         &self,
     ) -> Result<std::collections::BTreeMap<String, Vec<bool>>, InterfaceError>;
+
+    /// Get named result provenance from the execution context.
+    ///
+    /// Returns one record per `result(...)` output call, including the runtime
+    /// measurement result IDs read to produce that output.
+    ///
+    /// # Errors
+    /// Returns an error if the FFI call fails or JSON parsing fails.
+    fn get_named_result_traces(
+        &self,
+    ) -> Result<Vec<pecos_qis_ffi_types::NamedResultTrace>, InterfaceError>;
 }
 
 /// Box type for interface implementations

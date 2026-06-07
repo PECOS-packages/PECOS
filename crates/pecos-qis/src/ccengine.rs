@@ -23,7 +23,9 @@ use pecos_engines::shot_results::{Data, Shot};
 use pecos_engines::{
     ByteMessage, ByteMessageBuilder, ClassicalEngine, ControlEngine, Engine, EngineStage,
 };
-use pecos_qis_ffi_types::{Operation, OperationCollector as OperationList, QuantumOp};
+use pecos_qis_ffi_types::{
+    NamedResultTrace, Operation, OperationCollector as OperationList, QuantumOp,
+};
 use pecos_random::PecosRng;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -58,6 +60,7 @@ pub struct OperationTraceChunk {
     pub num_operations: usize,
     pub operations: Vec<Operation>,
     pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
+    pub named_result_traces: Vec<NamedResultTrace>,
 }
 
 /// Shared in-memory store for traced QIS operation batches.
@@ -892,6 +895,7 @@ impl QisEngine {
             num_operations: ops.len(),
             operations: ops.to_vec(),
             lowered_quantum_ops: lowered_trace,
+            named_result_traces: Vec::new(),
         };
 
         if let Some(ref collector) = self.operation_trace_collector {
@@ -929,6 +933,92 @@ impl QisEngine {
                 );
             }
         }
+    }
+
+    fn trace_named_result_traces_chunk(&mut self, named_result_traces: &[NamedResultTrace]) {
+        if named_result_traces.is_empty()
+            || (self.operation_trace_dir.is_none() && self.operation_trace_collector.is_none())
+        {
+            return;
+        }
+
+        let stage = "named_results";
+        let file_name = format!(
+            "engine_{:04}_shot_{:06}_chunk_{:04}_{}.json",
+            self.trace_engine_id, self.trace_shot_index, self.trace_chunk_index, stage
+        );
+        let chunk_index = self.trace_chunk_index;
+        self.trace_chunk_index = self
+            .trace_chunk_index
+            .checked_add(1)
+            .expect("trace_chunk_index overflow: too many chunks for a single trace shot");
+        let chunk = OperationTraceChunk {
+            format: "pecos_qis_operation_trace_v1",
+            engine_trace_id: self.trace_engine_id,
+            shot_index: self.trace_shot_index,
+            chunk_index,
+            stage: stage.to_string(),
+            waiting_for_result_id: None,
+            current_shot_seed: self.current_shot_seed,
+            simulated_op_count: self.simulated_op_count,
+            num_operations: 0,
+            operations: Vec::new(),
+            lowered_quantum_ops: Vec::new(),
+            named_result_traces: named_result_traces.to_vec(),
+        };
+
+        if let Some(ref collector) = self.operation_trace_collector {
+            match collector.lock() {
+                Ok(mut guard) => guard.push(chunk.clone()),
+                Err(err) => warn!("Failed to store named result trace chunk in memory: {err}"),
+            }
+        }
+
+        if let Some(ref trace_dir) = self.operation_trace_dir {
+            if let Err(err) = fs::create_dir_all(trace_dir) {
+                warn!(
+                    "Failed to create operation trace directory {}: {err}",
+                    trace_dir.display()
+                );
+                return;
+            }
+
+            let trace_path = trace_dir.join(file_name);
+            let serialized = match serde_json::to_string_pretty(&chunk) {
+                Ok(serialized) => serialized,
+                Err(err) => {
+                    warn!(
+                        "Failed to serialize named result trace chunk for {}: {err}",
+                        trace_path.display()
+                    );
+                    return;
+                }
+            };
+
+            if let Err(err) = fs::write(&trace_path, serialized) {
+                warn!(
+                    "Failed to write named result trace chunk {}: {err}",
+                    trace_path.display()
+                );
+            }
+        }
+    }
+
+    fn trace_named_result_traces_from_dynamic_handle(&mut self) {
+        let named_result_traces = if let Some(state) = &self.dynamic_state
+            && let Some(handle) = &state.sync_handle
+        {
+            match handle.get_named_result_traces() {
+                Ok(named_result_traces) => named_result_traces,
+                Err(e) => {
+                    debug!("QisEngine: Failed to get named result traces: {e}");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        self.trace_named_result_traces_chunk(&named_result_traces);
     }
 
     /// Start the LLVM program execution in a worker thread
@@ -1411,6 +1501,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
+            self.trace_named_result_traces_from_dynamic_handle();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -1457,6 +1548,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
+            self.trace_named_result_traces_from_dynamic_handle();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -1521,6 +1613,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(commands));
                 }
             }
+            self.trace_named_result_traces_from_dynamic_handle();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }

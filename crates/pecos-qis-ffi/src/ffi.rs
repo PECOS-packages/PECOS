@@ -266,6 +266,13 @@ pub unsafe extern "C" fn __quantum__rt__result_allocate() -> i64 {
 
 // --- Result Retrieval ---
 
+fn record_result_read(result_id: usize) {
+    if let Some(ctx) = crate::get_execution_context() {
+        // SAFETY: Context is valid for duration of execution.
+        unsafe { &*ctx }.record_result_read(result_id);
+    }
+}
+
 /// Get measurement result (returns 1 if result is One, 0 otherwise)
 ///
 /// This function supports dynamic circuits: if the result is not yet available and
@@ -284,6 +291,7 @@ pub unsafe extern "C" fn __quantum__rt__result_get_one(result: i64) -> i32 {
     let existing_result = with_interface(|interface| interface.get_result(result_id));
 
     if let Some(value) = existing_result {
+        record_result_read(result_id);
         return i32::from(value);
     }
 
@@ -300,7 +308,10 @@ pub unsafe extern "C" fn __quantum__rt__result_get_one(result: i64) -> i32 {
                     );
                     0
                 },
-                i32::from,
+                |value| {
+                    record_result_read(result_id);
+                    i32::from(value)
+                },
             )
         })
     } else {
@@ -473,6 +484,7 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
     log::debug!("___read_future_bool: existing_result={existing_result:?}");
 
     if let Some(result) = existing_result {
+        record_result_read(result_id);
         return result;
     }
 
@@ -484,6 +496,7 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
             log::debug!(
                 "___read_future_bool: result already in context for result_id={result_id}: {result}"
             );
+            record_result_read(result_id);
             return result;
         }
 
@@ -498,6 +511,9 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
             // The main thread stores results there to cross the thread boundary
             let result = crate::get_measurement_result(result_id as u64);
             log::debug!("___read_future_bool: got result after waiting: {result:?}");
+            if result.is_some() {
+                record_result_read(result_id);
+            }
             return result.unwrap_or(false);
         }
         log::debug!("___read_future_bool: timeout waiting for result");
@@ -1503,6 +1519,26 @@ mod tests {
 
         let result = unsafe { ___read_future_bool(0) };
         assert!(result);
+    }
+
+    #[test]
+    fn test_named_result_trace_consumes_recorded_result_reads() {
+        let ctx = crate::ExecutionContext::new();
+
+        ctx.record_result_read(7);
+        ctx.store_named_bool("m", true);
+        ctx.record_result_read(8);
+        ctx.record_result_read(9);
+        ctx.store_named_array("arr", &[false, true]);
+
+        let traces = ctx.get_named_result_traces();
+        assert_eq!(traces.len(), 2);
+        assert_eq!(traces[0].name, "m");
+        assert_eq!(traces[0].values, vec![true]);
+        assert_eq!(traces[0].result_ids, vec![7]);
+        assert_eq!(traces[1].name, "arr");
+        assert_eq!(traces[1].values, vec![false, true]);
+        assert_eq!(traces[1].result_ids, vec![8, 9]);
     }
 
     #[test]

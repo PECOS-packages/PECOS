@@ -242,6 +242,35 @@ def run_threshold(path: Path) -> None:
             )
 
 
+def run_hyperedge(path: Path) -> None:
+    """Closes the graphlike-scope caveat: PECOS full DEMs are genuinely
+    non-graphlike (weight-8 hyperedges, ~70% of CX errors weight>=3), so test
+    whether hyperedge-aware inners beat plain MWPM on the per-observable-subgraph
+    path NEAR threshold (where the 2026-04-24 audit saw a 23% hyperedge effect on
+    the full memory DEM). If they merely tie, the LogicalSubgraphDecoder default
+    is optimal even in the hyperedge regime, not just on graphlike DEMs."""
+    done = {(c.family, c.distance, c.p, c.seed, c.inner) for c in _load(path)}
+    inners = ["fusion_blossom_serial", "pymatching", "tesseract", "belief_matching", "belief_matching_correlated"]
+    plan = [
+        ("memory", 5, [0.006, 0.008], [1, 2], 30_000),
+        ("memory", 7, [0.008], [1, 2], 20_000),
+        ("cx", 5, [0.004], [1, 2], 30_000),
+    ]
+    for family, d, ps, seeds, n in plan:
+        for p in ps:
+            for seed in seeds:
+                todo = [i for i in inners if (family, d, p, seed, i) not in done]
+                if not todo:
+                    continue
+                cells = measure_cell(family, d, d, p, seed, todo, n)
+                _append(path, cells)
+                print(
+                    f"[hyperedge] {family:6s} d={d} p={p:.3f} seed={seed}: "
+                    + " ".join(f"{c.inner.split('_')[0][:6]}={c.num_errors}" for c in cells),
+                    flush=True,
+                )
+
+
 def run_speed(path: Path) -> None:
     """Per-shot decode throughput (build vs decode) at the costly d=7 point."""
     done = {(c.family, c.distance, c.p, c.seed, c.inner) for c in _load(path)}
@@ -415,7 +444,7 @@ def analyze(out_dir: Path) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--phase", required=True, choices=["suppress", "threshold", "speed", "analyze", "smoke"])
+    ap.add_argument("--phase", required=True, choices=["suppress", "threshold", "hyperedge", "speed", "analyze", "smoke"])
     ap.add_argument("--out", type=Path, default=RESULTS_DIR)
     args = ap.parse_args()
 
@@ -437,7 +466,7 @@ def main() -> None:
         return
 
     path = args.out / f"inner_decoder_study_{args.phase}.jsonl"
-    {"suppress": run_suppress, "threshold": run_threshold, "speed": run_speed}[args.phase](path)
+    {"suppress": run_suppress, "threshold": run_threshold, "hyperedge": run_hyperedge, "speed": run_speed}[args.phase](path)
     print(f"[done] {args.phase} -> {path}", flush=True)
 
 

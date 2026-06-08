@@ -473,6 +473,42 @@ class TestDemGeneration:
             )
             assert sampler.num_detectors == expected_detectors
 
+    def test_constrained_budget_dem_remains_strictly_decodable(self) -> None:
+        """Constrained ancilla reuse should not produce ungraphlike DEM artifacts.
+
+        This pins a regression where DAG fault propagation grouped measurements
+        by physical ancilla slot. That shortcut is invalid when the same slot is
+        reused for different stabilizers and produced high-degree mechanisms
+        that strict PyMatching could not parse.
+        """
+        from pecos.qec import ParsedDem
+
+        patch = SurfacePatch.create(distance=5)
+        params = {
+            "p1": 0.0,
+            "p2": 0.001,
+            "p_meas": 0.0,
+            "p_prep": 0.0,
+            "decompose_errors": True,
+        }
+
+        for basis in ("X", "Z"):
+            tc = generate_tick_circuit_from_patch(
+                patch,
+                num_rounds=5,
+                basis=basis,
+                ancilla_budget=8,
+            )
+            dem = generate_dem_from_tick_circuit(tc, **params)
+            sampler = ParsedDem.from_string(dem).to_dem_sampler()
+
+            assert sampler.sample_decode_count(
+                dem,
+                16,
+                decoder_type="pymatching",
+                seed=1234,
+            ) >= 0
+
     def test_traced_qis_traces_the_given_patch_not_its_distance(self) -> None:
         """A non-rotated patch must be traced from its OWN Guppy program, not
         the default rotated patch of the same distance. Before the patch-

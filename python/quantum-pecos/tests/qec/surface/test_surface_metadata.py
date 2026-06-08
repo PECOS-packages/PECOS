@@ -199,19 +199,23 @@ def test_tick_circuit_exposes_observable_descriptors() -> None:
 
 
 def test_tick_circuit_exposes_measurement_order() -> None:
-    """Tick circuits should expose measurement order matching their MZ gates."""
+    """Tick circuits should expose measurement order matching measurement gates."""
     patch = SurfacePatch.create(distance=3)
     tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
 
     observed = get_measurement_order_from_tick_circuit(tc)
 
     expected: list[int] = []
+    has_measure_free = False
     for tick_index in range(tc.num_ticks()):
         tick = tc.get_tick(tick_index)
         if tick is None:
             continue
         for gate in tick.gate_batches():
-            if "MZ" not in str(gate.gate_type):
+            gate_type = str(gate.gate_type)
+            if "MeasureFree" in gate_type:
+                has_measure_free = True
+            if "MZ" not in gate_type and "MeasureFree" not in gate_type:
                 continue
             for qubit in gate.qubits:
                 if hasattr(qubit, "index"):
@@ -219,6 +223,7 @@ def test_tick_circuit_exposes_measurement_order() -> None:
                 else:
                     expected.append(int(qubit))
 
+    assert has_measure_free
     assert observed == expected
     assert len(observed) == int(tc.get_meta("num_measurements") or "0")
 

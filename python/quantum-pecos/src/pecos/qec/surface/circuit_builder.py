@@ -728,7 +728,12 @@ class DagCircuitRenderer(CircuitRenderer):
                 circuit.cx([(op.qubits[0], op.qubits[1])])
 
             elif op.op_type == OpType.MEASURE:
-                circuit.mz([op.qubits[0]])
+                q = op.qubits[0]
+                if op.label.startswith(("sx", "sz")):
+                    circuit.mz_free([q])
+                    allocated.discard(q)
+                else:
+                    circuit.mz([q])
 
             elif op.op_type == OpType.TICK:
                 pass  # DagCircuit doesn't have explicit ticks
@@ -1038,7 +1043,11 @@ class TickCircuitRenderer(CircuitRenderer):
 
             elif op.op_type == OpType.MEASURE:
                 q = op.qubits[0]
-                meas_refs = get_tick_for_qubits([q]).mz([q])
+                if op.label.startswith(("sx", "sz")):
+                    meas_refs = get_tick_for_qubits([q]).mz_free([q])
+                    allocated.discard(q)
+                else:
+                    meas_refs = get_tick_for_qubits([q]).mz([q])
                 mark_qubits_used([q])
                 # Label helps identify measurement (e.g., "sx0", "sz0", "final[0]")
                 meta = get_ancilla_gate_metadata(q, op.label)
@@ -2091,7 +2100,7 @@ def _extract_measurement_order(tc: TickCircuit) -> list[int]:
         gates = tick.gate_batches()
         for gate in gates:
             gate_type = str(gate.gate_type)
-            if "MZ" in gate_type:
+            if "MZ" in gate_type or "MeasureFree" in gate_type:
                 # Add each measured qubit to the order
                 for qubit in gate.qubits:
                     # Qubit might be an int or a QubitId object

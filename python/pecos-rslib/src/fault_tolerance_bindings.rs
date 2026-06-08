@@ -4476,23 +4476,28 @@ pub struct PyLogicalSubgraphDecoder {
 
 #[pymethods]
 impl PyLogicalSubgraphDecoder {
-    // Default inner is `fusion_blossom_serial`: a POLICY choice of accuracy-first
-    // exact MWPM, bundled by default. It is exact minimum-weight matching on each
-    // per-observable subgraph, so it cannot be beaten on that projected graph, and
-    // it ships with PECOS (no optional dependency to install).
+    // Default inner is `fusion_blossom_serial`: exact MWPM on each per-observable
+    // subgraph, bundled (no optional dependency). This is now backed by a powered
+    // threshold/CI study (`examples/surface/inner_decoder_study.py`; memory +
+    // transversal-CX, d=3/5/7, 3 seeds pooled = 150-300k shots/cell, Jeffreys
+    // intervals), NOT just policy:
+    //   * Accuracy: fusion is statistically tied with pymatching/belief_matching/
+    //     tesseract (these per-observable DEMs are graphlike, so exact MWPM is
+    //     optimal) and STRICTLY beats `pecos_uf:bp` at every d>=5 cell -- 1.4-2.7x
+    //     lower LER with DISJOINT Jeffreys intervals, both families. Tied at d=3.
+    //   * Threshold: fusion ~0.9% vs `pecos_uf:bp` ~0.7% (bp also breaks down sooner).
+    //   * Speed: at d=7 bp's grow+peel blows up (CX 7.1ms/shot vs fusion 1.2ms);
+    //     "bp is the fast native one" is false at depth.
+    // Only `pymatching` is faster (~6x) but it is an EXTERNAL dep with zero accuracy
+    // or threshold gain, so it is the documented speed option, not the default.
+    // SCOPE: the study families are graphlike, so it does not distinguish fusion
+    // from hyperedge decoders (tesseract/mwpf) -- re-run with those if non-graphlike
+    // per-observable DEMs (biased/correlated noise) ever arise. See
+    // pecos-docs/design/inner-decoder-threshold-study.md.
     //
-    // A spot benchmark (memory + transversal-CX, d=3..7, p=0.001, n=30k, SINGLE
-    // SEED) is consistent with this: fusion is at least as accurate as the native
-    // `pecos_uf:bp` everywhere and markedly faster at depth (e.g. d=7 transversal-CX
-    // ~1.9s vs ~12.5s). But that table is UNDER-POWERED to prove a long-term
-    // default -- single seed, single p, point LERs with overlapping confidence
-    // intervals. Treat it as supporting evidence, not proof; a proper threshold/CI
-    // sweep is a tracked benchmark TODO. The default rests on the policy above.
-    //
-    // `pecos_uf:bp` remains the right pick for the pure-native, dependency-free
-    // path (it does achieve distance suppression -- the predecoder bug that broke
-    // it at d>=5 is fixed). `belief_matching` matched fusion's accuracy in the spot
-    // benchmark but was slower. See
+    // `pecos_uf:bp` remains the pure-native, dependency-free path (it does suppress
+    // with distance -- the predecoder bug that broke it at d>=5 is fixed -- just at
+    // a worse prefactor and lower threshold). See
     // pecos-docs/design/lomatching-paper-additional-learnings.md and
     // logical-subgraph-backprop-region-builder.md.
     #[new]

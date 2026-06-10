@@ -573,90 +573,189 @@ def _remap_surface_record_metadata_json(
 
 
 def _surface_runtime_measurement_remap_from_result_traces(
-    patch: SurfacePatch,
-    num_rounds: int,
+    abstract_tc: Any,
     result_traces: list[dict[str, Any]],
 ) -> dict[int, int]:
     """Map abstract surface measurement indices to runtime ``result_id``s.
 
-    The generated surface Guppy emits scalar ``result("sx*/sz*:meas:N", bit)``
-    calls for stabilizer measurements and one ``result("final", array(...))``
-    call for data readout. Those tags survive runtime scheduling changes and
-    are the stable detector/observable anchor. Aggregate ``synx``/``synz`` tags
-    are deliberately ignored because they reread existing futures.
+    The generated surface Guppy emits scalar counted-round
+    ``result("sx*/sz*:meas:N", bit)`` tags, prep-boundary
+    ``result("sx*/sz*:init:meas:N", bit)`` tags, and one
+    ``result("final", array(...))`` call for data readout. The abstract
+    TickCircuit labels each measurement with the result tag it should bind to.
+    Those tags survive runtime scheduling changes and are the stable
+    detector/observable anchor.
     """
-    import re
-    from collections import defaultdict
-
-    syndrome_per_round = len(patch.geometry.x_stabilizers) + len(patch.geometry.z_stabilizers)
-    expected_syndrome_measurements = syndrome_per_round * num_rounds
-    expected_measurements = expected_syndrome_measurements + patch.geometry.num_data
-
-    scalar_tag_re = re.compile(r"^s[xz]\d+:meas:(\d+)$")
-    occurrence_by_tag: defaultdict[str, int] = defaultdict(int)
-    remap: dict[int, int] = {}
-    final_seen = False
-
-    for trace in result_traces:
-        name = trace.get("name")
-        result_ids = trace.get("result_ids") or []
-        values = trace.get("values") or []
-        if not isinstance(name, str):
-            continue
-
-        match = scalar_tag_re.match(name)
-        if match is not None:
-            if len(result_ids) != 1 or len(values) != 1:
-                msg = f"Surface scalar result tag {name!r} must map to exactly one measurement result"
-                raise ValueError(msg)
-            meas_in_round = int(match.group(1))
-            if not 0 <= meas_in_round < syndrome_per_round:
-                msg = (
-                    f"Surface scalar result tag {name!r} has per-round measurement index "
-                    f"{meas_in_round}, outside [0, {syndrome_per_round})"
-                )
-                raise ValueError(msg)
-            round_index = occurrence_by_tag[name]
-            occurrence_by_tag[name] += 1
-            if round_index >= num_rounds:
-                msg = f"Surface scalar result tag {name!r} appears more than {num_rounds} round(s)"
-                raise ValueError(msg)
-            abstract_index = round_index * syndrome_per_round + meas_in_round
-            remap[abstract_index] = int(result_ids[0])
-        elif name == "final":
-            if final_seen:
-                msg = "Surface traced result provenance has more than one final data result"
-                raise ValueError(msg)
-            final_seen = True
-            if len(result_ids) != patch.geometry.num_data or len(values) != patch.geometry.num_data:
-                msg = (
-                    "Surface final result tag must map to exactly "
-                    f"{patch.geometry.num_data} data measurements"
-                )
-                raise ValueError(msg)
-            for offset, result_id in enumerate(result_ids):
-                remap[expected_syndrome_measurements + offset] = int(result_id)
-
-    if len(remap) != expected_measurements:
-        missing = sorted(set(range(expected_measurements)) - set(remap))
-        msg = (
-            "Runtime trace did not provide complete surface result-tag provenance: "
-            f"mapped {len(remap)}/{expected_measurements} measurements"
-        )
-        if missing:
-            msg += f"; first missing abstract measurement index {missing[0]}"
+    num_measurements = int(abstract_tc.get_meta("num_measurements"))
+    scalar_trace_ids, array_trace_ids = _index_surface_result_trace_ids(result_traces)
+    abstract_refs = _surface_abstract_measurement_result_refs(abstract_tc)
+    if len(abstract_refs) != num_measurements:
+        msg = f"expected {num_measurements} abstract measurement refs, got {len(abstract_refs)}"
         raise ValueError(msg)
 
+    occurrence_by_tag: dict[str, int] = {}
+    remap: dict[int, int] = {}
+    for abstract_index, ref in enumerate(abstract_refs):
+        if ref[0] == "scalar":
+            _, name = ref
+            occurrence = occurrence_by_tag.get(name, 0)
+            occurrence_by_tag[name] = occurrence + 1
+            try:
+                remap[abstract_index] = scalar_trace_ids[name][occurrence]
+            except (KeyError, IndexError) as exc:
+                msg = f"result tag {name!r} occurrence {occurrence} is missing from the runtime trace"
+                raise ValueError(msg) from exc
+        else:
+            _, name, element = ref
+            try:
+                remap[abstract_index] = array_trace_ids[name][0][element]
+            except (KeyError, IndexError) as exc:
+                msg = f"result tag {name!r}[{element}] is missing from the runtime trace"
+                raise ValueError(msg) from exc
+
     runtime_ids = sorted(remap.values())
-    if runtime_ids != list(range(expected_measurements)):
+    if runtime_ids != list(range(num_measurements)):
         msg = (
             "Runtime result-tag provenance is not a dense measurement-id range "
-            f"0..{expected_measurements - 1}; got first/last "
+            f"0..{num_measurements - 1}; got first/last "
             f"{runtime_ids[:3]}...{runtime_ids[-3:]}"
         )
         raise ValueError(msg)
-
     return remap
+
+
+def _index_surface_result_trace_ids(
+    result_traces: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, list[int]], dict[str, list[list[int]]]]:
+    """Index runtime named-result provenance by tag name."""
+    scalar_trace_ids: dict[str, list[int]] = {}
+    array_trace_ids: dict[str, list[list[int]]] = {}
+    for trace in result_traces:
+        name = trace.get("name")
+        values = trace.get("values")
+        result_ids = trace.get("result_ids")
+        if not isinstance(name, str) or not isinstance(values, list) or not isinstance(result_ids, list):
+            continue
+        if len(values) != len(result_ids):
+            msg = (
+                f"runtime result tag {name!r} has {len(values)} value(s) but "
+                f"{len(result_ids)} result id(s); cannot bind surface metadata"
+            )
+            raise ValueError(msg)
+        ids = [int(result_id) for result_id in result_ids]
+        is_scalar_syndrome_tag = name.startswith(("sx", "sz")) and ":meas:" in name
+        if is_scalar_syndrome_tag and len(ids) == 1:
+            scalar_trace_ids.setdefault(name, []).append(ids[0])
+        else:
+            array_trace_ids.setdefault(name, []).append(ids)
+    if not scalar_trace_ids and not array_trace_ids:
+        msg = "runtime trace does not contain named_result_traces; rebuild PECOS with result-tag provenance support"
+        raise ValueError(msg)
+    return scalar_trace_ids, array_trace_ids
+
+
+def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[str, str] | tuple[str, str, int]]:
+    """Return the result-tag reference for each abstract surface measurement."""
+    refs: list[tuple[str, str] | tuple[str, str, int]] = []
+    syndrome_measure_index_by_round: dict[int, int] = {}
+    measurement_gate_types = {"MZ", "MeasureFree"}
+    for tick_index in range(abstract_tc.num_ticks()):
+        tick = abstract_tc.get_tick(tick_index)
+        if tick is None:
+            continue
+        for gate_index, gate in enumerate(tick.gate_batches()):
+            gate_type = str(getattr(gate, "gate_type", "")).rsplit(".", maxsplit=1)[-1]
+            if gate_type not in measurement_gate_types:
+                continue
+            label = str(abstract_tc.get_gate_meta(tick_index, gate_index, "label") or "")
+            if label.startswith(("sx", "sz")):
+                round_value = abstract_tc.get_gate_meta(tick_index, gate_index, "syndrome_round")
+                if round_value is None:
+                    msg = f"surface syndrome measurement {label!r} is missing syndrome_round metadata"
+                    raise ValueError(msg)
+                round_index = int(round_value)
+                measurement_index = syndrome_measure_index_by_round.get(round_index, 0)
+                syndrome_measure_index_by_round[round_index] = measurement_index + 1
+                phase = "init:meas" if round_index < 0 else "meas"
+                refs.append(("scalar", f"{label}:{phase}:{measurement_index}"))
+                continue
+            if label.startswith("final[") and label.endswith("]"):
+                refs.append(("array", "final", int(label.removeprefix("final[").removesuffix("]"))))
+                continue
+            msg = f"surface measurement is missing a result-tag-compatible label: {label!r}"
+            raise ValueError(msg)
+    return refs
+
+
+def _extract_measurement_meas_ids(tc: Any) -> list[int]:
+    """Return stable measurement ids in TickCircuit execution order."""
+    ids: list[int] = []
+    for tick_idx in range(tc.num_ticks()):
+        tick = tc.get_tick(tick_idx)
+        if tick is None:
+            continue
+        for gate in tick.gate_batches():
+            gate_type = str(getattr(gate, "gate_type", "")).rsplit(".", maxsplit=1)[-1]
+            if gate_type not in {"MZ", "MeasureFree"}:
+                continue
+            qubits = list(getattr(gate, "qubits", []))
+            meas_ids = list(getattr(gate, "meas_ids", []))
+            if len(meas_ids) != len(qubits):
+                msg = (
+                    f"traced measurement gate {gate_type} in tick {tick_idx} carries "
+                    f"{len(meas_ids)} MeasId(s) for {len(qubits)} qubit(s)"
+                )
+                raise ValueError(msg)
+            ids.extend(int(meas_id) for meas_id in meas_ids)
+    return ids
+
+
+def _validate_result_tag_remap_against_traced_measurements(
+    traced_tc: Any,
+    measurement_index_remap: Mapping[int, int],
+    *,
+    expected_measurements: int,
+) -> None:
+    """Fail loudly unless result-tag bindings exactly cover traced MeasIds."""
+    expected_abstract_indices = list(range(expected_measurements))
+    actual_abstract_indices = sorted(measurement_index_remap)
+    if actual_abstract_indices != expected_abstract_indices:
+        msg = (
+            "runtime result-tag remap does not cover every abstract measurement; "
+            f"expected indices {expected_abstract_indices[:3]}...{expected_abstract_indices[-3:]}, "
+            f"got {actual_abstract_indices[:3]}...{actual_abstract_indices[-3:]}"
+        )
+        raise ValueError(msg)
+
+    traced_meas_ids = _extract_measurement_meas_ids(traced_tc)
+    if len(traced_meas_ids) != expected_measurements:
+        msg = (
+            "traced circuit contains "
+            f"{len(traced_meas_ids)} measured MeasId(s), but result-tag metadata "
+            f"expects {expected_measurements}"
+        )
+        raise ValueError(msg)
+    if len(set(traced_meas_ids)) != len(traced_meas_ids):
+        duplicates = sorted(
+            meas_id
+            for meas_id in set(traced_meas_ids)
+            if traced_meas_ids.count(meas_id) > 1
+        )
+        msg = f"traced circuit contains duplicate measured MeasId(s): {duplicates[:8]}"
+        raise ValueError(msg)
+
+    expected_meas_ids = sorted(int(meas_id) for meas_id in measurement_index_remap.values())
+    actual_meas_ids = sorted(traced_meas_ids)
+    if actual_meas_ids != expected_meas_ids:
+        expected_set = set(expected_meas_ids)
+        actual_set = set(actual_meas_ids)
+        missing = sorted(expected_set - actual_set)
+        extra = sorted(actual_set - expected_set)
+        msg = (
+            "runtime result-tag bindings do not exactly match the traced circuit's "
+            f"measured MeasIds; missing={missing[:8]}, extra={extra[:8]}"
+        )
+        raise ValueError(msg)
 
 
 def _runtime_idle_seconds_to_time_units(duration_seconds: float) -> Any:
@@ -1177,10 +1276,7 @@ def _build_surface_tick_circuit_for_native_model(
     runtime: object | None = None,
 ) -> Any:
     """Build the TickCircuit used by the native DEM and sampler paths."""
-    from pecos.qec.surface.circuit_builder import (
-        _extract_measurement_order,
-        generate_tick_circuit_from_patch,
-    )
+    from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
@@ -1204,10 +1300,11 @@ def _build_surface_tick_circuit_for_native_model(
         runtime=runtime,
     )
 
-    measurement_index_remap = _surface_runtime_measurement_remap_from_result_traces(
-        patch,
-        num_rounds,
-        result_traces,
+    measurement_index_remap = _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+    _validate_result_tag_remap_against_traced_measurements(
+        traced_tc,
+        measurement_index_remap,
+        expected_measurements=int(abstract_tc.get_meta("num_measurements")),
     )
     _copy_surface_tick_circuit_metadata(
         abstract_tc,
@@ -1215,24 +1312,6 @@ def _build_surface_tick_circuit_for_native_model(
         measurement_index_remap=measurement_index_remap,
     )
     traced_tc.set_meta("surface_metadata_record_binding", "runtime_result_tags")
-
-    # Coarse sanity check: detector metadata is bound by runtime result tags,
-    # but still reject traces with dropped/extra/wrong measured physical qubits.
-    traced_measurement_order = _extract_measurement_order(traced_tc)
-    abstract_measurement_order = _extract_measurement_order(abstract_tc)
-    try:
-        _measurement_index_remap_for_orders(
-            abstract_measurement_order,
-            traced_measurement_order,
-        )
-    except ValueError as exc:
-        msg = (
-            "Traced and abstract surface circuits disagree on the measured-qubit "
-            "multiset (a dropped/added/wrong-qubit measurement); refusing to "
-            "build a native DEM/sampler from a circuit that does not match the "
-            "surface memory experiment"
-        )
-        raise ValueError(msg) from exc
 
     traced_tc.set_meta("circuit_source", circuit_source)
     return traced_tc
@@ -1277,8 +1356,8 @@ def build_memory_circuit(
     """
     from pecos.qec.surface.patch import SurfacePatch
 
-    if rounds < 1:
-        msg = f"rounds must be >= 1, got {rounds}"
+    if rounds < 0:
+        msg = f"rounds must be >= 0, got {rounds}"
         raise ValueError(msg)
     if patch is None:
         if distance is None:
@@ -1391,7 +1470,10 @@ def _surface_native_topology(
     import json
 
     from pecos.qec import DagFaultAnalyzer
-    from pecos.qec.surface.circuit_builder import _extract_measurement_order
+    from pecos.qec.surface.circuit_builder import (
+        _extract_measurement_order,
+        normalize_traced_qis_tick_circuit,
+    )
 
     patch = _cached_surface_patch(patch_key)
     tc = _build_surface_tick_circuit_for_native_model(
@@ -1402,6 +1484,11 @@ def _surface_native_topology(
         circuit_source=circuit_source,
         runtime=runtime,
     )
+    if circuit_source == "traced_qis":
+        # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
+        # traced QIS emits parameterized Clifford rotations, while DEM
+        # replacement-branch approximations operate on named Clifford gates.
+        normalize_traced_qis_tick_circuit(tc, context="surface traced-QIS native topology")
     if include_idle_gates:
         # Insert idle gates only when the requested noise model includes a
         # dedicated idle channel. Otherwise inserted idle gates receive ordinary
@@ -1493,7 +1580,12 @@ def _dem_string_from_cached_surface_topology(
         .with_observables_json(topology.observables_json)
         .build_with_source_tracking()
     )
-    return dem.to_string_decomposed() if decompose_errors else dem.to_string()
+    if not decompose_errors:
+        return dem.to_string()
+    source_graphlike = getattr(dem, "to_string_source_graphlike_decomposed", None)
+    if source_graphlike is not None:
+        return source_graphlike()
+    return dem.to_string_decomposed()
 
 
 @cache
@@ -2646,15 +2738,18 @@ class SurfaceDecoder:
         synx_list: list[NDArray[np.uint8]],
         synz_list: list[NDArray[np.uint8]],
         final: NDArray[np.uint8],
+        *,
+        init_synx: NDArray[np.uint8] | None = None,
     ) -> NDArray[np.uint8]:
         """Compute full detection events for Z-basis DEM-based decoding.
 
         The circuit-level DEM defines detectors in this order:
-        1. X stabilizer detectors for rounds 1..num_rounds-1
-           (X stabs are non-deterministic at round 0 for Z-basis)
+        1. X stabilizer detectors for rounds 0..num_rounds-1
+           (round 0 compares against the init X-syndrome baseline when present)
         2. Z stabilizer detectors for rounds 0..num_rounds-1
            (round 0 is deterministic for Z-basis)
-        3. Final round detectors: last Z syndrome vs final data parity
+        3. Final detectors: last known Z syndrome vs final data parity
+           (for r=0, the known Z syndrome is the deterministic prep sign)
 
         Args:
             synx_list: X syndrome arrays, one per round
@@ -2667,22 +2762,36 @@ class SurfaceDecoder:
         geom = self.patch.geometry
         synx = np.array(synx_list, dtype=np.uint8)
         synz = np.array(synz_list, dtype=np.uint8)
+        if self.num_rounds > 0 and init_synx is None:
+            msg = (
+                "Z-basis circuit-level DEM decoding requires init_synx, the prep-baseline "
+                "X syndrome measured before counted syndrome-extraction rounds."
+            )
+            raise ValueError(msg)
 
         events: list[int] = []
 
-        # 1. X stabilizer detection events (rounds 1 to num_rounds-1)
-        for r in range(1, self.num_rounds):
-            events.extend((synx[r] ^ synx[r - 1]).tolist())
+        if self.num_rounds > 0:
+            assert init_synx is not None
+            init_synx_array = np.array(init_synx, dtype=np.uint8)
+            if init_synx_array.shape != synx[0].shape:
+                msg = f"init_synx has shape {init_synx_array.shape}, expected {synx[0].shape}"
+                raise ValueError(msg)
 
-        # 2. Z stabilizer detection events (all rounds)
-        events.extend(synz[0].tolist())  # round 0: compare to expected 0
-        for r in range(1, self.num_rounds):
-            events.extend((synz[r] ^ synz[r - 1]).tolist())
+            # 1. X stabilizer detection events
+            events.extend((synx[0] ^ init_synx_array).tolist())
+            for r in range(1, self.num_rounds):
+                events.extend((synx[r] ^ synx[r - 1]).tolist())
 
-        # 3. Final round: parity of final data on each Z stabilizer XOR last syndrome
+            # 2. Z stabilizer detection events (all rounds)
+            events.extend(synz[0].tolist())  # round 0: compare to expected 0
+            for r in range(1, self.num_rounds):
+                events.extend((synz[r] ^ synz[r - 1]).tolist())
+
+        # 3. Final readout: final Z parity XOR the last known Z syndrome.
         for stab in geom.z_stabilizers:
             data_parity = sum(int(final[q]) for q in stab.data_qubits) % 2
-            last_syn = int(synz[-1][stab.index])
+            last_syn = int(synz[-1][stab.index]) if self.num_rounds > 0 else 0
             events.append((data_parity ^ last_syn) & 1)
 
         return np.array(events, dtype=np.uint8)
@@ -2692,15 +2801,18 @@ class SurfaceDecoder:
         synx_list: list[NDArray[np.uint8]],
         synz_list: list[NDArray[np.uint8]],
         final: NDArray[np.uint8],
+        *,
+        init_synz: NDArray[np.uint8] | None = None,
     ) -> NDArray[np.uint8]:
         """Compute full detection events for X-basis DEM-based decoding.
 
         The circuit-level DEM defines detectors in this order:
         1. X stabilizer detectors for rounds 0..num_rounds-1
            (X stabs are deterministic at round 0 for X-basis)
-        2. Z stabilizer detectors for rounds 1..num_rounds-1
-           (Z stabs are non-deterministic at round 0 for X-basis)
-        3. Final round detectors: last X syndrome vs final data parity
+        2. Z stabilizer detectors for rounds 0..num_rounds-1
+           (round 0 compares against the init Z-syndrome baseline when present)
+        3. Final detectors: last known X syndrome vs final data parity
+           (for r=0, the known X syndrome is the deterministic prep sign)
 
         Args:
             synx_list: X syndrome arrays, one per round
@@ -2713,22 +2825,36 @@ class SurfaceDecoder:
         geom = self.patch.geometry
         synx = np.array(synx_list, dtype=np.uint8)
         synz = np.array(synz_list, dtype=np.uint8)
+        if self.num_rounds > 0 and init_synz is None:
+            msg = (
+                "X-basis circuit-level DEM decoding requires init_synz, the prep-baseline "
+                "Z syndrome measured before counted syndrome-extraction rounds."
+            )
+            raise ValueError(msg)
 
         events: list[int] = []
 
-        # 1. X stabilizer detection events (all rounds)
-        events.extend(synx[0].tolist())  # round 0: compare to expected 0
-        for r in range(1, self.num_rounds):
-            events.extend((synx[r] ^ synx[r - 1]).tolist())
+        if self.num_rounds > 0:
+            assert init_synz is not None
+            init_synz_array = np.array(init_synz, dtype=np.uint8)
+            if init_synz_array.shape != synz[0].shape:
+                msg = f"init_synz has shape {init_synz_array.shape}, expected {synz[0].shape}"
+                raise ValueError(msg)
 
-        # 2. Z stabilizer detection events (rounds 1 to num_rounds-1)
-        for r in range(1, self.num_rounds):
-            events.extend((synz[r] ^ synz[r - 1]).tolist())
+            # 1. X stabilizer detection events (all rounds)
+            events.extend(synx[0].tolist())  # round 0: compare to expected 0
+            for r in range(1, self.num_rounds):
+                events.extend((synx[r] ^ synx[r - 1]).tolist())
 
-        # 3. Final round: parity of final data on each X stabilizer XOR last syndrome
+            # 2. Z stabilizer detection events
+            events.extend((synz[0] ^ init_synz_array).tolist())
+            for r in range(1, self.num_rounds):
+                events.extend((synz[r] ^ synz[r - 1]).tolist())
+
+        # 3. Final readout: final X parity XOR the last known X syndrome.
         for stab in geom.x_stabilizers:
             data_parity = sum(int(final[q]) for q in stab.data_qubits) % 2
-            last_syn = int(synx[-1][stab.index])
+            last_syn = int(synx[-1][stab.index]) if self.num_rounds > 0 else 0
             events.append((data_parity ^ last_syn) & 1)
 
         return np.array(events, dtype=np.uint8)
@@ -2738,6 +2864,8 @@ class SurfaceDecoder:
         synx_list: list[NDArray[np.uint8]],
         synz_list: list[NDArray[np.uint8]],
         final: NDArray[np.uint8],
+        *,
+        init_synx: NDArray[np.uint8] | None = None,
     ) -> tuple[bool, DecodingResult]:
         """Decode a Z-basis memory experiment.
 
@@ -2759,6 +2887,8 @@ class SurfaceDecoder:
             synx_list: List of X syndrome arrays, one per round
             synz_list: List of Z syndrome arrays, one per round
             final: Final data qubit measurements
+            init_synx: Optional prep-baseline X syndrome for the random
+                stabilizer signs established before counted Z-memory rounds.
 
         Returns:
             (is_logical_error, decoding_result)
@@ -2772,7 +2902,7 @@ class SurfaceDecoder:
             DecoderType.PYMATCHING,
             DecoderType.TESSERACT,
         ):
-            events = self._compute_dem_detection_events_z(synx_list, synz_list, final)
+            events = self._compute_dem_detection_events_z(synx_list, synz_list, final, init_synx=init_synx)
             events_flat = events.ravel().astype(np.uint8)
 
             decoder = self._get_z_decoder()
@@ -2833,6 +2963,8 @@ class SurfaceDecoder:
         synx_list: list[NDArray[np.uint8]],
         synz_list: list[NDArray[np.uint8]],
         final: NDArray[np.uint8],
+        *,
+        init_synz: NDArray[np.uint8] | None = None,
     ) -> tuple[bool, DecodingResult]:
         """Decode an X-basis memory experiment.
 
@@ -2854,6 +2986,8 @@ class SurfaceDecoder:
             synx_list: List of X syndrome arrays, one per round
             synz_list: List of Z syndrome arrays, one per round
             final: Final data qubit measurements
+            init_synz: Optional prep-baseline Z syndrome for the random
+                stabilizer signs established before counted X-memory rounds.
 
         Returns:
             (is_logical_error, decoding_result)
@@ -2867,7 +3001,7 @@ class SurfaceDecoder:
             DecoderType.PYMATCHING,
             DecoderType.TESSERACT,
         ):
-            events = self._compute_dem_detection_events_x(synx_list, synz_list, final)
+            events = self._compute_dem_detection_events_x(synx_list, synz_list, final, init_synz=init_synz)
             events_flat = events.ravel().astype(np.uint8)
 
             decoder = self._get_x_decoder()
@@ -3082,8 +3216,8 @@ def surface_code_memory(
         msg = f"shots must be >= 0, got {shots}"
         raise ValueError(msg)
     num_rounds = distance if rounds is None else rounds
-    if num_rounds < 1:
-        msg = f"rounds must be >= 1, got {num_rounds}"
+    if num_rounds < 0:
+        msg = f"rounds must be >= 0, got {num_rounds}"
         raise ValueError(msg)
 
     noise_model = _memory_noise_model(physical_error_rate, noise_model)

@@ -1227,16 +1227,43 @@ impl PyDetectorErrorModel {
         self.inner.to_string()
     }
 
-    /// Convert the DEM to a string with decomposed representations.
+    /// Convert the DEM to a string with source-decomposed representations.
     ///
-    /// For 2-detector mechanisms, outputs multiple equivalent representations
-    /// including L0 cancellation forms where available. Hyperedge errors
-    /// (affecting 3+ detectors) are decomposed into graphlike components.
+    /// Faults are decomposed only using component structure attached to the
+    /// original source contribution. Residual hyperedges remain hyperedges
+    /// instead of being rewritten by an ambient graphlike search.
     ///
     /// Returns:
     ///     A string in DEM format with decomposed representations.
     fn to_string_decomposed(&self) -> String {
         self.inner.to_string_decomposed()
+    }
+
+    /// Convert the DEM to source-decomposed text.
+    ///
+    /// Only decomposition components attached to the original fault source are
+    /// used. Residual hyperedges remain hyperedges instead of being rewritten
+    /// by an ambient graphlike search.
+    fn to_string_source_decomposed(&self) -> String {
+        self.inner.to_string_source_decomposed()
+    }
+
+    /// Convert the DEM to a source-informed graphlike decomposition.
+    ///
+    /// Source-carried components are recursively decomposed only using
+    /// graphlike pieces that are themselves source-carried components in this
+    /// DEM. Residual hyperedges remain hyperedges.
+    fn to_string_source_graphlike_decomposed(&self) -> String {
+        self.inner.to_string_source_graphlike_decomposed()
+    }
+
+    /// Convert the DEM using the explicit historical graphlike-search renderer.
+    ///
+    /// This may decompose residual hyperedges by searching for graphlike
+    /// mechanisms elsewhere in the DEM, so it should be treated as a
+    /// compatibility/diagnostic representation rather than source proof.
+    fn to_string_graphlike_search_decomposed(&self) -> String {
+        self.inner.to_string_graphlike_search_decomposed()
     }
 
     /// Convert the DEM to a string with an explicit direct-2det render policy.
@@ -1337,6 +1364,19 @@ impl PyDetectorErrorModel {
     ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
         self.inner
             .contribution_render_records()
+            .into_iter()
+            .map(|record| contribution_render_record_to_pydict(py, record, &self.inner))
+            .collect()
+    }
+
+    /// Returns per-contribution render records for the source-informed
+    /// graphlike renderer.
+    fn contribution_source_graphlike_render_records(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        self.inner
+            .contribution_source_graphlike_render_records()
             .into_iter()
             .map(|record| contribution_render_record_to_pydict(py, record, &self.inner))
             .collect()

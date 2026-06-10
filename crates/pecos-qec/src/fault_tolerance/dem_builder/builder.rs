@@ -1215,9 +1215,12 @@ impl<'a> DemBuilder<'a> {
                 .expect("exact_branch_replay replacement Pauli was validated");
             let (p1, p2) = two_qubit_label_to_pauli_indices(&label)
                 .expect("exact_branch_replay label must be a two-qubit Pauli");
-            let effect = self
-                .exact_replacement_branch_effect(context, request, &label)
+            let analysis = self
+                .exact_branch_analysis(context, request)
                 .expect("exact_branch_replay effect was validated");
+            let base_effect = analysis.base_effect.clone();
+            let branch_pauli_effect = analysis.branch_effects[p1 as usize][p2 as usize].clone();
+            let effect = base_effect.xor(&branch_pauli_effect);
             if effect.is_empty() {
                 continue;
             }
@@ -1226,7 +1229,7 @@ impl<'a> DemBuilder<'a> {
             let source_paulis = [Pauli::from_u8(p1), Pauli::from_u8(p2)];
             let source_gate_types = [loc1_meta.gate_type, loc2_meta.gate_type];
             let source_before_flags = [loc1_meta.before, loc2_meta.before];
-            dem.add_direct_contribution_with_source(
+            dem.add_direct_contribution_with_source_components(
                 effect,
                 self.noise.p2 * *relative_probability,
                 SourceMetadata::new(
@@ -1237,6 +1240,7 @@ impl<'a> DemBuilder<'a> {
                 )
                 .with_direct_source_family(DirectSourceFamily::TwoLocationExactReplacementBranch)
                 .with_replacement_branch(),
+                DirectSourceComponents::new(&base_effect, &branch_pauli_effect),
             );
         }
     }
@@ -1504,6 +1508,26 @@ impl<'a> DemBuilder<'a> {
         let source_gate_types = [loc1_meta.gate_type, loc2_meta.gate_type];
         let source_before_flags = [loc1_meta.before, loc2_meta.before];
 
+        let source_frame_components = if direct_source_family.is_none() {
+            Self::two_qubit_clifford_source_frame_components(loc1_meta.gate_type, p1, p2, effects)
+        } else {
+            None
+        };
+        if let Some(parts) = source_frame_components.as_ref() {
+            dem.add_direct_contribution_with_source_components(
+                effect.clone(),
+                prob,
+                SourceMetadata::new(
+                    &source_locations,
+                    &source_paulis,
+                    &source_gate_types,
+                    &source_before_flags,
+                ),
+                DirectSourceComponents::from_slice(parts.as_slice()),
+            );
+            return;
+        }
+
         if let Some((a1, a2, b1, b2)) = get_y_decomposition(p1, p2) {
             let e_a = &effects[a1 as usize][a2 as usize];
             let e_b = &effects[b1 as usize][b2 as usize];
@@ -1529,6 +1553,7 @@ impl<'a> DemBuilder<'a> {
                     .with_direct_source_family(family)
                     .with_replacement_branch();
             }
+
             dem.add_direct_contribution_with_source_components(
                 effect.clone(),
                 prob,
@@ -1536,6 +1561,47 @@ impl<'a> DemBuilder<'a> {
                 DirectSourceComponents::new(e1, e2),
             );
         }
+    }
+
+    /// Builds exact source-frame components for ordinary post-gate Pauli noise
+    /// on supported two-qubit Clifford gates.
+    ///
+    /// A post-gate Pauli can be pulled back through the Clifford into a pre-gate
+    /// Pauli. Decomposing that pre-gate Pauli into X/Z generators often exposes
+    /// the graphlike source pieces that were hidden by the native gate frame.
+    /// Each generator is then pushed forward again and looked up in the existing
+    /// post-gate effect table, so the XOR of returned components is exactly the
+    /// original post-gate effect.
+    fn two_qubit_clifford_source_frame_components(
+        gate_type: GateType,
+        post_p1: u8,
+        post_p2: u8,
+        effects: &[[FaultMechanism; 4]; 4],
+    ) -> Option<SmallVec<[FaultMechanism; 4]>> {
+        let images = two_qubit_pre_generator_post_images(gate_type)?;
+        let (pre_p1, pre_p2) = invert_two_qubit_clifford_post_pauli(images, (post_p1, post_p2))?;
+
+        let mut components = SmallVec::new();
+        for image in two_qubit_pre_pauli_generator_images(images, pre_p1, pre_p2) {
+            toggle_source_component(
+                &mut components,
+                effects[image.0 as usize][image.1 as usize].clone(),
+            );
+        }
+
+        if components.is_empty() {
+            return None;
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            let combined = components
+                .iter()
+                .fold(FaultMechanism::new(), |acc, part| acc.xor(part));
+            debug_assert_eq!(combined, effects[post_p1 as usize][post_p2 as usize]);
+        }
+
+        Some(components)
     }
 
     /// Builds mappings from measurement indices to detector/DEM-output IDs.
@@ -1849,6 +1915,133 @@ fn per_channel_probability(total_prob: f64, num_channels: u32) -> f64 {
 // ============================================================================
 // Intra-Channel Decomposition
 // ============================================================================
+
+type TwoQubitPauli = (u8, u8);
+type TwoQubitGeneratorImages = [TwoQubitPauli; 4];
+
+/// Returns post-gate images of the pre-gate generators
+/// `[X1, Z1, X2, Z2]`, ignoring phase.
+#[inline]
+fn two_qubit_pre_generator_post_images(gate_type: GateType) -> Option<TwoQubitGeneratorImages> {
+    match gate_type {
+        GateType::CX => Some([
+            (1, 1), // X1 -> XX
+            (3, 0), // Z1 -> ZI
+            (0, 1), // X2 -> IX
+            (3, 3), // Z2 -> ZZ
+        ]),
+        GateType::CZ => Some([
+            (1, 3), // X1 -> XZ
+            (3, 0), // Z1 -> ZI
+            (3, 1), // X2 -> ZX
+            (0, 3), // Z2 -> IZ
+        ]),
+        GateType::SZZ | GateType::SZZdg => Some([
+            (2, 3), // X1 -> YZ
+            (3, 0), // Z1 -> ZI
+            (3, 2), // X2 -> ZY
+            (0, 3), // Z2 -> IZ
+        ]),
+        _ => None,
+    }
+}
+
+#[inline]
+fn invert_two_qubit_clifford_post_pauli(
+    images: TwoQubitGeneratorImages,
+    post: TwoQubitPauli,
+) -> Option<TwoQubitPauli> {
+    for pre_p1 in 0..4 {
+        for pre_p2 in 0..4 {
+            if forward_two_qubit_pauli(images, pre_p1, pre_p2) == post {
+                return Some((pre_p1, pre_p2));
+            }
+        }
+    }
+    None
+}
+
+fn two_qubit_pre_pauli_generator_images(
+    images: TwoQubitGeneratorImages,
+    pre_p1: u8,
+    pre_p2: u8,
+) -> SmallVec<[TwoQubitPauli; 4]> {
+    let mut out = SmallVec::new();
+    if pauli_has_x(pre_p1) {
+        out.push(images[0]);
+    }
+    if pauli_has_z(pre_p1) {
+        out.push(images[1]);
+    }
+    if pauli_has_x(pre_p2) {
+        out.push(images[2]);
+    }
+    if pauli_has_z(pre_p2) {
+        out.push(images[3]);
+    }
+    out
+}
+
+#[inline]
+fn forward_two_qubit_pauli(
+    images: TwoQubitGeneratorImages,
+    pre_p1: u8,
+    pre_p2: u8,
+) -> TwoQubitPauli {
+    two_qubit_pre_pauli_generator_images(images, pre_p1, pre_p2)
+        .into_iter()
+        .fold((0, 0), xor_two_qubit_pauli)
+}
+
+#[inline]
+fn xor_two_qubit_pauli(a: TwoQubitPauli, b: TwoQubitPauli) -> TwoQubitPauli {
+    (xor_pauli(a.0, b.0), xor_pauli(a.1, b.1))
+}
+
+#[inline]
+fn xor_pauli(a: u8, b: u8) -> u8 {
+    pauli_from_bits(
+        pauli_has_x(a) ^ pauli_has_x(b),
+        pauli_has_z(a) ^ pauli_has_z(b),
+    )
+}
+
+#[inline]
+fn pauli_has_x(pauli: u8) -> bool {
+    matches!(pauli, 1 | 2)
+}
+
+#[inline]
+fn pauli_has_z(pauli: u8) -> bool {
+    matches!(pauli, 2 | 3)
+}
+
+#[inline]
+fn pauli_from_bits(has_x: bool, has_z: bool) -> u8 {
+    match (has_x, has_z) {
+        (false, false) => 0,
+        (true, false) => 1,
+        (true, true) => 2,
+        (false, true) => 3,
+    }
+}
+
+fn toggle_source_component(
+    components: &mut SmallVec<[FaultMechanism; 4]>,
+    component: FaultMechanism,
+) {
+    if component.is_empty() {
+        return;
+    }
+    if let Some(index) = components
+        .iter()
+        .position(|existing| existing == &component)
+    {
+        components.remove(index);
+    } else {
+        components.push(component);
+    }
+}
 
 /// Returns the intra-channel decomposition for Y-containing Pauli cases.
 ///
@@ -2793,6 +2986,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_szz_source_frame_components_pull_post_error_to_pre_generators() {
+        fn dets(indices: &[u32]) -> FaultMechanism {
+            FaultMechanism::from_unsorted(indices.iter().copied(), std::iter::empty())
+        }
+
+        let a = dets(&[0, 1]);
+        let b = dets(&[2]);
+        let c = dets(&[3, 4]);
+
+        let mut effects: [[FaultMechanism; 4]; 4] = Default::default();
+        effects[2][3] = a.clone(); // SZZ maps pre X1 to post YZ.
+        effects[3][0] = b.clone(); // SZZ maps pre Z1 to post ZI.
+        effects[0][3] = c.clone(); // SZZ maps pre Z2 to post IZ.
+        effects[1][0] = a.xor(&b).xor(&c);
+
+        let parts =
+            DemBuilder::two_qubit_clifford_source_frame_components(GateType::SZZ, 1, 0, &effects)
+                .expect("post XI should pull back through SZZ to pre YZ");
+
+        assert_eq!(parts.len(), 3);
+        assert!(parts.contains(&a));
+        assert!(parts.contains(&b));
+        assert!(parts.contains(&c));
+        assert_eq!(
+            parts
+                .iter()
+                .fold(FaultMechanism::new(), |acc, part| acc.xor(part)),
+            effects[1][0]
+        );
+
+        effects[3][0] = a.clone();
+        effects[1][0] = c.clone();
+
+        let parts =
+            DemBuilder::two_qubit_clifford_source_frame_components(GateType::SZZ, 1, 0, &effects)
+                .expect("duplicate source components should cancel by XOR");
+
+        assert_eq!(parts.as_slice(), &[c]);
+    }
+
+    #[test]
     fn test_from_circuit_tracks_tracked_pauli() {
         use pecos_core::pauli::X;
         use pecos_quantum::DagCircuit;
@@ -3463,6 +3697,15 @@ mod tests {
                 .all(|pauli| *pauli == Pauli::I),
             "omission-only replacement branch should be recorded as *II"
         );
+        let (base_effect, branch_pauli_effect) = contributions[0]
+            .direct_component_effects()
+            .expect("exact branch replay should preserve base/branch components");
+        assert_eq!(
+            base_effect.xor(&branch_pauli_effect),
+            contributions[0].effect
+        );
+        assert_eq!(base_effect.detectors.as_slice(), &[0]);
+        assert!(branch_pauli_effect.is_empty());
     }
 
     #[test]

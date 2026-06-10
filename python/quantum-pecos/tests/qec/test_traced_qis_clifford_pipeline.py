@@ -3,9 +3,13 @@
 
 """Smoke tests for the traced-QIS surface-code route after Clifford lowering."""
 
+import math
 import random
 
+import pytest
+
 from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 from pecos.quantum import TickCircuit
 from pecos_rslib_exp import (
@@ -79,7 +83,7 @@ TICK_2Q_METHODS = {
 def build_lowered_traced_qis_surface_code(rounds=3):
     patch = SurfacePatch.create(distance=3)
     tc = _build_surface_tick_circuit_for_native_model(patch, rounds, "Z", circuit_source="traced_qis")
-    tc.lower_clifford_rotations()
+    normalize_traced_qis_tick_circuit(tc, context="test traced-QIS surface code")
     return tc
 
 
@@ -211,6 +215,29 @@ def test_lowered_traced_qis_pipeline_sampling_and_catalog_smoke():
     assert len(catalog) > 0
     assert len(first_fault.locations) == 1
     assert len(first_fault.faults) == 1
+
+
+def test_normalize_traced_qis_tick_circuit_lowers_clifford_rzz():
+    tc = TickCircuit()
+    tc.tick().rzz(math.pi / 2, [(0, 1)])
+
+    normalize_traced_qis_tick_circuit(tc, context="test Clifford RZZ normalization")
+
+    gate_names = [
+        gate.gate_type.name
+        for tick_index in range(tc.num_ticks())
+        for gate in tc.get_tick(tick_index).gate_batches()
+    ]
+    assert "RZZ" not in gate_names
+    assert "SZZ" in gate_names
+
+
+def test_normalize_traced_qis_tick_circuit_rejects_raw_rzz_after_lowering():
+    tc = TickCircuit()
+    tc.tick().rzz(math.pi / 4, [(0, 1)])
+
+    with pytest.raises(ValueError, match="still contains raw RZZ"):
+        normalize_traced_qis_tick_circuit(tc, context="test non-Clifford RZZ normalization")
 
 
 def test_explicit_python_gate_names_map_to_rust_clifford_gates():

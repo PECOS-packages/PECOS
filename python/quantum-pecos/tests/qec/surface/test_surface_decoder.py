@@ -249,8 +249,14 @@ class TestSurfaceDecoder:
         synx_list = [np.zeros(num_x_stab, dtype=np.uint8)]
         synz_list = [np.zeros(num_z_stab, dtype=np.uint8)]
         final = np.zeros(patch.num_data, dtype=np.uint8)
+        init_synx = np.zeros(num_x_stab, dtype=np.uint8)
 
-        is_error, _result = decoder.decode_memory_z(synx_list, synz_list, final)
+        is_error, _result = decoder.decode_memory_z(
+            synx_list,
+            synz_list,
+            final,
+            init_synx=init_synx,
+        )
 
         # No errors should be detected
         assert not is_error
@@ -267,11 +273,79 @@ class TestSurfaceDecoder:
         synx_list = [np.zeros(num_x_stab, dtype=np.uint8)]
         synz_list = [np.zeros(num_z_stab, dtype=np.uint8)]
         final = np.zeros(patch.num_data, dtype=np.uint8)
+        init_synz = np.zeros(num_z_stab, dtype=np.uint8)
 
-        is_error, _result = decoder.decode_memory_x(synx_list, synz_list, final)
+        is_error, _result = decoder.decode_memory_x(
+            synx_list,
+            synz_list,
+            final,
+            init_synz=init_synz,
+        )
 
         # No errors should be detected
         assert not is_error
+
+    def test_dem_detection_events_require_prep_baseline(self) -> None:
+        """Circuit-level DEM event construction should fail loudly without prep baselines."""
+        patch = SurfacePatch.create(distance=3)
+        decoder = SurfaceDecoder(patch, num_rounds=2)
+        num_x_stab = len(patch.geometry.x_stabilizers)
+        num_z_stab = len(patch.geometry.z_stabilizers)
+        synx_list = [np.zeros(num_x_stab, dtype=np.uint8) for _ in range(2)]
+        synz_list = [np.zeros(num_z_stab, dtype=np.uint8) for _ in range(2)]
+        final = np.zeros(patch.num_data, dtype=np.uint8)
+
+        with pytest.raises(ValueError, match="requires init_synx"):
+            decoder._compute_dem_detection_events_z(synx_list, synz_list, final)
+        with pytest.raises(ValueError, match="requires init_synz"):
+            decoder._compute_dem_detection_events_x(synx_list, synz_list, final)
+
+    def test_dem_detection_events_count_only_syndrome_rounds_as_duration(self) -> None:
+        """Prep baselines and destructive readout should not add counted syndrome rounds."""
+        patch = SurfacePatch.create(distance=3)
+        rounds = 2
+        decoder = SurfaceDecoder(patch, num_rounds=rounds)
+        num_x_stab = len(patch.geometry.x_stabilizers)
+        num_z_stab = len(patch.geometry.z_stabilizers)
+        synx_list = [np.zeros(num_x_stab, dtype=np.uint8) for _ in range(rounds)]
+        synz_list = [np.zeros(num_z_stab, dtype=np.uint8) for _ in range(rounds)]
+        final = np.zeros(patch.num_data, dtype=np.uint8)
+
+        z_events = decoder._compute_dem_detection_events_z(
+            synx_list,
+            synz_list,
+            final,
+            init_synx=np.zeros(num_x_stab, dtype=np.uint8),
+        )
+        x_events = decoder._compute_dem_detection_events_x(
+            synx_list,
+            synz_list,
+            final,
+            init_synz=np.zeros(num_z_stab, dtype=np.uint8),
+        )
+
+        assert z_events.shape == (rounds * (num_x_stab + num_z_stab) + num_z_stab,)
+        assert x_events.shape == (rounds * (num_x_stab + num_z_stab) + num_x_stab,)
+
+    def test_zero_round_dem_events_use_readout_against_prep_boundary(self) -> None:
+        """r=0 still has terminal detectors from final readout versus prep signs."""
+        patch = SurfacePatch.create(distance=3)
+        decoder = SurfaceDecoder(patch, num_rounds=0)
+        num_x_stab = len(patch.geometry.x_stabilizers)
+        num_z_stab = len(patch.geometry.z_stabilizers)
+
+        z_final = np.zeros(patch.num_data, dtype=np.uint8)
+        z_final[patch.geometry.z_stabilizers[0].data_qubits[0]] = 1
+        x_final = np.zeros(patch.num_data, dtype=np.uint8)
+        x_final[patch.geometry.x_stabilizers[0].data_qubits[0]] = 1
+
+        z_events = decoder._compute_dem_detection_events_z([], [], z_final)
+        x_events = decoder._compute_dem_detection_events_x([], [], x_final)
+
+        assert z_events.shape == (num_z_stab,)
+        assert x_events.shape == (num_x_stab,)
+        assert z_events[0] == 1
+        assert x_events[0] == 1
 
 
 class TestDemGeneration:
@@ -527,6 +601,30 @@ class TestDemGeneration:
             return generate_dem_from_tick_circuit(tc, **params, decompose_errors=False)
 
         assert traced_dem(rotated=True) != traced_dem(rotated=False)
+
+    def test_traced_qis_native_topology_lowers_clifford_rotations(self) -> None:
+        """Surface native topology should match from_guppy's traced-QIS normalization."""
+        from pecos.qec.surface.decode import _surface_native_topology, _surface_patch_cache_key
+
+        _require_selene_runtime()
+
+        patch = SurfacePatch.create(distance=3)
+        topology = _surface_native_topology(
+            _surface_patch_cache_key(patch),
+            2,
+            "Z",
+            None,
+            "traced_qis",
+            False,
+        )
+        gate_names = {
+            topology.dag_circuit.gate(node).gate_type.name
+            for node in topology.dag_circuit.nodes()
+            if topology.dag_circuit.gate(node) is not None
+        }
+
+        assert "RZZ" not in gate_names
+        assert "SZZ" in gate_names
 
     def test_guppy_module_cache_keys_on_full_patch_identity(self) -> None:
         """Rotated and non-rotated patches of the same dx/dz/budget must NOT

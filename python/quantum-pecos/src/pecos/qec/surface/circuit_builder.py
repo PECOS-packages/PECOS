@@ -161,8 +161,9 @@ def build_surface_code_circuit(
 
     This generates the circuit structure matching the Guppy implementation:
     1. prep_{basis}_basis: Allocate and prepare data qubits
-    2. syndrome_extraction x num_rounds: Syndrome extraction with fresh ancillas
-    3. measure_{basis}_basis: Final data qubit measurement
+    2. init syndrome establishment for the random-sign stabilizer family
+    3. syndrome_extraction x num_rounds: Syndrome extraction with fresh ancillas
+    4. measure_{basis}_basis: Final data qubit measurement
 
     Args:
         patch: Surface code patch with geometry
@@ -239,6 +240,152 @@ def build_surface_code_circuit(
         ops.extend(SurfaceCircuitStep(OpType.H, [data_q(i)]) for i in range(num_data))
 
     ops.append(SurfaceCircuitStep(OpType.TICK))
+
+    # =========================================================================
+    # init_{basis}_basis syndrome establishment
+    # =========================================================================
+    # Data prep fixes only the stabilizers matching the memory basis. Measure
+    # the complementary stabilizer family once to establish its random signs;
+    # this is logical state prep and is intentionally not counted in
+    # `num_rounds`.
+    init_stabilizer_type = "X" if basis.upper() == "Z" else "Z"
+    ops.append(
+        SurfaceCircuitStep(
+            OpType.COMMENT,
+            label=f"init_{init_stabilizer_type.lower()}_syndrome",
+        ),
+    )
+    if effective_ancilla_budget == total_ancilla:
+        init_stabilizers = geom.x_stabilizers if init_stabilizer_type == "X" else geom.z_stabilizers
+        init_anc_q = x_anc_q if init_stabilizer_type == "X" else z_anc_q
+
+        ops.extend(
+            SurfaceCircuitStep(
+                OpType.ALLOC,
+                [init_anc_q(s.index)],
+                f"a{init_stabilizer_type.lower()}{s.index}",
+            )
+            for s in init_stabilizers
+        )
+
+        if init_stabilizer_type == "X":
+            ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
+            ops.extend(SurfaceCircuitStep(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in init_stabilizers)
+
+        ops.append(SurfaceCircuitStep(OpType.TICK))
+
+        for rnd_idx, cx_round in enumerate(cnot_rounds):
+            ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+            for stab_type, stab_idx, data_idx in cx_round:
+                if stab_type != init_stabilizer_type:
+                    continue
+                if stab_type == "X":
+                    ops.append(
+                        SurfaceCircuitStep(
+                            OpType.CX,
+                            [x_anc_q(stab_idx), data_q(data_idx)],
+                            f"X{stab_idx}",
+                        ),
+                    )
+                else:
+                    ops.append(
+                        SurfaceCircuitStep(
+                            OpType.CX,
+                            [data_q(data_idx), z_anc_q(stab_idx)],
+                            f"Z{stab_idx}",
+                        ),
+                    )
+            ops.append(SurfaceCircuitStep(OpType.TICK))
+
+        if init_stabilizer_type == "X":
+            ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
+            ops.extend(SurfaceCircuitStep(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in init_stabilizers)
+
+        ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+        init_label_prefix = "sx" if init_stabilizer_type == "X" else "sz"
+        ops.extend(
+            SurfaceCircuitStep(
+                OpType.MEASURE,
+                [init_anc_q(s.index)],
+                f"{init_label_prefix}{s.index}",
+            )
+            for s in init_stabilizers
+        )
+
+        ops.append(SurfaceCircuitStep(OpType.TICK))
+    else:
+        stabilizer_batches = _batched_stabilizers(patch, effective_ancilla_budget)
+        for batch in stabilizer_batches:
+            init_batch = [(stab_type, stab_idx) for stab_type, stab_idx in batch if stab_type == init_stabilizer_type]
+            if not init_batch:
+                continue
+            ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Prepare ancillas"))
+            batch_ancillas = {
+                (stab_type, stab_idx): x_anc_q(stab_idx) if stab_type == "X" else z_anc_q(stab_idx)
+                for stab_type, stab_idx in init_batch
+            }
+
+            for stab_type, stab_idx in init_batch:
+                ops.append(
+                    SurfaceCircuitStep(
+                        OpType.ALLOC,
+                        [batch_ancillas[(stab_type, stab_idx)]],
+                        f"a{stab_type.lower()}{stab_idx}",
+                    ),
+                )
+
+            if init_stabilizer_type == "X":
+                ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
+                ops.extend(
+                    SurfaceCircuitStep(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
+                    for _stab_type, stab_idx in init_batch
+                )
+
+            ops.append(SurfaceCircuitStep(OpType.TICK))
+
+            for rnd_idx, cx_round in enumerate(cnot_rounds):
+                ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                for stab_type, stab_idx, data_idx in cx_round:
+                    ancilla_q = batch_ancillas.get((stab_type, stab_idx))
+                    if ancilla_q is None:
+                        continue
+                    if stab_type == "X":
+                        ops.append(
+                            SurfaceCircuitStep(
+                                OpType.CX,
+                                [ancilla_q, data_q(data_idx)],
+                                f"X{stab_idx}",
+                            ),
+                        )
+                    else:
+                        ops.append(
+                            SurfaceCircuitStep(
+                                OpType.CX,
+                                [data_q(data_idx), ancilla_q],
+                                f"Z{stab_idx}",
+                            ),
+                        )
+                ops.append(SurfaceCircuitStep(OpType.TICK))
+
+            if init_stabilizer_type == "X":
+                ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
+                ops.extend(
+                    SurfaceCircuitStep(OpType.H, [batch_ancillas[("X", stab_idx)]], f"ax{stab_idx}")
+                    for _stab_type, stab_idx in init_batch
+                )
+
+            ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+            for stab_type, stab_idx in init_batch:
+                measure_label = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
+                ops.append(
+                    SurfaceCircuitStep(
+                        OpType.MEASURE,
+                        [batch_ancillas[(stab_type, stab_idx)]],
+                        measure_label,
+                    ),
+                )
+
+            ops.append(SurfaceCircuitStep(OpType.TICK))
 
     # =========================================================================
     # syndrome_extraction (called num_rounds times)
@@ -569,10 +716,11 @@ class StimRenderer(CircuitRenderer):
             lines.append("")
             lines.append("# Detectors")
 
-            # Determine which stabilizer types are deterministic in round 0
-            # Z-basis: Z stabilizers are deterministic (eigenvalue +1 on |0>)
-            # X-basis: X stabilizers are deterministic (eigenvalue +1 on |+>)
+            # Data prep fixes stabilizers matching the memory basis. The
+            # complementary family is random but has an explicit init
+            # measurement, which round 0 compares against.
             deterministic_type_round0 = "Z" if basis.upper() == "Z" else "X"
+            init_baseline_type = "X" if basis.upper() == "Z" else "Z"
 
             # Syndrome detectors for X stabilizers
             for rnd in range(num_rounds):
@@ -583,12 +731,16 @@ class StimRenderer(CircuitRenderer):
                     curr_offset = meas_count - curr_idx
 
                     if rnd == 0:
-                        # Only X stabilizers have deterministic round-0 detectors in X-basis
-                        if deterministic_type_round0 == "X":
+                        if init_baseline_type == "X":
+                            init_idx = stab_meas_record[("X", s.index, -1)]
+                            init_offset = meas_count - init_idx
+                            lines.append(
+                                f"DETECTOR({s.index}, 0, {rnd}) rec[{-curr_offset}] rec[{-init_offset}]",
+                            )
+                        elif deterministic_type_round0 == "X":
                             lines.append(
                                 f"DETECTOR({s.index}, 0, {rnd}) rec[{-curr_offset}]",
                             )
-                        # In Z-basis, X stabilizers are random in round 0, skip single-record detector
                     else:
                         # Compare consecutive rounds (always valid)
                         prev_idx = stab_meas_record[("X", s.index, rnd - 1)]
@@ -607,12 +759,16 @@ class StimRenderer(CircuitRenderer):
                     det_x = num_x_anc + s.index
 
                     if rnd == 0:
-                        # Only Z stabilizers have deterministic round-0 detectors in Z-basis
-                        if deterministic_type_round0 == "Z":
+                        if init_baseline_type == "Z":
+                            init_idx = stab_meas_record[("Z", s.index, -1)]
+                            init_offset = meas_count - init_idx
+                            lines.append(
+                                f"DETECTOR({det_x}, 1, {rnd}) rec[{-curr_offset}] rec[{-init_offset}]",
+                            )
+                        elif deterministic_type_round0 == "Z":
                             lines.append(
                                 f"DETECTOR({det_x}, 1, {rnd}) rec[{-curr_offset}]",
                             )
-                        # In X-basis, Z stabilizers are random in round 0, skip single-record detector
                     else:
                         # Compare consecutive rounds (always valid)
                         prev_idx = stab_meas_record[("Z", s.index, rnd - 1)]
@@ -634,13 +790,15 @@ class StimRenderer(CircuitRenderer):
 
             for s in stabilizers:
                 data_rec_offsets = [meas_count - (final_meas_start + dq) for dq in s.data_qubits]
-                last_syn_idx = stab_meas_record[(stab_type, s.index, num_rounds - 1)]
-                syn_offset = meas_count - last_syn_idx
-                rec_str = " ".join(f"rec[{-off}]" for off in data_rec_offsets)
+                record_offsets = [*data_rec_offsets]
+                if num_rounds > 0:
+                    last_syn_idx = stab_meas_record[(stab_type, s.index, num_rounds - 1)]
+                    record_offsets.append(meas_count - last_syn_idx)
+                rec_str = " ".join(f"rec[{-off}]" for off in record_offsets)
                 det_x = s.index if stab_type == "X" else num_x_anc + s.index
                 det_y = 0 if stab_type == "X" else 1
                 lines.append(
-                    f"DETECTOR({det_x}, {det_y}, {num_rounds}) {rec_str} rec[{-syn_offset}]",
+                    f"DETECTOR({det_x}, {det_y}, {num_rounds}) {rec_str}",
                 )
 
             # Logical observable
@@ -930,6 +1088,15 @@ class TickCircuitRenderer(CircuitRenderer):
             """Mark qubits as used in current tick."""
             qubits_in_current_tick.update(qubits)
 
+        def is_syndrome_context(phase: str, round_index: int) -> bool:
+            """Return whether the current context belongs to syndrome extraction."""
+            if round_index >= 0 or phase.startswith("init_syndrome"):
+                return True
+            return round_index == -1 and (
+                phase in {"syndrome_h_pre", "syndrome_h_post", "measure_ancilla"}
+                or phase.startswith("cx_round_")
+            )
+
         def gate_metadata(meta: dict | None = None) -> dict:
             """Build metadata for the current gate context.
 
@@ -939,7 +1106,7 @@ class TickCircuitRenderer(CircuitRenderer):
             context: dict[str, object] = {
                 "phase": current_phase,
             }
-            if current_round >= 0:
+            if is_syndrome_context(current_phase, current_round):
                 context["syndrome_round"] = current_round
             if current_cx_round > 0:
                 context["cx_round"] = current_cx_round
@@ -966,11 +1133,19 @@ class TickCircuitRenderer(CircuitRenderer):
                     current_round = int(op.label.split()[-1]) - 1
                     current_phase = "syndrome_prep"
                     current_cx_round = 0
+                elif "init_" in op.label and "syndrome" in op.label:
+                    current_round = -1
+                    current_phase = "init_syndrome_prep"
+                    current_cx_round = 0
                 elif "Prepare ancillas" in op.label:
-                    current_phase = "syndrome_prep"
+                    current_phase = "init_syndrome_prep" if current_round < 0 else "syndrome_prep"
                     current_cx_round = 0
                 elif "Hadamard on X ancillas" in op.label:
-                    current_phase = "syndrome_h_pre" if current_phase == "syndrome_prep" else "syndrome_h_post"
+                    current_phase = (
+                        "syndrome_h_pre"
+                        if current_phase in {"syndrome_prep", "init_syndrome_prep"}
+                        else "syndrome_h_post"
+                    )
                 elif "CX round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"cx_round_{current_cx_round}"
@@ -1080,7 +1255,7 @@ class TickCircuitRenderer(CircuitRenderer):
         for tick_idx, tick_meta in all_tick_metadata.items():
             # Set tick-level metadata
             circuit.set_tick_meta(tick_idx, "phase", tick_meta["phase"])
-            if tick_meta["round"] >= 0:
+            if is_syndrome_context(str(tick_meta["phase"]), int(tick_meta["round"])):
                 circuit.set_tick_meta(tick_idx, "syndrome_round", tick_meta["round"])
             if tick_meta["cx_round"] > 0:
                 circuit.set_tick_meta(tick_idx, "cx_round", tick_meta["cx_round"])
@@ -1090,6 +1265,7 @@ class TickCircuitRenderer(CircuitRenderer):
             geom = patch.geometry
             num_x_anc = len(geom.x_stabilizers)
             deterministic_type_round0 = "Z" if basis.upper() == "Z" else "X"
+            init_baseline_type = "X" if basis.upper() == "Z" else "Z"
 
             detectors = []
             detector_id = 0
@@ -1103,7 +1279,18 @@ class TickCircuitRenderer(CircuitRenderer):
                     curr_offset = meas_count - curr_idx
 
                     if rnd == 0:
-                        if deterministic_type_round0 == "X":
+                        if init_baseline_type == "X":
+                            init_idx = stab_meas_record[("X", s.index, -1)]
+                            init_offset = meas_count - init_idx
+                            detectors.append(
+                                {
+                                    "id": detector_id,
+                                    "coords": [s.index, 0, rnd],
+                                    "records": [-curr_offset, -init_offset],
+                                },
+                            )
+                            detector_id += 1
+                        elif deterministic_type_round0 == "X":
                             detectors.append(
                                 {
                                     "id": detector_id,
@@ -1134,7 +1321,18 @@ class TickCircuitRenderer(CircuitRenderer):
                     det_x = num_x_anc + s.index
 
                     if rnd == 0:
-                        if deterministic_type_round0 == "Z":
+                        if init_baseline_type == "Z":
+                            init_idx = stab_meas_record[("Z", s.index, -1)]
+                            init_offset = meas_count - init_idx
+                            detectors.append(
+                                {
+                                    "id": detector_id,
+                                    "coords": [det_x, 1, rnd],
+                                    "records": [-curr_offset, -init_offset],
+                                },
+                            )
+                            detector_id += 1
+                        elif deterministic_type_round0 == "Z":
                             detectors.append(
                                 {
                                     "id": detector_id,
@@ -1167,15 +1365,17 @@ class TickCircuitRenderer(CircuitRenderer):
 
             for s in stabilizers:
                 data_rec_offsets = [-(meas_count - (final_meas_start + dq)) for dq in s.data_qubits]
-                last_syn_idx = stab_meas_record[(stab_type, s.index, num_rounds - 1)]
-                syn_offset = -(meas_count - last_syn_idx)
+                records = [*data_rec_offsets]
+                if num_rounds > 0:
+                    last_syn_idx = stab_meas_record[(stab_type, s.index, num_rounds - 1)]
+                    records.append(-(meas_count - last_syn_idx))
                 det_x = s.index if stab_type == "X" else num_x_anc + s.index
                 det_y = 0 if stab_type == "X" else 1
                 detectors.append(
                     {
                         "id": detector_id,
                         "coords": [det_x, det_y, num_rounds],
-                        "records": [*data_rec_offsets, syn_offset],
+                        "records": records,
                     },
                 )
                 detector_id += 1
@@ -1204,6 +1404,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 stab_meas_refs,
                 final_meas_refs_by_qubit,
                 deterministic_type_round0,
+                init_baseline_type,
             )
         circuit.set_meta("basis", basis.upper())
         circuit.set_meta("ancilla_budget", str(allocation.total - len(allocation.data_qubits)))
@@ -1219,6 +1420,7 @@ class TickCircuitRenderer(CircuitRenderer):
         stab_meas_refs: dict,
         final_meas_refs_by_qubit: dict,
         deterministic_type_round0: str,
+        init_baseline_type: str,
     ) -> None:
         """Add typed PauliAnnotation detectors and observables to the circuit.
 
@@ -1232,7 +1434,10 @@ class TickCircuitRenderer(CircuitRenderer):
                 if curr_refs is None:
                     continue
                 if rnd == 0:
-                    if deterministic_type_round0 == "X":
+                    if init_baseline_type == "X":
+                        init_refs = stab_meas_refs.get(("X", s.index, -1), [])
+                        circuit.detector(init_refs + curr_refs, label=f"Sx{s.index}_r{rnd}")
+                    elif deterministic_type_round0 == "X":
                         circuit.detector(curr_refs, label=f"Sx{s.index}_r{rnd}")
                 else:
                     prev_refs = stab_meas_refs.get(("X", s.index, rnd - 1), [])
@@ -1245,7 +1450,10 @@ class TickCircuitRenderer(CircuitRenderer):
                 if curr_refs is None:
                     continue
                 if rnd == 0:
-                    if deterministic_type_round0 == "Z":
+                    if init_baseline_type == "Z":
+                        init_refs = stab_meas_refs.get(("Z", s.index, -1), [])
+                        circuit.detector(init_refs + curr_refs, label=f"Sz{s.index}_r{rnd}")
+                    elif deterministic_type_round0 == "Z":
                         circuit.detector(curr_refs, label=f"Sz{s.index}_r{rnd}")
                 else:
                     prev_refs = stab_meas_refs.get(("Z", s.index, rnd - 1), [])
@@ -1407,6 +1615,101 @@ def generate_tick_circuit_from_patch(
     ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
     renderer = TickCircuitRenderer(add_detectors=add_detectors)
     return renderer.render(ops, allocation, patch, num_rounds, basis)
+
+
+def normalize_traced_qis_tick_circuit(
+    tick_circuit: object,
+    *,
+    context: str = "traced-QIS DEM construction",
+) -> None:
+    """Normalize a traced-QIS TickCircuit before DEM/DAG analysis.
+
+    Selene/QIS traces may contain parameterized Clifford rotations such as
+    ``RZZ(pi/2)``. Fault analysis and replacement-branch noise models operate
+    on the named Clifford gates (``SZZ`` / ``SZZdg``), so callers should run
+    this helper at every traced-QIS boundary before converting to a DAG.
+    """
+    _call_required_tick_circuit_method(tick_circuit, "lower_clifford_rotations", context)
+    _call_required_tick_circuit_method(tick_circuit, "assign_missing_meas_ids", context)
+    assert_traced_qis_tick_circuit_dem_ready(tick_circuit, context=context)
+
+
+def assert_traced_qis_tick_circuit_dem_ready(
+    tick_circuit: object,
+    *,
+    context: str = "traced-QIS DEM construction",
+) -> None:
+    """Fail loudly if raw traced-QIS rotations survived normalization."""
+    offenders = _raw_traced_qis_rzz_gates(tick_circuit, context=context)
+    if not offenders:
+        return
+
+    preview = "; ".join(offenders[:5])
+    suffix = f"; ... {len(offenders) - 5} more" if len(offenders) > 5 else ""
+    msg = (
+        f"{context}: traced-QIS circuit still contains raw RZZ gates after Clifford "
+        "normalization. DEM/DAG analysis expects Clifford RZZ(pi/2) and "
+        "RZZ(-pi/2) gates to be lowered to SZZ/SZZdg before noise attachment "
+        "and fault propagation. Call normalize_traced_qis_tick_circuit(...) "
+        "before to_dag_circuit(), or extend lower_clifford_rotations() for the "
+        f"runtime-emitted angle. First offending gates: {preview}{suffix}"
+    )
+    raise ValueError(msg)
+
+
+def _call_required_tick_circuit_method(tick_circuit: object, method_name: str, context: str) -> None:
+    method = getattr(tick_circuit, method_name, None)
+    if not callable(method):
+        msg = f"{context}: expected a TickCircuit with callable {method_name}()."
+        raise TypeError(msg)
+    method()
+
+
+def _raw_traced_qis_rzz_gates(tick_circuit: object, *, context: str) -> list[str]:
+    try:
+        num_ticks = int(tick_circuit.num_ticks())  # type: ignore[attr-defined]
+    except AttributeError as exc:
+        msg = f"{context}: expected a TickCircuit with num_ticks() before DEM/DAG analysis."
+        raise TypeError(msg) from exc
+
+    offenders: list[str] = []
+    for tick_index in range(num_ticks):
+        try:
+            tick = tick_circuit.get_tick(tick_index)  # type: ignore[attr-defined]
+        except AttributeError as exc:
+            msg = f"{context}: expected a TickCircuit with get_tick() before DEM/DAG analysis."
+            raise TypeError(msg) from exc
+        try:
+            gate_batches = tick.gate_batches()
+        except AttributeError as exc:
+            msg = f"{context}: expected TickCircuit ticks with gate_batches() before DEM/DAG analysis."
+            raise TypeError(msg) from exc
+        for gate_index, gate in enumerate(gate_batches):
+            if _gate_type_name(gate) != "RZZ":
+                continue
+            qubits = [int(q) for q in getattr(gate, "qubits", [])]
+            offenders.append(
+                f"tick={tick_index} gate={gate_index} qubits={qubits} angles={_gate_angles_for_message(gate)}",
+            )
+    return offenders
+
+
+def _gate_type_name(gate: object) -> str:
+    gate_type = getattr(gate, "gate_type", "")
+    return str(getattr(gate_type, "name", str(gate_type).rsplit(".", maxsplit=1)[-1]))
+
+
+def _gate_angles_for_message(gate: object) -> list[str]:
+    angles = getattr(gate, "angles", None)
+    if angles is None:
+        angles = getattr(gate, "params", [])
+    formatted = []
+    for angle in angles:
+        try:
+            formatted.append(repr(float(angle)))
+        except (TypeError, ValueError):
+            formatted.append(repr(angle))
+    return formatted
 
 
 def get_detector_descriptors_from_tick_circuit(
@@ -2299,6 +2602,9 @@ def generate_dem_from_tick_circuit(
     if maximal_decomposition:
         return _maximally_decompose_graphlike_dem(dem.to_string_decomposed())
     if decompose_errors:
+        source_graphlike = getattr(dem, "to_string_source_graphlike_decomposed", None)
+        if source_graphlike is not None:
+            return source_graphlike()
         return dem.to_string_decomposed()
     return dem.to_string()
 

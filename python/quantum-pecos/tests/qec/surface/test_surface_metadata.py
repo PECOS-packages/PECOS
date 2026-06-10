@@ -178,6 +178,40 @@ def test_tick_circuit_exposes_detector_descriptors() -> None:
     assert final_x["coords"] == [0, 0, 2]
 
 
+@pytest.mark.parametrize(
+    ("basis", "baseline_kind", "detector_y"),
+    [("Z", "X", 0), ("X", "Z", 1)],
+)
+def test_tick_circuit_uses_explicit_prep_syndrome_baseline(
+    basis: str,
+    baseline_kind: str,
+    detector_y: int,
+) -> None:
+    """Round-0 random-sign detectors should compare against prep syndrome measurements."""
+    patch = SurfacePatch.create(distance=3)
+    tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis=basis)
+    detectors = json.loads(tc.get_meta("detectors") or "[]")
+    num_measurements = int(tc.get_meta("num_measurements") or "0")
+    init_count = len(patch.x_stabilizers if baseline_kind == "X" else patch.z_stabilizers)
+
+    assert num_measurements == init_count + 2 * patch.num_ancilla + patch.num_data
+
+    init_tick_rounds = [
+        tc.get_tick_meta(tick_index, "syndrome_round")
+        for tick_index in range(tc.num_ticks())
+        if tc.get_tick_meta(tick_index, "syndrome_round") == -1
+    ]
+    assert init_tick_rounds
+
+    first_random_detector = next(
+        det for det in detectors if det["coords"][1] == detector_y and det["coords"][2] == 0
+    )
+    assert len(first_random_detector["records"]) == 2
+    record_indices = [num_measurements + int(record) for record in first_random_detector["records"]]
+    assert record_indices[0] >= init_count
+    assert record_indices[1] < init_count
+
+
 def test_tick_circuit_exposes_observable_descriptors() -> None:
     """Tick circuits should publish observable descriptors derived from logical metadata."""
     patch = SurfacePatch.create(distance=3)
@@ -243,9 +277,11 @@ def test_tick_circuit_respects_ancilla_budget_in_measurement_order() -> None:
     batched_order = get_measurement_order_from_tick_circuit(batched_tc)
     num_ancilla = patch.geometry.num_ancilla
 
-    full_ancilla_measures = full_order[:num_ancilla]
-    batched_ancilla_measures = batched_order[:num_ancilla]
+    init_count = len(patch.x_stabilizers)
+    full_ancilla_measures = full_order[init_count : init_count + num_ancilla]
+    batched_ancilla_measures = batched_order[init_count : init_count + num_ancilla]
 
+    assert len(set(full_order[:init_count])) == init_count
     assert len(set(full_ancilla_measures)) == num_ancilla
     assert len(set(batched_ancilla_measures)) == 2
     assert max(batched_ancilla_measures) == patch.num_data + 1

@@ -67,7 +67,8 @@ def generate_guppy_source(
     4-round CX schedule restricted to that batch's stabilizers,
     measure, then move to the next batch (which allocates fresh
     qubits whose physical slots are reused by Selene's lowering).
-    The same per-stabilizer ``result("...:meas:N", …)`` calls fire
+    Per-stabilizer counted-round ``result("...:meas:N", …)`` calls
+    and prep-boundary ``result("...:init:meas:N", …)`` calls fire
     in the abstract's batched measurement order, keeping
     detector record offsets transferable between abstract and traced
     paths.
@@ -289,6 +290,128 @@ def generate_guppy_source(
         ],
     )
 
+    def append_init_syndrome_function(function_name: str, stab_type: str) -> None:
+        """Append a basis-prep syndrome-establishment helper."""
+        if stab_type == "X":
+            stabs = list(geom.x_stabilizers)
+            return_type = f"array[bool, {num_x_stab}]"
+            return_calls = ", ".join(f"sx{s.index}" for s in stabs)
+            doc = "Establish initial X stabilizer signs after Z-basis data prep."
+        else:
+            stabs = list(geom.z_stabilizers)
+            return_type = f"array[bool, {num_z_stab}]"
+            return_calls = ", ".join(f"sz{s.index}" for s in stabs)
+            doc = "Establish initial Z stabilizer signs after X-basis data prep."
+
+        lines.extend(
+            [
+                "",
+                "",
+                "@guppy",
+                f"def {function_name}(surf: SurfaceCode_{dx}x{dz}) -> {return_type}:",
+                f'    """{doc}"""',
+            ],
+        )
+
+        if not constrained:
+            if stab_type == "X":
+                lines.extend(f"    ax{stab.index} = qubit()" for stab in stabs)
+                lines.append("")
+                lines.append("    # Hadamard on X ancillas")
+                lines.extend(f"    h(ax{stab.index})" for stab in stabs)
+            else:
+                lines.extend(f"    az{stab.index} = qubit()" for stab in stabs)
+
+            for rnd_idx, rnd_gates in enumerate(rounds):
+                filtered = [(t, i, q) for t, i, q in rnd_gates if t == stab_type]
+                if not filtered:
+                    continue
+                lines.append("")
+                lines.append(f"    # Round {rnd_idx + 1}")
+                for _stab_type, stab_idx, data_q in filtered:
+                    if stab_type == "X":
+                        lines.append(f"    cx(ax{stab_idx}, surf.data[{data_q}])")
+                    else:
+                        lines.append(f"    cx(surf.data[{data_q}], az{stab_idx})")
+
+            if stab_type == "X":
+                lines.append("")
+                lines.append("    # Hadamard on X ancillas")
+                lines.extend(f"    h(ax{stab.index})" for stab in stabs)
+
+            lines.append("")
+            lines.append("    # Measure init ancillas")
+            for idx, stab in enumerate(stabs):
+                if stab_type == "X":
+                    lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
+                    lines.append(f'    result("sx{stab.index}:init:meas:{idx}", sx{stab.index})')
+                else:
+                    lines.append(f"    sz{stab.index} = measure(az{stab.index})")
+                    lines.append(f'    result("sz{stab.index}:init:meas:{idx}", sz{stab.index})')
+        else:
+            batches = batched_stabilizers(patch, effective_budget)
+            idx = 0
+            for batch_idx, batch in enumerate(batches):
+                init_batch = [(t, i) for t, i in batch if t == stab_type]
+                if not init_batch:
+                    continue
+                lines.append("")
+                lines.append(f"    # Batch {batch_idx + 1}/{len(batches)} of {stab_type} stabilizers")
+
+                batch_anc_var: dict[tuple[str, int], str] = {}
+                for pos, (selected_type, stab_idx) in enumerate(init_batch):
+                    var = f"_init_a_b{batch_idx}_p{pos}"
+                    batch_anc_var[(selected_type, stab_idx)] = var
+                    lines.append(f"    {var} = qubit()")
+
+                if stab_type == "X":
+                    lines.append("    # Hadamard on X ancillas in this batch")
+                    for selected_type, stab_idx in init_batch:
+                        lines.append(f"    h({batch_anc_var[(selected_type, stab_idx)]})")
+
+                batch_keys = set(batch_anc_var.keys())
+                for rnd_idx, rnd_gates in enumerate(rounds):
+                    rnd_in_batch = [
+                        (selected_type, stab_idx, data_q)
+                        for selected_type, stab_idx, data_q in rnd_gates
+                        if (selected_type, stab_idx) in batch_keys
+                    ]
+                    if not rnd_in_batch:
+                        continue
+                    lines.append("")
+                    lines.append(f"    # Batch {batch_idx + 1} round {rnd_idx + 1}")
+                    for selected_type, stab_idx, data_q in rnd_in_batch:
+                        anc = batch_anc_var[(selected_type, stab_idx)]
+                        if selected_type == "X":
+                            lines.append(f"    cx({anc}, surf.data[{data_q}])")
+                        else:
+                            lines.append(f"    cx(surf.data[{data_q}], {anc})")
+
+                if stab_type == "X":
+                    lines.append("")
+                    lines.append("    # Hadamard on X ancillas in this batch")
+                    for selected_type, stab_idx in init_batch:
+                        lines.append(f"    h({batch_anc_var[(selected_type, stab_idx)]})")
+
+                lines.append("")
+                lines.append(f"    # Measure init batch {batch_idx + 1} ancillas")
+                for selected_type, stab_idx in init_batch:
+                    anc = batch_anc_var[(selected_type, stab_idx)]
+                    syn_var = f"sx{stab_idx}" if selected_type == "X" else f"sz{stab_idx}"
+                    lines.append(f"    {syn_var} = measure({anc})")
+                    lines.append(f'    result("{syn_var}:init:meas:{idx}", {syn_var})')
+                    idx += 1
+
+        lines.extend(
+            [
+                "",
+                f"    return array({return_calls})",
+            ],
+        )
+
+    append_init_syndrome_function("init_z_basis", "X")
+    append_init_syndrome_function("init_x_basis", "Z")
+
     # Generate measurement
     lines.extend(
         [
@@ -359,6 +482,8 @@ def generate_guppy_source(
             "    def memory_z() -> None:",
             f'        """Z-basis memory experiment for dx={dx}, dz={dz}."""',
             "        surf = prep_z_basis()",
+            "        init_syn = init_z_basis(surf)",
+            '        result("init_synx", init_syn)',
             "",
             "        for _t in range(comptime(num_rounds)):",
             "            syn = syndrome_extraction(surf)",
@@ -379,6 +504,8 @@ def generate_guppy_source(
             "    def memory_x() -> None:",
             f'        """X-basis memory experiment for dx={dx}, dz={dz}."""',
             "        surf = prep_x_basis()",
+            "        init_syn = init_x_basis(surf)",
+            '        result("init_synz", init_syn)',
             "",
             "        for _t in range(comptime(num_rounds)):",
             "            syn = syndrome_extraction(surf)",

@@ -12,14 +12,17 @@ from guppylang.std.quantum import h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 from pecos.qec.surface.decode import (
     _build_surface_tick_circuit_for_native_model,
+    _extract_measurement_meas_ids,
     _measurement_index_remap_for_orders,
     _reject_partially_lowered_trace,
     _remap_surface_record_metadata_json,
     _replay_lowered_qis_trace_into_tick_circuit,
     _replay_qis_trace_into_tick_circuit,
     _surface_runtime_measurement_remap_from_result_traces,
+    _validate_result_tag_remap_against_traced_measurements,
     trace_guppy_into_tick_circuit_with_result_traces,
 )
 
@@ -767,6 +770,12 @@ def test_surface_metadata_records_remap_to_runtime_measurement_order() -> None:
 
 def test_surface_metadata_records_remap_to_runtime_result_tags() -> None:
     patch = SurfacePatch.create(distance=3)
+    abstract_tc = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+    )
     program = make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2)
     _, result_traces = trace_guppy_into_tick_circuit_with_result_traces(
         program,
@@ -775,14 +784,83 @@ def test_surface_metadata_records_remap_to_runtime_result_tags() -> None:
     )
 
     remap = _surface_runtime_measurement_remap_from_result_traces(
-        patch,
-        2,
+        abstract_tc,
         result_traces,
     )
 
-    assert len(remap) == 25  # 2 rounds * 8 stabilizers + 9 final data measurements
-    assert sorted(remap) == list(range(25))
-    assert sorted(remap.values()) == list(range(25))
+    assert len(remap) == 29  # 4 prep X stabilizers + 2 rounds * 8 stabilizers + 9 final data measurements
+    assert sorted(remap) == list(range(29))
+    assert sorted(remap.values()) == list(range(29))
+
+
+def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().mz_with_ids([0, 1], [10, 3])
+
+    remap = {0: 3, 1: 10}
+
+    assert _extract_measurement_meas_ids(tc) == [10, 3]
+    _validate_result_tag_remap_against_traced_measurements(
+        tc,
+        remap,
+        expected_measurements=2,
+    )
+
+
+def test_result_tag_remap_validation_rejects_duplicate_traced_meas_ids() -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().mz_with_ids([0, 1], [7, 7])
+
+    with pytest.raises(ValueError, match="duplicate measured MeasId"):
+        _validate_result_tag_remap_against_traced_measurements(
+            tc,
+            {0: 7, 1: 8},
+            expected_measurements=2,
+        )
+
+
+def test_result_tag_remap_validation_rejects_unbound_traced_meas_ids() -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().mz_with_ids([0, 1], [0, 2])
+
+    with pytest.raises(ValueError, match="do not exactly match"):
+        _validate_result_tag_remap_against_traced_measurements(
+            tc,
+            {0: 0, 1: 1},
+            expected_measurements=2,
+        )
+
+
+def test_result_tag_remap_validation_rejects_unstamped_measurements() -> None:
+    class FakeGate:
+        gate_type = "MZ"
+        qubits = [0]
+        meas_ids: list[int] = []
+
+    class FakeTick:
+        def gate_batches(self):
+            return [FakeGate()]
+
+    class FakeCircuit:
+        def num_ticks(self) -> int:
+            return 1
+
+        def get_tick(self, tick_idx: int):
+            assert tick_idx == 0
+            return FakeTick()
+
+    with pytest.raises(ValueError, match="carries 0 MeasId"):
+        _validate_result_tag_remap_against_traced_measurements(
+            FakeCircuit(),
+            {0: 0},
+            expected_measurements=1,
+        )
 
 
 def test_traced_surface_metadata_uses_runtime_result_tags() -> None:
@@ -797,7 +875,7 @@ def test_traced_surface_metadata_uses_runtime_result_tags() -> None:
 
     assert traced_tc.get_meta("surface_metadata_record_binding") == "runtime_result_tags"
     assert traced_tc.get_meta("circuit_source") == "traced_qis"
-    assert int(traced_tc.get_meta("num_measurements")) == 25
+    assert int(traced_tc.get_meta("num_measurements")) == 29
     assert len(json.loads(traced_tc.get_meta("detectors"))) > 0
     assert len(json.loads(traced_tc.get_meta("observables"))) == 1
 

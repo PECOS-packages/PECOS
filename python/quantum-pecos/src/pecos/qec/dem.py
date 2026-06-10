@@ -210,6 +210,7 @@ class _DetectorErrorModelMixin:
             scalar ``result(tag, measure(q))`` in straight-line programs; the
             runtime-loop case (per-occurrence binding) remains deferred.
         """
+        from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
         from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
 
         # Tag-referenced detectors require the compiled HUGR (to recover the
@@ -240,11 +241,10 @@ class _DetectorErrorModelMixin:
         tc = trace_guppy_into_tick_circuit(guppy, num_qubits, seed=seed, runtime=runtime)
 
         # Compilation passes required for traced QIS circuits before fault
-        # analysis: normalize parameterized Clifford rotations to named gates
-        # and stamp stable MeasIds onto measurement gates. After this every
-        # MZ carries the stable id the Rust builder resolves meas_ids against.
-        tc.lower_clifford_rotations()
-        tc.assign_missing_meas_ids()
+        # analysis: normalize parameterized Clifford rotations to named gates,
+        # stamp stable MeasIds onto measurement gates, and fail loudly if raw
+        # traced-QIS rotations survived normalization.
+        normalize_traced_qis_tick_circuit(tc, context="DetectorErrorModel.from_guppy")
 
         # Resolve `result_tags` -> record offsets via Rust (sound HUGR
         # extraction + runtime-loop guard via static-vs-traced measurement

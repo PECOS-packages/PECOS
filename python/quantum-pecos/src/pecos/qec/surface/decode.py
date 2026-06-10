@@ -552,23 +552,38 @@ def _remap_surface_record_metadata_json(
     measurement_index_remap: dict[int, int],
     num_measurements: int,
 ) -> str:
-    """Remap negative ``records`` offsets inside detector/observable metadata."""
+    """Bind abstract measurement refs to runtime-stable ``meas_ids``.
+
+    ``measurement_index_remap`` maps abstract measurement indices to the
+    stable result ids emitted by the runtime trace. Those ids are not
+    positional record offsets, so remapped runtime metadata must use
+    ``meas_ids`` and must drop stale ``records``.
+    """
     import json
 
     entries = json.loads(metadata_json)
     for entry in entries:
-        records = entry.get("records")
-        if records is None:
+        records = entry.pop("records", None)
+        if records is not None:
+            abstract_indices = []
+            for record in records:
+                abstract_index = num_measurements + int(record)
+                if abstract_index not in measurement_index_remap:
+                    msg = f"Surface metadata record {record!r} is out of range for remapping"
+                    raise ValueError(msg)
+                abstract_indices.append(abstract_index)
+        elif "meas_ids" in entry:
+            abstract_indices = [int(meas_id) for meas_id in entry["meas_ids"]]
+        else:
             continue
-        remapped_records = []
-        for record in records:
-            abstract_index = num_measurements + int(record)
+
+        remapped_meas_ids = []
+        for abstract_index in abstract_indices:
             if abstract_index not in measurement_index_remap:
-                msg = f"Surface metadata record {record!r} is out of range for remapping"
+                msg = f"Surface metadata meas_id {abstract_index!r} is out of range for remapping"
                 raise ValueError(msg)
-            traced_index = measurement_index_remap[abstract_index]
-            remapped_records.append(traced_index - num_measurements)
-        entry["records"] = remapped_records
+            remapped_meas_ids.append(int(measurement_index_remap[abstract_index]))
+        entry["meas_ids"] = remapped_meas_ids
     return json.dumps(entries)
 
 
@@ -736,11 +751,7 @@ def _validate_result_tag_remap_against_traced_measurements(
         )
         raise ValueError(msg)
     if len(set(traced_meas_ids)) != len(traced_meas_ids):
-        duplicates = sorted(
-            meas_id
-            for meas_id in set(traced_meas_ids)
-            if traced_meas_ids.count(meas_id) > 1
-        )
+        duplicates = sorted(meas_id for meas_id in set(traced_meas_ids) if traced_meas_ids.count(meas_id) > 1)
         msg = f"traced circuit contains duplicate measured MeasId(s): {duplicates[:8]}"
         raise ValueError(msg)
 
@@ -958,31 +969,15 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
     tick, then compact (ASAP schedule) so that gates on disjoint qubits share
     a tick --- matching the parallel structure of the abstract circuit.
 
-    MeasIds flow from the QIS measurement result slot: Quantum.Measure carries
-    ``[qubit, result_id]``, and those IDs are stamped on MZ gates via
-    mz_with_ids().
+    MeasIds flow from runtime-lowered measurement provenance:
+    ``lowered_quantum_ops`` MZ entries must carry ``measurement_result_ids``.
+    This avoids inferring lowered measurement IDs from raw QIS operation order,
+    which is not stable under runtime scheduling or transport.
     """
     from pecos_rslib.quantum import TickCircuit
 
     tick_circuit = TickCircuit()
 
-    # Pass 1: the ordered MeasIds, read directly from each Measure op. A
-    # ``Quantum.Measure`` op carries ``[qubit, result_id]`` where ``result_id``
-    # is the QIS result slot the runtime allocated for it (== the MeasId we
-    # stamp). Using it directly needs no AllocateResult/Measure pairing
-    # heuristic and no interleave assumption -- batched
-    # allocate-allocate-measure-measure (a valid QIS pattern) works the same
-    # as interleaved. (The order of Measure ops here matches the order of MZ
-    # gates in ``lowered_quantum_ops``, consumed in pass 2.)
-    meas_ids_in_order: list[int] = []
-    for chunk in chunks:
-        for op in chunk.get("operations") or []:
-            quantum = dict(op).get("Quantum")
-            if isinstance(quantum, dict) and "Measure" in quantum:
-                meas_ids_in_order.append(int(quantum["Measure"][1]))
-
-    # Pass 2: replay gates, stamping MeasIds on MZ gates in global trace order.
-    meas_cursor = 0
     for chunk in chunks:
         for gate in chunk.get("lowered_quantum_ops") or []:
             gate_type = str(gate["gate_type"])
@@ -1015,16 +1010,19 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
                     raise ValueError(msg)
                 tick.idle(_runtime_idle_seconds_to_time_units(params[0]), qubits)
             elif gate_type == "MZ":
-                end = meas_cursor + len(qubits)
-                if end > len(meas_ids_in_order):
+                meas_ids = gate.get("measurement_result_ids")
+                if not isinstance(meas_ids, list):
                     msg = (
-                        "More measured qubits than result(...)-anchored "
-                        "MeasIds in the traced program; a measurement is "
-                        "missing its result(...) call."
+                        "Lowered MZ trace is missing measurement_result_ids; "
+                        "rebuild PECOS so runtime-lowered measurements carry "
+                        "their result-id provenance instead of relying on "
+                        "operation-order inference."
                     )
                     raise ValueError(msg)
-                tick.mz_with_ids(qubits, meas_ids_in_order[meas_cursor:end])
-                meas_cursor = end
+                if len(meas_ids) != len(qubits):
+                    msg = f"Lowered MZ gate carries {len(meas_ids)} measurement_result_ids for {len(qubits)} qubit(s)"
+                    raise ValueError(msg)
+                tick.mz_with_ids(qubits, [int(meas_id) for meas_id in meas_ids])
             elif gate_type == "RX":
                 tick.rx(angles[0], qubits)
             elif gate_type == "RY":
@@ -1054,14 +1052,6 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
             else:
                 msg = f"Unsupported lowered traced gate {gate_type!r}"
                 raise ValueError(msg)
-
-    if meas_cursor != len(meas_ids_in_order):
-        msg = (
-            f"Traced program has {len(meas_ids_in_order)} result(...)-anchored "
-            f"measurements but only {meas_cursor} measured qubit(s) in the "
-            "lowered gate stream; result()/measurement mismatch."
-        )
-        raise ValueError(msg)
 
     # Compact: ASAP-schedule gates into minimal ticks
     tick_circuit.compact_ticks()
@@ -1283,6 +1273,7 @@ def _build_surface_tick_circuit_for_native_model(
         num_rounds,
         basis,
         ancilla_budget=ancilla_budget,
+        add_typed_annotations=False,
     )
 
     if circuit_source == "abstract":
@@ -1469,9 +1460,10 @@ def _surface_native_topology(
     """Build topology-only native analysis shared across noise parameters."""
     import json
 
-    from pecos.qec import DagFaultAnalyzer
     from pecos.qec.surface.circuit_builder import (
+        _build_canonical_dem_influence_map,
         _extract_measurement_order,
+        _metadata_uses_record_offsets,
         normalize_traced_qis_tick_circuit,
     )
 
@@ -1496,12 +1488,13 @@ def _surface_native_topology(
         tc.fill_idle_gates()
 
     dag = tc.to_dag_circuit()
-    analyzer = DagFaultAnalyzer(dag)
-    influence_map = analyzer.build_influence_map()
+    influence_map = _build_canonical_dem_influence_map(dag)
 
     detectors_json = tc.get_meta("detectors") or "[]"
     observables_json = tc.get_meta("observables") or "[]"
-    measurement_order = tuple(_extract_measurement_order(tc))
+    measurement_order = (
+        tuple(_extract_measurement_order(tc)) if _metadata_uses_record_offsets(detectors_json, observables_json) else ()
+    )
     num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
 
     return _CachedNativeSurfaceTopology(
@@ -1572,12 +1565,14 @@ def _dem_string_from_cached_surface_topology(
     if hasattr(builder, "with_exact_branch_replay_circuit"):
         builder = builder.with_exact_branch_replay_circuit(topology.dag_circuit)
 
+    builder = builder.with_num_measurements(topology.num_measurements)
+    if topology.measurement_order:
+        builder = builder.with_measurement_order(list(topology.measurement_order))
     dem = (
-        builder
-        .with_num_measurements(topology.num_measurements)
-        .with_measurement_order(list(topology.measurement_order))
-        .with_detectors_json(topology.detectors_json)
-        .with_observables_json(topology.observables_json)
+        builder.with_detectors_json(topology.detectors_json)
+        .with_observables_json(
+            topology.observables_json,
+        )
         .build_with_source_tracking()
     )
     if not decompose_errors:
@@ -1690,32 +1685,35 @@ def _build_native_sampler_from_cached_surface_topology(
         )
         sampler = ParsedDem.from_string(dem_str).to_dem_sampler()
     elif sampling_model in ("influence_dem", "mnm"):
-        import json
+        from pecos.qec import DemSamplerBuilder
 
-        det_records = [d["records"] for d in json.loads(topology.detectors_json)]
-        obs_records = [o["records"] for o in json.loads(topology.observables_json)] if topology.observables_json else []
-        sampler = DemSampler.with_detectors(
-            topology.influence_map,
-            det_records,
-            obs_records,
-            noise.p1,
-            noise.p2,
-            noise.p_meas,
-            noise.p_prep,
-            p_idle=noise.p_idle,
-            t1=noise.t1,
-            t2=noise.t2,
-            p_idle_linear_rate=noise.p_idle_linear_rate,
-            p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-            p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-            p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-            p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-            p2_weights=_p2_weights_dict(noise.p2_weights),
-            p2_replacement_approximation=noise.p2_replacement_approximation,
+        sampler_builder = (
+            DemSamplerBuilder(topology.influence_map)
+            .with_noise(
+                noise.p1,
+                noise.p2,
+                noise.p_meas,
+                noise.p_prep,
+                p_idle=noise.p_idle,
+                t1=noise.t1,
+                t2=noise.t2,
+                p_idle_linear_rate=noise.p_idle_linear_rate,
+                p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+                p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
+                p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
+                p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
+                p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
+                p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
+                p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+                p2_weights=_p2_weights_dict(noise.p2_weights),
+                p2_replacement_approximation=noise.p2_replacement_approximation,
+            )
+            .with_detectors_json(topology.detectors_json)
+            .with_observables_json(topology.observables_json)
         )
+        if topology.measurement_order:
+            sampler_builder = sampler_builder.with_measurement_order(list(topology.measurement_order))
+        sampler = sampler_builder.build()
         # Remap sampling_model for NativeSampler dispatch
         sampling_model = "influence_dem"
     else:

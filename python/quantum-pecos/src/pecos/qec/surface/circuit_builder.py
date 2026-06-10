@@ -913,13 +913,20 @@ class TickCircuitRenderer(CircuitRenderer):
     are stored as circuit metadata and preserved when converting to DagCircuit.
     """
 
-    def __init__(self, *, add_detectors: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        add_detectors: bool = True,
+        add_typed_annotations: bool = True,
+    ) -> None:
         """Initialize TickCircuit renderer.
 
         Args:
-            add_detectors: Whether to add detector annotations as metadata
+            add_detectors: Whether to add detector/observable metadata.
+            add_typed_annotations: Whether to also add typed Pauli annotations.
         """
         self.add_detectors = add_detectors
+        self.add_typed_annotations = add_typed_annotations
 
     def render(
         self,
@@ -1093,8 +1100,7 @@ class TickCircuitRenderer(CircuitRenderer):
             if round_index >= 0 or phase.startswith("init_syndrome"):
                 return True
             return round_index == -1 and (
-                phase in {"syndrome_h_pre", "syndrome_h_post", "measure_ancilla"}
-                or phase.startswith("cx_round_")
+                phase in {"syndrome_h_pre", "syndrome_h_post", "measure_ancilla"} or phase.startswith("cx_round_")
             )
 
         def gate_metadata(meta: dict | None = None) -> dict:
@@ -1395,17 +1401,23 @@ class TickCircuitRenderer(CircuitRenderer):
             circuit.set_meta("num_measurements", str(meas_count))
             circuit.set_meta("num_detectors", str(len(detectors)))
 
-            # Also add typed PauliAnnotation annotations (new path)
-            self._add_typed_annotations(
-                circuit,
-                geom,
-                num_rounds,
-                basis,
-                stab_meas_refs,
-                final_meas_refs_by_qubit,
-                deterministic_type_round0,
-                init_baseline_type,
-            )
+            # Also add typed PauliAnnotation annotations (new path) when the
+            # caller wants direct Pauli annotations in addition to legacy
+            # measurement-record metadata. Native surface DEM construction uses
+            # the JSON metadata below and disables these annotations to avoid
+            # mixing two independent observable sources in the same influence
+            # map.
+            if self.add_typed_annotations:
+                self._add_typed_annotations(
+                    circuit,
+                    geom,
+                    num_rounds,
+                    basis,
+                    stab_meas_refs,
+                    final_meas_refs_by_qubit,
+                    deterministic_type_round0,
+                    init_baseline_type,
+                )
         circuit.set_meta("basis", basis.upper())
         circuit.set_meta("ancilla_budget", str(allocation.total - len(allocation.data_qubits)))
 
@@ -1585,6 +1597,7 @@ def generate_tick_circuit_from_patch(
     basis: str = "Z",
     *,
     add_detectors: bool = True,
+    add_typed_annotations: bool = True,
     ancilla_budget: int | None = None,
 ) -> TickCircuit:
     """Generate PECOS TickCircuit from SurfacePatch.
@@ -1606,14 +1619,18 @@ def generate_tick_circuit_from_patch(
         patch: Surface code patch
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
-        add_detectors: Whether to add detector annotations as metadata
+        add_detectors: Whether to add detector/observable metadata.
+        add_typed_annotations: Whether to also add typed Pauli annotations.
         ancilla_budget: Optional cap on simultaneously live ancillas
 
     Returns:
         PECOS TickCircuit instance
     """
     ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
-    renderer = TickCircuitRenderer(add_detectors=add_detectors)
+    renderer = TickCircuitRenderer(
+        add_detectors=add_detectors,
+        add_typed_annotations=add_typed_annotations,
+    )
     return renderer.render(ops, allocation, patch, num_rounds, basis)
 
 
@@ -2252,11 +2269,7 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
         if abs(weight_sum - 1.0) >= 1.0e-6:
             message = f"p2_weights relative probabilities must sum to 1.0, got {weight_sum}"
             raise ValueError(message)
-        two_paulis = tuple(
-            (label[0], label[1], weight)
-            for label, weight in sorted(weights.items())
-            if weight > 0.0
-        )
+        two_paulis = tuple((label[0], label[1], weight) for label, weight in sorted(weights.items()) if weight > 0.0)
 
     # Process each gate as a potential error location
     for op_idx, (_tick_idx, gate_name, qubits, meas_idx) in enumerate(circuit_ops):
@@ -2476,6 +2489,38 @@ def _maximally_decompose_graphlike_dem(dem_text: str) -> str:
     return "\n".join(rewritten_lines)
 
 
+def _build_canonical_dem_influence_map(dag: DagCircuit):
+    """Build the influence map used by the canonical Rust DEM builder.
+
+    `DagFaultAnalyzer` supplies the detector influence map. Observable and
+    tracked-Pauli annotations need positional propagation from
+    `InfluenceBuilder`; merging those non-detector outputs keeps this legacy
+    surface helper aligned with `DetectorErrorModel.from_circuit`.
+    """
+    from pecos.qec import DagFaultAnalyzer, InfluenceBuilder
+
+    analyzer = DagFaultAnalyzer(dag)
+    influence_map = analyzer.build_influence_map()
+    annotation_builder = InfluenceBuilder(dag)
+    annotation_builder.with_circuit_annotations()
+    annotation_map = annotation_builder.build()
+    influence_map.merge_dem_outputs_from(annotation_map)
+    return influence_map
+
+
+def _metadata_uses_record_offsets(*metadata_jsons: str | None) -> bool:
+    """Return whether detector/observable metadata uses positional records."""
+    import json
+
+    for metadata_json in metadata_jsons:
+        if not metadata_json:
+            continue
+        for entry in json.loads(metadata_json):
+            if entry.get("records"):
+                return True
+    return False
+
+
 def generate_dem_from_tick_circuit(
     tc: TickCircuit,
     *,
@@ -2549,7 +2594,7 @@ def generate_dem_from_tick_circuit(
     Returns:
         DEM string in Stim-compatible format
     """
-    from pecos.qec import DagFaultAnalyzer, DemBuilder
+    from pecos.qec import DemBuilder
 
     # Get detector and observable metadata
     detectors_json = tc.get_meta("detectors")
@@ -2565,11 +2610,11 @@ def generate_dem_from_tick_circuit(
     # This allows proper mapping between record offsets (TickCircuit order) and
     # influence map indices (DAG topological order).
     measurement_order = _extract_measurement_order(tc)
+    metadata_uses_records = _metadata_uses_record_offsets(detectors_json, observables_json)
 
     # Convert TickCircuit to DagCircuit and build influence map
     dag = tc.to_dag_circuit()
-    analyzer = DagFaultAnalyzer(dag)
-    influence_map = analyzer.build_influence_map()
+    influence_map = _build_canonical_dem_influence_map(dag)
 
     # Build DEM using Rust DemBuilder
     builder = DemBuilder(influence_map)
@@ -2592,7 +2637,8 @@ def generate_dem_from_tick_circuit(
         p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
     )
     builder.with_num_measurements(num_measurements)
-    builder.with_measurement_order(measurement_order)
+    if metadata_uses_records:
+        builder.with_measurement_order(measurement_order)
     builder.with_detectors_json(detectors_json)
     if observables_json:
         builder.with_observables_json(observables_json)

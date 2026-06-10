@@ -11,10 +11,11 @@ from guppylang.std.builtins import result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface import NoiseModel, SurfacePatch
 from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 from pecos.qec.surface.decode import (
     _build_surface_tick_circuit_for_native_model,
+    _copy_surface_tick_circuit_metadata,
     _extract_measurement_meas_ids,
     _measurement_index_remap_for_orders,
     _reject_partially_lowered_trace,
@@ -23,6 +24,7 @@ from pecos.qec.surface.decode import (
     _replay_qis_trace_into_tick_circuit,
     _surface_runtime_measurement_remap_from_result_traces,
     _validate_result_tag_remap_against_traced_measurements,
+    generate_circuit_level_dem_from_builder,
     trace_guppy_into_tick_circuit_with_result_traces,
 )
 
@@ -145,26 +147,40 @@ def test_lowered_replay_uses_measure_result_ids_directly() -> None:
                 {"Quantum": {"Measure": [1, 42]}},
             ],
             "lowered_quantum_ops": [
-                {"gate_type": "MZ", "qubits": [0], "angles": []},
-                {"gate_type": "MZ", "qubits": [1], "angles": []},
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "measurement_result_ids": [42]},
+                {"gate_type": "MZ", "qubits": [1], "angles": [], "measurement_result_ids": [99]},
             ],
         },
     ]
 
     tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
-    assert _flat_mz_ids(tc) == [99, 42]
+    assert _flat_mz_ids(tc) == [42, 99]
 
 
 def test_lowered_replay_fails_on_measurement_count_mismatch() -> None:
     chunks = [
         {
             "operations": [{"Quantum": {"Measure": [0, 7]}}],
-            "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0, 1], "angles": []}],
+            "lowered_quantum_ops": [
+                {"gate_type": "MZ", "qubits": [0, 1], "angles": [], "measurement_result_ids": [7]},
+            ],
         },
     ]
 
-    with pytest.raises(ValueError, match="More measured qubits"):
+    with pytest.raises(ValueError, match="carries 1 measurement_result_ids for 2"):
+        _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+
+def test_lowered_replay_fails_on_missing_measurement_result_ids() -> None:
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [0, 7]}}],
+            "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0], "angles": []}],
+        },
+    ]
+
+    with pytest.raises(ValueError, match="missing measurement_result_ids"):
         _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
 
@@ -195,7 +211,7 @@ def test_lowered_runtime_idles_can_drive_memory_noise_dem() -> None:
                 {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
                 {"gate_type": "Idle", "qubits": [0], "angles": [], "params": [20e-9]},
                 {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
-                {"gate_type": "MZ", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "params": [], "measurement_result_ids": [0]},
             ],
         },
     ]
@@ -225,7 +241,7 @@ def test_lowered_runtime_idles_accept_axis_memory_noise_dem() -> None:
             "lowered_quantum_ops": [
                 {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
                 {"gate_type": "Idle", "qubits": [0], "angles": [], "params": [10e-9]},
-                {"gate_type": "MZ", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "params": [], "measurement_result_ids": [0]},
             ],
         },
     ]
@@ -257,7 +273,7 @@ def test_from_circuit_accepts_biased_p2_weights() -> None:
                 {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
                 {"gate_type": "PZ", "qubits": [1], "angles": [], "params": []},
                 {"gate_type": "CX", "qubits": [0, 1], "angles": [], "params": []},
-                {"gate_type": "MZ", "qubits": [1], "angles": [], "params": []},
+                {"gate_type": "MZ", "qubits": [1], "angles": [], "params": [], "measurement_result_ids": [0]},
             ],
         },
     ]
@@ -305,7 +321,7 @@ def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
     chunks = [
         {
             "operations": [{"Quantum": {"Measure": [0, 7]}}],
-            "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0], "angles": []}],
+            "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0], "angles": [], "measurement_result_ids": [7]}],
         },
         {  # allocation/output bookkeeping only; legitimately has no lowered ops
             "operations": [{"AllocateResult": {"id": 7}}, {"RecordOutput": {"id": 7}}],
@@ -509,17 +525,18 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
         noise=noise,
     )
     assert got == ref_dem, (
-        f"constrained surface from_guppy not byte-identical for "
-        f"d={d}, budget={budget}, basis={basis}, rounds={rounds}"
+        f"constrained surface from_guppy not byte-identical for d={d}, budget={budget}, basis={basis}, rounds={rounds}"
     )
 
 
 def test_constrained_surface_traced_metadata_matches_abstract() -> None:
-    """The traced TickCircuit's surface metadata is copied verbatim from the
-    abstract reference. Specifically pins that
-    ``_copy_surface_tick_circuit_metadata`` propagates ``ancilla_budget``
-    (the new key added when the constrained codegen landed) alongside the
-    existing detectors/observables/counts."""
+    """Traced surface metadata preserves structure but binds via MeasIds.
+
+    Runtime traces may reorder measurements, so detector/observable metadata
+    cannot be copied as positional ``records``. It should preserve the same
+    detector/observable IDs and descriptors while replacing abstract records
+    with runtime-stable ``meas_ids``.
+    """
     patch = SurfacePatch.create(distance=3)
     abstract_tc = _build_surface_tick_circuit_for_native_model(
         patch,
@@ -537,8 +554,6 @@ def test_constrained_surface_traced_metadata_matches_abstract() -> None:
     )
     for key in (
         "basis",
-        "detectors",
-        "observables",
         "num_measurements",
         "num_detectors",
         "ancilla_budget",
@@ -546,8 +561,107 @@ def test_constrained_surface_traced_metadata_matches_abstract() -> None:
         a = abstract_tc.get_meta(key)
         b = traced_tc.get_meta(key)
         assert a == b, f"metadata mismatch on key {key!r}: abstract={a!r}, traced={b!r}"
+
+    for key in ("detectors", "observables"):
+        abstract_entries = json.loads(abstract_tc.get_meta(key) or "[]")
+        traced_entries = json.loads(traced_tc.get_meta(key) or "[]")
+        assert len(abstract_entries) == len(traced_entries)
+        for abstract_entry, traced_entry in zip(abstract_entries, traced_entries, strict=True):
+            assert "records" in abstract_entry
+            assert "records" not in traced_entry
+            assert "meas_ids" in traced_entry
+            assert {k: v for k, v in abstract_entry.items() if k != "records"} == {
+                k: v for k, v in traced_entry.items() if k != "meas_ids"
+            }
     # ancilla_budget specifically must be the requested budget (stored as a string by set_meta).
     assert traced_tc.get_meta("ancilla_budget") == "2"
+
+
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_native_abstract_surface_dem_uses_record_metadata_only_for_r0(basis: str) -> None:
+    """Native abstract DEM construction must not mix typed Pauli annotations
+    with legacy record metadata.
+
+    Public abstract circuits keep typed annotations by default, but the native
+    surface DEM helper consumes JSON record metadata. Mixing both sources makes
+    r=0 prep/readout DEMs carry a detectorless logical source that is absent
+    from the traced-QIS metadata path.
+    """
+    patch = SurfacePatch.create(distance=3)
+    public_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis=basis)
+    native_tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=0,
+        basis=basis,
+        circuit_source="abstract",
+    )
+
+    assert public_tc.annotations()
+    assert native_tc.annotations() == []
+    assert json.loads(native_tc.get_meta("detectors") or "[]")
+    assert json.loads(native_tc.get_meta("observables") or "[]")
+
+    noise = NoiseModel(p1=0.0, p2=0.001, p_meas=0.0, p_prep=0.0)
+    for decompose_errors in (False, True):
+        dem_text = generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=0,
+            noise=noise,
+            basis=basis,
+            circuit_source="abstract",
+            decompose_errors=decompose_errors,
+        )
+        detectorless_logical_errors = [
+            line
+            for line in dem_text.splitlines()
+            if line.startswith("error") and "L" in line and "D" not in line
+        ]
+        assert detectorless_logical_errors == []
+
+
+@pytest.mark.parametrize(
+    ("distance", "ancilla_budget"),
+    [
+        (3, None),
+        (3, 2),
+        (9, None),
+        (9, 17),
+    ],
+)
+@pytest.mark.parametrize("basis", ["X", "Z"])
+@pytest.mark.parametrize("rounds", [0, 1, 3])
+def test_surface_memory_round_count_contract(
+    distance: int,
+    ancilla_budget: int | None,
+    basis: str,
+    rounds: int,
+) -> None:
+    """Surface memory circuits count only full X/Z syndrome rounds as ``r``.
+
+    Logical SPAM is outside ``r``: the prep phase measures only the random-sign
+    stabilizer family (X checks for Z-basis memory, Z checks for X-basis
+    memory), and readout measures all data qubits. Restricted and unrestricted
+    ancilla schedules must preserve that experiment contract.
+    """
+    patch = SurfacePatch.create(distance=distance)
+    geom = patch.geometry
+    num_x_checks = len(geom.x_stabilizers)
+    num_z_checks = len(geom.z_stabilizers)
+    init_checks = num_z_checks if basis == "X" else num_x_checks
+    final_check_detectors = num_x_checks if basis == "X" else num_z_checks
+    expected_measurements = init_checks + rounds * (num_x_checks + num_z_checks) + geom.num_data
+    expected_detectors = rounds * (num_x_checks + num_z_checks) + final_check_detectors
+
+    tc = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=rounds,
+        basis=basis,
+        ancilla_budget=ancilla_budget,
+    )
+
+    assert int(tc.get_meta("num_measurements")) == expected_measurements
+    assert len(json.loads(tc.get_meta("detectors") or "[]")) == expected_detectors
+    assert json.loads(tc.get_meta("observables") or "[]")
 
 
 @pytest.mark.parametrize(("d", "budget"), [(3, 1), (3, 2), (5, 3)])
@@ -742,7 +856,7 @@ def test_copy_surface_metadata_propagates_descriptors() -> None:
     assert len(obs_desc) > 0
 
 
-def test_surface_metadata_records_remap_to_runtime_measurement_order() -> None:
+def test_surface_metadata_records_bind_to_runtime_meas_ids() -> None:
     remap = _measurement_index_remap_for_orders(
         [0, 1, 0, 2],
         [1, 0, 2, 0],
@@ -763,9 +877,19 @@ def test_surface_metadata_records_remap_to_runtime_measurement_order() -> None:
         ),
     )
     assert remapped == [
-        {"id": 0, "records": [-3, -1]},
-        {"id": 1, "records": [-4]},
+        {"id": 0, "meas_ids": [1, 3]},
+        {"id": 1, "meas_ids": [0]},
     ]
+
+    existing_meas_ids = json.dumps([{"id": 2, "meas_ids": [0, 3]}])
+    rebound = json.loads(
+        _remap_surface_record_metadata_json(
+            existing_meas_ids,
+            measurement_index_remap=remap,
+            num_measurements=4,
+        ),
+    )
+    assert rebound == [{"id": 2, "meas_ids": [1, 2]}]
 
 
 def test_surface_metadata_records_remap_to_runtime_result_tags() -> None:
@@ -791,6 +915,53 @@ def test_surface_metadata_records_remap_to_runtime_result_tags() -> None:
     assert len(remap) == 29  # 4 prep X stabilizers + 2 rounds * 8 stabilizers + 9 final data measurements
     assert sorted(remap) == list(range(29))
     assert sorted(remap.values()) == list(range(29))
+
+
+def test_runtime_result_tags_bind_metadata_when_lowered_measurements_reorder() -> None:
+    from pecos_rslib.quantum import TickCircuit
+
+    patch = SurfacePatch.create(distance=3)
+    abstract_tc = generate_tick_circuit_from_patch(patch, num_rounds=0, basis="Z")
+    result_traces = [
+        {"name": "sx0:init:meas:0", "values": [False], "result_ids": [0]},
+        {"name": "sx1:init:meas:1", "values": [False], "result_ids": [1]},
+        {"name": "sx2:init:meas:2", "values": [False], "result_ids": [2]},
+        {"name": "sx3:init:meas:3", "values": [False], "result_ids": [3]},
+        {
+            "name": "final",
+            "values": [False] * 9,
+            # Semantic data-qubit order, independent of runtime MZ order.
+            "result_ids": list(range(4, 13)),
+        },
+    ]
+    remap = _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
+
+    traced_tc = TickCircuit()
+    traced_tc.tick().mz_with_ids([9, 10, 11, 12], [0, 1, 2, 3])
+    traced_tc.tick().mz_with_ids(
+        [5, 0, 4, 1, 8, 3, 7, 6, 2],
+        [9, 4, 8, 5, 12, 7, 11, 10, 6],
+    )
+
+    assert _extract_measurement_meas_ids(traced_tc) != list(range(13))
+    _validate_result_tag_remap_against_traced_measurements(
+        traced_tc,
+        remap,
+        expected_measurements=13,
+    )
+
+    _copy_surface_tick_circuit_metadata(
+        abstract_tc,
+        traced_tc,
+        measurement_index_remap=remap,
+    )
+    detectors = json.loads(traced_tc.get_meta("detectors"))
+    observables = json.loads(traced_tc.get_meta("observables"))
+    assert all("records" not in entry for entry in detectors + observables)
+    assert all("meas_ids" in entry for entry in detectors + observables)
+
+    logical_z_qubits = list(patch.geometry.logical_z.data_qubits)
+    assert observables == [{"id": 0, "meas_ids": [4 + q for q in logical_z_qubits]}]
 
 
 def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:

@@ -485,6 +485,16 @@ impl PyDagFaultInfluenceMap {
         self.inner.has_observable_flips(loc_idx, pauli)
     }
 
+    /// Replace this map's non-detector DEM outputs with another map's outputs.
+    ///
+    /// This is the Python equivalent of the canonical Rust DEM builder's
+    /// annotation merge: detector influence from `DagFaultAnalyzer` is kept,
+    /// while observable/tracked-Pauli outputs from `InfluenceBuilder` are used
+    /// for DEM output propagation.
+    fn merge_dem_outputs_from(&mut self, other: &PyDagFaultInfluenceMap) {
+        self.inner.merge_dem_outputs_from(&other.inner);
+    }
+
     /// Check if a fault at the given location flips any tracked Pauli.
     ///
     /// Args:

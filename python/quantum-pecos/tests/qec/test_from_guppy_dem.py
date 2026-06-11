@@ -84,6 +84,16 @@ def _flat_idle_gates(tc) -> list[tuple[list[int], float]]:
     return idles
 
 
+def _flat_gate_qubits(tc, gate_type_name: str) -> list[list[int]]:
+    dag = tc.to_dag_circuit()
+    gate_qubits: list[list[int]] = []
+    for node_id in dag.nodes():
+        gate = dag.gate(node_id)
+        if gate is not None and gate.gate_type.name == gate_type_name:
+            gate_qubits.append(list(gate.qubits))
+    return gate_qubits
+
+
 def test_from_guppy_meas_ids_are_normalized_to_records() -> None:
     assert _dem_text(detectors_json='[{"id":0,"meas_ids":[0]}]') == _dem_text(
         detectors_json='[{"id":0,"records":[-1]}]',
@@ -198,6 +208,41 @@ def test_lowered_replay_preserves_runtime_idles() -> None:
     tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
     assert _flat_idle_gates(tc) == [([0], 20.0)]
+
+
+def test_lowered_replay_preserves_measurement_crosstalk_payloads() -> None:
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [0, 0]}}],
+            "lowered_quantum_ops": [
+                {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
+                {
+                    "gate_type": "MeasCrosstalkLocalPayload",
+                    "qubits": [1, 2],
+                    "angles": [],
+                    "params": [],
+                },
+                {
+                    "gate_type": "MeasCrosstalkGlobalPayload",
+                    "qubits": [3, 4],
+                    "angles": [],
+                    "params": [],
+                },
+                {
+                    "gate_type": "MZ",
+                    "qubits": [0],
+                    "angles": [],
+                    "params": [],
+                    "measurement_result_ids": [0],
+                },
+            ],
+        },
+    ]
+
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+    assert _flat_gate_qubits(tc, "MeasCrosstalkLocalPayload") == [[1, 2]]
+    assert _flat_gate_qubits(tc, "MeasCrosstalkGlobalPayload") == [[3, 4]]
 
 
 def test_lowered_runtime_idles_can_drive_memory_noise_dem() -> None:
@@ -612,9 +657,7 @@ def test_native_abstract_surface_dem_uses_record_metadata_only_for_r0(basis: str
             decompose_errors=decompose_errors,
         )
         detectorless_logical_errors = [
-            line
-            for line in dem_text.splitlines()
-            if line.startswith("error") and "L" in line and "D" not in line
+            line for line in dem_text.splitlines() if line.startswith("error") and "L" in line and "D" not in line
         ]
         assert detectorless_logical_errors == []
 

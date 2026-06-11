@@ -271,8 +271,9 @@ impl GateType {
     ///
     /// # Returns
     ///
-    /// The number of qubits this gate type requires. All current gate types
-    /// have a fixed number of qubits (1 or 2).
+    /// The number of qubits this gate type requires. Variable-arity
+    /// payload/meta gates return 1 for compatibility with validation code; the
+    /// concrete gate stores the actual qubit count.
     #[must_use]
     pub const fn quantum_arity(self) -> usize {
         match self {
@@ -304,13 +305,12 @@ impl GateType {
             | GateType::QAlloc
             | GateType::QFree
             | GateType::Idle
+            | GateType::Custom
+            // Payload/meta gates are variable-arity but return 1 here because
+            // validation checks `is_multiple_of(quantum_arity())`, and any
+            // count is a multiple of 1. The actual qubit count is in the gate.
             | GateType::MeasCrosstalkGlobalPayload
             | GateType::MeasCrosstalkLocalPayload
-            | GateType::Custom
-            // TrackedPauliMeta and Channel are variable-arity but return 1
-            // here because gate validation checks
-            // `is_multiple_of(quantum_arity())` and any count is a multiple
-            // of 1. The actual qubit count is in the gate.
             | GateType::Channel
             | GateType::TrackedPauliMeta => 1,
 
@@ -527,6 +527,12 @@ impl std::str::FromStr for GateType {
             "QFREE" => Ok(GateType::QFree),
             "IDLE" => Ok(GateType::Idle),
             "TRACKEDPAULI" | "TRACKEDPAULIMETA" | "TP" => Ok(GateType::TrackedPauliMeta),
+            "MEASCROSSTALKGLOBALPAYLOAD" | "MEAS_CROSSTALK_GLOBAL_PAYLOAD" => {
+                Ok(GateType::MeasCrosstalkGlobalPayload)
+            }
+            "MEASCROSSTALKLOCALPAYLOAD" | "MEAS_CROSSTALK_LOCAL_PAYLOAD" => {
+                Ok(GateType::MeasCrosstalkLocalPayload)
+            }
             "CHANNEL" => Ok(GateType::Channel),
             _ => Err(format!("Unknown gate type: {s}")),
         }
@@ -611,6 +617,14 @@ mod tests {
         assert_eq!(GateType::from_str("Channel").unwrap(), GateType::Channel);
         assert_eq!(GateType::from_str("SWAP").unwrap(), GateType::SWAP);
         assert_eq!(GateType::from_str("CCX").unwrap(), GateType::CCX);
+        assert_eq!(
+            GateType::from_str("MeasCrosstalkGlobalPayload").unwrap(),
+            GateType::MeasCrosstalkGlobalPayload
+        );
+        assert_eq!(
+            GateType::from_str("MeasCrosstalkLocalPayload").unwrap(),
+            GateType::MeasCrosstalkLocalPayload
+        );
 
         // Aliases
         assert_eq!(GateType::from_str("CNOT").unwrap(), GateType::CX);
@@ -618,6 +632,14 @@ mod tests {
         assert_eq!(GateType::from_str("S").unwrap(), GateType::SZ);
         assert_eq!(GateType::from_str("TOFFOLI").unwrap(), GateType::CCX);
         assert_eq!(GateType::from_str("init |0>").unwrap(), GateType::PZ);
+        assert_eq!(
+            GateType::from_str("meas_crosstalk_global_payload").unwrap(),
+            GateType::MeasCrosstalkGlobalPayload
+        );
+        assert_eq!(
+            GateType::from_str("meas_crosstalk_local_payload").unwrap(),
+            GateType::MeasCrosstalkLocalPayload
+        );
 
         // Case-insensitive matching
         assert_eq!(GateType::from_str("h").unwrap(), GateType::H);

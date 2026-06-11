@@ -3496,11 +3496,18 @@ impl PyTickHandle {
                     )));
                 }
 
-                // Determine if we need to broadcast (e.g. single-qubit gate on multiple qubits)
-                let needs_broadcast =
-                    arity > 0 && qubits.len() > arity && qubits.len().is_multiple_of(arity);
+                let variable_arity_payload = gate_type.is_crosstalk_payload()
+                    || matches!(gate_type, GateType::Channel | GateType::TrackedPauliMeta);
 
-                if arity > 0 && qubits.len() != arity && !needs_broadcast {
+                // Determine if we need to broadcast (e.g. single-qubit gate on multiple qubits).
+                // Payload/meta gates carry their qubit list as data and must remain a single gate.
+                let needs_broadcast = !variable_arity_payload
+                    && arity > 0
+                    && qubits.len() > arity
+                    && qubits.len().is_multiple_of(arity);
+
+                if !variable_arity_payload && arity > 0 && qubits.len() != arity && !needs_broadcast
+                {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "Gate '{name}' requires {} qubit(s), got {} (not a valid multiple)",
                         arity,

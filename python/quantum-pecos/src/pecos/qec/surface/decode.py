@@ -1023,6 +1023,10 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
                     msg = f"Lowered MZ gate carries {len(meas_ids)} measurement_result_ids for {len(qubits)} qubit(s)"
                     raise ValueError(msg)
                 tick.mz_with_ids(qubits, [int(meas_id) for meas_id in meas_ids])
+            elif gate_type == "MeasCrosstalkGlobalPayload":
+                tick.add_gate("MeasCrosstalkGlobalPayload", qubits)
+            elif gate_type == "MeasCrosstalkLocalPayload":
+                tick.add_gate("MeasCrosstalkLocalPayload", qubits)
             elif gate_type == "RX":
                 tick.rx(angles[0], qubits)
             elif gate_type == "RY":

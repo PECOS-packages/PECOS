@@ -1442,6 +1442,8 @@ class GateType:
     QAlloc: GateType
     QFree: GateType
     TrackedPauliMeta: GateType
+    MeasCrosstalkGlobalPayload: GateType
+    MeasCrosstalkLocalPayload: GateType
     Custom: GateType
 
     @property

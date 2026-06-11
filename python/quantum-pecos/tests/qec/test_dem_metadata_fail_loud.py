@@ -11,6 +11,7 @@ and the public ``DemBuilder.build`` -- not silently dropped.
 
 import pytest
 from pecos_rslib import DagCircuit
+from pecos_rslib.quantum import Gate, GateType
 from pecos_rslib.qec import (
     DagFaultAnalyzer,
     DemBuilder,
@@ -47,6 +48,38 @@ def test_valid_metadata_builds_on_all_paths() -> None:
     builder.with_num_measurements(1)
     builder.with_detectors_json('[{"id": 0, "records": [-1]}]')
     assert builder.build().num_detectors == 1
+
+
+def test_exact_measurement_crosstalk_payload_emits_python_source_record() -> None:
+    dag = DagCircuit()
+    prep = dag.add_gate(Gate(GateType.Prep, qubits=[0]))
+    payload = dag.add_gate(Gate(GateType.MeasCrosstalkLocalPayload, qubits=[0]))
+    meas = dag.add_gate(Gate(GateType.Measure, qubits=[0]))
+    dag.connect(prep, payload, 0)
+    dag.connect(payload, meas, 0)
+    dag.set_attr("num_measurements", "1")
+    dag.set_attr("detectors", '[{"id": 0, "records": [-1]}]')
+
+    im = DagFaultAnalyzer(dag).build_influence_map()
+    builder = DemBuilder(im)
+    builder.with_noise(
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+        p_meas_crosstalk_local=0.25,
+        p_meas_crosstalk_model={"0->1": 0.4},
+        measurement_crosstalk_dem_mode="exact_deterministic",
+    )
+    builder.with_num_measurements(1)
+    builder.with_detectors_json('[{"id": 0, "records": [-1]}]')
+    builder.with_exact_branch_replay_circuit(dag)
+    dem = builder.build_with_source_tracking()
+
+    records = dem.contribution_render_records()
+    assert len(records) == 1
+    assert records[0]["direct_source_family"] == "MeasurementCrosstalk"
+    assert records[0]["gate_type_labels"] == ["MeasCrosstalkLocalPayload"]
 
 
 # --- out-of-range record offsets -------------------------------------------

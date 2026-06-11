@@ -614,6 +614,22 @@ impl PyGateType {
     }
 
     #[classattr]
+    #[pyo3(name = "MeasCrosstalkGlobalPayload")]
+    fn meas_crosstalk_global_payload() -> Self {
+        Self {
+            inner: GateType::MeasCrosstalkGlobalPayload,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "MeasCrosstalkLocalPayload")]
+    fn meas_crosstalk_local_payload() -> Self {
+        Self {
+            inner: GateType::MeasCrosstalkLocalPayload,
+        }
+    }
+
+    #[classattr]
     #[pyo3(name = "Custom")]
     fn custom() -> Self {
         Self {

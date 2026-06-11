@@ -41,20 +41,38 @@ A crosstalk DEM implementation should satisfy these constraints:
 - Keep any Pauli-twirled or averaged treatment explicit and opt-in; it must not be
   used under a name that implies exact crosstalk DEM support.
 
+## Implemented Mode
+
+`NoiseConfig` now exposes `MeasurementCrosstalkDemMode::ExactDeterministic`
+for the local-payload subset. In this mode the circuit-aware DEM builder:
+
+- Replays the ideal Clifford circuit up to each `MeasCrosstalkLocalPayload`.
+- Synthesizes the hidden `MZ` on the payload victim.
+- Requires that hidden result to be deterministic and state-independent.
+- Emits an `X`-equivalent DEM source with `DirectSourceFamily::MeasurementCrosstalk`
+  for `0->1` or `1->0` transitions.
+- Emits no contribution for implicit `0->0` or `1->1` transitions.
+- Fails loudly if global payloads, leakage transitions, missing circuit context,
+  unsupported pre-payload gates, or nondeterministic hidden outcomes are present.
+
+This mode is intentionally narrow: it is exact for the deterministic local cases
+it accepts, and it rejects cases that still need a branch-level representation.
+
 ## Implementation Plan
 
-1. Extend `NoiseConfig` with measurement-crosstalk local/global probabilities,
-   transition weights, and an explicit approximation mode.
-2. Add crosstalk payload source extraction in the circuit-aware DEM path.
+1. Extend the exact crosstalk DEM path beyond deterministic local bit-flip
+   transitions.
+2. Add global-payload victim selection from the live prepared qubit set.
 3. Reuse the exact branch replay machinery where possible: compute the ideal
    measurement parity expressions once, then evaluate branch effects by replaying
    hidden `MZ` plus the transition action at each payload victim.
-4. Emit raw hypergraph DEM contributions with crosstalk source metadata.
-5. Extend source-level decomposition so graph-like decoder inputs preserve the
+4. Add `leak2depolar` transition expansion into explicit Pauli/no-op branches.
+5. Emit raw hypergraph DEM contributions with crosstalk source metadata.
+6. Extend source-level decomposition so graph-like decoder inputs preserve the
    same crosstalk source identity and fail loudly on irreducible branch effects.
-6. Thread the new options through Python bindings and surface helper APIs.
-7. Keep coverage diagnostics reporting crosstalk as omitted until one of these DEM
-   modes is explicitly enabled and tested.
+7. Thread the new options through Python bindings and surface helper APIs.
+8. Keep coverage diagnostics reporting unsupported crosstalk branches as omitted
+   until the relevant DEM modes are explicitly enabled and tested.
 
 ## Minimal Tests
 

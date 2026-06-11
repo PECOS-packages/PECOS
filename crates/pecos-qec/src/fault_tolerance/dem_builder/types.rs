@@ -134,6 +134,9 @@ pub enum DirectSourceFamily {
     /// Two-location direct source produced by exact replacement-branch replay.
     TwoLocationExactReplacementBranch,
 
+    /// Single-location direct source produced by measurement-crosstalk replay.
+    MeasurementCrosstalk,
+
     /// Fallback for other direct-source shapes.
     Other,
 }
@@ -2496,6 +2499,97 @@ pub struct NoiseConfig {
     pub p_idle_x_quadratic_rate: f64,
     /// Stochastic Y-memory error rate quadratic in idle duration.
     pub p_idle_y_quadratic_rate: f64,
+    /// Per-payload local measurement-crosstalk event rate.
+    ///
+    /// This rate is multiplied by the selected hidden-measurement transition
+    /// probability from [`MeasurementCrosstalkTransitionModel`] when crosstalk
+    /// DEM replay is enabled.
+    pub p_meas_crosstalk_local: f64,
+    /// Per-payload global measurement-crosstalk event rate.
+    ///
+    /// Global payload DEM replay is intentionally not implemented yet because
+    /// the source semantics need to be represented explicitly. If exact
+    /// crosstalk DEM replay is requested with a positive global rate, the DEM
+    /// builder fails loudly.
+    pub p_meas_crosstalk_global: f64,
+    /// Hidden-measurement transition probabilities used by measurement
+    /// crosstalk DEM replay.
+    pub p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel,
+    /// Policy for converting measurement-crosstalk payloads into DEM sources.
+    pub measurement_crosstalk_dem_mode: MeasurementCrosstalkDemMode,
+}
+
+/// Policy for converting runtime measurement-crosstalk payloads into DEMs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MeasurementCrosstalkDemMode {
+    /// Ignore measurement-crosstalk payloads when constructing DEMs.
+    #[default]
+    Omitted,
+    /// Replay payloads exactly when the hidden measurement outcome is
+    /// deterministic and state-independent.
+    ExactDeterministic,
+}
+
+/// Hidden-measurement transition probabilities for local measurement crosstalk.
+///
+/// The no-op probabilities are implicit:
+/// `p(0->0) = 1 - p_0_to_1 - p_0_to_leak` and
+/// `p(1->1) = 1 - p_1_to_0 - p_1_to_leak`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeasurementCrosstalkTransitionModel {
+    /// Probability that a hidden 0 result flips to 1.
+    pub p_0_to_1: f64,
+    /// Probability that a hidden 0 result leaks.
+    pub p_0_to_leak: f64,
+    /// Probability that a hidden 1 result flips to 0.
+    pub p_1_to_0: f64,
+    /// Probability that a hidden 1 result leaks.
+    pub p_1_to_leak: f64,
+}
+
+impl MeasurementCrosstalkTransitionModel {
+    /// Creates a no-leakage measurement-crosstalk transition model.
+    #[must_use]
+    pub const fn bit_flip(p_0_to_1: f64, p_1_to_0: f64) -> Self {
+        Self {
+            p_0_to_1,
+            p_0_to_leak: 0.0,
+            p_1_to_0,
+            p_1_to_leak: 0.0,
+        }
+    }
+
+    /// Returns true if all transition probabilities are finite and valid.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.p_0_to_1.is_finite()
+            && self.p_0_to_leak.is_finite()
+            && self.p_1_to_0.is_finite()
+            && self.p_1_to_leak.is_finite()
+            && self.p_0_to_1 >= 0.0
+            && self.p_0_to_leak >= 0.0
+            && self.p_1_to_0 >= 0.0
+            && self.p_1_to_leak >= 0.0
+            && self.p_0_to_1 + self.p_0_to_leak <= 1.0 + f64::EPSILON
+            && self.p_1_to_0 + self.p_1_to_leak <= 1.0 + f64::EPSILON
+    }
+
+    /// Returns true when any leakage transition probability is non-zero.
+    #[must_use]
+    pub fn has_leakage(&self) -> bool {
+        self.p_0_to_leak > 0.0 || self.p_1_to_leak > 0.0
+    }
+}
+
+impl Default for MeasurementCrosstalkTransitionModel {
+    fn default() -> Self {
+        Self {
+            p_0_to_1: 0.0,
+            p_0_to_leak: 0.0,
+            p_1_to_0: 0.0,
+            p_1_to_leak: 0.0,
+        }
+    }
 }
 
 /// Per-Pauli error probabilities for a single qubit.
@@ -2568,6 +2662,10 @@ impl Default for NoiseConfig {
             p_idle_y_linear_rate: 0.0,
             p_idle_x_quadratic_rate: 0.0,
             p_idle_y_quadratic_rate: 0.0,
+            p_meas_crosstalk_local: 0.0,
+            p_meas_crosstalk_global: 0.0,
+            p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
+            measurement_crosstalk_dem_mode: MeasurementCrosstalkDemMode::default(),
         }
     }
 }
@@ -2594,6 +2692,10 @@ impl NoiseConfig {
             p_idle_y_linear_rate: 0.0,
             p_idle_x_quadratic_rate: 0.0,
             p_idle_y_quadratic_rate: 0.0,
+            p_meas_crosstalk_local: 0.0,
+            p_meas_crosstalk_global: 0.0,
+            p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
+            measurement_crosstalk_dem_mode: MeasurementCrosstalkDemMode::default(),
         }
     }
 
@@ -2618,6 +2720,10 @@ impl NoiseConfig {
             p_idle_y_linear_rate: 0.0,
             p_idle_x_quadratic_rate: 0.0,
             p_idle_y_quadratic_rate: 0.0,
+            p_meas_crosstalk_local: 0.0,
+            p_meas_crosstalk_global: 0.0,
+            p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
+            measurement_crosstalk_dem_mode: MeasurementCrosstalkDemMode::default(),
         }
     }
 
@@ -2642,6 +2748,10 @@ impl NoiseConfig {
             p_idle_y_linear_rate: 0.0,
             p_idle_x_quadratic_rate: 0.0,
             p_idle_y_quadratic_rate: 0.0,
+            p_meas_crosstalk_local: 0.0,
+            p_meas_crosstalk_global: 0.0,
+            p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
+            measurement_crosstalk_dem_mode: MeasurementCrosstalkDemMode::default(),
         }
     }
 
@@ -2745,6 +2855,37 @@ impl NoiseConfig {
         approximation: ReplacementBranchApproximation,
     ) -> Self {
         self.p2_replacement_approximation = approximation;
+        self
+    }
+
+    /// Sets the local measurement-crosstalk payload event rate.
+    #[must_use]
+    pub fn set_measurement_crosstalk_local_rate(mut self, rate: f64) -> Self {
+        self.p_meas_crosstalk_local = rate.max(0.0);
+        self
+    }
+
+    /// Sets the global measurement-crosstalk payload event rate.
+    #[must_use]
+    pub fn set_measurement_crosstalk_global_rate(mut self, rate: f64) -> Self {
+        self.p_meas_crosstalk_global = rate.max(0.0);
+        self
+    }
+
+    /// Sets the hidden-measurement transition model for crosstalk DEM replay.
+    #[must_use]
+    pub fn set_measurement_crosstalk_transition_model(
+        mut self,
+        model: MeasurementCrosstalkTransitionModel,
+    ) -> Self {
+        self.p_meas_crosstalk_model = model;
+        self
+    }
+
+    /// Sets the policy for converting measurement-crosstalk payloads into DEMs.
+    #[must_use]
+    pub fn set_measurement_crosstalk_dem_mode(mut self, mode: MeasurementCrosstalkDemMode) -> Self {
+        self.measurement_crosstalk_dem_mode = mode;
         self
     }
 
@@ -4250,6 +4391,7 @@ impl DetectorErrorModel {
                 DirectSourceFamily::TwoLocationExactReplacementBranch => {
                     "TwoLocationExactReplacementBranch"
                 }
+                DirectSourceFamily::MeasurementCrosstalk => "MeasurementCrosstalk",
                 DirectSourceFamily::Other => "Other",
             }
         }

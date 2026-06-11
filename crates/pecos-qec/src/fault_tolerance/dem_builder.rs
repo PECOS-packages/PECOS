@@ -100,7 +100,8 @@ pub use sampler::{
 pub use types::{
     ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,
     ContributionRenderSummary, DecomposedFault, DemOutput, DetectorDef, DetectorErrorModel,
-    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, MeasurementMechanism,
+    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType,
+    MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, MeasurementMechanism,
     MeasurementNoiseModel, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights,
     PecosDemMetadataError, PerGateTypeNoise, ReplacementBranchApproximation,
     ReplacementBranchImpact, TwoDetectorDirectRenderPolicy, combine_probabilities,

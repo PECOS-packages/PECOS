@@ -878,14 +878,28 @@ impl<'a> DemBuilder<'a> {
             ));
         }
 
-        if has_global_payloads && self.noise.p_meas_crosstalk_global > 0.0 {
+        if self.noise.p_meas_crosstalk_global > 0.0 && !has_global_payloads {
+            return Err(DemBuilderError::ConfigurationError(
+                "exact deterministic measurement crosstalk DEM replay requested a positive global rate, but the influence map contains no MeasCrosstalkGlobalPayload locations"
+                    .to_string(),
+            ));
+        }
+
+        if self.noise.p_meas_crosstalk_global > 0.0 {
             return Err(DemBuilderError::ConfigurationError(
                 "exact deterministic measurement crosstalk DEM replay does not yet support global payloads"
                     .to_string(),
             ));
         }
 
-        if self.noise.p_meas_crosstalk_local <= 0.0 || !has_local_payloads {
+        if self.noise.p_meas_crosstalk_local > 0.0 && !has_local_payloads {
+            return Err(DemBuilderError::ConfigurationError(
+                "exact deterministic measurement crosstalk DEM replay requested a positive local rate, but the influence map contains no MeasCrosstalkLocalPayload locations"
+                    .to_string(),
+            ));
+        }
+
+        if self.noise.p_meas_crosstalk_local <= 0.0 {
             return Ok(());
         }
 
@@ -4035,6 +4049,21 @@ mod tests {
         circuit
     }
 
+    fn single_qubit_no_crosstalk_payload_circuit() -> pecos_quantum::DagCircuit {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+        circuit
+    }
+
     #[test]
     fn test_exact_deterministic_local_measurement_crosstalk_emits_dem_source() {
         use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
@@ -4062,6 +4091,52 @@ mod tests {
             &[GateType::MeasCrosstalkLocalPayload]
         );
         assert_eq!(contributions[0].paulis.as_slice(), &[Pauli::X]);
+    }
+
+    #[test]
+    fn test_exact_deterministic_local_measurement_crosstalk_requires_payloads() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_no_crosstalk_payload_circuit();
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_local_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect_err("positive local crosstalk rate without payloads must fail loudly");
+
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string()
+                .contains("no MeasCrosstalkLocalPayload locations"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_exact_deterministic_global_measurement_crosstalk_requires_payloads() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_no_crosstalk_payload_circuit();
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_global_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect_err("positive global crosstalk rate without payloads must fail loudly");
+
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string()
+                .contains("no MeasCrosstalkGlobalPayload locations"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

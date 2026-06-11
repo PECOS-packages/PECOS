@@ -1218,6 +1218,32 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
+    /// Set the probability of global crosstalk during measurement operations
+    fn with_p_meas_crosstalk_global(&self, prob: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().with_p_meas_crosstalk_global(prob),
+        })
+    }
+
+    /// Set the probability of local crosstalk during measurement operations
+    fn with_p_meas_crosstalk_local(&self, prob: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: self.inner.clone().with_p_meas_crosstalk_local(prob),
+        })
+    }
+
+    /// Set the transition model for measurement crosstalk
+    fn with_p_meas_crosstalk_model(
+        &self,
+        model: std::collections::BTreeMap<String, f64>,
+    ) -> PyResult<Self> {
+        use std::collections::BTreeMap;
+        let btree_map: BTreeMap<String, f64> = model.into_iter().collect();
+        Ok(Self {
+            inner: self.inner.clone().with_p_meas_crosstalk_model(&btree_map),
+        })
+    }
+
     /// Set the scaling factor for measurement errors
     fn with_meas_scale(&self, scale: f64) -> PyResult<Self> {
         Ok(Self {

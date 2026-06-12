@@ -1,6 +1,7 @@
-"""Canonical `(round, qubit) -> site_idx` mapping shared by the abstract
-circuit (`circuit_builder.py`) and the Guppy runtime renderer
-(`pecos.guppy.surface`).
+"""Canonical Pauli-twirl site mapping.
+
+This maps `(round, qubit) -> site_idx` for both the abstract circuit
+(`circuit_builder.py`) and the Guppy runtime renderer (`pecos.guppy.surface`).
 
 Both tracks must agree byte-for-byte on the ordering of twirl-site
 metadata: the abstract circuit's `tracked_pauli` annotations populate
@@ -60,8 +61,10 @@ PAULI_MASK_TAG = PAULI_MASK_TAG_PREFIX
 
 
 def pauli_mask_round_tag(round_idx: int) -> str:
-    """Canonical `result()` tag for the twirl mask emitted between syndrome
-    rounds ``round_idx`` and ``round_idx + 1``.
+    """Return the canonical per-round twirl-mask result tag.
+
+    The tag is emitted between syndrome rounds ``round_idx`` and
+    ``round_idx + 1``.
     """
     return f"{PAULI_MASK_TAG_PREFIX}:round:{round_idx}"
 
@@ -76,8 +79,7 @@ def num_twirl_sites(num_rounds: int) -> int:
 
 
 def site_idx_for_round(round_idx: int) -> int:
-    """Map the round-loop index of the round PRECEDING a twirl site to its
-    canonical `site_idx`.
+    """Map the preceding round-loop index to a twirl site index.
 
     For the `between_rounds` schedule, the twirl site that sits between
     syndrome round `r` and round `r + 1` is canonical `site_idx == r`.

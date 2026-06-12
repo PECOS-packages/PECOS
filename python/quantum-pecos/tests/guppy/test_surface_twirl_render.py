@@ -4,14 +4,14 @@ import pytest
 
 pytest.importorskip("guppylang")
 
-from pecos.guppy.surface import (  # noqa: E402
+from pecos.guppy.surface import (
     _guppy_module_cache_key,
     generate_guppy_source,
     generate_memory_experiment,
 )
-from pecos.qec.surface import GuppyRngMaskConfig, TwirlConfig  # noqa: E402
-from pecos.qec.surface._twirl_sites import pauli_mask_round_tag  # noqa: E402
-from pecos.qec.surface.patch import SurfacePatch  # noqa: E402
+from pecos.qec.surface import GuppyRngMaskConfig, TwirlConfig
+from pecos.qec.surface._twirl_sites import pauli_mask_round_tag
+from pecos.qec.surface.patch import SurfacePatch
 
 
 @pytest.fixture

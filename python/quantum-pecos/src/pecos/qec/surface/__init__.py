@@ -18,6 +18,8 @@ Functions:
 """
 
 # Circuit generation from geometry (unified abstraction)
+from pecos.qec.surface._detection_events import extract_detection_events_and_observables
+from pecos.qec.surface._twirl_config import GuppyRngMaskConfig, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     DagCircuitRenderer,
     GuppyRenderer,
@@ -105,12 +107,10 @@ from pecos.qec.surface.patch import (
     get_stabilizer_touch_label,
 )
 from pecos.qec.surface.plot import plot_patch, plot_surface_code
-from pecos.qec.surface._detection_events import extract_detection_events_and_observables
 from pecos.qec.surface.schedule import (
     compute_cnot_schedule,
     get_stab_schedule,
 )
-from pecos.qec.surface._twirl_config import GuppyRngMaskConfig, TwirlConfig
 
 __all__ = [
     # Twirling config (Pauli-frame randomization)

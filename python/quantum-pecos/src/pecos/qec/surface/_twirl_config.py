@@ -27,7 +27,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-
 _SUPPORTED_SCHEMES = ("pauli",)
 _SUPPORTED_SITE_SCHEDULES = ("between_rounds",)
 _SUPPORTED_RESULT_ENCODINGS = ("bool_array_v1",)
@@ -71,7 +70,7 @@ class TwirlConfig:
     result_encoding: Literal["bool_array_v1"] = "bool_array_v1"
     frame_output: Literal["raw", "canonical"] = "raw"
 
-    def _validate_runtime_supported(self) -> None:
+    def validate_runtime_supported(self) -> None:
         """Raise ``ValueError`` if any field is outside the supported runtime set.
 
         The ``Literal`` annotations are static-only hints; this method
@@ -105,6 +104,10 @@ class TwirlConfig:
                 f"supported; expected one of {_SUPPORTED_FRAME_OUTPUTS!r}"
             )
             raise ValueError(msg)
+
+    def _validate_runtime_supported(self) -> None:
+        """Compatibility alias for the public runtime validator."""
+        self.validate_runtime_supported()
 
 
 @dataclass(frozen=True)

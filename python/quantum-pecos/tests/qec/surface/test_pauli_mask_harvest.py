@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pecos.qec.surface import (
     GuppyRngMaskConfig,
     NoiseModel,
@@ -103,10 +102,9 @@ def _run_twirled_guppy_rows_masks_and_raw(
     rng: GuppyRngMaskConfig,
     twirl: TwirlConfig,
 ) -> tuple[list[list[int]], np.ndarray, list[list[int]], list[str]]:
-    from selene_sim import SimpleRuntime, Stim, build
-
     from pecos.compilation_pipeline import compile_guppy_to_hugr
     from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+    from selene_sim import SimpleRuntime, Stim, build
 
     fn = generate_memory_experiment(
         patch,
@@ -217,13 +215,13 @@ def test_runtime_twirl_masks_vary_across_shots(patch_d3: SurfacePatch) -> None:
 
 
 def test_same_seed_is_reproducible(patch_d3: SurfacePatch) -> None:
-    kwargs = dict(
-        num_rounds=3,
-        num_shots=6,
-        basis="Z",
-        twirl=TwirlConfig(),
-        rng=GuppyRngMaskConfig(seed=42),
-    )
+    kwargs = {
+        "num_rounds": 3,
+        "num_shots": 6,
+        "basis": "Z",
+        "twirl": TwirlConfig(),
+        "rng": GuppyRngMaskConfig(seed=42),
+    }
 
     masks_a = sample_pauli_masks_from_guppy(patch_d3, **kwargs)
     masks_b = sample_pauli_masks_from_guppy(patch_d3, **kwargs)
@@ -232,12 +230,12 @@ def test_same_seed_is_reproducible(patch_d3: SurfacePatch) -> None:
 
 
 def test_different_seeds_differ(patch_d3: SurfacePatch) -> None:
-    common = dict(
-        num_rounds=3,
-        num_shots=8,
-        basis="Z",
-        twirl=TwirlConfig(),
-    )
+    common = {
+        "num_rounds": 3,
+        "num_shots": 8,
+        "basis": "Z",
+        "twirl": TwirlConfig(),
+    }
 
     masks_seed1 = sample_pauli_masks_from_guppy(
         patch_d3,
@@ -390,4 +388,5 @@ def test_d5_compile_smoke(patch_d3: SurfacePatch) -> None:
     num_data = patch_d5.geometry.num_data
     assert masks.shape == (2, num_pauli_sites(3, num_data))
     assert masks.dtype == np.uint8
-    assert masks.min() >= 0 and masks.max() <= 3
+    assert masks.min() >= 0
+    assert masks.max() <= 3

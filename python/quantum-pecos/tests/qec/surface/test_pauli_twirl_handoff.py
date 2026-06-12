@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from pecos.qec.surface import (
     GuppyRngMaskConfig,
     NoiseModel,
@@ -250,7 +249,7 @@ def test_twirling_does_not_change_canonical_dem(
 def test_surface_traced_qis_rejects_twirl_with_semantic_message() -> None:
     patch = SurfacePatch.create(distance=3)
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError, match="one concrete mask realization") as exc_info:
         build_memory_circuit(
             patch=patch,
             rounds=2,

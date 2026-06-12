@@ -299,7 +299,7 @@ def _abstract_twirl_config(twirl: TwirlConfig | None) -> TwirlConfig | None:
     """Drop runtime-only Guppy record-framing fields before DEM caching."""
     if twirl is None:
         return None
-    twirl._validate_runtime_supported()
+    twirl.validate_runtime_supported()
     return replace(twirl, frame_output="raw")
 
 
@@ -1192,7 +1192,6 @@ def _replay_qis_trace_chunks_into_tick_circuit(chunks: list[dict[str, Any]]) -> 
             # operations, whose Measure payloads include the stable result ids.
             # Replay the raw operations in that compatibility case instead of
             # losing provenance.
-            pass
 
     operations: list[dict[str, Any]] = []
     for chunk in chunks:
@@ -1320,7 +1319,6 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
     runtime: object | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
-    from pecos.guppy import get_num_qubits
     from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
 
     program = generate_memory_experiment(
@@ -1351,7 +1349,7 @@ def _build_surface_tick_circuit_for_native_model(
     from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 
     if twirl is not None:
-        twirl._validate_runtime_supported()
+        twirl.validate_runtime_supported()
 
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
@@ -3812,7 +3810,7 @@ def build_native_sampler_from_dem(
         basis,
         ancilla_budget,
         circuit_source,
-        False,
+        include_idle_gates=False,
         twirl=twirl,
     )
     sampler = _cached_parsed_dem(decomposed_dem).to_dem_sampler()
@@ -4010,7 +4008,7 @@ def sample_pauli_masks_from_guppy(
     if twirl is None or rng is None:
         msg = "sample_pauli_masks_from_guppy requires both twirl and rng to be set"
         raise ValueError(msg)
-    twirl._validate_runtime_supported()
+    twirl.validate_runtime_supported()
     if num_rounds < 1:
         msg = f"num_rounds must be >= 1, got {num_rounds}"
         raise ValueError(msg)

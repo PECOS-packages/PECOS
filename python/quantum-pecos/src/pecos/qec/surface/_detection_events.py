@@ -6,12 +6,20 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
+
+class _TickCircuitLike(Protocol):
+    def get_meta(self, key: str) -> str | None:
+        """Return metadata stored under ``key`` when available."""
+        ...
 
 
 def extract_detection_events_and_observables(
-    tick_circuit: Any,
+    tick_circuit: _TickCircuitLike,
     results: Iterable[Sequence[int]],
 ) -> tuple[list[list[int]], list[list[int]]]:
     """Extract fired detectors and observables from flat measurement rows."""

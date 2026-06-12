@@ -153,6 +153,8 @@ def generate_guppy_source(
             emits measurement records in the canonical untwirled DEM frame.
         rng: Runtime mask source: a stream-separator seed mixed with
             per-shot quantum entropy when ``twirl`` is enabled.
+        num_rounds: Number of syndrome rounds to render. Required when
+            ``twirl`` is enabled because twirled source is unrolled per round.
 
     Returns:
         Python/Guppy source code as a string.
@@ -163,12 +165,10 @@ def generate_guppy_source(
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
 
     if (twirl is None) != (rng is None):
-        msg = "twirl and rng must be supplied together; got twirl={!r} rng={!r}".format(
-            twirl, rng
-        )
+        msg = f"twirl and rng must be supplied together; got twirl={twirl!r} rng={rng!r}"
         raise ValueError(msg)
     if twirl is not None:
-        twirl._validate_runtime_supported()
+        twirl.validate_runtime_supported()
         if num_rounds is None:
             msg = "num_rounds is required when twirl is supplied"
             raise ValueError(msg)
@@ -291,11 +291,15 @@ def generate_guppy_source(
     )
     if canonical_frame_output:
         lines.append(
-            f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}, frame_x: array[bool, {num_data}], frame_z: array[bool, {num_data}]) -> Syndrome_{dx}x{dz}:"
+            "def syndrome_extraction("
+            f"surf: SurfaceCode_{dx}x{dz}, "
+            f"frame_x: array[bool, {num_data}], "
+            f"frame_z: array[bool, {num_data}]"
+            f") -> Syndrome_{dx}x{dz}:",
         )
     else:
         lines.append(
-            f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}) -> Syndrome_{dx}x{dz}:"
+            f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}) -> Syndrome_{dx}x{dz}:",
         )
 
     if not constrained:
@@ -651,8 +655,9 @@ def _render_memory_experiments(
         if twirl is None:
             lines.extend(_render_plain_memory_block(basis, basis_upper, dx, dz))
         else:
-            assert rng is not None
-            assert num_rounds is not None
+            if rng is None or num_rounds is None:
+                msg = "twirled memory rendering requires both rng and num_rounds"
+                raise ValueError(msg)
             lines.extend(
                 _render_twirled_memory_block(
                     basis,
@@ -663,7 +668,7 @@ def _render_memory_experiments(
                     twirl,
                     rng,
                     num_rounds,
-                )
+                ),
             )
     return lines
 
@@ -745,7 +750,7 @@ def _render_twirled_memory_block(
             frame_x = ", ".join(f"fx_{q}" for q in range(num_data))
             frame_z = ", ".join(f"fz_{q}" for q in range(num_data))
             body.append(
-                f"        syn = syndrome_extraction(surf, array({frame_x}), array({frame_z}))"
+                f"        syn = syndrome_extraction(surf, array({frame_x}), array({frame_z}))",
             )
         else:
             body.append("        syn = syndrome_extraction(surf)")
@@ -764,10 +769,10 @@ def _render_twirled_memory_block(
             body.append(f"        hi_{r}_{q} = (m_{r}_{q} == 2) | (m_{r}_{q} == 3)")
             if canonical_frame_output:
                 body.append(
-                    f"        twx_{r}_{q} = (m_{r}_{q} == 1) | (m_{r}_{q} == 2)"
+                    f"        twx_{r}_{q} = (m_{r}_{q} == 1) | (m_{r}_{q} == 2)",
                 )
                 body.append(
-                    f"        twz_{r}_{q} = (m_{r}_{q} == 2) | (m_{r}_{q} == 3)"
+                    f"        twz_{r}_{q} = (m_{r}_{q} == 2) | (m_{r}_{q} == 3)",
                 )
                 body.append(f"        fx_{q} = fx_{q} != twx_{r}_{q}")
                 body.append(f"        fz_{q} = fz_{q} != twz_{r}_{q}")
@@ -782,7 +787,7 @@ def _render_twirled_memory_block(
             frame_x = ", ".join(f"fx_{q}" for q in range(num_data))
             frame_z = ", ".join(f"fz_{q}" for q in range(num_data))
             body.append(
-                f"        syn = syndrome_extraction(surf, array({frame_x}), array({frame_z}))"
+                f"        syn = syndrome_extraction(surf, array({frame_x}), array({frame_z}))",
             )
         else:
             body.append("        syn = syndrome_extraction(surf)")
@@ -861,8 +866,9 @@ def _guppy_module_cache_key(
     base = f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}_b{effective_budget}"
     if twirl is None:
         return base
-    assert rng is not None
-    assert num_rounds is not None
+    if rng is None or num_rounds is None:
+        msg = "twirled Guppy module cache keys require both rng and num_rounds"
+        raise ValueError(msg)
     twirl_part = (
         f"t-{twirl.scheme}-{twirl.site_schedule}-{twirl.result_encoding}"
         f"-frame-{twirl.frame_output}"
@@ -893,6 +899,7 @@ def _load_guppy_module(
         ancilla_budget: Optional cap on simultaneously live ancillas
         twirl: Pauli-twirl-site declaration (structural)
         rng: Runtime mask RNG seed (must be supplied with ``twirl``)
+        num_rounds: Syndrome-round count for unrolled twirled source.
 
     Returns:
         Module dictionary with generated functions

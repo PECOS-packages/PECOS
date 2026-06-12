@@ -358,6 +358,36 @@ def test_from_circuit_accepts_biased_p2_weights() -> None:
     assert dem.num_contributions > 0
 
 
+def test_from_circuit_accepts_biased_p1_weights() -> None:
+    from pecos.qec import DetectorErrorModel
+
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [0, 0]}}],
+            "lowered_quantum_ops": [
+                {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "params": [], "measurement_result_ids": [0]},
+            ],
+        },
+    ]
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    tc.set_meta("detectors", '[{"id": 0, "records": [-1]}]')
+    tc.set_meta("observables", "[]")
+    tc.set_meta("num_measurements", "1")
+
+    dem = DetectorErrorModel.from_circuit(
+        tc,
+        p1=0.01,
+        p1_weights={"X": 1.0, "Y": 0.0, "Z": 0.0},
+        p2=0.0,
+        p_meas=0.0,
+        p_prep=0.0,
+    )
+
+    assert dem.num_contributions > 0
+
+
 def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
     """A trace where every quantum-carrying chunk is also lowered is accepted
     (this is the real Selene shape; the byte-identical regressions exercise it

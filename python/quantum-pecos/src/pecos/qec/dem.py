@@ -41,6 +41,7 @@ from typing import Any
 
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
+P1Weights = Mapping[str, float]
 P2Weights = Mapping[str, float]
 
 
@@ -59,6 +60,7 @@ class _DetectorErrorModelMixin:
         observables_json: str = "[]",
         num_measurements: int | None = None,
         p1: float = 0.001,
+        p1_weights: P1Weights | None = None,
         p2: float = 0.01,
         p2_weights: P2Weights | None = None,
         p2_replacement_approximation: str | None = None,
@@ -142,7 +144,10 @@ class _DetectorErrorModelMixin:
             num_measurements: Total measurement count, used to resolve negative
                 ``records`` offsets. If omitted, it is inferred from the traced
                 circuit; if given, it must match the traced count.
-            p1: Single-qubit gate depolarizing rate.
+            p1: Single-qubit gate Pauli error rate.
+            p1_weights: Optional relative probabilities over single-qubit
+                Pauli error labels ``"X"``, ``"Y"``, and ``"Z"``. Values must
+                sum to 1.0; ``p1`` remains the total single-qubit error rate.
             p2: Two-qubit gate depolarizing rate.
             p2_weights: Optional relative probabilities over two-qubit Pauli
                 error labels. Plain labels such as ``"XX"`` are post-gate
@@ -272,6 +277,7 @@ class _DetectorErrorModelMixin:
         return _RustDetectorErrorModel.from_circuit(
             tc,
             p1=p1,
+            p1_weights=p1_weights,
             p2=p2,
             p2_weights=p2_weights,
             p2_replacement_approximation=p2_replacement_approximation,

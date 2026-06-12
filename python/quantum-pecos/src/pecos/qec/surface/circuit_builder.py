@@ -2525,6 +2525,7 @@ def generate_dem_from_tick_circuit(
     tc: TickCircuit,
     *,
     p1: float = 0.01,
+    p1_weights: Mapping[str, float] | None = None,
     p2: float = 0.01,
     p2_weights: Mapping[str, float] | None = None,
     p_meas: float = 0.01,
@@ -2563,7 +2564,10 @@ def generate_dem_from_tick_circuit(
 
     Args:
         tc: TickCircuit with detector/observable metadata (required)
-        p1: Single-qubit depolarizing error rate
+        p1: Single-qubit Pauli error rate
+        p1_weights: Optional relative probabilities over single-qubit Pauli
+            errors (``X``, ``Y``, ``Z``). Values must sum to 1.0; ``p1``
+            remains the total single-qubit error rate.
         p2: Two-qubit depolarizing error rate
         p2_weights: Optional relative probabilities over the 15 non-identity
             two-qubit Pauli errors (``IX`` through ``ZZ``). Values must sum to
@@ -2623,6 +2627,7 @@ def generate_dem_from_tick_circuit(
         p2,
         p_meas,
         p_prep,
+        p1_weights=p1_weights,
         p2_weights=p2_weights,
         p_idle=p_idle,
         t1=t1,

@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
 
+P1Weights = Mapping[str, float] | Sequence[tuple[str, float]]
 P2Weights = Mapping[str, float] | Sequence[tuple[str, float]]
 
 
@@ -90,6 +91,9 @@ class NoiseModel:
 
     Attributes:
         p1: Single-qubit gate error rate.
+        p1_weights: Optional relative probabilities over single-qubit Pauli
+            error labels ``"X"``, ``"Y"``, and ``"Z"``. Values must sum to
+            1.0; ``p1`` remains the total single-qubit error rate.
         p2: Two-qubit gate error rate.
         p2_weights: Optional relative probabilities over two-qubit Pauli error
             labels. Plain labels such as ``"XX"`` are post-gate Pauli branches;
@@ -122,6 +126,7 @@ class NoiseModel:
     """
 
     p1: float = 0.0
+    p1_weights: P1Weights | None = None
     p2: float = 0.0
     p2_weights: P2Weights | None = None
     p2_replacement_approximation: str | None = None
@@ -141,6 +146,7 @@ class NoiseModel:
 
     def __post_init__(self) -> None:
         """Normalize cache-sensitive inputs after dataclass initialization."""
+        self.p1_weights = _normalize_p1_weights(self.p1_weights)
         self.p2_weights = _normalize_p2_weights(self.p2_weights)
 
     @property
@@ -193,11 +199,24 @@ class NoiseModel:
         return max(rates)
 
 
-def _normalize_p2_weights(p2_weights: P2Weights | None) -> tuple[tuple[str, float], ...] | None:
-    if p2_weights is None:
+def _normalize_pauli_weights(weights: P1Weights | P2Weights | None) -> tuple[tuple[str, float], ...] | None:
+    if weights is None:
         return None
-    items = p2_weights.items() if isinstance(p2_weights, Mapping) else p2_weights
+    items = weights.items() if isinstance(weights, Mapping) else weights
     return tuple(sorted((str(label).upper(), float(weight)) for label, weight in items))
+
+
+def _normalize_p1_weights(p1_weights: P1Weights | None) -> tuple[tuple[str, float], ...] | None:
+    return _normalize_pauli_weights(p1_weights)
+
+
+def _p1_weights_dict(p1_weights: P1Weights | None) -> dict[str, float] | None:
+    normalized = _normalize_p1_weights(p1_weights)
+    return None if normalized is None else dict(normalized)
+
+
+def _normalize_p2_weights(p2_weights: P2Weights | None) -> tuple[tuple[str, float], ...] | None:
+    return _normalize_pauli_weights(p2_weights)
 
 
 def _p2_weights_dict(p2_weights: P2Weights | None) -> dict[str, float] | None:
@@ -1554,6 +1573,7 @@ def _dem_string_from_cached_surface_topology(
         "p_idle_x_quadratic_rate": noise.p_idle_x_quadratic_rate,
         "p_idle_y_quadratic_rate": noise.p_idle_y_quadratic_rate,
         "p_idle_z_quadratic_rate": noise.p_idle_z_quadratic_rate,
+        "p1_weights": _p1_weights_dict(noise.p1_weights),
         "p2_weights": _p2_weights_dict(noise.p2_weights),
     }
     if noise.p2_replacement_approximation is not None:
@@ -1595,6 +1615,7 @@ def _cached_surface_native_dem_string(
     ancilla_budget: int | None,
     circuit_source: Literal["abstract", "traced_qis"],
     p1: float,
+    p1_weights: tuple[tuple[str, float], ...] | None,
     p2: float,
     p_meas: float,
     p_prep: float,
@@ -1639,6 +1660,7 @@ def _cached_surface_native_dem_string(
         topology,
         NoiseModel(
             p1=p1,
+            p1_weights=p1_weights,
             p2=p2,
             p2_weights=p2_weights,
             p2_replacement_approximation=p2_replacement_approximation,
@@ -1709,6 +1731,7 @@ def _build_native_sampler_from_cached_surface_topology(
                 p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
                 p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
                 p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+                p1_weights=_p1_weights_dict(noise.p1_weights),
                 p2_weights=_p2_weights_dict(noise.p2_weights),
                 p2_replacement_approximation=noise.p2_replacement_approximation,
             )
@@ -1813,6 +1836,7 @@ def generate_circuit_level_dem_from_builder(
         ancilla_budget,
         circuit_source,
         noise.p1,
+        noise.p1_weights,
         noise.p2,
         noise.p_meas,
         noise.p_prep,
@@ -3531,6 +3555,7 @@ def build_native_sampler(
             ancilla_budget,
             circuit_source,
             noise.p1,
+            noise.p1_weights,
             noise.p2,
             noise.p_meas,
             noise.p_prep,

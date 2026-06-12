@@ -1352,18 +1352,10 @@ def _build_surface_tick_circuit_for_native_model(
     if twirl is not None:
         twirl.validate_runtime_supported()
     interaction_basis = _normalize_interaction_basis(interaction_basis)
-    if interaction_basis != "cx":
-        if circuit_source == "traced_qis":
-            msg = (
-                "interaction_basis='szz' is not supported with circuit_source='traced_qis' "
-                "until the Guppy emitter stage"
-            )
-            raise ValueError(msg)
+    if interaction_basis != "cx" and circuit_source == "traced_qis":
         msg = (
-            "interaction_basis='szz' native detector/DEM/sampler support requires "
-            "Stage 2 class-2 stream-corrected detector validation; use "
-            "generate_tick_circuit_from_patch(..., add_detectors=False) for "
-            "Stage 1 structural rendering"
+            "interaction_basis='szz' is not supported with circuit_source='traced_qis' "
+            "until the Guppy emitter supports that basis"
         )
         raise ValueError(msg)
 
@@ -1657,6 +1649,7 @@ def _surface_native_topology(
     from pecos.qec.surface.circuit_builder import (
         _build_canonical_dem_influence_map,
         _extract_measurement_order,
+        _metadata_record_offsets,
         _metadata_uses_record_offsets,
         normalize_traced_qis_tick_circuit,
     )
@@ -1688,12 +1681,16 @@ def _surface_native_topology(
 
     detectors_json = tc.get_meta("detectors") or "[]"
     observables_json = tc.get_meta("observables") or "[]"
-    det_records = [d["records"] for d in json.loads(detectors_json)] if detectors_json else []
-    obs_records = [o["records"] for o in json.loads(observables_json)] if observables_json else []
     measurement_order = (
         tuple(_extract_measurement_order(tc)) if _metadata_uses_record_offsets(detectors_json, observables_json) else ()
     )
     num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
+    det_records = [
+        _metadata_record_offsets(detector, num_measurements) for detector in json.loads(detectors_json)
+    ] if detectors_json else []
+    obs_records = [
+        _metadata_record_offsets(observable, num_measurements) for observable in json.loads(observables_json)
+    ] if observables_json else []
 
     pauli_frame_lookup = None
     num_pauli_sites = 0

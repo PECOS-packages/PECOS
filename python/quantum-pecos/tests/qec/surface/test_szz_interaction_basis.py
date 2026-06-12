@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pecos as pc
 import pytest
-from pecos.qec.surface import SurfacePatch, TwirlConfig
+import stim
+from pecos.qec.surface import NoiseModel, SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     OpType,
     SzzTouchSign,
@@ -22,7 +25,7 @@ from pecos.qec.surface.circuit_builder import (
     generate_stim_from_patch,
     generate_tick_circuit_from_patch,
 )
-from pecos.qec.surface.decode import build_memory_circuit
+from pecos.qec.surface.decode import build_memory_circuit, generate_circuit_level_dem_from_builder
 
 
 def _to_numpy_complex(matrix: object) -> np.ndarray:
@@ -105,6 +108,37 @@ def _matrix_frame_update(
                 return ax, az, bx, bz
     msg = f"not a tensor-product Pauli up to phase:\n{after}"
     raise AssertionError(msg)
+
+
+def _record_parity(raw_records: np.ndarray, records: list[int]) -> np.ndarray:
+    num_measurements = raw_records.shape[1]
+    if not records:
+        return np.zeros(raw_records.shape[0], dtype=bool)
+    indices = [num_measurements + int(record) for record in records]
+    return np.bitwise_xor.reduce(raw_records[:, indices], axis=1)
+
+
+def _assert_noiseless_record_metadata_is_zero(stim_text: str, tick_circuit: object) -> None:
+    circuit = stim.Circuit(stim_text)
+    circuit.detector_error_model()
+
+    raw_records = circuit.compile_sampler(seed=20260612).sample(shots=32)
+    detectors = json.loads(tick_circuit.get_meta("detectors") or "[]")
+    observables = json.loads(tick_circuit.get_meta("observables") or "[]")
+
+    for detector in detectors:
+        assert not np.any(_record_parity(raw_records, detector["records"]))
+    for observable in observables:
+        assert not np.any(_record_parity(raw_records, observable["records"]))
+
+    det_samples, obs_samples = circuit.compile_detector_sampler(seed=20260612).sample(
+        shots=32,
+        separate_observables=True,
+    )
+    assert det_samples.shape == (32, circuit.num_detectors)
+    assert obs_samples.shape == (32, circuit.num_observables)
+    assert not np.any(det_samples)
+    assert not np.any(obs_samples)
 
 
 def test_szz_unitary_identities() -> None:
@@ -204,6 +238,12 @@ def test_szz_builder_emits_szz_template_and_rejects_stage_later_features() -> No
     op_types = {op.op_type for op in szz_ops}
     assert OpType.CX not in op_types
     assert {OpType.SZZ, OpType.SZZDG, OpType.SX, OpType.SXDG, OpType.SZ, OpType.SZDG} <= op_types
+    szz_gate_count = sum(op.op_type in {OpType.SZZ, OpType.SZZDG} for op in szz_ops)
+    data_compensation_count = sum(
+        op.label.startswith("szz_touch_comp:") and op.op_type in {OpType.SX, OpType.SXDG, OpType.SZ, OpType.SZDG}
+        for op in szz_ops
+    )
+    assert data_compensation_count == szz_gate_count
 
     with pytest.raises(ValueError, match="does not yet support constrained ancilla budgets"):
         build_surface_code_circuit(patch, num_rounds=1, ancilla_budget=1, interaction_basis="szz")
@@ -256,14 +296,65 @@ def test_szz_direct_renderers_accept_interaction_basis() -> None:
     assert {"SZZ", "SZZdg", "SX", "SXdg", "SZ", "SZdg"} <= gate_names
 
 
-def test_szz_detector_paths_reject_until_stage2() -> None:
+def test_szz_detector_paths_accept_abstract_basis_and_reject_traced_qis() -> None:
     patch = SurfacePatch.create(distance=3)
 
-    with pytest.raises(ValueError, match="detector annotations require Stage 2"):
-        generate_stim_from_patch(patch, num_rounds=1, interaction_basis="szz")
+    stim_text = generate_stim_from_patch(patch, num_rounds=1, interaction_basis="szz")
+    assert "DETECTOR" in stim_text
 
-    with pytest.raises(ValueError, match="detector annotations require Stage 2"):
-        generate_tick_circuit_from_patch(patch, num_rounds=1, interaction_basis="szz")
+    tick_circuit = generate_tick_circuit_from_patch(patch, num_rounds=1, interaction_basis="szz")
+    assert int(tick_circuit.get_meta("num_detectors")) > 0
 
-    with pytest.raises(ValueError, match="native detector/DEM/sampler support requires Stage 2"):
-        build_memory_circuit(patch=patch, rounds=1, interaction_basis="szz")
+    memory_circuit = build_memory_circuit(patch=patch, rounds=1, interaction_basis="szz")
+    assert int(memory_circuit.get_meta("num_detectors")) == int(tick_circuit.get_meta("num_detectors"))
+
+    with pytest.raises(ValueError, match="circuit_source='traced_qis'"):
+        build_memory_circuit(
+            patch=patch,
+            rounds=1,
+            circuit_source="traced_qis",
+            interaction_basis="szz",
+        )
+
+
+@pytest.mark.parametrize("distance", [3, 5])
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_szz_noiseless_detector_record_equivalence(distance: int, basis: str) -> None:
+    patch = SurfacePatch.create(distance=distance)
+
+    cx_text = generate_stim_from_patch(patch, num_rounds=3, basis=basis, interaction_basis="cx")
+    szz_text = generate_stim_from_patch(patch, num_rounds=3, basis=basis, interaction_basis="szz")
+    cx_tick = generate_tick_circuit_from_patch(patch, num_rounds=3, basis=basis, interaction_basis="cx")
+    szz_tick = generate_tick_circuit_from_patch(patch, num_rounds=3, basis=basis, interaction_basis="szz")
+
+    cx_circuit = stim.Circuit(cx_text)
+    szz_circuit = stim.Circuit(szz_text)
+    assert cx_circuit.num_measurements == szz_circuit.num_measurements
+    assert cx_circuit.num_detectors == szz_circuit.num_detectors
+    assert cx_circuit.num_observables == szz_circuit.num_observables
+    assert cx_tick.get_meta("detectors") == szz_tick.get_meta("detectors")
+    assert cx_tick.get_meta("observables") == szz_tick.get_meta("observables")
+
+    _assert_noiseless_record_metadata_is_zero(cx_text, cx_tick)
+    _assert_noiseless_record_metadata_is_zero(szz_text, szz_tick)
+
+
+def test_szz_native_dem_path_uses_interaction_basis() -> None:
+    patch = SurfacePatch.create(distance=3)
+    noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)
+
+    cx_dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=noise,
+        interaction_basis="cx",
+    )
+    szz_dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=noise,
+        interaction_basis="szz",
+    )
+
+    assert cx_dem != szz_dem
+    assert stim.DetectorErrorModel(szz_dem).num_detectors > 0

@@ -18,6 +18,16 @@ class _TickCircuitLike(Protocol):
         ...
 
 
+def _record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
+    records = entry.get("records")
+    if records is not None:
+        return [int(record) for record in records]  # type: ignore[union-attr]
+    meas_ids = entry.get("meas_ids")
+    if meas_ids is not None:
+        return [int(meas_id) - num_measurements for meas_id in meas_ids]  # type: ignore[union-attr]
+    return []
+
+
 def extract_detection_events_and_observables(
     tick_circuit: _TickCircuitLike,
     results: Iterable[Sequence[int]],
@@ -52,7 +62,7 @@ def extract_detection_events_and_observables(
         fired_detectors: list[int] = []
         for det_idx, det in enumerate(detectors):
             val = 0
-            for rec in det["records"]:
+            for rec in _record_offsets(det, num_meas):
                 idx = num_meas + rec
                 if 0 <= idx < num_meas:
                     val ^= int(row[idx])
@@ -63,7 +73,7 @@ def extract_detection_events_and_observables(
         flipped_observables: list[int] = []
         for obs_idx, obs in enumerate(observables):
             val = 0
-            for rec in obs["records"]:
+            for rec in _record_offsets(obs, num_meas):
                 idx = num_meas + rec
                 if 0 <= idx < num_meas:
                     val ^= int(row[idx])

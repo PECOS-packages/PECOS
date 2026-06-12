@@ -407,8 +407,8 @@ def build_surface_code_circuit(
             immediately before each surface-memory two-qubit gate.
         interaction_basis: Surface-memory two-qubit interaction basis.
             ``"cx"`` preserves the existing CNOT extraction circuit. ``"szz"``
-            emits the direct-renderer SZZ/SZZdg abstract template; v1 rejects
-            ancilla reuse and twirl integration until the later stage gates.
+            emits the direct-renderer SZZ/SZZdg abstract template with local
+            data-qubit compensation.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -808,21 +808,26 @@ def _build_surface_code_circuit_szz(
     cnot_rounds: list[list[tuple[str, int, int]]],
     residual_plan: SzzResidualPlan,
 ) -> list[SurfaceCircuitStep]:
-    """Build the Stage-1 abstract SZZ/SZZdg surface-memory template."""
+    """Build the abstract SZZ/SZZdg surface-memory template."""
     geom = patch.geometry
     num_data = geom.num_data
     sign_by_touch = {
         (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): entry.sign for entry in residual_plan.signs
     }
-    compensation_by_touch = {
-        (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): entry.gate
-        for entry in residual_plan.boundary_compensations
+    data_compensation_by_touch = {
+        (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): {
+            ("X", 1): OpType.SXDG,
+            ("X", -1): OpType.SX,
+            ("Z", 1): OpType.SZDG,
+            ("Z", -1): OpType.SZ,
+        }[(entry.stabilizer_type, entry.sign)]
+        for entry in residual_plan.signs
     }
-    gate_by_name = {
-        "SX": OpType.SX,
-        "SXDG": OpType.SXDG,
-        "SZ": OpType.SZ,
-        "SZDG": OpType.SZDG,
+    gate_name_by_type = {
+        OpType.SX: "SX",
+        OpType.SXDG: "SXDG",
+        OpType.SZ: "SZ",
+        OpType.SZDG: "SZDG",
     }
 
     def data_q(i: int) -> int:
@@ -865,14 +870,12 @@ def _build_surface_code_circuit_szz(
             target_ops.append(SurfaceCircuitStep(OpType.H, [data_q(data_idx)], f"szz_x_touch_post_d{data_idx}"))
 
         for stab_type, stab_idx, data_idx in layer_gates:
-            compensation = compensation_by_touch.get((stab_type, stab_idx, data_idx))
-            if compensation is None:
-                continue
+            compensation = data_compensation_by_touch[(stab_type, stab_idx, data_idx)]
             target_ops.append(
                 SurfaceCircuitStep(
-                    gate_by_name[compensation],
+                    compensation,
                     [data_q(data_idx)],
-                    f"szz_boundary_comp:{compensation}:{stab_type}{stab_idx}:d{data_idx}",
+                    f"szz_touch_comp:{gate_name_by_type[compensation]}:{stab_type}{stab_idx}:d{data_idx}",
                 ),
             )
 
@@ -2156,13 +2159,6 @@ def generate_stim_from_patch(
         Stim circuit string
     """
     interaction_basis = _normalize_interaction_basis(interaction_basis)
-    if interaction_basis == "szz" and add_detectors:
-        msg = (
-            "interaction_basis='szz' detector annotations require Stage 2 "
-            "class-2 stream correction; pass add_detectors=False for Stage 1 "
-            "structural gate rendering"
-        )
-        raise ValueError(msg)
     ops, allocation = build_surface_code_circuit(
         patch,
         num_rounds,
@@ -2276,13 +2272,6 @@ def generate_tick_circuit_from_patch(
         PECOS TickCircuit instance
     """
     interaction_basis = _normalize_interaction_basis(interaction_basis)
-    if interaction_basis == "szz" and add_detectors:
-        msg = (
-            "interaction_basis='szz' detector annotations require Stage 2 "
-            "class-2 stream correction; pass add_detectors=False for Stage 1 "
-            "structural gate rendering"
-        )
-        raise ValueError(msg)
     ops, allocation = build_surface_code_circuit(
         patch,
         num_rounds,
@@ -2542,6 +2531,7 @@ def tick_circuit_to_stim(
         "SZZ": ("SQRT_ZZ", "two"),
         "SZZdg": ("SQRT_ZZ_DAG", "two"),
         "MZ": ("M", "measure"),
+        "MeasureFree": ("M", "measure"),
         "PZ": ("R", "prep"),
         "QAlloc": ("R", "prep"),
     }
@@ -2661,9 +2651,10 @@ def tick_circuit_to_stim(
     detectors_json = tc.get_meta("detectors")
     if detectors_json:
         detectors = json.loads(detectors_json)
+        num_measurements = int(tc.get_meta("num_measurements") or "0")
         for det in detectors:
             coords = det["coords"]
-            records = det["records"]
+            records = _metadata_record_offsets(det, num_measurements)
             coord_str = ", ".join(str(c) for c in coords)
             record_str = " ".join(f"rec[{r}]" for r in records)
             lines.append(f"DETECTOR({coord_str}) {record_str}")
@@ -2672,9 +2663,10 @@ def tick_circuit_to_stim(
     observables_json = tc.get_meta("observables")
     if observables_json:
         observables = json.loads(observables_json)
+        num_measurements = int(tc.get_meta("num_measurements") or "0")
         for obs in observables:
             obs_id = obs["id"]
-            records = obs["records"]
+            records = _metadata_record_offsets(obs, num_measurements)
             record_str = " ".join(f"rec[{r}]" for r in records)
             lines.append(f"OBSERVABLE_INCLUDE({obs_id}) {record_str}")
 
@@ -2772,14 +2764,14 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     meas_to_detectors: dict[int, list[int]] = defaultdict(list)
     for det in detectors:
         det_id = det["id"]
-        for rec in det["records"]:
+        for rec in _metadata_record_offsets(det, num_measurements):
             abs_meas = num_measurements + rec  # rec is negative
             meas_to_detectors[abs_meas].append(det_id)
 
     meas_to_observables: dict[int, list[int]] = defaultdict(list)
     for obs in observables:
         obs_id = obs["id"]
-        for rec in obs["records"]:
+        for rec in _metadata_record_offsets(obs, num_measurements):
             abs_meas = num_measurements + rec
             meas_to_observables[abs_meas].append(obs_id)
 
@@ -3160,24 +3152,25 @@ def _maximally_decompose_graphlike_dem(dem_text: str) -> str:
     return "\n".join(rewritten_lines)
 
 
-def _build_canonical_dem_influence_map(dag: DagCircuit) -> object:
-    """Build the influence map used by the canonical Rust DEM builder.
-
-    `DagFaultAnalyzer` supplies the detector influence map. Observable and
-    tracked-Pauli annotations need positional propagation from
-    `InfluenceBuilder`; merging those non-detector outputs keeps this legacy
-    surface helper aligned with `DetectorErrorModel.from_circuit`.
-    """
-    from pecos.qec import DagFaultAnalyzer, InfluenceBuilder
+def _build_canonical_dem_influence_map(
+    dag: DagCircuit,
+    *,
+    include_circuit_annotations: bool = False,
+) -> object:
+    """Build the influence map used by the metadata-driven Rust DEM builder."""
+    from pecos.qec import DagFaultAnalyzer
 
     analyzer = DagFaultAnalyzer(dag)
     influence_map = analyzer.build_influence_map()
-    annotation_builder = InfluenceBuilder(dag)
-    annotation_builder.with_circuit_annotations()
-    annotation_map = annotation_builder.build()
-    merge_dem_outputs = getattr(influence_map, "merge_dem_outputs_from", None)
-    if merge_dem_outputs is not None:
-        merge_dem_outputs(annotation_map)
+    if include_circuit_annotations:
+        from pecos.qec import InfluenceBuilder
+
+        annotation_builder = InfluenceBuilder(dag)
+        annotation_builder.with_circuit_annotations()
+        annotation_map = annotation_builder.build()
+        merge_dem_outputs = getattr(influence_map, "merge_dem_outputs_from", None)
+        if merge_dem_outputs is not None:
+            merge_dem_outputs(annotation_map)
     return influence_map
 
 
@@ -3192,6 +3185,19 @@ def _metadata_uses_record_offsets(*metadata_jsons: str | None) -> bool:
             if entry.get("records"):
                 return True
     return False
+
+
+def _metadata_record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
+    """Return Stim-style negative record offsets for a metadata entry."""
+    records = entry.get("records")
+    if records is not None:
+        return [int(record) for record in records]  # type: ignore[union-attr]
+
+    meas_ids = entry.get("meas_ids")
+    if meas_ids is not None:
+        return [int(meas_id) - num_measurements for meas_id in meas_ids]  # type: ignore[union-attr]
+
+    return []
 
 
 def generate_dem_from_tick_circuit(
@@ -3327,6 +3333,8 @@ def generate_dem_from_tick_circuit(
         p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
     )
+    if hasattr(builder, "with_exact_branch_replay_circuit"):
+        builder = builder.with_exact_branch_replay_circuit(dag)
     builder.with_num_measurements(num_measurements)
     if metadata_uses_records:
         builder.with_measurement_order(measurement_order)

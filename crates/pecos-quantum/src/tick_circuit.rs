@@ -2297,6 +2297,17 @@ impl TickCircuit {
         }
 
         for tick in &mut self.ticks {
+            // Metadata-only ticks are zero-duration bookkeeping markers.
+            // They preserve annotation order but must not create physical idle
+            // periods on qubits outside the metadata payload.
+            if !tick.is_empty()
+                && tick
+                    .gate_batches()
+                    .iter()
+                    .all(|gate| gate.gate_type.is_meta())
+            {
+                continue;
+            }
             let active = tick.active_qubits();
             for &q in &all_qubits {
                 if !active.contains(&q) {
@@ -6137,6 +6148,31 @@ mod tests {
 
         // Tick 0: qubit 1 was idle, should get an idle gate
         assert!(count_after > count_before, "Should have added idle gates");
+    }
+
+    #[test]
+    fn test_fill_idle_gates_skips_tracked_pauli_meta_ticks() {
+        use pecos_core::pauli::X;
+
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0, 1]);
+        tc.tracked_pauli_labeled("frame_marker", X(0));
+        tc.tick().h(&[0, 1]);
+
+        tc.fill_idle_gates();
+
+        let meta_tick = tc
+            .ticks()
+            .iter()
+            .find(|tick| {
+                tick.gate_batches()
+                    .iter()
+                    .any(|gate| gate.gate_type == GateType::TrackedPauliMeta)
+            })
+            .expect("tracked-Pauli meta tick");
+
+        assert_eq!(meta_tick.len(), 1);
+        assert!(meta_tick.gate_batches()[0].gate_type.is_meta());
     }
 
     #[test]

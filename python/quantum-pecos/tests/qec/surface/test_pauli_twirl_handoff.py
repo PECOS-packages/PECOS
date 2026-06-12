@@ -210,6 +210,43 @@ def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
     assert obs_flips.shape == (2, sampler.num_observables)
 
 
+@pytest.mark.parametrize(
+    ("label", "noise"),
+    [
+        ("depolarizing", NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)),
+        ("uniform_idle", NoiseModel(p_idle=0.002)),
+        ("t1_t2", NoiseModel(t1=1000.0, t2=800.0)),
+        ("linear_idle", NoiseModel(p_idle_linear_rate=0.001)),
+        ("quadratic_idle", NoiseModel(p_idle_quadratic_rate=0.01)),
+        ("sine_law_idle", NoiseModel(p_idle_x_quadratic_sine_rate=0.03)),
+    ],
+)
+def test_twirling_does_not_change_canonical_dem(
+    label: str,
+    noise: NoiseModel,
+) -> None:
+    del label
+    patch = SurfacePatch.create(distance=3)
+
+    untwirled = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=noise,
+        basis="Z",
+        decompose_errors=True,
+    )
+    twirled = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=noise,
+        basis="Z",
+        decompose_errors=True,
+        twirl=TwirlConfig(),
+    )
+
+    assert twirled == untwirled
+
+
 def test_surface_traced_qis_rejects_twirl_with_semantic_message() -> None:
     patch = SurfacePatch.create(distance=3)
 

@@ -18,10 +18,13 @@ from pecos.qec.surface._twirl_sites import (
     num_pauli_sites,
     num_pauli_sites_for_schedule,
     num_two_qubit_gate_twirl_sites,
+    pauli_active_gate_tag,
+    pauli_active_round_tag,
     pauli_mask_gate_tag,
     pauli_mask_round_tag,
 )
 from pecos.qec.surface.decode import (
+    _extract_pauli_activations_from_results,
     _extract_pauli_masks_from_results,
     generate_circuit_level_dem_from_builder,
 )
@@ -46,6 +49,54 @@ def test_extract_pauli_masks_packs_bits_in_row_major_site_qubit_order() -> None:
     assert mask[0, mask_col_for(0, 1, 2)] == 3
     assert mask[0, mask_col_for(1, 0, 2)] == 2
     assert mask[0, mask_col_for(1, 1, 2)] == 0
+
+
+def test_extract_scaled_round_twirl_requires_and_validates_activation_tags() -> None:
+    scaled = TwirlConfig(twirl_probability=0.5)
+    results = {
+        pauli_mask_round_tag(0): [[1, 0, 0, 0]],
+        pauli_active_round_tag(0): [[True, False]],
+    }
+
+    mask = _extract_pauli_masks_from_results(
+        results,
+        num_rounds=2,
+        num_data=2,
+        num_shots=1,
+        twirl=scaled,
+    )
+    active = _extract_pauli_activations_from_results(
+        results,
+        num_rounds=2,
+        num_data=2,
+        num_shots=1,
+        twirl=scaled,
+    )
+
+    assert mask.tolist() == [[1, 0]]
+    assert active.tolist() == [[True, False]]
+
+    with pytest.raises(ValueError, match="missing Pauli-activation result tag"):
+        _extract_pauli_masks_from_results(
+            {pauli_mask_round_tag(0): [[0, 0, 0, 0]]},
+            num_rounds=2,
+            num_data=2,
+            num_shots=1,
+            twirl=scaled,
+        )
+
+    malformed = {
+        pauli_mask_round_tag(0): [[1, 0, 0, 0]],
+        pauli_active_round_tag(0): [[False, True]],
+    }
+    with pytest.raises(ValueError, match="inactive round site recorded a non-identity"):
+        _extract_pauli_masks_from_results(
+            malformed,
+            num_rounds=2,
+            num_data=2,
+            num_shots=1,
+            twirl=scaled,
+        )
 
 
 def test_extract_pauli_masks_rejects_missing_or_misshaped_tags() -> None:
@@ -91,6 +142,34 @@ def test_extract_gate_local_pauli_masks_packs_operand_order() -> None:
     )
     assert mask[0, mask_col_for_gate_operand(0, 0)] == 1
     assert mask[0, mask_col_for_gate_operand(0, 1)] == 2
+
+
+def test_extract_scaled_gate_local_twirl_validates_activation_tags() -> None:
+    patch = SurfacePatch.create(distance=3)
+    twirl = TwirlConfig(site_schedule="before_two_qubit_gate", twirl_probability=0.5)
+    results = {
+        pauli_mask_gate_tag(site): [[0, 0, 0, 0]]
+        for site in range(num_two_qubit_gate_twirl_sites(patch, num_rounds=1, basis="Z"))
+    }
+    results.update(
+        {
+            pauli_active_gate_tag(site): [[True, True]]
+            for site in range(num_two_qubit_gate_twirl_sites(patch, num_rounds=1, basis="Z"))
+        },
+    )
+    results[pauli_mask_gate_tag(0)] = [[1, 0, 0, 0]]
+    results[pauli_active_gate_tag(0)] = [[False, True]]
+
+    with pytest.raises(ValueError, match="inactive gate-local site recorded a non-identity"):
+        _extract_pauli_masks_from_results(
+            results,
+            num_rounds=1,
+            num_data=patch.geometry.num_data,
+            num_shots=1,
+            patch=patch,
+            basis="Z",
+            twirl=twirl,
+        )
 
 
 def test_demask_helper_cancels_known_pauli_frame_xor() -> None:
@@ -165,12 +244,24 @@ def test_canonical_frame_output_reuses_raw_abstract_sampler_topology() -> None:
         basis="Z",
         twirl=TwirlConfig(frame_output="canonical"),
     )
+    scaled = build_native_sampler(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(),
+        basis="Z",
+        twirl=TwirlConfig(twirl_probability=0.5),
+    )
 
     assert canonical.num_detectors == raw.num_detectors
     assert canonical.num_observables == raw.num_observables
     assert canonical.num_pauli_sites == raw.num_pauli_sites
     assert canonical.pauli_frame_lookup is raw.pauli_frame_lookup
     assert canonical.dem_string == raw.dem_string
+    assert scaled.num_detectors == raw.num_detectors
+    assert scaled.num_observables == raw.num_observables
+    assert scaled.num_pauli_sites == raw.num_pauli_sites
+    assert scaled.pauli_frame_lookup is raw.pauli_frame_lookup
+    assert scaled.dem_string == raw.dem_string
 
 
 @pytest.mark.parametrize(
@@ -180,11 +271,13 @@ def test_canonical_frame_output_reuses_raw_abstract_sampler_topology() -> None:
         ("site_schedule", "per_two_qubit_gate"),
         ("result_encoding", "bogus"),
         ("frame_output", "physical"),
+        ("twirl_probability", -0.1),
+        ("twirl_probability", 1.1),
     ],
 )
 def test_abstract_twirl_builders_reject_unsupported_config(
     field: str,
-    value: str,
+    value: object,
 ) -> None:
     patch = SurfacePatch.create(distance=3)
     kwargs = {field: value}
@@ -400,25 +493,27 @@ def test_raw_twirled_guppy_trace_result_provenance_ignores_sideband_tags() -> No
 
     patch = SurfacePatch.create(distance=3)
     num_rounds = 2
+    twirl = TwirlConfig(twirl_probability=0.5)
     program = generate_memory_experiment(
         patch,
         num_rounds=num_rounds,
         basis="Z",
-        twirl=TwirlConfig(),
+        twirl=twirl,
         rng=GuppyRngMaskConfig(seed=0),
     )
     _, result_traces = trace_guppy_into_tick_circuit_with_result_traces(
         program,
-        get_num_qubits(patch=patch, twirl=TwirlConfig()),
+        get_num_qubits(patch=patch, twirl=twirl),
         seed=0,
     )
 
     sideband_names = {trace.get("name") for trace in result_traces if isinstance(trace.get("name"), str)}
     assert any(str(name).startswith("pauli_mask:") for name in sideband_names)
+    assert any(str(name).startswith("pauli_active:") for name in sideband_names)
     assert "frame_mode:raw" in sideband_names
 
     scalar_trace_ids, array_trace_ids = _index_surface_result_trace_ids(result_traces)
     indexed_names = set(scalar_trace_ids) | set(array_trace_ids)
     assert any(name.startswith("sx") and ":meas:" in name for name in indexed_names)
     assert "final" in indexed_names
-    assert not any(name.startswith(("pauli_mask:", "frame_mode:", "raw:")) for name in indexed_names)
+    assert not any(name.startswith(("pauli_mask:", "pauli_active:", "frame_mode:", "raw:")) for name in indexed_names)

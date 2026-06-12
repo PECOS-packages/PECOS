@@ -44,6 +44,7 @@ Encoding contract for the runtime mask (``"bool_array_v1"``):
   ``(site, qubit)`` order so the output columns match the abstract
   ``PauliFrameLookup`` byte-for-byte.
 - Side-band result tags emitted by twirl support (`pauli_mask:*`,
+  `pauli_active:*`,
   `frame_mode:*`, `raw:*`) are not detector-bearing measurement tags.
   They must never contain ``":meas:"`` and must never be exactly
   ``"final"``; handoff result-provenance code treats only the surface
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
 # call per twirl site so each tag fires exactly once per shot (avoids the
 # same-tag-multi-call overwrite trap in `ShotVec.to_dict()`).
 PAULI_MASK_TAG_PREFIX = "pauli_mask"
+PAULI_ACTIVE_TAG_PREFIX = "pauli_active"
 
 # Backwards-compatible alias for callers that constructed the bare tag.
 PAULI_MASK_TAG = PAULI_MASK_TAG_PREFIX
@@ -81,6 +83,16 @@ def pauli_mask_round_tag(round_idx: int) -> str:
 def pauli_mask_gate_tag(site_idx: int) -> str:
     """Return the canonical per-two-qubit-gate twirl-mask result tag."""
     return f"{PAULI_MASK_TAG_PREFIX}:gate:{site_idx}"
+
+
+def pauli_active_round_tag(round_idx: int) -> str:
+    """Return the canonical per-round twirl-activation result tag."""
+    return f"{PAULI_ACTIVE_TAG_PREFIX}:round:{round_idx}"
+
+
+def pauli_active_gate_tag(site_idx: int) -> str:
+    """Return the canonical per-two-qubit-gate activation result tag."""
+    return f"{PAULI_ACTIVE_TAG_PREFIX}:gate:{site_idx}"
 
 
 def num_twirl_sites(num_rounds: int) -> int:

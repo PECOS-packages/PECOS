@@ -10,7 +10,12 @@ from pecos.guppy.surface import (
     generate_memory_experiment,
 )
 from pecos.qec.surface import GuppyRngMaskConfig, TwirlConfig
-from pecos.qec.surface._twirl_sites import pauli_mask_gate_tag, pauli_mask_round_tag
+from pecos.qec.surface._twirl_sites import (
+    pauli_active_gate_tag,
+    pauli_active_round_tag,
+    pauli_mask_gate_tag,
+    pauli_mask_round_tag,
+)
 from pecos.qec.surface.patch import SurfacePatch
 
 
@@ -38,13 +43,18 @@ def test_twirl_source_unrolls_rng_masks_and_runtime_paulis(patch: SurfacePatch) 
         num_rounds=3,
     )
 
+    assert "def _pcg32_next32(state: nat, inc: nat) -> tuple[nat, nat]:" in src
     assert "def _pcg32_next4(state: nat, inc: nat) -> tuple[nat, int]:" in src
     assert "def seeded_pcg32_with_quantum_entropy(seed: int) -> tuple[nat, nat]:" in src
     assert "entropy_q = qubit()" in src
     assert "if measure(entropy_q):" in src
     assert src.count("rng_state, rng_inc = seeded_pcg32_with_quantum_entropy(42)") == 2
     assert src.count('result("frame_mode:raw", True)') == 2
-    assert "rng_state, m_0_0 = _pcg32_next4(rng_state, rng_inc)" in src
+    assert "rng_state, active_draw_m_0_0 = _pcg32_next32(rng_state, rng_inc)" in src
+    assert "active_0_0 = active_draw_m_0_0 < nat(4294967296)" in src
+    assert "rng_state, m_draw_0_0 = _pcg32_next4(rng_state, rng_inc)" in src
+    assert "if active_0_0:" in src
+    assert "    m_0_0 = m_draw_0_0" in src
     assert "if m_0_0 == 1:" in src
     assert "    x(surf.data[0])" in src
     assert "if m_0_0 == 2:" in src
@@ -54,7 +64,21 @@ def test_twirl_source_unrolls_rng_masks_and_runtime_paulis(patch: SurfacePatch) 
 
     for r in range(2):
         assert src.count(f'result("{pauli_mask_round_tag(r)}"') == 2
+        assert f'result("{pauli_active_round_tag(r)}"' not in src
     assert src.count("# === Round 2 (final, no twirl after) ===") == 2
+
+
+def test_scaled_twirl_source_emits_activation_tags_and_threshold(patch: SurfacePatch) -> None:
+    src = generate_guppy_source(
+        patch,
+        twirl=TwirlConfig(twirl_probability=0.5),
+        rng=GuppyRngMaskConfig(seed=42),
+        num_rounds=2,
+    )
+
+    assert "active_0_0 = active_draw_m_0_0 < nat(2147483648)" in src
+    assert "rng_state, m_draw_0_0 = _pcg32_next4(rng_state, rng_inc)" in src
+    assert f'result("{pauli_active_round_tag(0)}", array(active_0_0' in src
 
 
 def test_canonical_frame_output_emits_raw_sibling_tags(patch: SurfacePatch) -> None:
@@ -87,13 +111,26 @@ def test_gate_local_twirl_source_emits_gate_tags_and_ancilla_frame_tracking(
 
     assert 'result("frame_mode:canonical", True)' in src
     assert f'result("{pauli_mask_gate_tag(0)}", array(' in src
-    assert "rng_state, m_g0_o0 = _pcg32_next4(rng_state, rng_inc)" in src
+    assert "rng_state, active_draw_m_g0_o0 = _pcg32_next32(rng_state, rng_inc)" in src
+    assert "rng_state, m_draw_g0_o0 = _pcg32_next4(rng_state, rng_inc)" in src
     assert "x(ax" in src
     assert "x(surf.data[" in src
     assert "frame_x_ax" in src
     assert "frame_z_az" in src
     assert "raw:sx" in src
     assert 'result("pauli_mask:round:' not in src
+
+
+def test_scaled_gate_local_source_emits_activation_tags(patch: SurfacePatch) -> None:
+    src = generate_guppy_source(
+        patch,
+        twirl=TwirlConfig(site_schedule="before_two_qubit_gate", twirl_probability=0.25),
+        rng=GuppyRngMaskConfig(seed=7),
+        num_rounds=1,
+    )
+
+    assert "active_g0_o0 = active_draw_m_g0_o0 < nat(1073741824)" in src
+    assert f'result("{pauli_active_gate_tag(0)}", array(active_g0_o0, active_g0_o1))' in src
 
 
 def test_twirl_validation_requires_rng_and_num_rounds(patch: SurfacePatch) -> None:
@@ -145,14 +182,24 @@ def test_twirled_cache_key_includes_seed_rounds_and_frame_mode(patch: SurfacePat
         rng=GuppyRngMaskConfig(seed=1),
         num_rounds=2,
     )
+    scaled = _guppy_module_cache_key(
+        patch,
+        effective_budget=10,
+        twirl=TwirlConfig(twirl_probability=0.5),
+        rng=GuppyRngMaskConfig(seed=1),
+        num_rounds=2,
+    )
 
     assert raw != _guppy_module_cache_key(patch, effective_budget=10)
     assert raw != raw_seed2
     assert raw != canonical
     assert raw != round3
     assert raw != gate_local
+    assert raw != scaled
     assert "s1" in raw
     assert "s2" in raw_seed2
+    assert "p4294967296" in raw
+    assert "p2147483648" in scaled
     assert "frame-raw" in raw
     assert "frame-canonical" in canonical
     assert "before_two_qubit_gate" in gate_local

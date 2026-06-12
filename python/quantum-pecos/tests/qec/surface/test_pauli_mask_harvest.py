@@ -12,10 +12,11 @@ from pecos.qec.surface import (
     decode_native_samples,
     demask_pauli_frame_records,
     extract_detection_events_and_observables,
+    sample_pauli_activations_from_guppy,
     sample_pauli_masks_from_guppy,
 )
 from pecos.qec.surface._twirl_sites import num_pauli_sites, num_pauli_sites_for_schedule
-from pecos.qec.surface.decode import _extract_pauli_masks_from_results
+from pecos.qec.surface.decode import _extract_pauli_activations_from_results, _extract_pauli_masks_from_results
 
 pytest.importorskip("guppylang")
 pytest.importorskip("selene_sim")
@@ -120,7 +121,7 @@ def _run_twirled_guppy_rows_masks_and_raw(
         name=f"pauli_twirl_null_d{patch.geometry.dx}_r{num_rounds}_{basis.lower()}",
     )
 
-    mask_results: dict[str, list[list[int]]] = {}
+    sideband_results: dict[str, list[list[int]]] = {}
     measurement_rows: list[list[int]] = []
     raw_rows: list[list[int]] = []
     frame_modes: list[str] = []
@@ -143,8 +144,8 @@ def _run_twirled_guppy_rows_masks_and_raw(
             except TypeError:
                 shot_value = [values]
 
-            if name.startswith("pauli_mask:"):
-                mask_results.setdefault(name, []).append([int(v) for v in shot_value])
+            if name.startswith(("pauli_mask:", "pauli_active:")):
+                sideband_results.setdefault(name, []).append([int(v) for v in shot_value])
             elif name.startswith("frame_mode:"):
                 assert len(shot_value) == 1
                 assert bool(shot_value[0])
@@ -178,7 +179,7 @@ def _run_twirled_guppy_rows_masks_and_raw(
         frame_modes.append(frame_mode)
 
     masks = _extract_pauli_masks_from_results(
-        mask_results,
+        sideband_results,
         num_rounds=num_rounds,
         num_data=patch.geometry.num_data,
         num_shots=num_shots,
@@ -187,6 +188,70 @@ def _run_twirled_guppy_rows_masks_and_raw(
         twirl=twirl,
     )
     return measurement_rows, masks, raw_rows, frame_modes
+
+
+def _sample_twirled_guppy_masks_and_activations(
+    patch: SurfacePatch,
+    *,
+    basis: str,
+    num_rounds: int,
+    num_shots: int,
+    rng: GuppyRngMaskConfig,
+    twirl: TwirlConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    from pecos.compilation_pipeline import compile_guppy_to_hugr
+    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+    from selene_sim import SimpleRuntime, Stim, build
+
+    fn = generate_memory_experiment(
+        patch,
+        num_rounds=num_rounds,
+        basis=basis,
+        twirl=twirl,
+        rng=rng,
+    )
+    hugr_bytes = compile_guppy_to_hugr(fn)
+    instance = build(
+        hugr_bytes,
+        name=f"pauli_twirl_active_d{patch.geometry.dx}_r{num_rounds}_{basis.lower()}",
+    )
+
+    sideband_results: dict[str, list[list[int]]] = {}
+    for shot_results in instance.run_shots(
+        simulator=Stim(random_seed=int(rng.seed)),
+        n_qubits=get_num_qubits(patch=patch, twirl=twirl),
+        n_shots=num_shots,
+        runtime=SimpleRuntime(),
+        n_processes=1,
+    ):
+        for name, values in shot_results:
+            if not name.startswith(("pauli_mask:", "pauli_active:")):
+                continue
+            try:
+                shot_value = list(values)
+            except TypeError:
+                shot_value = [values]
+            sideband_results.setdefault(name, []).append([int(v) for v in shot_value])
+
+    masks = _extract_pauli_masks_from_results(
+        sideband_results,
+        num_rounds=num_rounds,
+        num_data=patch.geometry.num_data,
+        num_shots=num_shots,
+        patch=patch,
+        basis=basis,
+        twirl=twirl,
+    )
+    activations = _extract_pauli_activations_from_results(
+        sideband_results,
+        num_rounds=num_rounds,
+        num_data=patch.geometry.num_data,
+        num_shots=num_shots,
+        patch=patch,
+        basis=basis,
+        twirl=twirl,
+    )
+    return masks, activations
 
 
 def _run_twirled_guppy_measurement_rows_and_masks(
@@ -234,6 +299,124 @@ def test_runtime_gate_local_twirl_masks_vary_across_shots(patch_d3: SurfacePatch
 
     unique_rows = np.unique(masks, axis=0)
     assert unique_rows.shape[0] >= 2
+
+
+def test_scaled_twirl_probability_zero_records_inactive_identity(
+    patch_d3: SurfacePatch,
+) -> None:
+    twirl = TwirlConfig(twirl_probability=0.0)
+    masks, active = _sample_twirled_guppy_masks_and_activations(
+        patch_d3,
+        num_rounds=2,
+        num_shots=3,
+        basis="Z",
+        twirl=twirl,
+        rng=GuppyRngMaskConfig(seed=19),
+    )
+
+    assert masks.shape == active.shape
+    assert not masks.any()
+    assert not active.any()
+
+
+def test_scaled_twirl_records_active_identity_distinct_from_inactive_identity(
+    patch_d3: SurfacePatch,
+) -> None:
+    twirl = TwirlConfig(twirl_probability=0.5)
+    masks, active = _sample_twirled_guppy_masks_and_activations(
+        patch_d3,
+        num_rounds=2,
+        num_shots=16,
+        basis="Z",
+        twirl=twirl,
+        rng=GuppyRngMaskConfig(seed=20),
+    )
+
+    assert active.any()
+    assert (~active).any()
+    assert np.any(active & (masks == 0))
+    assert np.any((~active) & (masks == 0))
+    assert not np.any((~active) & (masks != 0))
+
+
+def test_scaled_twirl_fixed_rng_consumption_aligns_same_seed_codes(
+    patch_d3: SurfacePatch,
+) -> None:
+    common = {
+        "num_rounds": 2,
+        "num_shots": 8,
+        "basis": "Z",
+        "rng": GuppyRngMaskConfig(seed=21),
+    }
+    full_masks, full_active = _sample_twirled_guppy_masks_and_activations(
+        patch_d3,
+        twirl=TwirlConfig(twirl_probability=1.0),
+        **common,
+    )
+    half_masks, half_active = _sample_twirled_guppy_masks_and_activations(
+        patch_d3,
+        twirl=TwirlConfig(twirl_probability=0.5),
+        **common,
+    )
+
+    assert full_active.all()
+    assert half_active.any()
+    np.testing.assert_array_equal(half_masks[half_active], full_masks[half_active])
+
+
+def _assert_jeffreys_rate_near(
+    successes: int,
+    total: int,
+    expected: float,
+    *,
+    sigma: float = 6.0,
+) -> None:
+    assert total > 0
+    alpha = successes + 0.5
+    beta = total - successes + 0.5
+    mean = alpha / (alpha + beta)
+    variance = (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
+    assert abs(mean - expected) <= sigma * float(np.sqrt(variance))
+
+
+def test_scaled_twirl_empirical_activation_and_code_rates(
+    patch_d3: SurfacePatch,
+) -> None:
+    num_rounds = 2
+    num_shots = 64
+    twirl = TwirlConfig(twirl_probability=0.5)
+    rng = GuppyRngMaskConfig(seed=22)
+    masks, active = _sample_twirled_guppy_masks_and_activations(
+        patch_d3,
+        num_rounds=num_rounds,
+        num_shots=num_shots,
+        basis="Z",
+        twirl=twirl,
+        rng=rng,
+    )
+
+    public_active = sample_pauli_activations_from_guppy(
+        patch_d3,
+        num_rounds=num_rounds,
+        num_shots=num_shots,
+        basis="Z",
+        twirl=twirl,
+        rng=rng,
+    )
+    np.testing.assert_array_equal(public_active, active)
+
+    active_count = int(active.sum())
+    total_sites = int(active.size)
+    _assert_jeffreys_rate_near(active_count, total_sites, 0.5)
+
+    active_codes = masks[active]
+    assert active_codes.size == active_count
+    for code in range(4):
+        _assert_jeffreys_rate_near(
+            int(np.count_nonzero(active_codes == code)),
+            active_count,
+            0.25,
+        )
 
 
 def test_same_seed_is_reproducible(patch_d3: SurfacePatch) -> None:

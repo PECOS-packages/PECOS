@@ -300,7 +300,7 @@ def _abstract_twirl_config(twirl: TwirlConfig | None) -> TwirlConfig | None:
     if twirl is None:
         return None
     twirl.validate_runtime_supported()
-    return replace(twirl, frame_output="raw")
+    return replace(twirl, frame_output="raw", twirl_probability=1.0)
 
 
 def _twirl_traced_qis_rejection_message() -> str:
@@ -733,7 +733,7 @@ def _index_surface_result_trace_ids(
 
 def _is_surface_sideband_result_tag(name: str) -> bool:
     """Return true for non-detector-bearing surface result tags."""
-    return name.startswith(("pauli_mask:", "frame_mode:", "raw:"))
+    return name.startswith(("pauli_mask:", "pauli_active:", "frame_mode:", "raw:"))
 
 
 def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[str, str] | tuple[str, str, int]]:
@@ -4008,6 +4008,18 @@ def _extract_pauli_masks_from_results(
             packed = (lo + (hi << 1)).astype(np.uint8)
             for operand in range(2):
                 out[:, mask_col_for_gate_operand(site, operand)] = packed[:, operand]
+        active = _extract_pauli_activations_from_results(
+            results,
+            num_rounds=num_rounds,
+            num_data=num_data,
+            num_shots=num_shots,
+            patch=patch,
+            basis=basis,
+            twirl=twirl,
+        )
+        if np.any((~active) & (out != 0)):
+            msg = "malformed Pauli twirl bundle: inactive gate-local site recorded a non-identity Pauli"
+            raise ValueError(msg)
         return out
 
     n_twirl = max(0, num_rounds - 1)
@@ -4046,10 +4058,131 @@ def _extract_pauli_masks_from_results(
         for q in range(num_data):
             out[:, mask_col_for(site, q, num_data)] = packed[:, q]
 
+    active = _extract_pauli_activations_from_results(
+        results,
+        num_rounds=num_rounds,
+        num_data=num_data,
+        num_shots=num_shots,
+        patch=patch,
+        basis=basis,
+        twirl=twirl,
+    )
+    if np.any((~active) & (out != 0)):
+        msg = "malformed Pauli twirl bundle: inactive round site recorded a non-identity Pauli"
+        raise ValueError(msg)
     return out
 
 
-def sample_pauli_masks_from_guppy(
+def _extract_pauli_activations_from_results(
+    results: dict[str, Any],
+    *,
+    num_rounds: int,
+    num_data: int,
+    num_shots: int,
+    patch: SurfacePatch | None = None,
+    basis: str = "Z",
+    twirl: TwirlConfig | None = None,
+) -> NDArray[np.bool_]:
+    """Reconstruct per-shot twirl activation bits from Guppy result tags.
+
+    Legacy `twirl_probability=1.0` bundles have no activation tags; they are
+    interpreted as active at every site. Scaled-twirl bundles must carry explicit
+    activation tags so skipped sites and active identity draws remain auditable.
+    """
+    from pecos.qec.surface._twirl_sites import (
+        mask_col_for,
+        mask_col_for_gate_operand,
+        num_pauli_sites,
+        num_pauli_sites_for_schedule,
+        num_two_qubit_gate_twirl_sites,
+        pauli_active_gate_tag,
+        pauli_active_round_tag,
+        site_idx_for_round,
+    )
+
+    site_schedule = "between_rounds" if twirl is None else twirl.site_schedule
+    probability = 1.0 if twirl is None else float(twirl.twirl_probability)
+    has_active_tags = any(str(name).startswith("pauli_active:") for name in results)
+    require_active_tags = has_active_tags or probability != 1.0
+
+    if site_schedule == "before_two_qubit_gate":
+        if patch is None:
+            msg = "patch is required to extract before_two_qubit_gate Pauli activations"
+            raise ValueError(msg)
+        n_twirl = num_two_qubit_gate_twirl_sites(
+            patch,
+            num_rounds=num_rounds,
+            basis=basis,
+        )
+        out = np.ones(
+            (
+                num_shots,
+                num_pauli_sites_for_schedule(
+                    patch,
+                    num_rounds=num_rounds,
+                    basis=basis,
+                    site_schedule="before_two_qubit_gate",
+                ),
+            ),
+            dtype=bool,
+        )
+        if not require_active_tags:
+            return out
+        out[...] = False
+        for site in range(n_twirl):
+            tag = pauli_active_gate_tag(site)
+            if tag not in results:
+                msg = f"missing Pauli-activation result tag {tag!r}"
+                raise ValueError(msg)
+            per_gate = results[tag]
+            if len(per_gate) != num_shots:
+                msg = (
+                    f"Pauli-activation tag {tag!r}: got {len(per_gate)} shots, "
+                    f"expected {num_shots} shots"
+                )
+                raise ValueError(msg)
+            bits = np.asarray(per_gate, dtype=bool)
+            if bits.ndim != 2 or bits.shape[1] != 2:
+                msg = (
+                    f"Pauli-activation tag {tag!r} array has shape {bits.shape}, "
+                    f"expected ({num_shots}, 2) = (num_shots, gate_operands)"
+                )
+                raise ValueError(msg)
+            for operand in range(2):
+                out[:, mask_col_for_gate_operand(site, operand)] = bits[:, operand]
+        return out
+
+    n_twirl = max(0, num_rounds - 1)
+    out = np.ones((num_shots, num_pauli_sites(num_rounds, num_data)), dtype=bool)
+    if not require_active_tags:
+        return out
+    out[...] = False
+    for r in range(n_twirl):
+        tag = pauli_active_round_tag(r)
+        if tag not in results:
+            msg = f"missing Pauli-activation result tag {tag!r}"
+            raise ValueError(msg)
+        per_round = results[tag]
+        if len(per_round) != num_shots:
+            msg = (
+                f"Pauli-activation tag {tag!r}: got {len(per_round)} shots, "
+                f"expected {num_shots} shots"
+            )
+            raise ValueError(msg)
+        bits = np.asarray(per_round, dtype=bool)
+        if bits.ndim != 2 or bits.shape[1] != num_data:
+            msg = (
+                f"Pauli-activation tag {tag!r} array has shape {bits.shape}, "
+                f"expected ({num_shots}, {num_data}) = (num_shots, num_data)"
+            )
+            raise ValueError(msg)
+        site = site_idx_for_round(r)
+        for q in range(num_data):
+            out[:, mask_col_for(site, q, num_data)] = bits[:, q]
+    return out
+
+
+def _sample_pauli_sideband_results_from_guppy(
     patch: SurfacePatch,
     *,
     num_rounds: int,
@@ -4058,8 +4191,8 @@ def sample_pauli_masks_from_guppy(
     twirl: TwirlConfig,
     rng: Any,
     ancilla_budget: int | None = None,
-) -> NDArray[np.uint8]:
-    """Run the Guppy memory program with twirling and harvest mask columns."""
+) -> dict[str, list[list[Any]]]:
+    """Run the Guppy memory program with twirling and harvest side-band tags."""
     from selene_sim import SimpleRuntime, Stim, build
 
     from pecos.compilation_pipeline import compile_guppy_to_hugr
@@ -4072,8 +4205,6 @@ def sample_pauli_masks_from_guppy(
     if num_rounds < 1:
         msg = f"num_rounds must be >= 1, got {num_rounds}"
         raise ValueError(msg)
-
-    num_data = patch.geometry.num_data
 
     fn = generate_memory_experiment(
         patch,
@@ -4108,9 +4239,69 @@ def sample_pauli_masks_from_guppy(
                 shot_value = list(values)
             except TypeError:
                 shot_value = [values]
-            results.setdefault(name, []).append(shot_value)
+            if name.startswith(("pauli_mask:", "pauli_active:")):
+                results.setdefault(name, []).append(shot_value)
+    return results
+
+
+def sample_pauli_masks_from_guppy(
+    patch: SurfacePatch,
+    *,
+    num_rounds: int,
+    num_shots: int,
+    basis: str,
+    twirl: TwirlConfig,
+    rng: Any,
+    ancilla_budget: int | None = None,
+) -> NDArray[np.uint8]:
+    """Run the Guppy memory program with twirling and harvest mask columns."""
+    twirl.validate_runtime_supported()
+    num_data = patch.geometry.num_data
+    results = _sample_pauli_sideband_results_from_guppy(
+        patch,
+        num_rounds=num_rounds,
+        num_shots=num_shots,
+        basis=basis,
+        twirl=twirl,
+        rng=rng,
+        ancilla_budget=ancilla_budget,
+    )
 
     return _extract_pauli_masks_from_results(
+        results,
+        num_rounds=num_rounds,
+        num_data=num_data,
+        num_shots=num_shots,
+        patch=patch,
+        basis=basis,
+        twirl=twirl,
+    )
+
+
+def sample_pauli_activations_from_guppy(
+    patch: SurfacePatch,
+    *,
+    num_rounds: int,
+    num_shots: int,
+    basis: str,
+    twirl: TwirlConfig,
+    rng: Any,
+    ancilla_budget: int | None = None,
+) -> NDArray[np.bool_]:
+    """Run the Guppy memory program with twirling and harvest activation bits."""
+    twirl.validate_runtime_supported()
+    num_data = patch.geometry.num_data
+    results = _sample_pauli_sideband_results_from_guppy(
+        patch,
+        num_rounds=num_rounds,
+        num_shots=num_shots,
+        basis=basis,
+        twirl=twirl,
+        rng=rng,
+        ancilla_budget=ancilla_budget,
+    )
+
+    return _extract_pauli_activations_from_results(
         results,
         num_rounds=num_rounds,
         num_data=num_data,

@@ -68,13 +68,20 @@ def _render_inline_pcg32() -> list[str]:
         "",
         "@guppy",
         "@no_type_check",
-        "def _pcg32_next4(state: nat, inc: nat) -> tuple[nat, int]:",
+        "def _pcg32_next32(state: nat, inc: nat) -> tuple[nat, nat]:",
         "    old_state = state",
         "    new_state = _pcg32_advance(state, inc)",
         "    xorshifted = _pcg32_mask32(((old_state >> nat(18)) ^ old_state) >> nat(27))",
         "    rot = _pcg32_mask32(old_state >> nat(59))",
         "    rot_inv = _pcg32_mask32((~rot + nat(1)) & nat(31))",
         "    output = _pcg32_mask32((xorshifted >> rot) | (xorshifted << rot_inv))",
+        "    return new_state, output",
+        "",
+        "",
+        "@guppy",
+        "@no_type_check",
+        "def _pcg32_next4(state: nat, inc: nat) -> tuple[nat, int]:",
+        "    new_state, output = _pcg32_next32(state, inc)",
         "    return new_state, int(output & nat(3))",
         "",
         "",
@@ -724,6 +731,45 @@ def _render_plain_memory_block(
     ]
 
 
+def _twirl_activation_threshold(twirl: "TwirlConfig") -> int:
+    """Return the full-width PCG threshold for a twirl activation probability."""
+    probability = float(twirl.twirl_probability)
+    # Validation lives on TwirlConfig; clamp the mathematically exact endpoint
+    # after float multiplication so f=1.0 always activates every 32-bit draw.
+    threshold = int(probability * (1 << 32))
+    return min(max(threshold, 0), 1 << 32)
+
+
+def _emit_scaled_activation_tags(twirl: "TwirlConfig") -> bool:
+    """Whether generated source needs explicit activation side-band tags."""
+    return float(twirl.twirl_probability) != 1.0
+
+
+def _append_pauli_draw(
+    lines: list[str],
+    indent: str,
+    *,
+    active_var: str,
+    draw_var: str,
+    m_var: str,
+    qubit_expr: str,
+    threshold: int,
+) -> None:
+    """Emit fixed-consumption activation + Pauli draw code for one twirl operand."""
+    lines.append(f"{indent}rng_state, active_draw_{m_var} = _pcg32_next32(rng_state, rng_inc)")
+    lines.append(f"{indent}{active_var} = active_draw_{m_var} < nat({threshold})")
+    lines.append(f"{indent}rng_state, {draw_var} = _pcg32_next4(rng_state, rng_inc)")
+    lines.append(f"{indent}{m_var} = 0")
+    lines.append(f"{indent}if {active_var}:")
+    lines.append(f"{indent}    {m_var} = {draw_var}")
+    lines.append(f"{indent}if {m_var} == 1:")
+    lines.append(f"{indent}    x({qubit_expr})")
+    lines.append(f"{indent}if {m_var} == 2:")
+    lines.append(f"{indent}    y({qubit_expr})")
+    lines.append(f"{indent}if {m_var} == 3:")
+    lines.append(f"{indent}    z({qubit_expr})")
+
+
 def _render_twirled_memory_block(
     basis: str,
     basis_upper: str,
@@ -735,10 +781,12 @@ def _render_twirled_memory_block(
     num_rounds: int,
 ) -> list[str]:
     """Render a Python-time unrolled twirled memory factory."""
-    from pecos.qec.surface._twirl_sites import num_twirl_sites, pauli_mask_round_tag
+    from pecos.qec.surface._twirl_sites import num_twirl_sites, pauli_active_round_tag, pauli_mask_round_tag
 
     seed = int(rng.seed)
     canonical_frame_output = twirl.frame_output == "canonical"
+    activation_threshold = _twirl_activation_threshold(twirl)
+    emit_activation_tags = _emit_scaled_activation_tags(twirl)
     init_func = "init_z_basis" if basis == "z" else "init_x_basis"
     init_tag = "init_synx" if basis == "z" else "init_synz"
     body: list[str] = [
@@ -774,13 +822,15 @@ def _render_twirled_memory_block(
         body.append('        result("synz", syn.synz)')
         body.append("        # Pauli twirl site between this round and the next.")
         for q in range(num_data):
-            body.append(f"        rng_state, m_{r}_{q} = _pcg32_next4(rng_state, rng_inc)")
-            body.append(f"        if m_{r}_{q} == 1:")
-            body.append(f"            x(surf.data[{q}])")
-            body.append(f"        if m_{r}_{q} == 2:")
-            body.append(f"            y(surf.data[{q}])")
-            body.append(f"        if m_{r}_{q} == 3:")
-            body.append(f"            z(surf.data[{q}])")
+            _append_pauli_draw(
+                body,
+                "        ",
+                active_var=f"active_{r}_{q}",
+                draw_var=f"m_draw_{r}_{q}",
+                m_var=f"m_{r}_{q}",
+                qubit_expr=f"surf.data[{q}]",
+                threshold=activation_threshold,
+            )
             body.append(f"        lo_{r}_{q} = (m_{r}_{q} == 1) | (m_{r}_{q} == 3)")
             body.append(f"        hi_{r}_{q} = (m_{r}_{q} == 2) | (m_{r}_{q} == 3)")
             if canonical_frame_output:
@@ -795,6 +845,10 @@ def _render_twirled_memory_block(
         elements = ", ".join(f"lo_{r}_{q}, hi_{r}_{q}" for q in range(num_data))
         tag = pauli_mask_round_tag(r)
         body.append(f'        result("{tag}", array({elements}))')
+        if emit_activation_tags:
+            active_elements = ", ".join(f"active_{r}_{q}" for q in range(num_data))
+            active_tag = pauli_active_round_tag(r)
+            body.append(f'        result("{active_tag}", array({active_elements}))')
         body.append("")
 
     if num_rounds > 0:
@@ -862,17 +916,22 @@ def _append_gate_local_draw(
     operand_idx: int,
     qubit_expr: str,
     frame_vars: tuple[str, str] | None,
-) -> tuple[str, str]:
+    threshold: int,
+) -> tuple[str, str, str]:
     m_var = f"m_g{site_idx}_o{operand_idx}"
+    active_var = f"active_g{site_idx}_o{operand_idx}"
+    draw_var = f"m_draw_g{site_idx}_o{operand_idx}"
     lo_var = f"lo_g{site_idx}_o{operand_idx}"
     hi_var = f"hi_g{site_idx}_o{operand_idx}"
-    lines.append(f"{indent}rng_state, {m_var} = _pcg32_next4(rng_state, rng_inc)")
-    lines.append(f"{indent}if {m_var} == 1:")
-    lines.append(f"{indent}    x({qubit_expr})")
-    lines.append(f"{indent}if {m_var} == 2:")
-    lines.append(f"{indent}    y({qubit_expr})")
-    lines.append(f"{indent}if {m_var} == 3:")
-    lines.append(f"{indent}    z({qubit_expr})")
+    _append_pauli_draw(
+        lines,
+        indent,
+        active_var=active_var,
+        draw_var=draw_var,
+        m_var=m_var,
+        qubit_expr=qubit_expr,
+        threshold=threshold,
+    )
     lines.append(f"{indent}{lo_var} = ({m_var} == 1) | ({m_var} == 3)")
     lines.append(f"{indent}{hi_var} = ({m_var} == 2) | ({m_var} == 3)")
     if frame_vars is not None:
@@ -883,7 +942,7 @@ def _append_gate_local_draw(
         lines.append(f"{indent}{twz_var} = ({m_var} == 2) | ({m_var} == 3)")
         lines.append(f"{indent}{x_frame} = {x_frame} != {twx_var}")
         lines.append(f"{indent}{z_frame} = {z_frame} != {twz_var}")
-    return lo_var, hi_var
+    return lo_var, hi_var, active_var
 
 
 def _append_gate_local_layer(
@@ -892,29 +951,36 @@ def _append_gate_local_layer(
     *,
     site_idx: int,
     cx_ops: list[tuple[str, str, tuple[str, str] | None, tuple[str, str] | None]],
+    threshold: int,
+    emit_activation_tags: bool,
 ) -> int:
     """Emit all twirl draws before a parallel CX layer, then the CX layer."""
-    from pecos.qec.surface._twirl_sites import pauli_mask_gate_tag
+    from pecos.qec.surface._twirl_sites import pauli_active_gate_tag, pauli_mask_gate_tag
 
     for control_expr, target_expr, control_frame, target_frame in cx_ops:
-        lo0, hi0 = _append_gate_local_draw(
+        lo0, hi0, active0 = _append_gate_local_draw(
             lines,
             indent,
             site_idx=site_idx,
             operand_idx=0,
             qubit_expr=control_expr,
             frame_vars=control_frame,
+            threshold=threshold,
         )
-        lo1, hi1 = _append_gate_local_draw(
+        lo1, hi1, active1 = _append_gate_local_draw(
             lines,
             indent,
             site_idx=site_idx,
             operand_idx=1,
             qubit_expr=target_expr,
             frame_vars=target_frame,
+            threshold=threshold,
         )
         tag = pauli_mask_gate_tag(site_idx)
         lines.append(f'{indent}result("{tag}", array({lo0}, {hi0}, {lo1}, {hi1}))')
+        if emit_activation_tags:
+            active_tag = pauli_active_gate_tag(site_idx)
+            lines.append(f'{indent}result("{active_tag}", array({active0}, {active1}))')
         site_idx += 1
 
     for control_expr, target_expr, control_frame, target_frame in cx_ops:
@@ -962,6 +1028,8 @@ def _render_gate_local_twirled_memory_block(
     """Render a gate-local twirled memory factory."""
     seed = int(rng.seed)
     canonical_frame_output = twirl.frame_output == "canonical"
+    activation_threshold = _twirl_activation_threshold(twirl)
+    emit_activation_tags = _emit_scaled_activation_tags(twirl)
     geom = patch.geometry
     rounds = compute_cnot_schedule(patch)
     init_stab_type = "X" if basis == "z" else "Z"
@@ -1045,7 +1113,14 @@ def _render_gate_local_twirled_memory_block(
         body.append("")
         body.append(f"{indent}# Init CX round {rnd_idx + 1}")
         cx_ops = [cx_tuple(stab_type, stab_idx, data_q) for stab_type, stab_idx, data_q in filtered]
-        site_idx = _append_gate_local_layer(body, indent, site_idx=site_idx, cx_ops=cx_ops)
+        site_idx = _append_gate_local_layer(
+            body,
+            indent,
+            site_idx=site_idx,
+            cx_ops=cx_ops,
+            threshold=activation_threshold,
+            emit_activation_tags=emit_activation_tags,
+        )
 
     if init_stab_type == "X":
         body.append("")
@@ -1096,7 +1171,14 @@ def _render_gate_local_twirled_memory_block(
             body.append("")
             body.append(f"{indent}# Round {round_idx} CX layer {rnd_idx + 1}")
             cx_ops = [cx_tuple(stab_type, stab_idx, data_q) for stab_type, stab_idx, data_q in rnd_gates]
-            site_idx = _append_gate_local_layer(body, indent, site_idx=site_idx, cx_ops=cx_ops)
+            site_idx = _append_gate_local_layer(
+                body,
+                indent,
+                site_idx=site_idx,
+                cx_ops=cx_ops,
+                threshold=activation_threshold,
+                emit_activation_tags=emit_activation_tags,
+            )
 
         for stab in geom.x_stabilizers:
             body.append(f"{indent}h(ax{stab.index})")
@@ -1205,7 +1287,7 @@ def _guppy_module_cache_key(
 
     Twirled source is Python-time unrolled, so the cache key includes
     ``num_rounds`` in addition to the structural twirl fields, runtime
-    frame-output mode, and RNG seed.
+    frame-output mode, RNG seed, and activation-probability threshold.
     """
     geom = patch.geometry
     rotated = "rot" if geom.rotated else "unrot"
@@ -1218,6 +1300,7 @@ def _guppy_module_cache_key(
     twirl_part = (
         f"t-{twirl.scheme}-{twirl.site_schedule}-{twirl.result_encoding}"
         f"-frame-{twirl.frame_output}"
+        f"-p{_twirl_activation_threshold(twirl)}"
         f"-s{int(rng.seed)}-r{int(num_rounds)}"
     )
     return f"{base}_{twirl_part}"
@@ -1238,7 +1321,8 @@ def _load_guppy_module(
     ``normalize_ancilla_budget``), so ``ancilla_budget=None`` and
     ``ancilla_budget >= total_ancilla`` resolve to the same cache entry
     while distinct patch geometries never collide. Twirled source also
-    keys on twirl fields, frame-output mode, RNG seed, and round count.
+    keys on twirl fields, frame-output mode, activation-probability threshold,
+    RNG seed, and round count.
 
     Args:
         patch: SurfacePatch with geometry

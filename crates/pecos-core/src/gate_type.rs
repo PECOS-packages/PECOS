@@ -193,6 +193,12 @@ impl GateType {
     ///
     /// Meta-gates have a position in the DAG but do not affect quantum state
     /// and should not create fault locations or receive noise.
+    ///
+    /// Idle-duration accounting depends on this predicate:
+    /// `TickCircuit::fill_idle_gates` treats ticks whose batches are all
+    /// meta as zero physical duration. Any new meta gate type MUST be added
+    /// here, or it will manufacture phantom idle periods in
+    /// idle-duration-driven noise models.
     #[must_use]
     pub const fn is_meta(self) -> bool {
         matches!(self, GateType::TrackedPauliMeta)

@@ -2260,6 +2260,14 @@ impl TickCircuit {
 
     // ==================== Idle ====================
 
+    /// Insert Idle gates after each two-qubit gate on both of its qubits.
+    ///
+    /// Delegates to `InsertIdleAfterTwoQubitGates` pass. See [`crate::pass`].
+    pub fn insert_idle_after_two_qubit_gates(&mut self, duration: f64) {
+        use crate::pass::{CircuitPass, InsertIdleAfterTwoQubitGates};
+        InsertIdleAfterTwoQubitGates(duration).apply_tick(self);
+    }
+
     /// Insert identity gates for qubits not operated on during each tick.
     ///
     /// For each tick, finds qubits that are in the circuit's qubit set but
@@ -2269,6 +2277,17 @@ impl TickCircuit {
     ///
     /// This is separate from `GateType::Idle` which represents explicit
     /// wait operations with duration-dependent `p_idle` noise.
+    ///
+    /// Metadata-only ticks (all batches `GateType::is_meta`) are zero
+    /// physical duration and receive no idle gates.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a tick mixes meta and physical gate batches: such a tick has
+    /// physical duration, but per-tick qubit exclusivity makes idle insertion
+    /// on meta-occupied qubits impossible, so the accounting would be
+    /// silently wrong. Emit meta batches in their own tick (as
+    /// `tracked_pauli` does).
     ///
     /// # Example
     ///
@@ -2282,14 +2301,6 @@ impl TickCircuit {
     ///
     /// circuit.fill_idle_gates();
     /// ```
-    /// Insert Idle gates after each two-qubit gate on both of its qubits.
-    ///
-    /// Delegates to `InsertIdleAfterTwoQubitGates` pass. See [`crate::pass`].
-    pub fn insert_idle_after_two_qubit_gates(&mut self, duration: f64) {
-        use crate::pass::{CircuitPass, InsertIdleAfterTwoQubitGates};
-        InsertIdleAfterTwoQubitGates(duration).apply_tick(self);
-    }
-
     pub fn fill_idle_gates(&mut self) {
         let all_qubits = self.all_qubits();
         if all_qubits.is_empty() {
@@ -2300,14 +2311,25 @@ impl TickCircuit {
             // Metadata-only ticks are zero-duration bookkeeping markers.
             // They preserve annotation order but must not create physical idle
             // periods on qubits outside the metadata payload.
-            if !tick.is_empty()
-                && tick
-                    .gate_batches()
-                    .iter()
-                    .all(|gate| gate.gate_type.is_meta())
-            {
+            let meta_batches = tick
+                .gate_batches()
+                .iter()
+                .filter(|gate| gate.gate_type.is_meta())
+                .count();
+            if !tick.is_empty() && meta_batches == tick.gate_batches().len() {
                 continue;
             }
+            // A tick that mixes meta and physical gates has ambiguous idle
+            // accounting: the tick has physical duration, but per-tick qubit
+            // exclusivity makes it impossible to insert an Idle on a qubit a
+            // meta gate already occupies. Meta batches belong in their own
+            // tick (as `tracked_pauli` emits them).
+            assert!(
+                meta_batches == 0,
+                "fill_idle_gates: tick mixes meta and physical gates; emit meta \
+                 batches in their own tick so idle-duration accounting stays \
+                 unambiguous"
+            );
             let active = tick.active_qubits();
             for &q in &all_qubits {
                 if !active.contains(&q) {
@@ -6173,6 +6195,22 @@ mod tests {
 
         assert_eq!(meta_tick.len(), 1);
         assert!(meta_tick.gate_batches()[0].gate_type.is_meta());
+    }
+
+    #[test]
+    #[should_panic(expected = "tick mixes meta and physical gates")]
+    fn test_fill_idle_gates_rejects_mixed_meta_and_physical_tick() {
+        let mut tc = TickCircuit::new();
+        let mut tick = tc.tick();
+        tick.h(&[0]);
+        tick.try_add_gate(Gate::simple(
+            GateType::TrackedPauliMeta,
+            vec![QubitId::from(1)],
+        ))
+        .map(|_| ())
+        .expect("meta gate on a free qubit must be addable");
+
+        tc.fill_idle_gates();
     }
 
     #[test]

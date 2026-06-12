@@ -9,6 +9,7 @@ from pecos.qec.surface import (
     TwirlConfig,
     build_memory_circuit,
     build_native_sampler,
+    decode_native_samples,
     demask_pauli_frame_records,
     extract_detection_events_and_observables,
     sample_pauli_masks_from_guppy,
@@ -300,20 +301,21 @@ def test_runtime_twirled_theta0_demask_null(
     assert not observables.any()
 
 
-@pytest.mark.parametrize("basis", ["Z", "X"])
-def test_runtime_canonical_frame_output_theta0_null_and_raw_equivalence(
-    patch_d3: SurfacePatch,
+def _assert_canonical_frame_output_matches_lookup(
+    patch: SurfacePatch,
+    *,
     basis: str,
+    num_rounds: int,
+    num_shots: int,
+    seed: int,
 ) -> None:
-    num_rounds = 2
-    num_shots = 6
     twirl = TwirlConfig(frame_output="canonical")
     measurement_rows, masks, raw_rows, frame_modes = _run_twirled_guppy_rows_masks_and_raw(
-        patch_d3,
+        patch,
         basis=basis,
         num_rounds=num_rounds,
         num_shots=num_shots,
-        rng=GuppyRngMaskConfig(seed=12345),
+        rng=GuppyRngMaskConfig(seed=seed),
         twirl=twirl,
     )
 
@@ -322,7 +324,7 @@ def test_runtime_canonical_frame_output_theta0_null_and_raw_equivalence(
     assert raw_rows
 
     expected_rows = _canonicalize_raw_rows_from_masks(
-        patch_d3,
+        patch,
         basis=basis,
         num_rounds=num_rounds,
         raw_rows=raw_rows,
@@ -331,13 +333,13 @@ def test_runtime_canonical_frame_output_theta0_null_and_raw_equivalence(
     assert measurement_rows == expected_rows
 
     tick_circuit = build_memory_circuit(
-        patch=patch_d3,
+        patch=patch,
         rounds=num_rounds,
         basis=basis,
         twirl=TwirlConfig(),
     )
     sampler = build_native_sampler(
-        patch_d3,
+        patch,
         num_rounds=num_rounds,
         noise=NoiseModel(),
         basis=basis,
@@ -371,6 +373,82 @@ def test_runtime_canonical_frame_output_theta0_null_and_raw_equivalence(
     np.testing.assert_array_equal(observables, demasked_obs)
     assert not events.any()
     assert not observables.any()
+
+
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_runtime_canonical_frame_output_theta0_null_and_raw_equivalence(
+    patch_d3: SurfacePatch,
+    basis: str,
+) -> None:
+    _assert_canonical_frame_output_matches_lookup(
+        patch_d3,
+        basis=basis,
+        num_rounds=2,
+        num_shots=6,
+        seed=12345,
+    )
+
+
+@pytest.mark.parametrize(
+    ("distance", "num_rounds", "basis", "num_shots", "seed"),
+    [
+        (3, 3, "Z", 4, 2024),
+        (3, 3, "X", 4, 2025),
+        (5, 3, "Z", 2, 2026),
+    ],
+)
+def test_runtime_canonical_frame_output_matches_lookup_matrix(
+    distance: int,
+    num_rounds: int,
+    basis: str,
+    num_shots: int,
+    seed: int,
+) -> None:
+    patch = SurfacePatch.create(distance=distance)
+    _assert_canonical_frame_output_matches_lookup(
+        patch,
+        basis=basis,
+        num_rounds=num_rounds,
+        num_shots=num_shots,
+        seed=seed,
+    )
+
+
+def test_harvested_runtime_masks_drive_fixed_dem_sampler_null(patch_d3: SurfacePatch) -> None:
+    num_rounds = 3
+    num_shots = 8
+    twirl = TwirlConfig()
+    masks = sample_pauli_masks_from_guppy(
+        patch_d3,
+        num_rounds=num_rounds,
+        num_shots=num_shots,
+        basis="Z",
+        twirl=twirl,
+        rng=GuppyRngMaskConfig(seed=5150),
+    )
+    assert masks.any()
+
+    sampler = build_native_sampler(
+        patch_d3,
+        num_rounds=num_rounds,
+        noise=NoiseModel(),
+        basis="Z",
+        twirl=twirl,
+    )
+    assert sampler.pauli_frame_lookup is not None
+
+    raw_events, raw_obs = sampler.sample(num_shots, seed=99, pauli_masks=masks)
+    assert raw_events.any() or raw_obs.any()
+
+    events, observables = demask_pauli_frame_records(
+        sampler.pauli_frame_lookup,
+        raw_events,
+        raw_obs,
+        masks,
+    )
+    assert not events.any()
+    assert not observables.any()
+    assert decode_native_samples(sampler, num_shots, seed=99, pauli_masks=masks) == 0
 
 
 def test_d5_compile_smoke(patch_d3: SurfacePatch) -> None:

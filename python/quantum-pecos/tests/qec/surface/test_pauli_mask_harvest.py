@@ -222,6 +222,20 @@ def test_runtime_twirl_masks_vary_across_shots(patch_d3: SurfacePatch) -> None:
     assert unique_rows.shape[0] >= 2
 
 
+def test_runtime_gate_local_twirl_masks_vary_across_shots(patch_d3: SurfacePatch) -> None:
+    masks = sample_pauli_masks_from_guppy(
+        patch_d3,
+        num_rounds=2,
+        num_shots=6,
+        basis="Z",
+        twirl=TwirlConfig(site_schedule="before_two_qubit_gate"),
+        rng=GuppyRngMaskConfig(seed=12),
+    )
+
+    unique_rows = np.unique(masks, axis=0)
+    assert unique_rows.shape[0] >= 2
+
+
 def test_same_seed_is_reproducible(patch_d3: SurfacePatch) -> None:
     kwargs = {
         "num_rounds": 3,

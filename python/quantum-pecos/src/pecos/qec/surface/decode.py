@@ -1344,12 +1344,28 @@ def _build_surface_tick_circuit_for_native_model(
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
 ) -> Any:
     """Build the TickCircuit used by the native DEM and sampler paths."""
-    from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis, generate_tick_circuit_from_patch
 
     if twirl is not None:
         twirl.validate_runtime_supported()
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    if interaction_basis != "cx":
+        if circuit_source == "traced_qis":
+            msg = (
+                "interaction_basis='szz' is not supported with circuit_source='traced_qis' "
+                "until the Guppy emitter stage"
+            )
+            raise ValueError(msg)
+        msg = (
+            "interaction_basis='szz' native detector/DEM/sampler support requires "
+            "Stage 2 class-2 stream-corrected detector validation; use "
+            "generate_tick_circuit_from_patch(..., add_detectors=False) for "
+            "Stage 1 structural rendering"
+        )
+        raise ValueError(msg)
 
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
@@ -1358,6 +1374,7 @@ def _build_surface_tick_circuit_for_native_model(
         ancilla_budget=ancilla_budget,
         add_typed_annotations=False,
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
 
     if circuit_source == "abstract":
@@ -1417,6 +1434,7 @@ def build_memory_circuit(
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
 ) -> Any:
     """Build the standard surface-code memory ``TickCircuit``.
 
@@ -1439,6 +1457,7 @@ def build_memory_circuit(
             only with ``circuit_source="abstract"``; traced-QIS twirl is
             rejected because a runtime trace would bake one sampled mask into
             the circuit and can lose canonical result-id provenance.
+        interaction_basis: Surface-memory two-qubit interaction basis.
 
     Returns:
         A Rust-backed ``TickCircuit`` with detector and observable metadata.
@@ -1471,6 +1490,7 @@ def build_memory_circuit(
         circuit_source=circuit_source,
         runtime=runtime,
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
 
 
@@ -1629,6 +1649,7 @@ def _surface_native_topology(
     *,
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
 ) -> _CachedNativeSurfaceTopology:
     """Build topology-only native analysis shared across noise parameters."""
     import json
@@ -1649,6 +1670,7 @@ def _surface_native_topology(
         circuit_source=circuit_source,
         runtime=runtime,
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
     if circuit_source == "traced_qis":
         # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
@@ -1705,6 +1727,7 @@ def _cached_surface_native_topology(
     include_idle_gates: bool,
     *,
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
 ) -> _CachedNativeSurfaceTopology:
     """Cache topology-only native analysis shared across noise parameters."""
     return _surface_native_topology(
@@ -1715,6 +1738,7 @@ def _cached_surface_native_topology(
         circuit_source,
         include_idle_gates,
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
 
 
@@ -1780,6 +1804,7 @@ def _cached_surface_native_dem_string(
     p_idle_y_quadratic_sine_rate: float | None = None,
     p_idle_z_quadratic_sine_rate: float | None = None,
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
     include_idle_gates = _uses_dedicated_idle_noise(
@@ -1807,6 +1832,7 @@ def _cached_surface_native_dem_string(
         circuit_source,
         include_idle_gates,
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
     return _dem_string_from_cached_surface_topology(
         topology,
@@ -1906,6 +1932,7 @@ def generate_circuit_level_dem_from_builder(
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
 ) -> str:
     """Generate circuit-level DEM using PECOS native fault propagation.
 
@@ -1941,6 +1968,7 @@ def generate_circuit_level_dem_from_builder(
         twirl: Optional Pauli-frame randomization layout. Canonical Guppy
             frame-output mode is normalized to the same abstract raw lookup
             and DEM topology.
+        interaction_basis: Surface-memory two-qubit interaction basis.
 
     Returns:
         DEM string in standard format
@@ -1954,6 +1982,9 @@ def generate_circuit_level_dem_from_builder(
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
     twirl = _abstract_twirl_config(twirl)
+    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
+
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
     patch_key = _surface_patch_cache_key(patch)
     include_idle_gates = _noise_uses_dedicated_idle_noise(noise)
     if runtime is not None:
@@ -1966,6 +1997,7 @@ def generate_circuit_level_dem_from_builder(
             include_idle_gates,
             runtime=runtime,
             twirl=twirl,
+            interaction_basis=interaction_basis,
         )
         return _dem_string_from_cached_surface_topology(
             topology,
@@ -2003,6 +2035,7 @@ def generate_circuit_level_dem_from_builder(
         p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
 
 
@@ -3672,6 +3705,7 @@ def build_native_sampler(
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
     sampling_model: Literal[
         "dem",
         "influence_dem",
@@ -3703,6 +3737,7 @@ def build_native_sampler(
             before native PECOS fault analysis.
         twirl: Optional Pauli-frame randomization layout. Canonical runtime
             frame-output mode is normalized to the same abstract raw lookup.
+        interaction_basis: Surface-memory two-qubit interaction basis.
         sampling_model: Which native sampling backend to use. ``"dem"``
             samples the generated decomposed DEM and is the default.
             ``"influence_dem"`` uses the influence-map-based DemSampler with
@@ -3721,6 +3756,9 @@ def build_native_sampler(
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
     twirl = _abstract_twirl_config(twirl)
+    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
+
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
     topology = _cached_surface_native_topology(
@@ -3731,6 +3769,7 @@ def build_native_sampler(
         circuit_source,
         _noise_uses_dedicated_idle_noise(noise),
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
     if sampling_model == "dem":
         dem_str = _cached_surface_native_dem_string(
@@ -3763,6 +3802,7 @@ def build_native_sampler(
             p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
             p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
             twirl=twirl,
+            interaction_basis=interaction_basis,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(
@@ -3792,6 +3832,7 @@ def build_native_sampler_from_dem(
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
 ) -> NativeSampler:
     """Build a native sampler from a caller-supplied decomposed DEM string.
 
@@ -3802,6 +3843,9 @@ def build_native_sampler_from_dem(
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
     twirl = _abstract_twirl_config(twirl)
+    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
+
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
     topology = _cached_surface_native_topology(
@@ -3812,6 +3856,7 @@ def build_native_sampler_from_dem(
         circuit_source,
         include_idle_gates=False,
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
     sampler = _cached_parsed_dem(decomposed_dem).to_dem_sampler()
     return NativeSampler(

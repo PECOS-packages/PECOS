@@ -183,10 +183,11 @@ def build_surface_code_circuit(
             provided below the total stabilizer count, ancillas are reused
             across stabilizer batches following the public Guppy order.
         twirl: When provided, emit three ``OpType.TRACKED_PAULI`` annotations
-            (``X``, ``Y``, ``Z``) per data qubit at each between-round twirl
-            site. The sites are between counted syndrome rounds only: no site
-            is emitted before the first counted round, after the last counted
-            round, or inside the prep-boundary init syndrome block.
+            (``X``, ``Y``, ``Z``) per Pauli-mask column. The
+            ``"between_rounds"`` schedule emits one column per data qubit at
+            each site between counted syndrome rounds. The
+            ``"before_two_qubit_gate"`` schedule emits one column per operand
+            immediately before each surface-memory two-qubit gate.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -199,6 +200,9 @@ def build_surface_code_circuit(
     num_z_anc = len(geom.z_stabilizers)
     total_ancilla = num_x_anc + num_z_anc
     effective_ancilla_budget = _normalize_ancilla_budget(total_ancilla, ancilla_budget)
+    if twirl is not None:
+        twirl.validate_runtime_supported()
+    twirl_site_schedule = None if twirl is None else twirl.site_schedule
 
     # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
     # shared ancilla pool and different stabilizers can intentionally share the
@@ -237,13 +241,49 @@ def build_surface_code_circuit(
     def z_anc_q(stab_idx: int) -> int:
         return allocation.z_ancilla_qubits[stab_idx]
 
-    def emit_pauli_twirl_site(target_ops: list[SurfaceCircuitStep], site_idx: int) -> None:
+    def emit_between_round_twirl_site(target_ops: list[SurfaceCircuitStep], site_idx: int) -> None:
         """Append 3 * num_data candidate tracked-Pauli annotations."""
         target_ops.extend(
             SurfaceCircuitStep(OpType.TRACKED_PAULI, [data_q(i)], f"{kind}@s{site_idx}")
             for i in range(num_data)
             for kind in ("X", "Y", "Z")
         )
+
+    gate_twirl_site_idx = 0
+
+    def emit_gate_local_twirl_site(
+        target_ops: list[SurfaceCircuitStep],
+        site_idx: int,
+        control_q: int,
+        target_q: int,
+    ) -> None:
+        """Append tracked-Pauli annotations for one two-qubit-gate site."""
+        for operand_idx, q in enumerate((control_q, target_q)):
+            target_ops.extend(
+                SurfaceCircuitStep(
+                    OpType.TRACKED_PAULI,
+                    [q],
+                    f"{kind}@g{site_idx}o{operand_idx}",
+                )
+                for kind in ("X", "Y", "Z")
+            )
+
+    def emit_gate_local_twirl_layer(
+        target_ops: list[SurfaceCircuitStep],
+        cx_ops: list[tuple[int, int, str]],
+    ) -> None:
+        """Append all gate-local twirl annotations before a parallel CX layer."""
+        nonlocal gate_twirl_site_idx
+        if twirl_site_schedule != "before_two_qubit_gate":
+            return
+        for control_q, target_q, _label in cx_ops:
+            emit_gate_local_twirl_site(
+                target_ops,
+                gate_twirl_site_idx,
+                control_q,
+                target_q,
+            )
+            gate_twirl_site_idx += 1
 
     # Get CNOT schedule
     cnot_rounds = compute_cnot_schedule(patch)
@@ -299,25 +339,16 @@ def build_surface_code_circuit(
 
         for rnd_idx, cx_round in enumerate(cnot_rounds):
             ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+            cx_ops: list[tuple[int, int, str]] = []
             for stab_type, stab_idx, data_idx in cx_round:
                 if stab_type != init_stabilizer_type:
                     continue
                 if stab_type == "X":
-                    ops.append(
-                        SurfaceCircuitStep(
-                            OpType.CX,
-                            [x_anc_q(stab_idx), data_q(data_idx)],
-                            f"X{stab_idx}",
-                        ),
-                    )
+                    cx_ops.append((x_anc_q(stab_idx), data_q(data_idx), f"X{stab_idx}"))
                 else:
-                    ops.append(
-                        SurfaceCircuitStep(
-                            OpType.CX,
-                            [data_q(data_idx), z_anc_q(stab_idx)],
-                            f"Z{stab_idx}",
-                        ),
-                    )
+                    cx_ops.append((data_q(data_idx), z_anc_q(stab_idx), f"Z{stab_idx}"))
+            emit_gate_local_twirl_layer(ops, cx_ops)
+            ops.extend(SurfaceCircuitStep(OpType.CX, [control, target], label) for control, target, label in cx_ops)
             ops.append(SurfaceCircuitStep(OpType.TICK))
 
         if init_stabilizer_type == "X":
@@ -368,26 +399,17 @@ def build_surface_code_circuit(
 
             for rnd_idx, cx_round in enumerate(cnot_rounds):
                 ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                cx_ops: list[tuple[int, int, str]] = []
                 for stab_type, stab_idx, data_idx in cx_round:
                     ancilla_q = batch_ancillas.get((stab_type, stab_idx))
                     if ancilla_q is None:
                         continue
                     if stab_type == "X":
-                        ops.append(
-                            SurfaceCircuitStep(
-                                OpType.CX,
-                                [ancilla_q, data_q(data_idx)],
-                                f"X{stab_idx}",
-                            ),
-                        )
+                        cx_ops.append((ancilla_q, data_q(data_idx), f"X{stab_idx}"))
                     else:
-                        ops.append(
-                            SurfaceCircuitStep(
-                                OpType.CX,
-                                [data_q(data_idx), ancilla_q],
-                                f"Z{stab_idx}",
-                            ),
-                        )
+                        cx_ops.append((data_q(data_idx), ancilla_q, f"Z{stab_idx}"))
+                emit_gate_local_twirl_layer(ops, cx_ops)
+                ops.extend(SurfaceCircuitStep(OpType.CX, [control, target], label) for control, target, label in cx_ops)
                 ops.append(SurfaceCircuitStep(OpType.TICK))
 
             if init_stabilizer_type == "X":
@@ -428,23 +450,14 @@ def build_surface_code_circuit(
 
             for rnd_idx, cx_round in enumerate(cnot_rounds):
                 ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                cx_ops: list[tuple[int, int, str]] = []
                 for stab_type, stab_idx, data_idx in cx_round:
                     if stab_type == "X":
-                        ops.append(
-                            SurfaceCircuitStep(
-                                OpType.CX,
-                                [x_anc_q(stab_idx), data_q(data_idx)],
-                                f"X{stab_idx}",
-                            ),
-                        )
+                        cx_ops.append((x_anc_q(stab_idx), data_q(data_idx), f"X{stab_idx}"))
                     else:
-                        ops.append(
-                            SurfaceCircuitStep(
-                                OpType.CX,
-                                [data_q(data_idx), z_anc_q(stab_idx)],
-                                f"Z{stab_idx}",
-                            ),
-                        )
+                        cx_ops.append((data_q(data_idx), z_anc_q(stab_idx), f"Z{stab_idx}"))
+                emit_gate_local_twirl_layer(ops, cx_ops)
+                ops.extend(SurfaceCircuitStep(OpType.CX, [control, target], label) for control, target, label in cx_ops)
                 ops.append(SurfaceCircuitStep(OpType.TICK))
 
             ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
@@ -489,26 +502,20 @@ def build_surface_code_circuit(
 
                 for rnd_idx, cx_round in enumerate(cnot_rounds):
                     ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                    cx_ops: list[tuple[int, int, str]] = []
                     for stab_type, stab_idx, data_idx in cx_round:
                         ancilla_q = batch_ancillas.get((stab_type, stab_idx))
                         if ancilla_q is None:
                             continue
                         if stab_type == "X":
-                            ops.append(
-                                SurfaceCircuitStep(
-                                    OpType.CX,
-                                    [ancilla_q, data_q(data_idx)],
-                                    f"X{stab_idx}",
-                                ),
-                            )
+                            cx_ops.append((ancilla_q, data_q(data_idx), f"X{stab_idx}"))
                         else:
-                            ops.append(
-                                SurfaceCircuitStep(
-                                    OpType.CX,
-                                    [data_q(data_idx), ancilla_q],
-                                    f"Z{stab_idx}",
-                                ),
-                            )
+                            cx_ops.append((data_q(data_idx), ancilla_q, f"Z{stab_idx}"))
+                    emit_gate_local_twirl_layer(ops, cx_ops)
+                    ops.extend(
+                        SurfaceCircuitStep(OpType.CX, [control, target], label)
+                        for control, target, label in cx_ops
+                    )
                     ops.append(SurfaceCircuitStep(OpType.TICK))
 
                 if x_stabilizers_in_batch:
@@ -531,8 +538,8 @@ def build_surface_code_circuit(
 
                 ops.append(SurfaceCircuitStep(OpType.TICK))
 
-        if twirl is not None and rnd < num_rounds - 1:
-            emit_pauli_twirl_site(ops, rnd)
+        if twirl_site_schedule == "between_rounds" and rnd < num_rounds - 1:
+            emit_between_round_twirl_site(ops, rnd)
 
     # =========================================================================
     # measure_z_basis / measure_x_basis
@@ -1306,10 +1313,11 @@ class TickCircuitRenderer(CircuitRenderer):
                     "Y": PauliString.Y,
                     "Z": PauliString.Z,
                 }.get(kind)
-                if pauli_ctor is None or sep != "@" or not site_suffix.startswith("s"):
+                if pauli_ctor is None or sep != "@" or not site_suffix.startswith(("s", "g")):
                     msg = (
                         "OpType.TRACKED_PAULI requires label of the form "
-                        f"'{{X|Y|Z}}@s<site_idx>', got {op.label!r}"
+                        f"'{{X|Y|Z}}@s<site_idx>' or "
+                        f"'{{X|Y|Z}}@g<site_idx>o<operand_idx>', got {op.label!r}"
                     )
                     raise ValueError(msg)
                 circuit.tracked_pauli(

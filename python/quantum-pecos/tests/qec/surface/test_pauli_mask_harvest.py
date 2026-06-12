@@ -14,7 +14,7 @@ from pecos.qec.surface import (
     extract_detection_events_and_observables,
     sample_pauli_masks_from_guppy,
 )
-from pecos.qec.surface._twirl_sites import num_pauli_sites
+from pecos.qec.surface._twirl_sites import num_pauli_sites, num_pauli_sites_for_schedule
 from pecos.qec.surface.decode import _extract_pauli_masks_from_results
 
 pytest.importorskip("guppylang")
@@ -143,7 +143,7 @@ def _run_twirled_guppy_rows_masks_and_raw(
             except TypeError:
                 shot_value = [values]
 
-            if name.startswith("pauli_mask:round:"):
+            if name.startswith("pauli_mask:"):
                 mask_results.setdefault(name, []).append([int(v) for v in shot_value])
             elif name.startswith("frame_mode:"):
                 assert len(shot_value) == 1
@@ -159,7 +159,11 @@ def _run_twirled_guppy_rows_masks_and_raw(
                 assert len(shot_value) == 1
                 bit = int(shot_value[0])
                 row.append(bit)
-                if twirl.frame_output == "canonical" and ":init:meas:" in name:
+                if (
+                    twirl.frame_output == "canonical"
+                    and twirl.site_schedule == "between_rounds"
+                    and ":init:meas:" in name
+                ):
                     raw_row.append(bit)
             elif name == "final":
                 row.extend(int(v) for v in shot_value)
@@ -178,6 +182,9 @@ def _run_twirled_guppy_rows_masks_and_raw(
         num_rounds=num_rounds,
         num_data=patch.geometry.num_data,
         num_shots=num_shots,
+        patch=patch,
+        basis=basis,
+        twirl=twirl,
     )
     return measurement_rows, masks, raw_rows, frame_modes
 
@@ -301,6 +308,68 @@ def test_runtime_twirled_theta0_demask_null(
     assert not observables.any()
 
 
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_runtime_gate_local_twirled_theta0_demask_null(
+    patch_d3: SurfacePatch,
+    basis: str,
+) -> None:
+    num_rounds = 2
+    num_shots = 4
+    twirl = TwirlConfig(site_schedule="before_two_qubit_gate")
+    measurement_rows, masks, _, _ = _run_twirled_guppy_rows_masks_and_raw(
+        patch_d3,
+        basis=basis,
+        num_rounds=num_rounds,
+        num_shots=num_shots,
+        rng=GuppyRngMaskConfig(seed=23456),
+        twirl=twirl,
+    )
+    assert masks.any()
+    assert masks.shape == (
+        num_shots,
+        num_pauli_sites_for_schedule(
+            patch_d3,
+            num_rounds=num_rounds,
+            basis=basis,
+            site_schedule="before_two_qubit_gate",
+        ),
+    )
+
+    tick_circuit = build_memory_circuit(
+        patch=patch_d3,
+        rounds=num_rounds,
+        basis=basis,
+        twirl=twirl,
+    )
+    sampler = build_native_sampler(
+        patch_d3,
+        num_rounds=num_rounds,
+        noise=NoiseModel(),
+        basis=basis,
+        twirl=twirl,
+    )
+    assert sampler.pauli_frame_lookup is not None
+    assert sampler.num_pauli_sites == masks.shape[1]
+
+    events_per_shot, obs_per_shot = extract_detection_events_and_observables(
+        tick_circuit,
+        measurement_rows,
+    )
+    raw_events = _bool_array_from_indices(events_per_shot, sampler.num_detectors)
+    raw_obs = _bool_array_from_indices(obs_per_shot, sampler.num_observables)
+    assert raw_events.any() or raw_obs.any()
+
+    events, observables = demask_pauli_frame_records(
+        sampler.pauli_frame_lookup,
+        raw_events,
+        raw_obs,
+        masks,
+    )
+
+    assert not events.any()
+    assert not observables.any()
+
+
 def _assert_canonical_frame_output_matches_lookup(
     patch: SurfacePatch,
     *,
@@ -344,6 +413,71 @@ def _assert_canonical_frame_output_matches_lookup(
         noise=NoiseModel(),
         basis=basis,
         twirl=TwirlConfig(),
+    )
+    assert sampler.pauli_frame_lookup is not None
+
+    raw_events_per_shot, raw_obs_per_shot = extract_detection_events_and_observables(
+        tick_circuit,
+        raw_rows,
+    )
+    raw_events = _bool_array_from_indices(raw_events_per_shot, sampler.num_detectors)
+    raw_obs = _bool_array_from_indices(raw_obs_per_shot, sampler.num_observables)
+    assert raw_events.any() or raw_obs.any()
+
+    demasked_events, demasked_obs = demask_pauli_frame_records(
+        sampler.pauli_frame_lookup,
+        raw_events,
+        raw_obs,
+        masks,
+    )
+
+    events_per_shot, obs_per_shot = extract_detection_events_and_observables(
+        tick_circuit,
+        measurement_rows,
+    )
+    events = _bool_array_from_indices(events_per_shot, sampler.num_detectors)
+    observables = _bool_array_from_indices(obs_per_shot, sampler.num_observables)
+
+    np.testing.assert_array_equal(events, demasked_events)
+    np.testing.assert_array_equal(observables, demasked_obs)
+    assert not events.any()
+    assert not observables.any()
+
+
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_runtime_gate_local_canonical_frame_output_matches_lookup(
+    patch_d3: SurfacePatch,
+    basis: str,
+) -> None:
+    num_rounds = 2
+    num_shots = 4
+    twirl = TwirlConfig(site_schedule="before_two_qubit_gate", frame_output="canonical")
+    measurement_rows, masks, raw_rows, frame_modes = _run_twirled_guppy_rows_masks_and_raw(
+        patch_d3,
+        basis=basis,
+        num_rounds=num_rounds,
+        num_shots=num_shots,
+        rng=GuppyRngMaskConfig(seed=34567),
+        twirl=twirl,
+    )
+
+    assert frame_modes == ["canonical"] * num_shots
+    assert masks.any()
+    assert raw_rows
+
+    abstract_twirl = TwirlConfig(site_schedule="before_two_qubit_gate")
+    tick_circuit = build_memory_circuit(
+        patch=patch_d3,
+        rounds=num_rounds,
+        basis=basis,
+        twirl=abstract_twirl,
+    )
+    sampler = build_native_sampler(
+        patch_d3,
+        num_rounds=num_rounds,
+        noise=NoiseModel(),
+        basis=basis,
+        twirl=abstract_twirl,
     )
     assert sampler.pauli_frame_lookup is not None
 

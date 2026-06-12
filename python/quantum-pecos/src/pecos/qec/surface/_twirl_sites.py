@@ -1,6 +1,6 @@
 """Canonical Pauli-twirl site mapping.
 
-This maps `(round, qubit) -> site_idx` for both the abstract circuit
+This maps twirl-site declarations for both the abstract circuit
 (`circuit_builder.py`) and the Guppy runtime renderer (`pecos.guppy.surface`).
 
 Both tracks must agree byte-for-byte on the ordering of twirl-site
@@ -12,10 +12,12 @@ the matching mask columns. If the two paths disagree about which
 application silently runs the mask against the wrong tracked-Pauli
 annotations and the decoder sees an incoherent syndrome.
 
-The mapping is currently a simple `site_idx == round_idx` for the
-`between_rounds` schedule (one site between each pair of consecutive
-syndrome rounds, for a total of `num_rounds - 1` sites). The helpers
-below abstract that so a future schedule only needs to update this module.
+The backwards-compatible helpers below describe the `between_rounds`
+schedule: `site_idx == round_idx`, one site between each pair of
+consecutive syndrome rounds, and one Pauli-mask column per data qubit at
+that site. The `before_two_qubit_gate` helpers describe the gate-local
+schedule: one tag per two-qubit gate occurrence and two Pauli-mask
+columns per tag (control operand then target operand).
 
 Encoding contract for the runtime mask (``"bool_array_v1"``):
 
@@ -50,6 +52,13 @@ Encoding contract for the runtime mask (``"bool_array_v1"``):
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Literal
+
+from pecos.qec.surface.schedule import compute_cnot_schedule
+
+if TYPE_CHECKING:
+    from pecos.qec.surface.patch import SurfacePatch
+
 # Base prefix for per-round mask result tags. The Guppy renderer emits one
 # `result(f"{PAULI_MASK_TAG_PREFIX}:round:{r}", array(lo_q0, hi_q0, ...))`
 # call per twirl site so each tag fires exactly once per shot (avoids the
@@ -67,6 +76,11 @@ def pauli_mask_round_tag(round_idx: int) -> str:
     ``round_idx + 1``.
     """
     return f"{PAULI_MASK_TAG_PREFIX}:round:{round_idx}"
+
+
+def pauli_mask_gate_tag(site_idx: int) -> str:
+    """Return the canonical per-two-qubit-gate twirl-mask result tag."""
+    return f"{PAULI_MASK_TAG_PREFIX}:gate:{site_idx}"
 
 
 def num_twirl_sites(num_rounds: int) -> int:
@@ -119,3 +133,55 @@ def mask_col_for(site_idx: int, qubit_idx: int, num_data: int) -> int:
     flat bool stream.
     """
     return site_idx * num_data + qubit_idx
+
+
+def mask_col_for_gate_operand(site_idx: int, operand_idx: int) -> int:
+    """Canonical flat (gate site, operand) -> mask column index.
+
+    Operand order is the physical two-qubit gate order: control first,
+    target second. Each gate-local twirl site therefore contributes two
+    integer Pauli-code columns.
+    """
+    if operand_idx not in (0, 1):
+        msg = f"operand_idx must be 0 or 1, got {operand_idx}"
+        raise ValueError(msg)
+    return site_idx * 2 + operand_idx
+
+
+def num_two_qubit_gate_twirl_sites(
+    patch: SurfacePatch,
+    *,
+    num_rounds: int,
+    basis: str,
+) -> int:
+    """Number of two-qubit gate occurrences twirled by the gate-local schedule."""
+    init_stabilizer_type = "X" if basis.upper() == "Z" else "Z"
+    cnot_rounds = compute_cnot_schedule(patch)
+    init_gates = sum(
+        1
+        for cx_round in cnot_rounds
+        for stab_type, _stab_idx, _data_idx in cx_round
+        if stab_type == init_stabilizer_type
+    )
+    counted_round_gates = sum(len(cx_round) for cx_round in cnot_rounds) * num_rounds
+    return init_gates + counted_round_gates
+
+
+def num_pauli_sites_for_schedule(
+    patch: SurfacePatch,
+    *,
+    num_rounds: int,
+    basis: str,
+    site_schedule: Literal["between_rounds", "before_two_qubit_gate"] = "between_rounds",
+) -> int:
+    """Number of integer Pauli-code columns for a schedule."""
+    if site_schedule == "between_rounds":
+        return num_pauli_sites(num_rounds, patch.geometry.num_data)
+    if site_schedule == "before_two_qubit_gate":
+        return 2 * num_two_qubit_gate_twirl_sites(
+            patch,
+            num_rounds=num_rounds,
+            basis=basis,
+        )
+    msg = f"unsupported Pauli-twirl site_schedule={site_schedule!r}"
+    raise ValueError(msg)

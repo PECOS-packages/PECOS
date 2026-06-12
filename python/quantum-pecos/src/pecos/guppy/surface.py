@@ -189,7 +189,7 @@ def generate_guppy_source(
             f"twirl + constrained ancilla budget is not supported on "
             f"the Guppy runtime path "
             f"(ancilla_budget={ancilla_budget} < total_ancilla={total_ancilla}); "
-            "the between_rounds twirl-site schedule assumes the "
+            "the runtime twirl-site schedules assume the "
             "unconstrained syndrome shape. Pass ancilla_budget=None or "
             ">= total_ancilla, or omit twirl."
         )
@@ -622,7 +622,7 @@ def generate_guppy_source(
     )
 
     # Generate memory experiment factories
-    lines.extend(_render_memory_experiments(dx, dz, num_data, twirl, rng, num_rounds))
+    lines.extend(_render_memory_experiments(patch, dx, dz, num_data, twirl, rng, num_rounds))
 
     return "\n".join(lines)
 
@@ -639,6 +639,7 @@ def _xor_expr(terms: object) -> str:
 
 
 def _render_memory_experiments(
+    patch: "SurfacePatch",
     dx: int,
     dz: int,
     num_data: int,
@@ -658,18 +659,33 @@ def _render_memory_experiments(
             if rng is None or num_rounds is None:
                 msg = "twirled memory rendering requires both rng and num_rounds"
                 raise ValueError(msg)
-            lines.extend(
-                _render_twirled_memory_block(
-                    basis,
-                    basis_upper,
-                    dx,
-                    dz,
-                    num_data,
-                    twirl,
-                    rng,
-                    num_rounds,
-                ),
-            )
+            if twirl.site_schedule == "before_two_qubit_gate":
+                lines.extend(
+                    _render_gate_local_twirled_memory_block(
+                        patch,
+                        basis,
+                        basis_upper,
+                        dx,
+                        dz,
+                        num_data,
+                        twirl,
+                        rng,
+                        num_rounds,
+                    ),
+                )
+            else:
+                lines.extend(
+                    _render_twirled_memory_block(
+                        basis,
+                        basis_upper,
+                        dx,
+                        dz,
+                        num_data,
+                        twirl,
+                        rng,
+                        num_rounds,
+                    ),
+                )
     return lines
 
 
@@ -810,6 +826,336 @@ def _render_twirled_memory_block(
     return [
         f"def make_memory_{basis}(num_rounds: int):",
         f'    """Create {basis_upper}-basis twirled memory experiment.',
+        "",
+        f"    num_rounds must equal {num_rounds} -- the body was unrolled at",
+        "    source-generation time. Mismatched values raise ValueError.",
+        '    """',
+        f"    if num_rounds != {num_rounds}:",
+        f'        msg = f"this generated module was unrolled for num_rounds={num_rounds}, got {{num_rounds!r}}"',
+        "        raise ValueError(msg)",
+        "",
+        "    @guppy",
+        f"    def memory_{basis}() -> None:",
+        *body,
+        "",
+        f"    return memory_{basis}",
+        "",
+        "",
+    ]
+
+
+def _frame_vars(prefix: str, idx: int) -> tuple[str, str]:
+    return f"frame_x_{prefix}{idx}", f"frame_z_{prefix}{idx}"
+
+
+def _append_frame_swap(lines: list[str], indent: str, x_var: str, z_var: str, tmp_var: str) -> None:
+    lines.append(f"{indent}{tmp_var} = {x_var}")
+    lines.append(f"{indent}{x_var} = {z_var}")
+    lines.append(f"{indent}{z_var} = {tmp_var}")
+
+
+def _append_gate_local_draw(
+    lines: list[str],
+    indent: str,
+    *,
+    site_idx: int,
+    operand_idx: int,
+    qubit_expr: str,
+    frame_vars: tuple[str, str] | None,
+) -> tuple[str, str]:
+    m_var = f"m_g{site_idx}_o{operand_idx}"
+    lo_var = f"lo_g{site_idx}_o{operand_idx}"
+    hi_var = f"hi_g{site_idx}_o{operand_idx}"
+    lines.append(f"{indent}rng_state, {m_var} = _pcg32_next4(rng_state, rng_inc)")
+    lines.append(f"{indent}if {m_var} == 1:")
+    lines.append(f"{indent}    x({qubit_expr})")
+    lines.append(f"{indent}if {m_var} == 2:")
+    lines.append(f"{indent}    y({qubit_expr})")
+    lines.append(f"{indent}if {m_var} == 3:")
+    lines.append(f"{indent}    z({qubit_expr})")
+    lines.append(f"{indent}{lo_var} = ({m_var} == 1) | ({m_var} == 3)")
+    lines.append(f"{indent}{hi_var} = ({m_var} == 2) | ({m_var} == 3)")
+    if frame_vars is not None:
+        x_frame, z_frame = frame_vars
+        twx_var = f"twx_g{site_idx}_o{operand_idx}"
+        twz_var = f"twz_g{site_idx}_o{operand_idx}"
+        lines.append(f"{indent}{twx_var} = ({m_var} == 1) | ({m_var} == 2)")
+        lines.append(f"{indent}{twz_var} = ({m_var} == 2) | ({m_var} == 3)")
+        lines.append(f"{indent}{x_frame} = {x_frame} != {twx_var}")
+        lines.append(f"{indent}{z_frame} = {z_frame} != {twz_var}")
+    return lo_var, hi_var
+
+
+def _append_gate_local_layer(
+    lines: list[str],
+    indent: str,
+    *,
+    site_idx: int,
+    cx_ops: list[tuple[str, str, tuple[str, str] | None, tuple[str, str] | None]],
+) -> int:
+    """Emit all twirl draws before a parallel CX layer, then the CX layer."""
+    from pecos.qec.surface._twirl_sites import pauli_mask_gate_tag
+
+    for control_expr, target_expr, control_frame, target_frame in cx_ops:
+        lo0, hi0 = _append_gate_local_draw(
+            lines,
+            indent,
+            site_idx=site_idx,
+            operand_idx=0,
+            qubit_expr=control_expr,
+            frame_vars=control_frame,
+        )
+        lo1, hi1 = _append_gate_local_draw(
+            lines,
+            indent,
+            site_idx=site_idx,
+            operand_idx=1,
+            qubit_expr=target_expr,
+            frame_vars=target_frame,
+        )
+        tag = pauli_mask_gate_tag(site_idx)
+        lines.append(f'{indent}result("{tag}", array({lo0}, {hi0}, {lo1}, {hi1}))')
+        site_idx += 1
+
+    for control_expr, target_expr, control_frame, target_frame in cx_ops:
+        lines.append(f"{indent}cx({control_expr}, {target_expr})")
+        if control_frame is not None and target_frame is not None:
+            control_x, control_z = control_frame
+            target_x, target_z = target_frame
+            lines.append(f"{indent}{target_x} = {target_x} != {control_x}")
+            lines.append(f"{indent}{control_z} = {control_z} != {target_z}")
+    return site_idx
+
+
+def _append_gate_local_measure(
+    lines: list[str],
+    indent: str,
+    *,
+    bit_var: str,
+    qubit_expr: str,
+    result_tag: str,
+    raw_tag: str,
+    frame_vars: tuple[str, str] | None,
+) -> None:
+    if frame_vars is None:
+        lines.append(f"{indent}{bit_var} = measure({qubit_expr})")
+    else:
+        raw_var = f"{bit_var}_raw"
+        frame_x, _frame_z = frame_vars
+        lines.append(f"{indent}{raw_var} = measure({qubit_expr})")
+        lines.append(f"{indent}{bit_var} = {raw_var} != {frame_x}")
+        lines.append(f'{indent}result("{raw_tag}", {raw_var})')
+    lines.append(f'{indent}result("{result_tag}", {bit_var})')
+
+
+def _render_gate_local_twirled_memory_block(
+    patch: "SurfacePatch",
+    basis: str,
+    basis_upper: str,
+    dx: int,
+    dz: int,
+    num_data: int,
+    twirl: "TwirlConfig",
+    rng: "GuppyRngMaskConfig",
+    num_rounds: int,
+) -> list[str]:
+    """Render a gate-local twirled memory factory."""
+    seed = int(rng.seed)
+    canonical_frame_output = twirl.frame_output == "canonical"
+    geom = patch.geometry
+    rounds = compute_cnot_schedule(patch)
+    init_stab_type = "X" if basis == "z" else "Z"
+    init_tag = "init_synx" if basis == "z" else "init_synz"
+    indent = "        "
+    site_idx = 0
+
+    data_frames = [_frame_vars("d", q) for q in range(num_data)]
+    x_anc_frames = [_frame_vars("ax", stab.index) for stab in geom.x_stabilizers]
+    z_anc_frames = [_frame_vars("az", stab.index) for stab in geom.z_stabilizers]
+
+    def data_expr(q: int) -> str:
+        return f"surf.data[{q}]"
+
+    def anc_expr(stab_type: str, stab_idx: int) -> str:
+        return f"ax{stab_idx}" if stab_type == "X" else f"az{stab_idx}"
+
+    def anc_frame(stab_type: str, stab_idx: int) -> tuple[str, str] | None:
+        if not canonical_frame_output:
+            return None
+        return x_anc_frames[stab_idx] if stab_type == "X" else z_anc_frames[stab_idx]
+
+    def data_frame(q: int) -> tuple[str, str] | None:
+        return data_frames[q] if canonical_frame_output else None
+
+    def cx_tuple(
+        stab_type: str,
+        stab_idx: int,
+        data_q: int,
+    ) -> tuple[str, str, tuple[str, str] | None, tuple[str, str] | None]:
+        if stab_type == "X":
+            return (
+                anc_expr(stab_type, stab_idx),
+                data_expr(data_q),
+                anc_frame(stab_type, stab_idx),
+                data_frame(data_q),
+            )
+        return (
+            data_expr(data_q),
+            anc_expr(stab_type, stab_idx),
+            data_frame(data_q),
+            anc_frame(stab_type, stab_idx),
+        )
+
+    body: list[str] = [
+        f'        """{basis_upper}-basis memory experiment for dx={dx}, dz={dz}, '
+        f'num_rounds={num_rounds} (gate-local twirled)."""',
+        f"        surf = prep_{basis}_basis()",
+        "        # RNG seed is structural -- changing it does not invalidate the",
+        "        # abstract DEM / topology cache, only the per-shot mask buffer.",
+        f"        rng_state, rng_inc = seeded_pcg32_with_quantum_entropy({seed})",
+        f'        result("frame_mode:{twirl.frame_output}", True)',
+    ]
+    if canonical_frame_output:
+        for q in range(num_data):
+            frame_x, frame_z = data_frames[q]
+            body.append(f"{indent}{frame_x} = False")
+            body.append(f"{indent}{frame_z} = False")
+        body.append("")
+
+    # Initial syndrome establishment for the complementary stabilizer family.
+    init_stabs = list(geom.x_stabilizers if init_stab_type == "X" else geom.z_stabilizers)
+    for stab in init_stabs:
+        body.append(f"{indent}{anc_expr(init_stab_type, stab.index)} = qubit()")
+        if canonical_frame_output:
+            frame_x, frame_z = anc_frame(init_stab_type, stab.index) or ("", "")
+            body.append(f"{indent}{frame_x} = False")
+            body.append(f"{indent}{frame_z} = False")
+    if init_stab_type == "X":
+        body.append("")
+        for stab in init_stabs:
+            body.append(f"{indent}h(ax{stab.index})")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_init_ax{stab.index}")
+
+    for rnd_idx, rnd_gates in enumerate(rounds):
+        filtered = [(t, i, q) for t, i, q in rnd_gates if t == init_stab_type]
+        if not filtered:
+            continue
+        body.append("")
+        body.append(f"{indent}# Init CX round {rnd_idx + 1}")
+        cx_ops = [cx_tuple(stab_type, stab_idx, data_q) for stab_type, stab_idx, data_q in filtered]
+        site_idx = _append_gate_local_layer(body, indent, site_idx=site_idx, cx_ops=cx_ops)
+
+    if init_stab_type == "X":
+        body.append("")
+        for stab in init_stabs:
+            body.append(f"{indent}h(ax{stab.index})")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_init2_ax{stab.index}")
+
+    body.append("")
+    init_bits: list[str] = []
+    for idx, stab in enumerate(init_stabs):
+        bit_var = f"s{init_stab_type.lower()}{stab.index}_init"
+        init_bits.append(bit_var)
+        _append_gate_local_measure(
+            body,
+            indent,
+            bit_var=bit_var,
+            qubit_expr=anc_expr(init_stab_type, stab.index),
+            result_tag=f"s{init_stab_type.lower()}{stab.index}:init:meas:{idx}",
+            raw_tag=f"raw:s{init_stab_type.lower()}{stab.index}:init:bit:{idx}",
+            frame_vars=anc_frame(init_stab_type, stab.index),
+        )
+    body.append(f'{indent}result("{init_tag}", array({", ".join(init_bits)}))')
+    body.append("")
+
+    for round_idx in range(num_rounds):
+        body.append(f"{indent}# === Round {round_idx} (gate-local twirled) ===")
+        for stab in geom.x_stabilizers:
+            body.append(f"{indent}ax{stab.index} = qubit()")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                body.append(f"{indent}{frame_x} = False")
+                body.append(f"{indent}{frame_z} = False")
+        for stab in geom.z_stabilizers:
+            body.append(f"{indent}az{stab.index} = qubit()")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("Z", stab.index) or ("", "")
+                body.append(f"{indent}{frame_x} = False")
+                body.append(f"{indent}{frame_z} = False")
+        for stab in geom.x_stabilizers:
+            body.append(f"{indent}h(ax{stab.index})")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_r{round_idx}_ax{stab.index}")
+
+        for rnd_idx, rnd_gates in enumerate(rounds):
+            body.append("")
+            body.append(f"{indent}# Round {round_idx} CX layer {rnd_idx + 1}")
+            cx_ops = [cx_tuple(stab_type, stab_idx, data_q) for stab_type, stab_idx, data_q in rnd_gates]
+            site_idx = _append_gate_local_layer(body, indent, site_idx=site_idx, cx_ops=cx_ops)
+
+        for stab in geom.x_stabilizers:
+            body.append(f"{indent}h(ax{stab.index})")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h2_r{round_idx}_ax{stab.index}")
+
+        sx_bits: list[str] = []
+        sz_bits: list[str] = []
+        meas_idx = 0
+        for stab in geom.x_stabilizers:
+            bit_var = f"sx{stab.index}_r{round_idx}"
+            sx_bits.append(bit_var)
+            _append_gate_local_measure(
+                body,
+                indent,
+                bit_var=bit_var,
+                qubit_expr=f"ax{stab.index}",
+                result_tag=f"sx{stab.index}:meas:{meas_idx}",
+                raw_tag=f"raw:sx{stab.index}:bit:{meas_idx}",
+                frame_vars=anc_frame("X", stab.index),
+            )
+            meas_idx += 1
+        for stab in geom.z_stabilizers:
+            bit_var = f"sz{stab.index}_r{round_idx}"
+            sz_bits.append(bit_var)
+            _append_gate_local_measure(
+                body,
+                indent,
+                bit_var=bit_var,
+                qubit_expr=f"az{stab.index}",
+                result_tag=f"sz{stab.index}:meas:{meas_idx}",
+                raw_tag=f"raw:sz{stab.index}:bit:{meas_idx}",
+                frame_vars=anc_frame("Z", stab.index),
+            )
+            meas_idx += 1
+        body.append(f'{indent}result("synx", array({", ".join(sx_bits)}))')
+        body.append(f'{indent}result("synz", array({", ".join(sz_bits)}))')
+        body.append("")
+
+    if canonical_frame_output:
+        if basis == "x":
+            for q in range(num_data):
+                body.append(f"{indent}h(surf.data[{q}])")
+                frame_x, frame_z = data_frames[q]
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_final_d{q}")
+        body.append(f"{indent}final_raw = measure_array(surf.data)")
+        body.append(f'{indent}result("raw:final", final_raw)')
+        for q in range(num_data):
+            frame_x, _frame_z = data_frames[q]
+            body.append(f"{indent}final_{q} = final_raw[{q}] != {frame_x}")
+        body.append(f'{indent}result("final", array({", ".join(f"final_{q}" for q in range(num_data))}))')
+    else:
+        body.append(f"{indent}final = measure_{basis}_basis(surf)")
+        body.append(f'{indent}result("final", final)')
+
+    return [
+        f"def make_memory_{basis}(num_rounds: int):",
+        f'    """Create {basis_upper}-basis gate-local twirled memory experiment.',
         "",
         f"    num_rounds must equal {num_rounds} -- the body was unrolled at",
         "    source-generation time. Mismatched values raise ValueError.",

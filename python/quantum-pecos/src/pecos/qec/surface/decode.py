@@ -3941,14 +3941,74 @@ def _extract_pauli_masks_from_results(
     num_rounds: int,
     num_data: int,
     num_shots: int,
+    patch: SurfacePatch | None = None,
+    basis: str = "Z",
+    twirl: TwirlConfig | None = None,
 ) -> NDArray[np.uint8]:
     """Reconstruct per-shot Pauli-mask codes from Guppy result tags."""
     from pecos.qec.surface._twirl_sites import (
         mask_col_for,
+        mask_col_for_gate_operand,
         num_pauli_sites,
+        num_pauli_sites_for_schedule,
+        num_two_qubit_gate_twirl_sites,
+        pauli_mask_gate_tag,
         pauli_mask_round_tag,
         site_idx_for_round,
     )
+
+    site_schedule = "between_rounds" if twirl is None else twirl.site_schedule
+    if site_schedule == "before_two_qubit_gate":
+        if patch is None:
+            msg = "patch is required to extract before_two_qubit_gate Pauli masks"
+            raise ValueError(msg)
+        n_twirl = num_two_qubit_gate_twirl_sites(
+            patch,
+            num_rounds=num_rounds,
+            basis=basis,
+        )
+        out = np.zeros(
+            (
+                num_shots,
+                num_pauli_sites_for_schedule(
+                    patch,
+                    num_rounds=num_rounds,
+                    basis=basis,
+                    site_schedule="before_two_qubit_gate",
+                ),
+            ),
+            dtype=np.uint8,
+        )
+        for site in range(n_twirl):
+            tag = pauli_mask_gate_tag(site)
+            if tag not in results:
+                msg = (
+                    f"missing Pauli-mask result tag {tag!r} (expected {n_twirl} gate "
+                    f"tags for num_rounds={num_rounds}, basis={basis!r}); "
+                    "did the program run with gate-local twirl enabled?"
+                )
+                raise ValueError(msg)
+            per_gate = results[tag]
+            if len(per_gate) != num_shots:
+                msg = (
+                    f"Pauli-mask tag {tag!r}: got {len(per_gate)} shots, "
+                    f"expected {num_shots} shots"
+                )
+                raise ValueError(msg)
+
+            bits = np.asarray(per_gate, dtype=np.uint8)
+            if bits.ndim != 2 or bits.shape[1] != 4:
+                msg = (
+                    f"Pauli-mask tag {tag!r} array has shape {bits.shape}, expected "
+                    f"({num_shots}, 4) = (num_shots, 2*gate_operands)"
+                )
+                raise ValueError(msg)
+            lo = bits[:, 0::2]
+            hi = bits[:, 1::2]
+            packed = (lo + (hi << 1)).astype(np.uint8)
+            for operand in range(2):
+                out[:, mask_col_for_gate_operand(site, operand)] = packed[:, operand]
+        return out
 
     n_twirl = max(0, num_rounds - 1)
     bits_per_round = 2 * num_data
@@ -4055,4 +4115,7 @@ def sample_pauli_masks_from_guppy(
         num_rounds=num_rounds,
         num_data=num_data,
         num_shots=num_shots,
+        patch=patch,
+        basis=basis,
+        twirl=twirl,
     )

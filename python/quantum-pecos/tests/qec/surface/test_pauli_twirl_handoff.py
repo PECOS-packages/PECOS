@@ -14,7 +14,11 @@ from pecos.qec.surface import (
 )
 from pecos.qec.surface._twirl_sites import (
     mask_col_for,
+    mask_col_for_gate_operand,
     num_pauli_sites,
+    num_pauli_sites_for_schedule,
+    num_two_qubit_gate_twirl_sites,
+    pauli_mask_gate_tag,
     pauli_mask_round_tag,
 )
 from pecos.qec.surface.decode import (
@@ -55,6 +59,38 @@ def test_extract_pauli_masks_rejects_missing_or_misshaped_tags() -> None:
             num_data=2,
             num_shots=1,
         )
+
+
+def test_extract_gate_local_pauli_masks_packs_operand_order() -> None:
+    patch = SurfacePatch.create(distance=3)
+    results = {
+        pauli_mask_gate_tag(site): [[0, 0, 0, 0]]
+        for site in range(num_two_qubit_gate_twirl_sites(patch, num_rounds=1, basis="Z"))
+    }
+    results[pauli_mask_gate_tag(0)] = [[1, 0, 0, 1]]
+
+    mask = _extract_pauli_masks_from_results(
+        results,
+        num_rounds=1,
+        num_data=patch.geometry.num_data,
+        num_shots=1,
+        patch=patch,
+        basis="Z",
+        twirl=TwirlConfig(site_schedule="before_two_qubit_gate"),
+    )
+
+    assert mask.dtype == np.uint8
+    assert mask.shape == (
+        1,
+        num_pauli_sites_for_schedule(
+            patch,
+            num_rounds=1,
+            basis="Z",
+            site_schedule="before_two_qubit_gate",
+        ),
+    )
+    assert mask[0, mask_col_for_gate_operand(0, 0)] == 1
+    assert mask[0, mask_col_for_gate_operand(0, 1)] == 2
 
 
 def test_demask_helper_cancels_known_pauli_frame_xor() -> None:
@@ -250,6 +286,29 @@ def test_twirling_does_not_change_canonical_dem(
     assert twirled == untwirled
 
 
+def test_gate_local_twirling_does_not_change_canonical_dem() -> None:
+    patch = SurfacePatch.create(distance=3)
+    noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)
+
+    untwirled = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=noise,
+        basis="Z",
+        decompose_errors=True,
+    )
+    twirled = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=noise,
+        basis="Z",
+        decompose_errors=True,
+        twirl=TwirlConfig(site_schedule="before_two_qubit_gate"),
+    )
+
+    assert twirled == untwirled
+
+
 def test_surface_traced_qis_rejects_twirl_with_semantic_message() -> None:
     patch = SurfacePatch.create(distance=3)
 
@@ -291,6 +350,41 @@ def test_tracked_pauli_label_order_matches_mask_col_for(
             base = 3 * col
             for offset, kind in enumerate(("X", "Y", "Z")):
                 assert tracked[base + offset]["label"] == f"twirl_s{site}_q{q}_{kind}"
+
+
+def test_gate_local_tracked_pauli_label_order_matches_gate_operand_cols() -> None:
+    from pecos.qec.surface.schedule import compute_cnot_schedule
+
+    patch = SurfacePatch.create(distance=3)
+    num_rounds = 2
+    tc = build_memory_circuit(
+        patch=patch,
+        rounds=num_rounds,
+        basis="Z",
+        twirl=TwirlConfig(site_schedule="before_two_qubit_gate"),
+    )
+    tracked = [a for a in tc.annotations() if a["kind"] == "tracked_pauli"]
+    expected_cols = num_pauli_sites_for_schedule(
+        patch,
+        num_rounds=num_rounds,
+        basis="Z",
+        site_schedule="before_two_qubit_gate",
+    )
+    assert len(tracked) == 3 * expected_cols
+
+    first_init_x_gate = next(
+        (stab_idx, data_idx)
+        for cx_round in compute_cnot_schedule(patch)
+        for stab_type, stab_idx, data_idx in cx_round
+        if stab_type == "X"
+    )
+    stab_idx, data_idx = first_init_x_gate
+    first_control = patch.geometry.num_data + stab_idx
+    expected_first_labels = [
+        *(f"twirl_g0o0_q{first_control}_{kind}" for kind in ("X", "Y", "Z")),
+        *(f"twirl_g0o1_q{data_idx}_{kind}" for kind in ("X", "Y", "Z")),
+    ]
+    assert [tracked[i]["label"] for i in range(6)] == expected_first_labels
 
 
 def test_raw_twirled_guppy_trace_result_provenance_ignores_sideband_tags() -> None:

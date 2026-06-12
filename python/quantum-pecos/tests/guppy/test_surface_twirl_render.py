@@ -10,7 +10,7 @@ from pecos.guppy.surface import (
     generate_memory_experiment,
 )
 from pecos.qec.surface import GuppyRngMaskConfig, TwirlConfig
-from pecos.qec.surface._twirl_sites import pauli_mask_round_tag
+from pecos.qec.surface._twirl_sites import pauli_mask_gate_tag, pauli_mask_round_tag
 from pecos.qec.surface.patch import SurfacePatch
 
 
@@ -75,6 +75,27 @@ def test_canonical_frame_output_emits_raw_sibling_tags(patch: SurfacePatch) -> N
     assert 'result("final", array(final_0' in src
 
 
+def test_gate_local_twirl_source_emits_gate_tags_and_ancilla_frame_tracking(
+    patch: SurfacePatch,
+) -> None:
+    src = generate_guppy_source(
+        patch,
+        twirl=TwirlConfig(site_schedule="before_two_qubit_gate", frame_output="canonical"),
+        rng=GuppyRngMaskConfig(seed=7),
+        num_rounds=2,
+    )
+
+    assert 'result("frame_mode:canonical", True)' in src
+    assert f'result("{pauli_mask_gate_tag(0)}", array(' in src
+    assert "rng_state, m_g0_o0 = _pcg32_next4(rng_state, rng_inc)" in src
+    assert "x(ax" in src
+    assert "x(surf.data[" in src
+    assert "frame_x_ax" in src
+    assert "frame_z_az" in src
+    assert "raw:sx" in src
+    assert 'result("pauli_mask:round:' not in src
+
+
 def test_twirl_validation_requires_rng_and_num_rounds(patch: SurfacePatch) -> None:
     with pytest.raises(ValueError, match="twirl and rng must be supplied together"):
         generate_guppy_source(patch, twirl=TwirlConfig(), num_rounds=2)
@@ -117,29 +138,40 @@ def test_twirled_cache_key_includes_seed_rounds_and_frame_mode(patch: SurfacePat
         rng=GuppyRngMaskConfig(seed=1),
         num_rounds=3,
     )
+    gate_local = _guppy_module_cache_key(
+        patch,
+        effective_budget=10,
+        twirl=TwirlConfig(site_schedule="before_two_qubit_gate"),
+        rng=GuppyRngMaskConfig(seed=1),
+        num_rounds=2,
+    )
 
     assert raw != _guppy_module_cache_key(patch, effective_budget=10)
     assert raw != raw_seed2
     assert raw != canonical
     assert raw != round3
+    assert raw != gate_local
     assert "s1" in raw
     assert "s2" in raw_seed2
     assert "frame-raw" in raw
     assert "frame-canonical" in canonical
+    assert "before_two_qubit_gate" in gate_local
 
 
 @pytest.mark.parametrize("basis", ["Z", "X"])
 @pytest.mark.parametrize("frame_output", ["raw", "canonical"])
+@pytest.mark.parametrize("site_schedule", ["between_rounds", "before_two_qubit_gate"])
 def test_twirled_memory_experiment_compiles(
     patch: SurfacePatch,
     basis: str,
     frame_output: str,
+    site_schedule: str,
 ) -> None:
     fn = generate_memory_experiment(
         patch,
         num_rounds=2,
         basis=basis,
-        twirl=TwirlConfig(frame_output=frame_output),
+        twirl=TwirlConfig(site_schedule=site_schedule, frame_output=frame_output),
         rng=GuppyRngMaskConfig(seed=7),
     )
     assert fn is not None

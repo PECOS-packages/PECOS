@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 _SUPPORTED_SCHEMES = ("pauli",)
-_SUPPORTED_SITE_SCHEDULES = ("between_rounds",)
+_SUPPORTED_SITE_SCHEDULES = ("between_rounds", "before_two_qubit_gate")
 _SUPPORTED_RESULT_ENCODINGS = ("bool_array_v1",)
 _SUPPORTED_FRAME_OUTPUTS = ("raw", "canonical")
 
@@ -45,8 +45,10 @@ class TwirlConfig:
             `"clifford"` value is reserved for Phase 2 ({I, H}
             Clifford-frame randomization) and not yet implemented.
         site_schedule: Where twirling sites are emitted in the circuit.
-            `"between_rounds"` (the only supported value) emits one site
-            between each pair of consecutive syndrome rounds.
+            `"between_rounds"` emits one site between each pair of
+            consecutive syndrome rounds. `"before_two_qubit_gate"` emits
+            one site per operand immediately before every surface-memory
+            two-qubit gate in the supported Guppy runtime path.
         result_encoding: How the per-shot mask is recorded in the
             runtime result bundle. `"bool_array_v1"` packs the
             `2 * num_data` bool bits per round into one tagged array per
@@ -66,7 +68,7 @@ class TwirlConfig:
     """
 
     scheme: Literal["pauli"] = "pauli"
-    site_schedule: Literal["between_rounds"] = "between_rounds"
+    site_schedule: Literal["between_rounds", "before_two_qubit_gate"] = "between_rounds"
     result_encoding: Literal["bool_array_v1"] = "bool_array_v1"
     frame_output: Literal["raw", "canonical"] = "raw"
 

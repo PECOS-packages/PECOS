@@ -299,6 +299,7 @@ def _abstract_twirl_config(twirl: TwirlConfig | None) -> TwirlConfig | None:
     """Drop runtime-only Guppy record-framing fields before DEM caching."""
     if twirl is None:
         return None
+    twirl._validate_runtime_supported()
     return replace(twirl, frame_output="raw")
 
 
@@ -1349,6 +1350,9 @@ def _build_surface_tick_circuit_for_native_model(
     """Build the TickCircuit used by the native DEM and sampler paths."""
     from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 
+    if twirl is not None:
+        twirl._validate_runtime_supported()
+
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
         num_rounds,
@@ -1391,6 +1395,18 @@ def _build_surface_tick_circuit_for_native_model(
 
     traced_tc.set_meta("circuit_source", circuit_source)
     return traced_tc
+
+
+def _pauli_masks_as_int64(pauli_masks: Any) -> NDArray[np.int64]:
+    """Return Pauli-mask input in the integer dtype accepted by Rust bindings."""
+    masks_arr = np.asarray(pauli_masks)
+    if not np.issubdtype(masks_arr.dtype, np.integer):
+        msg = (
+            "pauli_masks must be an integer array with values "
+            "0=I, 1=X, 2=Y, 3=Z"
+        )
+        raise TypeError(msg)
+    return np.asarray(masks_arr, dtype=np.int64)
 
 
 def build_memory_circuit(
@@ -3640,10 +3656,11 @@ class NativeSampler:
             if self.pauli_frame_lookup is None:
                 msg = "pauli_masks require build_native_sampler(..., twirl=TwirlConfig())"
                 raise ValueError(msg)
+            masks_arr = _pauli_masks_as_int64(pauli_masks)
             det_events, obs_flips = self.sampler.sample_batch_with_pauli_masks(
                 num_shots,
                 self.pauli_frame_lookup,
-                pauli_masks,
+                masks_arr,
                 seed,
             )
         return np.array(det_events, dtype=bool), np.array(obs_flips, dtype=bool)
@@ -3832,13 +3849,14 @@ def decode_native_samples(
         )
         raise ValueError(msg)
 
-    det_events, obs_flips = sampler.sample(num_shots, seed=seed, pauli_masks=pauli_masks)
+    masks_arr = _pauli_masks_as_int64(pauli_masks) if pauli_masks is not None else None
+    det_events, obs_flips = sampler.sample(num_shots, seed=seed, pauli_masks=masks_arr)
 
-    if pauli_masks is not None:
+    if masks_arr is not None:
         if sampler.pauli_frame_lookup is None:
             msg = "pauli_masks require build_native_sampler(..., twirl=TwirlConfig())"
             raise ValueError(msg)
-        det_xor, obs_xor = sampler.pauli_frame_lookup.compute_mask_xor(pauli_masks)
+        det_xor, obs_xor = sampler.pauli_frame_lookup.compute_mask_xor(masks_arr)
         det_events = np.asarray(det_events, dtype=bool) ^ np.asarray(det_xor, dtype=bool)
         obs_flips = np.asarray(obs_flips, dtype=bool) ^ np.asarray(obs_xor, dtype=bool)
 
@@ -3862,7 +3880,7 @@ def demask_pauli_frame_records(
     """Cancel known Pauli-frame mask flips from detector/observable records."""
     events_arr = np.asarray(raw_events, dtype=bool)
     obs_arr = np.asarray(raw_obs, dtype=bool)
-    masks_arr = np.asarray(pauli_masks, dtype=np.int64)
+    masks_arr = _pauli_masks_as_int64(pauli_masks)
 
     if events_arr.ndim != 2:
         msg = (

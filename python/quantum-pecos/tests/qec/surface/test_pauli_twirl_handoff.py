@@ -10,6 +10,7 @@ from pecos.qec.surface import (
     TwirlConfig,
     build_memory_circuit,
     build_native_sampler,
+    decode_native_samples,
     demask_pauli_frame_records,
 )
 from pecos.qec.surface._twirl_sites import (
@@ -17,7 +18,10 @@ from pecos.qec.surface._twirl_sites import (
     num_pauli_sites,
     pauli_mask_round_tag,
 )
-from pecos.qec.surface.decode import _extract_pauli_masks_from_results
+from pecos.qec.surface.decode import (
+    _extract_pauli_masks_from_results,
+    generate_circuit_level_dem_from_builder,
+)
 
 
 def test_extract_pauli_masks_packs_bits_in_row_major_site_qubit_order() -> None:
@@ -89,6 +93,27 @@ def test_demask_helper_cancels_known_pauli_frame_xor() -> None:
     np.testing.assert_array_equal(observables, physical_obs)
 
 
+def test_native_sampler_accepts_harvested_uint8_pauli_masks() -> None:
+    patch = SurfacePatch.create(distance=3)
+    sampler = build_native_sampler(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(),
+        basis="Z",
+        twirl=TwirlConfig(),
+    )
+    assert sampler.num_pauli_sites > 0
+
+    masks = np.zeros((4, sampler.num_pauli_sites), dtype=np.uint8)
+    masks[:, 0] = [0, 1, 2, 3]
+
+    det_events, obs_flips = sampler.sample(4, seed=123, pauli_masks=masks)
+    assert det_events.shape == (4, sampler.num_detectors)
+    assert obs_flips.shape == (4, sampler.num_observables)
+
+    assert decode_native_samples(sampler, 4, seed=123, pauli_masks=masks) == 0
+
+
 def test_canonical_frame_output_reuses_raw_abstract_sampler_topology() -> None:
     patch = SurfacePatch.create(distance=3)
     raw = build_native_sampler(
@@ -110,6 +135,79 @@ def test_canonical_frame_output_reuses_raw_abstract_sampler_topology() -> None:
     assert canonical.num_observables == raw.num_observables
     assert canonical.num_pauli_sites == raw.num_pauli_sites
     assert canonical.pauli_frame_lookup is raw.pauli_frame_lookup
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("scheme", "clifford"),
+        ("site_schedule", "per_two_qubit_gate"),
+        ("result_encoding", "bogus"),
+        ("frame_output", "physical"),
+    ],
+)
+def test_abstract_twirl_builders_reject_unsupported_config(
+    field: str,
+    value: str,
+) -> None:
+    patch = SurfacePatch.create(distance=3)
+    kwargs = {field: value}
+    twirl = TwirlConfig(**kwargs)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match=field):
+        build_memory_circuit(
+            patch=patch,
+            rounds=2,
+            basis="Z",
+            twirl=twirl,
+        )
+
+    with pytest.raises(ValueError, match=field):
+        build_native_sampler(
+            patch,
+            num_rounds=2,
+            noise=NoiseModel(),
+            basis="Z",
+            twirl=twirl,
+        )
+
+    with pytest.raises(ValueError, match=field):
+        generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=2,
+            noise=NoiseModel(),
+            basis="Z",
+            twirl=twirl,
+        )
+
+
+def test_twirl_sine_law_idle_noise_builds_dem_and_sampler() -> None:
+    patch = SurfacePatch.create(distance=3)
+    noise = NoiseModel(p_idle_x_quadratic_sine_rate=0.03)
+    twirl = TwirlConfig()
+
+    dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=noise,
+        basis="Z",
+        decompose_errors=True,
+        twirl=twirl,
+    )
+    assert "error(" in dem
+
+    sampler = build_native_sampler(
+        patch,
+        num_rounds=2,
+        noise=noise,
+        basis="Z",
+        twirl=twirl,
+    )
+    assert sampler.num_pauli_sites == num_pauli_sites(2, patch.geometry.num_data)
+
+    det_events, obs_flips = sampler.sample(2, seed=7)
+    assert det_events.shape == (2, sampler.num_detectors)
+    assert obs_flips.shape == (2, sampler.num_observables)
 
 
 def test_surface_traced_qis_rejects_twirl_with_semantic_message() -> None:

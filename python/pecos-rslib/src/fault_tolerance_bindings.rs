@@ -2024,6 +2024,10 @@ fn create_observable_decoder(
                     |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
                 )?;
 
+            // Reject negative-weight edges (error priors p > 0.5) as a Python
+            // error rather than panicking in `from_matching_graph`.
+            pecos_decoders::UfDecoder::check_non_negative_weights(&graph)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let uf = pecos_decoders::UfDecoder::from_matching_graph(
                 &graph,
                 pecos_decoders::UfDecoderConfig::balanced(),
@@ -4684,7 +4688,9 @@ impl PyLogicalSubgraphDecoder {
         let dem_str = dem.to_string();
         // Reuse the backend chosen at construction unless the caller overrides,
         // so parallel workers decode identically to the serial path.
-        let inner_str = inner_decoder.unwrap_or(self.inner_decoder.as_str()).to_string();
+        let inner_str = inner_decoder
+            .unwrap_or(self.inner_decoder.as_str())
+            .to_string();
         let n = batch.num_shots;
 
         // Materialize row-major data for parallel decode.
@@ -4702,7 +4708,10 @@ impl PyLogicalSubgraphDecoder {
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        let errors: usize = pool.install(|| {
+        // Propagate worker construction and decode errors instead of panicking
+        // across the FFI boundary or silently scoring a failed chunk as
+        // all-failures (which would inflate the reported logical error rate).
+        let errors: Result<usize, pecos_decoders::DecoderError> = pool.install(|| {
             // Split into chunks, each chunk gets its own decoder + batch decode
             let chunk_size = n.div_ceil(rayon::current_num_threads());
             (0..n)
@@ -4723,20 +4732,18 @@ impl PyLogicalSubgraphDecoder {
                             Ok(Box::new(SendWrapper(d))
                                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
                         },
-                    )
-                    .unwrap();
+                    )?;
 
                     // Collect chunk syndromes and masks for batch decode
                     let chunk_syns: Vec<Vec<u8>> =
                         chunk.iter().map(|&i| events[i].clone()).collect();
                     let chunk_masks: Vec<u64> = chunk.iter().map(|&i| masks[i]).collect();
                     dec.decode_count_batched(&chunk_syns, &chunk_masks)
-                        .unwrap_or(chunk.len())
                 })
-                .sum()
+                .try_reduce(|| 0, |a, b| Ok(a + b))
         });
 
-        Ok(errors)
+        errors.map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Number of detectors in each subgraph.
@@ -5449,9 +5456,10 @@ impl PyLogicalCircuitDecoder {
                     det_maps,
                     obs_indices,
                     |dem_str| {
-                        let dec = create_observable_decoder(dem_str, &fallback_inner).map_err(
-                            |e| pecos_decoders::DecoderError::InternalError(e.to_string()),
-                        )?;
+                        let dec =
+                            create_observable_decoder(dem_str, &fallback_inner).map_err(|e| {
+                                pecos_decoders::DecoderError::InternalError(e.to_string())
+                            })?;
                         Ok(Box::new(SendWrapper(dec))
                             as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
                     },

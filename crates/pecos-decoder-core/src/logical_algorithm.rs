@@ -764,7 +764,10 @@ mod tests {
         // bit 0; the strategy must flip the GLOBAL bit, not the list position.
         // (The pre-fix `1 << i` would have produced bits {0,1} = 0b0011.)
         let mut strat = WindowedLogicalSubgraphStrategy::new(
-            vec!["error(0.1) D0 L0".to_string(), "error(0.1) D0 L0".to_string()],
+            vec![
+                "error(0.1) D0 L0".to_string(),
+                "error(0.1) D0 L0".to_string(),
+            ],
             vec![vec![0usize], vec![1usize]],
             vec![1usize, 3usize],
             |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),

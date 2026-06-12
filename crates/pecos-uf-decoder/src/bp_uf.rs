@@ -151,6 +151,7 @@ impl BpUfDecoder {
         let dcm = DemCheckMatrix::from_dem_str(dem)
             .map_err(|e| DecoderError::InvalidConfiguration(e.to_string()))?;
         let graph = DemMatchingGraph::from_dem_str(dem)?;
+        UfDecoder::check_non_negative_weights(&graph)?;
         let uf = UfDecoder::from_matching_graph(&graph, config.uf_config);
 
         // Build mechanism → edge mapping.
@@ -252,6 +253,7 @@ impl BpUfDecoder {
 
         // Matching graph and UF from the decomposed DEM.
         let match_graph = DemMatchingGraph::from_dem_str(matching_dem)?;
+        UfDecoder::check_non_negative_weights(&match_graph)?;
         let uf = UfDecoder::from_matching_graph(&match_graph, config.uf_config);
 
         // Map BP mechanisms (non-decomposed) → matching graph edges (decomposed).
@@ -453,6 +455,9 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
     }
 
     fn is_trivial(&self, syndrome: &[u8]) -> Option<u64> {
+        if !self.uf.config.predecoder {
+            return None;
+        }
         self.uf.predecode_clusters(syndrome)
     }
 }
@@ -460,8 +465,14 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
 impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         // Fast path: cluster predecoder handles isolated cases without BP.
-        // This catches 0 defects, single defects, and isolated pairs.
-        if let Some(obs) = self.uf.predecode_clusters(syndrome) {
+        // This catches 0 defects, single defects, and isolated pairs. Gated on
+        // the UF config like the plain `UfDecoder` paths. It deliberately runs
+        // on construction-time weights, bypassing BP: the cases it accepts are
+        // provably min-weight under the prior weights, and BP reweighting is
+        // only consulted for the larger clusters that fall through.
+        if self.uf.config.predecoder
+            && let Some(obs) = self.uf.predecode_clusters(syndrome)
+        {
             return Ok(obs);
         }
 

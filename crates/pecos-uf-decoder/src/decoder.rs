@@ -144,8 +144,9 @@ pub struct UfDecoder {
     adj_offset: Vec<u32>,
     /// Number of detectors.
     num_detectors: usize,
-    /// Config.
-    config: UfDecoderConfig,
+    /// Config. Crate-visible so wrappers (e.g. `BpUfDecoder`) honour the same
+    /// flags (notably `predecoder`) instead of silently ignoring them.
+    pub(crate) config: UfDecoderConfig,
 
     // === Per-shot reusable buffers ===
     /// Disjoint-set forest: parent[i] = parent of node i.
@@ -193,7 +194,44 @@ impl UfDecoder {
         &self.adj_data[start..end]
     }
 
+    /// Check that every edge weight in `graph` is non-negative.
+    ///
+    /// The predecoder's shortcut proofs ("lightest edge is the min-weight
+    /// correction", "direct pair <= boundary split") require non-negative
+    /// weights. `ln((1-p)/p)` guarantees that for priors p <= 0.5, but a raw
+    /// `error(p)` DEM line with p > 0.5 produces a negative weight. Call this
+    /// at any boundary where DEM text enters, so bad input is rejected as an
+    /// error instead of panicking in `from_matching_graph`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError::InvalidConfiguration` naming the first offending
+    /// edge (negative or NaN weight).
+    pub fn check_non_negative_weights(graph: &DemMatchingGraph) -> Result<(), DecoderError> {
+        if let Some((idx, e)) = graph
+            .edges
+            .iter()
+            .enumerate()
+            .find(|(_, e)| e.weight < 0.0 || e.weight.is_nan())
+        {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "UfDecoder requires non-negative edge weights (error priors p <= 0.5), \
+                 but edge {idx} (node {} -- {:?}) has weight {}",
+                e.node1, e.node2, e.weight,
+            )));
+        }
+        Ok(())
+    }
+
     /// Build from a `DemMatchingGraph`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any edge weight is negative or NaN: the predecoder's
+    /// optimality proofs depend on non-negative weights, so violating that
+    /// premise must fail loudly rather than silently mis-decode. Callers
+    /// holding untrusted DEM input should pre-validate with
+    /// [`Self::check_non_negative_weights`] to get an error instead.
     #[must_use]
     pub fn from_matching_graph(graph: &DemMatchingGraph, config: UfDecoderConfig) -> Self {
         let num_detectors = graph.num_detectors;
@@ -225,13 +263,14 @@ impl UfDecoder {
         }
 
         // Construction-time invariant: edge weights are non-negative (true for
-        // `ln((1-p)/p)` when p < 0.5, i.e. real sub-threshold priors). The
+        // `ln((1-p)/p)` when p <= 0.5, i.e. real sub-threshold priors). The
         // predecoder's shortcut proofs ("lightest edge is the min-weight
         // correction", "direct pair <= boundary split") depend on it; a negative
-        // weight would silently break them. Checked once here, not per shot.
-        debug_assert!(
+        // weight would silently break them, so this is a hard assert (a raw
+        // `error(p > 0.5)` DEM line violates it). Checked once here, not per shot.
+        assert!(
             edges.iter().all(|e| e.weight >= 0.0),
-            "UfDecoder requires non-negative edge weights (error priors p < 0.5)"
+            "UfDecoder requires non-negative edge weights (error priors p <= 0.5)"
         );
 
         // Sort each node's adjacency by weight (lightest first).
@@ -283,9 +322,12 @@ impl UfDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `DecoderError` if the DEM is malformed.
+    /// Returns `DecoderError` if the DEM is malformed or contains an error
+    /// prior p > 0.5 (negative edge weight, which the predecoder's optimality
+    /// proofs do not admit).
     pub fn from_dem(dem: &str, config: UfDecoderConfig) -> Result<Self, DecoderError> {
         let graph = DemMatchingGraph::from_dem_str(dem)?;
+        Self::check_non_negative_weights(&graph)?;
         Ok(Self::from_matching_graph(&graph, config))
     }
 

@@ -141,7 +141,10 @@ impl LogicalSubgraphWindowPlan {
     /// Local->global detector maps (one per non-empty observable).
     #[must_use]
     pub fn detector_maps(&self) -> Vec<Vec<usize>> {
-        self.entries.iter().map(|e| e.detector_map.clone()).collect()
+        self.entries
+            .iter()
+            .map(|e| e.detector_map.clone())
+            .collect()
     }
 
     /// Estimated number of time windows observable `i` would use at `step`
@@ -200,7 +203,11 @@ fn window_count_for_times(times: &[f64], step: usize) -> usize {
     let mut t_start = 0.0f64;
     while t_start < total_t {
         let is_last = t_start + 2.0 * step > total_t;
-        let t_core_end = if is_last { total_t + 1.0 } else { t_start + step };
+        let t_core_end = if is_last {
+            total_t + 1.0
+        } else {
+            t_start + step
+        };
         if times.iter().any(|&t| t >= t_start && t < t_core_end) {
             count += 1;
         }

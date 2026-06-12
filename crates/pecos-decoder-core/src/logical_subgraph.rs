@@ -610,12 +610,7 @@ impl LogicalSubgraphDecoder {
         // Per-shot observable predictions, accumulated across subgraphs.
         let mut shot_obs: Vec<u64> = vec![0u64; num_shots];
 
-        for (i, (sg, dec)) in self
-            .subgraphs
-            .iter()
-            .zip(self.decoders.iter_mut())
-            .enumerate()
-        {
+        for (sg, dec) in self.subgraphs.iter().zip(self.decoders.iter_mut()) {
             let n = sg.detector_map.len();
             if n == 0 {
                 continue;
@@ -639,7 +634,9 @@ impl LogicalSubgraphDecoder {
 
             for (shot_idx, &sub_obs) in sub_masks.iter().enumerate() {
                 if sub_obs & 1 != 0 {
-                    shot_obs[shot_idx] |= 1 << i;
+                    // Flip the subgraph's GLOBAL observable bit, not the list
+                    // position: construction guarantees < 64 observables.
+                    shot_obs[shot_idx] |= 1u64 << sg.observable_idx;
                 }
             }
         }
@@ -682,7 +679,9 @@ impl ObservableDecoder for LogicalSubgraphDecoder {
             let sub_obs = dec.decode_to_observables(&buf[..n])?;
 
             if sub_obs & 1 != 0 {
-                obs_mask |= 1 << i;
+                // Flip the subgraph's GLOBAL observable bit, not the list
+                // position: construction guarantees < 64 observables.
+                obs_mask |= 1u64 << sg.observable_idx;
             }
         }
 
@@ -757,9 +756,11 @@ impl ParallelLogicalSubgraphDecoder {
             .collect();
 
         let mut obs_mask = 0u64;
-        for (i, result) in results.into_iter().enumerate() {
+        for (sg, result) in self.subgraphs.iter().zip(results) {
             if result? {
-                obs_mask |= 1 << i;
+                // Flip the subgraph's GLOBAL observable bit, not the list
+                // position: construction guarantees < 64 observables.
+                obs_mask |= 1u64 << sg.observable_idx;
             }
         }
         Ok(obs_mask)
@@ -909,7 +910,7 @@ mod tests {
         // An out-of-range membership detector id must error, not panic
         // (the DEM has 2 detectors D0,D1; detector 5 is past `inverse_map`).
         assert!(matches!(
-            subgraphs_from_membership(&sdem, &vec![vec![5usize]]),
+            subgraphs_from_membership(&sdem, &[vec![5usize]]),
             Err(DecoderError::InvalidConfiguration(_))
         ));
     }
@@ -932,7 +933,11 @@ mod tests {
         assert_eq!(exact, vec![vec![0usize]], "None = exact boundary time only");
 
         let widened = coordinate_membership_from_dem(&sdem, &sc, Some(1)).unwrap();
-        assert_eq!(widened, vec![vec![0usize, 1usize]], "radius pulls in time 1");
+        assert_eq!(
+            widened,
+            vec![vec![0usize, 1usize]],
+            "radius pulls in time 1"
+        );
     }
 
     #[test]
@@ -943,8 +948,8 @@ mod tests {
         let dem = concat!(
             "detector(1, 0, 0) D0\n",
             "detector(0, 1, 0) D1\n",
-            "error(0.01) D0 L0\n",        // boundary → qubit 0 X
-            "error(0.02) D0 ^ D1 L0\n",   // decomposed; XOR -> {D0, D1}
+            "error(0.01) D0 L0\n",      // boundary → qubit 0 X
+            "error(0.02) D0 ^ D1 L0\n", // decomposed; XOR -> {D0, D1}
         );
         let sc = simple_stab_coords();
         let sdem = SparseDem::from_dem_str(dem).unwrap();
@@ -1044,9 +1049,10 @@ mod tests {
     #[test]
     fn test_too_many_observables_errors() {
         // 65 observables exceeds the u64 mask capacity.
+        use std::fmt::Write;
         let mut dem = String::from("detector(1, 0, 0) D0\n");
         for l in 0..65 {
-            dem.push_str(&format!("error(0.01) D0 L{l}\n"));
+            writeln!(dem, "error(0.01) D0 L{l}").unwrap();
         }
         let sc = simple_stab_coords();
         let err = partition_dem_by_logical(&dem, &sc).unwrap_err();

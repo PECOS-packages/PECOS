@@ -44,7 +44,7 @@ For circuit-level decoding with MWPM:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import cache
 from typing import TYPE_CHECKING, Any, Literal
@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     import stim
     from numpy.typing import NDArray
 
+    from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
 
@@ -260,12 +261,14 @@ class _CachedNativeSurfaceTopology:
 
     dag_circuit: Any
     influence_map: Any
+    pauli_frame_lookup: Any | None
     detectors_json: str
     observables_json: str
     measurement_order: tuple[int, ...]
     num_measurements: int
     num_detectors: int
     num_observables: int
+    num_pauli_sites: int
 
 
 def _surface_patch_cache_key(patch: SurfacePatch) -> tuple[int, int, str, bool]:
@@ -289,6 +292,24 @@ def _cached_surface_patch(patch_key: tuple[int, int, str, bool]) -> SurfacePatch
         dz=dz,
         orientation=PatchOrientation[orientation_name],
         rotated=rotated,
+    )
+
+
+def _abstract_twirl_config(twirl: TwirlConfig | None) -> TwirlConfig | None:
+    """Drop runtime-only Guppy record-framing fields before DEM caching."""
+    if twirl is None:
+        return None
+    return replace(twirl, frame_output="raw")
+
+
+def _twirl_traced_qis_rejection_message() -> str:
+    return (
+        "twirl=TwirlConfig() is not supported with circuit_source='traced_qis': "
+        "tracing runtime RNG twirl would bake one concrete mask realization "
+        "into the circuit/DEM/lookup, and canonical frame_output may break "
+        "runtime measurement result-id provenance because measurement tags can "
+        "be XOR-derived expressions. Use circuit_source='abstract' for twirl "
+        "for now."
     )
 
 
@@ -689,6 +710,8 @@ def _index_surface_result_trace_ids(
         result_ids = trace.get("result_ids")
         if not isinstance(name, str) or not isinstance(values, list) or not isinstance(result_ids, list):
             continue
+        if _is_surface_sideband_result_tag(name):
+            continue
         if len(values) != len(result_ids):
             msg = (
                 f"runtime result tag {name!r} has {len(values)} value(s) but "
@@ -705,6 +728,11 @@ def _index_surface_result_trace_ids(
         msg = "runtime trace does not contain named_result_traces; rebuild PECOS with result-tag provenance support"
         raise ValueError(msg)
     return scalar_trace_ids, array_trace_ids
+
+
+def _is_surface_sideband_result_tag(name: str) -> bool:
+    """Return true for non-detector-bearing surface result tags."""
+    return name.startswith(("pauli_mask:", "frame_mode:", "raw:"))
 
 
 def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[str, str] | tuple[str, str, int]]:
@@ -1153,7 +1181,17 @@ def _replay_qis_trace_chunks_into_tick_circuit(chunks: list[dict[str, Any]]) -> 
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
     if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
         _reject_partially_lowered_trace(chunks)
-        return _replay_lowered_qis_trace_into_tick_circuit(chunks)
+        try:
+            return _replay_lowered_qis_trace_into_tick_circuit(chunks)
+        except ValueError as exc:
+            if "missing measurement_result_ids" not in str(exc):
+                raise
+            # Older local Selene/qis-compiler builds can emit lowered gates
+            # without measurement_result_ids while still carrying the raw QIS
+            # operations, whose Measure payloads include the stable result ids.
+            # Replay the raw operations in that compatibility case instead of
+            # losing provenance.
+            pass
 
     operations: list[dict[str, Any]] = []
     for chunk in chunks:
@@ -1282,7 +1320,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
     from pecos.guppy import get_num_qubits
-    from pecos.guppy.surface import generate_memory_experiment
+    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
 
     program = generate_memory_experiment(
         patch,
@@ -1306,6 +1344,7 @@ def _build_surface_tick_circuit_for_native_model(
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
+    twirl: TwirlConfig | None = None,
 ) -> Any:
     """Build the TickCircuit used by the native DEM and sampler paths."""
     from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
@@ -1316,6 +1355,7 @@ def _build_surface_tick_circuit_for_native_model(
         basis,
         ancilla_budget=ancilla_budget,
         add_typed_annotations=False,
+        twirl=twirl,
     )
 
     if circuit_source == "abstract":
@@ -1324,6 +1364,9 @@ def _build_surface_tick_circuit_for_native_model(
     if circuit_source != "traced_qis":
         msg = f"Unknown circuit_source {circuit_source!r}"
         raise ValueError(msg)
+
+    if twirl is not None:
+        raise ValueError(_twirl_traced_qis_rejection_message())
 
     traced_tc, result_traces = _generate_traced_surface_tick_circuit_with_result_traces(
         patch,
@@ -1359,6 +1402,7 @@ def build_memory_circuit(
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
+    twirl: TwirlConfig | None = None,
 ) -> Any:
     """Build the standard surface-code memory ``TickCircuit``.
 
@@ -1377,6 +1421,10 @@ def build_memory_circuit(
             ``"traced_qis"`` for the lowered traced QIS gate stream.
         runtime: Optional Selene runtime selector/plugin used when
             ``circuit_source="traced_qis"``.
+        twirl: Optional Pauli-frame randomization layout. Currently supported
+            only with ``circuit_source="abstract"``; traced-QIS twirl is
+            rejected because a runtime trace would bake one sampled mask into
+            the circuit and can lose canonical result-id provenance.
 
     Returns:
         A Rust-backed ``TickCircuit`` with detector and observable metadata.
@@ -1408,6 +1456,7 @@ def build_memory_circuit(
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
         runtime=runtime,
+        twirl=twirl,
     )
 
 
@@ -1501,97 +1550,8 @@ def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
     )
 
 
-def _surface_native_topology(
-    patch_key: tuple[int, int, str, bool],
-    num_rounds: int,
-    basis: str,
-    ancilla_budget: int | None,
-    circuit_source: Literal["abstract", "traced_qis"],
-    include_idle_gates: bool,
-    *,
-    runtime: object | None = None,
-) -> _CachedNativeSurfaceTopology:
-    """Build topology-only native analysis shared across noise parameters."""
-    import json
-
-    from pecos.qec.surface.circuit_builder import (
-        _build_canonical_dem_influence_map,
-        _extract_measurement_order,
-        _metadata_uses_record_offsets,
-        normalize_traced_qis_tick_circuit,
-    )
-
-    patch = _cached_surface_patch(patch_key)
-    tc = _build_surface_tick_circuit_for_native_model(
-        patch,
-        num_rounds,
-        basis,
-        ancilla_budget=ancilla_budget,
-        circuit_source=circuit_source,
-        runtime=runtime,
-    )
-    if circuit_source == "traced_qis":
-        # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
-        # traced QIS emits parameterized Clifford rotations, while DEM
-        # replacement-branch approximations operate on named Clifford gates.
-        normalize_traced_qis_tick_circuit(tc, context="surface traced-QIS native topology")
-    if include_idle_gates:
-        # Insert idle gates only when the requested noise model includes a
-        # dedicated idle channel. Otherwise inserted idle gates receive ordinary
-        # one-qubit gate noise and change the explicit circuit-level DEM.
-        tc.fill_idle_gates()
-
-    dag = tc.to_dag_circuit()
-    influence_map = _build_canonical_dem_influence_map(dag)
-
-    detectors_json = tc.get_meta("detectors") or "[]"
-    observables_json = tc.get_meta("observables") or "[]"
-    measurement_order = (
-        tuple(_extract_measurement_order(tc)) if _metadata_uses_record_offsets(detectors_json, observables_json) else ()
-    )
-    num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
-
-    return _CachedNativeSurfaceTopology(
-        dag_circuit=dag,
-        influence_map=influence_map,
-        detectors_json=detectors_json,
-        observables_json=observables_json,
-        measurement_order=measurement_order,
-        num_measurements=num_measurements,
-        num_detectors=len(json.loads(detectors_json)) if detectors_json else 0,
-        num_observables=len(json.loads(observables_json)) if observables_json else 0,
-    )
-
-
-@cache
-def _cached_surface_native_topology(
-    patch_key: tuple[int, int, str, bool],
-    num_rounds: int,
-    basis: str,
-    ancilla_budget: int | None,
-    circuit_source: Literal["abstract", "traced_qis"],
-    include_idle_gates: bool,
-) -> _CachedNativeSurfaceTopology:
-    """Cache topology-only native analysis shared across noise parameters."""
-    return _surface_native_topology(
-        patch_key,
-        num_rounds,
-        basis,
-        ancilla_budget,
-        circuit_source,
-        include_idle_gates,
-    )
-
-
-def _dem_string_from_cached_surface_topology(
-    topology: _CachedNativeSurfaceTopology,
-    noise: NoiseModel,
-    *,
-    decompose_errors: bool,
-) -> str:
-    """Build a DEM string from cached topology and fresh noise parameters."""
-    from pecos.qec import DemBuilder
-
+def _with_noise_compat(builder: Any, noise: NoiseModel) -> Any:
+    """Call Rust ``with_noise`` using the richest signature this binding supports."""
     noise_kwargs = {
         "p_idle": noise.p_idle,
         "t1": noise.t1,
@@ -1614,13 +1574,146 @@ def _dem_string_from_cached_surface_topology(
     if noise.p2_replacement_approximation is not None:
         noise_kwargs["p2_replacement_approximation"] = noise.p2_replacement_approximation
 
-    builder = DemBuilder(topology.influence_map).with_noise(
-        noise.p1,
-        noise.p2,
-        noise.p_meas,
-        noise.p_prep,
-        **noise_kwargs,
+    try:
+        return builder.with_noise(
+            noise.p1,
+            noise.p2,
+            noise.p_meas,
+            noise.p_prep,
+            **noise_kwargs,
+        )
+    except TypeError as exc:
+        unsupported = {
+            key: value
+            for key, value in noise_kwargs.items()
+            if key not in {"p_idle", "t1", "t2"} and value is not None
+        }
+        if unsupported:
+            msg = (
+                "This pecos_rslib build does not support the requested advanced "
+                f"surface noise options: {sorted(unsupported)}"
+            )
+            raise TypeError(msg) from exc
+        return builder.with_noise(
+            noise.p1,
+            noise.p2,
+            noise.p_meas,
+            noise.p_prep,
+            p_idle=noise.p_idle,
+            t1=noise.t1,
+            t2=noise.t2,
+        )
+
+
+def _surface_native_topology(
+    patch_key: tuple[int, int, str, bool],
+    num_rounds: int,
+    basis: str,
+    ancilla_budget: int | None,
+    circuit_source: Literal["abstract", "traced_qis"],
+    include_idle_gates: bool,
+    *,
+    runtime: object | None = None,
+    twirl: TwirlConfig | None = None,
+) -> _CachedNativeSurfaceTopology:
+    """Build topology-only native analysis shared across noise parameters."""
+    import json
+
+    from pecos.qec.surface.circuit_builder import (
+        _build_canonical_dem_influence_map,
+        _extract_measurement_order,
+        _metadata_uses_record_offsets,
+        normalize_traced_qis_tick_circuit,
     )
+
+    patch = _cached_surface_patch(patch_key)
+    tc = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        circuit_source=circuit_source,
+        runtime=runtime,
+        twirl=twirl,
+    )
+    if circuit_source == "traced_qis":
+        # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
+        # traced QIS emits parameterized Clifford rotations, while DEM
+        # replacement-branch approximations operate on named Clifford gates.
+        normalize_traced_qis_tick_circuit(tc, context="surface traced-QIS native topology")
+    if include_idle_gates:
+        # Insert idle gates only when the requested noise model includes a
+        # dedicated idle channel. Otherwise inserted idle gates receive ordinary
+        # one-qubit gate noise and change the explicit circuit-level DEM.
+        tc.fill_idle_gates()
+
+    dag = tc.to_dag_circuit()
+    influence_map = _build_canonical_dem_influence_map(dag)
+
+    detectors_json = tc.get_meta("detectors") or "[]"
+    observables_json = tc.get_meta("observables") or "[]"
+    det_records = [d["records"] for d in json.loads(detectors_json)] if detectors_json else []
+    obs_records = [o["records"] for o in json.loads(observables_json)] if observables_json else []
+    measurement_order = (
+        tuple(_extract_measurement_order(tc)) if _metadata_uses_record_offsets(detectors_json, observables_json) else ()
+    )
+    num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
+
+    pauli_frame_lookup = None
+    num_pauli_sites = 0
+    if twirl is not None:
+        from pecos_rslib.qec import PauliFrameLookup
+
+        pauli_frame_lookup = PauliFrameLookup.from_circuit(dag, det_records, obs_records)
+        num_pauli_sites = pauli_frame_lookup.num_pauli_sites
+
+    return _CachedNativeSurfaceTopology(
+        dag_circuit=dag,
+        influence_map=influence_map,
+        pauli_frame_lookup=pauli_frame_lookup,
+        detectors_json=detectors_json,
+        observables_json=observables_json,
+        measurement_order=measurement_order,
+        num_measurements=num_measurements,
+        num_detectors=len(det_records),
+        num_observables=len(obs_records),
+        num_pauli_sites=num_pauli_sites,
+    )
+
+
+@cache
+def _cached_surface_native_topology(
+    patch_key: tuple[int, int, str, bool],
+    num_rounds: int,
+    basis: str,
+    ancilla_budget: int | None,
+    circuit_source: Literal["abstract", "traced_qis"],
+    include_idle_gates: bool,
+    *,
+    twirl: TwirlConfig | None = None,
+) -> _CachedNativeSurfaceTopology:
+    """Cache topology-only native analysis shared across noise parameters."""
+    return _surface_native_topology(
+        patch_key,
+        num_rounds,
+        basis,
+        ancilla_budget,
+        circuit_source,
+        include_idle_gates,
+        twirl=twirl,
+    )
+
+
+def _dem_string_from_cached_surface_topology(
+    topology: _CachedNativeSurfaceTopology,
+    noise: NoiseModel,
+    *,
+    decompose_errors: bool,
+) -> str:
+    """Build a DEM string from cached topology and fresh noise parameters."""
+    from pecos.qec import DemBuilder
+
+    builder = _with_noise_compat(DemBuilder(topology.influence_map), noise)
     if hasattr(builder, "with_exact_branch_replay_circuit"):
         builder = builder.with_exact_branch_replay_circuit(topology.dag_circuit)
 
@@ -1672,6 +1765,7 @@ def _cached_surface_native_dem_string(
     p_idle_x_quadratic_sine_rate: float | None = None,
     p_idle_y_quadratic_sine_rate: float | None = None,
     p_idle_z_quadratic_sine_rate: float | None = None,
+    twirl: TwirlConfig | None = None,
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
     include_idle_gates = _uses_dedicated_idle_noise(
@@ -1698,6 +1792,7 @@ def _cached_surface_native_dem_string(
         ancilla_budget,
         circuit_source,
         include_idle_gates,
+        twirl=twirl,
     )
     return _dem_string_from_cached_surface_topology(
         topology,
@@ -1761,31 +1856,7 @@ def _build_native_sampler_from_cached_surface_topology(
         from pecos.qec import DemSamplerBuilder
 
         sampler_builder = (
-            DemSamplerBuilder(topology.influence_map)
-            .with_noise(
-                noise.p1,
-                noise.p2,
-                noise.p_meas,
-                noise.p_prep,
-                p_idle=noise.p_idle,
-                t1=noise.t1,
-                t2=noise.t2,
-                p_idle_linear_rate=noise.p_idle_linear_rate,
-                p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-                p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-                p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-                p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-                p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-                p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-                p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-                p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
-                p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
-                p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
-                p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
-                p1_weights=_p1_weights_dict(noise.p1_weights),
-                p2_weights=_p2_weights_dict(noise.p2_weights),
-                p2_replacement_approximation=noise.p2_replacement_approximation,
-            )
+            _with_noise_compat(DemSamplerBuilder(topology.influence_map), noise)
             .with_detectors_json(topology.detectors_json)
             .with_observables_json(topology.observables_json)
         )
@@ -1804,6 +1875,8 @@ def _build_native_sampler_from_cached_surface_topology(
         observables_json=topology.observables_json,
         num_detectors=topology.num_detectors,
         num_observables=topology.num_observables,
+        pauli_frame_lookup=topology.pauli_frame_lookup,
+        num_pauli_sites=topology.num_pauli_sites,
         sampling_model=sampling_model,
     )
 
@@ -1818,6 +1891,7 @@ def generate_circuit_level_dem_from_builder(
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
+    twirl: TwirlConfig | None = None,
 ) -> str:
     """Generate circuit-level DEM using PECOS native fault propagation.
 
@@ -1850,6 +1924,9 @@ def generate_circuit_level_dem_from_builder(
             ``circuit_source="traced_qis"``. Custom runtime topologies are not
             kept in PECOS's in-process topology cache because plugin objects
             can carry private mutable state.
+        twirl: Optional Pauli-frame randomization layout. Canonical Guppy
+            frame-output mode is normalized to the same abstract raw lookup
+            and DEM topology.
 
     Returns:
         DEM string in standard format
@@ -1862,6 +1939,7 @@ def generate_circuit_level_dem_from_builder(
         >>> dem = generate_circuit_level_dem_from_builder(patch, num_rounds=3, noise=noise)
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
+    twirl = _abstract_twirl_config(twirl)
     patch_key = _surface_patch_cache_key(patch)
     include_idle_gates = _noise_uses_dedicated_idle_noise(noise)
     if runtime is not None:
@@ -1873,6 +1951,7 @@ def generate_circuit_level_dem_from_builder(
             circuit_source,
             include_idle_gates,
             runtime=runtime,
+            twirl=twirl,
         )
         return _dem_string_from_cached_surface_topology(
             topology,
@@ -1909,6 +1988,7 @@ def generate_circuit_level_dem_from_builder(
         p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
         p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+        twirl=twirl,
     )
 
 
@@ -3511,7 +3591,11 @@ class NativeSampler:
         observables_json: JSON string with observable definitions
         num_detectors: Number of detectors
         num_observables: Number of observables
+        pauli_frame_lookup: Optional PECOS lookup for Pauli-twirl mask composition
+        num_pauli_sites: Number of Pauli-twirl mask sites
         sampling_model: Which native sampling backend is active
+        dem_string: Optional graphlike-decomposed DEM string used to build the
+            sampler. Populated when the ``"dem"`` sampling model is selected.
     """
 
     sampler: Any
@@ -3519,14 +3603,19 @@ class NativeSampler:
     observables_json: str
     num_detectors: int
     num_observables: int
+    pauli_frame_lookup: Any | None = None
+    num_pauli_sites: int = 0
     sampling_model: Literal["dem", "influence_dem", "mnm"] = (
         "dem"  # "mnm" accepted for compat, mapped to "influence_dem"
     )
+    dem_string: str | None = None
 
     def sample(
         self,
         num_shots: int,
         seed: int | None = None,
+        *,
+        pauli_masks: Any | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Sample detection events and observable flips.
 
@@ -3535,13 +3624,28 @@ class NativeSampler:
         Args:
             num_shots: Number of shots to sample
             seed: Optional random seed for reproducibility
+            pauli_masks: Optional integer array of shape
+                ``(num_shots, num_pauli_sites)`` with values 0=I, 1=X, 2=Y,
+                3=Z. Requires ``build_native_sampler(...,
+                twirl=TwirlConfig())``.
 
         Returns:
             Tuple of (detection_events, observable_flips) as numpy arrays.
             - detection_events: shape (num_shots, num_detectors)
             - observable_flips: shape (num_shots, num_observables)
         """
-        det_events, obs_flips = self.sampler.sample_batch(num_shots, seed)
+        if pauli_masks is None:
+            det_events, obs_flips = self.sampler.sample_batch(num_shots, seed)
+        else:
+            if self.pauli_frame_lookup is None:
+                msg = "pauli_masks require build_native_sampler(..., twirl=TwirlConfig())"
+                raise ValueError(msg)
+            det_events, obs_flips = self.sampler.sample_batch_with_pauli_masks(
+                num_shots,
+                self.pauli_frame_lookup,
+                pauli_masks,
+                seed,
+            )
         return np.array(det_events, dtype=bool), np.array(obs_flips, dtype=bool)
 
 
@@ -3552,6 +3656,7 @@ def build_native_sampler(
     basis: str = "Z",
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    twirl: TwirlConfig | None = None,
     sampling_model: Literal[
         "dem",
         "influence_dem",
@@ -3581,6 +3686,8 @@ def build_native_sampler(
             TickCircuit. ``"traced_qis"`` traces the lowered ideal Selene/QIS
             gate stream and replays that exact gate list into a TickCircuit
             before native PECOS fault analysis.
+        twirl: Optional Pauli-frame randomization layout. Canonical runtime
+            frame-output mode is normalized to the same abstract raw lookup.
         sampling_model: Which native sampling backend to use. ``"dem"``
             samples the generated decomposed DEM and is the default.
             ``"influence_dem"`` uses the influence-map-based DemSampler with
@@ -3598,6 +3705,7 @@ def build_native_sampler(
         >>> detection_events, observable_flips = sampler.sample(num_shots=10000)
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
+    twirl = _abstract_twirl_config(twirl)
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
     topology = _cached_surface_native_topology(
@@ -3607,6 +3715,7 @@ def build_native_sampler(
         ancilla_budget,
         circuit_source,
         _noise_uses_dedicated_idle_noise(noise),
+        twirl=twirl,
     )
     if sampling_model == "dem":
         dem_str = _cached_surface_native_dem_string(
@@ -3638,6 +3747,7 @@ def build_native_sampler(
             p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
             p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
             p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+            twirl=twirl,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(
@@ -3646,10 +3756,287 @@ def build_native_sampler(
             observables_json=topology.observables_json,
             num_detectors=topology.num_detectors,
             num_observables=topology.num_observables,
+            pauli_frame_lookup=topology.pauli_frame_lookup,
+            num_pauli_sites=topology.num_pauli_sites,
             sampling_model=sampling_model,
+            dem_string=dem_str,
         )
     return _build_native_sampler_from_cached_surface_topology(
         topology,
         noise,
         sampling_model=sampling_model,
+    )
+
+
+def build_native_sampler_from_dem(
+    decomposed_dem: str,
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str = "Z",
+    *,
+    ancilla_budget: int | None = None,
+    circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    twirl: TwirlConfig | None = None,
+) -> NativeSampler:
+    """Build a native sampler from a caller-supplied decomposed DEM string.
+
+    The supplied DEM is parsed directly and stored verbatim on the returned
+    sampler. Surface topology metadata and optional Pauli-frame lookup are
+    taken from the same abstract/traced surface circuit family as
+    :func:`build_native_sampler`.
+    """
+    ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
+    twirl = _abstract_twirl_config(twirl)
+    basis = basis.upper()
+    patch_key = _surface_patch_cache_key(patch)
+    topology = _cached_surface_native_topology(
+        patch_key,
+        num_rounds,
+        basis,
+        ancilla_budget,
+        circuit_source,
+        False,
+        twirl=twirl,
+    )
+    sampler = _cached_parsed_dem(decomposed_dem).to_dem_sampler()
+    return NativeSampler(
+        sampler=sampler,
+        detectors_json=topology.detectors_json,
+        observables_json=topology.observables_json,
+        num_detectors=topology.num_detectors,
+        num_observables=topology.num_observables,
+        pauli_frame_lookup=topology.pauli_frame_lookup,
+        num_pauli_sites=topology.num_pauli_sites,
+        sampling_model="dem",
+        dem_string=decomposed_dem,
+    )
+
+
+def decode_native_samples(
+    sampler: NativeSampler,
+    num_shots: int,
+    *,
+    dem: str | None = None,
+    decoder_type: str = "pymatching",
+    seed: int | None = None,
+    pauli_masks: Any | None = None,
+) -> int:
+    """Sample, optionally apply a known Pauli-frame mask, de-mask, and decode."""
+    from pecos_rslib.qec import SampleBatch
+
+    dem_str = dem if dem is not None else sampler.dem_string
+    if dem_str is None:
+        msg = (
+            "decode_native_samples requires a DEM string; "
+            "pass dem= or build the sampler with sampling_model='dem'"
+        )
+        raise ValueError(msg)
+
+    det_events, obs_flips = sampler.sample(num_shots, seed=seed, pauli_masks=pauli_masks)
+
+    if pauli_masks is not None:
+        if sampler.pauli_frame_lookup is None:
+            msg = "pauli_masks require build_native_sampler(..., twirl=TwirlConfig())"
+            raise ValueError(msg)
+        det_xor, obs_xor = sampler.pauli_frame_lookup.compute_mask_xor(pauli_masks)
+        det_events = np.asarray(det_events, dtype=bool) ^ np.asarray(det_xor, dtype=bool)
+        obs_flips = np.asarray(obs_flips, dtype=bool) ^ np.asarray(obs_xor, dtype=bool)
+
+    det_list = np.asarray(det_events, dtype=np.uint8).tolist()
+    obs_arr = np.asarray(obs_flips, dtype=np.uint64)
+    if obs_arr.ndim != 2:
+        msg = f"expected obs_flips to be 2-D, got shape {obs_arr.shape}"
+        raise ValueError(msg)
+    weights = (1 << np.arange(obs_arr.shape[1], dtype=np.uint64)).astype(np.uint64)
+    obs_masks = (obs_arr * weights).sum(axis=1).astype(np.uint64).tolist()
+    batch = SampleBatch(det_list, obs_masks)
+    return batch.decode_count(dem_str, decoder_type)
+
+
+def demask_pauli_frame_records(
+    pauli_frame_lookup: Any,
+    raw_events: Any,
+    raw_obs: Any,
+    pauli_masks: Any,
+) -> tuple[NDArray[np.bool_], NDArray[np.bool_]]:
+    """Cancel known Pauli-frame mask flips from detector/observable records."""
+    events_arr = np.asarray(raw_events, dtype=bool)
+    obs_arr = np.asarray(raw_obs, dtype=bool)
+    masks_arr = np.asarray(pauli_masks, dtype=np.int64)
+
+    if events_arr.ndim != 2:
+        msg = (
+            f"raw_events must be 2-D of shape (num_shots, num_detectors); "
+            f"got ndim={events_arr.ndim}, shape={events_arr.shape}"
+        )
+        raise ValueError(msg)
+    if obs_arr.ndim != 2:
+        msg = (
+            f"raw_obs must be 2-D of shape (num_shots, num_observables); "
+            f"got ndim={obs_arr.ndim}, shape={obs_arr.shape}"
+        )
+        raise ValueError(msg)
+    if masks_arr.ndim != 2:
+        msg = (
+            f"pauli_masks must be 2-D of shape (num_shots, num_pauli_sites); "
+            f"got ndim={masks_arr.ndim}, shape={masks_arr.shape}"
+        )
+        raise ValueError(msg)
+    if events_arr.shape[0] != obs_arr.shape[0] or events_arr.shape[0] != masks_arr.shape[0]:
+        msg = (
+            "raw_events, raw_obs, and pauli_masks must have the same "
+            f"num_shots; got {events_arr.shape[0]}, {obs_arr.shape[0]}, "
+            f"{masks_arr.shape[0]}"
+        )
+        raise ValueError(msg)
+
+    expected_det = pauli_frame_lookup.num_detectors
+    expected_obs = pauli_frame_lookup.num_observables
+    expected_sites = pauli_frame_lookup.num_pauli_sites
+    if events_arr.shape[1] != expected_det:
+        msg = (
+            f"raw_events width {events_arr.shape[1]} != "
+            f"pauli_frame_lookup.num_detectors {expected_det}"
+        )
+        raise ValueError(msg)
+    if obs_arr.shape[1] != expected_obs:
+        msg = (
+            f"raw_obs width {obs_arr.shape[1]} != "
+            f"pauli_frame_lookup.num_observables {expected_obs}"
+        )
+        raise ValueError(msg)
+    if masks_arr.shape[1] != expected_sites:
+        msg = (
+            f"pauli_masks width {masks_arr.shape[1]} != "
+            f"pauli_frame_lookup.num_pauli_sites {expected_sites}"
+        )
+        raise ValueError(msg)
+
+    det_xor, obs_xor = pauli_frame_lookup.compute_mask_xor(masks_arr)
+    return (
+        events_arr ^ np.asarray(det_xor, dtype=bool),
+        obs_arr ^ np.asarray(obs_xor, dtype=bool),
+    )
+
+
+def _extract_pauli_masks_from_results(
+    results: dict[str, Any],
+    *,
+    num_rounds: int,
+    num_data: int,
+    num_shots: int,
+) -> NDArray[np.uint8]:
+    """Reconstruct per-shot Pauli-mask codes from Guppy result tags."""
+    from pecos.qec.surface._twirl_sites import (
+        mask_col_for,
+        num_pauli_sites,
+        pauli_mask_round_tag,
+        site_idx_for_round,
+    )
+
+    n_twirl = max(0, num_rounds - 1)
+    bits_per_round = 2 * num_data
+    out = np.zeros((num_shots, num_pauli_sites(num_rounds, num_data)), dtype=np.uint8)
+
+    for r in range(n_twirl):
+        tag = pauli_mask_round_tag(r)
+        if tag not in results:
+            msg = (
+                f"missing Pauli-mask result tag {tag!r} (expected {n_twirl} round "
+                f"tags for num_rounds={num_rounds}); did the program run with twirl enabled?"
+            )
+            raise ValueError(msg)
+        per_round = results[tag]
+        if len(per_round) != num_shots:
+            msg = (
+                f"Pauli-mask tag {tag!r}: got {len(per_round)} shots, "
+                f"expected {num_shots} shots"
+            )
+            raise ValueError(msg)
+
+        bits = np.asarray(per_round, dtype=np.uint8)
+        if bits.ndim != 2 or bits.shape[1] != bits_per_round:
+            msg = (
+                f"Pauli-mask tag {tag!r} array has shape {bits.shape}, expected "
+                f"({num_shots}, {bits_per_round}) = (num_shots, 2*num_data)"
+            )
+            raise ValueError(msg)
+
+        lo = bits[:, 0::2]
+        hi = bits[:, 1::2]
+        packed = (lo + (hi << 1)).astype(np.uint8)
+
+        site = site_idx_for_round(r)
+        for q in range(num_data):
+            out[:, mask_col_for(site, q, num_data)] = packed[:, q]
+
+    return out
+
+
+def sample_pauli_masks_from_guppy(
+    patch: SurfacePatch,
+    *,
+    num_rounds: int,
+    num_shots: int,
+    basis: str,
+    twirl: TwirlConfig,
+    rng: Any,
+    ancilla_budget: int | None = None,
+) -> NDArray[np.uint8]:
+    """Run the Guppy memory program with twirling and harvest mask columns."""
+    from selene_sim import SimpleRuntime, Stim, build
+
+    from pecos.compilation_pipeline import compile_guppy_to_hugr
+    from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
+
+    if twirl is None or rng is None:
+        msg = "sample_pauli_masks_from_guppy requires both twirl and rng to be set"
+        raise ValueError(msg)
+    twirl._validate_runtime_supported()
+    if num_rounds < 1:
+        msg = f"num_rounds must be >= 1, got {num_rounds}"
+        raise ValueError(msg)
+
+    num_data = patch.geometry.num_data
+
+    fn = generate_memory_experiment(
+        patch,
+        num_rounds=num_rounds,
+        basis=basis,
+        twirl=twirl,
+        rng=rng,
+        ancilla_budget=ancilla_budget,
+    )
+
+    hugr_bytes = compile_guppy_to_hugr(fn)
+    instance = build(
+        hugr_bytes,
+        name=f"pauli_mask_d{patch.geometry.dx}_r{num_rounds}_{basis.lower()}",
+    )
+    num_qubits = get_num_qubits(
+        patch=patch,
+        ancilla_budget=ancilla_budget,
+        twirl=twirl,
+    )
+
+    results: dict[str, list[list[Any]]] = {}
+    for shot_results in instance.run_shots(
+        simulator=Stim(random_seed=int(rng.seed)),
+        n_qubits=num_qubits,
+        n_shots=num_shots,
+        runtime=SimpleRuntime(),
+        n_processes=1,
+    ):
+        for name, values in shot_results:
+            try:
+                shot_value = list(values)
+            except TypeError:
+                shot_value = [values]
+            results.setdefault(name, []).append(shot_value)
+
+    return _extract_pauli_masks_from_results(
+        results,
+        num_rounds=num_rounds,
+        num_data=num_data,
+        num_shots=num_shots,
     )

@@ -54,12 +54,16 @@ from pecos.qec.surface.decode import (
     SurfaceDecoder,
     build_memory_circuit,
     build_native_sampler,
+    build_native_sampler_from_dem,
     build_stim_circuit_from_patch,
+    decode_native_samples,
+    demask_pauli_frame_records,
     generate_circuit_level_dem,
     generate_dem_from_patch,
     generate_repetition_code_dem,
     generate_surface_code_dem,
     run_noisy_memory_experiment,
+    sample_pauli_masks_from_guppy,
     surface_code_memory,
     syndromes_to_detection_events,
 )
@@ -101,12 +105,17 @@ from pecos.qec.surface.patch import (
     get_stabilizer_touch_label,
 )
 from pecos.qec.surface.plot import plot_patch, plot_surface_code
+from pecos.qec.surface._detection_events import extract_detection_events_and_observables
 from pecos.qec.surface.schedule import (
     compute_cnot_schedule,
     get_stab_schedule,
 )
+from pecos.qec.surface._twirl_config import GuppyRngMaskConfig, TwirlConfig
 
 __all__ = [
+    # Twirling config (Pauli-frame randomization)
+    "GuppyRngMaskConfig",
+    "TwirlConfig",
     # Rotated lattice (most common, default)
     "compute_rotated_x_stabilizers",
     "compute_rotated_z_stabilizers",
@@ -144,12 +153,17 @@ __all__ = [
     "SurfaceDecoder",
     "build_memory_circuit",
     "build_native_sampler",
+    "build_native_sampler_from_dem",
     "build_stim_circuit_from_patch",
+    "decode_native_samples",
+    "demask_pauli_frame_records",
+    "extract_detection_events_and_observables",
     "generate_circuit_level_dem",
     "generate_dem_from_patch",
     "generate_repetition_code_dem",
     "generate_surface_code_dem",
     "run_noisy_memory_experiment",
+    "sample_pauli_masks_from_guppy",
     "surface_code_memory",
     "syndromes_to_detection_events",
     # Visualization

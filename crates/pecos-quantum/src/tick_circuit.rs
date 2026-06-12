@@ -2229,6 +2229,7 @@ impl TickCircuit {
     pub fn tracked_pauli(&mut self, mut pauli: pecos_core::PauliString) -> usize {
         pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
         let idx = self.annotations.len();
+        self.insert_pauli_meta_tick(&pauli);
         self.annotations.push(PauliAnnotation {
             pauli,
             kind: AnnotationKind::TrackedPauli,
@@ -2242,6 +2243,13 @@ impl TickCircuit {
         let idx = self.tracked_pauli(pauli);
         self.annotations[idx].label = Some(label.to_string());
         idx
+    }
+
+    /// Insert a `TrackedPauliMeta` batch in its own tick at the current point.
+    fn insert_pauli_meta_tick(&mut self, pauli: &pecos_core::PauliString) {
+        let qubits: Vec<QubitId> = pauli.qubits().into_iter().map(QubitId::from).collect();
+        let gate = Gate::simple(GateType::TrackedPauliMeta, qubits);
+        self.tick().add_gate(gate);
     }
 
     /// Get all annotations.
@@ -3395,11 +3403,16 @@ impl From<&TickCircuit> for DagCircuit {
                 }
                 AnnotationKind::TrackedPauli => AnnotationKind::TrackedPauli,
             };
-            dag.add_annotation(PauliAnnotation {
+            let remapped_annotation = PauliAnnotation {
                 pauli: ann.pauli.clone(),
                 kind: remapped_kind,
                 label: ann.label.clone(),
-            });
+            };
+            if matches!(remapped_annotation.kind, AnnotationKind::TrackedPauli) {
+                dag.add_annotation_without_meta_gate(remapped_annotation);
+            } else {
+                dag.add_annotation(remapped_annotation);
+            }
         }
 
         dag

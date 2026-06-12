@@ -45,6 +45,59 @@ P1Weights = Mapping[str, float]
 P2Weights = Mapping[str, float]
 
 
+def _from_circuit_with_noise(
+    tc: Any,
+    *,
+    p1: float,
+    p1_weights: P1Weights | None,
+    p2: float,
+    p2_weights: P2Weights | None,
+    p2_replacement_approximation: str | None,
+    p_meas: float,
+    p_prep: float,
+    p_idle: float | None,
+    t1: float | None,
+    t2: float | None,
+    p_idle_linear_rate: float | None,
+    p_idle_quadratic_rate: float | None,
+    p_idle_x_linear_rate: float | None,
+    p_idle_y_linear_rate: float | None,
+    p_idle_z_linear_rate: float | None,
+    p_idle_x_quadratic_rate: float | None,
+    p_idle_y_quadratic_rate: float | None,
+    p_idle_z_quadratic_rate: float | None,
+    p_idle_quadratic_sine_rate: float | None,
+    p_idle_x_quadratic_sine_rate: float | None,
+    p_idle_y_quadratic_sine_rate: float | None,
+    p_idle_z_quadratic_sine_rate: float | None,
+) -> _RustDetectorErrorModel:
+    return _RustDetectorErrorModel.from_circuit(
+        tc,
+        p1=p1,
+        p1_weights=p1_weights,
+        p2=p2,
+        p2_weights=p2_weights,
+        p2_replacement_approximation=p2_replacement_approximation,
+        p_meas=p_meas,
+        p_prep=p_prep,
+        p_idle=p_idle,
+        t1=t1,
+        t2=t2,
+        p_idle_linear_rate=p_idle_linear_rate,
+        p_idle_quadratic_rate=p_idle_quadratic_rate,
+        p_idle_x_linear_rate=p_idle_x_linear_rate,
+        p_idle_y_linear_rate=p_idle_y_linear_rate,
+        p_idle_z_linear_rate=p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+    )
+
+
 class _DetectorErrorModelMixin:
     """Namespace for the Python Guppy/QIS-trace convenience constructor."""
 
@@ -283,7 +336,7 @@ class _DetectorErrorModelMixin:
         if num_measurements is not None:
             tc.set_meta("num_measurements", str(num_measurements))
 
-        return _RustDetectorErrorModel.from_circuit(
+        return _from_circuit_with_noise(
             tc,
             p1=p1,
             p1_weights=p1_weights,

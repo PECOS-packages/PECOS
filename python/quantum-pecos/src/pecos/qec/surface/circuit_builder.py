@@ -45,6 +45,7 @@ from pecos.qec.surface.patch import (
 )
 
 if TYPE_CHECKING:
+    from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import (
         LogicalDescriptor,
         StabilizerDescriptor,
@@ -127,6 +128,13 @@ class OpType(Enum):
     TICK = auto()  # Layer separator
     COMMENT = auto()  # Comment/annotation
 
+    # Annotation: declares a candidate tracked Pauli at this circuit position.
+    # The propagator records its forward propagation to detectors and
+    # observables; per-shot "did this Pauli fire?" is consumed at sampling
+    # time. ``qubits`` is the single data qubit the Pauli acts on; ``label``
+    # carries the Pauli kind and site as ``"{X|Y|Z}@s<site_idx>"``.
+    TRACKED_PAULI = auto()
+
 
 @dataclass
 class SurfaceCircuitStep:
@@ -156,6 +164,8 @@ def build_surface_code_circuit(
     num_rounds: int,
     basis: str = "Z",
     ancilla_budget: int | None = None,
+    *,
+    twirl: TwirlConfig | None = None,
 ) -> tuple[list[SurfaceCircuitStep], QubitAllocation]:
     """Build abstract circuit operations for a surface code memory experiment.
 
@@ -172,6 +182,11 @@ def build_surface_code_circuit(
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, ancillas are reused
             across stabilizer batches following the public Guppy order.
+        twirl: When provided, emit three ``OpType.TRACKED_PAULI`` annotations
+            (``X``, ``Y``, ``Z``) per data qubit at each between-round twirl
+            site. The sites are between counted syndrome rounds only: no site
+            is emitted before the first counted round, after the last counted
+            round, or inside the prep-boundary init syndrome block.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -221,6 +236,14 @@ def build_surface_code_circuit(
 
     def z_anc_q(stab_idx: int) -> int:
         return allocation.z_ancilla_qubits[stab_idx]
+
+    def emit_pauli_twirl_site(target_ops: list[SurfaceCircuitStep], site_idx: int) -> None:
+        """Append 3 * num_data candidate tracked-Pauli annotations."""
+        target_ops.extend(
+            SurfaceCircuitStep(OpType.TRACKED_PAULI, [data_q(i)], f"{kind}@s{site_idx}")
+            for i in range(num_data)
+            for kind in ("X", "Y", "Z")
+        )
 
     # Get CNOT schedule
     cnot_rounds = compute_cnot_schedule(patch)
@@ -508,6 +531,9 @@ def build_surface_code_circuit(
 
                 ops.append(SurfaceCircuitStep(OpType.TICK))
 
+        if twirl is not None and rnd < num_rounds - 1:
+            emit_pauli_twirl_site(ops, rnd)
+
     # =========================================================================
     # measure_z_basis / measure_x_basis
     # =========================================================================
@@ -711,6 +737,13 @@ class StimRenderer(CircuitRenderer):
             elif op.op_type == OpType.TICK:
                 lines.append("TICK")
 
+            elif op.op_type == OpType.TRACKED_PAULI:
+                msg = (
+                    "StimRenderer does not yet handle OpType.TRACKED_PAULI; "
+                    "use TickCircuit / PauliFrameLookup path for twirled DEMs"
+                )
+                raise NotImplementedError(msg)
+
         # Add detector annotations if requested
         if self.add_detectors:
             lines.append("")
@@ -895,6 +928,13 @@ class DagCircuitRenderer(CircuitRenderer):
 
             elif op.op_type == OpType.TICK:
                 pass  # DagCircuit doesn't have explicit ticks
+
+            elif op.op_type == OpType.TRACKED_PAULI:
+                msg = (
+                    "DagCircuitRenderer does not yet handle OpType.TRACKED_PAULI; "
+                    "use TickCircuit / PauliFrameLookup path for twirled DEMs"
+                )
+                raise NotImplementedError(msg)
 
         return circuit
 
@@ -1256,6 +1296,27 @@ class TickCircuitRenderer(CircuitRenderer):
                 current_tick_handle = None
                 qubits_in_current_tick = set()
 
+            elif op.op_type == OpType.TRACKED_PAULI:
+                from pecos_rslib import PauliString
+
+                q = op.qubits[0]
+                kind, sep, site_suffix = op.label.partition("@")
+                pauli_ctor = {
+                    "X": PauliString.X,
+                    "Y": PauliString.Y,
+                    "Z": PauliString.Z,
+                }.get(kind)
+                if pauli_ctor is None or sep != "@" or not site_suffix.startswith("s"):
+                    msg = (
+                        "OpType.TRACKED_PAULI requires label of the form "
+                        f"'{{X|Y|Z}}@s<site_idx>', got {op.label!r}"
+                    )
+                    raise ValueError(msg)
+                circuit.tracked_pauli(
+                    pauli_ctor(q),
+                    label=f"twirl_{site_suffix}_q{q}_{kind}",
+                )
+
         # Apply tick-level metadata in place. Gate metadata is attached as each
         # gate is emitted so batching decisions can account for it immediately.
         for tick_idx, tick_meta in all_tick_metadata.items():
@@ -1599,6 +1660,7 @@ def generate_tick_circuit_from_patch(
     add_detectors: bool = True,
     add_typed_annotations: bool = True,
     ancilla_budget: int | None = None,
+    twirl: TwirlConfig | None = None,
 ) -> TickCircuit:
     """Generate PECOS TickCircuit from SurfacePatch.
 
@@ -1622,11 +1684,21 @@ def generate_tick_circuit_from_patch(
         add_detectors: Whether to add detector/observable metadata.
         add_typed_annotations: Whether to also add typed Pauli annotations.
         ancilla_budget: Optional cap on simultaneously live ancillas
+        twirl: Optional Pauli-frame randomization layout. When supplied,
+            tracked-Pauli annotations are emitted even if
+            ``add_typed_annotations`` is false; that flag controls detector
+            and observable typed annotations, not the twirl lookup channel.
 
     Returns:
         PECOS TickCircuit instance
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
+    ops, allocation = build_surface_code_circuit(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget,
+        twirl=twirl,
+    )
     renderer = TickCircuitRenderer(
         add_detectors=add_detectors,
         add_typed_annotations=add_typed_annotations,
@@ -2505,7 +2577,9 @@ def _build_canonical_dem_influence_map(dag: DagCircuit) -> object:
     annotation_builder = InfluenceBuilder(dag)
     annotation_builder.with_circuit_annotations()
     annotation_map = annotation_builder.build()
-    influence_map.merge_dem_outputs_from(annotation_map)
+    merge_dem_outputs = getattr(influence_map, "merge_dem_outputs_from", None)
+    if merge_dem_outputs is not None:
+        merge_dem_outputs(annotation_map)
     return influence_map
 
 

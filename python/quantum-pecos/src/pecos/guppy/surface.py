@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
 if TYPE_CHECKING:
-    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface import GuppyRngMaskConfig, SurfacePatch, TwirlConfig
 
 
 # Module state container (avoids global statement)
@@ -45,10 +45,73 @@ def _get_temp_dir() -> Path:
     return _state.temp_dir
 
 
+def _render_inline_pcg32() -> list[str]:
+    """Render Guppy-local PCG32 helpers for runtime twirl masks.
+
+    The user seed is a stream separator. Per-shot entropy comes from
+    H/measure side-band qubits so the runtime twirl is not a fixed mask.
+    """
+    return [
+        "@guppy",
+        "@no_type_check",
+        "def _pcg32_mask32(value: nat) -> nat:",
+        "    uint32_mask: nat = 4294967295",
+        "    return value & uint32_mask",
+        "",
+        "",
+        "@guppy",
+        "@no_type_check",
+        "def _pcg32_advance(state: nat, inc: nat) -> nat:",
+        "    pcg32_mult: nat = 6364136223846793005",
+        "    return nat(state * pcg32_mult + inc)",
+        "",
+        "",
+        "@guppy",
+        "@no_type_check",
+        "def _pcg32_next4(state: nat, inc: nat) -> tuple[nat, int]:",
+        "    old_state = state",
+        "    new_state = _pcg32_advance(state, inc)",
+        "    xorshifted = _pcg32_mask32(((old_state >> nat(18)) ^ old_state) >> nat(27))",
+        "    rot = _pcg32_mask32(old_state >> nat(59))",
+        "    rot_inv = _pcg32_mask32((~rot + nat(1)) & nat(31))",
+        "    output = _pcg32_mask32((xorshifted >> rot) | (xorshifted << rot_inv))",
+        "    return new_state, int(output & nat(3))",
+        "",
+        "",
+        "@guppy",
+        "@no_type_check",
+        "def seeded_pcg32_from_sequence(seed: int, sequence: nat) -> tuple[nat, nat]:",
+        "    initstate = nat(42)",
+        "    initseq = nat(seed) ^ sequence",
+        "    inc = nat((initseq << nat(1)) | nat(1))",
+        "    state = _pcg32_advance(nat(0), inc)",
+        "    state += initstate",
+        "    state = _pcg32_advance(state, inc)",
+        "    return state, inc",
+        "",
+        "",
+        "@guppy",
+        "@no_type_check",
+        "def seeded_pcg32_with_quantum_entropy(seed: int) -> tuple[nat, nat]:",
+        "    entropy = nat(0)",
+        "    for i in range(32):",
+        "        entropy_q = qubit()",
+        "        h(entropy_q)",
+        "        if measure(entropy_q):",
+        "            entropy = entropy | (nat(1) << nat(i))",
+        "    return seeded_pcg32_from_sequence(seed, entropy)",
+        "",
+        "",
+    ]
+
+
 def generate_guppy_source(
     patch: "SurfacePatch",
     *,
     ancilla_budget: int | None = None,
+    twirl: "TwirlConfig | None" = None,
+    rng: "GuppyRngMaskConfig | None" = None,
+    num_rounds: int | None = None,
 ) -> str:
     """Generate Guppy source code for a surface code patch.
 
@@ -78,11 +141,41 @@ def generate_guppy_source(
         ancilla_budget: Optional cap on simultaneously live ancillas.
             ``None`` or a value ``>= total_ancilla`` emits the
             unconstrained shape; ``< total_ancilla`` emits batched.
+        twirl: When provided, emit Pauli-twirl-site mask draws between
+            consecutive syndrome rounds and apply the sampled physical
+            Pauli to each data qubit at runtime. Both ``twirl`` and
+            ``rng`` must be supplied together. The encoding is
+            ``"bool_array_v1"``: one
+            ``result("pauli_mask:round:R", array(lo_q0, hi_q0, ...))``
+            call per twirl site, with the per-round body Python-time
+            unrolled at source-generation time so each tag fires exactly
+            once per shot. ``twirl.frame_output="canonical"`` additionally
+            emits measurement records in the canonical untwirled DEM frame.
+        rng: Runtime mask source: a stream-separator seed mixed with
+            per-shot quantum entropy when ``twirl`` is enabled.
 
     Returns:
         Python/Guppy source code as a string.
+
+    Raises:
+        ValueError: If exactly one of ``twirl`` / ``rng`` is supplied.
     """
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
+
+    if (twirl is None) != (rng is None):
+        msg = "twirl and rng must be supplied together; got twirl={!r} rng={!r}".format(
+            twirl, rng
+        )
+        raise ValueError(msg)
+    if twirl is not None:
+        twirl._validate_runtime_supported()
+        if num_rounds is None:
+            msg = "num_rounds is required when twirl is supplied"
+            raise ValueError(msg)
+        if num_rounds < 1:
+            msg = f"num_rounds must be >= 1, got {num_rounds}"
+            raise ValueError(msg)
+    canonical_frame_output = twirl is not None and twirl.frame_output == "canonical"
 
     geom = patch.geometry
     num_data = geom.num_data
@@ -91,7 +184,36 @@ def generate_guppy_source(
     total_ancilla = num_x_stab + num_z_stab
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
     constrained = effective_budget < total_ancilla
+    if twirl is not None and constrained:
+        msg = (
+            f"twirl + constrained ancilla budget is not supported on "
+            f"the Guppy runtime path "
+            f"(ancilla_budget={ancilla_budget} < total_ancilla={total_ancilla}); "
+            "the between_rounds twirl-site schedule assumes the "
+            "unconstrained syndrome shape. Pass ancilla_budget=None or "
+            ">= total_ancilla, or omit twirl."
+        )
+        raise ValueError(msg)
     dx, dz = geom.dx, geom.dz
+
+    if twirl is not None:
+        imports = [
+            "from __future__ import annotations",
+            "from typing import no_type_check",
+            "",
+            "from guppylang import guppy",
+            "from guppylang.std.builtins import array, owned, result",
+            "from guppylang.std.num import nat",
+            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x, y, z",
+        ]
+    else:
+        imports = [
+            "from __future__ import annotations",
+            "",
+            "from guppylang import guppy",
+            "from guppylang.std.builtins import array, owned, result",
+            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x",
+        ]
 
     lines = [
         f'"""Surface code patch (dx={dx}, dz={dz}) implementation in Guppy.',
@@ -104,12 +226,13 @@ def generate_guppy_source(
         f"Ancilla qubits: {num_x_stab + num_z_stab} (one per stabilizer)",
         '"""',
         "",
-        "from guppylang import guppy",
-        "from guppylang.std.builtins import array, owned, result",
-        "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x",
+        *imports,
         "",
         "",
     ]
+
+    if twirl is not None:
+        lines.extend(_render_inline_pcg32())
 
     # Generate struct definitions
     lines.extend(
@@ -164,9 +287,16 @@ def generate_guppy_source(
             "# === Syndrome Extraction ===",
             "",
             "@guppy",
-            f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}) -> Syndrome_{dx}x{dz}:",
         ],
     )
+    if canonical_frame_output:
+        lines.append(
+            f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}, frame_x: array[bool, {num_data}], frame_z: array[bool, {num_data}]) -> Syndrome_{dx}x{dz}:"
+        )
+    else:
+        lines.append(
+            f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}) -> Syndrome_{dx}x{dz}:"
+        )
 
     if not constrained:
         # Unconstrained: one ancilla per stabilizer, X-stabs first then
@@ -203,11 +333,29 @@ def generate_guppy_source(
         lines.append("    # Measure ancillas")
         idx = 0
         for stab in geom.x_stabilizers:
-            lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
+            if canonical_frame_output:
+                raw_var = f"sx{stab.index}_raw"
+                flip_var = f"sx{stab.index}_flip"
+                flip_expr = _xor_expr(f"frame_z[{q}]" for q in stab.data_qubits)
+                lines.append(f"    {raw_var} = measure(ax{stab.index})")
+                lines.append(f"    {flip_var} = {flip_expr}")
+                lines.append(f"    sx{stab.index} = {raw_var} != {flip_var}")
+                lines.append(f'    result("raw:sx{stab.index}:bit:{idx}", {raw_var})')
+            else:
+                lines.append(f"    sx{stab.index} = measure(ax{stab.index})")
             lines.append(f'    result("sx{stab.index}:meas:{idx}", sx{stab.index})')
             idx += 1
         for stab in geom.z_stabilizers:
-            lines.append(f"    sz{stab.index} = measure(az{stab.index})")
+            if canonical_frame_output:
+                raw_var = f"sz{stab.index}_raw"
+                flip_var = f"sz{stab.index}_flip"
+                flip_expr = _xor_expr(f"frame_x[{q}]" for q in stab.data_qubits)
+                lines.append(f"    {raw_var} = measure(az{stab.index})")
+                lines.append(f"    {flip_var} = {flip_expr}")
+                lines.append(f"    sz{stab.index} = {raw_var} != {flip_var}")
+                lines.append(f'    result("raw:sz{stab.index}:bit:{idx}", {raw_var})')
+            else:
+                lines.append(f"    sz{stab.index} = measure(az{stab.index})")
             lines.append(f'    result("sz{stab.index}:meas:{idx}", sz{stab.index})')
             idx += 1
     else:
@@ -470,57 +618,209 @@ def generate_guppy_source(
     )
 
     # Generate memory experiment factories
-    lines.extend(
-        [
-            "# === Memory Experiments ===",
-            "",
-            "def make_memory_z(num_rounds: int):",
-            '    """Create Z-basis memory experiment."""',
-            "    from guppylang.std.builtins import comptime",
-            "",
-            "    @guppy",
-            "    def memory_z() -> None:",
-            f'        """Z-basis memory experiment for dx={dx}, dz={dz}."""',
-            "        surf = prep_z_basis()",
-            "        init_syn = init_z_basis(surf)",
-            '        result("init_synx", init_syn)',
-            "",
-            "        for _t in range(comptime(num_rounds)):",
-            "            syn = syndrome_extraction(surf)",
-            '            result("synx", syn.synx)',
-            '            result("synz", syn.synz)',
-            "",
-            "        final = measure_z_basis(surf)",
-            '        result("final", final)',
-            "",
-            "    return memory_z",
-            "",
-            "",
-            "def make_memory_x(num_rounds: int):",
-            '    """Create X-basis memory experiment."""',
-            "    from guppylang.std.builtins import comptime",
-            "",
-            "    @guppy",
-            "    def memory_x() -> None:",
-            f'        """X-basis memory experiment for dx={dx}, dz={dz}."""',
-            "        surf = prep_x_basis()",
-            "        init_syn = init_x_basis(surf)",
-            '        result("init_synz", init_syn)',
-            "",
-            "        for _t in range(comptime(num_rounds)):",
-            "            syn = syndrome_extraction(surf)",
-            '            result("synx", syn.synx)',
-            '            result("synz", syn.synz)',
-            "",
-            "        final = measure_x_basis(surf)",
-            '        result("final", final)',
-            "",
-            "    return memory_x",
-            "",
-        ],
-    )
+    lines.extend(_render_memory_experiments(dx, dz, num_data, twirl, rng, num_rounds))
 
     return "\n".join(lines)
+
+
+def _xor_expr(terms: object) -> str:
+    """Return a Guppy bool XOR expression for the given source terms."""
+    parts = list(terms)
+    if not parts:
+        return "False"
+    expr = parts[0]
+    for part in parts[1:]:
+        expr = f"({expr} != {part})"
+    return str(expr)
+
+
+def _render_memory_experiments(
+    dx: int,
+    dz: int,
+    num_data: int,
+    twirl: "TwirlConfig | None",
+    rng: "GuppyRngMaskConfig | None",
+    num_rounds: int | None,
+) -> list[str]:
+    """Render both memory factory functions."""
+    lines = [
+        "# === Memory Experiments ===",
+        "",
+    ]
+    for basis, basis_upper in (("z", "Z"), ("x", "X")):
+        if twirl is None:
+            lines.extend(_render_plain_memory_block(basis, basis_upper, dx, dz))
+        else:
+            assert rng is not None
+            assert num_rounds is not None
+            lines.extend(
+                _render_twirled_memory_block(
+                    basis,
+                    basis_upper,
+                    dx,
+                    dz,
+                    num_data,
+                    twirl,
+                    rng,
+                    num_rounds,
+                )
+            )
+    return lines
+
+
+def _render_plain_memory_block(
+    basis: str,
+    basis_upper: str,
+    dx: int,
+    dz: int,
+) -> list[str]:
+    """Render the vanilla handoff memory factory for one basis."""
+    init_func = "init_z_basis" if basis == "z" else "init_x_basis"
+    init_tag = "init_synx" if basis == "z" else "init_synz"
+    return [
+        f"def make_memory_{basis}(num_rounds: int):",
+        f'    """Create {basis_upper}-basis memory experiment."""',
+        "    from guppylang.std.builtins import comptime",
+        "",
+        "    @guppy",
+        f"    def memory_{basis}() -> None:",
+        f'        """{basis_upper}-basis memory experiment for dx={dx}, dz={dz}."""',
+        f"        surf = prep_{basis}_basis()",
+        f"        init_syn = {init_func}(surf)",
+        f'        result("{init_tag}", init_syn)',
+        "",
+        "        for _t in range(comptime(num_rounds)):",
+        "            syn = syndrome_extraction(surf)",
+        '            result("synx", syn.synx)',
+        '            result("synz", syn.synz)',
+        "",
+        f"        final = measure_{basis}_basis(surf)",
+        '        result("final", final)',
+        "",
+        f"    return memory_{basis}",
+        "",
+        "",
+    ]
+
+
+def _render_twirled_memory_block(
+    basis: str,
+    basis_upper: str,
+    dx: int,
+    dz: int,
+    num_data: int,
+    twirl: "TwirlConfig",
+    rng: "GuppyRngMaskConfig",
+    num_rounds: int,
+) -> list[str]:
+    """Render a Python-time unrolled twirled memory factory."""
+    from pecos.qec.surface._twirl_sites import num_twirl_sites, pauli_mask_round_tag
+
+    seed = int(rng.seed)
+    canonical_frame_output = twirl.frame_output == "canonical"
+    init_func = "init_z_basis" if basis == "z" else "init_x_basis"
+    init_tag = "init_synx" if basis == "z" else "init_synz"
+    body: list[str] = [
+        f'        """{basis_upper}-basis memory experiment for dx={dx}, dz={dz}, num_rounds={num_rounds} (twirled)."""',
+        f"        surf = prep_{basis}_basis()",
+        "        # RNG seed is structural -- changing it does not invalidate the",
+        "        # abstract DEM / topology cache, only the per-shot mask buffer.",
+        f"        rng_state, rng_inc = seeded_pcg32_with_quantum_entropy({seed})",
+        f'        result("frame_mode:{twirl.frame_output}", True)',
+        f"        init_syn = {init_func}(surf)",
+        f'        result("{init_tag}", init_syn)',
+        "",
+    ]
+    if canonical_frame_output:
+        for q in range(num_data):
+            body.append(f"        fx_{q} = False")
+            body.append(f"        fz_{q} = False")
+        body.append("")
+
+    # Emit num_rounds - 1 twirled rounds, then one final untwirled round.
+    n_twirl = num_twirl_sites(num_rounds)
+    for r in range(n_twirl):
+        body.append(f"        # === Round {r} (twirled) ===")
+        if canonical_frame_output:
+            frame_x = ", ".join(f"fx_{q}" for q in range(num_data))
+            frame_z = ", ".join(f"fz_{q}" for q in range(num_data))
+            body.append(
+                f"        syn = syndrome_extraction(surf, array({frame_x}), array({frame_z}))"
+            )
+        else:
+            body.append("        syn = syndrome_extraction(surf)")
+        body.append('        result("synx", syn.synx)')
+        body.append('        result("synz", syn.synz)')
+        body.append("        # Pauli twirl site between this round and the next.")
+        for q in range(num_data):
+            body.append(f"        rng_state, m_{r}_{q} = _pcg32_next4(rng_state, rng_inc)")
+            body.append(f"        if m_{r}_{q} == 1:")
+            body.append(f"            x(surf.data[{q}])")
+            body.append(f"        if m_{r}_{q} == 2:")
+            body.append(f"            y(surf.data[{q}])")
+            body.append(f"        if m_{r}_{q} == 3:")
+            body.append(f"            z(surf.data[{q}])")
+            body.append(f"        lo_{r}_{q} = (m_{r}_{q} == 1) | (m_{r}_{q} == 3)")
+            body.append(f"        hi_{r}_{q} = (m_{r}_{q} == 2) | (m_{r}_{q} == 3)")
+            if canonical_frame_output:
+                body.append(
+                    f"        twx_{r}_{q} = (m_{r}_{q} == 1) | (m_{r}_{q} == 2)"
+                )
+                body.append(
+                    f"        twz_{r}_{q} = (m_{r}_{q} == 2) | (m_{r}_{q} == 3)"
+                )
+                body.append(f"        fx_{q} = fx_{q} != twx_{r}_{q}")
+                body.append(f"        fz_{q} = fz_{q} != twz_{r}_{q}")
+        elements = ", ".join(f"lo_{r}_{q}, hi_{r}_{q}" for q in range(num_data))
+        tag = pauli_mask_round_tag(r)
+        body.append(f'        result("{tag}", array({elements}))')
+        body.append("")
+
+    if num_rounds > 0:
+        body.append(f"        # === Round {num_rounds - 1} (final, no twirl after) ===")
+        if canonical_frame_output:
+            frame_x = ", ".join(f"fx_{q}" for q in range(num_data))
+            frame_z = ", ".join(f"fz_{q}" for q in range(num_data))
+            body.append(
+                f"        syn = syndrome_extraction(surf, array({frame_x}), array({frame_z}))"
+            )
+        else:
+            body.append("        syn = syndrome_extraction(surf)")
+        body.append('        result("synx", syn.synx)')
+        body.append('        result("synz", syn.synz)')
+        body.append("")
+
+    if canonical_frame_output:
+        body.append(f"        final_raw = measure_{basis}_basis(surf)")
+        body.append('        result("raw:final", final_raw)')
+        for q in range(num_data):
+            flip_var = f"fx_{q}" if basis == "z" else f"fz_{q}"
+            body.append(f"        final_{q} = final_raw[{q}] != {flip_var}")
+        final_elements = ", ".join(f"final_{q}" for q in range(num_data))
+        body.append(f'        result("final", array({final_elements}))')
+    else:
+        body.append(f"        final = measure_{basis}_basis(surf)")
+        body.append('        result("final", final)')
+
+    return [
+        f"def make_memory_{basis}(num_rounds: int):",
+        f'    """Create {basis_upper}-basis twirled memory experiment.',
+        "",
+        f"    num_rounds must equal {num_rounds} -- the body was unrolled at",
+        "    source-generation time. Mismatched values raise ValueError.",
+        '    """',
+        f"    if num_rounds != {num_rounds}:",
+        f'        msg = f"this generated module was unrolled for num_rounds={num_rounds}, got {{num_rounds!r}}"',
+        "        raise ValueError(msg)",
+        "",
+        "    @guppy",
+        f"    def memory_{basis}() -> None:",
+        *body,
+        "",
+        f"    return memory_{basis}",
+        "",
+        "",
+    ]
 
 
 def _validate_surface_memory_distance(d: int) -> None:
@@ -538,23 +838,46 @@ def _validate_surface_memory_distance(d: int) -> None:
         raise ValueError(msg)
 
 
-def _guppy_module_cache_key(patch: "SurfacePatch", effective_budget: int) -> str:
-    """Filesystem-safe cache key spanning full patch identity + budget.
+def _guppy_module_cache_key(
+    patch: "SurfacePatch",
+    effective_budget: int,
+    twirl: "TwirlConfig | None" = None,
+    rng: "GuppyRngMaskConfig | None" = None,
+    num_rounds: int | None = None,
+) -> str:
+    """Filesystem-safe cache key spanning full patch identity + budget + twirl.
 
     Mirrors the topology identity used by the native cache
     (``decode._surface_patch_cache_key``): dx, dz, orientation, and the
     rotated flag. Keying on distance/dx-dz alone would collide a rotated and
     a non-rotated patch of the same shape onto one generated module.
+
+    Twirled source is Python-time unrolled, so the cache key includes
+    ``num_rounds`` in addition to the structural twirl fields, runtime
+    frame-output mode, and RNG seed.
     """
     geom = patch.geometry
     rotated = "rot" if geom.rotated else "unrot"
-    return f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}_b{effective_budget}"
+    base = f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}_b{effective_budget}"
+    if twirl is None:
+        return base
+    assert rng is not None
+    assert num_rounds is not None
+    twirl_part = (
+        f"t-{twirl.scheme}-{twirl.site_schedule}-{twirl.result_encoding}"
+        f"-frame-{twirl.frame_output}"
+        f"-s{int(rng.seed)}-r{int(num_rounds)}"
+    )
+    return f"{base}_{twirl_part}"
 
 
 def _load_guppy_module(
     patch: "SurfacePatch",
     *,
     ancilla_budget: int | None = None,
+    twirl: "TwirlConfig | None" = None,
+    rng: "GuppyRngMaskConfig | None" = None,
+    num_rounds: int | None = None,
 ) -> dict:
     """Load a Guppy module for a patch, using caching.
 
@@ -562,11 +885,14 @@ def _load_guppy_module(
     rotated) and the **effective** budget (after clamping via
     ``normalize_ancilla_budget``), so ``ancilla_budget=None`` and
     ``ancilla_budget >= total_ancilla`` resolve to the same cache entry
-    while distinct patch geometries never collide.
+    while distinct patch geometries never collide. Twirled source also
+    keys on twirl fields, frame-output mode, RNG seed, and round count.
 
     Args:
         patch: SurfacePatch with geometry
         ancilla_budget: Optional cap on simultaneously live ancillas
+        twirl: Pauli-twirl-site declaration (structural)
+        rng: Runtime mask RNG seed (must be supplied with ``twirl``)
 
     Returns:
         Module dictionary with generated functions
@@ -576,13 +902,18 @@ def _load_guppy_module(
     geom = patch.geometry
     total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
-    cache_key = _guppy_module_cache_key(patch, effective_budget)
+    cache_key = _guppy_module_cache_key(patch, effective_budget, twirl, rng, num_rounds)
 
     if cache_key in _state.module_cache:
         return _state.module_cache[cache_key]
 
-    # Generate source for this (patch, effective_budget) combination.
-    source = generate_guppy_source(patch, ancilla_budget=ancilla_budget)
+    source = generate_guppy_source(
+        patch,
+        ancilla_budget=ancilla_budget,
+        twirl=twirl,
+        rng=rng,
+        num_rounds=num_rounds,
+    )
 
     # Write to temp file (required for Guppy introspection).
     temp_dir = _get_temp_dir()
@@ -610,6 +941,8 @@ def generate_memory_experiment(
     basis: str,
     *,
     ancilla_budget: int | None = None,
+    twirl: "TwirlConfig | None" = None,
+    rng: "GuppyRngMaskConfig | None" = None,
 ) -> object:
     """Generate a memory experiment for a patch.
 
@@ -618,11 +951,19 @@ def generate_memory_experiment(
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
         ancilla_budget: Optional cap on simultaneously live ancillas
+        twirl: Pauli-twirl-site declaration; must be supplied with ``rng``.
+        rng: Runtime mask RNG seed; must be supplied with ``twirl``.
 
     Returns:
         Guppy function for the experiment
     """
-    module = _load_guppy_module(patch, ancilla_budget=ancilla_budget)
+    module = _load_guppy_module(
+        patch,
+        ancilla_budget=ancilla_budget,
+        twirl=twirl,
+        rng=rng,
+        num_rounds=num_rounds if twirl is not None else None,
+    )
 
     if basis.upper() == "Z":
         factory = module["make_memory_z"]
@@ -640,6 +981,7 @@ def get_num_qubits(
     *,
     patch: "SurfacePatch | None" = None,
     ancilla_budget: int | None = None,
+    twirl: "TwirlConfig | None" = None,
 ) -> int:
     """Get the peak simultaneously-live qubit count for a surface-code program.
 
@@ -657,6 +999,8 @@ def get_num_qubits(
     ``num_data + min(ancilla_budget, total_ancilla)`` slots are live at once.
     Clamping matches ``normalize_ancilla_budget``, so the
     unconstrained-via-``None`` and unconstrained-via-large-int cases collapse.
+    Twirled Guppy programs allocate one additional side-band entropy qubit at
+    a time for per-shot mask seeding.
 
     Returns:
         Total qubits the traced program will simultaneously use.
@@ -676,7 +1020,8 @@ def get_num_qubits(
         num_data = d * d
         total_ancilla = d * d - 1
 
-    return num_data + normalize_ancilla_budget(total_ancilla, ancilla_budget)
+    twirl_entropy_qubits = 1 if twirl is not None else 0
+    return num_data + normalize_ancilla_budget(total_ancilla, ancilla_budget) + twirl_entropy_qubits
 
 
 def generate_surface_code_module(d: int, *, ancilla_budget: int | None = None) -> str:

@@ -42,6 +42,8 @@
 //! has_syndrome, causes_logical = influence_map.classify_fault(0, 1)  # loc 0, X fault
 //! ```
 
+use crate::pecos_array::{Array, ArrayData};
+use pecos_qec::fault_tolerance::PauliFrameLookup as RustPauliFrameLookup;
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
     ContributionEffectSummary as RustContributionEffectSummary,
@@ -992,6 +994,178 @@ impl PyInfluenceBuilder {
             self.use_circuit_tracked_paulis,
         )
     }
+}
+
+// =============================================================================
+// Pauli Frame Lookup
+// =============================================================================
+
+#[pyclass(name = "PauliFrameLookup", module = "pecos_rslib.qec")]
+pub struct PyPauliFrameLookup {
+    inner: RustPauliFrameLookup,
+}
+
+#[pymethods]
+impl PyPauliFrameLookup {
+    /// Build a Pauli-frame lookup from positional tracked-Pauli annotations.
+    ///
+    /// Args:
+    ///     dag: A `DagCircuit` carrying tracked-Pauli meta-gates.
+    ///     detectors: Detector definitions as measurement-record offsets.
+    ///     observables: Observable definitions as measurement-record offsets.
+    #[staticmethod]
+    #[pyo3(signature = (dag, detectors, observables))]
+    fn from_circuit(
+        dag: &crate::dag_circuit_bindings::PyDagCircuit,
+        detectors: Vec<Vec<i32>>,
+        observables: Vec<Vec<i32>>,
+    ) -> PyResult<Self> {
+        let inner = RustPauliFrameLookup::from_circuit(&dag.inner, &detectors, &observables)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Number of Pauli-twirl mask sites.
+    #[getter]
+    fn num_pauli_sites(&self) -> usize {
+        self.inner.num_pauli_sites()
+    }
+
+    /// Number of tracked-Pauli rows.
+    #[getter]
+    fn num_tracked_paulis(&self) -> usize {
+        self.inner.num_tracked_paulis()
+    }
+
+    /// Number of detector columns.
+    #[getter]
+    fn num_detectors(&self) -> usize {
+        self.inner.num_detectors()
+    }
+
+    /// Number of observable columns.
+    #[getter]
+    fn num_observables(&self) -> usize {
+        self.inner.num_observables()
+    }
+
+    /// Return one tracked-Pauli row as `(detectors, observables)`.
+    fn row(&self, tracked_idx: usize) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let Some((detectors, observables)) = self.inner.row_effects(tracked_idx) else {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "tracked_idx {tracked_idx} is out of range"
+            )));
+        };
+        Ok((detectors.to_vec(), observables.to_vec()))
+    }
+
+    /// Decode a Pauli mask array into tracked-row firings.
+    fn mask_firings(&self, pauli_masks: &Bound<'_, pyo3::PyAny>) -> PyResult<Vec<Vec<bool>>> {
+        let (values, rows, cols) = extract_pauli_mask_values(pauli_masks)?;
+        self.inner
+            .mask_firings(&values, rows, cols)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    /// Compute per-shot detector/observable XOR patterns for the given masks.
+    fn compute_mask_xor(
+        &self,
+        pauli_masks: &Bound<'_, pyo3::PyAny>,
+    ) -> PyResult<(Vec<Vec<bool>>, Vec<Vec<bool>>)> {
+        let (values, rows, cols) = extract_pauli_mask_values(pauli_masks)?;
+        self.inner
+            .compute_mask_xor(&values, rows, cols)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PauliFrameLookup(num_pauli_sites={}, num_tracked_paulis={}, num_detectors={}, num_observables={})",
+            self.num_pauli_sites(),
+            self.num_tracked_paulis(),
+            self.num_detectors(),
+            self.num_observables(),
+        )
+    }
+}
+
+fn extract_pauli_mask_values(
+    pauli_masks: &Bound<'_, pyo3::PyAny>,
+) -> PyResult<(Vec<u8>, usize, usize)> {
+    let array = Array::from_python_value(pauli_masks, None)?;
+    match &array.data {
+        ArrayData::I8(arr) => collect_signed_pauli_mask_values(arr),
+        ArrayData::I16(arr) => collect_signed_pauli_mask_values(arr),
+        ArrayData::I32(arr) => collect_signed_pauli_mask_values(arr),
+        ArrayData::I64(arr) => collect_signed_pauli_mask_values(arr),
+        ArrayData::U8(arr) => collect_unsigned_pauli_mask_values(arr),
+        ArrayData::U16(arr) => collect_unsigned_pauli_mask_values(arr),
+        ArrayData::U32(arr) => collect_unsigned_pauli_mask_values(arr),
+        ArrayData::U64(arr) => collect_unsigned_pauli_mask_values(arr),
+        ArrayData::Bool(_)
+        | ArrayData::F32(_)
+        | ArrayData::F64(_)
+        | ArrayData::Complex64(_)
+        | ArrayData::Complex128(_)
+        | ArrayData::Pauli(_)
+        | ArrayData::PauliString(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+            "pauli_masks must be an integer Array with values 0=I, 1=X, 2=Y, 3=Z",
+        )),
+    }
+}
+
+fn pauli_mask_shape<T>(arr: &ndarray::ArrayD<T>) -> PyResult<(usize, usize)> {
+    let shape = arr.shape();
+    if shape.len() != 2 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "pauli_masks must be 2-D with shape (num_shots, num_pauli_sites), got shape {shape:?}"
+        )));
+    }
+    Ok((shape[0], shape[1]))
+}
+
+fn collect_signed_pauli_mask_values<T>(
+    arr: &ndarray::ArrayD<T>,
+) -> PyResult<(Vec<u8>, usize, usize)>
+where
+    T: Copy + Into<i64>,
+{
+    let (rows, cols) = pauli_mask_shape(arr)?;
+    let mut values = Vec::with_capacity(arr.len());
+    for (idx, value) in arr.iter().copied().enumerate() {
+        let value = value.into();
+        if !(0..=3).contains(&value) {
+            let row = idx / cols;
+            let col = idx % cols;
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pauli_masks[{row}, {col}]={value} is outside 0..=3"
+            )));
+        }
+        values.push(u8::try_from(value).expect("validated pauli mask value fits in u8"));
+    }
+    Ok((values, rows, cols))
+}
+
+fn collect_unsigned_pauli_mask_values<T>(
+    arr: &ndarray::ArrayD<T>,
+) -> PyResult<(Vec<u8>, usize, usize)>
+where
+    T: Copy + Into<u64>,
+{
+    let (rows, cols) = pauli_mask_shape(arr)?;
+    let mut values = Vec::with_capacity(arr.len());
+    for (idx, value) in arr.iter().copied().enumerate() {
+        let value = value.into();
+        if value > 3 {
+            let row = idx / cols;
+            let col = idx % cols;
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pauli_masks[{row}, {col}]={value} is outside 0..=3"
+            )));
+        }
+        values.push(u8::try_from(value).expect("validated pauli mask value fits in u8"));
+    }
+    Ok((values, rows, cols))
 }
 
 // =============================================================================
@@ -3929,6 +4103,63 @@ impl PyDemSampler {
         self.inner.sample_batch(num_shots, &mut rng)
     }
 
+    /// Sample multiple shots and XOR a known Pauli-frame mask into the outputs.
+    ///
+    /// Args:
+    ///     `num_shots`: Number of shots to sample.
+    ///     lookup: Pauli-frame lookup built from the same circuit metadata.
+    ///     `pauli_masks`: Integer array with shape `(num_shots, num_pauli_sites)`.
+    ///         Values are 0=I, 1=X, 2=Y, 3=Z.
+    ///     seed: Optional random seed for reproducibility.
+    ///
+    /// Returns:
+    ///     Tuple of (`all_detection_events`, `all_dem_output_flips`).
+    #[pyo3(signature = (num_shots, lookup, pauli_masks, seed=None))]
+    fn sample_batch_with_pauli_masks(
+        &self,
+        num_shots: usize,
+        lookup: &PyPauliFrameLookup,
+        pauli_masks: &Bound<'_, pyo3::PyAny>,
+        seed: Option<u64>,
+    ) -> PyResult<(Vec<Vec<bool>>, Vec<Vec<bool>>)> {
+        use pecos_random::PecosRng;
+        use rand::RngExt;
+
+        if lookup.inner.num_detectors() != self.inner.num_outputs() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pauli frame lookup has {} detector(s), sampler has {}",
+                lookup.inner.num_detectors(),
+                self.inner.num_outputs()
+            )));
+        }
+        if lookup.inner.num_observables() != self.inner.num_dem_outputs() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pauli frame lookup has {} observable(s), sampler has {}",
+                lookup.inner.num_observables(),
+                self.inner.num_dem_outputs()
+            )));
+        }
+
+        let (mask_values, mask_rows, mask_cols) = extract_pauli_mask_values(pauli_masks)?;
+        let mut rng = match seed {
+            Some(s) => PecosRng::seed_from_u64(s),
+            None => PecosRng::seed_from_u64(rand::rng().random()),
+        };
+
+        let (mut det_events, mut obs_flips) = self.inner.sample_batch(num_shots, &mut rng);
+        lookup
+            .inner
+            .apply_mask_values(
+                &mask_values,
+                mask_rows,
+                mask_cols,
+                &mut det_events,
+                &mut obs_flips,
+            )
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok((det_events, obs_flips))
+    }
+
     /// Sample direct tracked-Pauli flips.
     ///
     /// Raises:
@@ -6123,6 +6354,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDagFaultInfluenceMap>()?;
     qec.add_class::<PyDagFaultAnalyzer>()?;
     qec.add_class::<PyInfluenceBuilder>()?;
+    qec.add_class::<PyPauliFrameLookup>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;

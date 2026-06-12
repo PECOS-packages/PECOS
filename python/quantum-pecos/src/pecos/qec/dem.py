@@ -77,6 +77,10 @@ class _DetectorErrorModelMixin:
         p_idle_x_quadratic_rate: float | None = None,
         p_idle_y_quadratic_rate: float | None = None,
         p_idle_z_quadratic_rate: float | None = None,
+        p_idle_quadratic_sine_rate: float | None = None,
+        p_idle_x_quadratic_sine_rate: float | None = None,
+        p_idle_y_quadratic_sine_rate: float | None = None,
+        p_idle_z_quadratic_sine_rate: float | None = None,
         runtime: object | None = None,
         seed: int = 0,
     ) -> _RustDetectorErrorModel:
@@ -178,6 +182,11 @@ class _DetectorErrorModelMixin:
             p_idle_x_quadratic_rate: Optional stochastic X-memory rate quadratic in idle duration.
             p_idle_y_quadratic_rate: Optional stochastic Y-memory rate quadratic in idle duration.
             p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
+            p_idle_quadratic_sine_rate: Optional legacy alias for stochastic Z-memory
+                rate with probability ``sin(rate * duration)^2``.
+            p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
+            p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
+            p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
             runtime: Optional Selene runtime selector/plugin. ``None`` selects
                 the default Selene runtime. Runtime plugin objects are passed
                 through to ``pecos.selene_engine(runtime)``.
@@ -294,6 +303,10 @@ class _DetectorErrorModelMixin:
             p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
             p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
         )
 
 

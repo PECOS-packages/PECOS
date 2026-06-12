@@ -273,6 +273,10 @@ fn apply_noise_options(
     p_idle_x_quadratic_rate: Option<f64>,
     p_idle_y_quadratic_rate: Option<f64>,
     p_idle_z_quadratic_rate: Option<f64>,
+    p_idle_quadratic_sine_rate: Option<f64>,
+    p_idle_x_quadratic_sine_rate: Option<f64>,
+    p_idle_y_quadratic_sine_rate: Option<f64>,
+    p_idle_z_quadratic_sine_rate: Option<f64>,
     p1_weights: Option<BTreeMap<String, f64>>,
     p2_weights: Option<BTreeMap<String, f64>>,
     p2_replacement_approximation: Option<String>,
@@ -311,6 +315,18 @@ fn apply_noise_options(
     }
     if let Some(rate) = p_idle_z_quadratic_rate {
         noise.p_idle_quadratic_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_quadratic_sine_rate {
+        noise = noise.set_idle_quadratic_sine_rate(rate);
+    }
+    if let Some(rate) = p_idle_x_quadratic_sine_rate {
+        noise.p_idle_x_quadratic_sine_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_y_quadratic_sine_rate {
+        noise.p_idle_y_quadratic_sine_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_z_quadratic_sine_rate {
+        noise.p_idle_quadratic_sine_rate = rate.max(0.0);
     }
     if let Some(weights) = p1_weights {
         noise = noise.set_p1_weights(parse_p1_weights(weights)?);
@@ -1236,7 +1252,7 @@ impl PyDetectorErrorModel {
     ///     >>> print(dem.to_string())
     ///     >>> sampler = dem.to_sampler()
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
@@ -1256,6 +1272,10 @@ impl PyDetectorErrorModel {
         p_idle_x_quadratic_rate: Option<f64>,
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
         p1_weights: Option<BTreeMap<String, f64>>,
         p2_weights: Option<BTreeMap<String, f64>>,
         p2_replacement_approximation: Option<String>,
@@ -1280,6 +1300,10 @@ impl PyDetectorErrorModel {
             p_idle_x_quadratic_rate,
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
             p1_weights,
             p2_weights,
             p2_replacement_approximation,
@@ -1638,7 +1662,7 @@ impl PyDemBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -1658,6 +1682,10 @@ impl PyDemBuilder {
         p_idle_x_quadratic_rate: Option<f64>,
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
         p1_weights: Option<BTreeMap<String, f64>>,
         p2_weights: Option<BTreeMap<String, f64>>,
         p2_replacement_approximation: Option<String>,
@@ -1680,6 +1708,10 @@ impl PyDemBuilder {
             p_idle_x_quadratic_rate,
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
             p1_weights,
             p2_weights,
             p2_replacement_approximation,
@@ -3549,7 +3581,7 @@ impl PyDemSampler {
     ///     >>> sampler = DemSampler.from_circuit(dag, p1=0.001, p2=0.01)
     ///     >>> sampler = DemSampler.from_circuit(tc, p2=0.01)  # TickCircuit also works
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
@@ -3569,6 +3601,10 @@ impl PyDemSampler {
         p_idle_x_quadratic_rate: Option<f64>,
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
         p1_weights: Option<BTreeMap<String, f64>>,
         p2_weights: Option<BTreeMap<String, f64>>,
         p2_replacement_approximation: Option<String>,
@@ -3591,6 +3627,10 @@ impl PyDemSampler {
             p_idle_x_quadratic_rate,
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
             p1_weights,
             p2_weights,
             p2_replacement_approximation,
@@ -3708,7 +3748,7 @@ impl PyDemSampler {
     ///
     /// The `observables` argument defines observables.
     #[staticmethod]
-    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
@@ -3730,6 +3770,10 @@ impl PyDemSampler {
         p_idle_x_quadratic_rate: Option<f64>,
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
         p1_weights: Option<BTreeMap<String, f64>>,
         p2_weights: Option<BTreeMap<String, f64>>,
         p2_replacement_approximation: Option<String>,
@@ -3752,6 +3796,10 @@ impl PyDemSampler {
             p_idle_x_quadratic_rate,
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
             p1_weights,
             p2_weights,
             p2_replacement_approximation,
@@ -4212,7 +4260,7 @@ impl PyDemSamplerBuilder {
     }
 
     /// Set noise parameters.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -4232,6 +4280,10 @@ impl PyDemSamplerBuilder {
         p_idle_x_quadratic_rate: Option<f64>,
         p_idle_y_quadratic_rate: Option<f64>,
         p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
         p1_weights: Option<BTreeMap<String, f64>>,
         p2_weights: Option<BTreeMap<String, f64>>,
         p2_replacement_approximation: Option<String>,
@@ -4254,6 +4306,10 @@ impl PyDemSamplerBuilder {
             p_idle_x_quadratic_rate,
             p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
             p1_weights,
             p2_weights,
             p2_replacement_approximation,

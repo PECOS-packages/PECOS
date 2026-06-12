@@ -123,6 +123,11 @@ class NoiseModel:
         p_idle_x_quadratic_rate: Stochastic X-memory rate quadratic in idle duration.
         p_idle_y_quadratic_rate: Stochastic Y-memory rate quadratic in idle duration.
         p_idle_z_quadratic_rate: Stochastic Z-memory rate quadratic in idle duration.
+        p_idle_quadratic_sine_rate: Legacy alias for stochastic Z-memory rate
+            with probability ``sin(rate * duration)^2``.
+        p_idle_x_quadratic_sine_rate: Stochastic X-memory sine-law rate.
+        p_idle_y_quadratic_sine_rate: Stochastic Y-memory sine-law rate.
+        p_idle_z_quadratic_sine_rate: Stochastic Z-memory sine-law rate.
     """
 
     p1: float = 0.0
@@ -143,6 +148,10 @@ class NoiseModel:
     p_idle_x_quadratic_rate: float | None = None
     p_idle_y_quadratic_rate: float | None = None
     p_idle_z_quadratic_rate: float | None = None
+    p_idle_quadratic_sine_rate: float | None = None
+    p_idle_x_quadratic_sine_rate: float | None = None
+    p_idle_y_quadratic_sine_rate: float | None = None
+    p_idle_z_quadratic_sine_rate: float | None = None
 
     def __post_init__(self) -> None:
         """Normalize cache-sensitive inputs after dataclass initialization."""
@@ -160,6 +169,13 @@ class NoiseModel:
         return self.p_idle_z_quadratic_rate if self.p_idle_z_quadratic_rate is not None else self.p_idle_quadratic_rate
 
     @property
+    def effective_p_idle_z_quadratic_sine_rate(self) -> float | None:
+        """Z-axis sine-law quadratic idle rate, accepting the legacy alias."""
+        if self.p_idle_z_quadratic_sine_rate is not None:
+            return self.p_idle_z_quadratic_sine_rate
+        return self.p_idle_quadratic_sine_rate
+
+    @property
     def idle_memory_rates(self) -> tuple[float | None, ...]:
         """All dedicated Pauli idle-memory rates that require explicit idles."""
         return (
@@ -169,6 +185,9 @@ class NoiseModel:
             self.p_idle_x_quadratic_rate,
             self.p_idle_y_quadratic_rate,
             self.effective_p_idle_z_quadratic_rate,
+            self.p_idle_x_quadratic_sine_rate,
+            self.p_idle_y_quadratic_sine_rate,
+            self.effective_p_idle_z_quadratic_sine_rate,
         )
 
     @staticmethod
@@ -1432,6 +1451,10 @@ def _uses_dedicated_idle_noise(
     p_idle_x_quadratic_rate: float | None = None,
     p_idle_y_quadratic_rate: float | None = None,
     p_idle_z_quadratic_rate: float | None = None,
+    p_idle_quadratic_sine_rate: float | None = None,
+    p_idle_x_quadratic_sine_rate: float | None = None,
+    p_idle_y_quadratic_sine_rate: float | None = None,
+    p_idle_z_quadratic_sine_rate: float | None = None,
 ) -> bool:
     """Return True when noise parameters require explicit idle locations."""
     return (
@@ -1448,6 +1471,10 @@ def _uses_dedicated_idle_noise(
                 p_idle_x_quadratic_rate,
                 p_idle_y_quadratic_rate,
                 p_idle_z_quadratic_rate,
+                p_idle_quadratic_sine_rate,
+                p_idle_x_quadratic_sine_rate,
+                p_idle_y_quadratic_sine_rate,
+                p_idle_z_quadratic_sine_rate,
             )
         )
     )
@@ -1467,6 +1494,10 @@ def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
         p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
         p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
         p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
     )
 
 
@@ -1573,6 +1604,10 @@ def _dem_string_from_cached_surface_topology(
         "p_idle_x_quadratic_rate": noise.p_idle_x_quadratic_rate,
         "p_idle_y_quadratic_rate": noise.p_idle_y_quadratic_rate,
         "p_idle_z_quadratic_rate": noise.p_idle_z_quadratic_rate,
+        "p_idle_quadratic_sine_rate": noise.p_idle_quadratic_sine_rate,
+        "p_idle_x_quadratic_sine_rate": noise.p_idle_x_quadratic_sine_rate,
+        "p_idle_y_quadratic_sine_rate": noise.p_idle_y_quadratic_sine_rate,
+        "p_idle_z_quadratic_sine_rate": noise.p_idle_z_quadratic_sine_rate,
         "p1_weights": _p1_weights_dict(noise.p1_weights),
         "p2_weights": _p2_weights_dict(noise.p2_weights),
     }
@@ -1633,6 +1668,10 @@ def _cached_surface_native_dem_string(
     p_idle_x_quadratic_rate: float | None = None,
     p_idle_y_quadratic_rate: float | None = None,
     p_idle_z_quadratic_rate: float | None = None,
+    p_idle_quadratic_sine_rate: float | None = None,
+    p_idle_x_quadratic_sine_rate: float | None = None,
+    p_idle_y_quadratic_sine_rate: float | None = None,
+    p_idle_z_quadratic_sine_rate: float | None = None,
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
     include_idle_gates = _uses_dedicated_idle_noise(
@@ -1647,6 +1686,10 @@ def _cached_surface_native_dem_string(
         p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
         p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
         p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
     )
     topology = _cached_surface_native_topology(
         patch_key,
@@ -1677,6 +1720,10 @@ def _cached_surface_native_dem_string(
             p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
             p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
         ),
         decompose_errors=decompose_errors,
     )
@@ -1701,7 +1748,7 @@ def _build_native_sampler_from_cached_surface_topology(
     ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
 ) -> NativeSampler:
     """Construct a native sampler from cached topology-only analysis."""
-    from pecos.qec import DemSampler, ParsedDem
+    from pecos.qec import ParsedDem
 
     if sampling_model == "dem":
         dem_str = _dem_string_from_cached_surface_topology(
@@ -1731,6 +1778,10 @@ def _build_native_sampler_from_cached_surface_topology(
                 p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
                 p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
                 p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+                p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
+                p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
+                p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
+                p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
                 p1_weights=_p1_weights_dict(noise.p1_weights),
                 p2_weights=_p2_weights_dict(noise.p2_weights),
                 p2_replacement_approximation=noise.p2_replacement_approximation,
@@ -1854,6 +1905,10 @@ def generate_circuit_level_dem_from_builder(
         p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
         p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
         p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
     )
 
 
@@ -2781,6 +2836,7 @@ class SurfaceDecoder:
             synx_list: X syndrome arrays, one per round
             synz_list: Z syndrome arrays, one per round
             final: Final data qubit measurements
+            init_synx: Initial X-syndrome baseline measured during logical prep
 
         Returns:
             Detection events array matching the DEM detector ordering
@@ -2798,7 +2854,9 @@ class SurfaceDecoder:
         events: list[int] = []
 
         if self.num_rounds > 0:
-            assert init_synx is not None
+            if init_synx is None:
+                msg = "init_synx is required for Z-basis circuit-level DEM decoding"
+                raise ValueError(msg)
             init_synx_array = np.array(init_synx, dtype=np.uint8)
             if init_synx_array.shape != synx[0].shape:
                 msg = f"init_synx has shape {init_synx_array.shape}, expected {synx[0].shape}"
@@ -2844,6 +2902,7 @@ class SurfaceDecoder:
             synx_list: X syndrome arrays, one per round
             synz_list: Z syndrome arrays, one per round
             final: Final data qubit measurements
+            init_synz: Initial Z-syndrome baseline measured during logical prep
 
         Returns:
             Detection events array matching the DEM detector ordering
@@ -2861,7 +2920,9 @@ class SurfaceDecoder:
         events: list[int] = []
 
         if self.num_rounds > 0:
-            assert init_synz is not None
+            if init_synz is None:
+                msg = "init_synz is required for X-basis circuit-level DEM decoding"
+                raise ValueError(msg)
             init_synz_array = np.array(init_synz, dtype=np.uint8)
             if init_synz_array.shape != synz[0].shape:
                 msg = f"init_synz has shape {init_synz_array.shape}, expected {synz[0].shape}"
@@ -3573,6 +3634,10 @@ def build_native_sampler(
             p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
             p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
             p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(

@@ -247,6 +247,23 @@ fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
 }
 
 #[test]
+fn idle_memory_pauli_probabilities_support_quadratic_sine_model() {
+    let z_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_quadratic_sine_rate(0.2)
+        .idle_memory_pauli_probs(3.0);
+    assert_eq!(z_sine.px, 0.0);
+    assert_eq!(z_sine.py, 0.0);
+    assert!((z_sine.pz - 0.6_f64.sin().powi(2)).abs() < 1e-15);
+
+    let pauli_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_pauli_quadratic_sine_rates(0.1, 0.2, 0.3)
+        .idle_memory_pauli_probs(2.0);
+    assert!((pauli_sine.px - 0.2_f64.sin().powi(2)).abs() < 1e-15);
+    assert!((pauli_sine.py - 0.4_f64.sin().powi(2)).abs() < 1e-15);
+    assert!((pauli_sine.pz - 0.6_f64.sin().powi(2)).abs() < 1e-15);
+}
+
+#[test]
 fn dem_builder_scalar_p1_does_not_attach_to_idle() {
     let dag = build_idle_then_measure(1);
     let analyzer = DagFaultAnalyzer::new(&dag);

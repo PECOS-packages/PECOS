@@ -2491,6 +2491,15 @@ pub struct NoiseConfig {
     ///
     /// This is the legacy Z-axis alias for `p_idle_z_quadratic_rate`.
     pub p_idle_quadratic_rate: f64,
+    /// Stochastic Z-memory sine-law rate for the quadratic idle term.
+    ///
+    /// Each explicit `Idle(duration, q)` contributes a Z-fault probability
+    /// term `sin(p_idle_quadratic_sine_rate * duration)^2`. This preserves
+    /// the small-duration quadratic behavior of coherent dephasing models
+    /// without changing the coefficient-style `p_idle_quadratic_rate` API.
+    ///
+    /// This is the legacy Z-axis alias for `p_idle_z_quadratic_sine_rate`.
+    pub p_idle_quadratic_sine_rate: f64,
     /// Stochastic X-memory error rate linear in idle duration.
     pub p_idle_x_linear_rate: f64,
     /// Stochastic Y-memory error rate linear in idle duration.
@@ -2499,6 +2508,10 @@ pub struct NoiseConfig {
     pub p_idle_x_quadratic_rate: f64,
     /// Stochastic Y-memory error rate quadratic in idle duration.
     pub p_idle_y_quadratic_rate: f64,
+    /// Stochastic X-memory sine-law rate for the quadratic idle term.
+    pub p_idle_x_quadratic_sine_rate: f64,
+    /// Stochastic Y-memory sine-law rate for the quadratic idle term.
+    pub p_idle_y_quadratic_sine_rate: f64,
     /// Per-payload local measurement-crosstalk event rate.
     ///
     /// This rate is multiplied by the selected hidden-measurement transition
@@ -2658,10 +2671,13 @@ impl Default for NoiseConfig {
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
+            p_idle_quadratic_sine_rate: 0.0,
             p_idle_x_linear_rate: 0.0,
             p_idle_y_linear_rate: 0.0,
             p_idle_x_quadratic_rate: 0.0,
             p_idle_y_quadratic_rate: 0.0,
+            p_idle_x_quadratic_sine_rate: 0.0,
+            p_idle_y_quadratic_sine_rate: 0.0,
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -2688,10 +2704,13 @@ impl NoiseConfig {
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
+            p_idle_quadratic_sine_rate: 0.0,
             p_idle_x_linear_rate: 0.0,
             p_idle_y_linear_rate: 0.0,
             p_idle_x_quadratic_rate: 0.0,
             p_idle_y_quadratic_rate: 0.0,
+            p_idle_x_quadratic_sine_rate: 0.0,
+            p_idle_y_quadratic_sine_rate: 0.0,
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -2716,10 +2735,13 @@ impl NoiseConfig {
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
+            p_idle_quadratic_sine_rate: 0.0,
             p_idle_x_linear_rate: 0.0,
             p_idle_y_linear_rate: 0.0,
             p_idle_x_quadratic_rate: 0.0,
             p_idle_y_quadratic_rate: 0.0,
+            p_idle_x_quadratic_sine_rate: 0.0,
+            p_idle_y_quadratic_sine_rate: 0.0,
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -2744,10 +2766,13 @@ impl NoiseConfig {
             idle_rz: 0.0,
             p_idle_linear_rate: 0.0,
             p_idle_quadratic_rate: 0.0,
+            p_idle_quadratic_sine_rate: 0.0,
             p_idle_x_linear_rate: 0.0,
             p_idle_y_linear_rate: 0.0,
             p_idle_x_quadratic_rate: 0.0,
             p_idle_y_quadratic_rate: 0.0,
+            p_idle_x_quadratic_sine_rate: 0.0,
+            p_idle_y_quadratic_sine_rate: 0.0,
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_model: MeasurementCrosstalkTransitionModel::default(),
@@ -2776,6 +2801,13 @@ impl NoiseConfig {
         self
     }
 
+    /// Sets the sine-law quadratic stochastic Z-memory rate for explicit idle gates.
+    #[must_use]
+    pub fn set_idle_quadratic_sine_rate(mut self, rate: f64) -> Self {
+        self.p_idle_quadratic_sine_rate = rate.max(0.0);
+        self
+    }
+
     /// Sets the linear stochastic Pauli-memory rates for explicit idle gates.
     #[must_use]
     pub fn set_idle_pauli_linear_rates(mut self, px_rate: f64, py_rate: f64, pz_rate: f64) -> Self {
@@ -2796,6 +2828,20 @@ impl NoiseConfig {
         self.p_idle_x_quadratic_rate = px_rate.max(0.0);
         self.p_idle_y_quadratic_rate = py_rate.max(0.0);
         self.p_idle_quadratic_rate = pz_rate.max(0.0);
+        self
+    }
+
+    /// Sets the sine-law quadratic stochastic Pauli-memory rates for explicit idle gates.
+    #[must_use]
+    pub fn set_idle_pauli_quadratic_sine_rates(
+        mut self,
+        px_rate: f64,
+        py_rate: f64,
+        pz_rate: f64,
+    ) -> Self {
+        self.p_idle_x_quadratic_sine_rate = px_rate.max(0.0);
+        self.p_idle_y_quadratic_sine_rate = py_rate.max(0.0);
+        self.p_idle_quadratic_sine_rate = pz_rate.max(0.0);
         self
     }
 
@@ -2918,10 +2964,18 @@ impl NoiseConfig {
         self
     }
 
-    fn idle_memory_probability(linear_rate: f64, quadratic_rate: f64, duration: f64) -> f64 {
+    fn idle_memory_probability(
+        linear_rate: f64,
+        quadratic_rate: f64,
+        quadratic_sine_rate: f64,
+        duration: f64,
+    ) -> f64 {
         let duration = duration.max(0.0);
-        (linear_rate.max(0.0) * duration + quadratic_rate.max(0.0) * duration * duration)
-            .clamp(0.0, 1.0)
+        let sine_angle = quadratic_sine_rate.max(0.0) * duration;
+        (linear_rate.max(0.0) * duration
+            + quadratic_rate.max(0.0) * duration * duration
+            + sine_angle.sin().powi(2))
+        .clamp(0.0, 1.0)
     }
 
     /// Dedicated idle-memory Pauli probabilities for `Idle(duration, q)`.
@@ -2931,16 +2985,19 @@ impl NoiseConfig {
             px: Self::idle_memory_probability(
                 self.p_idle_x_linear_rate,
                 self.p_idle_x_quadratic_rate,
+                self.p_idle_x_quadratic_sine_rate,
                 duration,
             ),
             py: Self::idle_memory_probability(
                 self.p_idle_y_linear_rate,
                 self.p_idle_y_quadratic_rate,
+                self.p_idle_y_quadratic_sine_rate,
                 duration,
             ),
             pz: Self::idle_memory_probability(
                 self.p_idle_linear_rate,
                 self.p_idle_quadratic_rate,
+                self.p_idle_quadratic_sine_rate,
                 duration,
             ),
         };
@@ -2999,10 +3056,13 @@ impl NoiseConfig {
             || matches!((self.t1, self.t2), (Some(_), Some(_)))
             || self.p_idle_linear_rate > 0.0
             || self.p_idle_quadratic_rate.abs() > f64::EPSILON
+            || self.p_idle_quadratic_sine_rate > 0.0
             || self.p_idle_x_linear_rate > 0.0
             || self.p_idle_y_linear_rate > 0.0
             || self.p_idle_x_quadratic_rate > 0.0
             || self.p_idle_y_quadratic_rate > 0.0
+            || self.p_idle_x_quadratic_sine_rate > 0.0
+            || self.p_idle_y_quadratic_sine_rate > 0.0
     }
 }
 

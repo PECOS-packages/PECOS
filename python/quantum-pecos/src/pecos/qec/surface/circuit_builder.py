@@ -1716,17 +1716,18 @@ def _gate_type_name(gate: object) -> str:
     return str(getattr(gate_type, "name", str(gate_type).rsplit(".", maxsplit=1)[-1]))
 
 
+def _format_gate_angle(angle: object) -> str:
+    try:
+        return repr(float(angle))
+    except (TypeError, ValueError):
+        return repr(angle)
+
+
 def _gate_angles_for_message(gate: object) -> list[str]:
     angles = getattr(gate, "angles", None)
     if angles is None:
         angles = getattr(gate, "params", [])
-    formatted = []
-    for angle in angles:
-        try:
-            formatted.append(repr(float(angle)))
-        except (TypeError, ValueError):
-            formatted.append(repr(angle))
-    return formatted
+    return [_format_gate_angle(angle) for angle in angles]
 
 
 def get_detector_descriptors_from_tick_circuit(
@@ -2489,7 +2490,7 @@ def _maximally_decompose_graphlike_dem(dem_text: str) -> str:
     return "\n".join(rewritten_lines)
 
 
-def _build_canonical_dem_influence_map(dag: DagCircuit):
+def _build_canonical_dem_influence_map(dag: DagCircuit) -> object:
     """Build the influence map used by the canonical Rust DEM builder.
 
     `DagFaultAnalyzer` supplies the detector influence map. Observable and
@@ -2541,6 +2542,10 @@ def generate_dem_from_tick_circuit(
     p_idle_x_quadratic_rate: float | None = None,
     p_idle_y_quadratic_rate: float | None = None,
     p_idle_z_quadratic_rate: float | None = None,
+    p_idle_quadratic_sine_rate: float | None = None,
+    p_idle_x_quadratic_sine_rate: float | None = None,
+    p_idle_y_quadratic_sine_rate: float | None = None,
+    p_idle_z_quadratic_sine_rate: float | None = None,
     decompose_errors: bool = True,
     maximal_decomposition: bool = False,
 ) -> str:
@@ -2588,6 +2593,11 @@ def generate_dem_from_tick_circuit(
         p_idle_x_quadratic_rate: Optional stochastic X-memory rate quadratic in idle duration.
         p_idle_y_quadratic_rate: Optional stochastic Y-memory rate quadratic in idle duration.
         p_idle_z_quadratic_rate: Optional stochastic Z-memory rate quadratic in idle duration.
+        p_idle_quadratic_sine_rate: Optional legacy alias for stochastic Z-memory
+            rate with probability ``sin(rate * duration)^2``.
+        p_idle_x_quadratic_sine_rate: Optional stochastic X-memory sine-law rate.
+        p_idle_y_quadratic_sine_rate: Optional stochastic Y-memory sine-law rate.
+        p_idle_z_quadratic_sine_rate: Optional stochastic Z-memory sine-law rate.
         decompose_errors: If True (default), decompose hyperedge errors into
             graphlike components using the `^` separator. Set to False to
             output raw hyperedges. Ignored if maximal_decomposition=True.
@@ -2640,6 +2650,10 @@ def generate_dem_from_tick_circuit(
         p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
         p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
         p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
     )
     builder.with_num_measurements(num_measurements)
     if metadata_uses_records:

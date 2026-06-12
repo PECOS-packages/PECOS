@@ -134,6 +134,7 @@ def test_canonical_frame_output_reuses_raw_abstract_sampler_topology() -> None:
     assert canonical.num_observables == raw.num_observables
     assert canonical.num_pauli_sites == raw.num_pauli_sites
     assert canonical.pauli_frame_lookup is raw.pauli_frame_lookup
+    assert canonical.dem_string == raw.dem_string
 
 
 @pytest.mark.parametrize(
@@ -152,6 +153,9 @@ def test_abstract_twirl_builders_reject_unsupported_config(
     patch = SurfacePatch.create(distance=3)
     kwargs = {field: value}
     twirl = TwirlConfig(**kwargs)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match=field):
+        twirl.validate_runtime_supported()
 
     with pytest.raises(ValueError, match=field):
         build_memory_circuit(

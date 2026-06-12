@@ -138,10 +138,32 @@ def intervals_disjoint(a: Cell, b: Cell) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def measure_cell(family: str, d: int, rounds: int, p: float, seed: int, inners: list[str], n: int) -> list[Cell]:
-    """Sample ONE batch and decode it with every inner (paired comparison)."""
+def measure_cell(
+    family: str,
+    d: int,
+    rounds: int,
+    p: float,
+    seed: int,
+    inners: list[str],
+    n: int,
+    dem_source: str = "native",
+) -> list[Cell]:
+    """Sample ONE batch and decode it with every inner (paired comparison).
+
+    ``dem_source="native"`` uses the PECOS-native ``build_dem`` pipeline (the
+    main study). ``dem_source="stim"`` uses the exact DEM the production
+    default decode path consumes (``LogicalCircuitBuilder.build_decoder`` with
+    ``use_stim_dem=True``): the stim circuit's non-decomposed detector error
+    model.
+    """
     builder = FAMILIES[family](d, rounds)
-    dem = builder.build_dem(p1=p, p2=p, p_meas=p)
+    if dem_source == "stim":
+        import stim  # analysis-only here; the production path already requires it
+
+        stim_str = builder.to_stim(p1=p, p2=p, p_meas=p)
+        dem = str(stim.Circuit(stim_str).detector_error_model(ignore_decomposition_failures=True))
+    else:
+        dem = builder.build_dem(p1=p, p2=p, p_meas=p)
     sc = builder.stab_coords()
     batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(n, seed=seed)
 
@@ -269,6 +291,49 @@ def run_hyperedge(path: Path) -> None:
                     + " ".join(f"{c.inner.split('_')[0][:6]}={c.num_errors}" for c in cells),
                     flush=True,
                 )
+
+
+def run_stim_spotcheck(path: Path) -> None:
+    """Confirm the ranking transfers to the DEM generator the shipped default decodes.
+
+    The production default path (``LogicalCircuitBuilder.build_decoder``,
+    ``use_stim_dem=True``) consumes a STIM-generated DEM, while every main study
+    cell used the PECOS-native ``build_dem``. This cell repeats the memory
+    fusion-vs-bp contrast on the stim DEM (2026-06-11 review follow-up)."""
+    done = {(c.family, c.distance, c.p, c.seed, c.inner) for c in _load(path)}
+    inners = ["fusion_blossom_serial", "pecos_uf:bp", "pymatching"]
+    p = 0.005
+    for d in [3, 5]:
+        for seed in [1, 2, 3]:
+            todo = [i for i in inners if ("memory", d, p, seed, i) not in done]
+            if not todo:
+                continue
+            t = time.perf_counter()
+            cells = measure_cell("memory", d, d, p, seed, todo, 100_000, dem_source="stim")
+            _append(path, cells)
+            print(
+                f"[stim_spotcheck] memory d={d} p={p:.3f} seed={seed}: "
+                + " ".join(f"{c.inner.split(':')[0][:6]}={c.num_errors}" for c in cells)
+                + f"  ({time.perf_counter() - t:.1f}s)",
+                flush=True,
+            )
+    # Pooled verdict for the d=5 contrast (the cell where bp is dominated on
+    # the native DEM): report Jeffreys intervals and disjointness.
+    agg = _pool(_load(path))
+    for d in [3, 5]:
+        if ("memory", d, p, "fusion_blossom_serial") not in agg or ("memory", d, p, "pecos_uf:bp") not in agg:
+            continue
+        fk, fn = agg[("memory", d, p, "fusion_blossom_serial")]
+        rk, rn = agg[("memory", d, p, "pecos_uf:bp")]
+        flo, fhi = jeffreys_ci(fk, fn)
+        rlo, rhi = jeffreys_ci(rk, rn)
+        sep = "DISJOINT" if fhi < rlo or rhi < flo else "overlap"
+        ratio = (rk / rn) / (fk / fn) if fk else float("inf")
+        print(
+            f"[stim_spotcheck] pooled d={d}: fusion {fk}/{fn} [{flo:.2e},{fhi:.2e}] vs "
+            f"bp {rk}/{rn} [{rlo:.2e},{rhi:.2e}] -- {ratio:.2f}x, {sep}",
+            flush=True,
+        )
 
 
 def run_speed(path: Path) -> None:
@@ -444,7 +509,11 @@ def analyze(out_dir: Path) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--phase", required=True, choices=["suppress", "threshold", "hyperedge", "speed", "analyze", "smoke"])
+    ap.add_argument(
+        "--phase",
+        required=True,
+        choices=["suppress", "threshold", "hyperedge", "speed", "stim_spotcheck", "analyze", "smoke"],
+    )
     ap.add_argument("--out", type=Path, default=RESULTS_DIR)
     args = ap.parse_args()
 
@@ -466,7 +535,13 @@ def main() -> None:
         return
 
     path = args.out / f"inner_decoder_study_{args.phase}.jsonl"
-    {"suppress": run_suppress, "threshold": run_threshold, "hyperedge": run_hyperedge, "speed": run_speed}[args.phase](path)
+    {
+        "suppress": run_suppress,
+        "threshold": run_threshold,
+        "hyperedge": run_hyperedge,
+        "speed": run_speed,
+        "stim_spotcheck": run_stim_spotcheck,
+    }[args.phase](path)
     print(f"[done] {args.phase} -> {path}", flush=True)
 
 

@@ -198,8 +198,16 @@ def test_linear_regression_requires_matching_lengths(sweep: ModuleType) -> None:
 def test_native_sampler_model_tracks_decoder_dem_requirements(sweep: ModuleType) -> None:
     """Raw-DEM decoders should sample the exact native influence model."""
     assert sweep._native_sampler_model_for_decoder("pymatching") == "dem"
+    assert sweep._native_sampler_model_for_decoder("pymatching_correlated") == "dem"
     assert sweep._native_sampler_model_for_decoder("tesseract") == "influence_dem"
     assert sweep._native_sampler_model_for_decoder("bp_osd") == "influence_dem"
+
+
+def test_create_dem_decoder_supports_correlated_pymatching(sweep: ModuleType) -> None:
+    """The explicit correlated PyMatching option should construct a decoder."""
+    decoder = sweep._create_dem_decoder("pymatching_correlated", "error(0.1) D0 ^ D1")
+
+    assert "PyMatchingDecoder" in repr(decoder)
 
 
 # ---------------------------------------------------------------------------

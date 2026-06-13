@@ -2055,9 +2055,11 @@ def generate_circuit_level_dem_from_builder(
         num_rounds: Number of syndrome extraction rounds
         noise: Noise model parameters
         basis: Memory basis ('X' or 'Z')
-        decompose_errors: If True, return PECOS's native decomposed DEM
-            representation, which is more appropriate for graph-based
-            decoders like PyMatching.
+        decompose_errors: If True, return PECOS's native graphlike-decomposed
+            DEM representation for graph decoders such as PyMatching. The
+            decomposition preserves correlated mechanism metadata with ``^``
+            separators, but graph decoders may still approximate hyperedge
+            correlations.
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, the native DEM is built
             from the same batched ancilla-reuse circuit family used by Guppy.
@@ -2547,8 +2549,9 @@ class SurfaceDecoder:
             circuit_level_dem_mode: Which PECOS-native DEM representation to use
                 when circuit-level DEMs are enabled. ``"native_full"`` preserves
                 the current non-decomposed DEM output. ``"native_decomposed"``
-                returns PECOS's graphlike decomposed DEM output, which is often
-                a better fit for graph decoders such as PyMatching.
+                returns PECOS's graphlike decomposed DEM output for graph
+                decoders such as PyMatching. This is a decoder-facing
+                approximation of hyperedge correlations, not an exact raw DEM.
             circuit_level_dem_source: Which ideal circuit to analyze when
                 building native circuit-level DEMs. ``"abstract"`` uses the
                 high-level surface TickCircuit, while ``"traced_qis"`` traces

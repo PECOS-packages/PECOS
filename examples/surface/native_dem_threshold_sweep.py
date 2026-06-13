@@ -563,9 +563,10 @@ def _noise_model_description(args: argparse.Namespace) -> str:
 def _create_dem_decoder(decoder_type: str, dem_str: str, *, tesseract_beam: int = 5) -> object:
     """Create a DEM-level decoder from a DEM string.
 
-    Supports MWPM decoders (pymatching), search decoders (tesseract), and
-    check-matrix decoders (bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp)
-    via DemAwareDecoder which extracts the check matrix from the DEM.
+    Supports MWPM decoders (pymatching, pymatching_correlated), search
+    decoders (tesseract), and check-matrix decoders (bp_osd, bp_lsd,
+    union_find, relay_bp, min_sum_bp) via DemAwareDecoder which extracts the
+    check matrix from the DEM.
     """
     if decoder_type == "tesseract":
         from pecos.decoders import TesseractDecoder
@@ -580,6 +581,9 @@ def _create_dem_decoder(decoder_type: str, dem_str: str, *, tesseract_beam: int 
         return DemAwareDecoder.from_dem(dem_filtered, decoder_type=decoder_type)
 
     from pecos.decoders import PyMatchingDecoder
+
+    if decoder_type == "pymatching_correlated":
+        return PyMatchingDecoder.from_dem_with_correlations(dem_str, enable_correlations=True)
 
     return PyMatchingDecoder.from_dem(dem_str)
 
@@ -679,7 +683,7 @@ def _decoder_runtime(
         patch,
         num_rounds=total_rounds,
         noise=noise,
-        decoder_type=decoder_type,
+        decoder_type="pymatching" if decoder_type == "pymatching_correlated" else decoder_type,
         use_circuit_level_dem=True,
         circuit_level_dem_mode=dem_mode,
         circuit_level_dem_source=native_circuit_source,
@@ -698,7 +702,7 @@ def _decoder_runtime(
 
 def _native_sampler_model_for_decoder(decoder_type: str) -> str:
     """Choose the native sampler model paired with a DEM decoder."""
-    if decoder_type == "pymatching":
+    if decoder_type in {"pymatching", "pymatching_correlated"}:
         return "dem"
     return "influence_dem"
 
@@ -746,9 +750,11 @@ def _native_sampler_runtime(
         interaction_basis=interaction_basis,
         sampling_model=_native_sampler_model_for_decoder(decoder_type),
     )
-    # PyMatching needs decomposed (graph-like) DEMs; Tesseract and check-matrix
-    # decoders handle hyperedges natively and should get the full DEM.
-    if decoder_type == "pymatching":
+    # PyMatching uses graphlike decomposed DEMs. The correlated variant also
+    # consumes decomposition separators as correlation metadata. Tesseract and
+    # check-matrix decoders handle hyperedges natively and should get the full
+    # DEM.
+    if decoder_type in {"pymatching", "pymatching_correlated"}:
         dem_str = runtime.decoder.get_dem(basis.upper(), circuit_level=True)
     else:
         dem_str = generate_circuit_level_dem_from_builder(
@@ -1304,7 +1310,13 @@ def _run_memory_point(
         # The DemSampler keeps all per-shot data in Rust -- nothing crosses to Python.
         dem_str_for_rust = native_runtime.dem_str
         rust_sampler = getattr(sampler, "sampler", None)
-        if dem_str_for_rust and rust_sampler and hasattr(rust_sampler, "sample_decode_count"):
+        use_rust_sample_decode = (
+            decoder_type != "pymatching_correlated"
+            and dem_str_for_rust
+            and rust_sampler
+            and hasattr(rust_sampler, "sample_decode_count")
+        )
+        if use_rust_sample_decode:
             # Use parallel path for slow decoders (Tesseract, BP+OSD, etc.)
             if decoder_type != "pymatching" and hasattr(rust_sampler, "sample_decode_count_parallel"):
                 num_logical_errors = rust_sampler.sample_decode_count_parallel(
@@ -3726,16 +3738,30 @@ def _parse_args() -> argparse.Namespace:
         "--dem-mode",
         choices=["native_decomposed", "native_full"],
         default="native_decomposed",
-        help="PECOS native DEM mode. PyMatching typically wants native_decomposed.",
+        help=(
+            "PECOS native DEM mode. Graph decoders such as PyMatching require "
+            "native_decomposed; raw-DEM decoders should use native_full."
+        ),
     )
     parser.add_argument(
         "--decoder",
         nargs="+",
-        choices=["pymatching", "tesseract", "bp_osd", "bp_lsd", "union_find", "relay_bp", "min_sum_bp"],
+        choices=[
+            "pymatching",
+            "pymatching_correlated",
+            "tesseract",
+            "bp_osd",
+            "bp_lsd",
+            "union_find",
+            "relay_bp",
+            "min_sum_bp",
+        ],
         default=["pymatching"],
         help=(
             "Decoder(s) for circuit-level DEM decoding. Specify multiple to "
             "compare them side-by-side in plots and reports. Default: pymatching. "
+            "pymatching_correlated enables PyMatching's DEM-correlation mode for "
+            "decomposed errors. "
             "Check-matrix decoders (bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp) "
             "extract a check matrix from the DEM automatically."
         ),

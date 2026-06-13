@@ -852,12 +852,42 @@ def _runtime_idle_seconds_to_time_units(duration_seconds: float) -> Any:
     return TimeUnits(units)
 
 
-def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any:
+def _validate_measurement_crosstalk_topology(
+    measurement_crosstalk_topology: str | None,
+) -> str | None:
+    if measurement_crosstalk_topology in (None, "none", "runtime_payloads"):
+        return None
+    if measurement_crosstalk_topology == "global_from_measurements":
+        return measurement_crosstalk_topology
+    msg = (
+        "measurement_crosstalk_topology must be None, 'runtime_payloads', "
+        "or 'global_from_measurements'"
+    )
+    raise ValueError(msg)
+
+
+def _should_add_global_measurement_crosstalk_payload(
+    measurement_crosstalk_topology: str | None,
+) -> bool:
+    return (
+        _validate_measurement_crosstalk_topology(measurement_crosstalk_topology)
+        == "global_from_measurements"
+    )
+
+
+def _replay_qis_trace_into_tick_circuit(
+    operations: list[dict[str, Any]],
+    *,
+    measurement_crosstalk_topology: str | None = None,
+) -> Any:
     """Replay traced QIS operations into a PECOS TickCircuit."""
     import heapq
 
     from pecos_rslib.quantum import TickCircuit
 
+    measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
+        measurement_crosstalk_topology
+    )
     tick_circuit = TickCircuit()
     active_slots: dict[int, int] = {}
     free_slots: list[int] = []
@@ -994,11 +1024,21 @@ def _replay_qis_trace_into_tick_circuit(operations: list[dict[str, Any]]) -> Any
             )
         elif op_name == "Measure":
             program_id, result_id = tuple_args(payload, op_name, 2)
+            measurement_qubit = mapped_slot(int(program_id), op_name)
+            if _should_add_global_measurement_crosstalk_payload(
+                measurement_crosstalk_topology
+            ):
+                # Global crosstalk payload qubits are guaranteed not to be
+                # affected; for measurement-induced global crosstalk this is
+                # exactly the measured payload.
+                tick_circuit.tick().add_gate(
+                    "MeasCrosstalkGlobalPayload", [measurement_qubit]
+                )
             # Stamp the QIS-provided result_id as the MeasId rather than
             # discarding it and letting assign_missing_meas_ids() invent
             # sequential ids (which would be wrong for non-sequential ids).
             tick.mz_with_ids(
-                [mapped_slot(int(program_id), op_name)],
+                [measurement_qubit],
                 [int(result_id)],
             )
         elif op_name == "Reset":
@@ -1029,7 +1069,11 @@ def _gate_triples(qubits: list[int], gate_type: str) -> list[tuple[int, int, int
     return [(qubits[i], qubits[i + 1], qubits[i + 2]) for i in range(0, len(qubits), 3)]
 
 
-def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) -> Any:
+def _replay_lowered_qis_trace_into_tick_circuit(
+    chunks: list[dict[str, Any]],
+    *,
+    measurement_crosstalk_topology: str | None = None,
+) -> Any:
     """Replay lowered post-Selene ByteMessage gate batches into a TickCircuit.
 
     The lowered trace emits gates one at a time. We replay each into its own
@@ -1043,6 +1087,9 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
     """
     from pecos_rslib.quantum import TickCircuit
 
+    measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
+        measurement_crosstalk_topology
+    )
     tick_circuit = TickCircuit()
 
     for chunk in chunks:
@@ -1089,6 +1136,15 @@ def _replay_lowered_qis_trace_into_tick_circuit(chunks: list[dict[str, Any]]) ->
                 if len(meas_ids) != len(qubits):
                     msg = f"Lowered MZ gate carries {len(meas_ids)} measurement_result_ids for {len(qubits)} qubit(s)"
                     raise ValueError(msg)
+                if _should_add_global_measurement_crosstalk_payload(
+                    measurement_crosstalk_topology
+                ):
+                    # Global crosstalk payload qubits are guaranteed not to be
+                    # affected; for measurement-induced global crosstalk this is
+                    # exactly the measured payload.
+                    tick_circuit.tick().add_gate(
+                        "MeasCrosstalkGlobalPayload", qubits
+                    )
                 tick.mz_with_ids(qubits, [int(meas_id) for meas_id in meas_ids])
             elif gate_type == "MeasCrosstalkGlobalPayload":
                 tick.add_gate("MeasCrosstalkGlobalPayload", qubits)
@@ -1178,12 +1234,22 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
             raise ValueError(msg)
 
 
-def _replay_qis_trace_chunks_into_tick_circuit(chunks: list[dict[str, Any]]) -> Any:
+def _replay_qis_trace_chunks_into_tick_circuit(
+    chunks: list[dict[str, Any]],
+    *,
+    measurement_crosstalk_topology: str | None = None,
+) -> Any:
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
+    measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
+        measurement_crosstalk_topology
+    )
     if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
         _reject_partially_lowered_trace(chunks)
         try:
-            return _replay_lowered_qis_trace_into_tick_circuit(chunks)
+            return _replay_lowered_qis_trace_into_tick_circuit(
+                chunks,
+                measurement_crosstalk_topology=measurement_crosstalk_topology,
+            )
         except ValueError as exc:
             if "missing measurement_result_ids" not in str(exc):
                 raise
@@ -1196,7 +1262,10 @@ def _replay_qis_trace_chunks_into_tick_circuit(chunks: list[dict[str, Any]]) -> 
     operations: list[dict[str, Any]] = []
     for chunk in chunks:
         operations.extend(list(chunk.get("operations", [])))
-    return _replay_qis_trace_into_tick_circuit(operations)
+    return _replay_qis_trace_into_tick_circuit(
+        operations,
+        measurement_crosstalk_topology=measurement_crosstalk_topology,
+    )
 
 
 def named_result_traces_from_operation_trace(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1233,10 +1302,17 @@ def trace_guppy_into_tick_circuit_with_result_traces(
     *,
     seed: int = 0,
     runtime: object | None = None,
+    measurement_crosstalk_topology: str | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a Guppy/QIS program into a ``TickCircuit`` plus result-tag provenance."""
     chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    return _replay_qis_trace_chunks_into_tick_circuit(chunks), named_result_traces_from_operation_trace(chunks)
+    return (
+        _replay_qis_trace_chunks_into_tick_circuit(
+            chunks,
+            measurement_crosstalk_topology=measurement_crosstalk_topology,
+        ),
+        named_result_traces_from_operation_trace(chunks),
+    )
 
 
 def trace_guppy_into_tick_circuit(
@@ -1245,6 +1321,7 @@ def trace_guppy_into_tick_circuit(
     *,
     seed: int = 0,
     runtime: object | None = None,
+    measurement_crosstalk_topology: str | None = None,
 ) -> Any:
     """Trace a Guppy/QIS program's lowered Selene op stream into a ``TickCircuit``.
 
@@ -1275,7 +1352,10 @@ def trace_guppy_into_tick_circuit(
         caller supplies that.
     """
     chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    return _replay_qis_trace_chunks_into_tick_circuit(chunks)
+    return _replay_qis_trace_chunks_into_tick_circuit(
+        chunks,
+        measurement_crosstalk_topology=measurement_crosstalk_topology,
+    )
 
 
 def _generate_traced_surface_tick_circuit(

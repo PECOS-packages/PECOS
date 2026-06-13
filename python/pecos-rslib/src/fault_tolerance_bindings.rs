@@ -225,8 +225,14 @@ fn parse_measurement_crosstalk_dem_mode(
         | "leakage_as_depolarizing" => {
             Ok(MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing)
         }
+        "averaged_hidden_leakage_as_depolarizing"
+        | "average_hidden_leakage_as_depolarizing"
+        | "state_averaged_leakage_as_depolarizing"
+        | "averaged_leakage_as_depolarizing" => {
+            Ok(MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing)
+        }
         _ => Err(pyo3::exceptions::PyValueError::new_err(
-            "measurement_crosstalk_dem_mode must be 'omitted', 'exact_deterministic', or 'exact_deterministic_leakage_as_depolarizing'",
+            "measurement_crosstalk_dem_mode must be 'omitted', 'exact_deterministic', 'exact_deterministic_leakage_as_depolarizing', or 'averaged_hidden_leakage_as_depolarizing'",
         )),
     }
 }

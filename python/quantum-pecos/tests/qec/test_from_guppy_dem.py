@@ -245,6 +245,59 @@ def test_lowered_replay_preserves_measurement_crosstalk_payloads() -> None:
     assert _flat_gate_qubits(tc, "MeasCrosstalkGlobalPayload") == [[3, 4]]
 
 
+def test_lowered_replay_can_add_global_crosstalk_payloads_from_measurements() -> None:
+    chunks = [
+        {
+            "operations": [{"Quantum": {"Measure": [0, 7]}}],
+            "lowered_quantum_ops": [
+                {
+                    "gate_type": "MZ",
+                    "qubits": [11, 12],
+                    "angles": [],
+                    "params": [],
+                    "measurement_result_ids": [7, 8],
+                },
+            ],
+        },
+    ]
+
+    without_payloads = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+    with_payloads = _replay_lowered_qis_trace_into_tick_circuit(
+        chunks,
+        measurement_crosstalk_topology="global_from_measurements",
+    )
+
+    assert _flat_gate_qubits(without_payloads, "MeasCrosstalkGlobalPayload") == []
+    assert _flat_gate_qubits(with_payloads, "MeasCrosstalkGlobalPayload") == [
+        [11, 12]
+    ]
+    assert _flat_mz_ids(with_payloads) == [7, 8]
+
+
+def test_raw_replay_can_add_global_crosstalk_payloads_from_measurements() -> None:
+    operations = [
+        {"AllocateQubit": {"id": 0}},
+        {"AllocateResult": {"id": 9}},
+        {"Quantum": {"Measure": [0, 9]}},
+    ]
+
+    tc = _replay_qis_trace_into_tick_circuit(
+        operations,
+        measurement_crosstalk_topology="global_from_measurements",
+    )
+
+    assert _flat_gate_qubits(tc, "MeasCrosstalkGlobalPayload") == [[0]]
+    assert _flat_mz_ids(tc) == [9]
+
+
+def test_replay_rejects_unknown_measurement_crosstalk_topology() -> None:
+    with pytest.raises(ValueError, match="measurement_crosstalk_topology"):
+        _replay_lowered_qis_trace_into_tick_circuit(
+            [],
+            measurement_crosstalk_topology="local_from_vibes",
+        )
+
+
 def test_lowered_runtime_idles_can_drive_memory_noise_dem() -> None:
     from pecos.qec import DetectorErrorModel
 

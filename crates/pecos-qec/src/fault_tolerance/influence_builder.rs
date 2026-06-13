@@ -36,7 +36,7 @@ use super::propagator::{DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply
 use pecos_core::QubitId;
 use pecos_simulators::{PauliProp, SymbolicSparseStab};
 use smallvec::SmallVec;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeSet, BinaryHeap};
 
 struct ObservablePropagationWork<'a> {
     recorder: &'a mut CompoundRecorder,
@@ -479,6 +479,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// Extract fault locations from the propagator.
     fn extract_locations(propagator: &DagPropagator<'_>) -> Vec<DagSpacetimeLocation> {
         let mut locations = Vec::new();
+        let mut prepared_qubits: BTreeSet<QubitId> = BTreeSet::new();
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
@@ -497,7 +498,20 @@ impl<'a> InfluenceBuilder<'a> {
                 // Standard circuit noise model: one fault location per gate.
                 //   Measurement: before. All others: after.
                 let before = is_measurement;
-                for &q in &qubits {
+                let location_qubits: Vec<QubitId> =
+                    if gate.gate_type == pecos_quantum::GateType::MeasCrosstalkGlobalPayload {
+                        qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.remove(&q);
+                        });
+                        let victims = prepared_qubits.iter().copied().collect();
+                        qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.insert(q);
+                        });
+                        victims
+                    } else {
+                        qubits.clone()
+                    };
+                for q in location_qubits {
                     locations.push(DagSpacetimeLocation {
                         node,
                         qubits: vec![q],
@@ -505,6 +519,12 @@ impl<'a> InfluenceBuilder<'a> {
                         gate_type: gate.gate_type,
                         idle_duration: gate.idle_duration(),
                     });
+                }
+                if matches!(
+                    gate.gate_type,
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                ) {
+                    prepared_qubits.extend(qubits.iter().copied());
                 }
             }
         }
@@ -799,6 +819,7 @@ impl<'a> InfluenceBuilder<'a> {
         let mut map: std::collections::HashMap<(usize, bool), Vec<(usize, usize)>> =
             std::collections::HashMap::new();
         let mut loc_idx = 0;
+        let mut prepared_qubits: BTreeSet<QubitId> = BTreeSet::new();
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
@@ -812,10 +833,29 @@ impl<'a> InfluenceBuilder<'a> {
                 );
 
                 let before = is_measurement;
-                for q in &gate.qubits {
+                let location_qubits: Vec<QubitId> =
+                    if gate.gate_type == pecos_quantum::GateType::MeasCrosstalkGlobalPayload {
+                        gate.qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.remove(&q);
+                        });
+                        let victims = prepared_qubits.iter().copied().collect();
+                        gate.qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.insert(q);
+                        });
+                        victims
+                    } else {
+                        gate.qubits.to_vec()
+                    };
+                for q in &location_qubits {
                     let qi = q.index();
                     map.entry((node, before)).or_default().push((qi, loc_idx));
                     loc_idx += 1;
+                }
+                if matches!(
+                    gate.gate_type,
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                ) {
+                    prepared_qubits.extend(gate.qubits.iter().copied());
                 }
             }
         }

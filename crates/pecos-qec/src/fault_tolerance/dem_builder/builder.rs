@@ -21,11 +21,12 @@ use super::types::{
     ReplacementBranchApproximation, SourceMetadata, record_offset_to_absolute_index,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
-use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
+use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Direction, Pauli, apply_gate};
 use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
 use pecos_simulators::{
-    SymbolicMeasurementResult, SymbolicSparseStab, symbolic_sparse_stab::MeasurementHistory,
+    PauliProp, SymbolicMeasurementResult, SymbolicSparseStab,
+    symbolic_sparse_stab::MeasurementHistory,
 };
 use smallvec::SmallVec;
 use std::cell::RefCell;
@@ -885,13 +886,6 @@ impl<'a> DemBuilder<'a> {
             ));
         }
 
-        if self.noise.p_meas_crosstalk_global > 0.0 {
-            return Err(DemBuilderError::ConfigurationError(
-                "exact deterministic measurement crosstalk DEM replay does not yet support global payloads"
-                    .to_string(),
-            ));
-        }
-
         if self.noise.p_meas_crosstalk_local > 0.0 && !has_local_payloads {
             return Err(DemBuilderError::ConfigurationError(
                 "exact deterministic measurement crosstalk DEM replay requested a positive local rate, but the influence map contains no MeasCrosstalkLocalPayload locations"
@@ -899,13 +893,16 @@ impl<'a> DemBuilder<'a> {
             ));
         }
 
-        if self.noise.p_meas_crosstalk_local <= 0.0 {
+        if self.noise.p_meas_crosstalk_local <= 0.0 && self.noise.p_meas_crosstalk_global <= 0.0 {
             return Ok(());
         }
 
         if self.noise.p_meas_crosstalk_model.has_leakage()
-            && self.noise.measurement_crosstalk_dem_mode
-                != MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+            && !matches!(
+                self.noise.measurement_crosstalk_dem_mode,
+                MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+                    | MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing
+            )
         {
             return Err(DemBuilderError::ConfigurationError(
                 "exact deterministic measurement crosstalk DEM replay does not yet support leakage transitions"
@@ -913,15 +910,34 @@ impl<'a> DemBuilder<'a> {
             ));
         }
 
+        let needs_circuit_context =
+            self.noise.measurement_crosstalk_dem_mode != MeasurementCrosstalkDemMode::Omitted;
         let Some(context) = self.exact_branch_context else {
-            return Err(DemBuilderError::ConfigurationError(
-                "exact deterministic measurement crosstalk DEM replay requires a circuit-aware builder context"
-                    .to_string(),
-            ));
+            if needs_circuit_context {
+                return Err(DemBuilderError::ConfigurationError(
+                    "measurement crosstalk DEM replay requires a circuit-aware builder context"
+                        .to_string(),
+                ));
+            }
+            return Ok(());
         };
 
+        let requires_deterministic_hidden_measurements = matches!(
+            self.noise.measurement_crosstalk_dem_mode,
+            MeasurementCrosstalkDemMode::ExactDeterministic
+                | MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+        );
+        if !requires_deterministic_hidden_measurements {
+            return Ok(());
+        }
+
         for (loc_idx, loc) in self.influence_map.locations.iter().enumerate() {
-            if loc.before || loc.gate_type != GateType::MeasCrosstalkLocalPayload {
+            if loc.before
+                || !matches!(
+                    loc.gate_type,
+                    GateType::MeasCrosstalkLocalPayload | GateType::MeasCrosstalkGlobalPayload
+                )
+            {
                 continue;
             }
             let result = self.hidden_mz_result_before_crosstalk_payload(context, loc)?;
@@ -989,6 +1005,114 @@ impl<'a> DemBuilder<'a> {
         )))
     }
 
+    fn exact_measurement_crosstalk_pauli_effect(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        loc: &DagSpacetimeLocation,
+        pauli: Pauli,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
+
+        for detector in &self.detectors {
+            let indices =
+                self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)?;
+            if self.measurement_parity_anticommutes_after_crosstalk_payload(
+                context, loc, pauli, &indices,
+            )? {
+                xor_toggle_4(&mut triggered_dets, detector.id);
+            }
+        }
+
+        for observable in &self.observables {
+            let indices =
+                self.measurement_indices_from_refs(&observable.records, &observable.meas_ids)?;
+            if self.measurement_parity_anticommutes_after_crosstalk_payload(
+                context, loc, pauli, &indices,
+            )? {
+                xor_toggle_2(&mut triggered_obs, observable.id);
+            }
+        }
+
+        triggered_dets.sort_unstable();
+        triggered_obs.sort_unstable();
+        Ok(FaultMechanism::from_sorted_with_tracked_paulis(
+            triggered_dets,
+            triggered_obs,
+            SmallVec::new(),
+        ))
+    }
+
+    fn measurement_parity_anticommutes_after_crosstalk_payload(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        loc: &DagSpacetimeLocation,
+        pauli: Pauli,
+        measurement_indices: &[usize],
+    ) -> Result<bool, DemBuilderError> {
+        let victim = loc.qubits.first().copied().ok_or_else(|| {
+            DemBuilderError::ConfigurationError(format!(
+                "measurement crosstalk payload at node {} has no victim qubit",
+                loc.node
+            ))
+        })?;
+        let victim_index = victim.index();
+        let mut prop = PauliProp::new();
+        for &measurement_idx in measurement_indices {
+            let &(_, qubit, basis) = self
+                .influence_map
+                .measurements
+                .get(measurement_idx)
+                .ok_or_else(|| {
+                    DemBuilderError::ConfigurationError(format!(
+                        "measurement crosstalk exact replay has no measurement {measurement_idx}"
+                    ))
+                })?;
+            match basis {
+                0 => prop.track_z(&[qubit]),
+                1 => prop.track_x(&[qubit]),
+                other => {
+                    return Err(DemBuilderError::ConfigurationError(format!(
+                        "measurement crosstalk exact replay does not support measurement basis {other}"
+                    )));
+                }
+            }
+        }
+
+        let topo_order = context.circuit.topological_order();
+        let payload_pos = topo_order
+            .iter()
+            .position(|&node| node == loc.node)
+            .ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "measurement crosstalk payload node {} was not found in the replay circuit",
+                    loc.node
+                ))
+            })?;
+        for &node in topo_order[payload_pos + 1..].iter().rev() {
+            if let Some(gate) = context.circuit.gate(node) {
+                apply_gate(&mut prop, gate, Direction::Backward);
+            }
+        }
+
+        Ok(Self::pauli_anticommutes_with_prop_on_qubit(
+            &prop,
+            victim_index,
+            pauli,
+        ))
+    }
+
+    fn pauli_anticommutes_with_prop_on_qubit(prop: &PauliProp, qubit: usize, pauli: Pauli) -> bool {
+        let has_x = prop.contains_x(qubit);
+        let has_z = prop.contains_z(qubit);
+        match pauli {
+            Pauli::I => false,
+            Pauli::X => has_z,
+            Pauli::Z => has_x,
+            Pauli::Y => has_x ^ has_z,
+        }
+    }
+
     fn apply_symbolic_gate_for_crosstalk_hidden_mz(
         sim: &mut SymbolicSparseStab,
         node: usize,
@@ -1007,105 +1131,112 @@ impl<'a> DemBuilder<'a> {
             }
             Ok(())
         };
+        let pairs = || -> Result<Vec<(usize, usize)>, DemBuilderError> {
+            require(2)?;
+            if qubits.len() % 2 != 0 {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "measurement crosstalk replay expected gate {:?} at node {} to have an even number of qubits, got {}",
+                    gate_type,
+                    node,
+                    qubits.len()
+                )));
+            }
+            Ok(qubits
+                .chunks_exact(2)
+                .map(|pair| (pair[0], pair[1]))
+                .collect())
+        };
 
         match gate_type {
             GateType::H => {
                 require(1)?;
-                sim.h(&[qubits[0]]);
+                sim.h(qubits);
             }
             GateType::F => {
                 require(1)?;
-                sim.sx(&[qubits[0]]);
-                sim.sz(&[qubits[0]]);
+                sim.sx(qubits);
+                sim.sz(qubits);
             }
             GateType::Fdg => {
                 require(1)?;
-                sim.szdg(&[qubits[0]]);
-                sim.sxdg(&[qubits[0]]);
+                sim.szdg(qubits);
+                sim.sxdg(qubits);
             }
             GateType::SX => {
                 require(1)?;
-                sim.sx(&[qubits[0]]);
+                sim.sx(qubits);
             }
             GateType::SXdg => {
                 require(1)?;
-                sim.sxdg(&[qubits[0]]);
+                sim.sxdg(qubits);
             }
             GateType::SY => {
                 require(1)?;
-                sim.sy(&[qubits[0]]);
+                sim.sy(qubits);
             }
             GateType::SYdg => {
                 require(1)?;
-                sim.sydg(&[qubits[0]]);
+                sim.sydg(qubits);
             }
             GateType::SZ => {
                 require(1)?;
-                sim.sz(&[qubits[0]]);
+                sim.sz(qubits);
             }
             GateType::SZdg => {
                 require(1)?;
-                sim.szdg(&[qubits[0]]);
+                sim.szdg(qubits);
             }
             GateType::X => {
                 require(1)?;
-                sim.x(&[qubits[0]]);
+                sim.x(qubits);
             }
             GateType::Y => {
                 require(1)?;
-                sim.y(&[qubits[0]]);
+                sim.y(qubits);
             }
             GateType::Z => {
                 require(1)?;
-                sim.z(&[qubits[0]]);
+                sim.z(qubits);
             }
             GateType::CX => {
-                require(2)?;
-                sim.cx(&[(qubits[0], qubits[1])]);
+                sim.cx(&pairs()?);
             }
             GateType::CY => {
-                require(2)?;
-                sim.cy(&[(qubits[0], qubits[1])]);
+                sim.cy(&pairs()?);
             }
             GateType::CZ => {
-                require(2)?;
-                sim.cz(&[(qubits[0], qubits[1])]);
+                sim.cz(&pairs()?);
             }
             GateType::SXX => {
-                require(2)?;
-                sim.sxx(&[(qubits[0], qubits[1])]);
+                sim.sxx(&pairs()?);
             }
             GateType::SXXdg => {
-                require(2)?;
-                sim.sxxdg(&[(qubits[0], qubits[1])]);
+                sim.sxxdg(&pairs()?);
             }
             GateType::SYY => {
-                require(2)?;
-                sim.syy(&[(qubits[0], qubits[1])]);
+                sim.syy(&pairs()?);
             }
             GateType::SYYdg => {
-                require(2)?;
-                sim.syydg(&[(qubits[0], qubits[1])]);
+                sim.syydg(&pairs()?);
             }
             GateType::SZZ => {
-                require(2)?;
-                sim.szz(&[(qubits[0], qubits[1])]);
+                sim.szz(&pairs()?);
             }
             GateType::SZZdg => {
-                require(2)?;
-                sim.szzdg(&[(qubits[0], qubits[1])]);
+                sim.szzdg(&pairs()?);
             }
             GateType::SWAP => {
-                require(2)?;
-                sim.swap(&[(qubits[0], qubits[1])]);
+                sim.swap(&pairs()?);
             }
             GateType::MZ | GateType::MeasureFree => {
                 require(1)?;
-                sim.mz(&[qubits[0]]);
+                sim.mz(qubits);
             }
             GateType::PZ | GateType::QAlloc => {
                 require(1)?;
-                sim.pz(qubits[0]);
+                for &qubit in qubits {
+                    sim.pz(qubit);
+                }
             }
             GateType::I
             | GateType::Idle
@@ -1312,11 +1443,31 @@ impl<'a> DemBuilder<'a> {
                             self.noise.measurement_crosstalk_dem_mode,
                             MeasurementCrosstalkDemMode::ExactDeterministic
                                 | MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+                                | MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing
                         )
                         && self.noise.p_meas_crosstalk_local > 0.0 =>
                 {
-                    self.process_measurement_crosstalk_local_source_tracked(
+                    self.process_measurement_crosstalk_source_tracked(
                         loc_idx,
+                        self.noise.p_meas_crosstalk_local,
+                        dem,
+                        meas_to_detectors,
+                        meas_to_observables,
+                    );
+                }
+                GateType::MeasCrosstalkGlobalPayload
+                    if !loc.before
+                        && matches!(
+                            self.noise.measurement_crosstalk_dem_mode,
+                            MeasurementCrosstalkDemMode::ExactDeterministic
+                                | MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+                                | MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing
+                        )
+                        && self.noise.p_meas_crosstalk_global > 0.0 =>
+                {
+                    self.process_measurement_crosstalk_source_tracked(
+                        loc_idx,
+                        self.noise.p_meas_crosstalk_global,
                         dem,
                         meas_to_detectors,
                         meas_to_observables,
@@ -1559,55 +1710,70 @@ impl<'a> DemBuilder<'a> {
 
     /// Processes local measurement-crosstalk payloads when hidden outcomes are
     /// deterministic and state-independent.
-    fn process_measurement_crosstalk_local_source_tracked(
+    fn process_measurement_crosstalk_source_tracked(
         &self,
         loc_idx: usize,
+        payload_rate: f64,
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
-        let context = self
-            .exact_branch_context
-            .expect("measurement crosstalk exact deterministic mode was validated with context");
-        let loc = &self.influence_map.locations[loc_idx];
-        let hidden = self
-            .hidden_mz_result_before_crosstalk_payload(context, loc)
-            .expect("measurement crosstalk exact deterministic hidden result was validated");
-        let (bit_flip_probability, leak_probability) = if hidden.flip {
-            (
-                self.noise.p_meas_crosstalk_model.p_1_to_0,
-                self.noise.p_meas_crosstalk_model.p_1_to_leak,
-            )
-        } else {
-            (
-                self.noise.p_meas_crosstalk_model.p_0_to_1,
-                self.noise.p_meas_crosstalk_model.p_0_to_leak,
-            )
-        };
-        if self.noise.measurement_crosstalk_dem_mode
-            == MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
-        {
+        let (bit_flip_probability, leak_probability) =
+            match self.noise.measurement_crosstalk_dem_mode {
+                MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing => (
+                    0.5 * (self.noise.p_meas_crosstalk_model.p_0_to_1
+                        + self.noise.p_meas_crosstalk_model.p_1_to_0),
+                    0.5 * (self.noise.p_meas_crosstalk_model.p_0_to_leak
+                        + self.noise.p_meas_crosstalk_model.p_1_to_leak),
+                ),
+                MeasurementCrosstalkDemMode::ExactDeterministic
+                | MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing => {
+                    let context = self.exact_branch_context.expect(
+                        "measurement crosstalk exact deterministic mode was validated with context",
+                    );
+                    let loc = &self.influence_map.locations[loc_idx];
+                    let hidden = self
+                        .hidden_mz_result_before_crosstalk_payload(context, loc)
+                        .expect(
+                            "measurement crosstalk exact deterministic hidden result was validated",
+                        );
+                    if hidden.flip {
+                        (
+                            self.noise.p_meas_crosstalk_model.p_1_to_0,
+                            self.noise.p_meas_crosstalk_model.p_1_to_leak,
+                        )
+                    } else {
+                        (
+                            self.noise.p_meas_crosstalk_model.p_0_to_1,
+                            self.noise.p_meas_crosstalk_model.p_0_to_leak,
+                        )
+                    }
+                }
+                MeasurementCrosstalkDemMode::Omitted => {
+                    return;
+                }
+            };
+        if matches!(
+            self.noise.measurement_crosstalk_dem_mode,
+            MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+                | MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing
+        ) {
             let leak_pauli_probability = leak_probability / 4.0;
-            self.process_measurement_crosstalk_local_pauli_rates_source_tracked(
+            self.process_measurement_crosstalk_pauli_rates_source_tracked(
                 loc_idx,
                 [
-                    self.noise.p_meas_crosstalk_local
-                        * (bit_flip_probability + leak_pauli_probability),
-                    self.noise.p_meas_crosstalk_local * leak_pauli_probability,
-                    self.noise.p_meas_crosstalk_local * leak_pauli_probability,
+                    payload_rate * (bit_flip_probability + leak_pauli_probability),
+                    payload_rate * leak_pauli_probability,
+                    payload_rate * leak_pauli_probability,
                 ],
                 dem,
                 meas_to_detectors,
                 meas_to_observables,
             );
         } else {
-            self.process_measurement_crosstalk_local_pauli_rates_source_tracked(
+            self.process_measurement_crosstalk_pauli_rates_source_tracked(
                 loc_idx,
-                [
-                    self.noise.p_meas_crosstalk_local * bit_flip_probability,
-                    0.0,
-                    0.0,
-                ],
+                [payload_rate * bit_flip_probability, 0.0, 0.0],
                 dem,
                 meas_to_detectors,
                 meas_to_observables,
@@ -1617,7 +1783,7 @@ impl<'a> DemBuilder<'a> {
 
     /// Processes local measurement-crosstalk payloads as single-location Pauli
     /// source channels while preserving crosstalk source metadata.
-    fn process_measurement_crosstalk_local_pauli_rates_source_tracked(
+    fn process_measurement_crosstalk_pauli_rates_source_tracked(
         &self,
         loc_idx: usize,
         rates: [f64; 3],
@@ -1627,10 +1793,19 @@ impl<'a> DemBuilder<'a> {
     ) {
         let loc = &self.influence_map.locations[loc_idx];
         let [rate_x, rate_y, rate_z] = rates;
-        let x_effect =
-            self.compute_mechanism(loc_idx, Pauli::X, meas_to_detectors, meas_to_observables);
-        let z_effect =
-            self.compute_mechanism(loc_idx, Pauli::Z, meas_to_detectors, meas_to_observables);
+        let effect = |pauli| -> FaultMechanism {
+            if loc.gate_type == GateType::MeasCrosstalkGlobalPayload {
+                let context = self.exact_branch_context.expect(
+                    "measurement crosstalk exact deterministic mode was validated with context",
+                );
+                self.exact_measurement_crosstalk_pauli_effect(context, loc, pauli)
+                    .expect("global measurement crosstalk exact replay was validated")
+            } else {
+                self.compute_mechanism(loc_idx, pauli, meas_to_detectors, meas_to_observables)
+            }
+        };
+        let x_effect = effect(Pauli::X);
+        let z_effect = effect(Pauli::Z);
 
         if rate_x > 0.0 && !x_effect.is_empty() {
             dem.add_direct_contribution_with_source(
@@ -2994,12 +3169,29 @@ fn omitted_branch_flips_measurement_parity_from_histories(
     branch_history: &MeasurementHistory,
     measurement_indices: &[usize],
 ) -> Result<bool, DemBuilderError> {
+    measurement_parity_differs_from_histories(
+        ideal_history,
+        branch_history,
+        measurement_indices,
+        &format!(
+            "exact_branch_replay omitted gate at node {}",
+            request.gate_node
+        ),
+    )
+}
+
+fn measurement_parity_differs_from_histories(
+    ideal_history: &MeasurementHistory,
+    branch_history: &MeasurementHistory,
+    measurement_indices: &[usize],
+    context: &str,
+) -> Result<bool, DemBuilderError> {
     let ideal = measurement_parity_expression(ideal_history, measurement_indices, "ideal")?;
     let branch = measurement_parity_expression(branch_history, measurement_indices, "branch")?;
     if ideal.dependencies != branch.dependencies {
         return Err(DemBuilderError::ConfigurationError(format!(
-            "exact_branch_replay omitted gate at node {} changes measurement dependencies for parity {:?}; this branch is not representable as a single deterministic DEM event",
-            request.gate_node, measurement_indices
+            "{context} changes measurement dependencies for parity {:?}; this branch is not representable as a single deterministic DEM event",
+            measurement_indices
         )));
     }
     Ok(ideal.flip ^ branch.flip)
@@ -4086,7 +4278,12 @@ mod tests {
             .expect("exact branch replay should emit representable branch effects");
 
         let contributions = dem.contributions_for_effect(&[0], &[]);
-        assert_eq!(contributions.len(), 1);
+        assert_eq!(
+            contributions.len(),
+            1,
+            "all effects:\n{}",
+            dem.all_contribution_effects()
+        );
         assert!((contributions[0].probability - 0.01).abs() < 1.0e-12);
         assert!(contributions[0].replacement_branch);
         assert_eq!(
@@ -4145,6 +4342,41 @@ mod tests {
         circuit
     }
 
+    fn two_qubit_global_crosstalk_circuit() -> pecos_quantum::DagCircuit {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(1)]));
+        circuit.add_gate_auto_wire(Gate::meas_crosstalk_global_payload(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+        circuit
+    }
+
+    fn two_qubit_global_crosstalk_random_victim_circuit() -> pecos_quantum::DagCircuit {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(1)]));
+        circuit.add_gate_auto_wire(Gate::h(&[QubitId(1)]));
+        circuit.add_gate_auto_wire(Gate::meas_crosstalk_global_payload(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+        circuit
+    }
+
     #[test]
     fn test_exact_deterministic_local_measurement_crosstalk_emits_dem_source() {
         use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
@@ -4161,7 +4393,12 @@ mod tests {
             .expect("deterministic local measurement crosstalk should be representable");
 
         let contributions = dem.contributions_for_effect(&[0], &[]);
-        assert_eq!(contributions.len(), 1);
+        assert_eq!(
+            contributions.len(),
+            1,
+            "all effects:\n{}",
+            dem.all_contribution_effects()
+        );
         assert!((contributions[0].probability - 0.1).abs() < 1.0e-12);
         assert_eq!(
             contributions[0].direct_source_family,
@@ -4170,6 +4407,40 @@ mod tests {
         assert_eq!(
             contributions[0].source_gate_types.as_slice(),
             &[GateType::MeasCrosstalkLocalPayload]
+        );
+        assert_eq!(contributions[0].paulis.as_slice(), &[Pauli::X]);
+    }
+
+    #[test]
+    fn test_exact_deterministic_global_measurement_crosstalk_emits_victim_dem_source() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = two_qubit_global_crosstalk_circuit();
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_global_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("deterministic global measurement crosstalk should be representable");
+
+        let contributions = dem.contributions_for_effect(&[0], &[]);
+        assert_eq!(
+            contributions.len(),
+            1,
+            "all effects:\n{}",
+            dem.all_contribution_effects()
+        );
+        assert!((contributions[0].probability - 0.1).abs() < 1.0e-12);
+        assert_eq!(
+            contributions[0].direct_source_family,
+            Some(DirectSourceFamily::MeasurementCrosstalk)
+        );
+        assert_eq!(
+            contributions[0].source_gate_types.as_slice(),
+            &[GateType::MeasCrosstalkGlobalPayload]
         );
         assert_eq!(contributions[0].paulis.as_slice(), &[Pauli::X]);
     }
@@ -4259,6 +4530,48 @@ mod tests {
                 .contains("state-independent hidden MZ result"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn test_averaged_global_measurement_crosstalk_accepts_hidden_randomness() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = two_qubit_global_crosstalk_random_victim_circuit();
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_global_rate(0.25)
+            .set_measurement_crosstalk_transition_model(MeasurementCrosstalkTransitionModel {
+                p_0_to_1: 0.4,
+                p_0_to_leak: 0.2,
+                p_1_to_0: 0.0,
+                p_1_to_leak: 0.0,
+            })
+            .set_measurement_crosstalk_dem_mode(
+                MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing,
+            );
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("averaged global leak2depolar crosstalk should handle random hidden MZ");
+
+        let contributions = dem.contributions_for_effect(&[0], &[]);
+        assert_eq!(
+            contributions.len(),
+            2,
+            "all effects:\n{}",
+            dem.all_contribution_effects()
+        );
+        assert!(contributions.iter().any(|contribution| {
+            contribution.paulis.as_slice() == [Pauli::X]
+                && (contribution.probability - 0.05625).abs() < 1.0e-12
+        }));
+        assert!(contributions.iter().any(|contribution| {
+            contribution.paulis.as_slice() == [Pauli::Y]
+                && (contribution.probability - 0.00625).abs() < 1.0e-12
+        }));
+        assert!(contributions.iter().all(|contribution| {
+            contribution.direct_source_family == Some(DirectSourceFamily::MeasurementCrosstalk)
+                && contribution.source_gate_types.as_slice()
+                    == [GateType::MeasCrosstalkGlobalPayload]
+        }));
     }
 
     #[test]

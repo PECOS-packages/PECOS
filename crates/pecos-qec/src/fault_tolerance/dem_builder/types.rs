@@ -2519,11 +2519,6 @@ pub struct NoiseConfig {
     /// DEM replay is enabled.
     pub p_meas_crosstalk_local: f64,
     /// Per-payload global measurement-crosstalk event rate.
-    ///
-    /// Global payload DEM replay is intentionally not implemented yet because
-    /// the source semantics need to be represented explicitly. If exact
-    /// crosstalk DEM replay is requested with a positive global rate, the DEM
-    /// builder fails loudly.
     pub p_meas_crosstalk_global: f64,
     /// Hidden-measurement transition probabilities used by measurement
     /// crosstalk DEM replay.
@@ -2545,6 +2540,13 @@ pub enum MeasurementCrosstalkDemMode {
     /// transitions as the `leak2depolar` replacement channel: one quarter each
     /// of I, X, Y, and Z on the victim qubit.
     ExactDeterministicLeakageAsDepolarizing,
+    /// Replay payloads by averaging over the hidden measurement outcome while
+    /// treating leakage transitions as the `leak2depolar` replacement channel.
+    ///
+    /// This is appropriate when the hidden measurement is state-dependent
+    /// rather than deterministic, as happens for global measurement crosstalk
+    /// victims in generic circuits.
+    AveragedHiddenLeakageAsDepolarizing,
 }
 
 /// Hidden-measurement transition probabilities for local measurement crosstalk.

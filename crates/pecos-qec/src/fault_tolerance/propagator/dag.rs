@@ -1811,6 +1811,7 @@ impl<'a> DagFaultAnalyzer<'a> {
         let estimated_locations = topo_order.len() * 4;
         let mut locations =
             FaultLocations::with_capacity(estimated_locations, propagator.max_node());
+        let mut prepared_qubits: BTreeSet<usize> = BTreeSet::new();
 
         for &node in &topo_order {
             if let Some(gate) = propagator.gate(node) {
@@ -1836,9 +1837,23 @@ impl<'a> DagFaultAnalyzer<'a> {
                 } else {
                     0.0
                 };
-                for &q in &qubits {
+                let location_qubits: Vec<usize> =
+                    if gate.gate_type == GateType::MeasCrosstalkGlobalPayload {
+                        for &q in &qubits {
+                            prepared_qubits.remove(&q);
+                        }
+                        let victims = prepared_qubits.iter().copied().collect();
+                        prepared_qubits.extend(qubits.iter().copied());
+                        victims
+                    } else {
+                        qubits.iter().copied().collect()
+                    };
+                for q in location_qubits {
                     let single_qubit: SmallVec<[usize; 2]> = smallvec::smallvec![q];
                     locations.push(node, single_qubit, before, gate.gate_type, idle_duration);
+                }
+                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                    prepared_qubits.extend(qubits.iter().copied());
                 }
             }
         }

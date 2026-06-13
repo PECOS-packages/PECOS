@@ -1333,6 +1333,8 @@ class GuppyRenderer(CircuitRenderer):
         patch: SurfacePatch,
         _num_rounds: int,
         _basis: str,
+        *,
+        interaction_basis: str = "cx",
     ) -> str:
         """Render to Guppy source code.
 
@@ -1347,7 +1349,7 @@ class GuppyRenderer(CircuitRenderer):
         from pecos.guppy.surface import generate_guppy_source
 
         # Use the canonical Guppy generator to ensure identical output
-        return generate_guppy_source(patch)
+        return generate_guppy_source(patch, interaction_basis=interaction_basis)
 
 
 class DagCircuitRenderer(CircuitRenderer):
@@ -2178,6 +2180,8 @@ def generate_guppy_from_patch(
     patch: SurfacePatch,
     _num_rounds: int = 1,
     _basis: str = "Z",
+    *,
+    interaction_basis: str = "cx",
 ) -> str:
     """Generate Guppy code from SurfacePatch.
 
@@ -2193,13 +2197,14 @@ def generate_guppy_from_patch(
         patch: Surface code patch
         _num_rounds: Unused (factory functions accept this at runtime)
         _basis: Unused (module includes both Z and X basis functions)
+        interaction_basis: Surface-memory two-qubit interaction basis.
 
     Returns:
         Guppy source code string (full module)
     """
     from pecos.guppy.surface import generate_guppy_source
 
-    return generate_guppy_source(patch)
+    return generate_guppy_source(patch, interaction_basis=interaction_basis)
 
 
 def generate_dag_circuit_from_patch(

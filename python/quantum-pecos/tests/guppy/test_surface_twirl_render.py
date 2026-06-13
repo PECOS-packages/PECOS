@@ -35,6 +35,53 @@ def test_no_twirl_source_has_no_rng_or_mask_tags(patch: SurfacePatch) -> None:
     assert 'result("final"' in src
 
 
+def test_szz_source_uses_signed_zz_phase_template(patch: SurfacePatch) -> None:
+    src = generate_guppy_source(patch, interaction_basis="szz")
+
+    assert "from guppylang.std.angles import angle" in src
+    assert "from guppylang.std.qsystem.functional import zz_phase" in src
+    assert "zz_phase(" in src
+    assert "angle(0.5)" in src
+    assert "angle(-0.5)" in src
+    assert "cx(" not in src
+    assert "h(az" in src
+    assert "vdg(d" in src
+    assert "sdg(d" in src
+
+
+def test_szz_source_rejects_staged_later_runtime_shapes(patch: SurfacePatch) -> None:
+    with pytest.raises(ValueError, match="constrained ancilla budgets"):
+        generate_guppy_source(patch, interaction_basis="szz", ancilla_budget=1)
+
+    with pytest.raises(ValueError, match="twirl integration is staged later"):
+        generate_guppy_source(
+            patch,
+            interaction_basis="szz",
+            twirl=TwirlConfig(),
+            rng=GuppyRngMaskConfig(seed=42),
+            num_rounds=2,
+        )
+
+
+def test_szz_basis_forks_guppy_module_cache_key(patch: SurfacePatch) -> None:
+    cx_key = _guppy_module_cache_key(patch, effective_budget=8)
+    szz_key = _guppy_module_cache_key(patch, effective_budget=8, interaction_basis="szz")
+
+    assert cx_key != szz_key
+    assert "_ibcx" not in cx_key
+    assert "_ibszz" in szz_key
+
+
+def test_szz_memory_experiment_compiles_to_guppy_function(patch: SurfacePatch) -> None:
+    fn = generate_memory_experiment(
+        patch,
+        num_rounds=2,
+        basis="Z",
+        interaction_basis="szz",
+    )
+    assert fn is not None
+
+
 def test_twirl_source_unrolls_rng_masks_and_runtime_paulis(patch: SurfacePatch) -> None:
     src = generate_guppy_source(
         patch,

@@ -1284,6 +1284,7 @@ def _generate_traced_surface_tick_circuit(
     basis: str,
     *,
     ancilla_budget: int | None = None,
+    interaction_basis: str = "cx",
     runtime: object | None = None,
 ) -> Any:
     """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit.
@@ -1305,6 +1306,7 @@ def _generate_traced_surface_tick_circuit(
         num_rounds,
         basis,
         ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
         runtime=runtime,
     )
     return tc
@@ -1316,6 +1318,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
     basis: str,
     *,
     ancilla_budget: int | None = None,
+    interaction_basis: str = "cx",
     runtime: object | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
@@ -1326,10 +1329,15 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
         num_rounds,
         basis,
         ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
     )
     return trace_guppy_into_tick_circuit_with_result_traces(
         program,
-        get_num_qubits(patch=patch, ancilla_budget=ancilla_budget),
+        get_num_qubits(
+            patch=patch,
+            ancilla_budget=ancilla_budget,
+            interaction_basis=interaction_basis,
+        ),
         seed=0,
         runtime=runtime,
     )
@@ -1352,12 +1360,6 @@ def _build_surface_tick_circuit_for_native_model(
     if twirl is not None:
         twirl.validate_runtime_supported()
     interaction_basis = _normalize_interaction_basis(interaction_basis)
-    if interaction_basis != "cx" and circuit_source == "traced_qis":
-        msg = (
-            "interaction_basis='szz' is not supported with circuit_source='traced_qis' "
-            "until the Guppy emitter supports that basis"
-        )
-        raise ValueError(msg)
 
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
@@ -1384,6 +1386,7 @@ def _build_surface_tick_circuit_for_native_model(
         num_rounds,
         basis,
         ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
         runtime=runtime,
     )
 

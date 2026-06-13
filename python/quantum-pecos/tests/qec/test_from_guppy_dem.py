@@ -4,6 +4,7 @@
 """Regression tests for the Guppy-to-DEM convenience path."""
 
 import json
+from typing import ClassVar
 
 import pytest
 from guppylang import guppy
@@ -493,6 +494,37 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
             **p,
         ).to_string()
         assert got == ref_dem, f"surface from_guppy not byte-identical ({basis})"
+
+
+def test_from_guppy_szz_surface_code_is_byte_identical_to_reference() -> None:
+    """SZZ-basis surface Guppy generation must match the traced-QIS reference DEM."""
+    p = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    for basis in ("Z", "X"):
+        patch = SurfacePatch.create(distance=3)
+        ref = _build_surface_tick_circuit_for_native_model(
+            patch,
+            3,
+            basis,
+            circuit_source="traced_qis",
+            interaction_basis="szz",
+        )
+        ref.lower_clifford_rotations()
+        ref.assign_missing_meas_ids()
+        ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
+        got = DetectorErrorModel.from_guppy(
+            make_surface_code(
+                distance=3,
+                num_rounds=3,
+                basis=basis,
+                interaction_basis="szz",
+            ),
+            num_qubits=get_num_qubits(3, interaction_basis="szz"),
+            detectors_json=ref.get_meta("detectors"),
+            observables_json=ref.get_meta("observables"),
+            num_measurements=int(ref.get_meta("num_measurements")),
+            **p,
+        ).to_string()
+        assert got == ref_dem, f"SZZ surface from_guppy not byte-identical ({basis})"
 
 
 def test_from_guppy_out_of_range_record_fails_loud() -> None:
@@ -1084,8 +1116,8 @@ def test_result_tag_remap_validation_rejects_unbound_traced_meas_ids() -> None:
 def test_result_tag_remap_validation_rejects_unstamped_measurements() -> None:
     class FakeGate:
         gate_type = "MZ"
-        qubits = [0]
-        meas_ids: list[int] = []
+        qubits: ClassVar[list[int]] = [0]
+        meas_ids: ClassVar[list[int]] = []
 
     class FakeTick:
         def gate_batches(self):

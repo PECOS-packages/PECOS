@@ -296,7 +296,7 @@ def test_szz_direct_renderers_accept_interaction_basis() -> None:
     assert {"SZZ", "SZZdg", "SX", "SXdg", "SZ", "SZdg"} <= gate_names
 
 
-def test_szz_detector_paths_accept_abstract_basis_and_reject_traced_qis() -> None:
+def test_szz_detector_paths_accept_abstract_and_traced_qis_basis() -> None:
     patch = SurfacePatch.create(distance=3)
 
     stim_text = generate_stim_from_patch(patch, num_rounds=1, interaction_basis="szz")
@@ -308,13 +308,14 @@ def test_szz_detector_paths_accept_abstract_basis_and_reject_traced_qis() -> Non
     memory_circuit = build_memory_circuit(patch=patch, rounds=1, interaction_basis="szz")
     assert int(memory_circuit.get_meta("num_detectors")) == int(tick_circuit.get_meta("num_detectors"))
 
-    with pytest.raises(ValueError, match="circuit_source='traced_qis'"):
-        build_memory_circuit(
-            patch=patch,
-            rounds=1,
-            circuit_source="traced_qis",
-            interaction_basis="szz",
-        )
+    traced_memory_circuit = build_memory_circuit(
+        patch=patch,
+        rounds=1,
+        circuit_source="traced_qis",
+        interaction_basis="szz",
+    )
+    assert traced_memory_circuit.get_meta("circuit_source") == "traced_qis"
+    assert int(traced_memory_circuit.get_meta("num_detectors")) == int(tick_circuit.get_meta("num_detectors"))
 
 
 @pytest.mark.parametrize("distance", [3, 5])

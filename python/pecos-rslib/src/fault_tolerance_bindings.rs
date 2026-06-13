@@ -219,8 +219,14 @@ fn parse_measurement_crosstalk_dem_mode(
         "exact_deterministic" | "exact" | "deterministic" => {
             Ok(MeasurementCrosstalkDemMode::ExactDeterministic)
         }
+        "exact_deterministic_leakage_as_depolarizing"
+        | "exact_leakage_as_depolarizing"
+        | "deterministic_leakage_as_depolarizing"
+        | "leakage_as_depolarizing" => {
+            Ok(MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing)
+        }
         _ => Err(pyo3::exceptions::PyValueError::new_err(
-            "measurement_crosstalk_dem_mode must be 'omitted' or 'exact_deterministic'",
+            "measurement_crosstalk_dem_mode must be 'omitted', 'exact_deterministic', or 'exact_deterministic_leakage_as_depolarizing'",
         )),
     }
 }

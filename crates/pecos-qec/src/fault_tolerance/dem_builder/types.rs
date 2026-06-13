@@ -2541,6 +2541,10 @@ pub enum MeasurementCrosstalkDemMode {
     /// Replay payloads exactly when the hidden measurement outcome is
     /// deterministic and state-independent.
     ExactDeterministic,
+    /// Replay deterministic local payloads while treating hidden leakage
+    /// transitions as the `leak2depolar` replacement channel: one quarter each
+    /// of I, X, Y, and Z on the victim qubit.
+    ExactDeterministicLeakageAsDepolarizing,
 }
 
 /// Hidden-measurement transition probabilities for local measurement crosstalk.

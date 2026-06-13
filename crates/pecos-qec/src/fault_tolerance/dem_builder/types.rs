@@ -2435,6 +2435,12 @@ pub fn omitted_two_qubit_gate_pauli_twirl(
 pub struct NoiseConfig {
     /// Single-qubit gate error rate.
     pub p1: f64,
+    /// Optional per-gate total error-rate overrides for single-qubit gates.
+    ///
+    /// When a single-qubit gate type appears here, this total rate replaces
+    /// `p1` while still using `p1_weights` to distribute probability across
+    /// Pauli channels.
+    pub p1_gate_rates: BTreeMap<GateType, f64>,
     /// Two-qubit gate error rate.
     pub p2: f64,
     /// Optional per-gate total error-rate overrides for two-qubit gates.
@@ -2665,6 +2671,7 @@ impl Default for NoiseConfig {
     fn default() -> Self {
         Self {
             p1: 0.01,
+            p1_gate_rates: BTreeMap::new(),
             p2: 0.01,
             p2_gate_rates: BTreeMap::new(),
             p_meas: 0.01,
@@ -2699,6 +2706,7 @@ impl NoiseConfig {
     pub fn new(p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
         Self {
             p1,
+            p1_gate_rates: BTreeMap::new(),
             p2,
             p2_gate_rates: BTreeMap::new(),
             p_meas,
@@ -2731,6 +2739,7 @@ impl NoiseConfig {
     pub fn with_idle(p1: f64, p2: f64, p_meas: f64, p_prep: f64, p_idle: f64) -> Self {
         Self {
             p1,
+            p1_gate_rates: BTreeMap::new(),
             p2,
             p2_gate_rates: BTreeMap::new(),
             p_meas,
@@ -2763,6 +2772,7 @@ impl NoiseConfig {
     pub fn uniform(p: f64) -> Self {
         Self {
             p1: p,
+            p1_gate_rates: BTreeMap::new(),
             p2: p,
             p2_gate_rates: BTreeMap::new(),
             p_meas: p,
@@ -2895,6 +2905,26 @@ impl NoiseConfig {
     pub fn set_p1_weights(mut self, weights: PauliWeights) -> Self {
         self.p1_weights = Some(weights);
         self
+    }
+
+    /// Sets a total single-qubit error-rate override for one gate type.
+    ///
+    /// The override changes only the total rate. If `p1_weights` is configured,
+    /// those weights still determine the relative Pauli distribution for this
+    /// gate.
+    #[must_use]
+    pub fn set_p1_gate_rate(mut self, gate_type: GateType, rate: f64) -> Self {
+        self.p1_gate_rates.insert(gate_type, rate.max(0.0));
+        self
+    }
+
+    /// Returns the total single-qubit error rate for `gate_type`.
+    #[must_use]
+    pub fn p1_rate_for_gate(&self, gate_type: GateType) -> f64 {
+        self.p1_gate_rates
+            .get(&gate_type)
+            .copied()
+            .unwrap_or(self.p1)
     }
 
     /// Sets custom per-Pauli weights for two-qubit gates.
@@ -3542,8 +3572,9 @@ impl PerGateTypeNoise {
         self
     }
 
-    /// Lookup 1Q Pauli rate for a gate. Returns `base.p1 / 3.0` if the
-    /// gate type is not in the map. `pauli_idx` is 0=X, 1=Y, 2=Z.
+    /// Lookup 1Q Pauli rate for a gate. Returns the base single-qubit gate
+    /// rate divided over the 3 Pauli channels if the gate type is not in the
+    /// map. `pauli_idx` is 0=X, 1=Y, 2=Z.
     ///
     /// `Idle` is a no-op by default. It receives noise only from explicitly
     /// attached idle rates or from the base idle-noise model.
@@ -3564,11 +3595,12 @@ impl PerGateTypeNoise {
             }
             return 0.0;
         }
-        self.base.p1 / 3.0
+        self.base.p1_rate_for_gate(gate) / 3.0
     }
 
     /// Lookup 1Q Pauli rate for a gate on a specific qubit. Tries the
-    /// per-qubit map first, then the per-gate-type map, then `base.p1 / 3.0`.
+    /// per-qubit map first, then the per-gate-type map, then the base
+    /// single-qubit gate rate divided over the 3 Pauli channels.
     /// `pauli_idx` is 0=X, 1=Y, 2=Z.
     #[must_use]
     pub fn rate_1q_on(&self, gate: GateType, qubit: QubitId, pauli_idx: usize) -> f64 {

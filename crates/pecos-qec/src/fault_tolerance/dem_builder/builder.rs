@@ -370,15 +370,16 @@ impl<'a> DemBuilder<'a> {
                 pg.rate_1q(loc.gate_type, 2),
             ];
         }
+        let p1_total = self.noise.p1_rate_for_gate(loc.gate_type);
         if let Some(weights) = &self.noise.p1_weights {
             use pecos_core::pauli::{X, Y, Z};
             return [
-                self.noise.p1 * weights.weight_for(&X(0)),
-                self.noise.p1 * weights.weight_for(&Y(0)),
-                self.noise.p1 * weights.weight_for(&Z(0)),
+                p1_total * weights.weight_for(&X(0)),
+                p1_total * weights.weight_for(&Y(0)),
+                p1_total * weights.weight_for(&Z(0)),
             ];
         }
-        let per = per_channel_probability(self.noise.p1, 3);
+        let per = per_channel_probability(p1_total, 3);
         [per, per, per]
     }
 

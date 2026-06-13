@@ -115,8 +115,12 @@ class OpType(Enum):
 
     # Single-qubit gates
     H = auto()  # Hadamard
+    F = auto()  # face Clifford
+    FDG = auto()  # face Clifford dagger
     SX = auto()  # sqrt X
     SXDG = auto()  # sqrt X dagger
+    SY = auto()  # sqrt Y
+    SYDG = auto()  # sqrt Y dagger
     SZ = auto()  # sqrt Z / phase
     SZDG = auto()  # sqrt Z dagger
     X = auto()  # Pauli X
@@ -428,8 +432,12 @@ _SZZ_FLOW_SINGLE_QUBIT_GATES = {
 }
 _SZZ_FLOW_GATE_ACTIONS: dict[OpType, dict[int, int]] = {
     OpType.H: {1: 3, 2: -2, 3: 1},
+    OpType.F: {1: 2, 2: 3, 3: 1},
+    OpType.FDG: {1: 3, 2: 1, 3: 2},
     OpType.SX: {1: 1, 2: 3, 3: -2},
     OpType.SXDG: {1: 1, 2: -3, 3: 2},
+    OpType.SY: {1: -3, 2: 2, 3: 1},
+    OpType.SYDG: {1: 3, 2: 2, 3: -1},
     OpType.SZ: {1: 2, 2: -1, 3: 3},
     OpType.SZDG: {1: -2, 2: 1, 3: 3},
     OpType.X: {1: 1, 2: -2, 3: -3},
@@ -615,6 +623,107 @@ def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSu
         free_standing_single_qubit_ops=0,
         pulses=tuple(pulses),
     )
+
+
+_SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING: dict[tuple[int, int], tuple[OpType | None, OpType]] = {
+    (3, 1): (None, OpType.H),
+    (-3, 1): (None, OpType.SY),
+    (2, 1): (None, OpType.F),
+    (-2, 1): (OpType.Z, OpType.F),
+}
+
+
+def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCircuitStep]:
+    """Return an SZZ physical-prefix TickCircuit op stream.
+
+    Free-standing single-qubit Cliffords in the abstract SZZ template are
+    accumulated into a pending local Clifford and discharged as a physical
+    prefix pulse on the next SZZ/SZZdg or MZ host. Zero-noise Z-frame gates are
+    emitted only when needed to preserve the exact signed Clifford before a
+    physical prefix pulse.
+    """
+    pending_by_qubit: dict[int, tuple[int, int]] = {}
+    lowered: list[SurfaceCircuitStep] = []
+
+    def pending_for(q: int) -> tuple[int, int]:
+        return pending_by_qubit.setdefault(q, _SZZ_FLOW_IDENTITY)
+
+    def reset_for_prep(q: int, op: SurfaceCircuitStep) -> None:
+        current = pending_for(q)
+        if current != _SZZ_FLOW_IDENTITY:
+            msg = (
+                "SZZ forward-flow cannot reset a qubit with a pending "
+                f"Clifford: q={q}, pending={_szz_flow_clifford_name(current)}, "
+                f"op={op.op_type.name} {op.label!r}"
+            )
+            raise ValueError(msg)
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    def discharge(q: int, host: SurfaceCircuitStep) -> None:
+        current = pending_for(q)
+        if current == _SZZ_FLOW_IDENTITY:
+            return
+        if _szz_flow_is_virtual_z(current):
+            pending_by_qubit[q] = _SZZ_FLOW_IDENTITY if host.op_type == OpType.MEASURE else current
+            return
+        try:
+            virtual_gate, physical_gate = _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING[current]
+        except KeyError as exc:
+            msg = (
+                "SZZ forward-flow cannot lower pending Clifford "
+                f"{_szz_flow_clifford_name(current)} on q={q} before "
+                f"{host.op_type.name} {host.label!r}"
+            )
+            raise ValueError(msg) from exc
+        if virtual_gate is not None:
+            lowered.append(
+                SurfaceCircuitStep(
+                    virtual_gate,
+                    [q],
+                    f"szz_virtual_prefix:{virtual_gate.name}:{host.label}:q{q}",
+                ),
+            )
+        lowered.append(
+            SurfaceCircuitStep(
+                physical_gate,
+                [q],
+                f"szz_physical_prefix:{physical_gate.name}:{host.label}:q{q}",
+            ),
+        )
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    for op in ops:
+        if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
+            lowered.append(op)
+            continue
+        if op.op_type in {OpType.ALLOC, OpType.PREP}:
+            reset_for_prep(op.qubits[0], op)
+            lowered.append(op)
+            continue
+        if op.op_type in _SZZ_FLOW_SINGLE_QUBIT_GATES:
+            q = op.qubits[0]
+            pending_by_qubit[q] = _szz_flow_compose_pending_gate(pending_for(q), op.op_type)
+            continue
+        if op.op_type in {OpType.SZZ, OpType.SZZDG}:
+            for q in op.qubits:
+                discharge(q, op)
+            lowered.append(op)
+            continue
+        if op.op_type == OpType.CX:
+            msg = "SZZ forward-flow lowering only supports SZZ/SZZdg two-qubit gates"
+            raise ValueError(msg)
+        if op.op_type == OpType.MEASURE:
+            discharge(op.qubits[0], op)
+            lowered.append(op)
+            continue
+        lowered.append(op)
+
+    remaining = {q: pending for q, pending in pending_by_qubit.items() if pending != _SZZ_FLOW_IDENTITY}
+    if remaining:
+        formatted = {q: _szz_flow_clifford_name(pending) for q, pending in sorted(remaining.items())}
+        msg = f"SZZ forward-flow lowering ended with pending Cliffords: {formatted}"
+        raise ValueError(msg)
+    return lowered
 
 
 def build_surface_code_circuit(
@@ -1982,6 +2091,24 @@ class TickCircuitRenderer(CircuitRenderer):
                     meta["label"] = op.label
                 apply_gate_metadata(tick, meta or None)
 
+            elif op.op_type == OpType.F:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).f([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.FDG:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).fdg([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
             elif op.op_type == OpType.SX:
                 q = op.qubits[0]
                 tick = get_tick_for_qubits([q]).sx([q])
@@ -1994,6 +2121,24 @@ class TickCircuitRenderer(CircuitRenderer):
             elif op.op_type == OpType.SXDG:
                 q = op.qubits[0]
                 tick = get_tick_for_qubits([q]).sxdg([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SY:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).sy([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SYDG:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).sydg([q])
                 mark_qubits_used([q])
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
@@ -2487,6 +2632,7 @@ def generate_tick_circuit_from_patch(
     ancilla_budget: int | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    szz_physical_prefixes: bool = False,
 ) -> TickCircuit:
     """Generate PECOS TickCircuit from SurfacePatch.
 
@@ -2515,11 +2661,16 @@ def generate_tick_circuit_from_patch(
             ``add_typed_annotations`` is false; that flag controls detector
             and observable typed annotations, not the twirl lookup channel.
         interaction_basis: Surface-memory two-qubit interaction basis.
+        szz_physical_prefixes: If true, lower the abstract SZZ single-qubit
+            scaffold into physical prefix pulses for native DEM analysis.
 
     Returns:
         PECOS TickCircuit instance
     """
     interaction_basis = _normalize_interaction_basis(interaction_basis)
+    if szz_physical_prefixes and interaction_basis != "szz":
+        msg = "szz_physical_prefixes=True requires interaction_basis='szz'"
+        raise ValueError(msg)
     ops, allocation = build_surface_code_circuit(
         patch,
         num_rounds,
@@ -2528,6 +2679,8 @@ def generate_tick_circuit_from_patch(
         twirl=twirl,
         interaction_basis=interaction_basis,
     )
+    if szz_physical_prefixes:
+        ops = _lower_szz_forward_flow_ops(ops)
     renderer = TickCircuitRenderer(
         add_detectors=add_detectors,
         add_typed_annotations=add_typed_annotations,

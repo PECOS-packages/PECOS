@@ -528,10 +528,28 @@ def test_szz_native_influence_sampler_respects_override_only_p2() -> None:
     assert "mechanisms=0" not in repr(active_sampler.sampler)
 
 
+@pytest.mark.parametrize("sampling_model", ["dem", "influence_dem"])
+def test_szz_native_sampler_accepts_p1_with_physical_prefix_lowering(sampling_model: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    sampler = build_native_sampler(
+        patch,
+        num_rounds=1,
+        noise=NoiseModel(p1=0.001),
+        interaction_basis="szz",
+        sampling_model=sampling_model,
+    )
+    det_events, obs_flips = sampler.sample(4, seed=20260612)
+
+    assert det_events.shape == (4, sampler.num_detectors)
+    assert obs_flips.shape == (4, sampler.num_observables)
+    if sampling_model == "influence_dem":
+        assert "mechanisms=0" not in repr(sampler.sampler)
+
+
 @pytest.mark.parametrize(
     ("noise", "match"),
     [
-        (NoiseModel(p1=0.001), r"p1.*post-flow prefix pulse locations"),
         (NoiseModel(p_idle=0.001), r"dedicated idle noise.*post-flow prefix pulse locations"),
     ],
 )
@@ -547,13 +565,39 @@ def test_szz_native_dem_rejects_unlowered_physical_noise(noise: NoiseModel, matc
         )
 
 
-def test_szz_native_sampler_rejects_unlowered_physical_noise() -> None:
+def test_szz_native_dem_rejects_traced_qis_p1() -> None:
     patch = SurfacePatch.create(distance=3)
 
-    with pytest.raises(ValueError, match=r"p1.*post-flow prefix pulse locations"):
-        build_native_sampler(
+    with pytest.raises(ValueError, match=r"p1 with circuit_source='traced_qis'.*post-flow prefix pulse locations"):
+        generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=1,
             noise=NoiseModel(p1=0.001),
+            interaction_basis="szz",
+            circuit_source="traced_qis",
+        )
+
+
+def test_szz_native_dem_accepts_p1_with_physical_prefix_lowering() -> None:
+    patch = SurfacePatch.create(distance=3)
+    dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=1,
+        noise=NoiseModel(p1=0.001),
+        interaction_basis="szz",
+    )
+
+    assert "error(" in dem
+    assert stim.DetectorErrorModel(dem).num_detectors > 0
+
+
+def test_szz_native_sampler_rejects_unlowered_idle_noise() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    with pytest.raises(ValueError, match=r"dedicated idle noise.*post-flow prefix pulse locations"):
+        build_native_sampler(
+            patch,
+            num_rounds=1,
+            noise=NoiseModel(p_idle=0.001),
             interaction_basis="szz",
         )

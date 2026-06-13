@@ -287,6 +287,7 @@ class _CachedNativeSurfaceTopology:
 
     dag_circuit: Any
     influence_map: Any
+    szz_physical_prefixes: bool
     pauli_frame_lookup: Any | None
     detectors_json: str
     observables_json: str
@@ -1379,6 +1380,7 @@ def _build_surface_tick_circuit_for_native_model(
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    szz_physical_prefixes: bool = False,
 ) -> Any:
     """Build the TickCircuit used by the native DEM and sampler paths."""
     from pecos.qec.surface.circuit_builder import _normalize_interaction_basis, generate_tick_circuit_from_patch
@@ -1386,6 +1388,9 @@ def _build_surface_tick_circuit_for_native_model(
     if twirl is not None:
         twirl.validate_runtime_supported()
     interaction_basis = _normalize_interaction_basis(interaction_basis)
+    if szz_physical_prefixes and (interaction_basis != "szz" or circuit_source != "abstract"):
+        msg = "SZZ physical-prefix lowering requires interaction_basis='szz' and circuit_source='abstract'"
+        raise ValueError(msg)
 
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
@@ -1395,6 +1400,7 @@ def _build_surface_tick_circuit_for_native_model(
         add_typed_annotations=False,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        szz_physical_prefixes=szz_physical_prefixes,
     )
 
     if circuit_source == "abstract":
@@ -1605,13 +1611,17 @@ def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
     )
 
 
-def _reject_szz_unlowered_physical_noise(noise: NoiseModel, interaction_basis: str) -> None:
+def _reject_szz_unlowered_physical_noise(
+    noise: NoiseModel,
+    interaction_basis: str,
+    circuit_source: Literal["abstract", "traced_qis"],
+) -> None:
     """Reject SZZ surface DEM noise that still needs post-flow pulse locations."""
     if interaction_basis != "szz":
         return
     reasons: list[str] = []
-    if noise.p1 > 0.0:
-        reasons.append("p1")
+    if noise.p1 > 0.0 and circuit_source != "abstract":
+        reasons.append("p1 with circuit_source='traced_qis'")
     if _noise_uses_dedicated_idle_noise(noise):
         reasons.append("dedicated idle noise")
     if not reasons:
@@ -1620,13 +1630,33 @@ def _reject_szz_unlowered_physical_noise(noise: NoiseModel, interaction_basis: s
     msg = (
         "interaction_basis='szz' surface DEM generation does not yet support "
         f"{joined} because the DEM must use post-flow prefix pulse locations "
-        "rather than the abstract H/SX/SZ scaffold; set p1=0 and omit "
-        "dedicated idle noise until SZZ pulse-location DEM lowering is enabled"
+        "rather than the abstract H/SX/SZ scaffold; use circuit_source='abstract' "
+        "for p1 and omit dedicated idle noise until SZZ idle pulse-location DEM "
+        "lowering is enabled"
     )
     raise ValueError(msg)
 
 
-def _with_noise_compat(builder: Any, noise: NoiseModel) -> Any:
+def _use_szz_physical_prefixes(
+    noise: NoiseModel,
+    interaction_basis: str,
+    circuit_source: Literal["abstract", "traced_qis"],
+) -> bool:
+    return interaction_basis == "szz" and circuit_source == "abstract" and noise.p1 > 0.0
+
+
+def _szz_prefix_p1_gate_rates(topology: _CachedNativeSurfaceTopology) -> dict[str, float] | None:
+    if not topology.szz_physical_prefixes:
+        return None
+    return {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
+
+
+def _with_noise_compat(
+    builder: Any,
+    noise: NoiseModel,
+    *,
+    p1_gate_rates: Mapping[str, float] | None = None,
+) -> Any:
     """Call Rust ``with_noise`` using the richest signature this binding supports."""
     noise_kwargs = {
         "p_idle": noise.p_idle,
@@ -1647,6 +1677,8 @@ def _with_noise_compat(builder: Any, noise: NoiseModel) -> Any:
         "p1_weights": _p1_weights_dict(noise.p1_weights),
         "p2_weights": _p2_weights_dict(noise.p2_weights),
     }
+    if p1_gate_rates is not None:
+        noise_kwargs["p1_gate_rates"] = {str(gate): float(rate) for gate, rate in p1_gate_rates.items()}
     p2_gate_rates = _p2_gate_rates_dict(noise)
     if p2_gate_rates is not None:
         noise_kwargs["p2_gate_rates"] = p2_gate_rates
@@ -1695,6 +1727,7 @@ def _surface_native_topology(
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    szz_physical_prefixes: bool = False,
 ) -> _CachedNativeSurfaceTopology:
     """Build topology-only native analysis shared across noise parameters."""
     import json
@@ -1717,6 +1750,7 @@ def _surface_native_topology(
         runtime=runtime,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        szz_physical_prefixes=szz_physical_prefixes,
     )
     if circuit_source == "traced_qis":
         # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
@@ -1756,6 +1790,7 @@ def _surface_native_topology(
     return _CachedNativeSurfaceTopology(
         dag_circuit=dag,
         influence_map=influence_map,
+        szz_physical_prefixes=szz_physical_prefixes,
         pauli_frame_lookup=pauli_frame_lookup,
         detectors_json=detectors_json,
         observables_json=observables_json,
@@ -1778,6 +1813,7 @@ def _cached_surface_native_topology(
     *,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    szz_physical_prefixes: bool = False,
 ) -> _CachedNativeSurfaceTopology:
     """Cache topology-only native analysis shared across noise parameters."""
     return _surface_native_topology(
@@ -1789,6 +1825,7 @@ def _cached_surface_native_topology(
         include_idle_gates,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        szz_physical_prefixes=szz_physical_prefixes,
     )
 
 
@@ -1801,7 +1838,11 @@ def _dem_string_from_cached_surface_topology(
     """Build a DEM string from cached topology and fresh noise parameters."""
     from pecos.qec import DemBuilder
 
-    builder = _with_noise_compat(DemBuilder(topology.influence_map), noise)
+    builder = _with_noise_compat(
+        DemBuilder(topology.influence_map),
+        noise,
+        p1_gate_rates=_szz_prefix_p1_gate_rates(topology),
+    )
     if hasattr(builder, "with_exact_branch_replay_circuit"):
         builder = builder.with_exact_branch_replay_circuit(topology.dag_circuit)
 
@@ -1876,6 +1917,7 @@ def _cached_surface_native_dem_string(
         p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
     )
+    szz_physical_prefixes = interaction_basis == "szz" and circuit_source == "abstract" and p1 > 0.0
     topology = _cached_surface_native_topology(
         patch_key,
         num_rounds,
@@ -1885,6 +1927,7 @@ def _cached_surface_native_dem_string(
         include_idle_gates,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        szz_physical_prefixes=szz_physical_prefixes,
     )
     return _dem_string_from_cached_surface_topology(
         topology,
@@ -1950,7 +1993,11 @@ def _build_native_sampler_from_cached_surface_topology(
         from pecos.qec import DemSamplerBuilder
 
         sampler_builder = (
-            _with_noise_compat(DemSamplerBuilder(topology.influence_map), noise)
+            _with_noise_compat(
+                DemSamplerBuilder(topology.influence_map),
+                noise,
+                p1_gate_rates=_szz_prefix_p1_gate_rates(topology),
+            )
             .with_detectors_json(topology.detectors_json)
             .with_observables_json(topology.observables_json)
         )
@@ -2039,9 +2086,10 @@ def generate_circuit_level_dem_from_builder(
     from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
     interaction_basis = _normalize_interaction_basis(interaction_basis)
-    _reject_szz_unlowered_physical_noise(noise, interaction_basis)
+    _reject_szz_unlowered_physical_noise(noise, interaction_basis, circuit_source)
     patch_key = _surface_patch_cache_key(patch)
     include_idle_gates = _noise_uses_dedicated_idle_noise(noise)
+    szz_physical_prefixes = _use_szz_physical_prefixes(noise, interaction_basis, circuit_source)
     if runtime is not None:
         topology = _surface_native_topology(
             patch_key,
@@ -2053,6 +2101,7 @@ def generate_circuit_level_dem_from_builder(
             runtime=runtime,
             twirl=twirl,
             interaction_basis=interaction_basis,
+            szz_physical_prefixes=szz_physical_prefixes,
         )
         return _dem_string_from_cached_surface_topology(
             topology,
@@ -3816,9 +3865,10 @@ def build_native_sampler(
     from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
     interaction_basis = _normalize_interaction_basis(interaction_basis)
-    _reject_szz_unlowered_physical_noise(noise, interaction_basis)
+    _reject_szz_unlowered_physical_noise(noise, interaction_basis, circuit_source)
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
+    szz_physical_prefixes = _use_szz_physical_prefixes(noise, interaction_basis, circuit_source)
     topology = _cached_surface_native_topology(
         patch_key,
         num_rounds,
@@ -3828,6 +3878,7 @@ def build_native_sampler(
         _noise_uses_dedicated_idle_noise(noise),
         twirl=twirl,
         interaction_basis=interaction_basis,
+        szz_physical_prefixes=szz_physical_prefixes,
     )
     if sampling_model == "dem":
         dem_str = _cached_surface_native_dem_string(

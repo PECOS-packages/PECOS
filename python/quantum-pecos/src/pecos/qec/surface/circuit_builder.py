@@ -177,7 +177,7 @@ class SzzTouchSign:
 
 @dataclass(frozen=True, order=True)
 class SzzBoundaryCompensation:
-    """Single-qubit Clifford compensation for an odd boundary residual."""
+    """Analysis-only compensation for an odd uncompensated boundary residual."""
 
     stabilizer_type: str
     stabilizer_index: int
@@ -186,8 +186,8 @@ class SzzBoundaryCompensation:
 
 
 @dataclass(frozen=True, order=True)
-class SzzClass2Stream:
-    """Standing deterministic Pauli stream induced by a class-2 residual."""
+class SzzClass2Residual:
+    """Analysis-only class-2 data residual of the uncompensated sign vector."""
 
     stabilizer_type: str
     data_qubit: int
@@ -196,11 +196,15 @@ class SzzClass2Stream:
 
 @dataclass(frozen=True)
 class SzzResidualPlan:
-    """Validated SZZ sign convention and residual bookkeeping."""
+    """Validated SZZ sign convention and uncompensated residual bookkeeping.
+
+    The active SZZ template cancels data residuals with immediate per-touch
+    compensation; no class-2 residual stream is emitted by the circuit.
+    """
 
     signs: tuple[SzzTouchSign, ...]
     boundary_compensations: tuple[SzzBoundaryCompensation, ...]
-    class2_streams: tuple[SzzClass2Stream, ...]
+    class2_residuals: tuple[SzzClass2Residual, ...]
 
 
 def _normalize_interaction_basis(interaction_basis: str) -> str:
@@ -306,14 +310,14 @@ def _validate_szz_sign_vector(
             raise ValueError(msg)
 
     compensations: list[SzzBoundaryCompensation] = []
-    streams: list[SzzClass2Stream] = []
+    class2_residuals: list[SzzClass2Residual] = []
     for (stabilizer_type, data_qubit), sum_signs in sorted(data_sums.items()):
         residual_class = _szz_residual_class(sum_signs)
         if residual_class == "identity":
             continue
         if residual_class == "pauli":
-            streams.append(
-                SzzClass2Stream(
+            class2_residuals.append(
+                SzzClass2Residual(
                     stabilizer_type=stabilizer_type,
                     data_qubit=data_qubit,
                     pauli="X" if stabilizer_type == "X" else "Z",
@@ -349,7 +353,7 @@ def _validate_szz_sign_vector(
     return SzzResidualPlan(
         signs=tuple(sorted(signs)),
         boundary_compensations=tuple(sorted(compensations)),
-        class2_streams=tuple(sorted(streams)),
+        class2_residuals=tuple(sorted(class2_residuals)),
     )
 
 
@@ -3197,7 +3201,8 @@ def _metadata_record_offsets(entry: dict[str, object], num_measurements: int) ->
     if meas_ids is not None:
         return [int(meas_id) - num_measurements for meas_id in meas_ids]  # type: ignore[union-attr]
 
-    return []
+    msg = "detector/observable metadata entry must define either 'records' or 'meas_ids'"
+    raise ValueError(msg)
 
 
 def generate_dem_from_tick_circuit(

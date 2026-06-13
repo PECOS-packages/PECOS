@@ -208,7 +208,7 @@ def test_szz_residual_classifier_and_default_plan() -> None:
         "SZ",
         "SZDG",
     }
-    assert {entry.pauli for entry in plan.class2_streams} == {"X", "Z"}
+    assert {entry.pauli for entry in plan.class2_residuals} == {"X", "Z"}
 
 
 def test_szz_bad_sign_vector_rejected_loudly() -> None:

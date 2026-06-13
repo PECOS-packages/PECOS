@@ -25,7 +25,8 @@ def _record_offsets(entry: dict[str, object], num_measurements: int) -> list[int
     meas_ids = entry.get("meas_ids")
     if meas_ids is not None:
         return [int(meas_id) - num_measurements for meas_id in meas_ids]  # type: ignore[union-attr]
-    return []
+    msg = "detector/observable metadata entry must define either 'records' or 'meas_ids'"
+    raise ValueError(msg)
 
 
 def extract_detection_events_and_observables(

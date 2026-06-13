@@ -1622,8 +1622,8 @@ def _reject_szz_unlowered_physical_noise(
     reasons: list[str] = []
     if noise.p1 > 0.0 and circuit_source != "abstract":
         reasons.append("p1 with circuit_source='traced_qis'")
-    if _noise_uses_dedicated_idle_noise(noise):
-        reasons.append("dedicated idle noise")
+    if _noise_uses_dedicated_idle_noise(noise) and circuit_source != "abstract":
+        reasons.append("dedicated idle noise with circuit_source='traced_qis'")
     if not reasons:
         return
     joined = ", ".join(reasons)
@@ -1631,8 +1631,7 @@ def _reject_szz_unlowered_physical_noise(
         "interaction_basis='szz' surface DEM generation does not yet support "
         f"{joined} because the DEM must use post-flow prefix pulse locations "
         "rather than the abstract H/SX/SZ scaffold; use circuit_source='abstract' "
-        "for p1 and omit dedicated idle noise until SZZ idle pulse-location DEM "
-        "lowering is enabled"
+        "for p1 or dedicated idle noise"
     )
     raise ValueError(msg)
 
@@ -1642,7 +1641,11 @@ def _use_szz_physical_prefixes(
     interaction_basis: str,
     circuit_source: Literal["abstract", "traced_qis"],
 ) -> bool:
-    return interaction_basis == "szz" and circuit_source == "abstract" and noise.p1 > 0.0
+    return (
+        interaction_basis == "szz"
+        and circuit_source == "abstract"
+        and (noise.p1 > 0.0 or _noise_uses_dedicated_idle_noise(noise))
+    )
 
 
 def _szz_prefix_p1_gate_rates(topology: _CachedNativeSurfaceTopology) -> dict[str, float] | None:
@@ -1917,7 +1920,11 @@ def _cached_surface_native_dem_string(
         p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
     )
-    szz_physical_prefixes = interaction_basis == "szz" and circuit_source == "abstract" and p1 > 0.0
+    szz_physical_prefixes = (
+        interaction_basis == "szz"
+        and circuit_source == "abstract"
+        and (p1 > 0.0 or include_idle_gates)
+    )
     topology = _cached_surface_native_topology(
         patch_key,
         num_rounds,

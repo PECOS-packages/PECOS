@@ -659,13 +659,13 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
             raise ValueError(msg)
         pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
 
-    def discharge(q: int, host: SurfaceCircuitStep) -> None:
+    def discharge(q: int, host: SurfaceCircuitStep) -> tuple[SurfaceCircuitStep | None, SurfaceCircuitStep | None]:
         current = pending_for(q)
         if current == _SZZ_FLOW_IDENTITY:
-            return
+            return None, None
         if _szz_flow_is_virtual_z(current):
             pending_by_qubit[q] = _SZZ_FLOW_IDENTITY if host.op_type == OpType.MEASURE else current
-            return
+            return None, None
         try:
             virtual_gate, physical_gate = _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING[current]
         except KeyError as exc:
@@ -675,22 +675,30 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
                 f"{host.op_type.name} {host.label!r}"
             )
             raise ValueError(msg) from exc
+        virtual_step = None
         if virtual_gate is not None:
-            lowered.append(
-                SurfaceCircuitStep(
-                    virtual_gate,
-                    [q],
-                    f"szz_virtual_prefix:{virtual_gate.name}:{host.label}:q{q}",
-                ),
-            )
-        lowered.append(
-            SurfaceCircuitStep(
-                physical_gate,
+            virtual_step = SurfaceCircuitStep(
+                virtual_gate,
                 [q],
-                f"szz_physical_prefix:{physical_gate.name}:{host.label}:q{q}",
-            ),
+                f"szz_virtual_prefix:{virtual_gate.name}:{host.label}:q{q}",
+            )
+        physical_step = SurfaceCircuitStep(
+            physical_gate,
+            [q],
+            f"szz_physical_prefix:{physical_gate.name}:{host.label}:q{q}",
         )
         pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+        return virtual_step, physical_step
+
+    def append_prefix_ticks(virtual_steps: list[SurfaceCircuitStep], physical_steps: list[SurfaceCircuitStep]) -> None:
+        if virtual_steps:
+            lowered.append(SurfaceCircuitStep(OpType.TICK))
+            lowered.extend(virtual_steps)
+            lowered.append(SurfaceCircuitStep(OpType.TICK))
+        if physical_steps:
+            lowered.append(SurfaceCircuitStep(OpType.TICK))
+            lowered.extend(physical_steps)
+            lowered.append(SurfaceCircuitStep(OpType.TICK))
 
     for op in ops:
         if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
@@ -705,15 +713,26 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
             pending_by_qubit[q] = _szz_flow_compose_pending_gate(pending_for(q), op.op_type)
             continue
         if op.op_type in {OpType.SZZ, OpType.SZZDG}:
+            virtual_steps: list[SurfaceCircuitStep] = []
+            physical_steps: list[SurfaceCircuitStep] = []
             for q in op.qubits:
-                discharge(q, op)
+                virtual_step, physical_step = discharge(q, op)
+                if virtual_step is not None:
+                    virtual_steps.append(virtual_step)
+                if physical_step is not None:
+                    physical_steps.append(physical_step)
+            append_prefix_ticks(virtual_steps, physical_steps)
             lowered.append(op)
             continue
         if op.op_type == OpType.CX:
             msg = "SZZ forward-flow lowering only supports SZZ/SZZdg two-qubit gates"
             raise ValueError(msg)
         if op.op_type == OpType.MEASURE:
-            discharge(op.qubits[0], op)
+            virtual_step, physical_step = discharge(op.qubits[0], op)
+            append_prefix_ticks(
+                [] if virtual_step is None else [virtual_step],
+                [] if physical_step is None else [physical_step],
+            )
             lowered.append(op)
             continue
         lowered.append(op)
@@ -2179,6 +2198,8 @@ class TickCircuitRenderer(CircuitRenderer):
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
                     meta["label"] = op.label
+                if op.label.startswith("szz_virtual_prefix:"):
+                    meta["_physical_duration"] = 0.0
                 apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.CX:

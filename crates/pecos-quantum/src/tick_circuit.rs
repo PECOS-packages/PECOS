@@ -615,6 +615,14 @@ impl<'a> GateInstanceRef<'a> {
     }
 }
 
+fn gate_batch_has_zero_physical_duration(gate: GateBatchRef<'_>) -> bool {
+    match gate.get_attr("_physical_duration") {
+        Some(Attribute::Float(duration)) => *duration == 0.0,
+        Some(Attribute::Int(duration)) => *duration == 0,
+        _ => false,
+    }
+}
+
 impl Tick {
     /// Create a new empty tick.
     #[must_use]
@@ -2308,15 +2316,18 @@ impl TickCircuit {
         }
 
         for tick in &mut self.ticks {
-            // Metadata-only ticks are zero-duration bookkeeping markers.
-            // They preserve annotation order but must not create physical idle
-            // periods on qubits outside the metadata payload.
+            // Metadata-only and explicitly zero-duration ticks preserve
+            // ordering but must not create physical idle periods.
+            let batch_count = tick.gate_batches().len();
             let meta_batches = tick
-                .gate_batches()
-                .iter()
-                .filter(|gate| gate.gate_type.is_meta())
+                .iter_gate_batches()
+                .filter(|gate| gate.as_gate().gate_type.is_meta())
                 .count();
-            if !tick.is_empty() && meta_batches == tick.gate_batches().len() {
+            let zero_duration_batches = tick
+                .iter_gate_batches()
+                .filter(|gate| gate_batch_has_zero_physical_duration(*gate))
+                .count();
+            if !tick.is_empty() && meta_batches + zero_duration_batches == batch_count {
                 continue;
             }
             // A tick that mixes meta and physical gates has ambiguous idle
@@ -2329,6 +2340,12 @@ impl TickCircuit {
                 "fill_idle_gates: tick mixes meta and physical gates; emit meta \
                  batches in their own tick so idle-duration accounting stays \
                  unambiguous"
+            );
+            assert!(
+                zero_duration_batches == 0,
+                "fill_idle_gates: tick mixes zero-duration and physical gates; emit \
+                 zero-duration frame updates in their own tick so idle-duration \
+                 accounting stays unambiguous"
             );
             let active = tick.active_qubits();
             for &q in &all_qubits {
@@ -6198,6 +6215,26 @@ mod tests {
     }
 
     #[test]
+    fn test_fill_idle_gates_skips_zero_duration_ticks() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0, 1]);
+        tc.tick()
+            .z(&[0])
+            .meta("_physical_duration", Attribute::Float(0.0));
+        tc.tick().h(&[0, 1]);
+
+        tc.fill_idle_gates();
+
+        let zero_duration_tick = tc.get_tick(1).expect("zero-duration tick");
+        assert_eq!(zero_duration_tick.gate_count(), 1);
+        assert_eq!(zero_duration_tick.gate_batches()[0].gate_type, GateType::Z);
+        assert_eq!(
+            zero_duration_tick.get_gate_attr(0, "_physical_duration"),
+            Some(&Attribute::Float(0.0))
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "tick mixes meta and physical gates")]
     fn test_fill_idle_gates_rejects_mixed_meta_and_physical_tick() {
         let mut tc = TickCircuit::new();
@@ -6209,6 +6246,18 @@ mod tests {
         ))
         .map(|_| ())
         .expect("meta gate on a free qubit must be addable");
+
+        tc.fill_idle_gates();
+    }
+
+    #[test]
+    #[should_panic(expected = "tick mixes zero-duration and physical gates")]
+    fn test_fill_idle_gates_rejects_mixed_zero_duration_and_physical_tick() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .h(&[0])
+            .z(&[1])
+            .meta("_physical_duration", Attribute::Float(0.0));
 
         tc.fill_idle_gates();
     }

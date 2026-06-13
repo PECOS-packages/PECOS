@@ -150,6 +150,13 @@ def _assert_noiseless_record_metadata_is_zero(stim_text: str, tick_circuit: obje
     assert not np.any(obs_samples)
 
 
+def _gate_labels_for_tick(tick_circuit: object, tick_index: int) -> list[str | None]:
+    return [
+        tick_circuit.get_gate_meta(tick_index, gate_index, "label")
+        for gate_index, _gate in enumerate(tick_circuit.get_tick(tick_index).gate_batches())
+    ]
+
+
 def test_szz_unitary_identities() -> None:
     assert _equiv_up_to_global_phase(SZZ @ _kron(SZDG, SZDG), CZ)
     assert _equiv_up_to_global_phase(SZZ @ ZZ, SZZDG)
@@ -573,6 +580,44 @@ def test_szz_prefix_lowering_preserves_p2_influence_dem(basis: str) -> None:
     )
 
 
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_szz_prefix_lowering_emits_dedicated_prefix_ticks(basis: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+    tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        basis=basis,
+        interaction_basis="szz",
+        szz_physical_prefixes=True,
+    )
+
+    saw_physical_prefix = False
+    saw_virtual_prefix = False
+    for tick_index in range(tick_circuit.num_ticks()):
+        tick = tick_circuit.get_tick(tick_index)
+        labels = _gate_labels_for_tick(tick_circuit, tick_index)
+        prefix_labels = [label for label in labels if label and label.startswith("szz_")]
+        if not prefix_labels:
+            continue
+
+        assert len(prefix_labels) == len(labels)
+        if prefix_labels[0].startswith("szz_virtual_prefix:"):
+            saw_virtual_prefix = True
+            assert all(label.startswith("szz_virtual_prefix:") for label in prefix_labels)
+            for gate_index, gate in enumerate(tick.gate_batches()):
+                assert gate.gate_type.name == "Z"
+                assert tick_circuit.get_gate_meta(tick_index, gate_index, "_physical_duration") == 0.0
+        else:
+            saw_physical_prefix = True
+            assert all(label.startswith("szz_physical_prefix:") for label in prefix_labels)
+            assert {gate.gate_type.name for gate in tick.gate_batches()} <= {"H", "F", "SY"}
+            for gate_index, _gate in enumerate(tick.gate_batches()):
+                assert tick_circuit.get_gate_meta(tick_index, gate_index, "_physical_duration") is None
+
+    assert saw_physical_prefix
+    assert saw_virtual_prefix
+
+
 @pytest.mark.parametrize("sampling_model", ["dem", "influence_dem"])
 def test_szz_native_sampler_accepts_p1_with_physical_prefix_lowering(sampling_model: str) -> None:
     patch = SurfacePatch.create(distance=3)
@@ -592,21 +637,19 @@ def test_szz_native_sampler_accepts_p1_with_physical_prefix_lowering(sampling_mo
         assert "mechanisms=0" not in repr(sampler.sampler)
 
 
-@pytest.mark.parametrize(
-    ("noise", "match"),
-    [
-        (NoiseModel(p_idle=0.001), r"dedicated idle noise.*post-flow prefix pulse locations"),
-    ],
-)
-def test_szz_native_dem_rejects_unlowered_physical_noise(noise: NoiseModel, match: str) -> None:
+def test_szz_native_dem_rejects_traced_qis_idle_noise() -> None:
     patch = SurfacePatch.create(distance=3)
 
-    with pytest.raises(ValueError, match=match):
+    with pytest.raises(
+        ValueError,
+        match=r"dedicated idle noise with circuit_source='traced_qis'.*post-flow prefix pulse locations",
+    ):
         generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=1,
-            noise=noise,
+            noise=NoiseModel(p_idle=0.001),
             interaction_basis="szz",
+            circuit_source="traced_qis",
         )
 
 
@@ -636,13 +679,81 @@ def test_szz_native_dem_accepts_p1_with_physical_prefix_lowering() -> None:
     assert stim.DetectorErrorModel(dem).num_detectors > 0
 
 
-def test_szz_native_sampler_rejects_unlowered_idle_noise() -> None:
+@pytest.mark.parametrize("sampling_model", ["dem", "influence_dem"])
+def test_szz_native_sampler_accepts_idle_with_physical_prefix_lowering(sampling_model: str) -> None:
     patch = SurfacePatch.create(distance=3)
 
-    with pytest.raises(ValueError, match=r"dedicated idle noise.*post-flow prefix pulse locations"):
-        build_native_sampler(
-            patch,
-            num_rounds=1,
-            noise=NoiseModel(p_idle=0.001),
-            interaction_basis="szz",
-        )
+    sampler = build_native_sampler(
+        patch,
+        num_rounds=1,
+        noise=NoiseModel(p_idle=0.001),
+        interaction_basis="szz",
+        sampling_model=sampling_model,
+    )
+    det_events, obs_flips = sampler.sample(4, seed=20260612)
+
+    assert det_events.shape == (4, sampler.num_detectors)
+    assert obs_flips.shape == (4, sampler.num_observables)
+    if sampling_model == "influence_dem":
+        assert "mechanisms=0" not in repr(sampler.sampler)
+
+
+def test_szz_native_dem_accepts_idle_with_physical_prefix_lowering() -> None:
+    patch = SurfacePatch.create(distance=3)
+    dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=1,
+        noise=NoiseModel(p_idle=0.001),
+        interaction_basis="szz",
+    )
+
+    assert "error(" in dem
+    assert stim.DetectorErrorModel(dem).num_detectors > 0
+
+
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_szz_idle_dem_uses_lowered_prefix_topology(basis: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+    patch_key = _surface_patch_cache_key(patch)
+    noise = NoiseModel(p_idle_z_linear_rate=0.01)
+
+    actual = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=1,
+        basis=basis,
+        noise=noise,
+        interaction_basis="szz",
+        decompose_errors=False,
+    )
+    lowered = _surface_native_topology(
+        patch_key,
+        1,
+        basis,
+        None,
+        "abstract",
+        True,
+        interaction_basis="szz",
+        szz_physical_prefixes=True,
+    )
+    plain = _surface_native_topology(
+        patch_key,
+        1,
+        basis,
+        None,
+        "abstract",
+        True,
+        interaction_basis="szz",
+        szz_physical_prefixes=False,
+    )
+
+    expected = _dem_string_from_cached_surface_topology(
+        lowered,
+        noise,
+        decompose_errors=False,
+    )
+    assert actual == expected
+    assert actual != _dem_string_from_cached_surface_topology(
+        plain,
+        noise,
+        decompose_errors=False,
+    )

@@ -61,6 +61,18 @@ class DecodeSummary:
 
 
 @dataclass(frozen=True)
+class PairAnalysisSummary:
+    decoder: str
+    pair_probability_mass: float
+    wrong_probability_mass: float
+    wrong_probability_fraction: float
+    disagree_tesseract_probability_mass: float
+    disagree_tesseract_probability_fraction: float
+    wrong_count: int
+    disagree_tesseract_count: int
+
+
+@dataclass(frozen=True)
 class CaseResult:
     distance: int
     rounds: int
@@ -71,6 +83,7 @@ class CaseResult:
     raw_comparison: RawDemComparison
     dem_stats: dict[str, DemStats]
     decoders: list[DecodeSummary]
+    pair_analysis: list[PairAnalysisSummary] | None
 
 
 def _combine_independent_probabilities(left: float, right: float) -> float:
@@ -207,13 +220,24 @@ def true_observable_flips(observable_flips: np.ndarray) -> np.ndarray:
     return observable_flips[:, 0].astype(np.uint8)
 
 
-def decode_with_tesseract(
-    dem_text: str,
-    detection_events: np.ndarray,
-    observable_flips: np.ndarray,
-    *,
-    beam: int,
-) -> int:
+def dense_effect_arrays(effects: dict[str, float]) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray]:
+    """Convert effect keys into dense detector rows and observable flips."""
+    keys = list(effects)
+    probabilities = np.array([effects[key] for key in keys], dtype=float)
+    max_detector = max((int(detector) for key in keys for detector in DET_RE.findall(key)), default=-1)
+    detection_events = np.zeros((len(keys), max_detector + 1), dtype=np.uint8)
+    observable_flips = np.zeros(len(keys), dtype=np.uint8)
+
+    for index, key in enumerate(keys):
+        detectors = [int(detector) for detector in DET_RE.findall(key)]
+        if detectors:
+            detection_events[index, detectors] = 1
+        observable_flips[index] = 1 if "0" in OBS_RE.findall(key) else 0
+
+    return keys, probabilities, detection_events, observable_flips
+
+
+def tesseract_predictions(dem_text: str, detection_events: np.ndarray, *, beam: int) -> np.ndarray:
     from pecos.decoders import TesseractDecoder
 
     decoder = TesseractDecoder.from_dem(
@@ -221,10 +245,34 @@ def decode_with_tesseract(
         preset="fast",
         det_beam=beam,
     )
+    results = decoder.decode_batch([row.tolist() for row in detection_events])
+    return np.array([int(result.observables_mask & 1) for result in results], dtype=np.uint8)
+
+
+def pymatching_predictions(dem_text: str, detection_events: np.ndarray, *, correlated: bool) -> np.ndarray:
+    from pecos.decoders import PyMatchingDecoder
+
+    if correlated:
+        decoder = PyMatchingDecoder.from_dem_with_correlations(dem_text, enable_correlations=True)
+    else:
+        decoder = PyMatchingDecoder.from_dem(dem_text)
+    predictions = decoder.decode_batch(
+        detection_events.astype(np.uint8).flatten().tolist(),
+        len(detection_events),
+    )
+    return np.array([prediction[0] if prediction else 0 for prediction in predictions], dtype=np.uint8)
+
+
+def decode_with_tesseract(
+    dem_text: str,
+    detection_events: np.ndarray,
+    observable_flips: np.ndarray,
+    *,
+    beam: int,
+) -> int:
     expected = true_observable_flips(observable_flips)
-    syndromes = [detection_events[index].astype(np.uint8).tolist() for index in range(len(detection_events))]
-    results = decoder.decode_batch(syndromes)
-    return sum(int(int(result.observables_mask & 1) != expected[index]) for index, result in enumerate(results))
+    predicted = tesseract_predictions(dem_text, detection_events, beam=beam)
+    return int(np.sum(predicted != expected))
 
 
 def decode_with_pymatching(
@@ -234,19 +282,8 @@ def decode_with_pymatching(
     *,
     correlated: bool,
 ) -> int:
-    from pecos.decoders import PyMatchingDecoder
-
-    if correlated:
-        decoder = PyMatchingDecoder.from_dem_with_correlations(dem_text, enable_correlations=True)
-    else:
-        decoder = PyMatchingDecoder.from_dem(dem_text)
-
     expected = true_observable_flips(observable_flips)
-    predictions = decoder.decode_batch(
-        detection_events.astype(np.uint8).flatten().tolist(),
-        len(detection_events),
-    )
-    predicted = np.array([prediction[0] if prediction else 0 for prediction in predictions], dtype=np.uint8)
+    predicted = pymatching_predictions(dem_text, detection_events, correlated=correlated)
     return int(np.sum(predicted != expected))
 
 
@@ -262,6 +299,82 @@ def _timed_decode(label: str, callback: Any, shots: int) -> DecodeSummary:
     )
 
 
+def two_fault_pair_analysis(
+    *,
+    native_raw: str,
+    native_decomposed: str,
+    stim_decomposed: str,
+    max_effects: int,
+) -> list[PairAnalysisSummary] | None:
+    """Exhaustively compare decoders on all two-mechanism XOR combinations."""
+    effects = dem_effect_probabilities(native_raw)
+    keys, probabilities, detection_events, observable_flips = dense_effect_arrays(effects)
+    if len(keys) > max_effects:
+        return None
+
+    pair_rows: list[np.ndarray] = []
+    pair_observables: list[int] = []
+    pair_weights: list[float] = []
+    for left in range(len(keys)):
+        for right in range(left + 1, len(keys)):
+            pair_rows.append(detection_events[left] ^ detection_events[right])
+            pair_observables.append(int(observable_flips[left] ^ observable_flips[right]))
+            pair_weights.append(float(probabilities[left] * probabilities[right]))
+
+    if not pair_rows:
+        return []
+
+    pair_detection_events = np.asarray(pair_rows, dtype=np.uint8)
+    pair_observable_flips = np.asarray(pair_observables, dtype=np.uint8)
+    weights = np.asarray(pair_weights, dtype=float)
+    total_weight = float(np.sum(weights))
+
+    predictions = {
+        "native_raw_tesseract_b5": tesseract_predictions(native_raw, pair_detection_events, beam=5),
+        "native_decomp_pymatching": pymatching_predictions(
+            native_decomposed,
+            pair_detection_events,
+            correlated=False,
+        ),
+        "native_decomp_pymatching_correlated": pymatching_predictions(
+            native_decomposed,
+            pair_detection_events,
+            correlated=True,
+        ),
+        "stim_decomp_pymatching": pymatching_predictions(
+            stim_decomposed,
+            pair_detection_events,
+            correlated=False,
+        ),
+        "stim_decomp_pymatching_correlated": pymatching_predictions(
+            stim_decomposed,
+            pair_detection_events,
+            correlated=True,
+        ),
+    }
+    reference = predictions["native_raw_tesseract_b5"]
+
+    summaries = []
+    for name, predicted in predictions.items():
+        wrong = predicted != pair_observable_flips
+        disagree = predicted != reference
+        wrong_mass = float(np.sum(weights[wrong]))
+        disagree_mass = float(np.sum(weights[disagree]))
+        summaries.append(
+            PairAnalysisSummary(
+                decoder=name,
+                pair_probability_mass=total_weight,
+                wrong_probability_mass=wrong_mass,
+                wrong_probability_fraction=wrong_mass / total_weight if total_weight else 0.0,
+                disagree_tesseract_probability_mass=disagree_mass,
+                disagree_tesseract_probability_fraction=disagree_mass / total_weight if total_weight else 0.0,
+                wrong_count=int(np.sum(wrong)),
+                disagree_tesseract_count=int(np.sum(disagree)),
+            ),
+        )
+    return summaries
+
+
 def run_case(
     *,
     distance: int,
@@ -272,6 +385,8 @@ def run_case(
     shots: int,
     seed: int,
     tesseract_beams: list[int],
+    pair_analysis: bool,
+    pair_analysis_max_effects: int,
 ) -> CaseResult:
     from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
     from pecos.qec.surface.circuit_builder import (
@@ -414,6 +529,14 @@ def run_case(
             "stim_decomposed": dem_stats(stim_decomposed),
         },
         decoders=decoders,
+        pair_analysis=two_fault_pair_analysis(
+            native_raw=native_raw,
+            native_decomposed=native_decomposed,
+            stim_decomposed=stim_decomposed,
+            max_effects=pair_analysis_max_effects,
+        )
+        if pair_analysis
+        else None,
     )
 
 
@@ -449,6 +572,19 @@ def print_case(result: CaseResult) -> None:
             f"{summary.logical_error_rate:10.6f} {summary.elapsed_s:8.3f}s",
         )
 
+    if result.pair_analysis is None:
+        return
+    print("Exact two-fault analysis:")
+    print("  decoder                                  wrong_mass wrong_frac disagree_mass disagree_frac")
+    for summary in result.pair_analysis:
+        print(
+            f"  {summary.decoder:<36} "
+            f"{summary.wrong_probability_mass:10.6f} "
+            f"{summary.wrong_probability_fraction:10.4f} "
+            f"{summary.disagree_tesseract_probability_mass:13.6f} "
+            f"{summary.disagree_tesseract_probability_fraction:13.4f}",
+        )
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -460,6 +596,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shots", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=20260613)
     parser.add_argument("--tesseract-beams", nargs="+", type=int, default=[5])
+    parser.add_argument(
+        "--pair-analysis",
+        action="store_true",
+        help="Exhaustively compare decoders on all two-fault combinations when the effect count is small enough.",
+    )
+    parser.add_argument("--pair-analysis-max-effects", type=int, default=400)
     parser.add_argument("--save-json", type=Path, default=None)
     return parser.parse_args()
 
@@ -481,6 +623,8 @@ def main() -> int:
                         shots=args.shots,
                         seed=args.seed,
                         tesseract_beams=args.tesseract_beams,
+                        pair_analysis=args.pair_analysis,
+                        pair_analysis_max_effects=args.pair_analysis_max_effects,
                     )
                     results.append(result)
                     print_case(result)

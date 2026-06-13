@@ -467,6 +467,67 @@ def test_szz_native_dem_path_uses_interaction_basis() -> None:
     assert stim.DetectorErrorModel(szz_dem).num_detectors > 0
 
 
+def test_szz_native_dem_respects_gate_specific_p2_overrides() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    inherited_dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(p1=0.0, p2=0.01, p2_weights={"ZI": 1.0}),
+        interaction_basis="szz",
+    )
+    no_szz_dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(p1=0.0, p2=0.01, p2_szz=0.0, p2_weights={"ZI": 1.0}),
+        interaction_basis="szz",
+    )
+    no_szzdg_dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(p1=0.0, p2=0.01, p2_szzdg=0.0, p2_weights={"ZI": 1.0}),
+        interaction_basis="szz",
+    )
+    override_only_dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(
+            p1=0.0,
+            p2=0.0,
+            p2_szz=0.01,
+            p2_szzdg=0.01,
+            p2_weights={"ZI": 1.0},
+        ),
+        interaction_basis="szz",
+    )
+
+    assert no_szz_dem != inherited_dem
+    assert no_szzdg_dem != inherited_dem
+    assert "error(" in override_only_dem
+
+
+def test_szz_native_influence_sampler_respects_override_only_p2() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    zero_sampler = build_native_sampler(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(p1=0.0, p2=0.0, p2_szz=0.0, p2_szzdg=0.0, p2_weights={"ZI": 1.0}),
+        interaction_basis="szz",
+        sampling_model="influence_dem",
+    )
+    active_sampler = build_native_sampler(
+        patch,
+        num_rounds=2,
+        noise=NoiseModel(p1=0.0, p2=0.0, p2_szz=0.01, p2_szzdg=0.01, p2_weights={"ZI": 1.0}),
+        interaction_basis="szz",
+        sampling_model="influence_dem",
+    )
+
+    assert "mechanisms=0" in repr(zero_sampler.sampler)
+    assert "mechanisms=0" not in repr(active_sampler.sampler)
+
+
 @pytest.mark.parametrize(
     ("noise", "match"),
     [

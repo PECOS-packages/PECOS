@@ -1848,6 +1848,7 @@ pub(crate) struct SamplingEngineBuilder<'a> {
     influence_map: &'a DagFaultInfluenceMap,
     p1: f64,
     p2: f64,
+    p2_gate_rates: BTreeMap<GateType, f64>,
     p_meas: f64,
     p_prep: f64,
     p1_weights: Option<PauliWeights>,
@@ -1874,6 +1875,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             influence_map,
             p1: 0.01,
             p2: 0.01,
+            p2_gate_rates: BTreeMap::new(),
             p_meas: 0.01,
             p_prep: 0.01,
             p1_weights: None,
@@ -1893,6 +1895,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     pub fn with_noise(mut self, p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
         self.p1 = p1;
         self.p2 = p2;
+        self.p2_gate_rates.clear();
         self.p_meas = p_meas;
         self.p_prep = p_prep;
         self.p1_weights = None;
@@ -1907,6 +1910,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     pub fn with_noise_config(mut self, noise: NoiseConfig) -> Self {
         self.p1 = noise.p1;
         self.p2 = noise.p2;
+        self.p2_gate_rates = noise.p2_gate_rates.clone();
         self.p_meas = noise.p_meas;
         self.p_prep = noise.p_prep;
         self.p1_weights = noise.p1_weights.clone();
@@ -2134,7 +2138,9 @@ impl<'a> SamplingEngineBuilder<'a> {
         }
 
         // Process two-qubit gates as pairs
-        let has_any_2q_noise = self.per_gate.is_some() || self.p2 > 0.0;
+        let has_any_2q_noise = self.per_gate.is_some()
+            || self.p2 > 0.0
+            || self.p2_gate_rates.values().any(|rate| *rate > 0.0);
         if has_any_2q_noise {
             for loc_indices in cx_groups.values() {
                 for pair in loc_indices.chunks(2) {
@@ -2380,12 +2386,13 @@ impl<'a> SamplingEngineBuilder<'a> {
                 std::array::from_fn(|i| pg.rate_2q(gate, i))
             }
         } else {
+            let p2_total = self.p2_gate_rates.get(&gate).copied().unwrap_or(self.p2);
             if let Some(weights) = &self.p2_weights {
                 return std::array::from_fn(|idx| {
                     let flat = idx + 1;
                     let p1 = flat / 4;
                     let p2 = flat % 4;
-                    self.p2
+                    p2_total
                         * weights.two_qubit_weight_for(
                             gate,
                             &pauli_pair_for_weight(p1, p2),
@@ -2393,7 +2400,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                         )
                 });
             }
-            [self.p2 / 15.0; 15]
+            [p2_total / 15.0; 15]
         }
     }
 

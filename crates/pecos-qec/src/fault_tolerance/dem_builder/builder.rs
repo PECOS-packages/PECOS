@@ -434,6 +434,7 @@ impl<'a> DemBuilder<'a> {
                 let p1 = flat / 4;
                 let p2 = flat % 4;
                 let pauli = pauli_pair_for_weight(p1, p2);
+                let p2_total = self.noise.p2_rate_for_gate(loc1.gate_type);
                 let weight = if self.noise.p2_replacement_approximation
                     == ReplacementBranchApproximation::BranchImpact
                     || self.noise.p2_replacement_approximation
@@ -447,10 +448,10 @@ impl<'a> DemBuilder<'a> {
                         self.noise.p2_replacement_approximation,
                     )
                 };
-                self.noise.p2 * weight
+                p2_total * weight
             });
         }
-        [per_channel_probability(self.noise.p2, 15); 15]
+        [per_channel_probability(self.noise.p2_rate_for_gate(loc1.gate_type), 15); 15]
     }
 
     /// Sets the number of measurements (used for record offset calculation).

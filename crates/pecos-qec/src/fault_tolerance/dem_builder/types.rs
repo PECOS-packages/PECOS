@@ -2437,6 +2437,12 @@ pub struct NoiseConfig {
     pub p1: f64,
     /// Two-qubit gate error rate.
     pub p2: f64,
+    /// Optional per-gate total error-rate overrides for two-qubit gates.
+    ///
+    /// When a two-qubit gate type appears here, this total rate replaces
+    /// `p2` while still using `p2_weights` to distribute probability across
+    /// Pauli-pair channels.
+    pub p2_gate_rates: BTreeMap<GateType, f64>,
     /// Measurement error rate.
     pub p_meas: f64,
     /// Initialization (prep) error rate.
@@ -2660,6 +2666,7 @@ impl Default for NoiseConfig {
         Self {
             p1: 0.01,
             p2: 0.01,
+            p2_gate_rates: BTreeMap::new(),
             p_meas: 0.01,
             p_prep: 0.01,
             p_idle: 0.0,
@@ -2693,6 +2700,7 @@ impl NoiseConfig {
         Self {
             p1,
             p2,
+            p2_gate_rates: BTreeMap::new(),
             p_meas,
             p_prep,
             p_idle: 0.0,
@@ -2724,6 +2732,7 @@ impl NoiseConfig {
         Self {
             p1,
             p2,
+            p2_gate_rates: BTreeMap::new(),
             p_meas,
             p_prep,
             p_idle,
@@ -2755,6 +2764,7 @@ impl NoiseConfig {
         Self {
             p1: p,
             p2: p,
+            p2_gate_rates: BTreeMap::new(),
             p_meas: p,
             p_prep: p,
             p_idle: p,
@@ -2892,6 +2902,32 @@ impl NoiseConfig {
     pub fn set_p2_weights(mut self, weights: PauliWeights) -> Self {
         self.p2_weights = Some(weights);
         self
+    }
+
+    /// Sets a total two-qubit error-rate override for one gate type.
+    ///
+    /// The override changes only the total rate. If `p2_weights` is configured,
+    /// those weights still determine the relative Pauli-pair distribution for
+    /// this gate.
+    #[must_use]
+    pub fn set_p2_gate_rate(mut self, gate_type: GateType, rate: f64) -> Self {
+        self.p2_gate_rates.insert(gate_type, rate.max(0.0));
+        self
+    }
+
+    /// Returns the total two-qubit error rate for `gate_type`.
+    #[must_use]
+    pub fn p2_rate_for_gate(&self, gate_type: GateType) -> f64 {
+        self.p2_gate_rates
+            .get(&gate_type)
+            .copied()
+            .unwrap_or(self.p2)
+    }
+
+    /// Returns true when any scalar or per-gate two-qubit rate is positive.
+    #[must_use]
+    pub fn has_any_p2_noise(&self) -> bool {
+        self.p2 > 0.0 || self.p2_gate_rates.values().any(|rate| *rate > 0.0)
     }
 
     /// Sets how replacement entries in `p2_weights` are approximated.
@@ -3542,18 +3578,20 @@ impl PerGateTypeNoise {
         self.rate_1q(gate, pauli_idx)
     }
 
-    /// Lookup 2Q Pauli pair rate for a gate. Returns `base.p2 / 15.0`
-    /// if the gate type is not in the map. `pair_idx` follows [`PAULI_2Q_ORDER`].
+    /// Lookup 2Q Pauli pair rate for a gate. Returns the base two-qubit gate
+    /// rate divided over the 15 Pauli pairs if the gate type is not in the
+    /// map. `pair_idx` follows [`PAULI_2Q_ORDER`].
     #[must_use]
     pub fn rate_2q(&self, gate: GateType, pair_idx: usize) -> f64 {
         self.rates_2q
             .get(&gate)
-            .map_or(self.base.p2 / 15.0, |r| r[pair_idx])
+            .map_or(self.base.p2_rate_for_gate(gate) / 15.0, |r| r[pair_idx])
     }
 
     /// Lookup 2Q Pauli pair rate for a gate on a specific ordered
     /// qubit pair. Tries `(gate, q_control, q_target)` in the per-qubits
-    /// map first, then the per-gate-type map, then `base.p2 / 15.0`.
+    /// map first, then the per-gate-type map, then the base two-qubit gate
+    /// rate divided over the 15 Pauli pairs.
     #[must_use]
     pub fn rate_2q_on(
         &self,

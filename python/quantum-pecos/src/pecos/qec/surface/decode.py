@@ -96,6 +96,10 @@ class NoiseModel:
             error labels ``"X"``, ``"Y"``, and ``"Z"``. Values must sum to
             1.0; ``p1`` remains the total single-qubit error rate.
         p2: Two-qubit gate error rate.
+        p2_szz: Optional total error-rate override for ``SZZ`` gates. When
+            unset, ``SZZ`` uses ``p2``.
+        p2_szzdg: Optional total error-rate override for ``SZZdg`` gates. When
+            unset, ``SZZdg`` uses ``p2``.
         p2_weights: Optional relative probabilities over two-qubit Pauli error
             labels. Plain labels such as ``"XX"`` are post-gate Pauli branches;
             labels prefixed by ``"*"`` such as ``"*XX"`` are replacement
@@ -134,6 +138,8 @@ class NoiseModel:
     p1: float = 0.0
     p1_weights: P1Weights | None = None
     p2: float = 0.0
+    p2_szz: float | None = None
+    p2_szzdg: float | None = None
     p2_weights: P2Weights | None = None
     p2_replacement_approximation: str | None = None
     p_meas: float = 0.0
@@ -158,6 +164,10 @@ class NoiseModel:
         """Normalize cache-sensitive inputs after dataclass initialization."""
         self.p1_weights = _normalize_p1_weights(self.p1_weights)
         self.p2_weights = _normalize_p2_weights(self.p2_weights)
+        if self.p2_szz is not None:
+            self.p2_szz = _validate_probability("p2_szz", self.p2_szz)
+        if self.p2_szzdg is not None:
+            self.p2_szzdg = _validate_probability("p2_szzdg", self.p2_szzdg)
 
     @property
     def effective_p_idle_z_linear_rate(self) -> float | None:
@@ -191,6 +201,11 @@ class NoiseModel:
             self.effective_p_idle_z_quadratic_sine_rate,
         )
 
+    @property
+    def p2_gate_rates(self) -> tuple[float | None, ...]:
+        """Explicit two-qubit gate-rate overrides."""
+        return (self.p2_szz, self.p2_szzdg)
+
     @staticmethod
     def uniform(physical_error_rate: float) -> NoiseModel:
         """Create a uniform circuit-level noise model from one physical error rate."""
@@ -203,6 +218,7 @@ class NoiseModel:
         return (
             self.p1 == 0.0
             and self.p2 == 0.0
+            and all(rate is None or rate == 0.0 for rate in self.p2_gate_rates)
             and self.p_meas == 0.0
             and self.p_prep == 0.0
             and (self.p_idle is None or self.p_idle == 0.0)
@@ -213,6 +229,7 @@ class NoiseModel:
     def physical_error_rate(self) -> float:
         """Approximate combined physical error rate."""
         rates = [self.p1, self.p2, self.p_meas, self.p_prep]
+        rates.extend(rate for rate in self.p2_gate_rates if rate is not None)
         if self.p_idle is not None:
             rates.append(self.p_idle)
         rates.extend(rate for rate in self.idle_memory_rates if rate is not None)
@@ -242,6 +259,15 @@ def _normalize_p2_weights(p2_weights: P2Weights | None) -> tuple[tuple[str, floa
 def _p2_weights_dict(p2_weights: P2Weights | None) -> dict[str, float] | None:
     normalized = _normalize_p2_weights(p2_weights)
     return None if normalized is None else dict(normalized)
+
+
+def _p2_gate_rates_dict(noise: NoiseModel) -> dict[str, float] | None:
+    rates: dict[str, float] = {}
+    if noise.p2_szz is not None:
+        rates["SZZ"] = noise.p2_szz
+    if noise.p2_szzdg is not None:
+        rates["SZZdg"] = noise.p2_szzdg
+    return rates or None
 
 
 @dataclass
@@ -1621,6 +1647,9 @@ def _with_noise_compat(builder: Any, noise: NoiseModel) -> Any:
         "p1_weights": _p1_weights_dict(noise.p1_weights),
         "p2_weights": _p2_weights_dict(noise.p2_weights),
     }
+    p2_gate_rates = _p2_gate_rates_dict(noise)
+    if p2_gate_rates is not None:
+        noise_kwargs["p2_gate_rates"] = p2_gate_rates
     if noise.p2_replacement_approximation is not None:
         noise_kwargs["p2_replacement_approximation"] = noise.p2_replacement_approximation
 
@@ -1804,6 +1833,8 @@ def _cached_surface_native_dem_string(
     p1: float,
     p1_weights: tuple[tuple[str, float], ...] | None,
     p2: float,
+    p2_szz: float | None,
+    p2_szzdg: float | None,
     p_meas: float,
     p_prep: float,
     decompose_errors: bool,
@@ -1861,6 +1892,8 @@ def _cached_surface_native_dem_string(
             p1=p1,
             p1_weights=p1_weights,
             p2=p2,
+            p2_szz=p2_szz,
+            p2_szzdg=p2_szzdg,
             p2_weights=p2_weights,
             p2_replacement_approximation=p2_replacement_approximation,
             p_meas=p_meas,
@@ -2036,6 +2069,8 @@ def generate_circuit_level_dem_from_builder(
         noise.p1,
         noise.p1_weights,
         noise.p2,
+        noise.p2_szz,
+        noise.p2_szzdg,
         noise.p_meas,
         noise.p_prep,
         decompose_errors=decompose_errors,
@@ -3804,6 +3839,8 @@ def build_native_sampler(
             noise.p1,
             noise.p1_weights,
             noise.p2,
+            noise.p2_szz,
+            noise.p2_szzdg,
             noise.p_meas,
             noise.p_prep,
             decompose_errors=True,

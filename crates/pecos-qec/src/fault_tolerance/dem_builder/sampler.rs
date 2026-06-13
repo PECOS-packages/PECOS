@@ -1441,7 +1441,7 @@ pub(crate) fn compute_location_probs_from_noise(
                 | GateType::SWAP
                 | GateType::RXX
                 | GateType::RYY
-                | GateType::RZZ => noise.p2,
+                | GateType::RZZ => noise.p2_rate_for_gate(loc.gate_type),
                 GateType::Idle => {
                     if noise.uses_dedicated_idle_noise() {
                         let duration = loc.idle_duration.max(0.0);

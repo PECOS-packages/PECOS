@@ -764,6 +764,17 @@ def print_case(result: CaseResult) -> None:
         )
 
 
+def write_results_json(path: Path, results: list[CaseResult]) -> None:
+    """Write completed case results to JSON.
+
+    Diagnostics can be expensive for larger distance/round combinations, so the
+    CLI writes after every finished case instead of only at process exit.
+    """
+    payload = [asdict(result) for result in results]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--distances", nargs="+", type=int, default=[3, 5])
@@ -799,11 +810,20 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     results: list[CaseResult] = []
+    total_cases = len(args.distances) * len(args.bases) * len(args.interaction_bases) * len(args.p)
+    case_index = 0
     for distance in args.distances:
         rounds = args.rounds if args.rounds is not None else distance
         for basis in args.bases:
             for interaction_basis in args.interaction_bases:
                 for p in args.p:
+                    case_index += 1
+                    label = (
+                        f"d={distance} r={rounds} basis={basis} "
+                        f"basis2q={interaction_basis} p={p:g} shots={args.shots}"
+                    )
+                    print(f"\n[{case_index}/{total_cases}] Starting {label}", flush=True)
+                    start = time.perf_counter()
                     result = run_case(
                         distance=distance,
                         rounds=rounds,
@@ -818,12 +838,15 @@ def main() -> int:
                         pair_analysis_max_effects=args.pair_analysis_max_effects,
                     )
                     results.append(result)
+                    elapsed = time.perf_counter() - start
+                    print(f"[{case_index}/{total_cases}] Finished {label} in {elapsed:.3f}s", flush=True)
                     print_case(result)
+                    if args.save_json is not None:
+                        write_results_json(args.save_json, results)
+                        print(f"Wrote partial results to {args.save_json}", flush=True)
 
     if args.save_json is not None:
-        payload = [asdict(result) for result in results]
-        args.save_json.parent.mkdir(parents=True, exist_ok=True)
-        args.save_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        write_results_json(args.save_json, results)
         print(f"\nWrote {args.save_json}")
 
     return 0

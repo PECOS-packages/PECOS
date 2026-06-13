@@ -27,7 +27,14 @@ from pecos.qec.surface.circuit_builder import (
     generate_stim_from_patch,
     generate_tick_circuit_from_patch,
 )
-from pecos.qec.surface.decode import build_memory_circuit, build_native_sampler, generate_circuit_level_dem_from_builder
+from pecos.qec.surface.decode import (
+    _dem_string_from_cached_surface_topology,
+    _surface_native_topology,
+    _surface_patch_cache_key,
+    build_memory_circuit,
+    build_native_sampler,
+    generate_circuit_level_dem_from_builder,
+)
 
 
 def _to_numpy_complex(matrix: object) -> np.ndarray:
@@ -526,6 +533,44 @@ def test_szz_native_influence_sampler_respects_override_only_p2() -> None:
 
     assert "mechanisms=0" in repr(zero_sampler.sampler)
     assert "mechanisms=0" not in repr(active_sampler.sampler)
+
+
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_szz_prefix_lowering_preserves_p2_influence_dem(basis: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+    patch_key = _surface_patch_cache_key(patch)
+    noise = NoiseModel(p1=0.0, p2=0.01, p_meas=0.0, p_prep=0.0)
+
+    plain = _surface_native_topology(
+        patch_key,
+        1,
+        basis,
+        None,
+        "abstract",
+        False,
+        interaction_basis="szz",
+        szz_physical_prefixes=False,
+    )
+    lowered = _surface_native_topology(
+        patch_key,
+        1,
+        basis,
+        None,
+        "abstract",
+        False,
+        interaction_basis="szz",
+        szz_physical_prefixes=True,
+    )
+
+    assert _dem_string_from_cached_surface_topology(
+        lowered,
+        noise,
+        decompose_errors=False,
+    ) == _dem_string_from_cached_surface_topology(
+        plain,
+        noise,
+        decompose_errors=False,
+    )
 
 
 @pytest.mark.parametrize("sampling_model", ["dem", "influence_dem"])

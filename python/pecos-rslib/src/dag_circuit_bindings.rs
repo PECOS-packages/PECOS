@@ -26,7 +26,8 @@ use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
 use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
 use pecos_quantum::{
-    Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit, TickGateError,
+    Attribute, DagCircuit, Gate, GateType, PHYSICAL_DURATION_META_KEY, QubitId, Tick, TickCircuit,
+    TickGateError,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -3823,6 +3824,7 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
     parent_module.add_class::<PyTickHandle>()?;
     parent_module.add_class::<PyTickPrepHandle>()?;
     parent_module.add_class::<PyTickMeasureHandle>()?;
+    parent_module.add("PHYSICAL_DURATION_META_KEY", PHYSICAL_DURATION_META_KEY)?;
 
     // Add exceptions
     parent_module.add(

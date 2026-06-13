@@ -24,6 +24,7 @@ from pecos.qec.surface.circuit_builder import (
     _validate_szz_sign_vector,
     build_surface_code_circuit,
     generate_dag_circuit_from_patch,
+    generate_dem_from_tick_circuit,
     generate_stim_from_patch,
     generate_tick_circuit_from_patch,
 )
@@ -35,6 +36,7 @@ from pecos.qec.surface.decode import (
     build_native_sampler,
     generate_circuit_level_dem_from_builder,
 )
+from pecos.quantum import PHYSICAL_DURATION_META_KEY
 
 
 def _to_numpy_complex(matrix: object) -> np.ndarray:
@@ -155,6 +157,17 @@ def _gate_labels_for_tick(tick_circuit: object, tick_index: int) -> list[str | N
         tick_circuit.get_gate_meta(tick_index, gate_index, "label")
         for gate_index, _gate in enumerate(tick_circuit.get_tick(tick_index).gate_batches())
     ]
+
+
+def _retag_virtual_prefix_duration(tick_circuit: object, duration: float) -> int:
+    count = 0
+    for tick_index in range(tick_circuit.num_ticks()):
+        for gate_index, _gate in enumerate(tick_circuit.get_tick(tick_index).gate_batches()):
+            label = tick_circuit.get_gate_meta(tick_index, gate_index, "label")
+            if label and label.startswith("szz_virtual_prefix:"):
+                tick_circuit.set_gate_meta(tick_index, gate_index, PHYSICAL_DURATION_META_KEY, duration)
+                count += 1
+    return count
 
 
 def test_szz_unitary_identities() -> None:
@@ -606,13 +619,13 @@ def test_szz_prefix_lowering_emits_dedicated_prefix_ticks(basis: str) -> None:
             assert all(label.startswith("szz_virtual_prefix:") for label in prefix_labels)
             for gate_index, gate in enumerate(tick.gate_batches()):
                 assert gate.gate_type.name == "Z"
-                assert tick_circuit.get_gate_meta(tick_index, gate_index, "_physical_duration") == 0.0
+                assert tick_circuit.get_gate_meta(tick_index, gate_index, PHYSICAL_DURATION_META_KEY) == 0.0
         else:
             saw_physical_prefix = True
             assert all(label.startswith("szz_physical_prefix:") for label in prefix_labels)
             assert {gate.gate_type.name for gate in tick.gate_batches()} <= {"H", "F", "SY"}
             for gate_index, _gate in enumerate(tick.gate_batches()):
-                assert tick_circuit.get_gate_meta(tick_index, gate_index, "_physical_duration") is None
+                assert tick_circuit.get_gate_meta(tick_index, gate_index, PHYSICAL_DURATION_META_KEY) is None
 
     assert saw_physical_prefix
     assert saw_virtual_prefix
@@ -757,3 +770,50 @@ def test_szz_idle_dem_uses_lowered_prefix_topology(basis: str) -> None:
         noise,
         decompose_errors=False,
     )
+
+
+def test_szz_virtual_prefix_ticks_do_not_contribute_idle_dem() -> None:
+    patch = SurfacePatch.create(distance=3)
+    noise_kwargs = {
+        "p1": 0.0,
+        "p2": 0.0,
+        "p_meas": 0.0,
+        "p_prep": 0.0,
+        "p_idle_z_linear_rate": 0.01,
+        "decompose_errors": False,
+    }
+
+    tagged = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        basis="Z",
+        interaction_basis="szz",
+        szz_physical_prefixes=True,
+    )
+    retagged = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        basis="Z",
+        interaction_basis="szz",
+        szz_physical_prefixes=True,
+    )
+    assert _retag_virtual_prefix_duration(retagged, 1.0) > 0
+
+    tagged.fill_idle_gates()
+    retagged.fill_idle_gates()
+
+    tagged_dem = generate_dem_from_tick_circuit(tagged, **noise_kwargs)
+    retagged_dem = generate_dem_from_tick_circuit(retagged, **noise_kwargs)
+
+    assert (
+        generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=1,
+            basis="Z",
+            noise=NoiseModel(p_idle_z_linear_rate=0.01),
+            interaction_basis="szz",
+            decompose_errors=False,
+        )
+        == tagged_dem
+    )
+    assert retagged_dem != tagged_dem

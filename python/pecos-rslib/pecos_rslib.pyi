@@ -1397,6 +1397,8 @@ class llvm:
 # Tick Circuit
 # =============================================================================
 
+PHYSICAL_DURATION_META_KEY: str
+
 class GateType:
     """Gate type marker."""
 

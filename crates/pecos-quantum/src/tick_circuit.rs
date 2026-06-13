@@ -76,6 +76,9 @@ use crate::dag_circuit::{AnnotationKind, DagCircuit, PauliAnnotation};
 use std::fmt;
 use std::ops::{Deref, Index};
 
+/// Gate metadata key for explicitly zero-duration physical frame updates.
+pub const PHYSICAL_DURATION_META_KEY: &str = "_physical_duration";
+
 fn meta_json_array(circuit: &TickCircuit, key: &str) -> Result<Vec<serde_json::Value>, String> {
     let Some(attr) = circuit.get_meta(key) else {
         return Ok(Vec::new());
@@ -616,7 +619,7 @@ impl<'a> GateInstanceRef<'a> {
 }
 
 fn gate_batch_has_zero_physical_duration(gate: GateBatchRef<'_>) -> bool {
-    match gate.get_attr("_physical_duration") {
+    match gate.get_attr(PHYSICAL_DURATION_META_KEY) {
         Some(Attribute::Float(duration)) => *duration == 0.0,
         Some(Attribute::Int(duration)) => *duration == 0,
         _ => false,
@@ -6220,7 +6223,7 @@ mod tests {
         tc.tick().h(&[0, 1]);
         tc.tick()
             .z(&[0])
-            .meta("_physical_duration", Attribute::Float(0.0));
+            .meta(PHYSICAL_DURATION_META_KEY, Attribute::Float(0.0));
         tc.tick().h(&[0, 1]);
 
         tc.fill_idle_gates();
@@ -6229,7 +6232,7 @@ mod tests {
         assert_eq!(zero_duration_tick.gate_count(), 1);
         assert_eq!(zero_duration_tick.gate_batches()[0].gate_type, GateType::Z);
         assert_eq!(
-            zero_duration_tick.get_gate_attr(0, "_physical_duration"),
+            zero_duration_tick.get_gate_attr(0, PHYSICAL_DURATION_META_KEY),
             Some(&Attribute::Float(0.0))
         );
     }
@@ -6257,7 +6260,7 @@ mod tests {
         tc.tick()
             .h(&[0])
             .z(&[1])
-            .meta("_physical_duration", Attribute::Float(0.0));
+            .meta(PHYSICAL_DURATION_META_KEY, Attribute::Float(0.0));
 
         tc.fill_idle_gates();
     }

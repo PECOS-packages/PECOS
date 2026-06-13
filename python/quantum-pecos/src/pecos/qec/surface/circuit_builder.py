@@ -43,6 +43,7 @@ from pecos.qec.surface.patch import (
     get_stabilizer_region,
     get_stabilizer_touch_label,
 )
+from pecos.quantum import PHYSICAL_DURATION_META_KEY
 
 if TYPE_CHECKING:
     from pecos.qec.surface._twirl_config import TwirlConfig
@@ -2199,7 +2200,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 if op.label:
                     meta["label"] = op.label
                 if op.label.startswith("szz_virtual_prefix:"):
-                    meta["_physical_duration"] = 0.0
+                    meta[PHYSICAL_DURATION_META_KEY] = 0.0
                 apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.CX:

@@ -496,11 +496,12 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
         assert got == ref_dem, f"surface from_guppy not byte-identical ({basis})"
 
 
-def test_from_guppy_szz_surface_code_is_byte_identical_to_reference() -> None:
+@pytest.mark.parametrize("distance", [3, 5])
+def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: int) -> None:
     """SZZ-basis surface Guppy generation must match the traced-QIS reference DEM."""
     p = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
     for basis in ("Z", "X"):
-        patch = SurfacePatch.create(distance=3)
+        patch = SurfacePatch.create(distance=distance)
         ref = _build_surface_tick_circuit_for_native_model(
             patch,
             3,
@@ -513,18 +514,18 @@ def test_from_guppy_szz_surface_code_is_byte_identical_to_reference() -> None:
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(
-                distance=3,
+                distance=distance,
                 num_rounds=3,
                 basis=basis,
                 interaction_basis="szz",
             ),
-            num_qubits=get_num_qubits(3, interaction_basis="szz"),
+            num_qubits=get_num_qubits(distance, interaction_basis="szz"),
             detectors_json=ref.get_meta("detectors"),
             observables_json=ref.get_meta("observables"),
             num_measurements=int(ref.get_meta("num_measurements")),
             **p,
         ).to_string()
-        assert got == ref_dem, f"SZZ surface from_guppy not byte-identical ({basis})"
+        assert got == ref_dem, f"SZZ surface from_guppy not byte-identical (d={distance}, {basis})"
 
 
 def test_from_guppy_out_of_range_record_fails_loud() -> None:

@@ -46,7 +46,9 @@ def test_szz_source_uses_signed_zz_phase_template(patch: SurfacePatch) -> None:
     assert "cx(" not in src
     assert "h(az" in src
     assert "vdg(d" in src
+    assert "v(d" in src
     assert "sdg(d" in src
+    assert "s(d" in src
 
 
 def test_szz_source_rejects_staged_later_runtime_shapes(patch: SurfacePatch) -> None:

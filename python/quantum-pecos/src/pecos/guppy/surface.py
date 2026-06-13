@@ -246,7 +246,7 @@ def generate_guppy_source(
             "from guppylang.std.angles import angle",
             "from guppylang.std.builtins import array, owned, result",
             "from guppylang.std.qsystem.functional import zz_phase",
-            "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x",
+            "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, z",
         ]
     else:
         imports = [
@@ -254,7 +254,7 @@ def generate_guppy_source(
             "",
             "from guppylang import guppy",
             "from guppylang.std.builtins import array, owned, result",
-            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x",
+            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x, z",
         ]
 
     lines = [
@@ -415,13 +415,18 @@ def generate_guppy_source(
         # abstract circuit's unconstrained-path measurement order.
         lines.extend(
             [
-                '    """Extract full syndrome using 4-round parallel CNOT schedule."""',
-                "    # Allocate ancilla qubits (one per stabilizer)",
+                (
+                    '    """Extract full syndrome using 4-round parallel SZZ/SZZdg schedule."""'
+                    if interaction_basis == "szz"
+                    else '    """Extract full syndrome using 4-round parallel CNOT schedule."""'
+                ),
             ],
         )
         if interaction_basis == "szz":
+            lines.append("    # Unpack data qubits")
             _append_szz_data_unpack(lines, "    ")
 
+        lines.append("    # Allocate ancilla qubits (one per stabilizer)")
         lines.extend(f"    ax{stab.index} = qubit()" for stab in geom.x_stabilizers)
         lines.extend(f"    az{stab.index} = qubit()" for stab in geom.z_stabilizers)
 
@@ -774,8 +779,6 @@ def generate_guppy_source(
             "@guppy",
             f"def apply_logical_z(surf: SurfaceCode_{dx}x{dz}) -> None:",
             '    """Apply logical Z (string along top edge)."""',
-            "    from guppylang.std.quantum import z",
-            "",
         ],
     )
     if interaction_basis == "szz":

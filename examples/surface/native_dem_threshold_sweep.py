@@ -8,7 +8,8 @@ This example runs rotated surface-code memory experiments using:
 - direct ``selene_sim`` execution with either Selene ``Stim`` or the PECOS
   Selene stabilizer plugin
 - optional native DEM sampling via ``build_native_sampler(...)``
-- a depolarizing noise model with ``p2 = p``, ``p1 = p/30``, ``p_meas = p_prep = p/3``
+- circuit-level rates ``p2 = p``, ``p1 = p/30``, ``p_meas = p_prep = p/3``
+  with selectable ``sim`` runtime noise builders
 - ``SurfaceDecoder(...)`` with PECOS-native DEMs (PyMatching or Tesseract)
 
 For the ``sim`` backend, decoding is performed relative to a cached noiseless
@@ -261,7 +262,7 @@ def _backend_runtime_label(sample_backend: str, native_circuit_source: str = "ab
     if sample_backend == "sim":
         return (
             "sim(Guppy(...)).classical(selene_engine()).quantum(pecos.stabilizer()) "
-            f"+ PECOS depolarizing noise + native DEM source={native_circuit_source} + noiseless "
+            f"+ PECOS runtime noise + native DEM source={native_circuit_source} + noiseless "
             "reference-trajectory calibration"
         )
     if sample_backend == "selene_sim":
@@ -552,29 +553,37 @@ def _noise_model_description(args: argparse.Namespace) -> str:
     p1s = getattr(args, "p1_scale", 1.0 / 30.0)
     pms = getattr(args, "p_meas_scale", 1.0 / 3.0)
     pps = getattr(args, "p_prep_scale", 1.0 / 3.0)
-    return f"depolarizing with p1={p1s:.4g}*p, p2=p, p_meas={pms:.4g}*p, p_prep={pps:.4g}*p"
+    sim_noise_model = getattr(args, "sim_noise_model", "depolarizing")
+    base = f"p1={p1s:.4g}*p, p2=p, p_meas={pms:.4g}*p, p_prep={pps:.4g}*p"
+    if sim_noise_model == "general":
+        return f"general_noise runtime ({base}, leak2depolar=True, p_idle_coherent=False)"
+    return f"depolarizing runtime ({base})"
 
 
 def _create_dem_decoder(decoder_type: str, dem_str: str, *, tesseract_beam: int = 5) -> object:
     """Create a DEM-level decoder from a DEM string.
 
-    Supports MWPM decoders (pymatching), search decoders (tesseract), and
-    check-matrix decoders (bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp)
-    via DemAwareDecoder which extracts the check matrix from the DEM.
+    Supports MWPM decoders (pymatching, pymatching_correlated), search
+    decoders (tesseract), and check-matrix decoders (bp_osd, bp_lsd,
+    union_find, relay_bp, min_sum_bp) via DemAwareDecoder which extracts the
+    check matrix from the DEM.
     """
     if decoder_type == "tesseract":
-        from pecos_rslib.decoders import TesseractDecoder
+        from pecos.decoders import TesseractDecoder
 
         dem_filtered = "\n".join(line for line in dem_str.split("\n") if not line.startswith("logical_observable"))
         return TesseractDecoder.from_dem(dem_filtered, preset="fast", det_beam=tesseract_beam)
 
     if decoder_type in _CHECK_MATRIX_DECODERS:
-        from pecos_rslib.decoders import DemAwareDecoder
+        from pecos.decoders import DemAwareDecoder
 
         dem_filtered = "\n".join(line for line in dem_str.split("\n") if not line.startswith("logical_observable"))
         return DemAwareDecoder.from_dem(dem_filtered, decoder_type=decoder_type)
 
-    from pecos_rslib.decoders import PyMatchingDecoder
+    from pecos.decoders import PyMatchingDecoder
+
+    if decoder_type == "pymatching_correlated":
+        return PyMatchingDecoder.from_dem_with_correlations(dem_str, enable_correlations=True)
 
     return PyMatchingDecoder.from_dem(dem_str)
 
@@ -613,7 +622,7 @@ def _decode_all_shots(
     )
 
     # PyMatching batch: takes flattened (num_shots * num_detectors) u8 array
-    from pecos_rslib.decoders import PyMatchingDecoder
+    from pecos.decoders import PyMatchingDecoder
 
     if isinstance(dem_decoder, PyMatchingDecoder):
         flat = detection_events.astype(np.uint8).flatten().tolist()
@@ -623,7 +632,7 @@ def _decode_all_shots(
         return int(np.sum(predicted != true_flips))
 
     # Tesseract batch: takes list of syndromes, parallel rayon
-    from pecos_rslib.decoders import TesseractDecoder
+    from pecos.decoders import TesseractDecoder
 
     if isinstance(dem_decoder, TesseractDecoder):
         syndromes = [detection_events[i].astype(np.uint8).tolist() for i in range(num_shots)]
@@ -652,6 +661,7 @@ def _decoder_runtime(
     physical_error_rate: float,
     dem_mode: str,
     native_circuit_source: str,
+    interaction_basis: str = "cx",
     decoder_type: str = "pymatching",
     ancilla_budget: int | None = None,
     p1_scale: float = 0.1,
@@ -673,11 +683,12 @@ def _decoder_runtime(
         patch,
         num_rounds=total_rounds,
         noise=noise,
-        decoder_type=decoder_type,
+        decoder_type="pymatching" if decoder_type == "pymatching_correlated" else decoder_type,
         use_circuit_level_dem=True,
         circuit_level_dem_mode=dem_mode,
         circuit_level_dem_source=native_circuit_source,
         ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
     )
     return _DecoderRuntime(
         patch=patch,
@@ -689,6 +700,13 @@ def _decoder_runtime(
     )
 
 
+def _native_sampler_model_for_decoder(decoder_type: str) -> str:
+    """Choose the native sampler model paired with a DEM decoder."""
+    if decoder_type in {"pymatching", "pymatching_correlated"}:
+        return "dem"
+    return "influence_dem"
+
+
 @cache
 def _native_sampler_runtime(
     distance: int,
@@ -697,6 +715,7 @@ def _native_sampler_runtime(
     physical_error_rate: float,
     dem_mode: str,
     native_circuit_source: str,
+    interaction_basis: str = "cx",
     decoder_type: str = "pymatching",
     ancilla_budget: int | None = None,
     p1_scale: float = 0.1,
@@ -714,6 +733,7 @@ def _native_sampler_runtime(
         physical_error_rate,
         dem_mode,
         native_circuit_source,
+        interaction_basis=interaction_basis,
         decoder_type=decoder_type,
         ancilla_budget=ancilla_budget,
         p1_scale=p1_scale,
@@ -727,10 +747,14 @@ def _native_sampler_runtime(
         basis=basis,
         circuit_source=native_circuit_source,
         ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
+        sampling_model=_native_sampler_model_for_decoder(decoder_type),
     )
-    # PyMatching needs decomposed (graph-like) DEMs; Tesseract and check-matrix
-    # decoders handle hyperedges natively and should get the full DEM.
-    if decoder_type == "pymatching":
+    # PyMatching uses graphlike decomposed DEMs. The correlated variant also
+    # consumes decomposition separators as correlation metadata. Tesseract and
+    # check-matrix decoders handle hyperedges natively and should get the full
+    # DEM.
+    if decoder_type in {"pymatching", "pymatching_correlated"}:
         dem_str = runtime.decoder.get_dem(basis.upper(), circuit_level=True)
     else:
         dem_str = generate_circuit_level_dem_from_builder(
@@ -741,6 +765,7 @@ def _native_sampler_runtime(
             decompose_errors=False,
             circuit_source=native_circuit_source,
             ancilla_budget=ancilla_budget,
+            interaction_basis=interaction_basis,
         )
     dem_decoder = _create_dem_decoder(decoder_type, dem_str)
     # The traced-QIS sampler stack has a noticeable one-time initialization cost
@@ -764,7 +789,9 @@ def _sim_reference_trajectory(
     distance: int,
     total_rounds: int,
     basis: str,
-) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...], tuple[int, ...]]:
+    interaction_basis: str,
+    sim_noise_model: str,
+) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...], tuple[int, ...], tuple[int, ...]]:
     """Cache a noiseless gate-level trajectory used as a decoding reference."""
     import numpy as np
     from pecos.qec.surface import SurfacePatch
@@ -778,6 +805,8 @@ def _sim_reference_trajectory(
         total_rounds=total_rounds,
         num_shots=1,
         seed=0,
+        interaction_basis=interaction_basis,
+        sim_noise_model=sim_noise_model,
     )
 
     synx_rows = _reshape_round_values(
@@ -793,32 +822,40 @@ def _sim_reference_trajectory(
         "synz",
     )
     final = np.asarray(_result_rows_for_key(result_dict, "final")[0], dtype=np.uint8)
+    init_key = "init_synx" if basis.upper() == "Z" else "init_synz"
+    init = np.asarray(_result_rows_for_key(result_dict, init_key)[0], dtype=np.uint8)
 
     return (
         tuple(tuple(int(v) for v in row) for row in synx_rows),
         tuple(tuple(int(v) for v in row) for row in synz_rows),
         tuple(int(v) for v in final.tolist()),
+        tuple(int(v) for v in init.tolist()),
     )
 
 
 @cache
-def _compiled_guppy_hugr(distance: int, total_rounds: int, basis: str) -> bytes:
+def _compiled_guppy_hugr(distance: int, total_rounds: int, basis: str, interaction_basis: str = "cx") -> bytes:
     """Cache compiled HUGR bytes for the direct selene_sim backend."""
     from pecos.compilation_pipeline import compile_guppy_to_hugr
     from pecos.guppy import make_surface_code
 
-    program = make_surface_code(distance=distance, num_rounds=total_rounds, basis=basis)
+    program = make_surface_code(
+        distance=distance,
+        num_rounds=total_rounds,
+        basis=basis,
+        interaction_basis=interaction_basis,
+    )
     return compile_guppy_to_hugr(program)
 
 
 @cache
-def _selene_instance(distance: int, total_rounds: int, basis: str) -> object:
+def _selene_instance(distance: int, total_rounds: int, basis: str, interaction_basis: str = "cx") -> object:
     """Cache a built Selene instance for one circuit shape."""
     from selene_sim import build
 
     instance = build(
-        _compiled_guppy_hugr(distance, total_rounds, basis),
-        name=f"surface_d{distance}_{basis.lower()}_r{total_rounds}",
+        _compiled_guppy_hugr(distance, total_rounds, basis, interaction_basis),
+        name=f"surface_d{distance}_{basis.lower()}_{interaction_basis}_r{total_rounds}",
     )
     _CACHED_SELENE_INSTANCES.append(instance)
     return instance
@@ -837,6 +874,8 @@ def _run_gate_backend_result_dict(
     p1_scale: float = 0.1,
     p_meas_scale: float = 0.5,
     p_prep_scale: float = 0.5,
+    interaction_basis: str = "cx",
+    sim_noise_model: str = "depolarizing",
 ) -> dict[str, list[list[int]]]:
     """Run one gate-level backend and normalize results to a shot-map-like dict."""
     import os
@@ -860,11 +899,11 @@ def _run_gate_backend_result_dict(
         )
 
         compile_start = time.perf_counter()
-        _compiled_guppy_hugr(distance, total_rounds, basis)
+        _compiled_guppy_hugr(distance, total_rounds, basis, interaction_basis)
         compile_seconds = time.perf_counter() - compile_start
 
         build_start = time.perf_counter()
-        instance = _selene_instance(distance, total_rounds, basis)
+        instance = _selene_instance(distance, total_rounds, basis, interaction_basis)
         build_seconds = time.perf_counter() - build_start
 
         reset_start = time.perf_counter()
@@ -885,7 +924,7 @@ def _run_gate_backend_result_dict(
         run_start = time.perf_counter()
         for shot_results in instance.run_shots(
             simulator=simulator,
-            n_qubits=get_num_qubits(distance),
+            n_qubits=get_num_qubits(distance, interaction_basis=interaction_basis),
             n_shots=num_shots,
             error_model=error_model,
             runtime=SimpleRuntime(),
@@ -914,24 +953,45 @@ def _run_gate_backend_result_dict(
     if sample_backend == "sim":
         backend_start = time.perf_counter()
         noise_start = time.perf_counter()
-        noise_model = pecos.depolarizing_noise()
-        noise_model.set_probabilities(
-            physical_error_rate * p_prep_scale,  # p_prep
-            physical_error_rate * p_meas_scale,  # p_meas_0
-            physical_error_rate * p_meas_scale,  # p_meas_1
-            physical_error_rate * p1_scale,  # p1 (single-qubit gates)
-            physical_error_rate,  # p2 (two-qubit gates)
-        )
+        if sim_noise_model == "general":
+            use_coherent_idle = False
+            noise_model = (
+                pecos.general_noise()
+                .with_prep_probability(physical_error_rate * p_prep_scale)
+                .with_meas_probability(physical_error_rate * p_meas_scale)
+                .with_p1_probability(physical_error_rate * p1_scale)
+                .with_p2_probability(physical_error_rate)
+                .with_leakage_scale(0.0)
+                .with_p_idle_coherent(use_coherent_idle)
+                .with_seed(seed)
+            )
+        elif sim_noise_model == "depolarizing":
+            noise_model = pecos.depolarizing_noise()
+            noise_model.set_probabilities(
+                physical_error_rate * p_prep_scale,  # p_prep
+                physical_error_rate * p_meas_scale,  # p_meas_0
+                physical_error_rate * p_meas_scale,  # p_meas_1
+                physical_error_rate * p1_scale,  # p1 (single-qubit gates)
+                physical_error_rate,  # p2 (two-qubit gates)
+            )
+        else:
+            msg = f"Unknown sim noise model: {sim_noise_model}"
+            raise ValueError(msg)
         noise_seconds = time.perf_counter() - noise_start
         program_start = time.perf_counter()
-        program = make_surface_code(distance=distance, num_rounds=total_rounds, basis=basis)
+        program = make_surface_code(
+            distance=distance,
+            num_rounds=total_rounds,
+            basis=basis,
+            interaction_basis=interaction_basis,
+        )
         program_seconds = time.perf_counter() - program_start
         run_start = time.perf_counter()
         shot_vec = (
             pecos.sim(program)
             .classical(pecos.selene_engine())
             .quantum(pecos.stabilizer())
-            .qubits(get_num_qubits(distance))
+            .qubits(get_num_qubits(distance, interaction_basis=interaction_basis))
             .noise(noise_model)
             .seed(seed)
             .run(num_shots)
@@ -979,6 +1039,8 @@ def _profile_gate_backends(
     duration_rounds_by_distance: dict[int, tuple[int, ...]],
     shots: int,
     seed: int,
+    interaction_basis: str,
+    sim_noise_model: str,
     warmup_repetitions: int,
     benchmark_repetitions: int,
 ) -> None:
@@ -1045,6 +1107,8 @@ def _profile_gate_backends(
                     total_rounds=total_rounds,
                     num_shots=shots,
                     seed=combo_seed + rep,
+                    interaction_basis=interaction_basis,
+                    sim_noise_model=sim_noise_model,
                 )
 
             runs: list[dict[str, float]] = []
@@ -1059,6 +1123,8 @@ def _profile_gate_backends(
                     num_shots=shots,
                     seed=combo_seed + warmup_repetitions + rep,
                     timing_sink=timing,
+                    interaction_basis=interaction_basis,
+                    sim_noise_model=sim_noise_model,
                 )
                 runs.append(timing)
 
@@ -1102,6 +1168,8 @@ def _run_memory_point(
     p1_scale: float = 0.1,
     p_meas_scale: float = 0.5,
     p_prep_scale: float = 0.5,
+    interaction_basis: str = "cx",
+    sim_noise_model: str = "depolarizing",
 ) -> SweepPoint:
     """Run one surface-memory point and decode it with native PECOS DEMs."""
     import numpy as np
@@ -1114,6 +1182,7 @@ def _run_memory_point(
         physical_error_rate,
         dem_mode,
         native_circuit_source,
+        interaction_basis=interaction_basis,
         decoder_type=decoder_type,
         ancilla_budget=ancilla_budget,
         p1_scale=p1_scale,
@@ -1130,15 +1199,18 @@ def _run_memory_point(
     num_raw_errors: int | None = 0
 
     if sample_backend in {"sim", "selene_sim", "selene_stabilizer_plugin"}:
-        ref_synx_rows, ref_synz_rows, ref_final_row = _sim_reference_trajectory(
+        ref_synx_rows, ref_synz_rows, ref_final_row, ref_init_row = _sim_reference_trajectory(
             sample_backend,
             distance,
             total_rounds,
             basis.upper(),
+            interaction_basis,
+            sim_noise_model,
         )
         ref_synx_list = [np.asarray(row, dtype=np.uint8) for row in ref_synx_rows]
         ref_synz_list = [np.asarray(row, dtype=np.uint8) for row in ref_synz_rows]
         ref_final = np.asarray(ref_final_row, dtype=np.uint8)
+        ref_init = np.asarray(ref_init_row, dtype=np.uint8)
         result_dict = _run_gate_backend_result_dict(
             sample_backend=sample_backend,
             distance=distance,
@@ -1150,16 +1222,26 @@ def _run_memory_point(
             p1_scale=p1_scale,
             p_meas_scale=p_meas_scale,
             p_prep_scale=p_prep_scale,
+            interaction_basis=interaction_basis,
+            sim_noise_model=sim_noise_model,
         )
 
         synx_rows = _result_rows_for_key(result_dict, "synx")
         synz_rows = _result_rows_for_key(result_dict, "synz")
         final_rows = _result_rows_for_key(result_dict, "final")
+        init_key = "init_synx" if basis.upper() == "Z" else "init_synz"
+        init_rows = _result_rows_for_key(result_dict, init_key)
 
-        if len(synx_rows) != num_shots or len(synz_rows) != num_shots or len(final_rows) != num_shots:
+        if (
+            len(synx_rows) != num_shots
+            or len(synz_rows) != num_shots
+            or len(final_rows) != num_shots
+            or len(init_rows) != num_shots
+        ):
             msg = (
                 "Result register lengths do not match the requested shot count: "
-                f"synx={len(synx_rows)}, synz={len(synz_rows)}, final={len(final_rows)}, shots={num_shots}"
+                f"synx={len(synx_rows)}, synz={len(synz_rows)}, final={len(final_rows)}, "
+                f"{init_key}={len(init_rows)}, shots={num_shots}"
             )
             raise ValueError(
                 msg,
@@ -1169,12 +1251,16 @@ def _run_memory_point(
             synx_list = _reshape_round_values(synx_rows[shot_idx], total_rounds, num_x_stab, "synx")
             synz_list = _reshape_round_values(synz_rows[shot_idx], total_rounds, num_z_stab, "synz")
             final = np.asarray(final_rows[shot_idx], dtype=np.uint8)
+            init = np.asarray(init_rows[shot_idx], dtype=np.uint8)
 
             if final.size != patch.geometry.num_data:
                 msg = f"Register 'final' has {final.size} bits for one shot, expected {patch.geometry.num_data}"
                 raise ValueError(
                     msg,
                 )
+            if init.shape != ref_init.shape:
+                msg = f"Register {init_key!r} has shape {init.shape}, expected {ref_init.shape}"
+                raise ValueError(msg)
 
             # Decode relative to the noiseless gate-level baseline so the native
             # DEM sees deviations from the actual circuit trajectory.
@@ -1187,6 +1273,7 @@ def _run_memory_point(
                 for synz, ref_synz in zip(synz_list, ref_synz_list, strict=True)
             ]
             final = final ^ ref_final
+            init = init ^ ref_init
 
             raw_parity = int(sum(int(final[q]) for q in logical_qubits) % 2)
             if num_raw_errors is None:
@@ -1195,9 +1282,9 @@ def _run_memory_point(
             num_raw_errors += raw_parity
 
             if basis.upper() == "Z":
-                is_error, _ = decoder.decode_memory_z(synx_list, synz_list, final)
+                is_error, _ = decoder.decode_memory_z(synx_list, synz_list, final, init_synx=init)
             else:
-                is_error, _ = decoder.decode_memory_x(synx_list, synz_list, final)
+                is_error, _ = decoder.decode_memory_x(synx_list, synz_list, final, init_synz=init)
             num_logical_errors += int(is_error)
     elif sample_backend == "native_sampler":
         native_runtime = _native_sampler_runtime(
@@ -1207,6 +1294,7 @@ def _run_memory_point(
             physical_error_rate,
             dem_mode,
             native_circuit_source,
+            interaction_basis=interaction_basis,
             decoder_type=decoder_type,
             ancilla_budget=ancilla_budget,
             p1_scale=p1_scale,
@@ -1222,7 +1310,13 @@ def _run_memory_point(
         # The DemSampler keeps all per-shot data in Rust -- nothing crosses to Python.
         dem_str_for_rust = native_runtime.dem_str
         rust_sampler = getattr(sampler, "sampler", None)
-        if dem_str_for_rust and rust_sampler and hasattr(rust_sampler, "sample_decode_count"):
+        use_rust_sample_decode = (
+            decoder_type != "pymatching_correlated"
+            and dem_str_for_rust
+            and rust_sampler
+            and hasattr(rust_sampler, "sample_decode_count")
+        )
+        if use_rust_sample_decode:
             # Use parallel path for slow decoders (Tesseract, BP+OSD, etc.)
             if decoder_type != "pymatching" and hasattr(rust_sampler, "sample_decode_count_parallel"):
                 num_logical_errors = rust_sampler.sample_decode_count_parallel(
@@ -1874,6 +1968,8 @@ def _write_json_results(
             "shots": args.shots,
             "dem_mode": args.dem_mode,
             "native_circuit_source": args.native_circuit_source,
+            "interaction_basis": args.interaction_basis,
+            "sim_noise_model": args.sim_noise_model,
             "seed": args.seed,
             "backend_runtime_descriptions": {
                 backend: _backend_runtime_label(backend, args.native_circuit_source)
@@ -3511,6 +3607,8 @@ def _config_for_report(args: argparse.Namespace) -> dict[str, Any]:
         # appendix page can read the same field from either source.
         "sample_backend_mode": getattr(args, "sample_backend", None),
         "native_circuit_source": getattr(args, "native_circuit_source", None),
+        "interaction_basis": getattr(args, "interaction_basis", None),
+        "sim_noise_model": getattr(args, "sim_noise_model", None),
         "decoder": getattr(args, "decoder", ["pymatching"]),
         "noise_model": _noise_model_description(args),
         "seed": getattr(args, "seed", None),
@@ -3622,19 +3720,50 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--interaction-basis",
+        choices=["cx", "szz"],
+        default="cx",
+        help="Surface-memory two-qubit interaction basis to generate and analyze.",
+    )
+    parser.add_argument(
+        "--sim-noise-model",
+        choices=["depolarizing", "general"],
+        default="depolarizing",
+        help=(
+            "Runtime noise model used by --sample-backend sim. The 'general' "
+            "option sets leak2depolar=True and p_idle_coherent=False."
+        ),
+    )
+    parser.add_argument(
         "--dem-mode",
-        choices=["native_decomposed", "native_full"],
+        choices=["native_decomposed", "native_full", "native_terminal_graphlike"],
         default="native_decomposed",
-        help="PECOS native DEM mode. PyMatching typically wants native_decomposed.",
+        help=(
+            "PECOS native DEM mode. Graph decoders such as PyMatching require "
+            "native_decomposed or native_terminal_graphlike; raw-DEM decoders "
+            "should use native_full. The graphlike modes are lossy "
+            "hyperedge-to-edge decoder projections."
+        ),
     )
     parser.add_argument(
         "--decoder",
         nargs="+",
-        choices=["pymatching", "tesseract", "bp_osd", "bp_lsd", "union_find", "relay_bp", "min_sum_bp"],
+        choices=[
+            "pymatching",
+            "pymatching_correlated",
+            "tesseract",
+            "bp_osd",
+            "bp_lsd",
+            "union_find",
+            "relay_bp",
+            "min_sum_bp",
+        ],
         default=["pymatching"],
         help=(
             "Decoder(s) for circuit-level DEM decoding. Specify multiple to "
             "compare them side-by-side in plots and reports. Default: pymatching. "
+            "pymatching_correlated enables PyMatching's DEM-correlation mode for "
+            "decomposed errors. "
             "Check-matrix decoders (bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp) "
             "extract a check matrix from the DEM automatically."
         ),
@@ -3845,16 +3974,15 @@ def _print_config_banner(
     print(f"shots / point    : {args.shots}")
     print(f"sample backend mode: {args.sample_backend}")
     print(f"executed backends: {backends}")
+    print(f"interaction basis: {args.interaction_basis}")
+    print(f"sim noise model  : {args.sim_noise_model}")
     print(f"DEM mode         : {args.dem_mode}")
     print(f"native circuit source: {args.native_circuit_source}")
     decoders = getattr(args, "decoder", ["pymatching"])
     print(f"decoder(s)       : {', '.join(decoders)} via SurfaceDecoder(native PECOS DEM)")
     for backend in backends:
         print(f"runtime[{backend}]  : {_backend_runtime_label(backend, args.native_circuit_source)}")
-    p1s = getattr(args, "p1_scale", 0.1)
-    pms = getattr(args, "p_meas_scale", 0.5)
-    pps = getattr(args, "p_prep_scale", 0.5)
-    print(f"noise model      : depolarizing with p1={p1s}*p, p2=p, p_meas={pms}*p, p_prep={pps}*p")
+    print(f"noise model      : {_noise_model_description(args)}")
     print("fit model        : p_L(r) = 0.5 * (1 - (1 - 2 * epsilon) ** r)")
     if output_dir is not None:
         print(f"artifact dir     : {output_dir}")
@@ -3902,6 +4030,8 @@ def _run_one_memory_point(
         p1_scale=getattr(args, "p1_scale", 0.1),
         p_meas_scale=getattr(args, "p_meas_scale", 0.5),
         p_prep_scale=getattr(args, "p_prep_scale", 0.5),
+        interaction_basis=getattr(args, "interaction_basis", "cx"),
+        sim_noise_model=getattr(args, "sim_noise_model", "depolarizing"),
     )
     elapsed_seconds = time.perf_counter() - point_start
     naive_per_round = ler_per_round_exp(point.logical_error_rate, point.total_rounds)
@@ -3919,6 +4049,7 @@ def _run_one_memory_point(
         "physical_error_rate": physical_error_rate,
         "total_rounds": total_rounds,
         "num_shots": args.shots,
+        "interaction_basis": getattr(args, "interaction_basis", "cx"),
         "elapsed_seconds": elapsed_seconds,
     }
     return point, timing_row
@@ -4194,6 +4325,9 @@ def _print_post_sweep_analysis(
 def main() -> int:
     """Run the threshold sweep CLI and optionally write summary artifacts."""
     args = _parse_args()
+    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
+
+    args.interaction_basis = _normalize_interaction_basis(args.interaction_basis)
     if args.open_html:
         args.save_html = True
     if args.save_html:
@@ -4238,6 +4372,8 @@ def main() -> int:
             duration_rounds_by_distance=duration_rounds_by_distance,
             shots=args.shots,
             seed=args.seed,
+            interaction_basis=args.interaction_basis,
+            sim_noise_model=args.sim_noise_model,
             warmup_repetitions=args.benchmark_warmup,
             benchmark_repetitions=args.benchmark_repetitions,
         )

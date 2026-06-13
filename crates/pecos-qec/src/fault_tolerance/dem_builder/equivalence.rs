@@ -19,8 +19,10 @@
 //!
 //! - Two DEMs are equivalent if they produce the same probability distribution
 //!   over (`detector_events`, `dem_output_flips`) patterns.
-//! - Decomposed DEMs (using ^) create independent error channels that are `XORed`.
-//! - Different decomposition strategies can produce equivalent sampling results.
+//! - Decomposed DEMs (using ^) split one correlated error mechanism into
+//!   graphlike components that are `XORed` when that mechanism fires.
+//! - Different decomposition strategies can produce equivalent sampling results
+//!   when their correlated mechanisms have the same combined effects.
 //! - For non-decomposed DEMs, mechanisms must match exactly.
 //!
 //! # Comparison Methods

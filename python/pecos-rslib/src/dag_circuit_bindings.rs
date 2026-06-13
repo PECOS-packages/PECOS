@@ -26,7 +26,8 @@ use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
 use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
 use pecos_quantum::{
-    Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit, TickGateError,
+    Attribute, DagCircuit, Gate, GateType, PHYSICAL_DURATION_META_KEY, QubitId, Tick, TickCircuit,
+    TickGateError,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -2671,6 +2672,60 @@ impl PyTickCircuit {
         SimplifyRotations.apply_tick(&mut self.inner);
     }
 
+    /// Remove identity gates and zero-angle rotations.
+    ///
+    /// Modifies the circuit in place.
+    fn remove_identity(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, RemoveIdentity};
+        RemoveIdentity.apply_tick(&mut self.inner);
+    }
+
+    /// Cancel adjacent inverse gate pairs.
+    ///
+    /// This removes adjacent inverse pairs such as H-H, SX-SXdg, and SZZ-SZZdg
+    /// when they act on the same qubits with no intervening operation on those
+    /// qubits. Modifies the circuit in place.
+    fn cancel_inverses(&mut self) {
+        use pecos_quantum::pass::{CancelInverses, CircuitPass};
+        CancelInverses.apply_tick(&mut self.inner);
+    }
+
+    /// Merge adjacent same-axis rotation gates.
+    ///
+    /// Consecutive rotations such as RZ(a) followed by RZ(b) on the same qubit
+    /// become one RZ(a+b). Run lower_clifford_rotations() afterwards when
+    /// special-angle rotations should become named Clifford gates.
+    /// Modifies the circuit in place.
+    fn merge_adjacent_rotations(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, MergeAdjacentRotations};
+        MergeAdjacentRotations.apply_tick(&mut self.inner);
+    }
+
+    /// Run PECOS's local peephole optimizer.
+    ///
+    /// Currently recognizes small Clifford patterns such as H-conjugated
+    /// two-qubit gates. Modifies the circuit in place.
+    fn peephole_optimize(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, PeepholeOptimize};
+        PeepholeOptimize.apply_tick(&mut self.inner);
+    }
+
+    /// Absorb redundant Z-diagonal gates next to Z preparations/measurements.
+    ///
+    /// Modifies the circuit in place.
+    fn absorb_basis_gates(&mut self) {
+        use pecos_quantum::pass::{AbsorbBasisGates, CircuitPass};
+        AbsorbBasisGates.apply_tick(&mut self.inner);
+    }
+
+    /// Simplify adjacent single-qubit Clifford chains.
+    ///
+    /// Modifies the circuit in place.
+    fn simplify_single_qubit_clifford_chains(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, SimplifySingleQubitCliffordChains};
+        SimplifySingleQubitCliffordChains.apply_tick(&mut self.inner);
+    }
+
     /// Assign MeasId to measurement gates that don't have them.
     ///
     /// Use on circuits from external sources (QIS trace, Stim import)
@@ -3823,6 +3878,7 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
     parent_module.add_class::<PyTickHandle>()?;
     parent_module.add_class::<PyTickPrepHandle>()?;
     parent_module.add_class::<PyTickMeasureHandle>()?;
+    parent_module.add("PHYSICAL_DURATION_META_KEY", PHYSICAL_DURATION_META_KEY)?;
 
     // Add exceptions
     parent_module.add(

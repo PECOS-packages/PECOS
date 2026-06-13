@@ -15,6 +15,7 @@ from pecos.qec.surface import (
     SurfacePatch,
     classify_stabilizer_boundary,
     describe_surface_memory_experiment,
+    extract_detection_events_and_observables,
     generate_tick_circuit_from_patch,
     get_detector_descriptors_from_tick_circuit,
     get_measurement_order_from_tick_circuit,
@@ -25,9 +26,37 @@ from pecos.qec.surface import (
     get_stabilizer_schedule_metadata,
     get_stabilizer_touch_label,
 )
+from pecos.qec.surface.circuit_builder import _metadata_record_offsets
 
 if TYPE_CHECKING:
     from pecos.qec.surface import SurfacePatchDescriptor
+
+
+class _MetadataOnlyTickCircuit:
+    def __init__(self, metadata: dict[str, str]) -> None:
+        self._metadata = metadata
+
+    def get_meta(self, key: str) -> str | None:
+        return self._metadata.get(key)
+
+
+def test_metadata_record_offsets_require_records_or_meas_ids() -> None:
+    """Local metadata consumers should not silently ignore malformed entries."""
+    assert _metadata_record_offsets({"records": []}, 3) == []
+    assert _metadata_record_offsets({"meas_ids": [1, 2]}, 5) == [-4, -3]
+
+    with pytest.raises(ValueError, match=r"records.*meas_ids"):
+        _metadata_record_offsets({"id": 0}, 3)
+
+    tick_circuit = _MetadataOnlyTickCircuit(
+        {
+            "detectors": json.dumps([{"id": 0, "coords": [0, 0, 0]}]),
+            "observables": "[]",
+            "num_measurements": "1",
+        },
+    )
+    with pytest.raises(ValueError, match=r"records.*meas_ids"):
+        extract_detection_events_and_observables(tick_circuit, [[0]])
 
 
 def test_surface_schedule_helpers_expose_region_and_touch_labels() -> None:

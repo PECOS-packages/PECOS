@@ -223,10 +223,10 @@ class TestSurfaceDecoder:
         real_generate = decode_module.generate_circuit_level_dem_from_builder
         calls = 0
 
-        def wrapped_generate(*args: object, **kwargs: object) -> str:
+        def wrapped_generate(*_args: object, **kwargs: object) -> str:
             nonlocal calls
             calls += 1
-            return real_generate(*args, **kwargs)
+            return real_generate(*_args, **kwargs)
 
         monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
 
@@ -235,6 +235,63 @@ class TestSurfaceDecoder:
 
         assert dem_1 == dem_2
         assert calls == 1
+
+    def test_get_dem_passes_interaction_basis_to_native_builder(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Decoder DEM generation should use the requested interaction basis."""
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **kwargs: object) -> str:
+            seen["interaction_basis"] = kwargs.get("interaction_basis")
+            return "error(0.01) D0\n"
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            circuit_level_dem_mode="native_decomposed",
+            interaction_basis="SZZ",
+        )
+
+        assert decoder.interaction_basis == "szz"
+        assert decoder.get_dem("Z", circuit_level=True) == "error(0.01) D0\n"
+        assert seen["interaction_basis"] == "szz"
+
+    def test_get_dem_passes_terminal_graphlike_mode_to_native_builder(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The terminal graphlike mode should select the terminal DEM projection."""
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **kwargs: object) -> str:
+            seen["decompose_errors"] = kwargs.get("decompose_errors")
+            seen["dem_decomposition"] = kwargs.get("dem_decomposition")
+            return "error(0.01) D0\n"
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            circuit_level_dem_mode="native_terminal_graphlike",
+        )
+
+        assert decoder.get_dem("Z", circuit_level=True) == "error(0.01) D0\n"
+        assert seen == {
+            "decompose_errors": True,
+            "dem_decomposition": "terminal_graphlike",
+        }
 
     def test_decode_trivial_syndrome_z(self) -> None:
         """Decode trivial Z syndrome (no errors)."""

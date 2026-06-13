@@ -21,7 +21,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, GateQubits, QubitId};
+use pecos_core::{Angle64, Clifford, Gate, GateQubits, QubitId};
 
 use crate::{Attribute, DagCircuit, Tick, TickCircuit};
 
@@ -104,6 +104,11 @@ pub fn peephole_optimize(circuit: &mut TickCircuit) {
 /// Absorb single-qubit basis gates into adjacent preps/measurements.
 pub fn absorb_basis_gates(circuit: &mut TickCircuit) {
     AbsorbBasisGates.apply_tick(circuit);
+}
+
+/// Simplify adjacent single-qubit Clifford chains on each qubit.
+pub fn simplify_single_qubit_clifford_chains(circuit: &mut TickCircuit) {
+    SimplifySingleQubitCliffordChains.apply_tick(circuit);
 }
 
 /// Compact ticks by ASAP scheduling (merge gates into earlier ticks).
@@ -1169,6 +1174,237 @@ impl CircuitPass for AbsorbBasisGates {
     }
 }
 
+const SINGLE_QUBIT_CLIFFORD_CANDIDATES: [GateType; 12] = [
+    GateType::Z,
+    GateType::SZ,
+    GateType::SZdg,
+    GateType::X,
+    GateType::Y,
+    GateType::H,
+    GateType::SX,
+    GateType::SXdg,
+    GateType::SY,
+    GateType::SYdg,
+    GateType::F,
+    GateType::Fdg,
+];
+
+#[derive(Clone, Debug)]
+struct SingleQubitCliffordChain {
+    positions: Vec<(usize, usize)>,
+    gates: Vec<GateType>,
+    product: Clifford,
+}
+
+impl SingleQubitCliffordChain {
+    fn new(position: (usize, usize), gate_type: GateType, clifford: Clifford) -> Self {
+        Self {
+            positions: vec![position],
+            gates: vec![gate_type],
+            product: clifford,
+        }
+    }
+
+    fn push(&mut self, position: (usize, usize), gate_type: GateType, clifford: Clifford) {
+        self.positions.push(position);
+        self.gates.push(gate_type);
+        self.product = clifford.compose(self.product);
+    }
+}
+
+fn gate_type_to_single_qubit_clifford(gate_type: GateType) -> Option<Clifford> {
+    match gate_type {
+        GateType::I => Some(Clifford::I),
+        GateType::X => Some(Clifford::X),
+        GateType::Y => Some(Clifford::Y),
+        GateType::Z => Some(Clifford::Z),
+        GateType::H => Some(Clifford::H),
+        GateType::SX => Some(Clifford::SX),
+        GateType::SXdg => Some(Clifford::SXdg),
+        GateType::SY => Some(Clifford::SY),
+        GateType::SYdg => Some(Clifford::SYdg),
+        GateType::SZ => Some(Clifford::SZ),
+        GateType::SZdg => Some(Clifford::SZdg),
+        GateType::F => Some(Clifford::F),
+        GateType::Fdg => Some(Clifford::Fdg),
+        _ => None,
+    }
+}
+
+fn plain_single_qubit_clifford_gate(gate: &Gate) -> Option<Clifford> {
+    if gate.qubits.len() != 1
+        || !gate.angles.is_empty()
+        || !gate.params.is_empty()
+        || !gate.meas_ids.is_empty()
+        || gate.channel.is_some()
+    {
+        return None;
+    }
+    gate_type_to_single_qubit_clifford(gate.gate_type)
+}
+
+fn single_qubit_clifford_sequence_product(sequence: &[GateType]) -> Clifford {
+    let mut product = Clifford::I;
+    for &gate_type in sequence {
+        let clifford = gate_type_to_single_qubit_clifford(gate_type)
+            .expect("candidate gate types must be one-qubit Cliffords");
+        product = clifford.compose(product);
+    }
+    product
+}
+
+fn is_z_axis_frame_candidate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::I | GateType::Z | GateType::SZ | GateType::SZdg
+    )
+}
+
+fn single_qubit_clifford_sequence_score(sequence: &[GateType]) -> (usize, usize) {
+    let non_frame_count = sequence
+        .iter()
+        .filter(|&&gate_type| !is_z_axis_frame_candidate(gate_type))
+        .count();
+    (non_frame_count, sequence.len())
+}
+
+fn canonical_single_qubit_clifford_sequence(clifford: Clifford) -> Vec<GateType> {
+    if clifford == Clifford::I {
+        return Vec::new();
+    }
+
+    let mut best_sequence: Option<Vec<GateType>> = None;
+    let mut best_score: Option<(usize, usize)> = None;
+
+    for &candidate in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
+        let sequence = vec![candidate];
+        if single_qubit_clifford_sequence_product(&sequence) == clifford {
+            let score = single_qubit_clifford_sequence_score(&sequence);
+            if best_score.is_none_or(|best| score < best) {
+                best_score = Some(score);
+                best_sequence = Some(sequence);
+            }
+        }
+    }
+
+    for &first in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
+        for &second in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
+            let sequence = vec![first, second];
+            if single_qubit_clifford_sequence_product(&sequence) == clifford {
+                let score = single_qubit_clifford_sequence_score(&sequence);
+                if best_score.is_none_or(|best| score < best) {
+                    best_score = Some(score);
+                    best_sequence = Some(sequence);
+                }
+            }
+        }
+    }
+
+    best_sequence.unwrap_or_else(|| {
+        panic!("no existing-gate decomposition found for one-qubit Clifford {clifford}")
+    })
+}
+
+fn flush_single_qubit_clifford_chain(
+    chain: SingleQubitCliffordChain,
+    replacements: &mut BTreeMap<(usize, usize), GateType>,
+    to_remove: &mut HashSet<(usize, usize)>,
+) {
+    if chain.positions.len() < 2 {
+        return;
+    }
+
+    let canonical = canonical_single_qubit_clifford_sequence(chain.product);
+    let original_score = single_qubit_clifford_sequence_score(&chain.gates);
+    let canonical_score = single_qubit_clifford_sequence_score(&canonical);
+    if canonical_score >= original_score || canonical.len() > chain.positions.len() {
+        return;
+    }
+
+    for (position, gate_type) in chain.positions.iter().zip(canonical.iter()) {
+        replacements.insert(*position, *gate_type);
+    }
+    for position in chain.positions.iter().skip(canonical.len()) {
+        to_remove.insert(*position);
+    }
+}
+
+/// Simplify adjacent single-qubit Clifford chains on each qubit.
+///
+/// The pass follows each qubit's operation timeline, composes adjacent plain
+/// one-qubit Clifford gates exactly, and replaces the chain with a deterministic
+/// sequence over existing PECOS gate names. Gates carrying parameters,
+/// measurement IDs, channel payloads, or batch metadata are treated as barriers.
+pub struct SimplifySingleQubitCliffordChains;
+
+impl CircuitPass for SimplifySingleQubitCliffordChains {
+    fn apply_tick(&self, circuit: &mut TickCircuit) {
+        split_batched_tick_commands(circuit);
+
+        let mut pending: BTreeMap<QubitId, SingleQubitCliffordChain> = BTreeMap::new();
+        let mut replacements: BTreeMap<(usize, usize), GateType> = BTreeMap::new();
+        let mut to_remove: HashSet<(usize, usize)> = HashSet::new();
+
+        for (ti, tick) in circuit.iter_ticks() {
+            for gate_ref in tick.iter_gate_batches() {
+                let position = (ti, gate_ref.batch_index());
+                let gate = gate_ref.as_gate();
+
+                if gate_ref.attrs().next().is_none()
+                    && let Some(clifford) = plain_single_qubit_clifford_gate(gate)
+                {
+                    let qubit = gate.qubits[0];
+                    if let Some(chain) = pending.get_mut(&qubit) {
+                        chain.push(position, gate.gate_type, clifford);
+                    } else {
+                        pending.insert(
+                            qubit,
+                            SingleQubitCliffordChain::new(position, gate.gate_type, clifford),
+                        );
+                    }
+                    continue;
+                }
+
+                for &qubit in &gate.qubits {
+                    if let Some(chain) = pending.remove(&qubit) {
+                        flush_single_qubit_clifford_chain(chain, &mut replacements, &mut to_remove);
+                    }
+                }
+            }
+        }
+
+        for (_, chain) in pending {
+            flush_single_qubit_clifford_chain(chain, &mut replacements, &mut to_remove);
+        }
+
+        for (&(ti, gi), &gate_type) in &replacements {
+            if let Some(tick) = circuit.get_tick_mut(ti) {
+                tick.update_gate_batch(gi, |gate| {
+                    gate.gate_type = gate_type;
+                    gate.angles.clear();
+                    gate.params.clear();
+                    gate.meas_ids.clear();
+                    gate.channel = None;
+                })
+                .unwrap_or_else(|err| panic!("{err}"));
+            }
+        }
+
+        let mut remove_list: Vec<(usize, usize)> = to_remove.into_iter().collect();
+        remove_list.sort_unstable();
+        for &(ti, gi) in remove_list.iter().rev() {
+            if let Some(tick) = circuit.get_tick_mut(ti) {
+                tick.remove_gate(gi);
+            }
+        }
+    }
+
+    fn apply_dag(&self, _circuit: &mut DagCircuit) {
+        // Tick-only for now: this pass intentionally preserves tick-local
+        // metadata and rewrites concrete scheduled gate positions.
+    }
+}
+
 /// ASAP-schedule gates to minimise tick count, then drop empty ticks.
 ///
 /// For each gate (processed in original tick order), the pass assigns it to
@@ -1823,6 +2059,8 @@ mod tests {
             GateType::SYdg => Some(unitary_rep::SY(q0).dg()),
             GateType::SZ => Some(unitary_rep::SZ(q0)),
             GateType::SZdg => Some(unitary_rep::SZ(q0).dg()),
+            GateType::F => Some(unitary_rep::SZ(q0) * unitary_rep::SX(q0)),
+            GateType::Fdg => Some(unitary_rep::SX(q0).dg() * unitary_rep::SZ(q0).dg()),
             GateType::T => Some(unitary_rep::T(q0)),
             GateType::Tdg => Some(unitary_rep::T(q0).dg()),
             GateType::RX => {
@@ -2883,6 +3121,93 @@ mod tests {
         }
         assert!(saw_rewritten);
         assert!(saw_untouched);
+    }
+
+    #[test]
+    fn single_qubit_clifford_canonical_sequences_cover_all_1q() {
+        for &clifford in Clifford::all_1q() {
+            let sequence = canonical_single_qubit_clifford_sequence(clifford);
+            assert_eq!(
+                single_qubit_clifford_sequence_product(&sequence),
+                clifford,
+                "canonical sequence {sequence:?} does not implement {clifford}"
+            );
+            assert!(
+                sequence.len() <= 2,
+                "canonical sequence for {clifford} should use at most two gates"
+            );
+        }
+    }
+
+    #[test]
+    fn simplify_single_qubit_clifford_chains_reduces_batched_chains() {
+        let mut original = TickCircuit::new();
+        original.tick().sx(&[0, 1]);
+        original.tick().sz(&[0, 1]);
+
+        let mut simplified = original.clone();
+        SimplifySingleQubitCliffordChains.apply_tick(&mut simplified);
+
+        assert_circuits_equiv(&original, &simplified);
+        let gates: Vec<&Gate> = simplified
+            .ticks()
+            .iter()
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
+            .collect();
+        assert_eq!(gates.len(), 2);
+        assert!(gates.iter().all(|gate| gate.gate_type == GateType::F));
+    }
+
+    #[test]
+    fn simplify_single_qubit_clifford_chains_removes_identity_products() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0]);
+        tc.tick().h(&[0]);
+
+        SimplifySingleQubitCliffordChains.apply_tick(&mut tc);
+
+        assert!(tc.ticks().iter().all(|tick| tick.is_empty()));
+    }
+
+    #[test]
+    fn simplify_single_qubit_clifford_chains_respects_multi_qubit_barriers() {
+        let mut tc = TickCircuit::new();
+        tc.tick().sx(&[0]);
+        tc.tick().cx(&[(0, 1)]);
+        tc.tick().sz(&[0]);
+
+        SimplifySingleQubitCliffordChains.apply_tick(&mut tc);
+
+        let gate_types: Vec<GateType> = tc
+            .ticks()
+            .iter()
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
+            .map(|gate| gate.gate_type)
+            .collect();
+        assert_eq!(gate_types, vec![GateType::SX, GateType::CX, GateType::SZ]);
+    }
+
+    #[test]
+    fn simplify_single_qubit_clifford_chains_preserves_annotated_gates() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .sx(&[0])
+            .meta("role", Attribute::String("calibrated".into()));
+        tc.tick().sz(&[0]);
+
+        SimplifySingleQubitCliffordChains.apply_tick(&mut tc);
+
+        let gate_types: Vec<GateType> = tc
+            .ticks()
+            .iter()
+            .flat_map(super::super::tick_circuit::Tick::gate_batches)
+            .map(|gate| gate.gate_type)
+            .collect();
+        assert_eq!(gate_types, vec![GateType::SX, GateType::SZ]);
+        assert_eq!(
+            tc.get_tick(0).unwrap().get_gate_attr(0, "role"),
+            Some(&Attribute::String("calibrated".into()))
+        );
     }
 
     #[test]

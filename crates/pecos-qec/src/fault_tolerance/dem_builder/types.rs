@@ -2435,8 +2435,20 @@ pub fn omitted_two_qubit_gate_pauli_twirl(
 pub struct NoiseConfig {
     /// Single-qubit gate error rate.
     pub p1: f64,
+    /// Optional per-gate total error-rate overrides for single-qubit gates.
+    ///
+    /// When a single-qubit gate type appears here, this total rate replaces
+    /// `p1` while still using `p1_weights` to distribute probability across
+    /// Pauli channels.
+    pub p1_gate_rates: BTreeMap<GateType, f64>,
     /// Two-qubit gate error rate.
     pub p2: f64,
+    /// Optional per-gate total error-rate overrides for two-qubit gates.
+    ///
+    /// When a two-qubit gate type appears here, this total rate replaces
+    /// `p2` while still using `p2_weights` to distribute probability across
+    /// Pauli-pair channels.
+    pub p2_gate_rates: BTreeMap<GateType, f64>,
     /// Measurement error rate.
     pub p_meas: f64,
     /// Initialization (prep) error rate.
@@ -2665,7 +2677,9 @@ impl Default for NoiseConfig {
     fn default() -> Self {
         Self {
             p1: 0.01,
+            p1_gate_rates: BTreeMap::new(),
             p2: 0.01,
+            p2_gate_rates: BTreeMap::new(),
             p_meas: 0.01,
             p_prep: 0.01,
             p_idle: 0.0,
@@ -2698,7 +2712,9 @@ impl NoiseConfig {
     pub fn new(p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
         Self {
             p1,
+            p1_gate_rates: BTreeMap::new(),
             p2,
+            p2_gate_rates: BTreeMap::new(),
             p_meas,
             p_prep,
             p_idle: 0.0,
@@ -2729,7 +2745,9 @@ impl NoiseConfig {
     pub fn with_idle(p1: f64, p2: f64, p_meas: f64, p_prep: f64, p_idle: f64) -> Self {
         Self {
             p1,
+            p1_gate_rates: BTreeMap::new(),
             p2,
+            p2_gate_rates: BTreeMap::new(),
             p_meas,
             p_prep,
             p_idle,
@@ -2760,7 +2778,9 @@ impl NoiseConfig {
     pub fn uniform(p: f64) -> Self {
         Self {
             p1: p,
+            p1_gate_rates: BTreeMap::new(),
             p2: p,
+            p2_gate_rates: BTreeMap::new(),
             p_meas: p,
             p_prep: p,
             p_idle: p,
@@ -2893,11 +2913,57 @@ impl NoiseConfig {
         self
     }
 
+    /// Sets a total single-qubit error-rate override for one gate type.
+    ///
+    /// The override changes only the total rate. If `p1_weights` is configured,
+    /// those weights still determine the relative Pauli distribution for this
+    /// gate.
+    #[must_use]
+    pub fn set_p1_gate_rate(mut self, gate_type: GateType, rate: f64) -> Self {
+        self.p1_gate_rates.insert(gate_type, rate.max(0.0));
+        self
+    }
+
+    /// Returns the total single-qubit error rate for `gate_type`.
+    #[must_use]
+    pub fn p1_rate_for_gate(&self, gate_type: GateType) -> f64 {
+        self.p1_gate_rates
+            .get(&gate_type)
+            .copied()
+            .unwrap_or(self.p1)
+    }
+
     /// Sets custom per-Pauli weights for two-qubit gates.
     #[must_use]
     pub fn set_p2_weights(mut self, weights: PauliWeights) -> Self {
         self.p2_weights = Some(weights);
         self
+    }
+
+    /// Sets a total two-qubit error-rate override for one gate type.
+    ///
+    /// The override changes only the total rate. If `p2_weights` is configured,
+    /// those weights still determine the relative Pauli-pair distribution for
+    /// this gate.
+    #[must_use]
+    pub fn set_p2_gate_rate(mut self, gate_type: GateType, rate: f64) -> Self {
+        self.p2_gate_rates.insert(gate_type, rate.max(0.0));
+        self
+    }
+
+    /// Returns the total two-qubit error rate for `gate_type`.
+    #[must_use]
+    pub fn p2_rate_for_gate(&self, gate_type: GateType) -> f64 {
+        self.p2_gate_rates
+            .get(&gate_type)
+            .copied()
+            .unwrap_or(self.p2)
+    }
+
+    /// Returns true when any scalar or per-gate two-qubit rate is positive.
+    #[must_use]
+    pub fn has_any_p2_noise(&self) -> bool {
+        self.p2 > 0.0 || self.p2_gate_rates.values().any(|rate| *rate > 0.0)
     }
 
     /// Sets how replacement entries in `p2_weights` are approximated.
@@ -3512,8 +3578,9 @@ impl PerGateTypeNoise {
         self
     }
 
-    /// Lookup 1Q Pauli rate for a gate. Returns `base.p1 / 3.0` if the
-    /// gate type is not in the map. `pauli_idx` is 0=X, 1=Y, 2=Z.
+    /// Lookup 1Q Pauli rate for a gate. Returns the base single-qubit gate
+    /// rate divided over the 3 Pauli channels if the gate type is not in the
+    /// map. `pauli_idx` is 0=X, 1=Y, 2=Z.
     ///
     /// `Idle` is a no-op by default. It receives noise only from explicitly
     /// attached idle rates or from the base idle-noise model.
@@ -3534,11 +3601,12 @@ impl PerGateTypeNoise {
             }
             return 0.0;
         }
-        self.base.p1 / 3.0
+        self.base.p1_rate_for_gate(gate) / 3.0
     }
 
     /// Lookup 1Q Pauli rate for a gate on a specific qubit. Tries the
-    /// per-qubit map first, then the per-gate-type map, then `base.p1 / 3.0`.
+    /// per-qubit map first, then the per-gate-type map, then the base
+    /// single-qubit gate rate divided over the 3 Pauli channels.
     /// `pauli_idx` is 0=X, 1=Y, 2=Z.
     #[must_use]
     pub fn rate_1q_on(&self, gate: GateType, qubit: QubitId, pauli_idx: usize) -> f64 {
@@ -3548,18 +3616,20 @@ impl PerGateTypeNoise {
         self.rate_1q(gate, pauli_idx)
     }
 
-    /// Lookup 2Q Pauli pair rate for a gate. Returns `base.p2 / 15.0`
-    /// if the gate type is not in the map. `pair_idx` follows [`PAULI_2Q_ORDER`].
+    /// Lookup 2Q Pauli pair rate for a gate. Returns the base two-qubit gate
+    /// rate divided over the 15 Pauli pairs if the gate type is not in the
+    /// map. `pair_idx` follows [`PAULI_2Q_ORDER`].
     #[must_use]
     pub fn rate_2q(&self, gate: GateType, pair_idx: usize) -> f64 {
         self.rates_2q
             .get(&gate)
-            .map_or(self.base.p2 / 15.0, |r| r[pair_idx])
+            .map_or(self.base.p2_rate_for_gate(gate) / 15.0, |r| r[pair_idx])
     }
 
     /// Lookup 2Q Pauli pair rate for a gate on a specific ordered
     /// qubit pair. Tries `(gate, q_control, q_target)` in the per-qubits
-    /// map first, then the per-gate-type map, then `base.p2 / 15.0`.
+    /// map first, then the per-gate-type map, then the base two-qubit gate
+    /// rate divided over the 15 Pauli pairs.
     #[must_use]
     pub fn rate_2q_on(
         &self,
@@ -4942,6 +5012,271 @@ impl DetectorErrorModel {
 
             let targets = format_mechanism_targets(&effect);
             if !targets.is_empty() {
+                lines.push(format!(
+                    "error({}) {}",
+                    format_probability(total_prob),
+                    targets
+                ));
+            }
+        }
+
+        lines.join("\n")
+    }
+
+    fn detector_coordinate_map(&self) -> BTreeMap<u32, [f64; 3]> {
+        self.detectors
+            .iter()
+            .filter_map(|detector| detector.coords.map(|coords| (detector.id, coords)))
+            .collect()
+    }
+
+    fn detector_coordinate_distance(
+        left: u32,
+        right: u32,
+        detector_coords: &BTreeMap<u32, [f64; 3]>,
+    ) -> f64 {
+        let left_coords =
+            detector_coords
+                .get(&left)
+                .copied()
+                .unwrap_or([f64::from(left), 0.0, 0.0]);
+        let right_coords =
+            detector_coords
+                .get(&right)
+                .copied()
+                .unwrap_or([f64::from(right), 0.0, 0.0]);
+        left_coords
+            .iter()
+            .zip(right_coords)
+            .map(|(a, b)| (*a - b).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    }
+
+    fn min_coordinate_terminal_pairs(
+        detectors: &[u32],
+        detector_coords: &BTreeMap<u32, [f64; 3]>,
+    ) -> (Vec<(u32, u32)>, Vec<u32>) {
+        if detectors.len() > 20 {
+            return Self::greedy_coordinate_terminal_pairs(detectors, detector_coords);
+        }
+
+        fn solve(
+            mask: u64,
+            detectors: &[u32],
+            detector_coords: &BTreeMap<u32, [f64; 3]>,
+            memo: &mut BTreeMap<u64, (f64, Vec<(u32, u32)>, Vec<u32>)>,
+        ) -> (f64, Vec<(u32, u32)>, Vec<u32>) {
+            if let Some(cached) = memo.get(&mask) {
+                return cached.clone();
+            }
+
+            let count = mask.count_ones();
+            let result = if count == 0 {
+                (0.0, Vec::new(), Vec::new())
+            } else if count == 1 {
+                let index = mask.trailing_zeros() as usize;
+                (0.0, Vec::new(), vec![detectors[index]])
+            } else if count % 2 == 1 {
+                let mut best: Option<(f64, Vec<(u32, u32)>, Vec<u32>)> = None;
+                for index in 0..detectors.len() {
+                    if mask & (1_u64 << index) == 0 {
+                        continue;
+                    }
+                    let rest = mask & !(1_u64 << index);
+                    let (cost, pairs, mut singles) = solve(rest, detectors, detector_coords, memo);
+                    singles.push(detectors[index]);
+                    if best
+                        .as_ref()
+                        .is_none_or(|(best_cost, _, _)| cost < *best_cost)
+                    {
+                        best = Some((cost, pairs, singles));
+                    }
+                }
+                best.expect("odd non-empty mask must have a singleton candidate")
+            } else {
+                let first = mask.trailing_zeros() as usize;
+                let rest_without_first = mask & !(1_u64 << first);
+                let mut best: Option<(f64, Vec<(u32, u32)>, Vec<u32>)> = None;
+                for second in first + 1..detectors.len() {
+                    if rest_without_first & (1_u64 << second) == 0 {
+                        continue;
+                    }
+                    let rest = rest_without_first & !(1_u64 << second);
+                    let (sub_cost, mut pairs, singles) =
+                        solve(rest, detectors, detector_coords, memo);
+                    let pair = (detectors[first], detectors[second]);
+                    let cost = sub_cost
+                        + DetectorErrorModel::detector_coordinate_distance(
+                            pair.0,
+                            pair.1,
+                            detector_coords,
+                        );
+                    pairs.insert(0, pair);
+                    if best
+                        .as_ref()
+                        .is_none_or(|(best_cost, _, _)| cost < *best_cost)
+                    {
+                        best = Some((cost, pairs, singles));
+                    }
+                }
+                best.expect("even mask with at least two bits must have a pair candidate")
+            };
+
+            memo.insert(mask, result.clone());
+            result
+        }
+
+        let mut memo = BTreeMap::new();
+        let mask = (1_u64 << detectors.len()) - 1;
+        let (_, pairs, singles) = solve(mask, detectors, detector_coords, &mut memo);
+        (pairs, singles)
+    }
+
+    fn greedy_coordinate_terminal_pairs(
+        detectors: &[u32],
+        detector_coords: &BTreeMap<u32, [f64; 3]>,
+    ) -> (Vec<(u32, u32)>, Vec<u32>) {
+        let mut remaining: BTreeSet<u32> = detectors.iter().copied().collect();
+        let mut pairs = Vec::new();
+        let mut singles = Vec::new();
+
+        if remaining.len() % 2 == 1 {
+            let singleton = remaining
+                .iter()
+                .copied()
+                .max_by(|left, right| {
+                    let left_nearest = remaining
+                        .iter()
+                        .copied()
+                        .filter(|candidate| candidate != left)
+                        .map(|candidate| {
+                            Self::detector_coordinate_distance(*left, candidate, detector_coords)
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    let right_nearest = remaining
+                        .iter()
+                        .copied()
+                        .filter(|candidate| candidate != right)
+                        .map(|candidate| {
+                            Self::detector_coordinate_distance(*right, candidate, detector_coords)
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    left_nearest
+                        .partial_cmp(&right_nearest)
+                        .unwrap_or(Ordering::Equal)
+                })
+                .expect("odd non-empty detector set should have a singleton");
+            remaining.remove(&singleton);
+            singles.push(singleton);
+        }
+
+        while let Some(left) = remaining.pop_first() {
+            let Some(right) = remaining.iter().copied().min_by(|a, b| {
+                let da = Self::detector_coordinate_distance(left, *a, detector_coords);
+                let db = Self::detector_coordinate_distance(left, *b, detector_coords);
+                da.partial_cmp(&db)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| a.cmp(b))
+            }) else {
+                singles.push(left);
+                break;
+            };
+            remaining.remove(&right);
+            pairs.push((left, right));
+        }
+
+        (pairs, singles)
+    }
+
+    fn terminal_graphlike_parts(
+        effect: &FaultMechanism,
+        detector_coords: &BTreeMap<u32, [f64; 3]>,
+    ) -> Vec<FaultMechanism> {
+        let (pairs, singles) =
+            Self::min_coordinate_terminal_pairs(&effect.detectors, detector_coords);
+        let mut parts: Vec<FaultMechanism> = pairs
+            .into_iter()
+            .map(|(left, right)| FaultMechanism::from_unsorted([left, right], []))
+            .collect();
+        parts.extend(
+            singles
+                .into_iter()
+                .map(|detector| FaultMechanism::from_unsorted([detector], [])),
+        );
+
+        if parts.is_empty() {
+            if !effect.dem_outputs.is_empty() {
+                parts.push(FaultMechanism::from_unsorted(
+                    std::iter::empty(),
+                    effect.dem_outputs.iter().copied(),
+                ));
+            }
+        } else if !effect.dem_outputs.is_empty() {
+            let last = parts
+                .last_mut()
+                .expect("non-empty parts checked before attaching observables");
+            last.dem_outputs = effect.dem_outputs.clone();
+        }
+
+        parts
+    }
+
+    /// Converts the DEM to a terminal-only graphlike projection.
+    ///
+    /// Contributions are first grouped into the same raw mechanisms as
+    /// [`Self::to_string`]. Each grouped effect is then rendered as graphlike
+    /// components whose XOR is exactly the original detector/observable effect.
+    /// Pair components use only detectors present in the raw effect. Ordinary
+    /// low-weight effects use the exact minimum-total-distance pairing from
+    /// detector coordinates; unusually large effects use a deterministic
+    /// nearest-neighbor fallback to avoid exponential render time. This is a
+    /// decoder-facing projection for graph matchers; it is not source proof.
+    #[must_use]
+    pub fn to_string_terminal_graphlike_decomposed(&self) -> String {
+        let mut lines = Vec::new();
+
+        for det in &self.detectors {
+            if let Some([x, y, z]) = det.coords {
+                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            } else {
+                lines.push(format!("detector D{}", det.id));
+            }
+        }
+
+        for obs in &self.observables {
+            lines.push(format!("logical_observable L{}", obs.id));
+        }
+
+        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
+        for contrib in &self.contributions {
+            by_effect
+                .entry(contrib.effect.standard_effect())
+                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
+                .or_insert(contrib.probability);
+        }
+
+        let detector_coords = self.detector_coordinate_map();
+        let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
+        for (effect, total_prob) in by_effect {
+            if effect.is_standard_empty() || total_prob <= 0.0 {
+                continue;
+            }
+
+            let targets = Self::format_decomposed_parts(Self::terminal_graphlike_parts(
+                &effect,
+                &detector_coords,
+            ));
+            if !targets.is_empty() {
+                by_targets
+                    .entry(targets)
+                    .and_modify(|p| *p = combine_independent_probs(*p, total_prob))
+                    .or_insert(total_prob);
+            }
+        }
+
+        for (targets, total_prob) in by_targets {
+            if !targets.is_empty() && total_prob > 0.0 {
                 lines.push(format!(
                     "error({}) {}",
                     format_probability(total_prob),
@@ -6841,6 +7176,38 @@ mod tests {
 
         assert!(maximal.contains("error(0.01) D0 ^ D1"));
         assert!(!maximal.contains("error(0.01) D0 D1"));
+    }
+
+    #[test]
+    fn test_terminal_graphlike_decomposed_uses_min_coordinate_terminal_pairs() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([10.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(2).with_coords([1.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(3).with_coords([11.0, 0.0, 0.0]));
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2, 3], []), 0.01);
+
+        let projected = dem.to_string_terminal_graphlike_decomposed();
+
+        assert!(projected.contains("error(0.01) D0 D2 ^ D1 D3"));
+        assert!(!projected.contains("D0 D1 ^ D2 D3"));
+    }
+
+    #[test]
+    fn test_terminal_graphlike_decomposed_attaches_observable_to_terminal_component() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([1.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(2).with_coords([10.0, 0.0, 0.0]));
+        dem.add_dem_output(DemOutput::new(0));
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2], [0]), 0.01);
+
+        let projected = dem.to_string_terminal_graphlike_decomposed();
+
+        assert!(projected.contains("logical_observable L0"));
+        assert!(projected.contains("error(0.01) D0 D1 ^ D2 L0"));
     }
 
     #[test]

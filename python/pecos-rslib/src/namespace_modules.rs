@@ -21,6 +21,10 @@ pub fn register_quantum_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     quantum.add("TickPrepHandle", parent.getattr("TickPrepHandle")?)?;
     quantum.add("TickMeasureHandle", parent.getattr("TickMeasureHandle")?)?;
     quantum.add(
+        "PHYSICAL_DURATION_META_KEY",
+        parent.getattr("PHYSICAL_DURATION_META_KEY")?,
+    )?;
+    quantum.add(
         "DagCircuitWouldCycleError",
         parent.getattr("DagCircuitWouldCycleError")?,
     )?;

@@ -3,17 +3,27 @@
 `TwirlConfig` carries the twirl-site declaration: scheme, where in the
 circuit twirling sites are emitted, how the per-shot mask is encoded into
 the runtime result bundle after the corresponding physical Pauli gates
-are applied, and how generated Guppy measurement records are framed. The
-first three fields are structural for abstract DEM / topology caches.
-`frame_output` is runtime-only: raw and canonical Guppy records share the
-same abstract DEM and `PauliFrameLookup`.
+are applied, how generated Guppy measurement records are framed, and the
+runtime activation probability. `scheme`, `site_schedule`, and
+`result_encoding` are structural for abstract DEM / topology caches.
+`frame_output` and `twirl_probability` are runtime-only: raw/canonical and
+scaled/unscaled Guppy records share the same abstract DEM and
+`PauliFrameLookup`.
+
+Scaled twirl uses fixed RNG consumption: generated Guppy draws both an
+activation decision and a Pauli code at every site, even when inactive. This
+intentionally changed the exact seed-to-mask stream from the pre-scaled
+implementation, but preserves same-seed reproducibility within one build and
+enables common-random-number comparisons across different activation
+probabilities.
 
 `GuppyRngMaskConfig` carries the **runtime** mask source: a stream-separator
 seed mixed with 32 bits of per-shot quantum entropy when the mask is drawn,
 applied to data qubits, and recorded via `result()`. Two abstract circuits
-identical except for `seed` or `frame_output` reuse the same DEM but produce
-different shot-level runtime records, so those values belong in the Guppy-
-module / compiled-shot cache layer but NOT in the abstract DEM cache.
+identical except for `seed`, `frame_output`, or `twirl_probability` reuse the
+same DEM but produce different shot-level runtime records, so those values
+belong in the Guppy-module / compiled-shot cache layer but NOT in the abstract
+DEM cache.
 
 The split mirrors the two-tracks-per-twirl-setting architecture from the
 design doc: the abstract circuit (consumer: DEM builder,
@@ -28,7 +38,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 _SUPPORTED_SCHEMES = ("pauli",)
-_SUPPORTED_SITE_SCHEDULES = ("between_rounds",)
+_SUPPORTED_SITE_SCHEDULES = ("between_rounds", "before_two_qubit_gate")
 _SUPPORTED_RESULT_ENCODINGS = ("bool_array_v1",)
 _SUPPORTED_FRAME_OUTPUTS = ("raw", "canonical")
 
@@ -45,8 +55,10 @@ class TwirlConfig:
             `"clifford"` value is reserved for Phase 2 ({I, H}
             Clifford-frame randomization) and not yet implemented.
         site_schedule: Where twirling sites are emitted in the circuit.
-            `"between_rounds"` (the only supported value) emits one site
-            between each pair of consecutive syndrome rounds.
+            `"between_rounds"` emits one site between each pair of
+            consecutive syndrome rounds. `"before_two_qubit_gate"` emits
+            one site per operand immediately before every surface-memory
+            two-qubit gate in the supported Guppy runtime path.
         result_encoding: How the per-shot mask is recorded in the
             runtime result bundle. `"bool_array_v1"` packs the
             `2 * num_data` bool bits per round into one tagged array per
@@ -63,12 +75,18 @@ class TwirlConfig:
             frame. This does not change the abstract circuit or DEM
             topology; it only changes generated runtime records and must
             therefore be part of the Guppy module cache key.
+        twirl_probability: Per-site activation probability. Runtime Guppy
+            source draws an activation bit and a Pauli code at every twirl
+            site. If inactive, the recorded Pauli code is identity. This
+            changes runtime records and generated source, but not the
+            abstract DEM / `PauliFrameLookup` structure.
     """
 
     scheme: Literal["pauli"] = "pauli"
-    site_schedule: Literal["between_rounds"] = "between_rounds"
+    site_schedule: Literal["between_rounds", "before_two_qubit_gate"] = "between_rounds"
     result_encoding: Literal["bool_array_v1"] = "bool_array_v1"
     frame_output: Literal["raw", "canonical"] = "raw"
+    twirl_probability: float = 1.0
 
     def validate_runtime_supported(self) -> None:
         """Raise ``ValueError`` if any field is outside the supported runtime set.
@@ -102,6 +120,13 @@ class TwirlConfig:
             msg = (
                 f"TwirlConfig.frame_output={self.frame_output!r} is not "
                 f"supported; expected one of {_SUPPORTED_FRAME_OUTPUTS!r}"
+            )
+            raise ValueError(msg)
+        probability = float(self.twirl_probability)
+        if not 0.0 <= probability <= 1.0:
+            msg = (
+                f"TwirlConfig.twirl_probability={self.twirl_probability!r} "
+                "is not supported; expected a finite probability in [0, 1]"
             )
             raise ValueError(msg)
 

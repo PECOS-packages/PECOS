@@ -43,6 +43,7 @@
 //! ```
 
 use crate::pecos_array::{Array, ArrayData};
+use pecos_core::gate_type::GateType;
 use pecos_qec::fault_tolerance::PauliFrameLookup as RustPauliFrameLookup;
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
@@ -71,6 +72,7 @@ use pecos_quantum::QubitId;
 use pyo3::Py;
 use pyo3::prelude::*;
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
@@ -203,6 +205,48 @@ fn parse_replacement_approximation(
     }
 }
 
+fn parse_p2_gate_rates(rates: BTreeMap<String, f64>) -> PyResult<BTreeMap<GateType, f64>> {
+    let mut parsed = BTreeMap::new();
+    for (label, rate) in rates {
+        if !rate.is_finite() || rate < 0.0 {
+            let msg =
+                format!("p2_gate_rates[{label:?}] must be finite and non-negative, got {rate}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        let gate_type = GateType::from_str(label.trim()).map_err(|err| {
+            let msg = format!("unsupported p2_gate_rates gate label {label:?}: {err}");
+            pyo3::exceptions::PyValueError::new_err(msg)
+        })?;
+        if !gate_type.is_two_qubit() {
+            let msg = format!("p2_gate_rates keys must name two-qubit gates, got {label:?}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        parsed.insert(gate_type, rate);
+    }
+    Ok(parsed)
+}
+
+fn parse_p1_gate_rates(rates: BTreeMap<String, f64>) -> PyResult<BTreeMap<GateType, f64>> {
+    let mut parsed = BTreeMap::new();
+    for (label, rate) in rates {
+        if !rate.is_finite() || rate < 0.0 {
+            let msg =
+                format!("p1_gate_rates[{label:?}] must be finite and non-negative, got {rate}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        let gate_type = GateType::from_str(label.trim()).map_err(|err| {
+            let msg = format!("unsupported p1_gate_rates gate label {label:?}: {err}");
+            pyo3::exceptions::PyValueError::new_err(msg)
+        })?;
+        if !gate_type.is_single_qubit() {
+            let msg = format!("p1_gate_rates keys must name single-qubit gates, got {label:?}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        parsed.insert(gate_type, rate);
+    }
+    Ok(parsed)
+}
+
 fn parse_measurement_crosstalk_dem_mode(
     value: Option<String>,
 ) -> PyResult<MeasurementCrosstalkDemMode> {
@@ -298,6 +342,8 @@ fn apply_noise_options(
     p_meas_crosstalk_global: Option<f64>,
     p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
     measurement_crosstalk_dem_mode: Option<String>,
+    p2_gate_rates: Option<BTreeMap<String, f64>>,
+    p1_gate_rates: Option<BTreeMap<String, f64>>,
 ) -> PyResult<NoiseConfig> {
     noise.p_idle = p_idle.unwrap_or(0.0);
     if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
@@ -347,6 +393,16 @@ fn apply_noise_options(
     }
     if let Some(weights) = p2_weights {
         noise = noise.set_p2_weights(parse_p2_weights(weights)?);
+    }
+    if let Some(rates) = p2_gate_rates {
+        for (gate_type, rate) in parse_p2_gate_rates(rates)? {
+            noise = noise.set_p2_gate_rate(gate_type, rate);
+        }
+    }
+    if let Some(rates) = p1_gate_rates {
+        for (gate_type, rate) in parse_p1_gate_rates(rates)? {
+            noise = noise.set_p1_gate_rate(gate_type, rate);
+        }
     }
     noise = noise.set_p2_replacement_approximation(parse_replacement_approximation(
         p2_replacement_approximation,
@@ -1438,7 +1494,7 @@ impl PyDetectorErrorModel {
     ///     >>> print(dem.to_string())
     ///     >>> sampler = dem.to_sampler()
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
@@ -1469,6 +1525,8 @@ impl PyDetectorErrorModel {
         p_meas_crosstalk_global: Option<f64>,
         p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
         measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
         use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
 
@@ -1497,6 +1555,8 @@ impl PyDetectorErrorModel {
             p_meas_crosstalk_global,
             p_meas_crosstalk_model,
             measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
         )?;
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
@@ -1596,6 +1656,16 @@ impl PyDetectorErrorModel {
     /// DEM. Residual hyperedges remain hyperedges.
     fn to_string_source_graphlike_decomposed(&self) -> String {
         self.inner.to_string_source_graphlike_decomposed()
+    }
+
+    /// Convert the DEM to a terminal-only graphlike projection.
+    ///
+    /// Raw mechanisms are first grouped exactly as in `to_string()`. Each raw
+    /// effect is then projected to graphlike terminal components using detector
+    /// coordinates. This is a decoder-facing representation for graph matchers,
+    /// not source-proof decomposition.
+    fn to_string_terminal_graphlike_decomposed(&self) -> String {
+        self.inner.to_string_terminal_graphlike_decomposed()
     }
 
     /// Convert the DEM using the explicit historical graphlike-search renderer.
@@ -1848,7 +1918,7 @@ impl PyDemBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -1879,6 +1949,8 @@ impl PyDemBuilder {
         p_meas_crosstalk_global: Option<f64>,
         p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
         measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<PyRefMut<'_, Self>> {
         slf.noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
@@ -1905,6 +1977,8 @@ impl PyDemBuilder {
             p_meas_crosstalk_global,
             p_meas_crosstalk_model,
             measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
         )?;
         Ok(slf)
     }
@@ -3767,7 +3841,7 @@ impl PyDemSampler {
     ///     >>> sampler = DemSampler.from_circuit(dag, p1=0.001, p2=0.01)
     ///     >>> sampler = DemSampler.from_circuit(tc, p2=0.01)  # TickCircuit also works
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
@@ -3798,6 +3872,8 @@ impl PyDemSampler {
         p_meas_crosstalk_global: Option<f64>,
         p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
         measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
         let noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
@@ -3824,6 +3900,8 @@ impl PyDemSampler {
             p_meas_crosstalk_global,
             p_meas_crosstalk_model,
             measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
         )?;
 
         // Accept both DagCircuit and TickCircuit
@@ -3934,7 +4012,7 @@ impl PyDemSampler {
     ///
     /// The `observables` argument defines observables.
     #[staticmethod]
-    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
@@ -3967,6 +4045,8 @@ impl PyDemSampler {
         p_meas_crosstalk_global: Option<f64>,
         p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
         measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
         let noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
@@ -3993,6 +4073,8 @@ impl PyDemSampler {
             p_meas_crosstalk_global,
             p_meas_crosstalk_model,
             measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
         )?;
         let inner = RustNewDemSamplerBuilder::new(&influence_map.inner)
             .with_noise_config(noise)
@@ -4503,7 +4585,7 @@ impl PyDemSamplerBuilder {
     }
 
     /// Set noise parameters.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -4534,6 +4616,8 @@ impl PyDemSamplerBuilder {
         p_meas_crosstalk_global: Option<f64>,
         p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
         measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<PyRefMut<'_, Self>> {
         slf.noise = apply_noise_options(
             NoiseConfig::new(p1, p2, p_meas, p_prep),
@@ -4560,6 +4644,8 @@ impl PyDemSamplerBuilder {
             p_meas_crosstalk_global,
             p_meas_crosstalk_model,
             measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
         )?;
         Ok(slf)
     }

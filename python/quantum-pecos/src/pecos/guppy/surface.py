@@ -14,6 +14,7 @@ schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 import importlib.util
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -32,10 +33,16 @@ class _ModuleState:
     # Keyed by full patch identity + effective budget (dx, dz, orientation,
     # rotated, effective_budget) so distinct patch geometries -- e.g. rotated
     # vs non-rotated at the same dx/dz -- never collide on a cached module.
-    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int], dict]] = {}
+    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str], dict]] = {}
 
 
 _state = _ModuleState()
+
+
+def _normalize_surface_interaction_basis(interaction_basis: str) -> str:
+    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
+
+    return _normalize_interaction_basis(interaction_basis)
 
 
 def _get_temp_dir() -> Path:
@@ -68,13 +75,20 @@ def _render_inline_pcg32() -> list[str]:
         "",
         "@guppy",
         "@no_type_check",
-        "def _pcg32_next4(state: nat, inc: nat) -> tuple[nat, int]:",
+        "def _pcg32_next32(state: nat, inc: nat) -> tuple[nat, nat]:",
         "    old_state = state",
         "    new_state = _pcg32_advance(state, inc)",
         "    xorshifted = _pcg32_mask32(((old_state >> nat(18)) ^ old_state) >> nat(27))",
         "    rot = _pcg32_mask32(old_state >> nat(59))",
         "    rot_inv = _pcg32_mask32((~rot + nat(1)) & nat(31))",
         "    output = _pcg32_mask32((xorshifted >> rot) | (xorshifted << rot_inv))",
+        "    return new_state, output",
+        "",
+        "",
+        "@guppy",
+        "@no_type_check",
+        "def _pcg32_next4(state: nat, inc: nat) -> tuple[nat, int]:",
+        "    new_state, output = _pcg32_next32(state, inc)",
         "    return new_state, int(output & nat(3))",
         "",
         "",
@@ -112,10 +126,13 @@ def generate_guppy_source(
     twirl: "TwirlConfig | None" = None,
     rng: "GuppyRngMaskConfig | None" = None,
     num_rounds: int | None = None,
+    interaction_basis: str = "cx",
 ) -> str:
     """Generate Guppy source code for a surface code patch.
 
-    Uses a 4-round parallel CNOT schedule for syndrome extraction.
+    Uses a 4-round parallel schedule for syndrome extraction. The default
+    ``interaction_basis="cx"`` emits the CNOT template; ``"szz"`` emits the
+    signed SZZ/SZZdg template with immediate data compensation.
 
     ``ancilla_budget=None`` (default) emits the unconstrained shape:
     one ancilla per stabilizer, all measured in parallel at the end of
@@ -155,6 +172,9 @@ def generate_guppy_source(
             per-shot quantum entropy when ``twirl`` is enabled.
         num_rounds: Number of syndrome rounds to render. Required when
             ``twirl`` is enabled because twirled source is unrolled per round.
+        interaction_basis: Surface-memory interaction basis: ``"cx"`` or
+            ``"szz"``. SZZ Guppy generation currently supports only the
+            unconstrained, non-twirled memory shape.
 
     Returns:
         Python/Guppy source code as a string.
@@ -163,7 +183,9 @@ def generate_guppy_source(
         ValueError: If exactly one of ``twirl`` / ``rng`` is supplied.
     """
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
+    from pecos.qec.surface.circuit_builder import _default_szz_residual_plan
 
+    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
     if (twirl is None) != (rng is None):
         msg = f"twirl and rng must be supplied together; got twirl={twirl!r} rng={rng!r}"
         raise ValueError(msg)
@@ -184,12 +206,22 @@ def generate_guppy_source(
     total_ancilla = num_x_stab + num_z_stab
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
     constrained = effective_budget < total_ancilla
+    if interaction_basis == "szz" and constrained:
+        msg = (
+            "interaction_basis='szz' does not yet support constrained ancilla "
+            f"budgets on the Guppy runtime path (ancilla_budget={ancilla_budget} "
+            f"< total_ancilla={total_ancilla})"
+        )
+        raise ValueError(msg)
+    if interaction_basis == "szz" and twirl is not None:
+        msg = "interaction_basis='szz' Guppy runtime twirl integration is staged later"
+        raise ValueError(msg)
     if twirl is not None and constrained:
         msg = (
             f"twirl + constrained ancilla budget is not supported on "
             f"the Guppy runtime path "
             f"(ancilla_budget={ancilla_budget} < total_ancilla={total_ancilla}); "
-            "the between_rounds twirl-site schedule assumes the "
+            "the runtime twirl-site schedules assume the "
             "unconstrained syndrome shape. Pass ancilla_budget=None or "
             ">= total_ancilla, or omit twirl."
         )
@@ -206,13 +238,23 @@ def generate_guppy_source(
             "from guppylang.std.num import nat",
             "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x, y, z",
         ]
+    elif interaction_basis == "szz":
+        imports = [
+            "from __future__ import annotations",
+            "",
+            "from guppylang import guppy",
+            "from guppylang.std.angles import angle",
+            "from guppylang.std.builtins import array, owned, result",
+            "from guppylang.std.qsystem.functional import zz_phase",
+            "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, z",
+        ]
     else:
         imports = [
             "from __future__ import annotations",
             "",
             "from guppylang import guppy",
             "from guppylang.std.builtins import array, owned, result",
-            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x",
+            "from guppylang.std.quantum import cx, discard, h, measure, measure_array, qubit, x, z",
         ]
 
     lines = [
@@ -224,6 +266,7 @@ def generate_guppy_source(
         f"X stabilizers: {num_x_stab}",
         f"Z stabilizers: {num_z_stab}",
         f"Ancilla qubits: {num_x_stab + num_z_stab} (one per stabilizer)",
+        f"Interaction basis: {interaction_basis}",
         '"""',
         "",
         *imports,
@@ -234,14 +277,21 @@ def generate_guppy_source(
     if twirl is not None:
         lines.extend(_render_inline_pcg32())
 
-    # Generate struct definitions
+    # Generate struct definitions.
     lines.extend(
         [
             "@guppy.struct",
             f"class SurfaceCode_{dx}x{dz}:",
             f'    """Surface code patch with dx={dx}, dz={dz} ({num_data} data qubits)."""',
             "",
-            f"    data: array[qubit, {num_data}]",
+        ],
+    )
+    if interaction_basis == "szz":
+        lines.extend(f"    d{i}: qubit" for i in range(num_data))
+    else:
+        lines.append(f"    data: array[qubit, {num_data}]")
+    lines.extend(
+        [
             "",
             "",
             "@guppy.struct",
@@ -255,32 +305,83 @@ def generate_guppy_source(
         ],
     )
 
-    # Generate state preparation functions
-    lines.extend(
-        [
-            "# === State Preparation ===",
-            "",
-            "@guppy",
-            f"def prep_z_basis() -> SurfaceCode_{dx}x{dz}:",
-            '    """Prepare logical |0_L> state."""',
-            f"    data = array(qubit() for _ in range({num_data}))",
-            f"    return SurfaceCode_{dx}x{dz}(data)",
-            "",
-            "",
-            "@guppy",
-            f"def prep_x_basis() -> SurfaceCode_{dx}x{dz}:",
-            '    """Prepare logical |+_L> state."""',
-            f"    data = array(qubit() for _ in range({num_data}))",
-            f"    for i in range({num_data}):",
-            "        h(data[i])",
-            f"    return SurfaceCode_{dx}x{dz}(data)",
-            "",
-            "",
-        ],
-    )
+    szz_data_args = ", ".join(f"d{i}" for i in range(num_data))
 
-    # Generate syndrome extraction with parallel CNOT schedule.
+    def _append_szz_data_unpack(target: list[str], indent: str) -> None:
+        target.extend(f"{indent}d{i} = surf.d{i}" for i in range(num_data))
+
+    def _szz_data_expr(data_q: int) -> str:
+        return f"d{data_q}"
+
+    # Generate state preparation functions
+    lines.extend(["# === State Preparation ===", "", "@guppy", f"def prep_z_basis() -> SurfaceCode_{dx}x{dz}:"])
+    lines.append('    """Prepare logical |0_L> state."""')
+    if interaction_basis == "szz":
+        lines.extend(f"    d{i} = qubit()" for i in range(num_data))
+        lines.append(f"    return SurfaceCode_{dx}x{dz}({szz_data_args})")
+    else:
+        lines.append(f"    data = array(qubit() for _ in range({num_data}))")
+        lines.append(f"    return SurfaceCode_{dx}x{dz}(data)")
+    lines.extend(["", "", "@guppy", f"def prep_x_basis() -> SurfaceCode_{dx}x{dz}:"])
+    lines.append('    """Prepare logical |+_L> state."""')
+    if interaction_basis == "szz":
+        lines.extend(f"    d{i} = qubit()" for i in range(num_data))
+        lines.extend(f"    h(d{i})" for i in range(num_data))
+        lines.append(f"    return SurfaceCode_{dx}x{dz}({szz_data_args})")
+    else:
+        lines.append(f"    data = array(qubit() for _ in range({num_data}))")
+        lines.append(f"    for i in range({num_data}):")
+        lines.append("        h(data[i])")
+        lines.append(f"    return SurfaceCode_{dx}x{dz}(data)")
+    lines.extend(["", ""])
+
+    # Generate syndrome extraction with the selected parallel interaction schedule.
     rounds = compute_cnot_schedule(patch)
+    szz_sign_by_touch: dict[tuple[str, int, int], int] = {}
+    if interaction_basis == "szz":
+        residual_plan = _default_szz_residual_plan(patch)
+        szz_sign_by_touch = {
+            (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): entry.sign
+            for entry in residual_plan.signs
+        }
+
+    def _szz_ancilla_expr(stab_type: str, stab_idx: int) -> str:
+        return f"ax{stab_idx}" if stab_type == "X" else f"az{stab_idx}"
+
+    def _append_szz_layer(
+        target: list[str],
+        indent: str,
+        rnd_idx: int,
+        layer_gates: list[tuple[str, int, int]],
+        ancilla_expr: Callable[[str, int], str],
+        data_expr: Callable[[int], str],
+    ) -> None:
+        target.append("")
+        target.append(f"{indent}# SZZ round {rnd_idx + 1}")
+        x_touches = [(stab_idx, data_q) for stab_type, stab_idx, data_q in layer_gates if stab_type == "X"]
+        for _stab_idx, data_q in x_touches:
+            target.append(f"{indent}h({data_expr(data_q)})")
+
+        for stab_type, stab_idx, data_q in layer_gates:
+            sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
+            half_turns = "0.5" if sign > 0 else "-0.5"
+            target.append(
+                f"{indent}{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)} = "
+                f"zz_phase({ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)}, angle({half_turns}))",
+            )
+
+        for _stab_idx, data_q in x_touches:
+            target.append(f"{indent}h({data_expr(data_q)})")
+
+        for stab_type, stab_idx, data_q in layer_gates:
+            sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
+            compensation = {
+                ("X", 1): "vdg",
+                ("X", -1): "v",
+                ("Z", 1): "sdg",
+                ("Z", -1): "s",
+            }[(stab_type, sign)]
+            target.append(f"{indent}{compensation}({data_expr(data_q)})")
 
     lines.extend(
         [
@@ -298,9 +399,15 @@ def generate_guppy_source(
             f") -> Syndrome_{dx}x{dz}:",
         )
     else:
-        lines.append(
-            f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}) -> Syndrome_{dx}x{dz}:",
-        )
+        if interaction_basis == "szz":
+            lines.append(
+                f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz} @ owned) "
+                f"-> tuple[SurfaceCode_{dx}x{dz}, Syndrome_{dx}x{dz}]:",
+            )
+        else:
+            lines.append(
+                f"def syndrome_extraction(surf: SurfaceCode_{dx}x{dz}) -> Syndrome_{dx}x{dz}:",
+            )
 
     if not constrained:
         # Unconstrained: one ancilla per stabilizer, X-stabs first then
@@ -308,30 +415,51 @@ def generate_guppy_source(
         # abstract circuit's unconstrained-path measurement order.
         lines.extend(
             [
-                '    """Extract full syndrome using 4-round parallel CNOT schedule."""',
-                "    # Allocate ancilla qubits (one per stabilizer)",
+                (
+                    '    """Extract full syndrome using 4-round parallel SZZ/SZZdg schedule."""'
+                    if interaction_basis == "szz"
+                    else '    """Extract full syndrome using 4-round parallel CNOT schedule."""'
+                ),
             ],
         )
+        if interaction_basis == "szz":
+            lines.append("    # Unpack data qubits")
+            _append_szz_data_unpack(lines, "    ")
 
+        lines.append("    # Allocate ancilla qubits (one per stabilizer)")
         lines.extend(f"    ax{stab.index} = qubit()" for stab in geom.x_stabilizers)
         lines.extend(f"    az{stab.index} = qubit()" for stab in geom.z_stabilizers)
 
-        lines.append("")
-        lines.append("    # Hadamard on X ancillas")
-        lines.extend(f"    h(ax{stab.index})" for stab in geom.x_stabilizers)
-
-        for rnd_idx, rnd_gates in enumerate(rounds):
+        if interaction_basis == "cx":
             lines.append("")
-            lines.append(f"    # Round {rnd_idx + 1}")
-            for stab_type, stab_idx, data_q in rnd_gates:
-                if stab_type == "X":
-                    lines.append(f"    cx(ax{stab_idx}, surf.data[{data_q}])")
-                else:
-                    lines.append(f"    cx(surf.data[{data_q}], az{stab_idx})")
+            lines.append("    # Hadamard on X ancillas")
+            lines.extend(f"    h(ax{stab.index})" for stab in geom.x_stabilizers)
 
-        lines.append("")
-        lines.append("    # Hadamard on X ancillas")
-        lines.extend(f"    h(ax{stab.index})" for stab in geom.x_stabilizers)
+            for rnd_idx, rnd_gates in enumerate(rounds):
+                lines.append("")
+                lines.append(f"    # Round {rnd_idx + 1}")
+                for stab_type, stab_idx, data_q in rnd_gates:
+                    if stab_type == "X":
+                        lines.append(f"    cx(ax{stab_idx}, surf.data[{data_q}])")
+                    else:
+                        lines.append(f"    cx(surf.data[{data_q}], az{stab_idx})")
+
+            lines.append("")
+            lines.append("    # Hadamard on X ancillas")
+            lines.extend(f"    h(ax{stab.index})" for stab in geom.x_stabilizers)
+        else:
+            lines.append("")
+            lines.append("    # Hadamard on SZZ ancillas")
+            lines.extend(f"    h(ax{stab.index})" for stab in geom.x_stabilizers)
+            lines.extend(f"    h(az{stab.index})" for stab in geom.z_stabilizers)
+
+            for rnd_idx, rnd_gates in enumerate(rounds):
+                _append_szz_layer(lines, "    ", rnd_idx, list(rnd_gates), _szz_ancilla_expr, _szz_data_expr)
+
+            lines.append("")
+            lines.append("    # Hadamard on SZZ ancillas")
+            lines.extend(f"    h(ax{stab.index})" for stab in geom.x_stabilizers)
+            lines.extend(f"    h(az{stab.index})" for stab in geom.z_stabilizers)
 
         lines.append("")
         lines.append("    # Measure ancillas")
@@ -430,17 +558,13 @@ def generate_guppy_source(
     x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
     z_calls = ", ".join(f"sz{s.index}" for s in geom.z_stabilizers)
 
-    lines.extend(
-        [
-            "",
-            f"    synx = array({x_calls})",
-            f"    synz = array({z_calls})",
-            "",
-            f"    return Syndrome_{dx}x{dz}(synx, synz)",
-            "",
-            "",
-        ],
-    )
+    lines.extend(["", f"    synx = array({x_calls})", f"    synz = array({z_calls})", ""])
+    if interaction_basis == "szz":
+        lines.append(f"    surf = SurfaceCode_{dx}x{dz}({szz_data_args})")
+        lines.append(f"    return surf, Syndrome_{dx}x{dz}(synx, synz)")
+    else:
+        lines.append(f"    return Syndrome_{dx}x{dz}(synx, synz)")
+    lines.extend(["", ""])
 
     def append_init_syndrome_function(function_name: str, stab_type: str) -> None:
         """Append a basis-prep syndrome-establishment helper."""
@@ -460,36 +584,66 @@ def generate_guppy_source(
                 "",
                 "",
                 "@guppy",
-                f"def {function_name}(surf: SurfaceCode_{dx}x{dz}) -> {return_type}:",
+                (
+                    f"def {function_name}(surf: SurfaceCode_{dx}x{dz} @ owned) "
+                    f"-> tuple[SurfaceCode_{dx}x{dz}, {return_type}]:"
+                    if interaction_basis == "szz"
+                    else f"def {function_name}(surf: SurfaceCode_{dx}x{dz}) -> {return_type}:"
+                ),
                 f'    """{doc}"""',
             ],
         )
+        if interaction_basis == "szz":
+            _append_szz_data_unpack(lines, "    ")
 
         if not constrained:
             if stab_type == "X":
                 lines.extend(f"    ax{stab.index} = qubit()" for stab in stabs)
-                lines.append("")
-                lines.append("    # Hadamard on X ancillas")
-                lines.extend(f"    h(ax{stab.index})" for stab in stabs)
             else:
                 lines.extend(f"    az{stab.index} = qubit()" for stab in stabs)
 
-            for rnd_idx, rnd_gates in enumerate(rounds):
-                filtered = [(t, i, q) for t, i, q in rnd_gates if t == stab_type]
-                if not filtered:
-                    continue
-                lines.append("")
-                lines.append(f"    # Round {rnd_idx + 1}")
-                for _stab_type, stab_idx, data_q in filtered:
-                    if stab_type == "X":
-                        lines.append(f"    cx(ax{stab_idx}, surf.data[{data_q}])")
-                    else:
-                        lines.append(f"    cx(surf.data[{data_q}], az{stab_idx})")
+            if interaction_basis == "cx":
+                if stab_type == "X":
+                    lines.append("")
+                    lines.append("    # Hadamard on X ancillas")
+                    lines.extend(f"    h(ax{stab.index})" for stab in stabs)
 
-            if stab_type == "X":
+                for rnd_idx, rnd_gates in enumerate(rounds):
+                    filtered = [(t, i, q) for t, i, q in rnd_gates if t == stab_type]
+                    if not filtered:
+                        continue
+                    lines.append("")
+                    lines.append(f"    # Round {rnd_idx + 1}")
+                    for _stab_type, stab_idx, data_q in filtered:
+                        if stab_type == "X":
+                            lines.append(f"    cx(ax{stab_idx}, surf.data[{data_q}])")
+                        else:
+                            lines.append(f"    cx(surf.data[{data_q}], az{stab_idx})")
+
+                if stab_type == "X":
+                    lines.append("")
+                    lines.append("    # Hadamard on X ancillas")
+                    lines.extend(f"    h(ax{stab.index})" for stab in stabs)
+            else:
                 lines.append("")
-                lines.append("    # Hadamard on X ancillas")
-                lines.extend(f"    h(ax{stab.index})" for stab in stabs)
+                lines.append("    # Hadamard on SZZ ancillas")
+                if stab_type == "X":
+                    lines.extend(f"    h(ax{stab.index})" for stab in stabs)
+                else:
+                    lines.extend(f"    h(az{stab.index})" for stab in stabs)
+
+                for rnd_idx, rnd_gates in enumerate(rounds):
+                    filtered = [(t, i, q) for t, i, q in rnd_gates if t == stab_type]
+                    if not filtered:
+                        continue
+                    _append_szz_layer(lines, "    ", rnd_idx, filtered, _szz_ancilla_expr, _szz_data_expr)
+
+                lines.append("")
+                lines.append("    # Hadamard on SZZ ancillas")
+                if stab_type == "X":
+                    lines.extend(f"    h(ax{stab.index})" for stab in stabs)
+                else:
+                    lines.extend(f"    h(az{stab.index})" for stab in stabs)
 
             lines.append("")
             lines.append("    # Measure init ancillas")
@@ -554,12 +708,12 @@ def generate_guppy_source(
                     lines.append(f'    result("{syn_var}:init:meas:{idx}", {syn_var})')
                     idx += 1
 
-        lines.extend(
-            [
-                "",
-                f"    return array({return_calls})",
-            ],
-        )
+        lines.append("")
+        if interaction_basis == "szz":
+            lines.append(f"    surf = SurfaceCode_{dx}x{dz}({szz_data_args})")
+            lines.append(f"    return surf, array({return_calls})")
+        else:
+            lines.append(f"    return array({return_calls})")
 
     append_init_syndrome_function("init_z_basis", "X")
     append_init_syndrome_function("init_x_basis", "Z")
@@ -572,19 +726,33 @@ def generate_guppy_source(
             "@guppy",
             f"def measure_z_basis(surf: SurfaceCode_{dx}x{dz} @ owned) -> array[bool, {num_data}]:",
             '    """Destructively measure in Z basis."""',
-            "    return measure_array(surf.data)",
+        ],
+    )
+    if interaction_basis == "szz":
+        _append_szz_data_unpack(lines, "    ")
+        z_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
+        lines.append(f"    return array({z_meas})")
+    else:
+        lines.append("    return measure_array(surf.data)")
+    lines.extend(
+        [
             "",
             "",
             "@guppy",
             f"def measure_x_basis(surf: SurfaceCode_{dx}x{dz} @ owned) -> array[bool, {num_data}]:",
             '    """Destructively measure in X basis."""',
-            f"    for i in range({num_data}):",
-            "        h(surf.data[i])",
-            "    return measure_array(surf.data)",
-            "",
-            "",
         ],
     )
+    if interaction_basis == "szz":
+        _append_szz_data_unpack(lines, "    ")
+        lines.extend(f"    h(d{i})" for i in range(num_data))
+        x_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
+        lines.append(f"    return array({x_meas})")
+    else:
+        lines.append(f"    for i in range({num_data}):")
+        lines.append("        h(surf.data[i])")
+        lines.append("    return measure_array(surf.data)")
+    lines.extend(["", ""])
 
     # Generate logical operators
     logical_x_qubits = list(geom.logical_x.data_qubits) if geom.logical_x else []
@@ -599,7 +767,10 @@ def generate_guppy_source(
             '    """Apply logical X (string along left edge)."""',
         ],
     )
-    lines.extend(f"    x(surf.data[{q}])" for q in logical_x_qubits)
+    if interaction_basis == "szz":
+        lines.extend(f"    x(surf.d{q})" for q in logical_x_qubits)
+    else:
+        lines.extend(f"    x(surf.data[{q}])" for q in logical_x_qubits)
 
     lines.extend(
         [
@@ -608,11 +779,12 @@ def generate_guppy_source(
             "@guppy",
             f"def apply_logical_z(surf: SurfaceCode_{dx}x{dz}) -> None:",
             '    """Apply logical Z (string along top edge)."""',
-            "    from guppylang.std.quantum import z",
-            "",
         ],
     )
-    lines.extend(f"    z(surf.data[{q}])" for q in logical_z_qubits)
+    if interaction_basis == "szz":
+        lines.extend(f"    z(surf.d{q})" for q in logical_z_qubits)
+    else:
+        lines.extend(f"    z(surf.data[{q}])" for q in logical_z_qubits)
 
     lines.extend(
         [
@@ -622,7 +794,7 @@ def generate_guppy_source(
     )
 
     # Generate memory experiment factories
-    lines.extend(_render_memory_experiments(dx, dz, num_data, twirl, rng, num_rounds))
+    lines.extend(_render_memory_experiments(patch, dx, dz, num_data, twirl, rng, num_rounds, interaction_basis))
 
     return "\n".join(lines)
 
@@ -639,12 +811,14 @@ def _xor_expr(terms: object) -> str:
 
 
 def _render_memory_experiments(
+    patch: "SurfacePatch",
     dx: int,
     dz: int,
     num_data: int,
     twirl: "TwirlConfig | None",
     rng: "GuppyRngMaskConfig | None",
     num_rounds: int | None,
+    interaction_basis: str,
 ) -> list[str]:
     """Render both memory factory functions."""
     lines = [
@@ -653,23 +827,38 @@ def _render_memory_experiments(
     ]
     for basis, basis_upper in (("z", "Z"), ("x", "X")):
         if twirl is None:
-            lines.extend(_render_plain_memory_block(basis, basis_upper, dx, dz))
+            lines.extend(_render_plain_memory_block(basis, basis_upper, dx, dz, interaction_basis))
         else:
             if rng is None or num_rounds is None:
                 msg = "twirled memory rendering requires both rng and num_rounds"
                 raise ValueError(msg)
-            lines.extend(
-                _render_twirled_memory_block(
-                    basis,
-                    basis_upper,
-                    dx,
-                    dz,
-                    num_data,
-                    twirl,
-                    rng,
-                    num_rounds,
-                ),
-            )
+            if twirl.site_schedule == "before_two_qubit_gate":
+                lines.extend(
+                    _render_gate_local_twirled_memory_block(
+                        patch,
+                        basis,
+                        basis_upper,
+                        dx,
+                        dz,
+                        num_data,
+                        twirl,
+                        rng,
+                        num_rounds,
+                    ),
+                )
+            else:
+                lines.extend(
+                    _render_twirled_memory_block(
+                        basis,
+                        basis_upper,
+                        dx,
+                        dz,
+                        num_data,
+                        twirl,
+                        rng,
+                        num_rounds,
+                    ),
+                )
     return lines
 
 
@@ -678,10 +867,17 @@ def _render_plain_memory_block(
     basis_upper: str,
     dx: int,
     dz: int,
+    interaction_basis: str,
 ) -> list[str]:
     """Render the vanilla handoff memory factory for one basis."""
     init_func = "init_z_basis" if basis == "z" else "init_x_basis"
     init_tag = "init_synx" if basis == "z" else "init_synz"
+    if interaction_basis == "szz":
+        init_line = f"        surf, init_syn = {init_func}(surf)"
+        syndrome_line = "            surf, syn = syndrome_extraction(surf)"
+    else:
+        init_line = f"        init_syn = {init_func}(surf)"
+        syndrome_line = "            syn = syndrome_extraction(surf)"
     return [
         f"def make_memory_{basis}(num_rounds: int):",
         f'    """Create {basis_upper}-basis memory experiment."""',
@@ -691,11 +887,11 @@ def _render_plain_memory_block(
         f"    def memory_{basis}() -> None:",
         f'        """{basis_upper}-basis memory experiment for dx={dx}, dz={dz}."""',
         f"        surf = prep_{basis}_basis()",
-        f"        init_syn = {init_func}(surf)",
+        init_line,
         f'        result("{init_tag}", init_syn)',
         "",
         "        for _t in range(comptime(num_rounds)):",
-        "            syn = syndrome_extraction(surf)",
+        syndrome_line,
         '            result("synx", syn.synx)',
         '            result("synz", syn.synz)',
         "",
@@ -706,6 +902,45 @@ def _render_plain_memory_block(
         "",
         "",
     ]
+
+
+def _twirl_activation_threshold(twirl: "TwirlConfig") -> int:
+    """Return the full-width PCG threshold for a twirl activation probability."""
+    probability = float(twirl.twirl_probability)
+    # Validation lives on TwirlConfig; clamp the mathematically exact endpoint
+    # after float multiplication so f=1.0 always activates every 32-bit draw.
+    threshold = int(probability * (1 << 32))
+    return min(max(threshold, 0), 1 << 32)
+
+
+def _emit_scaled_activation_tags(twirl: "TwirlConfig") -> bool:
+    """Whether generated source needs explicit activation side-band tags."""
+    return float(twirl.twirl_probability) != 1.0
+
+
+def _append_pauli_draw(
+    lines: list[str],
+    indent: str,
+    *,
+    active_var: str,
+    draw_var: str,
+    m_var: str,
+    qubit_expr: str,
+    threshold: int,
+) -> None:
+    """Emit fixed-consumption activation + Pauli draw code for one twirl operand."""
+    lines.append(f"{indent}rng_state, active_draw_{m_var} = _pcg32_next32(rng_state, rng_inc)")
+    lines.append(f"{indent}{active_var} = active_draw_{m_var} < nat({threshold})")
+    lines.append(f"{indent}rng_state, {draw_var} = _pcg32_next4(rng_state, rng_inc)")
+    lines.append(f"{indent}{m_var} = 0")
+    lines.append(f"{indent}if {active_var}:")
+    lines.append(f"{indent}    {m_var} = {draw_var}")
+    lines.append(f"{indent}if {m_var} == 1:")
+    lines.append(f"{indent}    x({qubit_expr})")
+    lines.append(f"{indent}if {m_var} == 2:")
+    lines.append(f"{indent}    y({qubit_expr})")
+    lines.append(f"{indent}if {m_var} == 3:")
+    lines.append(f"{indent}    z({qubit_expr})")
 
 
 def _render_twirled_memory_block(
@@ -719,10 +954,12 @@ def _render_twirled_memory_block(
     num_rounds: int,
 ) -> list[str]:
     """Render a Python-time unrolled twirled memory factory."""
-    from pecos.qec.surface._twirl_sites import num_twirl_sites, pauli_mask_round_tag
+    from pecos.qec.surface._twirl_sites import num_twirl_sites, pauli_active_round_tag, pauli_mask_round_tag
 
     seed = int(rng.seed)
     canonical_frame_output = twirl.frame_output == "canonical"
+    activation_threshold = _twirl_activation_threshold(twirl)
+    emit_activation_tags = _emit_scaled_activation_tags(twirl)
     init_func = "init_z_basis" if basis == "z" else "init_x_basis"
     init_tag = "init_synx" if basis == "z" else "init_synz"
     body: list[str] = [
@@ -758,13 +995,15 @@ def _render_twirled_memory_block(
         body.append('        result("synz", syn.synz)')
         body.append("        # Pauli twirl site between this round and the next.")
         for q in range(num_data):
-            body.append(f"        rng_state, m_{r}_{q} = _pcg32_next4(rng_state, rng_inc)")
-            body.append(f"        if m_{r}_{q} == 1:")
-            body.append(f"            x(surf.data[{q}])")
-            body.append(f"        if m_{r}_{q} == 2:")
-            body.append(f"            y(surf.data[{q}])")
-            body.append(f"        if m_{r}_{q} == 3:")
-            body.append(f"            z(surf.data[{q}])")
+            _append_pauli_draw(
+                body,
+                "        ",
+                active_var=f"active_{r}_{q}",
+                draw_var=f"m_draw_{r}_{q}",
+                m_var=f"m_{r}_{q}",
+                qubit_expr=f"surf.data[{q}]",
+                threshold=activation_threshold,
+            )
             body.append(f"        lo_{r}_{q} = (m_{r}_{q} == 1) | (m_{r}_{q} == 3)")
             body.append(f"        hi_{r}_{q} = (m_{r}_{q} == 2) | (m_{r}_{q} == 3)")
             if canonical_frame_output:
@@ -779,6 +1018,10 @@ def _render_twirled_memory_block(
         elements = ", ".join(f"lo_{r}_{q}, hi_{r}_{q}" for q in range(num_data))
         tag = pauli_mask_round_tag(r)
         body.append(f'        result("{tag}", array({elements}))')
+        if emit_activation_tags:
+            active_elements = ", ".join(f"active_{r}_{q}" for q in range(num_data))
+            active_tag = pauli_active_round_tag(r)
+            body.append(f'        result("{active_tag}", array({active_elements}))')
         body.append("")
 
     if num_rounds > 0:
@@ -828,6 +1071,364 @@ def _render_twirled_memory_block(
     ]
 
 
+def _frame_vars(prefix: str, idx: int) -> tuple[str, str]:
+    return f"frame_x_{prefix}{idx}", f"frame_z_{prefix}{idx}"
+
+
+def _append_frame_swap(lines: list[str], indent: str, x_var: str, z_var: str, tmp_var: str) -> None:
+    lines.append(f"{indent}{tmp_var} = {x_var}")
+    lines.append(f"{indent}{x_var} = {z_var}")
+    lines.append(f"{indent}{z_var} = {tmp_var}")
+
+
+def _append_gate_local_draw(
+    lines: list[str],
+    indent: str,
+    *,
+    site_idx: int,
+    operand_idx: int,
+    qubit_expr: str,
+    frame_vars: tuple[str, str] | None,
+    threshold: int,
+) -> tuple[str, str, str]:
+    m_var = f"m_g{site_idx}_o{operand_idx}"
+    active_var = f"active_g{site_idx}_o{operand_idx}"
+    draw_var = f"m_draw_g{site_idx}_o{operand_idx}"
+    lo_var = f"lo_g{site_idx}_o{operand_idx}"
+    hi_var = f"hi_g{site_idx}_o{operand_idx}"
+    _append_pauli_draw(
+        lines,
+        indent,
+        active_var=active_var,
+        draw_var=draw_var,
+        m_var=m_var,
+        qubit_expr=qubit_expr,
+        threshold=threshold,
+    )
+    lines.append(f"{indent}{lo_var} = ({m_var} == 1) | ({m_var} == 3)")
+    lines.append(f"{indent}{hi_var} = ({m_var} == 2) | ({m_var} == 3)")
+    if frame_vars is not None:
+        x_frame, z_frame = frame_vars
+        twx_var = f"twx_g{site_idx}_o{operand_idx}"
+        twz_var = f"twz_g{site_idx}_o{operand_idx}"
+        lines.append(f"{indent}{twx_var} = ({m_var} == 1) | ({m_var} == 2)")
+        lines.append(f"{indent}{twz_var} = ({m_var} == 2) | ({m_var} == 3)")
+        lines.append(f"{indent}{x_frame} = {x_frame} != {twx_var}")
+        lines.append(f"{indent}{z_frame} = {z_frame} != {twz_var}")
+    return lo_var, hi_var, active_var
+
+
+def _append_gate_local_layer(
+    lines: list[str],
+    indent: str,
+    *,
+    site_idx: int,
+    cx_ops: list[tuple[str, str, tuple[str, str] | None, tuple[str, str] | None]],
+    threshold: int,
+    emit_activation_tags: bool,
+) -> int:
+    """Emit all twirl draws before a parallel CX layer, then the CX layer."""
+    from pecos.qec.surface._twirl_sites import pauli_active_gate_tag, pauli_mask_gate_tag
+
+    for control_expr, target_expr, control_frame, target_frame in cx_ops:
+        lo0, hi0, active0 = _append_gate_local_draw(
+            lines,
+            indent,
+            site_idx=site_idx,
+            operand_idx=0,
+            qubit_expr=control_expr,
+            frame_vars=control_frame,
+            threshold=threshold,
+        )
+        lo1, hi1, active1 = _append_gate_local_draw(
+            lines,
+            indent,
+            site_idx=site_idx,
+            operand_idx=1,
+            qubit_expr=target_expr,
+            frame_vars=target_frame,
+            threshold=threshold,
+        )
+        tag = pauli_mask_gate_tag(site_idx)
+        lines.append(f'{indent}result("{tag}", array({lo0}, {hi0}, {lo1}, {hi1}))')
+        if emit_activation_tags:
+            active_tag = pauli_active_gate_tag(site_idx)
+            lines.append(f'{indent}result("{active_tag}", array({active0}, {active1}))')
+        site_idx += 1
+
+    for control_expr, target_expr, control_frame, target_frame in cx_ops:
+        lines.append(f"{indent}cx({control_expr}, {target_expr})")
+        if control_frame is not None and target_frame is not None:
+            control_x, control_z = control_frame
+            target_x, target_z = target_frame
+            lines.append(f"{indent}{target_x} = {target_x} != {control_x}")
+            lines.append(f"{indent}{control_z} = {control_z} != {target_z}")
+    return site_idx
+
+
+def _append_gate_local_measure(
+    lines: list[str],
+    indent: str,
+    *,
+    bit_var: str,
+    qubit_expr: str,
+    result_tag: str,
+    raw_tag: str,
+    frame_vars: tuple[str, str] | None,
+) -> None:
+    if frame_vars is None:
+        lines.append(f"{indent}{bit_var} = measure({qubit_expr})")
+    else:
+        raw_var = f"{bit_var}_raw"
+        frame_x, _frame_z = frame_vars
+        lines.append(f"{indent}{raw_var} = measure({qubit_expr})")
+        lines.append(f"{indent}{bit_var} = {raw_var} != {frame_x}")
+        lines.append(f'{indent}result("{raw_tag}", {raw_var})')
+    lines.append(f'{indent}result("{result_tag}", {bit_var})')
+
+
+def _render_gate_local_twirled_memory_block(
+    patch: "SurfacePatch",
+    basis: str,
+    basis_upper: str,
+    dx: int,
+    dz: int,
+    num_data: int,
+    twirl: "TwirlConfig",
+    rng: "GuppyRngMaskConfig",
+    num_rounds: int,
+) -> list[str]:
+    """Render a gate-local twirled memory factory."""
+    seed = int(rng.seed)
+    canonical_frame_output = twirl.frame_output == "canonical"
+    activation_threshold = _twirl_activation_threshold(twirl)
+    emit_activation_tags = _emit_scaled_activation_tags(twirl)
+    geom = patch.geometry
+    rounds = compute_cnot_schedule(patch)
+    init_stab_type = "X" if basis == "z" else "Z"
+    init_tag = "init_synx" if basis == "z" else "init_synz"
+    indent = "        "
+    site_idx = 0
+
+    data_frames = [_frame_vars("d", q) for q in range(num_data)]
+    x_anc_frames = [_frame_vars("ax", stab.index) for stab in geom.x_stabilizers]
+    z_anc_frames = [_frame_vars("az", stab.index) for stab in geom.z_stabilizers]
+
+    def data_expr(q: int) -> str:
+        return f"surf.data[{q}]"
+
+    def anc_expr(stab_type: str, stab_idx: int) -> str:
+        return f"ax{stab_idx}" if stab_type == "X" else f"az{stab_idx}"
+
+    def anc_frame(stab_type: str, stab_idx: int) -> tuple[str, str] | None:
+        if not canonical_frame_output:
+            return None
+        return x_anc_frames[stab_idx] if stab_type == "X" else z_anc_frames[stab_idx]
+
+    def data_frame(q: int) -> tuple[str, str] | None:
+        return data_frames[q] if canonical_frame_output else None
+
+    def cx_tuple(
+        stab_type: str,
+        stab_idx: int,
+        data_q: int,
+    ) -> tuple[str, str, tuple[str, str] | None, tuple[str, str] | None]:
+        if stab_type == "X":
+            return (
+                anc_expr(stab_type, stab_idx),
+                data_expr(data_q),
+                anc_frame(stab_type, stab_idx),
+                data_frame(data_q),
+            )
+        return (
+            data_expr(data_q),
+            anc_expr(stab_type, stab_idx),
+            data_frame(data_q),
+            anc_frame(stab_type, stab_idx),
+        )
+
+    body: list[str] = [
+        f'        """{basis_upper}-basis memory experiment for dx={dx}, dz={dz}, '
+        f'num_rounds={num_rounds} (gate-local twirled)."""',
+        f"        surf = prep_{basis}_basis()",
+        "        # RNG seed is structural -- changing it does not invalidate the",
+        "        # abstract DEM / topology cache, only the per-shot mask buffer.",
+        f"        rng_state, rng_inc = seeded_pcg32_with_quantum_entropy({seed})",
+        f'        result("frame_mode:{twirl.frame_output}", True)',
+    ]
+    if canonical_frame_output:
+        for q in range(num_data):
+            frame_x, frame_z = data_frames[q]
+            body.append(f"{indent}{frame_x} = False")
+            body.append(f"{indent}{frame_z} = False")
+        body.append("")
+
+    # Initial syndrome establishment for the complementary stabilizer family.
+    init_stabs = list(geom.x_stabilizers if init_stab_type == "X" else geom.z_stabilizers)
+    for stab in init_stabs:
+        body.append(f"{indent}{anc_expr(init_stab_type, stab.index)} = qubit()")
+        if canonical_frame_output:
+            frame_x, frame_z = anc_frame(init_stab_type, stab.index) or ("", "")
+            body.append(f"{indent}{frame_x} = False")
+            body.append(f"{indent}{frame_z} = False")
+    if init_stab_type == "X":
+        body.append("")
+        for stab in init_stabs:
+            body.append(f"{indent}h(ax{stab.index})")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_init_ax{stab.index}")
+
+    for rnd_idx, rnd_gates in enumerate(rounds):
+        filtered = [(t, i, q) for t, i, q in rnd_gates if t == init_stab_type]
+        if not filtered:
+            continue
+        body.append("")
+        body.append(f"{indent}# Init CX round {rnd_idx + 1}")
+        cx_ops = [cx_tuple(stab_type, stab_idx, data_q) for stab_type, stab_idx, data_q in filtered]
+        site_idx = _append_gate_local_layer(
+            body,
+            indent,
+            site_idx=site_idx,
+            cx_ops=cx_ops,
+            threshold=activation_threshold,
+            emit_activation_tags=emit_activation_tags,
+        )
+
+    if init_stab_type == "X":
+        body.append("")
+        for stab in init_stabs:
+            body.append(f"{indent}h(ax{stab.index})")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_init2_ax{stab.index}")
+
+    body.append("")
+    init_bits: list[str] = []
+    for idx, stab in enumerate(init_stabs):
+        bit_var = f"s{init_stab_type.lower()}{stab.index}_init"
+        init_bits.append(bit_var)
+        _append_gate_local_measure(
+            body,
+            indent,
+            bit_var=bit_var,
+            qubit_expr=anc_expr(init_stab_type, stab.index),
+            result_tag=f"s{init_stab_type.lower()}{stab.index}:init:meas:{idx}",
+            raw_tag=f"raw:s{init_stab_type.lower()}{stab.index}:init:bit:{idx}",
+            frame_vars=anc_frame(init_stab_type, stab.index),
+        )
+    body.append(f'{indent}result("{init_tag}", array({", ".join(init_bits)}))')
+    body.append("")
+
+    for round_idx in range(num_rounds):
+        body.append(f"{indent}# === Round {round_idx} (gate-local twirled) ===")
+        for stab in geom.x_stabilizers:
+            body.append(f"{indent}ax{stab.index} = qubit()")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                body.append(f"{indent}{frame_x} = False")
+                body.append(f"{indent}{frame_z} = False")
+        for stab in geom.z_stabilizers:
+            body.append(f"{indent}az{stab.index} = qubit()")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("Z", stab.index) or ("", "")
+                body.append(f"{indent}{frame_x} = False")
+                body.append(f"{indent}{frame_z} = False")
+        for stab in geom.x_stabilizers:
+            body.append(f"{indent}h(ax{stab.index})")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_r{round_idx}_ax{stab.index}")
+
+        for rnd_idx, rnd_gates in enumerate(rounds):
+            body.append("")
+            body.append(f"{indent}# Round {round_idx} CX layer {rnd_idx + 1}")
+            cx_ops = [cx_tuple(stab_type, stab_idx, data_q) for stab_type, stab_idx, data_q in rnd_gates]
+            site_idx = _append_gate_local_layer(
+                body,
+                indent,
+                site_idx=site_idx,
+                cx_ops=cx_ops,
+                threshold=activation_threshold,
+                emit_activation_tags=emit_activation_tags,
+            )
+
+        for stab in geom.x_stabilizers:
+            body.append(f"{indent}h(ax{stab.index})")
+            if canonical_frame_output:
+                frame_x, frame_z = anc_frame("X", stab.index) or ("", "")
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h2_r{round_idx}_ax{stab.index}")
+
+        sx_bits: list[str] = []
+        sz_bits: list[str] = []
+        meas_idx = 0
+        for stab in geom.x_stabilizers:
+            bit_var = f"sx{stab.index}_r{round_idx}"
+            sx_bits.append(bit_var)
+            _append_gate_local_measure(
+                body,
+                indent,
+                bit_var=bit_var,
+                qubit_expr=f"ax{stab.index}",
+                result_tag=f"sx{stab.index}:meas:{meas_idx}",
+                raw_tag=f"raw:sx{stab.index}:bit:{meas_idx}",
+                frame_vars=anc_frame("X", stab.index),
+            )
+            meas_idx += 1
+        for stab in geom.z_stabilizers:
+            bit_var = f"sz{stab.index}_r{round_idx}"
+            sz_bits.append(bit_var)
+            _append_gate_local_measure(
+                body,
+                indent,
+                bit_var=bit_var,
+                qubit_expr=f"az{stab.index}",
+                result_tag=f"sz{stab.index}:meas:{meas_idx}",
+                raw_tag=f"raw:sz{stab.index}:bit:{meas_idx}",
+                frame_vars=anc_frame("Z", stab.index),
+            )
+            meas_idx += 1
+        body.append(f'{indent}result("synx", array({", ".join(sx_bits)}))')
+        body.append(f'{indent}result("synz", array({", ".join(sz_bits)}))')
+        body.append("")
+
+    if canonical_frame_output:
+        if basis == "x":
+            for q in range(num_data):
+                body.append(f"{indent}h(surf.data[{q}])")
+                frame_x, frame_z = data_frames[q]
+                _append_frame_swap(body, indent, frame_x, frame_z, f"tmp_h_final_d{q}")
+        body.append(f"{indent}final_raw = measure_array(surf.data)")
+        body.append(f'{indent}result("raw:final", final_raw)')
+        for q in range(num_data):
+            frame_x, _frame_z = data_frames[q]
+            body.append(f"{indent}final_{q} = final_raw[{q}] != {frame_x}")
+        body.append(f'{indent}result("final", array({", ".join(f"final_{q}" for q in range(num_data))}))')
+    else:
+        body.append(f"{indent}final = measure_{basis}_basis(surf)")
+        body.append(f'{indent}result("final", final)')
+
+    return [
+        f"def make_memory_{basis}(num_rounds: int):",
+        f'    """Create {basis_upper}-basis gate-local twirled memory experiment.',
+        "",
+        f"    num_rounds must equal {num_rounds} -- the body was unrolled at",
+        "    source-generation time. Mismatched values raise ValueError.",
+        '    """',
+        f"    if num_rounds != {num_rounds}:",
+        f'        msg = f"this generated module was unrolled for num_rounds={num_rounds}, got {{num_rounds!r}}"',
+        "        raise ValueError(msg)",
+        "",
+        "    @guppy",
+        f"    def memory_{basis}() -> None:",
+        *body,
+        "",
+        f"    return memory_{basis}",
+        "",
+        "",
+    ]
+
+
 def _validate_surface_memory_distance(d: int) -> None:
     """Enforce the surface-memory Guppy entry-point distance contract.
 
@@ -849,6 +1450,7 @@ def _guppy_module_cache_key(
     twirl: "TwirlConfig | None" = None,
     rng: "GuppyRngMaskConfig | None" = None,
     num_rounds: int | None = None,
+    interaction_basis: str = "cx",
 ) -> str:
     """Filesystem-safe cache key spanning full patch identity + budget + twirl.
 
@@ -859,11 +1461,13 @@ def _guppy_module_cache_key(
 
     Twirled source is Python-time unrolled, so the cache key includes
     ``num_rounds`` in addition to the structural twirl fields, runtime
-    frame-output mode, and RNG seed.
+    frame-output mode, RNG seed, and activation-probability threshold.
     """
     geom = patch.geometry
     rotated = "rot" if geom.rotated else "unrot"
-    base = f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}_b{effective_budget}"
+    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
+    interaction_part = "" if interaction_basis == "cx" else f"_ib{interaction_basis}"
+    base = f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}_b{effective_budget}{interaction_part}"
     if twirl is None:
         return base
     if rng is None or num_rounds is None:
@@ -872,6 +1476,7 @@ def _guppy_module_cache_key(
     twirl_part = (
         f"t-{twirl.scheme}-{twirl.site_schedule}-{twirl.result_encoding}"
         f"-frame-{twirl.frame_output}"
+        f"-p{_twirl_activation_threshold(twirl)}"
         f"-s{int(rng.seed)}-r{int(num_rounds)}"
     )
     return f"{base}_{twirl_part}"
@@ -884,6 +1489,7 @@ def _load_guppy_module(
     twirl: "TwirlConfig | None" = None,
     rng: "GuppyRngMaskConfig | None" = None,
     num_rounds: int | None = None,
+    interaction_basis: str = "cx",
 ) -> dict:
     """Load a Guppy module for a patch, using caching.
 
@@ -892,7 +1498,8 @@ def _load_guppy_module(
     ``normalize_ancilla_budget``), so ``ancilla_budget=None`` and
     ``ancilla_budget >= total_ancilla`` resolve to the same cache entry
     while distinct patch geometries never collide. Twirled source also
-    keys on twirl fields, frame-output mode, RNG seed, and round count.
+    keys on twirl fields, frame-output mode, activation-probability threshold,
+    RNG seed, and round count.
 
     Args:
         patch: SurfacePatch with geometry
@@ -900,16 +1507,25 @@ def _load_guppy_module(
         twirl: Pauli-twirl-site declaration (structural)
         rng: Runtime mask RNG seed (must be supplied with ``twirl``)
         num_rounds: Syndrome-round count for unrolled twirled source.
+        interaction_basis: Surface-memory interaction basis.
 
     Returns:
         Module dictionary with generated functions
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
+    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
     geom = patch.geometry
     total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
-    cache_key = _guppy_module_cache_key(patch, effective_budget, twirl, rng, num_rounds)
+    cache_key = _guppy_module_cache_key(
+        patch,
+        effective_budget,
+        twirl,
+        rng,
+        num_rounds,
+        interaction_basis,
+    )
 
     if cache_key in _state.module_cache:
         return _state.module_cache[cache_key]
@@ -920,6 +1536,7 @@ def _load_guppy_module(
         twirl=twirl,
         rng=rng,
         num_rounds=num_rounds,
+        interaction_basis=interaction_basis,
     )
 
     # Write to temp file (required for Guppy introspection).
@@ -950,6 +1567,7 @@ def generate_memory_experiment(
     ancilla_budget: int | None = None,
     twirl: "TwirlConfig | None" = None,
     rng: "GuppyRngMaskConfig | None" = None,
+    interaction_basis: str = "cx",
 ) -> object:
     """Generate a memory experiment for a patch.
 
@@ -960,6 +1578,7 @@ def generate_memory_experiment(
         ancilla_budget: Optional cap on simultaneously live ancillas
         twirl: Pauli-twirl-site declaration; must be supplied with ``rng``.
         rng: Runtime mask RNG seed; must be supplied with ``twirl``.
+        interaction_basis: Surface-memory interaction basis.
 
     Returns:
         Guppy function for the experiment
@@ -970,6 +1589,7 @@ def generate_memory_experiment(
         twirl=twirl,
         rng=rng,
         num_rounds=num_rounds if twirl is not None else None,
+        interaction_basis=interaction_basis,
     )
 
     if basis.upper() == "Z":
@@ -989,6 +1609,7 @@ def get_num_qubits(
     patch: "SurfacePatch | None" = None,
     ancilla_budget: int | None = None,
     twirl: "TwirlConfig | None" = None,
+    interaction_basis: str = "cx",
 ) -> int:
     """Get the peak simultaneously-live qubit count for a surface-code program.
 
@@ -1014,6 +1635,7 @@ def get_num_qubits(
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
+    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
     if (d is None) == (patch is None):
         msg = "get_num_qubits requires exactly one of d=... or patch=..."
         raise ValueError(msg)
@@ -1027,17 +1649,30 @@ def get_num_qubits(
         num_data = d * d
         total_ancilla = d * d - 1
 
+    if interaction_basis == "szz" and normalize_ancilla_budget(total_ancilla, ancilla_budget) < total_ancilla:
+        msg = "interaction_basis='szz' does not yet support constrained ancilla budgets on the Guppy runtime path"
+        raise ValueError(msg)
+    if interaction_basis == "szz" and twirl is not None:
+        msg = "interaction_basis='szz' Guppy runtime twirl integration is staged later"
+        raise ValueError(msg)
+
     twirl_entropy_qubits = 1 if twirl is not None else 0
     return num_data + normalize_ancilla_budget(total_ancilla, ancilla_budget) + twirl_entropy_qubits
 
 
-def generate_surface_code_module(d: int, *, ancilla_budget: int | None = None) -> str:
+def generate_surface_code_module(
+    d: int,
+    *,
+    ancilla_budget: int | None = None,
+    interaction_basis: str = "cx",
+) -> str:
     """Generate source code for a distance-d surface code module.
 
     Args:
         d: Code distance (must be odd >= 3)
         ancilla_budget: Optional cap on simultaneously live ancillas;
             forwarded to ``generate_guppy_source``.
+        interaction_basis: Surface-memory interaction basis.
 
     Returns:
         Python/Guppy source code as a string
@@ -1047,10 +1682,19 @@ def generate_surface_code_module(d: int, *, ancilla_budget: int | None = None) -
     from pecos.qec.surface import SurfacePatch
 
     patch = SurfacePatch.create(distance=d)
-    return generate_guppy_source(patch, ancilla_budget=ancilla_budget)
+    return generate_guppy_source(
+        patch,
+        ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
+    )
 
 
-def _surface_code_module_for_patch(patch: "SurfacePatch", *, ancilla_budget: int | None = None) -> dict:
+def _surface_code_module_for_patch(
+    patch: "SurfacePatch",
+    *,
+    ancilla_budget: int | None = None,
+    interaction_basis: str = "cx",
+) -> dict:
     """Load + cache a surface-code module for an arbitrary patch.
 
     Cache key spans full patch identity (dx, dz, orientation, rotated) plus
@@ -1061,32 +1705,44 @@ def _surface_code_module_for_patch(patch: "SurfacePatch", *, ancilla_budget: int
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
+    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
     geom = patch.geometry
     total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
-    cache_key = (patch.dx, patch.dz, geom.orientation.name, geom.rotated, effective_budget)
+    cache_key = (patch.dx, patch.dz, geom.orientation.name, geom.rotated, effective_budget, interaction_basis)
 
     if cache_key in _state.distance_module_cache:
         return _state.distance_module_cache[cache_key]
 
-    module = _load_guppy_module(patch, ancilla_budget=ancilla_budget)
+    module = _load_guppy_module(
+        patch,
+        ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
+    )
 
     # Metadata derived from the actual patch geometry.
     module["distance"] = patch.distance
     module["num_data"] = geom.num_data
     module["num_stab"] = total_ancilla
     module["ancilla_budget"] = effective_budget
+    module["interaction_basis"] = interaction_basis
 
     _state.distance_module_cache[cache_key] = module
     return module
 
 
-def get_surface_code_module(d: int, *, ancilla_budget: int | None = None) -> dict:
+def get_surface_code_module(
+    d: int,
+    *,
+    ancilla_budget: int | None = None,
+    interaction_basis: str = "cx",
+) -> dict:
     """Get a loaded surface code module for distance d.
 
     Args:
         d: Code distance (must be odd >= 3)
         ancilla_budget: Optional cap on simultaneously live ancillas
+        interaction_basis: Surface-memory interaction basis.
 
     Returns:
         Dictionary with module contents and metadata
@@ -1095,7 +1751,11 @@ def get_surface_code_module(d: int, *, ancilla_budget: int | None = None) -> dic
 
     _validate_surface_memory_distance(d)
     patch = SurfacePatch.create(distance=d)
-    return _surface_code_module_for_patch(patch, ancilla_budget=ancilla_budget)
+    return _surface_code_module_for_patch(
+        patch,
+        ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
+    )
 
 
 def make_surface_code(
@@ -1104,6 +1764,7 @@ def make_surface_code(
     basis: str,
     *,
     ancilla_budget: int | None = None,
+    interaction_basis: str = "cx",
 ) -> object:
     """Create a surface code memory experiment.
 
@@ -1116,6 +1777,7 @@ def make_surface_code(
             a finite budget emits a stabilizer-batched program that
             matches the abstract circuit's
             ``batched_stabilizers(patch, effective_budget)`` schedule.
+        interaction_basis: Surface-memory interaction basis.
 
     Returns:
         Compiled Guppy program
@@ -1124,7 +1786,11 @@ def make_surface_code(
         msg = f"basis must be 'Z' or 'X', got {basis!r}"
         raise ValueError(msg)
 
-    module = get_surface_code_module(distance, ancilla_budget=ancilla_budget)
+    module = get_surface_code_module(
+        distance,
+        ancilla_budget=ancilla_budget,
+        interaction_basis=interaction_basis,
+    )
 
     factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
 

@@ -43,6 +43,7 @@ from pecos.qec.surface.patch import (
     get_stabilizer_region,
     get_stabilizer_touch_label,
 )
+from pecos.quantum import PHYSICAL_DURATION_META_KEY
 
 if TYPE_CHECKING:
     from pecos.qec.surface._twirl_config import TwirlConfig
@@ -115,11 +116,21 @@ class OpType(Enum):
 
     # Single-qubit gates
     H = auto()  # Hadamard
+    F = auto()  # face Clifford
+    FDG = auto()  # face Clifford dagger
+    SX = auto()  # sqrt X
+    SXDG = auto()  # sqrt X dagger
+    SY = auto()  # sqrt Y
+    SYDG = auto()  # sqrt Y dagger
+    SZ = auto()  # sqrt Z / phase
+    SZDG = auto()  # sqrt Z dagger
     X = auto()  # Pauli X
     Z = auto()  # Pauli Z
 
     # Two-qubit gates
     CX = auto()  # CNOT
+    SZZ = auto()  # sqrt ZZ
+    SZZDG = auto()  # sqrt ZZ dagger
 
     # Measurement
     MEASURE = auto()  # Destructive measurement
@@ -159,6 +170,582 @@ class QubitAllocation:
         return len(set(self.data_qubits) | set(self.x_ancilla_qubits) | set(self.z_ancilla_qubits))
 
 
+@dataclass(frozen=True)
+class SzzForwardFlowPulse:
+    """One pending-Clifford discharge site in the SZZ device-flow model."""
+
+    host_index: int
+    host_op_type: str
+    host_label: str
+    qubit: int
+    kind: str
+    pending_clifford: str
+
+
+@dataclass(frozen=True)
+class SzzForwardFlowSummary:
+    """Pulse accounting for the SZZ pending-Clifford forward-flow model."""
+
+    abstract_single_qubit_ops: int
+    physical_prefix_pulses: int
+    two_qubit_prefix_pulses: int
+    measurement_prefix_pulses: int
+    virtual_z_two_qubit_carries: int
+    virtual_z_measure_discards: int
+    two_qubit_gates: int
+    measurements: int
+    prep_events: int
+    free_standing_single_qubit_ops: int
+    pulses: tuple[SzzForwardFlowPulse, ...]
+
+
+@dataclass(frozen=True, order=True)
+class SzzTouchSign:
+    """Signed SZZ touch in the v1 surface-memory sign convention."""
+
+    stabilizer_type: str
+    stabilizer_index: int
+    data_qubit: int
+    sign: int
+
+
+@dataclass(frozen=True, order=True)
+class SzzBoundaryCompensation:
+    """Analysis-only compensation for an odd uncompensated boundary residual."""
+
+    stabilizer_type: str
+    stabilizer_index: int
+    data_qubit: int
+    gate: str
+
+
+@dataclass(frozen=True, order=True)
+class SzzClass2Residual:
+    """Analysis-only class-2 data residual of the uncompensated sign vector."""
+
+    stabilizer_type: str
+    data_qubit: int
+    pauli: str
+
+
+@dataclass(frozen=True)
+class SzzResidualPlan:
+    """Validated SZZ sign convention and uncompensated residual bookkeeping.
+
+    The active SZZ template cancels data residuals with immediate per-touch
+    compensation; no class-2 residual stream is emitted by the circuit.
+    """
+
+    signs: tuple[SzzTouchSign, ...]
+    boundary_compensations: tuple[SzzBoundaryCompensation, ...]
+    class2_residuals: tuple[SzzClass2Residual, ...]
+
+
+def _normalize_interaction_basis(interaction_basis: str) -> str:
+    """Validate and normalize the surface two-qubit interaction basis."""
+    normalized = interaction_basis.lower()
+    if normalized not in {"cx", "szz"}:
+        msg = f"interaction_basis must be 'cx' or 'szz', got {interaction_basis!r}"
+        raise ValueError(msg)
+    return normalized
+
+
+def _szz_residual_class(sum_signs: int) -> str:
+    """Classify a signed residual sum modulo four."""
+    residue = sum_signs % 4
+    if residue == 0:
+        return "identity"
+    if residue == 2:
+        return "pauli"
+    return "odd"
+
+
+def _iter_surface_stabilizer_touches(patch: SurfacePatch) -> list[tuple[str, int, tuple[int, ...], bool]]:
+    """Return stabilizer touch rows in deterministic X-then-Z order."""
+    geom = patch.geometry
+    rows: list[tuple[str, int, tuple[int, ...], bool]] = []
+    rows.extend(("X", stab.index, tuple(stab.data_qubits), bool(stab.is_boundary)) for stab in geom.x_stabilizers)
+    rows.extend(("Z", stab.index, tuple(stab.data_qubits), bool(stab.is_boundary)) for stab in geom.z_stabilizers)
+    return rows
+
+
+def _default_szz_sign_vector(patch: SurfacePatch) -> tuple[SzzTouchSign, ...]:
+    """Return the v1 hard-coded SZZ sign vector.
+
+    Bulk checks use all ``SZZ``. Boundary checks use one ``SZZdg`` on the
+    second data operand, giving ancilla class 0 while preserving a stable,
+    geometry-derived convention.
+    """
+    signs: list[SzzTouchSign] = []
+    for stabilizer_type, stabilizer_index, data_qubits, is_boundary in _iter_surface_stabilizer_touches(patch):
+        if is_boundary and len(data_qubits) != 2:
+            msg = (
+                "SZZ v1 expects boundary stabilizers to have weight 2; "
+                f"{stabilizer_type}{stabilizer_index} has weight {len(data_qubits)}"
+            )
+            raise ValueError(msg)
+        for touch_index, data_qubit in enumerate(data_qubits):
+            sign = -1 if is_boundary and touch_index == 1 else 1
+            signs.append(
+                SzzTouchSign(
+                    stabilizer_type=stabilizer_type,
+                    stabilizer_index=stabilizer_index,
+                    data_qubit=data_qubit,
+                    sign=sign,
+                ),
+            )
+    return tuple(sorted(signs))
+
+
+def _validate_szz_sign_vector(
+    patch: SurfacePatch,
+    signs: tuple[SzzTouchSign, ...],
+) -> SzzResidualPlan:
+    """Validate an SZZ sign vector and derive fixed residual bookkeeping."""
+    expected_keys = {
+        (stabilizer_type, stabilizer_index, data_qubit)
+        for stabilizer_type, stabilizer_index, data_qubits, _is_boundary in _iter_surface_stabilizer_touches(patch)
+        for data_qubit in data_qubits
+    }
+    seen_keys: set[tuple[str, int, int]] = set()
+    check_sums: dict[tuple[str, int], int] = {}
+    data_sums: dict[tuple[str, int], int] = {}
+    data_touch_counts: dict[tuple[str, int], int] = {}
+
+    for entry in signs:
+        if entry.sign not in {-1, 1}:
+            msg = f"SZZ sign entries must be +/-1, got {entry.sign!r} for {entry}"
+            raise ValueError(msg)
+        key = (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit)
+        if key in seen_keys:
+            msg = f"duplicate SZZ sign entry for touch {key}"
+            raise ValueError(msg)
+        seen_keys.add(key)
+        check_key = (entry.stabilizer_type, entry.stabilizer_index)
+        data_key = (entry.stabilizer_type, entry.data_qubit)
+        check_sums[check_key] = check_sums.get(check_key, 0) + entry.sign
+        data_sums[data_key] = data_sums.get(data_key, 0) + entry.sign
+        data_touch_counts[data_key] = data_touch_counts.get(data_key, 0) + 1
+
+    missing = sorted(expected_keys - seen_keys)
+    extra = sorted(seen_keys - expected_keys)
+    if missing or extra:
+        msg = f"SZZ sign vector must cover exactly the surface touches; missing={missing}, extra={extra}"
+        raise ValueError(msg)
+
+    for (stabilizer_type, stabilizer_index), sum_signs in sorted(check_sums.items()):
+        residual_class = _szz_residual_class(sum_signs)
+        if residual_class != "identity":
+            msg = (
+                "SZZ sign vector rejected: "
+                f"{stabilizer_type}{stabilizer_index} ancilla residual is {residual_class} "
+                f"(sum={sum_signs}, mod4={sum_signs % 4}); v1 has no record-flip checks"
+            )
+            raise ValueError(msg)
+
+    compensations: list[SzzBoundaryCompensation] = []
+    class2_residuals: list[SzzClass2Residual] = []
+    for (stabilizer_type, data_qubit), sum_signs in sorted(data_sums.items()):
+        residual_class = _szz_residual_class(sum_signs)
+        if residual_class == "identity":
+            continue
+        if residual_class == "pauli":
+            class2_residuals.append(
+                SzzClass2Residual(
+                    stabilizer_type=stabilizer_type,
+                    data_qubit=data_qubit,
+                    pauli="X" if stabilizer_type == "X" else "Z",
+                ),
+            )
+            continue
+        if data_touch_counts[(stabilizer_type, data_qubit)] != 1:
+            msg = (
+                "SZZ sign vector rejected: odd residual on a non-boundary data class "
+                f"{stabilizer_type}, data={data_qubit}, sum={sum_signs}"
+            )
+            raise ValueError(msg)
+        touch = next(
+            entry
+            for entry in signs
+            if entry.stabilizer_type == stabilizer_type and entry.data_qubit == data_qubit
+        )
+        gate = {
+            ("X", 1): "SXDG",
+            ("X", -1): "SX",
+            ("Z", 1): "SZDG",
+            ("Z", -1): "SZ",
+        }[(stabilizer_type, touch.sign)]
+        compensations.append(
+            SzzBoundaryCompensation(
+                stabilizer_type=touch.stabilizer_type,
+                stabilizer_index=touch.stabilizer_index,
+                data_qubit=touch.data_qubit,
+                gate=gate,
+            ),
+        )
+
+    return SzzResidualPlan(
+        signs=tuple(sorted(signs)),
+        boundary_compensations=tuple(sorted(compensations)),
+        class2_residuals=tuple(sorted(class2_residuals)),
+    )
+
+
+def _default_szz_residual_plan(patch: SurfacePatch) -> SzzResidualPlan:
+    """Return the validated v1 SZZ residual plan for a patch."""
+    return _validate_szz_sign_vector(patch, _default_szz_sign_vector(patch))
+
+
+def _propagate_szz_frame_bits(x_a: bool, z_a: bool, x_b: bool, z_b: bool) -> tuple[bool, bool, bool, bool]:
+    """Propagate local Pauli-frame bits through uncompensated SZZ/SZZdg."""
+    common = x_a ^ x_b
+    return x_a, z_a ^ common, x_b, z_b ^ common
+
+
+def _propagate_compensated_szz_frame_bits(x_a: bool, z_a: bool, x_b: bool, z_b: bool) -> tuple[bool, bool, bool, bool]:
+    """Propagate local Pauli-frame bits through the compensated CZ-equivalent interaction."""
+    return x_a, z_a ^ x_b, x_b, z_b ^ x_a
+
+
+def _propagate_sxx_frame_bits(x_a: bool, z_a: bool, x_b: bool, z_b: bool) -> tuple[bool, bool, bool, bool]:
+    """Propagate local Pauli-frame bits through the SXX/SXXdg mirror."""
+    common = z_a ^ z_b
+    return x_a ^ common, z_a, x_b ^ common, z_b
+
+
+_SIGNED_PAULI_NAMES = {
+    1: "X",
+    -1: "-X",
+    2: "Y",
+    -2: "-Y",
+    3: "Z",
+    -3: "-Z",
+}
+_SZZ_FLOW_IDENTITY: tuple[int, int] = (1, 3)
+_SZZ_FLOW_SINGLE_QUBIT_GATES = {
+    OpType.H,
+    OpType.SX,
+    OpType.SXDG,
+    OpType.SZ,
+    OpType.SZDG,
+    OpType.X,
+    OpType.Z,
+}
+_SZZ_FLOW_GATE_ACTIONS: dict[OpType, dict[int, int]] = {
+    OpType.H: {1: 3, 2: -2, 3: 1},
+    OpType.F: {1: 2, 2: 3, 3: 1},
+    OpType.FDG: {1: 3, 2: 1, 3: 2},
+    OpType.SX: {1: 1, 2: 3, 3: -2},
+    OpType.SXDG: {1: 1, 2: -3, 3: 2},
+    OpType.SY: {1: -3, 2: 2, 3: 1},
+    OpType.SYDG: {1: 3, 2: 2, 3: -1},
+    OpType.SZ: {1: 2, 2: -1, 3: 3},
+    OpType.SZDG: {1: -2, 2: 1, 3: 3},
+    OpType.X: {1: 1, 2: -2, 3: -3},
+    OpType.Z: {1: -1, 2: -2, 3: 3},
+}
+
+
+def _szz_flow_apply_gate_to_pauli(op_type: OpType, pauli: int) -> int:
+    sign = -1 if pauli < 0 else 1
+    return sign * _SZZ_FLOW_GATE_ACTIONS[op_type][abs(pauli)]
+
+
+def _szz_flow_compose_pending_gate(pending: tuple[int, int], op_type: OpType) -> tuple[int, int]:
+    """Append one 1q Clifford to a pending signed-Pauli-image register."""
+    return (
+        _szz_flow_apply_gate_to_pauli(op_type, pending[0]),
+        _szz_flow_apply_gate_to_pauli(op_type, pending[1]),
+    )
+
+
+def _szz_flow_is_virtual_z(pending: tuple[int, int]) -> bool:
+    """Return whether a pending Clifford is a zero-pulse virtual-Z update."""
+    return pending[1] == 3
+
+
+def _szz_flow_clifford_name(pending: tuple[int, int]) -> str:
+    return f"X->{_SIGNED_PAULI_NAMES[pending[0]]},Z->{_SIGNED_PAULI_NAMES[pending[1]]}"
+
+
+def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSummary:
+    """Analyze SZZ pending-Clifford forward-flow pulse accounting.
+
+    The abstract SZZ template intentionally contains free-standing 1q
+    Cliffords. The SZZ device model executes those Cliffords only as prefixes
+    of the next SZZ/SZZdg or MZ on that qubit. Virtual-Z pending Cliffords carry
+    through SZZ/SZZdg and are discarded at MZ.
+    """
+    pending_by_qubit: dict[int, tuple[int, int]] = {}
+    pulses: list[SzzForwardFlowPulse] = []
+    abstract_single_qubit_ops = 0
+    physical_prefix_pulses = 0
+    two_qubit_prefix_pulses = 0
+    measurement_prefix_pulses = 0
+    virtual_z_two_qubit_carries = 0
+    virtual_z_measure_discards = 0
+    two_qubit_gates = 0
+    measurements = 0
+    prep_events = 0
+
+    def pending_for(q: int) -> tuple[int, int]:
+        return pending_by_qubit.setdefault(q, _SZZ_FLOW_IDENTITY)
+
+    def pulse_event(
+        *,
+        host_index: int,
+        op: SurfaceCircuitStep,
+        qubit: int,
+        kind: str,
+        pending: tuple[int, int],
+    ) -> SzzForwardFlowPulse:
+        return SzzForwardFlowPulse(
+            host_index=host_index,
+            host_op_type=op.op_type.name,
+            host_label=op.label,
+            qubit=qubit,
+            kind=kind,
+            pending_clifford=_szz_flow_clifford_name(pending),
+        )
+
+    def reset_for_prep(q: int, op: SurfaceCircuitStep) -> None:
+        current = pending_for(q)
+        if current != _SZZ_FLOW_IDENTITY:
+            msg = (
+                "SZZ forward-flow cannot reset a qubit with a pending "
+                f"Clifford: q={q}, pending={_szz_flow_clifford_name(current)}, "
+                f"op={op.op_type.name} {op.label!r}"
+            )
+            raise ValueError(msg)
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    def discharge_for_two_qubit(q: int, host_index: int, op: SurfaceCircuitStep) -> None:
+        nonlocal physical_prefix_pulses, two_qubit_prefix_pulses, virtual_z_two_qubit_carries
+        current = pending_for(q)
+        if current == _SZZ_FLOW_IDENTITY:
+            return
+        if _szz_flow_is_virtual_z(current):
+            virtual_z_two_qubit_carries += 1
+            pulses.append(
+                pulse_event(
+                    host_index=host_index,
+                    op=op,
+                    qubit=q,
+                    kind="virtual_z_two_qubit_carry",
+                    pending=current,
+                ),
+            )
+            return
+        physical_prefix_pulses += 1
+        two_qubit_prefix_pulses += 1
+        pulses.append(
+            pulse_event(
+                host_index=host_index,
+                op=op,
+                qubit=q,
+                kind="physical_two_qubit_prefix",
+                pending=current,
+            ),
+        )
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    def discharge_for_measurement(q: int, host_index: int, op: SurfaceCircuitStep) -> None:
+        nonlocal physical_prefix_pulses, measurement_prefix_pulses, virtual_z_measure_discards
+        current = pending_for(q)
+        if current == _SZZ_FLOW_IDENTITY:
+            return
+        if _szz_flow_is_virtual_z(current):
+            virtual_z_measure_discards += 1
+            pulses.append(
+                pulse_event(
+                    host_index=host_index,
+                    op=op,
+                    qubit=q,
+                    kind="virtual_z_measure_discard",
+                    pending=current,
+                ),
+            )
+            pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+            return
+        physical_prefix_pulses += 1
+        measurement_prefix_pulses += 1
+        pulses.append(
+            pulse_event(
+                host_index=host_index,
+                op=op,
+                qubit=q,
+                kind="physical_measurement_prefix",
+                pending=current,
+            ),
+        )
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    for host_index, op in enumerate(ops):
+        if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
+            continue
+        if op.op_type in {OpType.ALLOC, OpType.PREP}:
+            prep_events += 1
+            reset_for_prep(op.qubits[0], op)
+            continue
+        if op.op_type in _SZZ_FLOW_SINGLE_QUBIT_GATES:
+            q = op.qubits[0]
+            abstract_single_qubit_ops += 1
+            pending_by_qubit[q] = _szz_flow_compose_pending_gate(pending_for(q), op.op_type)
+            continue
+        if op.op_type in {OpType.SZZ, OpType.SZZDG}:
+            two_qubit_gates += 1
+            for q in op.qubits:
+                discharge_for_two_qubit(q, host_index, op)
+            continue
+        if op.op_type == OpType.CX:
+            msg = "SZZ forward-flow analysis only supports SZZ/SZZdg two-qubit gates"
+            raise ValueError(msg)
+        if op.op_type == OpType.MEASURE:
+            measurements += 1
+            discharge_for_measurement(op.qubits[0], host_index, op)
+            continue
+
+    remaining = {q: pending for q, pending in pending_by_qubit.items() if pending != _SZZ_FLOW_IDENTITY}
+    if remaining:
+        formatted = {q: _szz_flow_clifford_name(pending) for q, pending in sorted(remaining.items())}
+        msg = f"SZZ forward-flow ended with pending Cliffords: {formatted}"
+        raise ValueError(msg)
+
+    return SzzForwardFlowSummary(
+        abstract_single_qubit_ops=abstract_single_qubit_ops,
+        physical_prefix_pulses=physical_prefix_pulses,
+        two_qubit_prefix_pulses=two_qubit_prefix_pulses,
+        measurement_prefix_pulses=measurement_prefix_pulses,
+        virtual_z_two_qubit_carries=virtual_z_two_qubit_carries,
+        virtual_z_measure_discards=virtual_z_measure_discards,
+        two_qubit_gates=two_qubit_gates,
+        measurements=measurements,
+        prep_events=prep_events,
+        free_standing_single_qubit_ops=0,
+        pulses=tuple(pulses),
+    )
+
+
+_SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING: dict[tuple[int, int], tuple[OpType | None, OpType]] = {
+    (3, 1): (None, OpType.H),
+    (-3, 1): (None, OpType.SY),
+    (2, 1): (None, OpType.F),
+    (-2, 1): (OpType.Z, OpType.F),
+}
+
+
+def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCircuitStep]:
+    """Return an SZZ physical-prefix TickCircuit op stream.
+
+    Free-standing single-qubit Cliffords in the abstract SZZ template are
+    accumulated into a pending local Clifford and discharged as a physical
+    prefix pulse on the next SZZ/SZZdg or MZ host. Zero-noise Z-frame gates are
+    emitted only when needed to preserve the exact signed Clifford before a
+    physical prefix pulse.
+    """
+    pending_by_qubit: dict[int, tuple[int, int]] = {}
+    lowered: list[SurfaceCircuitStep] = []
+
+    def pending_for(q: int) -> tuple[int, int]:
+        return pending_by_qubit.setdefault(q, _SZZ_FLOW_IDENTITY)
+
+    def reset_for_prep(q: int, op: SurfaceCircuitStep) -> None:
+        current = pending_for(q)
+        if current != _SZZ_FLOW_IDENTITY:
+            msg = (
+                "SZZ forward-flow cannot reset a qubit with a pending "
+                f"Clifford: q={q}, pending={_szz_flow_clifford_name(current)}, "
+                f"op={op.op_type.name} {op.label!r}"
+            )
+            raise ValueError(msg)
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    def discharge(q: int, host: SurfaceCircuitStep) -> tuple[SurfaceCircuitStep | None, SurfaceCircuitStep | None]:
+        current = pending_for(q)
+        if current == _SZZ_FLOW_IDENTITY:
+            return None, None
+        if _szz_flow_is_virtual_z(current):
+            pending_by_qubit[q] = _SZZ_FLOW_IDENTITY if host.op_type == OpType.MEASURE else current
+            return None, None
+        try:
+            virtual_gate, physical_gate = _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING[current]
+        except KeyError as exc:
+            msg = (
+                "SZZ forward-flow cannot lower pending Clifford "
+                f"{_szz_flow_clifford_name(current)} on q={q} before "
+                f"{host.op_type.name} {host.label!r}"
+            )
+            raise ValueError(msg) from exc
+        virtual_step = None
+        if virtual_gate is not None:
+            virtual_step = SurfaceCircuitStep(
+                virtual_gate,
+                [q],
+                f"szz_virtual_prefix:{virtual_gate.name}:{host.label}:q{q}",
+            )
+        physical_step = SurfaceCircuitStep(
+            physical_gate,
+            [q],
+            f"szz_physical_prefix:{physical_gate.name}:{host.label}:q{q}",
+        )
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+        return virtual_step, physical_step
+
+    def append_prefix_ticks(virtual_steps: list[SurfaceCircuitStep], physical_steps: list[SurfaceCircuitStep]) -> None:
+        if virtual_steps:
+            lowered.append(SurfaceCircuitStep(OpType.TICK))
+            lowered.extend(virtual_steps)
+            lowered.append(SurfaceCircuitStep(OpType.TICK))
+        if physical_steps:
+            lowered.append(SurfaceCircuitStep(OpType.TICK))
+            lowered.extend(physical_steps)
+            lowered.append(SurfaceCircuitStep(OpType.TICK))
+
+    for op in ops:
+        if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
+            lowered.append(op)
+            continue
+        if op.op_type in {OpType.ALLOC, OpType.PREP}:
+            reset_for_prep(op.qubits[0], op)
+            lowered.append(op)
+            continue
+        if op.op_type in _SZZ_FLOW_SINGLE_QUBIT_GATES:
+            q = op.qubits[0]
+            pending_by_qubit[q] = _szz_flow_compose_pending_gate(pending_for(q), op.op_type)
+            continue
+        if op.op_type in {OpType.SZZ, OpType.SZZDG}:
+            virtual_steps: list[SurfaceCircuitStep] = []
+            physical_steps: list[SurfaceCircuitStep] = []
+            for q in op.qubits:
+                virtual_step, physical_step = discharge(q, op)
+                if virtual_step is not None:
+                    virtual_steps.append(virtual_step)
+                if physical_step is not None:
+                    physical_steps.append(physical_step)
+            append_prefix_ticks(virtual_steps, physical_steps)
+            lowered.append(op)
+            continue
+        if op.op_type == OpType.CX:
+            msg = "SZZ forward-flow lowering only supports SZZ/SZZdg two-qubit gates"
+            raise ValueError(msg)
+        if op.op_type == OpType.MEASURE:
+            virtual_step, physical_step = discharge(op.qubits[0], op)
+            append_prefix_ticks(
+                [] if virtual_step is None else [virtual_step],
+                [] if physical_step is None else [physical_step],
+            )
+            lowered.append(op)
+            continue
+        lowered.append(op)
+
+    remaining = {q: pending for q, pending in pending_by_qubit.items() if pending != _SZZ_FLOW_IDENTITY}
+    if remaining:
+        formatted = {q: _szz_flow_clifford_name(pending) for q, pending in sorted(remaining.items())}
+        msg = f"SZZ forward-flow lowering ended with pending Cliffords: {formatted}"
+        raise ValueError(msg)
+    return lowered
+
+
 def build_surface_code_circuit(
     patch: SurfacePatch,
     num_rounds: int,
@@ -166,6 +753,7 @@ def build_surface_code_circuit(
     ancilla_budget: int | None = None,
     *,
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
 ) -> tuple[list[SurfaceCircuitStep], QubitAllocation]:
     """Build abstract circuit operations for a surface code memory experiment.
 
@@ -183,10 +771,15 @@ def build_surface_code_circuit(
             provided below the total stabilizer count, ancillas are reused
             across stabilizer batches following the public Guppy order.
         twirl: When provided, emit three ``OpType.TRACKED_PAULI`` annotations
-            (``X``, ``Y``, ``Z``) per data qubit at each between-round twirl
-            site. The sites are between counted syndrome rounds only: no site
-            is emitted before the first counted round, after the last counted
-            round, or inside the prep-boundary init syndrome block.
+            (``X``, ``Y``, ``Z``) per Pauli-mask column. The
+            ``"between_rounds"`` schedule emits one column per data qubit at
+            each site between counted syndrome rounds. The
+            ``"before_two_qubit_gate"`` schedule emits one column per operand
+            immediately before each surface-memory two-qubit gate.
+        interaction_basis: Surface-memory two-qubit interaction basis.
+            ``"cx"`` preserves the existing CNOT extraction circuit. ``"szz"``
+            emits the direct-renderer SZZ/SZZdg abstract template with local
+            data-qubit compensation.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -199,6 +792,10 @@ def build_surface_code_circuit(
     num_z_anc = len(geom.z_stabilizers)
     total_ancilla = num_x_anc + num_z_anc
     effective_ancilla_budget = _normalize_ancilla_budget(total_ancilla, ancilla_budget)
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    if twirl is not None:
+        twirl.validate_runtime_supported()
+    twirl_site_schedule = None if twirl is None else twirl.site_schedule
 
     # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
     # shared ancilla pool and different stabilizers can intentionally share the
@@ -237,7 +834,7 @@ def build_surface_code_circuit(
     def z_anc_q(stab_idx: int) -> int:
         return allocation.z_ancilla_qubits[stab_idx]
 
-    def emit_pauli_twirl_site(target_ops: list[SurfaceCircuitStep], site_idx: int) -> None:
+    def emit_between_round_twirl_site(target_ops: list[SurfaceCircuitStep], site_idx: int) -> None:
         """Append 3 * num_data candidate tracked-Pauli annotations."""
         target_ops.extend(
             SurfaceCircuitStep(OpType.TRACKED_PAULI, [data_q(i)], f"{kind}@s{site_idx}")
@@ -245,8 +842,66 @@ def build_surface_code_circuit(
             for kind in ("X", "Y", "Z")
         )
 
+    gate_twirl_site_idx = 0
+
+    def emit_gate_local_twirl_site(
+        target_ops: list[SurfaceCircuitStep],
+        site_idx: int,
+        control_q: int,
+        target_q: int,
+    ) -> None:
+        """Append tracked-Pauli annotations for one two-qubit-gate site."""
+        for operand_idx, q in enumerate((control_q, target_q)):
+            target_ops.extend(
+                SurfaceCircuitStep(
+                    OpType.TRACKED_PAULI,
+                    [q],
+                    f"{kind}@g{site_idx}o{operand_idx}",
+                )
+                for kind in ("X", "Y", "Z")
+            )
+
+    def emit_gate_local_twirl_layer(
+        target_ops: list[SurfaceCircuitStep],
+        cx_ops: list[tuple[int, int, str]],
+    ) -> None:
+        """Append all gate-local twirl annotations before a parallel CX layer."""
+        nonlocal gate_twirl_site_idx
+        if twirl_site_schedule != "before_two_qubit_gate":
+            return
+        for control_q, target_q, _label in cx_ops:
+            emit_gate_local_twirl_site(
+                target_ops,
+                gate_twirl_site_idx,
+                control_q,
+                target_q,
+            )
+            gate_twirl_site_idx += 1
+
     # Get CNOT schedule
     cnot_rounds = compute_cnot_schedule(patch)
+
+    if interaction_basis == "szz":
+        if effective_ancilla_budget != total_ancilla:
+            msg = (
+                "interaction_basis='szz' does not yet support constrained "
+                "ancilla budgets; pass ancilla_budget=None or a budget >= total_ancilla"
+            )
+            raise ValueError(msg)
+        if twirl is not None:
+            msg = "interaction_basis='szz' twirl integration is staged later; omit twirl for Stage 1"
+            raise ValueError(msg)
+        return (
+            _build_surface_code_circuit_szz(
+                patch,
+                num_rounds,
+                basis,
+                allocation,
+                cnot_rounds,
+                _default_szz_residual_plan(patch),
+            ),
+            allocation,
+        )
 
     ops: list[SurfaceCircuitStep] = []
 
@@ -299,25 +954,16 @@ def build_surface_code_circuit(
 
         for rnd_idx, cx_round in enumerate(cnot_rounds):
             ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+            cx_ops: list[tuple[int, int, str]] = []
             for stab_type, stab_idx, data_idx in cx_round:
                 if stab_type != init_stabilizer_type:
                     continue
                 if stab_type == "X":
-                    ops.append(
-                        SurfaceCircuitStep(
-                            OpType.CX,
-                            [x_anc_q(stab_idx), data_q(data_idx)],
-                            f"X{stab_idx}",
-                        ),
-                    )
+                    cx_ops.append((x_anc_q(stab_idx), data_q(data_idx), f"X{stab_idx}"))
                 else:
-                    ops.append(
-                        SurfaceCircuitStep(
-                            OpType.CX,
-                            [data_q(data_idx), z_anc_q(stab_idx)],
-                            f"Z{stab_idx}",
-                        ),
-                    )
+                    cx_ops.append((data_q(data_idx), z_anc_q(stab_idx), f"Z{stab_idx}"))
+            emit_gate_local_twirl_layer(ops, cx_ops)
+            ops.extend(SurfaceCircuitStep(OpType.CX, [control, target], label) for control, target, label in cx_ops)
             ops.append(SurfaceCircuitStep(OpType.TICK))
 
         if init_stabilizer_type == "X":
@@ -368,26 +1014,17 @@ def build_surface_code_circuit(
 
             for rnd_idx, cx_round in enumerate(cnot_rounds):
                 ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                cx_ops: list[tuple[int, int, str]] = []
                 for stab_type, stab_idx, data_idx in cx_round:
                     ancilla_q = batch_ancillas.get((stab_type, stab_idx))
                     if ancilla_q is None:
                         continue
                     if stab_type == "X":
-                        ops.append(
-                            SurfaceCircuitStep(
-                                OpType.CX,
-                                [ancilla_q, data_q(data_idx)],
-                                f"X{stab_idx}",
-                            ),
-                        )
+                        cx_ops.append((ancilla_q, data_q(data_idx), f"X{stab_idx}"))
                     else:
-                        ops.append(
-                            SurfaceCircuitStep(
-                                OpType.CX,
-                                [data_q(data_idx), ancilla_q],
-                                f"Z{stab_idx}",
-                            ),
-                        )
+                        cx_ops.append((data_q(data_idx), ancilla_q, f"Z{stab_idx}"))
+                emit_gate_local_twirl_layer(ops, cx_ops)
+                ops.extend(SurfaceCircuitStep(OpType.CX, [control, target], label) for control, target, label in cx_ops)
                 ops.append(SurfaceCircuitStep(OpType.TICK))
 
             if init_stabilizer_type == "X":
@@ -428,23 +1065,14 @@ def build_surface_code_circuit(
 
             for rnd_idx, cx_round in enumerate(cnot_rounds):
                 ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                cx_ops: list[tuple[int, int, str]] = []
                 for stab_type, stab_idx, data_idx in cx_round:
                     if stab_type == "X":
-                        ops.append(
-                            SurfaceCircuitStep(
-                                OpType.CX,
-                                [x_anc_q(stab_idx), data_q(data_idx)],
-                                f"X{stab_idx}",
-                            ),
-                        )
+                        cx_ops.append((x_anc_q(stab_idx), data_q(data_idx), f"X{stab_idx}"))
                     else:
-                        ops.append(
-                            SurfaceCircuitStep(
-                                OpType.CX,
-                                [data_q(data_idx), z_anc_q(stab_idx)],
-                                f"Z{stab_idx}",
-                            ),
-                        )
+                        cx_ops.append((data_q(data_idx), z_anc_q(stab_idx), f"Z{stab_idx}"))
+                emit_gate_local_twirl_layer(ops, cx_ops)
+                ops.extend(SurfaceCircuitStep(OpType.CX, [control, target], label) for control, target, label in cx_ops)
                 ops.append(SurfaceCircuitStep(OpType.TICK))
 
             ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"))
@@ -489,26 +1117,20 @@ def build_surface_code_circuit(
 
                 for rnd_idx, cx_round in enumerate(cnot_rounds):
                     ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {rnd_idx + 1}"))
+                    cx_ops: list[tuple[int, int, str]] = []
                     for stab_type, stab_idx, data_idx in cx_round:
                         ancilla_q = batch_ancillas.get((stab_type, stab_idx))
                         if ancilla_q is None:
                             continue
                         if stab_type == "X":
-                            ops.append(
-                                SurfaceCircuitStep(
-                                    OpType.CX,
-                                    [ancilla_q, data_q(data_idx)],
-                                    f"X{stab_idx}",
-                                ),
-                            )
+                            cx_ops.append((ancilla_q, data_q(data_idx), f"X{stab_idx}"))
                         else:
-                            ops.append(
-                                SurfaceCircuitStep(
-                                    OpType.CX,
-                                    [data_q(data_idx), ancilla_q],
-                                    f"Z{stab_idx}",
-                                ),
-                            )
+                            cx_ops.append((data_q(data_idx), ancilla_q, f"Z{stab_idx}"))
+                    emit_gate_local_twirl_layer(ops, cx_ops)
+                    ops.extend(
+                        SurfaceCircuitStep(OpType.CX, [control, target], label)
+                        for control, target, label in cx_ops
+                    )
                     ops.append(SurfaceCircuitStep(OpType.TICK))
 
                 if x_stabilizers_in_batch:
@@ -531,8 +1153,8 @@ def build_surface_code_circuit(
 
                 ops.append(SurfaceCircuitStep(OpType.TICK))
 
-        if twirl is not None and rnd < num_rounds - 1:
-            emit_pauli_twirl_site(ops, rnd)
+        if twirl_site_schedule == "between_rounds" and rnd < num_rounds - 1:
+            emit_between_round_twirl_site(ops, rnd)
 
     # =========================================================================
     # measure_z_basis / measure_x_basis
@@ -547,6 +1169,197 @@ def build_surface_code_circuit(
     ops.extend(SurfaceCircuitStep(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data))
 
     return ops, allocation
+
+
+def _build_surface_code_circuit_szz(
+    patch: SurfacePatch,
+    num_rounds: int,
+    basis: str,
+    allocation: QubitAllocation,
+    cnot_rounds: list[list[tuple[str, int, int]]],
+    residual_plan: SzzResidualPlan,
+) -> list[SurfaceCircuitStep]:
+    """Build the abstract SZZ/SZZdg surface-memory template."""
+    geom = patch.geometry
+    num_data = geom.num_data
+    sign_by_touch = {
+        (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): entry.sign for entry in residual_plan.signs
+    }
+    data_compensation_by_touch = {
+        (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): {
+            ("X", 1): OpType.SXDG,
+            ("X", -1): OpType.SX,
+            ("Z", 1): OpType.SZDG,
+            ("Z", -1): OpType.SZ,
+        }[(entry.stabilizer_type, entry.sign)]
+        for entry in residual_plan.signs
+    }
+    gate_name_by_type = {
+        OpType.SX: "SX",
+        OpType.SXDG: "SXDG",
+        OpType.SZ: "SZ",
+        OpType.SZDG: "SZDG",
+    }
+
+    def data_q(i: int) -> int:
+        return allocation.data_qubits[i]
+
+    def x_anc_q(stab_idx: int) -> int:
+        return allocation.x_ancilla_qubits[stab_idx]
+
+    def z_anc_q(stab_idx: int) -> int:
+        return allocation.z_ancilla_qubits[stab_idx]
+
+    def anc_q(stabilizer_type: str, stab_idx: int) -> int:
+        return x_anc_q(stab_idx) if stabilizer_type == "X" else z_anc_q(stab_idx)
+
+    def stabilizers_for(stabilizer_type: str) -> list:
+        return geom.x_stabilizers if stabilizer_type == "X" else geom.z_stabilizers
+
+    def append_szz_layer(
+        target_ops: list[SurfaceCircuitStep],
+        rnd_idx: int,
+        layer_gates: list[tuple[str, int, int]],
+    ) -> None:
+        target_ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"SZZ round {rnd_idx + 1}"))
+        x_touches = [(stab_idx, data_idx) for stab_type, stab_idx, data_idx in layer_gates if stab_type == "X"]
+        for _stab_idx, data_idx in x_touches:
+            target_ops.append(SurfaceCircuitStep(OpType.H, [data_q(data_idx)], f"szz_x_touch_pre_d{data_idx}"))
+
+        for stab_type, stab_idx, data_idx in layer_gates:
+            sign = sign_by_touch[(stab_type, stab_idx, data_idx)]
+            op_type = OpType.SZZ if sign > 0 else OpType.SZZDG
+            target_ops.append(
+                SurfaceCircuitStep(
+                    op_type,
+                    [anc_q(stab_type, stab_idx), data_q(data_idx)],
+                    f"{stab_type}{stab_idx}",
+                ),
+            )
+
+        for _stab_idx, data_idx in x_touches:
+            target_ops.append(SurfaceCircuitStep(OpType.H, [data_q(data_idx)], f"szz_x_touch_post_d{data_idx}"))
+
+        for stab_type, stab_idx, data_idx in layer_gates:
+            compensation = data_compensation_by_touch[(stab_type, stab_idx, data_idx)]
+            target_ops.append(
+                SurfaceCircuitStep(
+                    compensation,
+                    [data_q(data_idx)],
+                    f"szz_touch_comp:{gate_name_by_type[compensation]}:{stab_type}{stab_idx}:d{data_idx}",
+                ),
+            )
+
+    ops: list[SurfaceCircuitStep] = []
+
+    # =========================================================================
+    # prep_z_basis / prep_x_basis
+    # =========================================================================
+    ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"prep_{basis.lower()}_basis"))
+    ops.extend(SurfaceCircuitStep(OpType.ALLOC, [data_q(i)], f"data[{i}]") for i in range(num_data))
+    if basis.upper() == "X":
+        ops.extend(SurfaceCircuitStep(OpType.H, [data_q(i)]) for i in range(num_data))
+    ops.append(SurfaceCircuitStep(OpType.TICK))
+
+    # =========================================================================
+    # init_{basis}_basis syndrome establishment
+    # =========================================================================
+    init_stabilizer_type = "X" if basis.upper() == "Z" else "Z"
+    init_stabilizers = list(stabilizers_for(init_stabilizer_type))
+    ops.append(
+        SurfaceCircuitStep(
+            OpType.COMMENT,
+            label=f"init_{init_stabilizer_type.lower()}_syndrome",
+        ),
+    )
+    ops.extend(
+        SurfaceCircuitStep(
+            OpType.ALLOC,
+            [anc_q(init_stabilizer_type, s.index)],
+            f"a{init_stabilizer_type.lower()}{s.index}",
+        )
+        for s in init_stabilizers
+    )
+    ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
+    ops.extend(
+        SurfaceCircuitStep(
+            OpType.H,
+            [anc_q(init_stabilizer_type, s.index)],
+            f"a{init_stabilizer_type.lower()}{s.index}",
+        )
+        for s in init_stabilizers
+    )
+    ops.append(SurfaceCircuitStep(OpType.TICK))
+
+    for rnd_idx, cnot_round in enumerate(cnot_rounds):
+        layer_gates = [
+            (stab_type, stab_idx, data_idx)
+            for stab_type, stab_idx, data_idx in cnot_round
+            if stab_type == init_stabilizer_type
+        ]
+        append_szz_layer(ops, rnd_idx, layer_gates)
+        ops.append(SurfaceCircuitStep(OpType.TICK))
+
+    ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
+    ops.extend(
+        SurfaceCircuitStep(
+            OpType.H,
+            [anc_q(init_stabilizer_type, s.index)],
+            f"a{init_stabilizer_type.lower()}{s.index}",
+        )
+        for s in init_stabilizers
+    )
+
+    ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+    init_label_prefix = "sx" if init_stabilizer_type == "X" else "sz"
+    ops.extend(
+        SurfaceCircuitStep(
+            OpType.MEASURE,
+            [anc_q(init_stabilizer_type, s.index)],
+            f"{init_label_prefix}{s.index}",
+        )
+        for s in init_stabilizers
+    )
+    ops.append(SurfaceCircuitStep(OpType.TICK))
+
+    # =========================================================================
+    # syndrome_extraction
+    # =========================================================================
+    for rnd in range(num_rounds):
+        ops.append(
+            SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {rnd + 1}"),
+        )
+        ops.extend(SurfaceCircuitStep(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+        ops.extend(SurfaceCircuitStep(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
+
+        ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
+        ops.extend(SurfaceCircuitStep(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+        ops.extend(SurfaceCircuitStep(OpType.H, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
+        ops.append(SurfaceCircuitStep(OpType.TICK))
+
+        for rnd_idx, cnot_round in enumerate(cnot_rounds):
+            append_szz_layer(ops, rnd_idx, list(cnot_round))
+            ops.append(SurfaceCircuitStep(OpType.TICK))
+
+        ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
+        ops.extend(SurfaceCircuitStep(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
+        ops.extend(SurfaceCircuitStep(OpType.H, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
+
+        ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+        ops.extend(SurfaceCircuitStep(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers)
+        ops.extend(SurfaceCircuitStep(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers)
+        ops.append(SurfaceCircuitStep(OpType.TICK))
+
+    # =========================================================================
+    # measure_z_basis / measure_x_basis
+    # =========================================================================
+    ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"measure_{basis.lower()}_basis"))
+    if basis.upper() == "X":
+        ops.extend(SurfaceCircuitStep(OpType.H, [data_q(i)]) for i in range(num_data))
+    ops.extend(SurfaceCircuitStep(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data))
+
+    _analyze_szz_forward_flow(ops)
+    return ops
 
 
 def classify_stabilizer_boundary(stab_type: str, data_qubits: tuple[int, ...], d: int, dz: int | None = None) -> str:
@@ -710,11 +1523,43 @@ class StimRenderer(CircuitRenderer):
                 if self.p1 > 0:
                     lines.append(f"DEPOLARIZE1({self.p1}) {op.qubits[0]}")
 
+            elif op.op_type == OpType.SX:
+                lines.append(f"SQRT_X {op.qubits[0]}")
+                if self.p1 > 0:
+                    lines.append(f"DEPOLARIZE1({self.p1}) {op.qubits[0]}")
+
+            elif op.op_type == OpType.SXDG:
+                lines.append(f"SQRT_X_DAG {op.qubits[0]}")
+                if self.p1 > 0:
+                    lines.append(f"DEPOLARIZE1({self.p1}) {op.qubits[0]}")
+
+            elif op.op_type == OpType.SZ:
+                lines.append(f"S {op.qubits[0]}")
+                if self.p1 > 0:
+                    lines.append(f"DEPOLARIZE1({self.p1}) {op.qubits[0]}")
+
+            elif op.op_type == OpType.SZDG:
+                lines.append(f"S_DAG {op.qubits[0]}")
+                if self.p1 > 0:
+                    lines.append(f"DEPOLARIZE1({self.p1}) {op.qubits[0]}")
+
             elif op.op_type == OpType.CX:
                 c, t = op.qubits
                 lines.append(f"CX {c} {t}")
                 if self.p2 > 0:
                     lines.append(f"DEPOLARIZE2({self.p2}) {c} {t}")
+
+            elif op.op_type == OpType.SZZ:
+                a, b = op.qubits
+                lines.append(f"SQRT_ZZ {a} {b}")
+                if self.p2 > 0:
+                    lines.append(f"DEPOLARIZE2({self.p2}) {a} {b}")
+
+            elif op.op_type == OpType.SZZDG:
+                a, b = op.qubits
+                lines.append(f"SQRT_ZZ_DAG {a} {b}")
+                if self.p2 > 0:
+                    lines.append(f"DEPOLARIZE2({self.p2}) {a} {b}")
 
             elif op.op_type == OpType.MEASURE:
                 q = op.qubits[0]
@@ -856,6 +1701,8 @@ class GuppyRenderer(CircuitRenderer):
         patch: SurfacePatch,
         _num_rounds: int,
         _basis: str,
+        *,
+        interaction_basis: str = "cx",
     ) -> str:
         """Render to Guppy source code.
 
@@ -870,7 +1717,7 @@ class GuppyRenderer(CircuitRenderer):
         from pecos.guppy.surface import generate_guppy_source
 
         # Use the canonical Guppy generator to ensure identical output
-        return generate_guppy_source(patch)
+        return generate_guppy_source(patch, interaction_basis=interaction_basis)
 
 
 class DagCircuitRenderer(CircuitRenderer):
@@ -885,7 +1732,7 @@ class DagCircuitRenderer(CircuitRenderer):
         _basis: str,
     ) -> DagCircuit:
         """Render to PECOS DagCircuit."""
-        from pecos_rslib import DagCircuit
+        from pecos_rslib import DagCircuit, Gate, GateType
 
         circuit = DagCircuit()
         allocated: set[int] = set()
@@ -909,6 +1756,18 @@ class DagCircuitRenderer(CircuitRenderer):
             elif op.op_type == OpType.H:
                 circuit.h([op.qubits[0]])
 
+            elif op.op_type == OpType.SX:
+                circuit.add_gate(Gate(GateType.SX, qubits=[op.qubits[0]]))
+
+            elif op.op_type == OpType.SXDG:
+                circuit.add_gate(Gate(GateType.SXdg, qubits=[op.qubits[0]]))
+
+            elif op.op_type == OpType.SZ:
+                circuit.sz([op.qubits[0]])
+
+            elif op.op_type == OpType.SZDG:
+                circuit.szdg([op.qubits[0]])
+
             elif op.op_type == OpType.X:
                 circuit.x([op.qubits[0]])
 
@@ -917,6 +1776,12 @@ class DagCircuitRenderer(CircuitRenderer):
 
             elif op.op_type == OpType.CX:
                 circuit.cx([(op.qubits[0], op.qubits[1])])
+
+            elif op.op_type == OpType.SZZ:
+                circuit.szz([(op.qubits[0], op.qubits[1])])
+
+            elif op.op_type == OpType.SZZDG:
+                circuit.szzdg([(op.qubits[0], op.qubits[1])])
 
             elif op.op_type == OpType.MEASURE:
                 q = op.qubits[0]
@@ -1039,9 +1904,9 @@ class TickCircuitRenderer(CircuitRenderer):
                 return f"Z{int(label[2:])}"
             return ""
 
-        # Helper to get stabilizer name for a CX gate
-        def get_cx_stabilizer(control: int, target: int, label: str = "") -> str:
-            """Get stabilizer name for a CX gate (e.g., 'X0', 'Z2')."""
+        # Helper to get stabilizer name for a two-qubit check interaction.
+        def get_check_stabilizer(control: int, target: int, label: str = "") -> str:
+            """Get stabilizer name for a two-qubit check gate (e.g., 'X0', 'Z2')."""
             from_label = get_stabilizer_from_label(label)
             if from_label:
                 return from_label
@@ -1082,11 +1947,18 @@ class TickCircuitRenderer(CircuitRenderer):
             metadata["ancilla_qubit"] = qubit
             return metadata
 
-        def get_cx_gate_metadata(control: int, target: int, label: str = "") -> dict[str, object]:
-            stab_label = get_cx_stabilizer(control, target, label)
+        def get_two_qubit_check_metadata(
+            control: int,
+            target: int,
+            label: str = "",
+            *,
+            gate_kind: str,
+        ) -> dict[str, object]:
+            stab_label = get_check_stabilizer(control, target, label)
             if not stab_label:
                 return {}
             metadata = get_stabilizer_metadata(stab_label)
+            metadata["interaction_gate"] = gate_kind
             ancilla_qubit = next(
                 (q for q in (control, target) if q in stabilizer_by_ancilla_qubit),
                 None,
@@ -1140,7 +2012,8 @@ class TickCircuitRenderer(CircuitRenderer):
             if round_index >= 0 or phase.startswith("init_syndrome"):
                 return True
             return round_index == -1 and (
-                phase in {"syndrome_h_pre", "syndrome_h_post", "measure_ancilla"} or phase.startswith("cx_round_")
+                phase in {"syndrome_h_pre", "syndrome_h_post", "measure_ancilla"}
+                or phase.startswith(("cx_round_", "szz_round_"))
             )
 
         def gate_metadata(meta: dict | None = None) -> dict:
@@ -1186,7 +2059,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif "Prepare ancillas" in op.label:
                     current_phase = "init_syndrome_prep" if current_round < 0 else "syndrome_prep"
                     current_cx_round = 0
-                elif "Hadamard on X ancillas" in op.label:
+                elif "Hadamard on X ancillas" in op.label or "Hadamard on SZZ ancillas" in op.label:
                     current_phase = (
                         "syndrome_h_pre"
                         if current_phase in {"syndrome_prep", "init_syndrome_prep"}
@@ -1195,6 +2068,9 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif "CX round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"cx_round_{current_cx_round}"
+                elif "SZZ round" in op.label:
+                    current_cx_round = int(op.label.split()[-1])
+                    current_phase = f"szz_round_{current_cx_round}"
                 elif "Measure ancillas" in op.label:
                     current_phase = "measure_ancilla"
                 elif "prep_z_basis" in op.label or "prep_x_basis" in op.label:
@@ -1235,6 +2111,78 @@ class TickCircuitRenderer(CircuitRenderer):
                     meta["label"] = op.label
                 apply_gate_metadata(tick, meta or None)
 
+            elif op.op_type == OpType.F:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).f([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.FDG:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).fdg([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SX:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).sx([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SXDG:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).sxdg([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SY:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).sy([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SYDG:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).sydg([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SZ:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).sz([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SZDG:
+                q = op.qubits[0]
+                tick = get_tick_for_qubits([q]).szdg([q])
+                mark_qubits_used([q])
+                meta = get_ancilla_gate_metadata(q, op.label)
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
             elif op.op_type == OpType.X:
                 q = op.qubits[0]
                 tick = get_tick_for_qubits([q]).x([q])
@@ -1251,13 +2199,33 @@ class TickCircuitRenderer(CircuitRenderer):
                 meta = get_ancilla_gate_metadata(q, op.label)
                 if op.label:
                     meta["label"] = op.label
+                if op.label.startswith("szz_virtual_prefix:"):
+                    meta[PHYSICAL_DURATION_META_KEY] = 0.0
                 apply_gate_metadata(tick, meta or None)
 
             elif op.op_type == OpType.CX:
                 qubits = op.qubits
                 tick = get_tick_for_qubits(qubits).cx([(qubits[0], qubits[1])])
                 mark_qubits_used(qubits)
-                meta = get_cx_gate_metadata(qubits[0], qubits[1], op.label)
+                meta = get_two_qubit_check_metadata(qubits[0], qubits[1], op.label, gate_kind="CX")
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SZZ:
+                qubits = op.qubits
+                tick = get_tick_for_qubits(qubits).szz([(qubits[0], qubits[1])])
+                mark_qubits_used(qubits)
+                meta = get_two_qubit_check_metadata(qubits[0], qubits[1], op.label, gate_kind="SZZ")
+                if op.label:
+                    meta["label"] = op.label
+                apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.SZZDG:
+                qubits = op.qubits
+                tick = get_tick_for_qubits(qubits).szzdg([(qubits[0], qubits[1])])
+                mark_qubits_used(qubits)
+                meta = get_two_qubit_check_metadata(qubits[0], qubits[1], op.label, gate_kind="SZZdg")
                 if op.label:
                     meta["label"] = op.label
                 apply_gate_metadata(tick, meta or None)
@@ -1306,10 +2274,11 @@ class TickCircuitRenderer(CircuitRenderer):
                     "Y": PauliString.Y,
                     "Z": PauliString.Z,
                 }.get(kind)
-                if pauli_ctor is None or sep != "@" or not site_suffix.startswith("s"):
+                if pauli_ctor is None or sep != "@" or not site_suffix.startswith(("s", "g")):
                     msg = (
                         "OpType.TRACKED_PAULI requires label of the form "
-                        f"'{{X|Y|Z}}@s<site_idx>', got {op.label!r}"
+                        f"'{{X|Y|Z}}@s<site_idx>' or "
+                        f"'{{X|Y|Z}}@g<site_idx>o<operand_idx>', got {op.label!r}"
                     )
                     raise ValueError(msg)
                 circuit.tracked_pauli(
@@ -1577,10 +2546,12 @@ def generate_stim_from_patch(
     basis: str = "Z",
     *,
     ancilla_budget: int | None = None,
+    interaction_basis: str = "cx",
     p1: float = 0.0,
     p2: float = 0.0,
     p_meas: float = 0.0,
     p_prep: float = 0.0,
+    add_detectors: bool = True,
 ) -> str:
     """Generate Stim circuit from SurfacePatch.
 
@@ -1589,16 +2560,25 @@ def generate_stim_from_patch(
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
         ancilla_budget: Optional cap on simultaneously live ancillas
+        interaction_basis: Surface-memory two-qubit interaction basis.
         p1: Single-qubit error rate
         p2: Two-qubit error rate
         p_meas: Measurement error rate
         p_prep: Initialization error rate
+        add_detectors: Whether to add detector/observable annotations.
 
     Returns:
         Stim circuit string
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
-    renderer = StimRenderer(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    ops, allocation = build_surface_code_circuit(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget,
+        interaction_basis=interaction_basis,
+    )
+    renderer = StimRenderer(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep, add_detectors=add_detectors)
     return renderer.render(ops, allocation, patch, num_rounds, basis)
 
 
@@ -1606,6 +2586,8 @@ def generate_guppy_from_patch(
     patch: SurfacePatch,
     _num_rounds: int = 1,
     _basis: str = "Z",
+    *,
+    interaction_basis: str = "cx",
 ) -> str:
     """Generate Guppy code from SurfacePatch.
 
@@ -1621,13 +2603,14 @@ def generate_guppy_from_patch(
         patch: Surface code patch
         _num_rounds: Unused (factory functions accept this at runtime)
         _basis: Unused (module includes both Z and X basis functions)
+        interaction_basis: Surface-memory two-qubit interaction basis.
 
     Returns:
         Guppy source code string (full module)
     """
     from pecos.guppy.surface import generate_guppy_source
 
-    return generate_guppy_source(patch)
+    return generate_guppy_source(patch, interaction_basis=interaction_basis)
 
 
 def generate_dag_circuit_from_patch(
@@ -1635,6 +2618,8 @@ def generate_dag_circuit_from_patch(
     num_rounds: int,
     basis: str = "Z",
     ancilla_budget: int | None = None,
+    *,
+    interaction_basis: str = "cx",
 ) -> DagCircuit:
     """Generate PECOS DagCircuit from SurfacePatch.
 
@@ -1643,11 +2628,18 @@ def generate_dag_circuit_from_patch(
         num_rounds: Number of syndrome rounds
         basis: 'Z' or 'X'
         ancilla_budget: Optional cap on simultaneously live ancillas
+        interaction_basis: Surface-memory two-qubit interaction basis.
 
     Returns:
         PECOS DagCircuit instance
     """
-    ops, allocation = build_surface_code_circuit(patch, num_rounds, basis, ancilla_budget)
+    ops, allocation = build_surface_code_circuit(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget,
+        interaction_basis=interaction_basis,
+    )
     renderer = DagCircuitRenderer()
     return renderer.render(ops, allocation, patch, num_rounds, basis)
 
@@ -1661,6 +2653,8 @@ def generate_tick_circuit_from_patch(
     add_typed_annotations: bool = True,
     ancilla_budget: int | None = None,
     twirl: TwirlConfig | None = None,
+    interaction_basis: str = "cx",
+    szz_physical_prefixes: bool = False,
 ) -> TickCircuit:
     """Generate PECOS TickCircuit from SurfacePatch.
 
@@ -1688,17 +2682,27 @@ def generate_tick_circuit_from_patch(
             tracked-Pauli annotations are emitted even if
             ``add_typed_annotations`` is false; that flag controls detector
             and observable typed annotations, not the twirl lookup channel.
+        interaction_basis: Surface-memory two-qubit interaction basis.
+        szz_physical_prefixes: If true, lower the abstract SZZ single-qubit
+            scaffold into physical prefix pulses for native DEM analysis.
 
     Returns:
         PECOS TickCircuit instance
     """
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    if szz_physical_prefixes and interaction_basis != "szz":
+        msg = "szz_physical_prefixes=True requires interaction_basis='szz'"
+        raise ValueError(msg)
     ops, allocation = build_surface_code_circuit(
         patch,
         num_rounds,
         basis,
         ancilla_budget,
         twirl=twirl,
+        interaction_basis=interaction_basis,
     )
+    if szz_physical_prefixes:
+        ops = _lower_szz_forward_flow_ops(ops)
     renderer = TickCircuitRenderer(
         add_detectors=add_detectors,
         add_typed_annotations=add_typed_annotations,
@@ -1710,6 +2714,7 @@ def normalize_traced_qis_tick_circuit(
     tick_circuit: object,
     *,
     context: str = "traced-QIS DEM construction",
+    simplify_single_qubit_clifford_chains: bool = True,
 ) -> None:
     """Normalize a traced-QIS TickCircuit before DEM/DAG analysis.
 
@@ -1719,6 +2724,12 @@ def normalize_traced_qis_tick_circuit(
     this helper at every traced-QIS boundary before converting to a DAG.
     """
     _call_required_tick_circuit_method(tick_circuit, "lower_clifford_rotations", context)
+    if simplify_single_qubit_clifford_chains:
+        _call_required_tick_circuit_method(
+            tick_circuit,
+            "simplify_single_qubit_clifford_chains",
+            context,
+        )
     _call_required_tick_circuit_method(tick_circuit, "assign_missing_meas_ids", context)
     assert_traced_qis_tick_circuit_dem_ready(tick_circuit, context=context)
 
@@ -1911,6 +2922,7 @@ def tick_circuit_to_stim(
     tc: TickCircuit,
     *,
     p1: float = 0.0,
+    p1_gate_rates: Mapping[str, float] | None = None,
     p2: float = 0.0,
     p_meas: float = 0.0,
     p_prep: float = 0.0,
@@ -1923,6 +2935,11 @@ def tick_circuit_to_stim(
     Args:
         tc: TickCircuit instance with detector/observable metadata
         p1: Single-qubit error rate
+        p1_gate_rates: Optional per-gate override for single-qubit error
+            rates. Gate names are PECOS ``GateType`` names such as ``"Z"``,
+            ``"SZ"``, and ``"SZdg"``. The surface SZZ reference path uses
+            this to mirror the staged PECOS device model where Z/SZ/SZdg frame
+            updates are virtual and p1-free.
         p2: Two-qubit error rate
         p_meas: Measurement error rate
         p_prep: Initialization error rate
@@ -1937,13 +2954,22 @@ def tick_circuit_to_stim(
 
     simple_gate_map = {
         "H": ("H", "single"),
+        "SX": ("SQRT_X", "single"),
+        "SXdg": ("SQRT_X_DAG", "single"),
+        "SY": ("SQRT_Y", "single"),
+        "SYdg": ("SQRT_Y_DAG", "single"),
+        "SZ": ("S", "single"),
+        "SZdg": ("S_DAG", "single"),
         "X": ("X", "single"),
         "Y": ("Y", "single"),
         "Z": ("Z", "single"),
         "CX": ("CX", "two"),
         "CY": ("CY", "two"),
         "CZ": ("CZ", "two"),
+        "SZZ": ("SQRT_ZZ", "two"),
+        "SZZdg": ("SQRT_ZZ_DAG", "two"),
         "MZ": ("M", "measure"),
+        "MeasureFree": ("M", "measure"),
         "PZ": ("R", "prep"),
         "QAlloc": ("R", "prep"),
     }
@@ -1982,6 +3008,12 @@ def tick_circuit_to_stim(
                 return [("S_DAG", qubits)], "single"
             msg = f"Unsupported traced Clifford RZ angle: {angle!r}"
             raise ValueError(msg)
+
+        if gate_name == "F":
+            return [("S_DAG", qubits), ("H", qubits)], "single"
+
+        if gate_name == "Fdg":
+            return [("H", qubits), ("S", qubits)], "single"
 
         if gate_name == "RZZ":
             if not gate.angles:
@@ -2048,8 +3080,9 @@ def tick_circuit_to_stim(
                 op_qubit_str = " ".join(str(q) for q in op_qubits)
                 lines.append(f"{stim_name} {op_qubit_str}")
 
-            if noise_kind == "single" and p1 > 0:
-                lines.append(f"DEPOLARIZE1({p1}) {qubit_str}")
+            p1_for_gate = p1 if p1_gate_rates is None else float(p1_gate_rates.get(gate.gate_type.name, p1))
+            if noise_kind == "single" and p1_for_gate > 0:
+                lines.append(f"DEPOLARIZE1({p1_for_gate}) {qubit_str}")
             elif noise_kind == "two" and p2 > 0:
                 lines.append(f"DEPOLARIZE2({p2}) {qubit_str}")
             elif noise_kind == "prep" and p_prep > 0:
@@ -2063,9 +3096,10 @@ def tick_circuit_to_stim(
     detectors_json = tc.get_meta("detectors")
     if detectors_json:
         detectors = json.loads(detectors_json)
+        num_measurements = int(tc.get_meta("num_measurements") or "0")
         for det in detectors:
             coords = det["coords"]
-            records = det["records"]
+            records = _metadata_record_offsets(det, num_measurements)
             coord_str = ", ".join(str(c) for c in coords)
             record_str = " ".join(f"rec[{r}]" for r in records)
             lines.append(f"DETECTOR({coord_str}) {record_str}")
@@ -2074,9 +3108,10 @@ def tick_circuit_to_stim(
     observables_json = tc.get_meta("observables")
     if observables_json:
         observables = json.loads(observables_json)
+        num_measurements = int(tc.get_meta("num_measurements") or "0")
         for obs in observables:
             obs_id = obs["id"]
-            records = obs["records"]
+            records = _metadata_record_offsets(obs, num_measurements)
             record_str = " ".join(f"rec[{r}]" for r in records)
             lines.append(f"OBSERVABLE_INCLUDE({obs_id}) {record_str}")
 
@@ -2174,14 +3209,14 @@ def generate_dem_from_tick_circuit_via_pauli_frame(
     meas_to_detectors: dict[int, list[int]] = defaultdict(list)
     for det in detectors:
         det_id = det["id"]
-        for rec in det["records"]:
+        for rec in _metadata_record_offsets(det, num_measurements):
             abs_meas = num_measurements + rec  # rec is negative
             meas_to_detectors[abs_meas].append(det_id)
 
     meas_to_observables: dict[int, list[int]] = defaultdict(list)
     for obs in observables:
         obs_id = obs["id"]
-        for rec in obs["records"]:
+        for rec in _metadata_record_offsets(obs, num_measurements):
             abs_meas = num_measurements + rec
             meas_to_observables[abs_meas].append(obs_id)
 
@@ -2423,6 +3458,7 @@ def generate_dem_from_tick_circuit_via_stim(
     tc: TickCircuit,
     *,
     p1: float = 0.01,
+    p1_gate_rates: Mapping[str, float] | None = None,
     p2: float = 0.01,
     p_meas: float = 0.01,
     p_prep: float = 0.01,
@@ -2438,6 +3474,10 @@ def generate_dem_from_tick_circuit_via_stim(
     Args:
         tc: TickCircuit with detector/observable metadata
         p1: Single-qubit depolarizing error rate
+        p1_gate_rates: Optional per-gate override for single-qubit
+            depolarizing rates. Gate names are PECOS ``GateType`` names. The
+            surface SZZ reference path uses this to mirror the staged PECOS
+            device model where Z/SZ/SZdg frame updates are virtual and p1-free.
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
@@ -2457,7 +3497,14 @@ def generate_dem_from_tick_circuit_via_stim(
         msg = "Stim is required for this function. Install with: pip install stim"
         raise ImportError(msg) from e
 
-    stim_str = tick_circuit_to_stim(tc, p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+    stim_str = tick_circuit_to_stim(
+        tc,
+        p1=p1,
+        p1_gate_rates=p1_gate_rates,
+        p2=p2,
+        p_meas=p_meas,
+        p_prep=p_prep,
+    )
     circuit = stim.Circuit(stim_str)
     dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition)
     if maximal_decomposition:
@@ -2562,24 +3609,25 @@ def _maximally_decompose_graphlike_dem(dem_text: str) -> str:
     return "\n".join(rewritten_lines)
 
 
-def _build_canonical_dem_influence_map(dag: DagCircuit) -> object:
-    """Build the influence map used by the canonical Rust DEM builder.
-
-    `DagFaultAnalyzer` supplies the detector influence map. Observable and
-    tracked-Pauli annotations need positional propagation from
-    `InfluenceBuilder`; merging those non-detector outputs keeps this legacy
-    surface helper aligned with `DetectorErrorModel.from_circuit`.
-    """
-    from pecos.qec import DagFaultAnalyzer, InfluenceBuilder
+def _build_canonical_dem_influence_map(
+    dag: DagCircuit,
+    *,
+    include_circuit_annotations: bool = False,
+) -> object:
+    """Build the influence map used by the metadata-driven Rust DEM builder."""
+    from pecos.qec import DagFaultAnalyzer
 
     analyzer = DagFaultAnalyzer(dag)
     influence_map = analyzer.build_influence_map()
-    annotation_builder = InfluenceBuilder(dag)
-    annotation_builder.with_circuit_annotations()
-    annotation_map = annotation_builder.build()
-    merge_dem_outputs = getattr(influence_map, "merge_dem_outputs_from", None)
-    if merge_dem_outputs is not None:
-        merge_dem_outputs(annotation_map)
+    if include_circuit_annotations:
+        from pecos.qec import InfluenceBuilder
+
+        annotation_builder = InfluenceBuilder(dag)
+        annotation_builder.with_circuit_annotations()
+        annotation_map = annotation_builder.build()
+        merge_dem_outputs = getattr(influence_map, "merge_dem_outputs_from", None)
+        if merge_dem_outputs is not None:
+            merge_dem_outputs(annotation_map)
     return influence_map
 
 
@@ -2594,6 +3642,20 @@ def _metadata_uses_record_offsets(*metadata_jsons: str | None) -> bool:
             if entry.get("records"):
                 return True
     return False
+
+
+def _metadata_record_offsets(entry: dict[str, object], num_measurements: int) -> list[int]:
+    """Return Stim-style negative record offsets for a metadata entry."""
+    records = entry.get("records")
+    if records is not None:
+        return [int(record) for record in records]  # type: ignore[union-attr]
+
+    meas_ids = entry.get("meas_ids")
+    if meas_ids is not None:
+        return [int(meas_id) - num_measurements for meas_id in meas_ids]  # type: ignore[union-attr]
+
+    msg = "detector/observable metadata entry must define either 'records' or 'meas_ids'"
+    raise ValueError(msg)
 
 
 def generate_dem_from_tick_circuit(
@@ -2729,6 +3791,8 @@ def generate_dem_from_tick_circuit(
         p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
         p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
     )
+    if hasattr(builder, "with_exact_branch_replay_circuit"):
+        builder = builder.with_exact_branch_replay_circuit(dag)
     builder.with_num_measurements(num_measurements)
     if metadata_uses_records:
         builder.with_measurement_order(measurement_order)

@@ -371,15 +371,16 @@ impl<'a> DemBuilder<'a> {
                 pg.rate_1q(loc.gate_type, 2),
             ];
         }
+        let p1_total = self.noise.p1_rate_for_gate(loc.gate_type);
         if let Some(weights) = &self.noise.p1_weights {
             use pecos_core::pauli::{X, Y, Z};
             return [
-                self.noise.p1 * weights.weight_for(&X(0)),
-                self.noise.p1 * weights.weight_for(&Y(0)),
-                self.noise.p1 * weights.weight_for(&Z(0)),
+                p1_total * weights.weight_for(&X(0)),
+                p1_total * weights.weight_for(&Y(0)),
+                p1_total * weights.weight_for(&Z(0)),
             ];
         }
-        let per = per_channel_probability(self.noise.p1, 3);
+        let per = per_channel_probability(p1_total, 3);
         [per, per, per]
     }
 
@@ -435,6 +436,7 @@ impl<'a> DemBuilder<'a> {
                 let p1 = flat / 4;
                 let p2 = flat % 4;
                 let pauli = pauli_pair_for_weight(p1, p2);
+                let p2_total = self.noise.p2_rate_for_gate(loc1.gate_type);
                 let weight = if self.noise.p2_replacement_approximation
                     == ReplacementBranchApproximation::BranchImpact
                     || self.noise.p2_replacement_approximation
@@ -448,10 +450,10 @@ impl<'a> DemBuilder<'a> {
                         self.noise.p2_replacement_approximation,
                     )
                 };
-                self.noise.p2 * weight
+                p2_total * weight
             });
         }
-        [per_channel_probability(self.noise.p2, 15); 15]
+        [per_channel_probability(self.noise.p2_rate_for_gate(loc1.gate_type), 15); 15]
     }
 
     /// Sets the number of measurements (used for record offset calculation).

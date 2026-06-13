@@ -3741,7 +3741,8 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "PECOS native DEM mode. Graph decoders such as PyMatching require "
             "native_decomposed or native_terminal_graphlike; raw-DEM decoders "
-            "should use native_full."
+            "should use native_full. The graphlike modes are lossy "
+            "hyperedge-to-edge decoder projections."
         ),
     )
     parser.add_argument(

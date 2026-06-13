@@ -3,7 +3,8 @@
 This is a narrower companion to ``dem_decomposition_diagnostics.py``. It builds
 each DEM view once, samples once from the exact native influence model, then
 times correlated PyMatching construction and batch decoding for the selected
-graphlike projections.
+graphlike projections. Those graphlike projections are lossy decoder-facing
+views of raw hyperedge mechanisms.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from dem_decomposition_diagnostics import (
     true_observable_flips,
 )
 
+# SZZ/SZZdg surface diagnostics model Z-frame gates as virtual and p1-free.
 SZZ_Z_FRAME_P1_GATE_RATES = {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
 
 
@@ -169,6 +171,16 @@ def build_case(
         f"max_rel={raw_comparison['max_rel_probability_diff']:.3e}",
         flush=True,
     )
+    if (
+        raw_comparison["only_native"] == 0
+        and raw_comparison["only_stim"] == 0
+        and raw_comparison["max_rel_probability_diff"] > 0
+    ):
+        print(
+            "raw structures match; max_rel is a probability-combination/"
+            "rounding delta.",
+            flush=True,
+        )
 
     sampler, elapsed = timed(
         "build native influence sampler",

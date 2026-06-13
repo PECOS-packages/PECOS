@@ -61,6 +61,8 @@ if TYPE_CHECKING:
 
 P1Weights = Mapping[str, float] | Sequence[tuple[str, float]]
 P2Weights = Mapping[str, float] | Sequence[tuple[str, float]]
+# Native graphlike decompositions are decoder-facing projections of raw
+# hyperedge mechanisms, not alternate exact DEM serializations.
 NativeDemDecomposition = Literal["source_graphlike", "terminal_graphlike"]
 CircuitLevelDemMode = Literal["native_full", "native_decomposed", "native_terminal_graphlike"]
 
@@ -1649,6 +1651,14 @@ def _use_szz_physical_prefixes(
 
 
 def _szz_z_frame_p1_gate_rates(topology: _CachedNativeSurfaceTopology) -> dict[str, float] | None:
+    """Return virtual-Z frame p1 overrides for the staged SZZ device model.
+
+    The current SZZ surface basis treats Z/SZ/SZdg frame updates as noiseless
+    virtual operations. That device-model assumption is keyed from
+    ``interaction_basis == "szz"`` in the staged API, so CX-vs-SZZ p1 location
+    comparisons include this free-Z modeling choice as well as gate basis
+    differences.
+    """
     if not topology.z_frame_gate_p1_free:
         return None
     return {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
@@ -1794,6 +1804,9 @@ def _surface_native_topology(
         dag_circuit=dag,
         influence_map=influence_map,
         szz_physical_prefixes=szz_physical_prefixes,
+        # Staged SZZ device model: Z/SZ/SZdg frame updates are virtual and
+        # receive no p1 noise. Keep CX-vs-SZZ p1 location comparisons scoped to
+        # that asymmetric device assumption.
         z_frame_gate_p1_free=interaction_basis == "szz",
         pauli_frame_lookup=pauli_frame_lookup,
         detectors_json=detectors_json,
@@ -2074,14 +2087,15 @@ def generate_circuit_level_dem_from_builder(
         basis: Memory basis ('X' or 'Z')
         decompose_errors: If True, return PECOS's native graphlike-decomposed
             DEM representation for graph decoders such as PyMatching. The
-            decomposition preserves correlated mechanism metadata with ``^``
-            separators, but graph decoders may still approximate hyperedge
-            correlations.
+            decomposition is a lossy hyperedge-to-edge projection; it preserves
+            correlated mechanism metadata with ``^`` separators where available,
+            but it is not an exact raw DEM serialization.
         dem_decomposition: Which native graphlike projection to use when
             ``decompose_errors=True``. ``"source_graphlike"`` preserves the
             existing source-informed decomposition. ``"terminal_graphlike"``
             groups raw mechanisms first, then pairs only detector terminals
-            present in each raw effect by coordinate distance.
+            present in each raw effect by coordinate distance. Both modes are
+            decoder-facing approximations of raw hyperedge mechanisms.
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, the native DEM is built
             from the same batched ancilla-reuse circuit family used by Guppy.
@@ -2097,7 +2111,11 @@ def generate_circuit_level_dem_from_builder(
         twirl: Optional Pauli-frame randomization layout. Canonical Guppy
             frame-output mode is normalized to the same abstract raw lookup
             and DEM topology.
-        interaction_basis: Surface-memory two-qubit interaction basis.
+        interaction_basis: Surface-memory two-qubit interaction basis. The
+            staged ``"szz"`` path currently assumes a virtual-Z device model:
+            Z/SZ/SZdg frame updates are p1-free. That is a device assumption
+            keyed from this basis selector, not a general claim about CX
+            hardware.
 
     Returns:
         DEM string in standard format
@@ -2578,11 +2596,14 @@ class SurfaceDecoder:
             circuit_level_dem_mode: Which PECOS-native DEM representation to use
                 when circuit-level DEMs are enabled. ``"native_full"`` preserves
                 the current non-decomposed DEM output. ``"native_decomposed"``
-                returns the source-informed graphlike output for graph decoders.
+                returns the source-informed graphlike projection for graph
+                decoders.
                 ``"native_terminal_graphlike"`` first groups raw mechanisms,
                 then projects each mechanism onto graphlike terminal components.
-                Decomposed modes are decoder-facing approximations of hyperedge
-                correlations, not exact raw DEMs.
+                Decomposed modes are lossy decoder-facing approximations of
+                hyperedge correlations, not exact raw DEMs. Correlated graph
+                decoding can use some preserved ``^`` metadata, but raw-DEM
+                decoders should use ``"native_full"``.
             circuit_level_dem_source: Which ideal circuit to analyze when
                 building native circuit-level DEMs. ``"abstract"`` uses the
                 high-level surface TickCircuit, while ``"traced_qis"`` traces
@@ -2592,7 +2613,8 @@ class SurfaceDecoder:
                 builds its DEM from the corresponding batched ancilla-reuse
                 circuit instead of the default dedicated-ancilla circuit.
             interaction_basis: Surface-memory two-qubit interaction basis,
-                ``"cx"`` or ``"szz"``.
+                ``"cx"`` or ``"szz"``. The staged ``"szz"`` path currently
+                treats Z/SZ/SZdg frame updates as p1-free virtual operations.
         """
         from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
@@ -3924,7 +3946,9 @@ def build_native_sampler(
             frame-output mode is normalized to the same abstract raw lookup.
         interaction_basis: Surface-memory two-qubit interaction basis.
         sampling_model: Which native sampling backend to use. ``"dem"``
-            samples the generated decomposed DEM and is the default.
+            samples the generated source-graphlike DEM projection and is the
+            default; this is a decoder-facing approximation of raw hyperedges,
+            not the exact raw DEM.
             ``"influence_dem"`` uses the influence-map-based DemSampler with
             detector definitions. ``"mnm"`` is accepted for compatibility
             and maps to ``"influence_dem"``.

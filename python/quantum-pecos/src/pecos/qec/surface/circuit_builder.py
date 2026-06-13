@@ -2937,7 +2937,9 @@ def tick_circuit_to_stim(
         p1: Single-qubit error rate
         p1_gate_rates: Optional per-gate override for single-qubit error
             rates. Gate names are PECOS ``GateType`` names such as ``"Z"``,
-            ``"SZ"``, and ``"SZdg"``.
+            ``"SZ"``, and ``"SZdg"``. The surface SZZ reference path uses
+            this to mirror the staged PECOS device model where Z/SZ/SZdg frame
+            updates are virtual and p1-free.
         p2: Two-qubit error rate
         p_meas: Measurement error rate
         p_prep: Initialization error rate
@@ -3473,7 +3475,9 @@ def generate_dem_from_tick_circuit_via_stim(
         tc: TickCircuit with detector/observable metadata
         p1: Single-qubit depolarizing error rate
         p1_gate_rates: Optional per-gate override for single-qubit
-            depolarizing rates. Gate names are PECOS ``GateType`` names.
+            depolarizing rates. Gate names are PECOS ``GateType`` names. The
+            surface SZZ reference path uses this to mirror the staged PECOS
+            device model where Z/SZ/SZdg frame updates are virtual and p1-free.
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate

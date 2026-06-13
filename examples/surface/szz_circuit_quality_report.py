@@ -3,6 +3,9 @@
 This script is intentionally descriptive rather than a threshold sweep. It
 counts the gate locations that drive the simple circuit-level noise model and,
 optionally, compares raw PECOS and Stim DEMs for the traced-QIS circuit path.
+For SZZ/SZZdg cases the staged device model treats Z/SZ/SZdg frame updates as
+noiseless virtual operations, so p1 location comparisons include that
+assumption as well as the gate-basis change.
 
 Example:
     uv run python examples/surface/szz_circuit_quality_report.py \\
@@ -56,6 +59,7 @@ TWO_QUBIT_GATES = {
 THREE_QUBIT_GATES = {"CCX", "CCZ"}
 SZZ_ABSTRACT_PREFIX_P1_FREE_GATES = {"Z", "SZ", "SZdg"}
 SZZ_Z_FRAME_P1_FREE_SOURCES = {"abstract_physical_prefix", "traced_qis"}
+# SZZ/SZZdg surface diagnostics model Z-frame gates as virtual and p1-free.
 SZZ_Z_FRAME_P1_GATE_RATES = {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
 
 
@@ -422,6 +426,16 @@ def build_case(
             f"max_rel={comparison['max_rel_probability_diff']:.3e}",
             flush=True,
         )
+        if (
+            comparison["only_native"] == 0
+            and comparison["only_stim"] == 0
+            and comparison["max_rel_probability_diff"] > 0
+        ):
+            print(
+                "raw structures match; max_rel is a probability-combination/"
+                "rounding delta.",
+                flush=True,
+            )
 
     return CaseReport(
         distance=distance,

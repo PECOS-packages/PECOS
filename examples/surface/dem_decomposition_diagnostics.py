@@ -2,7 +2,8 @@
 
 The script keeps sampling fixed: each case samples once from the exact native
 influence-model DEM, then decodes the same detector events with several decoder
-views of the model. This separates raw DEM generation from graphlike
+views of the model. The graphlike views are lossy hyperedge-to-edge projections
+for graph decoders, so this separates raw DEM generation from graphlike
 decomposition quality.
 
 Example:
@@ -36,6 +37,9 @@ GRAPHLIKE_DECODER_CHOICES = [
     "terminal_decomp_pymatching",
     "terminal_decomp_pymatching_correlated",
 ]
+# The staged SZZ device model treats Z/SZ/SZdg frame updates as noiseless
+# virtual operations. CX-vs-SZZ p1 location comparisons include this assumption
+# as well as the gate-basis difference.
 SZZ_Z_FRAME_P1_GATE_RATES = {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
 
 
@@ -139,7 +143,12 @@ def dem_effect_probabilities(dem_text: str) -> dict[str, float]:
 
 
 def compare_raw_dems(native_dem: str, stim_dem: str) -> RawDemComparison:
-    """Compare raw native and Stim DEMs after aggregating duplicate effects."""
+    """Compare raw native and Stim DEMs after aggregating duplicate effects.
+
+    ``only_native`` and ``only_stim`` report structural differences. Nonzero
+    probability deltas with zero structural differences reflect independent
+    probability-combination and serialization-rounding conventions.
+    """
     native = dem_effect_probabilities(native_dem)
     stim = dem_effect_probabilities(stim_dem)
     native_keys = set(native)
@@ -230,7 +239,8 @@ def terminal_graphlike_projection(raw_dem: str) -> str:
     but the rendered decomposition uses only detectors present in that raw
     effect. This avoids cancellation/path detectors introduced by graph-path
     decompositions while still producing graphlike components for matching
-    decoders.
+    decoders. The result is a lossy decoder-facing projection of hyperedge
+    correlations, not an exact raw DEM.
     """
     coords = parse_detector_coords(raw_dem)
     annotation_lines: list[str] = []
@@ -716,6 +726,11 @@ def print_case(result: CaseResult) -> None:
         f"max_rel={raw.max_rel_probability_diff:.3e} "
         f"l1={raw.l1_probability_diff:.3e}",
     )
+    if raw.only_native == 0 and raw.only_stim == 0 and raw.max_rel_probability_diff > 0:
+        print(
+            "  raw structures match; probability deltas reflect "
+            "combination/rounding conventions.",
+        )
 
     print("DEM stats:")
     print("  source              errors       psum   sep hyper max_comp max_line pure_L")

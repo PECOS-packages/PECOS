@@ -165,6 +165,35 @@ class QubitAllocation:
         return len(set(self.data_qubits) | set(self.x_ancilla_qubits) | set(self.z_ancilla_qubits))
 
 
+@dataclass(frozen=True)
+class SzzForwardFlowPulse:
+    """One pending-Clifford discharge site in the SZZ device-flow model."""
+
+    host_index: int
+    host_op_type: str
+    host_label: str
+    qubit: int
+    kind: str
+    pending_clifford: str
+
+
+@dataclass(frozen=True)
+class SzzForwardFlowSummary:
+    """Pulse accounting for the SZZ pending-Clifford forward-flow model."""
+
+    abstract_single_qubit_ops: int
+    physical_prefix_pulses: int
+    two_qubit_prefix_pulses: int
+    measurement_prefix_pulses: int
+    virtual_z_two_qubit_carries: int
+    virtual_z_measure_discards: int
+    two_qubit_gates: int
+    measurements: int
+    prep_events: int
+    free_standing_single_qubit_ops: int
+    pulses: tuple[SzzForwardFlowPulse, ...]
+
+
 @dataclass(frozen=True, order=True)
 class SzzTouchSign:
     """Signed SZZ touch in the v1 surface-memory sign convention."""
@@ -377,6 +406,215 @@ def _propagate_sxx_frame_bits(x_a: bool, z_a: bool, x_b: bool, z_b: bool) -> tup
     """Propagate local Pauli-frame bits through the SXX/SXXdg mirror."""
     common = z_a ^ z_b
     return x_a ^ common, z_a, x_b ^ common, z_b
+
+
+_SIGNED_PAULI_NAMES = {
+    1: "X",
+    -1: "-X",
+    2: "Y",
+    -2: "-Y",
+    3: "Z",
+    -3: "-Z",
+}
+_SZZ_FLOW_IDENTITY: tuple[int, int] = (1, 3)
+_SZZ_FLOW_SINGLE_QUBIT_GATES = {
+    OpType.H,
+    OpType.SX,
+    OpType.SXDG,
+    OpType.SZ,
+    OpType.SZDG,
+    OpType.X,
+    OpType.Z,
+}
+_SZZ_FLOW_GATE_ACTIONS: dict[OpType, dict[int, int]] = {
+    OpType.H: {1: 3, 2: -2, 3: 1},
+    OpType.SX: {1: 1, 2: 3, 3: -2},
+    OpType.SXDG: {1: 1, 2: -3, 3: 2},
+    OpType.SZ: {1: 2, 2: -1, 3: 3},
+    OpType.SZDG: {1: -2, 2: 1, 3: 3},
+    OpType.X: {1: 1, 2: -2, 3: -3},
+    OpType.Z: {1: -1, 2: -2, 3: 3},
+}
+
+
+def _szz_flow_apply_gate_to_pauli(op_type: OpType, pauli: int) -> int:
+    sign = -1 if pauli < 0 else 1
+    return sign * _SZZ_FLOW_GATE_ACTIONS[op_type][abs(pauli)]
+
+
+def _szz_flow_compose_pending_gate(pending: tuple[int, int], op_type: OpType) -> tuple[int, int]:
+    """Append one 1q Clifford to a pending signed-Pauli-image register."""
+    return (
+        _szz_flow_apply_gate_to_pauli(op_type, pending[0]),
+        _szz_flow_apply_gate_to_pauli(op_type, pending[1]),
+    )
+
+
+def _szz_flow_is_virtual_z(pending: tuple[int, int]) -> bool:
+    """Return whether a pending Clifford is a zero-pulse virtual-Z update."""
+    return pending[1] == 3
+
+
+def _szz_flow_clifford_name(pending: tuple[int, int]) -> str:
+    return f"X->{_SIGNED_PAULI_NAMES[pending[0]]},Z->{_SIGNED_PAULI_NAMES[pending[1]]}"
+
+
+def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSummary:
+    """Analyze SZZ pending-Clifford forward-flow pulse accounting.
+
+    The abstract SZZ template intentionally contains free-standing 1q
+    Cliffords. The SZZ device model executes those Cliffords only as prefixes
+    of the next SZZ/SZZdg or MZ on that qubit. Virtual-Z pending Cliffords carry
+    through SZZ/SZZdg and are discarded at MZ.
+    """
+    pending_by_qubit: dict[int, tuple[int, int]] = {}
+    pulses: list[SzzForwardFlowPulse] = []
+    abstract_single_qubit_ops = 0
+    physical_prefix_pulses = 0
+    two_qubit_prefix_pulses = 0
+    measurement_prefix_pulses = 0
+    virtual_z_two_qubit_carries = 0
+    virtual_z_measure_discards = 0
+    two_qubit_gates = 0
+    measurements = 0
+    prep_events = 0
+
+    def pending_for(q: int) -> tuple[int, int]:
+        return pending_by_qubit.setdefault(q, _SZZ_FLOW_IDENTITY)
+
+    def pulse_event(
+        *,
+        host_index: int,
+        op: SurfaceCircuitStep,
+        qubit: int,
+        kind: str,
+        pending: tuple[int, int],
+    ) -> SzzForwardFlowPulse:
+        return SzzForwardFlowPulse(
+            host_index=host_index,
+            host_op_type=op.op_type.name,
+            host_label=op.label,
+            qubit=qubit,
+            kind=kind,
+            pending_clifford=_szz_flow_clifford_name(pending),
+        )
+
+    def reset_for_prep(q: int, op: SurfaceCircuitStep) -> None:
+        current = pending_for(q)
+        if current != _SZZ_FLOW_IDENTITY:
+            msg = (
+                "SZZ forward-flow cannot reset a qubit with a pending "
+                f"Clifford: q={q}, pending={_szz_flow_clifford_name(current)}, "
+                f"op={op.op_type.name} {op.label!r}"
+            )
+            raise ValueError(msg)
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    def discharge_for_two_qubit(q: int, host_index: int, op: SurfaceCircuitStep) -> None:
+        nonlocal physical_prefix_pulses, two_qubit_prefix_pulses, virtual_z_two_qubit_carries
+        current = pending_for(q)
+        if current == _SZZ_FLOW_IDENTITY:
+            return
+        if _szz_flow_is_virtual_z(current):
+            virtual_z_two_qubit_carries += 1
+            pulses.append(
+                pulse_event(
+                    host_index=host_index,
+                    op=op,
+                    qubit=q,
+                    kind="virtual_z_two_qubit_carry",
+                    pending=current,
+                ),
+            )
+            return
+        physical_prefix_pulses += 1
+        two_qubit_prefix_pulses += 1
+        pulses.append(
+            pulse_event(
+                host_index=host_index,
+                op=op,
+                qubit=q,
+                kind="physical_two_qubit_prefix",
+                pending=current,
+            ),
+        )
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    def discharge_for_measurement(q: int, host_index: int, op: SurfaceCircuitStep) -> None:
+        nonlocal physical_prefix_pulses, measurement_prefix_pulses, virtual_z_measure_discards
+        current = pending_for(q)
+        if current == _SZZ_FLOW_IDENTITY:
+            return
+        if _szz_flow_is_virtual_z(current):
+            virtual_z_measure_discards += 1
+            pulses.append(
+                pulse_event(
+                    host_index=host_index,
+                    op=op,
+                    qubit=q,
+                    kind="virtual_z_measure_discard",
+                    pending=current,
+                ),
+            )
+            pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+            return
+        physical_prefix_pulses += 1
+        measurement_prefix_pulses += 1
+        pulses.append(
+            pulse_event(
+                host_index=host_index,
+                op=op,
+                qubit=q,
+                kind="physical_measurement_prefix",
+                pending=current,
+            ),
+        )
+        pending_by_qubit[q] = _SZZ_FLOW_IDENTITY
+
+    for host_index, op in enumerate(ops):
+        if op.op_type in {OpType.COMMENT, OpType.TICK, OpType.TRACKED_PAULI}:
+            continue
+        if op.op_type in {OpType.ALLOC, OpType.PREP}:
+            prep_events += 1
+            reset_for_prep(op.qubits[0], op)
+            continue
+        if op.op_type in _SZZ_FLOW_SINGLE_QUBIT_GATES:
+            q = op.qubits[0]
+            abstract_single_qubit_ops += 1
+            pending_by_qubit[q] = _szz_flow_compose_pending_gate(pending_for(q), op.op_type)
+            continue
+        if op.op_type in {OpType.SZZ, OpType.SZZDG}:
+            two_qubit_gates += 1
+            for q in op.qubits:
+                discharge_for_two_qubit(q, host_index, op)
+            continue
+        if op.op_type == OpType.CX:
+            msg = "SZZ forward-flow analysis only supports SZZ/SZZdg two-qubit gates"
+            raise ValueError(msg)
+        if op.op_type == OpType.MEASURE:
+            measurements += 1
+            discharge_for_measurement(op.qubits[0], host_index, op)
+            continue
+
+    remaining = {q: pending for q, pending in pending_by_qubit.items() if pending != _SZZ_FLOW_IDENTITY}
+    if remaining:
+        formatted = {q: _szz_flow_clifford_name(pending) for q, pending in sorted(remaining.items())}
+        msg = f"SZZ forward-flow ended with pending Cliffords: {formatted}"
+        raise ValueError(msg)
+
+    return SzzForwardFlowSummary(
+        abstract_single_qubit_ops=abstract_single_qubit_ops,
+        physical_prefix_pulses=physical_prefix_pulses,
+        two_qubit_prefix_pulses=two_qubit_prefix_pulses,
+        measurement_prefix_pulses=measurement_prefix_pulses,
+        virtual_z_two_qubit_carries=virtual_z_two_qubit_carries,
+        virtual_z_measure_discards=virtual_z_measure_discards,
+        two_qubit_gates=two_qubit_gates,
+        measurements=measurements,
+        prep_events=prep_events,
+        free_standing_single_qubit_ops=0,
+        pulses=tuple(pulses),
+    )
 
 
 def build_surface_code_circuit(
@@ -991,6 +1229,7 @@ def _build_surface_code_circuit_szz(
         ops.extend(SurfaceCircuitStep(OpType.H, [data_q(i)]) for i in range(num_data))
     ops.extend(SurfaceCircuitStep(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data))
 
+    _analyze_szz_forward_flow(ops)
     return ops
 
 

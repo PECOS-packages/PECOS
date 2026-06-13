@@ -12,7 +12,9 @@ import stim
 from pecos.qec.surface import NoiseModel, SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     OpType,
+    SurfaceCircuitStep,
     SzzTouchSign,
+    _analyze_szz_forward_flow,
     _default_szz_residual_plan,
     _default_szz_sign_vector,
     _propagate_compensated_szz_frame_bits,
@@ -273,6 +275,110 @@ def test_szz_tick_circuit_uses_named_szz_gates() -> None:
     }
     assert "CX" not in gate_names
     assert {"SZZ", "SZZdg", "SX", "SXdg", "SZ", "SZdg"} <= gate_names
+
+
+def test_szz_forward_flow_merges_h_sandwich_before_host() -> None:
+    ops = [
+        SurfaceCircuitStep(OpType.ALLOC, [0]),
+        SurfaceCircuitStep(OpType.ALLOC, [1]),
+        SurfaceCircuitStep(OpType.H, [0]),
+        SurfaceCircuitStep(OpType.H, [0]),
+        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
+        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
+        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+    ]
+
+    summary = _analyze_szz_forward_flow(ops)
+
+    assert summary.abstract_single_qubit_ops == 2
+    assert summary.physical_prefix_pulses == 0
+    assert summary.free_standing_single_qubit_ops == 0
+    assert summary.pulses == ()
+
+
+def test_szz_forward_flow_carries_virtual_z_to_measurement() -> None:
+    ops = [
+        SurfaceCircuitStep(OpType.ALLOC, [0]),
+        SurfaceCircuitStep(OpType.ALLOC, [1]),
+        SurfaceCircuitStep(OpType.SZ, [0]),
+        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
+        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
+        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+    ]
+
+    summary = _analyze_szz_forward_flow(ops)
+
+    assert summary.physical_prefix_pulses == 0
+    assert summary.virtual_z_two_qubit_carries == 1
+    assert summary.virtual_z_measure_discards == 1
+    assert [event.kind for event in summary.pulses] == [
+        "virtual_z_two_qubit_carry",
+        "virtual_z_measure_discard",
+    ]
+
+
+def test_szz_forward_flow_counts_physical_prefixes_at_hosts() -> None:
+    ops = [
+        SurfaceCircuitStep(OpType.ALLOC, [0]),
+        SurfaceCircuitStep(OpType.ALLOC, [1]),
+        SurfaceCircuitStep(OpType.H, [0]),
+        SurfaceCircuitStep(OpType.SZZ, [0, 1], "g"),
+        SurfaceCircuitStep(OpType.H, [1]),
+        SurfaceCircuitStep(OpType.MEASURE, [0], "m0"),
+        SurfaceCircuitStep(OpType.MEASURE, [1], "m1"),
+    ]
+
+    summary = _analyze_szz_forward_flow(ops)
+
+    assert summary.physical_prefix_pulses == 2
+    assert summary.two_qubit_prefix_pulses == 1
+    assert summary.measurement_prefix_pulses == 1
+    assert [event.kind for event in summary.pulses] == [
+        "physical_two_qubit_prefix",
+        "physical_measurement_prefix",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("basis", "expected"),
+    [
+        (
+            "Z",
+            {
+                "abstract_single_qubit_ops": 108,
+                "physical_prefix_pulses": 54,
+                "two_qubit_prefix_pulses": 38,
+                "measurement_prefix_pulses": 16,
+                "virtual_z_two_qubit_carries": 10,
+                "virtual_z_measure_discards": 5,
+            },
+        ),
+        (
+            "X",
+            {
+                "abstract_single_qubit_ops": 102,
+                "physical_prefix_pulses": 54,
+                "two_qubit_prefix_pulses": 37,
+                "measurement_prefix_pulses": 17,
+                "virtual_z_two_qubit_carries": 10,
+                "virtual_z_measure_discards": 3,
+            },
+        ),
+    ],
+)
+def test_szz_forward_flow_surface_pulse_count_snapshot(basis: str, expected: dict[str, int]) -> None:
+    patch = SurfacePatch.create(distance=3)
+    ops, _ = build_surface_code_circuit(patch, num_rounds=1, basis=basis, interaction_basis="szz")
+
+    summary = _analyze_szz_forward_flow(ops)
+
+    assert summary.two_qubit_gates == 36
+    assert summary.measurements == 21
+    assert summary.prep_events == 21
+    assert summary.free_standing_single_qubit_ops == 0
+    for field, value in expected.items():
+        assert getattr(summary, field) == value
+    assert summary.physical_prefix_pulses < summary.abstract_single_qubit_ops
 
 
 def test_szz_direct_renderers_accept_interaction_basis() -> None:

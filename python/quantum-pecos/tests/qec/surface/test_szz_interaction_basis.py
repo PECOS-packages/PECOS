@@ -27,7 +27,7 @@ from pecos.qec.surface.circuit_builder import (
     generate_stim_from_patch,
     generate_tick_circuit_from_patch,
 )
-from pecos.qec.surface.decode import build_memory_circuit, generate_circuit_level_dem_from_builder
+from pecos.qec.surface.decode import build_memory_circuit, build_native_sampler, generate_circuit_level_dem_from_builder
 
 
 def _to_numpy_complex(matrix: object) -> np.ndarray:
@@ -448,7 +448,7 @@ def test_szz_noiseless_detector_record_equivalence(distance: int, basis: str) ->
 
 def test_szz_native_dem_path_uses_interaction_basis() -> None:
     patch = SurfacePatch.create(distance=3)
-    noise = NoiseModel(p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001)
+    noise = NoiseModel(p1=0.0, p2=0.01, p2_weights={"ZI": 1.0}, p_meas=0.001, p_prep=0.001)
 
     cx_dem = generate_circuit_level_dem_from_builder(
         patch,
@@ -465,3 +465,34 @@ def test_szz_native_dem_path_uses_interaction_basis() -> None:
 
     assert cx_dem != szz_dem
     assert stim.DetectorErrorModel(szz_dem).num_detectors > 0
+
+
+@pytest.mark.parametrize(
+    ("noise", "match"),
+    [
+        (NoiseModel(p1=0.001), r"p1.*post-flow prefix pulse locations"),
+        (NoiseModel(p_idle=0.001), r"dedicated idle noise.*post-flow prefix pulse locations"),
+    ],
+)
+def test_szz_native_dem_rejects_unlowered_physical_noise(noise: NoiseModel, match: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    with pytest.raises(ValueError, match=match):
+        generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=1,
+            noise=noise,
+            interaction_basis="szz",
+        )
+
+
+def test_szz_native_sampler_rejects_unlowered_physical_noise() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    with pytest.raises(ValueError, match=r"p1.*post-flow prefix pulse locations"):
+        build_native_sampler(
+            patch,
+            num_rounds=1,
+            noise=NoiseModel(p1=0.001),
+            interaction_basis="szz",
+        )

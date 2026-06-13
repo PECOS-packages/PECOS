@@ -499,7 +499,7 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
 @pytest.mark.parametrize("distance", [3, 5])
 def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: int) -> None:
     """SZZ-basis surface Guppy generation must match the traced-QIS reference DEM."""
-    p = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    p = {"p1": 0.0, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
     for basis in ("Z", "X"):
         patch = SurfacePatch.create(distance=distance)
         ref = _build_surface_tick_circuit_for_native_model(

@@ -1579,6 +1579,27 @@ def _noise_uses_dedicated_idle_noise(noise: NoiseModel) -> bool:
     )
 
 
+def _reject_szz_unlowered_physical_noise(noise: NoiseModel, interaction_basis: str) -> None:
+    """Reject SZZ surface DEM noise that still needs post-flow pulse locations."""
+    if interaction_basis != "szz":
+        return
+    reasons: list[str] = []
+    if noise.p1 > 0.0:
+        reasons.append("p1")
+    if _noise_uses_dedicated_idle_noise(noise):
+        reasons.append("dedicated idle noise")
+    if not reasons:
+        return
+    joined = ", ".join(reasons)
+    msg = (
+        "interaction_basis='szz' surface DEM generation does not yet support "
+        f"{joined} because the DEM must use post-flow prefix pulse locations "
+        "rather than the abstract H/SX/SZ scaffold; set p1=0 and omit "
+        "dedicated idle noise until SZZ pulse-location DEM lowering is enabled"
+    )
+    raise ValueError(msg)
+
+
 def _with_noise_compat(builder: Any, noise: NoiseModel) -> Any:
     """Call Rust ``with_noise`` using the richest signature this binding supports."""
     noise_kwargs = {
@@ -1985,6 +2006,7 @@ def generate_circuit_level_dem_from_builder(
     from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
     interaction_basis = _normalize_interaction_basis(interaction_basis)
+    _reject_szz_unlowered_physical_noise(noise, interaction_basis)
     patch_key = _surface_patch_cache_key(patch)
     include_idle_gates = _noise_uses_dedicated_idle_noise(noise)
     if runtime is not None:
@@ -3759,6 +3781,7 @@ def build_native_sampler(
     from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
     interaction_basis = _normalize_interaction_basis(interaction_basis)
+    _reject_szz_unlowered_physical_noise(noise, interaction_basis)
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
     topology = _cached_surface_native_topology(

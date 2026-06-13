@@ -55,6 +55,8 @@ TWO_QUBIT_GATES = {
 }
 THREE_QUBIT_GATES = {"CCX", "CCZ"}
 SZZ_ABSTRACT_PREFIX_P1_FREE_GATES = {"Z", "SZ", "SZdg"}
+SZZ_Z_FRAME_P1_FREE_SOURCES = {"abstract_physical_prefix", "traced_qis"}
+SZZ_Z_FRAME_P1_GATE_RATES = {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
 
 
 @dataclass(frozen=True)
@@ -176,7 +178,7 @@ def _tick_circuit_stats(
     max_tick_width = 0
     p1_exempt_names = (
         SZZ_ABSTRACT_PREFIX_P1_FREE_GATES
-        if source == "abstract_physical_prefix" and interaction_basis == "szz"
+        if source in SZZ_Z_FRAME_P1_FREE_SOURCES and interaction_basis == "szz"
         else set()
     )
 
@@ -312,6 +314,7 @@ def _dem_report(
     noise = NoiseModel(p1=p / p1_ratio, p2=p, p_prep=p / 3.0, p_meas=p / 3.0)
     noise_args = {
         "p1": noise.p1,
+        "p1_gate_rates": SZZ_Z_FRAME_P1_GATE_RATES if interaction_basis == "szz" else None,
         "p2": noise.p2,
         "p_prep": noise.p_prep,
         "p_meas": noise.p_meas,

@@ -36,6 +36,7 @@ GRAPHLIKE_DECODER_CHOICES = [
     "terminal_decomp_pymatching",
     "terminal_decomp_pymatching_correlated",
 ]
+SZZ_Z_FRAME_P1_GATE_RATES = {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
 
 
 @dataclass(frozen=True)
@@ -529,6 +530,7 @@ def run_case(
     noise = NoiseModel(p1=p / 30.0, p2=p, p_meas=p / 3.0, p_prep=p / 3.0)
     noise_args = {
         "p1": noise.p1,
+        "p1_gate_rates": SZZ_Z_FRAME_P1_GATE_RATES if interaction_basis == "szz" else None,
         "p2": noise.p2,
         "p_meas": noise.p_meas,
         "p_prep": noise.p_prep,

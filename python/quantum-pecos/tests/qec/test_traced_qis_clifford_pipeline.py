@@ -7,7 +7,6 @@ import math
 import random
 
 import pytest
-
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
@@ -238,6 +237,53 @@ def test_normalize_traced_qis_tick_circuit_rejects_raw_rzz_after_lowering():
 
     with pytest.raises(ValueError, match="still contains raw RZZ"):
         normalize_traced_qis_tick_circuit(tc, context="test non-Clifford RZZ normalization")
+
+
+def _gate_names(tc):
+    return [
+        gate.gate_type.name
+        for tick_index in range(tc.num_ticks())
+        for gate in tc.get_tick(tick_index).gate_batches()
+    ]
+
+
+def test_tick_circuit_pass_bindings_cancel_and_remove_simple_gates():
+    tc = TickCircuit()
+    tc.tick().h([0])
+    tc.tick().h([0])
+    tc.tick().i([1])
+
+    tc.cancel_inverses()
+    tc.remove_identity()
+
+    assert _gate_names(tc) == []
+
+
+def test_tick_circuit_pass_bindings_merge_and_lower_rotations():
+    tc = TickCircuit()
+    tc.tick().rz(math.pi / 4, [0])
+    tc.tick().rz(math.pi / 4, [0])
+
+    tc.merge_adjacent_rotations()
+    tc.lower_clifford_rotations()
+
+    assert _gate_names(tc) == ["SZ"]
+
+
+def test_tick_circuit_pass_bindings_absorb_basis_and_peephole():
+    absorbed = TickCircuit()
+    absorbed.tick().pz([0])
+    absorbed.tick().sz([0])
+    absorbed.tick().mz([0])
+    absorbed.absorb_basis_gates()
+    assert _gate_names(absorbed) == ["PZ", "MZ"]
+
+    optimized = TickCircuit()
+    optimized.tick().h([1])
+    optimized.tick().cx([(0, 1)])
+    optimized.tick().h([1])
+    optimized.peephole_optimize()
+    assert _gate_names(optimized) == ["CZ"]
 
 
 def test_explicit_python_gate_names_map_to_rust_clifford_gates():

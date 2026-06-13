@@ -823,6 +823,72 @@ def test_szz_public_native_dem_accepts_traced_qis_p1() -> None:
     assert stim.DetectorErrorModel(dem).num_detectors > 0
 
 
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_szz_public_traced_qis_dem_matches_stim_with_z_frame_p1_free(basis: str) -> None:
+    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
+    from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+
+    patch = SurfacePatch.create(distance=3)
+    tick_circuit = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=1,
+        basis=basis,
+        circuit_source="traced_qis",
+        interaction_basis="szz",
+    )
+    normalize_traced_qis_tick_circuit(tick_circuit, context="SZZ public traced-QIS p1 test")
+    noise = NoiseModel(p1=0.001)
+
+    native_errors = _raw_dem_errors(
+        generate_circuit_level_dem_from_builder(
+            patch,
+            num_rounds=1,
+            noise=noise,
+            basis=basis,
+            decompose_errors=False,
+            circuit_source="traced_qis",
+            interaction_basis="szz",
+        ),
+    )
+    stim_errors = _raw_dem_errors(
+        generate_dem_from_tick_circuit_via_stim(
+            tick_circuit,
+            decompose_errors=False,
+            p1=noise.p1,
+            p2=0.0,
+            p_meas=0.0,
+            p_prep=0.0,
+            p1_gate_rates={"Z": 0.0, "SZ": 0.0, "SZdg": 0.0},
+        ),
+    )
+
+    assert set(native_errors) == set(stim_errors)
+    for target, native_probability in native_errors.items():
+        stim_probability = stim_errors[target]
+        rel_diff = abs(native_probability - stim_probability) / max(
+            native_probability,
+            stim_probability,
+            1e-12,
+        )
+        assert rel_diff < 0.005, (
+            f"{basis} public traced-QIS SZZ p1 DEM mismatch for {target}: "
+            f"PECOS={native_probability:.8f}, Stim={stim_probability:.8f}"
+        )
+
+
+def test_szz_z_frame_gates_are_p1_free_for_native_noise() -> None:
+    from types import SimpleNamespace
+
+    from pecos.qec.surface.decode import _szz_z_frame_p1_gate_rates
+
+    assert _szz_z_frame_p1_gate_rates(SimpleNamespace(z_frame_gate_p1_free=True)) == {
+        "Z": 0.0,
+        "SZ": 0.0,
+        "SZdg": 0.0,
+    }
+    assert _szz_z_frame_p1_gate_rates(SimpleNamespace(z_frame_gate_p1_free=False)) is None
+
+
 def test_szz_native_dem_accepts_p1_with_physical_prefix_lowering() -> None:
     patch = SurfacePatch.create(distance=3)
     dem = generate_circuit_level_dem_from_builder(

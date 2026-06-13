@@ -290,6 +290,7 @@ class _CachedNativeSurfaceTopology:
     dag_circuit: Any
     influence_map: Any
     szz_physical_prefixes: bool
+    z_frame_gate_p1_free: bool
     pauli_frame_lookup: Any | None
     detectors_json: str
     observables_json: str
@@ -1647,8 +1648,8 @@ def _use_szz_physical_prefixes(
     )
 
 
-def _szz_prefix_p1_gate_rates(topology: _CachedNativeSurfaceTopology) -> dict[str, float] | None:
-    if not topology.szz_physical_prefixes:
+def _szz_z_frame_p1_gate_rates(topology: _CachedNativeSurfaceTopology) -> dict[str, float] | None:
+    if not topology.z_frame_gate_p1_free:
         return None
     return {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
 
@@ -1793,6 +1794,7 @@ def _surface_native_topology(
         dag_circuit=dag,
         influence_map=influence_map,
         szz_physical_prefixes=szz_physical_prefixes,
+        z_frame_gate_p1_free=interaction_basis == "szz",
         pauli_frame_lookup=pauli_frame_lookup,
         detectors_json=detectors_json,
         observables_json=observables_json,
@@ -1844,7 +1846,7 @@ def _dem_string_from_cached_surface_topology(
     builder = _with_noise_compat(
         DemBuilder(topology.influence_map),
         noise,
-        p1_gate_rates=_szz_prefix_p1_gate_rates(topology),
+        p1_gate_rates=_szz_z_frame_p1_gate_rates(topology),
     )
     if hasattr(builder, "with_exact_branch_replay_circuit"):
         builder = builder.with_exact_branch_replay_circuit(topology.dag_circuit)
@@ -2014,7 +2016,7 @@ def _build_native_sampler_from_cached_surface_topology(
             _with_noise_compat(
                 DemSamplerBuilder(topology.influence_map),
                 noise,
-                p1_gate_rates=_szz_prefix_p1_gate_rates(topology),
+                p1_gate_rates=_szz_z_frame_p1_gate_rates(topology),
             )
             .with_detectors_json(topology.detectors_json)
             .with_observables_json(topology.observables_json)

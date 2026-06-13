@@ -2915,6 +2915,7 @@ def tick_circuit_to_stim(
     tc: TickCircuit,
     *,
     p1: float = 0.0,
+    p1_gate_rates: Mapping[str, float] | None = None,
     p2: float = 0.0,
     p_meas: float = 0.0,
     p_prep: float = 0.0,
@@ -2927,6 +2928,9 @@ def tick_circuit_to_stim(
     Args:
         tc: TickCircuit instance with detector/observable metadata
         p1: Single-qubit error rate
+        p1_gate_rates: Optional per-gate override for single-qubit error
+            rates. Gate names are PECOS ``GateType`` names such as ``"Z"``,
+            ``"SZ"``, and ``"SZdg"``.
         p2: Two-qubit error rate
         p_meas: Measurement error rate
         p_prep: Initialization error rate
@@ -3067,8 +3071,9 @@ def tick_circuit_to_stim(
                 op_qubit_str = " ".join(str(q) for q in op_qubits)
                 lines.append(f"{stim_name} {op_qubit_str}")
 
-            if noise_kind == "single" and p1 > 0:
-                lines.append(f"DEPOLARIZE1({p1}) {qubit_str}")
+            p1_for_gate = p1 if p1_gate_rates is None else float(p1_gate_rates.get(gate.gate_type.name, p1))
+            if noise_kind == "single" and p1_for_gate > 0:
+                lines.append(f"DEPOLARIZE1({p1_for_gate}) {qubit_str}")
             elif noise_kind == "two" and p2 > 0:
                 lines.append(f"DEPOLARIZE2({p2}) {qubit_str}")
             elif noise_kind == "prep" and p_prep > 0:
@@ -3444,6 +3449,7 @@ def generate_dem_from_tick_circuit_via_stim(
     tc: TickCircuit,
     *,
     p1: float = 0.01,
+    p1_gate_rates: Mapping[str, float] | None = None,
     p2: float = 0.01,
     p_meas: float = 0.01,
     p_prep: float = 0.01,
@@ -3459,6 +3465,8 @@ def generate_dem_from_tick_circuit_via_stim(
     Args:
         tc: TickCircuit with detector/observable metadata
         p1: Single-qubit depolarizing error rate
+        p1_gate_rates: Optional per-gate override for single-qubit
+            depolarizing rates. Gate names are PECOS ``GateType`` names.
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
@@ -3478,7 +3486,14 @@ def generate_dem_from_tick_circuit_via_stim(
         msg = "Stim is required for this function. Install with: pip install stim"
         raise ImportError(msg) from e
 
-    stim_str = tick_circuit_to_stim(tc, p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+    stim_str = tick_circuit_to_stim(
+        tc,
+        p1=p1,
+        p1_gate_rates=p1_gate_rates,
+        p2=p2,
+        p_meas=p_meas,
+        p_prep=p_prep,
+    )
     circuit = stim.Circuit(stim_str)
     dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition)
     if maximal_decomposition:

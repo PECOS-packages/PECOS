@@ -286,6 +286,40 @@ def test_tick_circuit_pass_bindings_absorb_basis_and_peephole():
     assert _gate_names(optimized) == ["CZ"]
 
 
+def test_tick_circuit_pass_bindings_simplify_single_qubit_clifford_chains():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    tc.simplify_single_qubit_clifford_chains()
+
+    assert _gate_names(tc) == ["F"]
+
+
+def test_normalize_traced_qis_tick_circuit_simplifies_single_qubit_clifford_chains():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    normalize_traced_qis_tick_circuit(tc, context="test one-qubit Clifford normalization")
+
+    assert _gate_names(tc) == ["F"]
+
+
+def test_normalize_traced_qis_tick_circuit_can_skip_single_qubit_clifford_simplification():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    normalize_traced_qis_tick_circuit(
+        tc,
+        context="test one-qubit Clifford normalization",
+        simplify_single_qubit_clifford_chains=False,
+    )
+
+    assert _gate_names(tc) == ["SX", "SZ"]
+
+
 def test_explicit_python_gate_names_map_to_rust_clifford_gates():
     tc = build_explicit_clifford_gate_circuit()
     noise = depolarizing().p1(0.03).p2(0.15).p_meas(0).p_prep(0)

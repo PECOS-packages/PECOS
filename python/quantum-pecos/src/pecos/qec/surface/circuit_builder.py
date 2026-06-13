@@ -2714,6 +2714,7 @@ def normalize_traced_qis_tick_circuit(
     tick_circuit: object,
     *,
     context: str = "traced-QIS DEM construction",
+    simplify_single_qubit_clifford_chains: bool = True,
 ) -> None:
     """Normalize a traced-QIS TickCircuit before DEM/DAG analysis.
 
@@ -2723,6 +2724,12 @@ def normalize_traced_qis_tick_circuit(
     this helper at every traced-QIS boundary before converting to a DAG.
     """
     _call_required_tick_circuit_method(tick_circuit, "lower_clifford_rotations", context)
+    if simplify_single_qubit_clifford_chains:
+        _call_required_tick_circuit_method(
+            tick_circuit,
+            "simplify_single_qubit_clifford_chains",
+            context,
+        )
     _call_required_tick_circuit_method(tick_circuit, "assign_missing_meas_ids", context)
     assert_traced_qis_tick_circuit_dem_ready(tick_circuit, context=context)
 

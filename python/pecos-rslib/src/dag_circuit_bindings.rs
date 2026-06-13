@@ -2718,6 +2718,14 @@ impl PyTickCircuit {
         AbsorbBasisGates.apply_tick(&mut self.inner);
     }
 
+    /// Simplify adjacent single-qubit Clifford chains.
+    ///
+    /// Modifies the circuit in place.
+    fn simplify_single_qubit_clifford_chains(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, SimplifySingleQubitCliffordChains};
+        SimplifySingleQubitCliffordChains.apply_tick(&mut self.inner);
+    }
+
     /// Assign MeasId to measurement gates that don't have them.
     ///
     /// Use on circuits from external sources (QIS trace, Stim import)

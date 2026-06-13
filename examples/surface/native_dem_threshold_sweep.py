@@ -3736,11 +3736,12 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--dem-mode",
-        choices=["native_decomposed", "native_full"],
+        choices=["native_decomposed", "native_full", "native_terminal_graphlike"],
         default="native_decomposed",
         help=(
             "PECOS native DEM mode. Graph decoders such as PyMatching require "
-            "native_decomposed; raw-DEM decoders should use native_full."
+            "native_decomposed or native_terminal_graphlike; raw-DEM decoders "
+            "should use native_full."
         ),
     )
     parser.add_argument(

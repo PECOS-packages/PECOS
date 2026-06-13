@@ -5017,6 +5017,271 @@ impl DetectorErrorModel {
         lines.join("\n")
     }
 
+    fn detector_coordinate_map(&self) -> BTreeMap<u32, [f64; 3]> {
+        self.detectors
+            .iter()
+            .filter_map(|detector| detector.coords.map(|coords| (detector.id, coords)))
+            .collect()
+    }
+
+    fn detector_coordinate_distance(
+        left: u32,
+        right: u32,
+        detector_coords: &BTreeMap<u32, [f64; 3]>,
+    ) -> f64 {
+        let left_coords =
+            detector_coords
+                .get(&left)
+                .copied()
+                .unwrap_or([f64::from(left), 0.0, 0.0]);
+        let right_coords =
+            detector_coords
+                .get(&right)
+                .copied()
+                .unwrap_or([f64::from(right), 0.0, 0.0]);
+        left_coords
+            .iter()
+            .zip(right_coords)
+            .map(|(a, b)| (*a - b).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    }
+
+    fn min_coordinate_terminal_pairs(
+        detectors: &[u32],
+        detector_coords: &BTreeMap<u32, [f64; 3]>,
+    ) -> (Vec<(u32, u32)>, Vec<u32>) {
+        if detectors.len() > 20 {
+            return Self::greedy_coordinate_terminal_pairs(detectors, detector_coords);
+        }
+
+        fn solve(
+            mask: u64,
+            detectors: &[u32],
+            detector_coords: &BTreeMap<u32, [f64; 3]>,
+            memo: &mut BTreeMap<u64, (f64, Vec<(u32, u32)>, Vec<u32>)>,
+        ) -> (f64, Vec<(u32, u32)>, Vec<u32>) {
+            if let Some(cached) = memo.get(&mask) {
+                return cached.clone();
+            }
+
+            let count = mask.count_ones();
+            let result = if count == 0 {
+                (0.0, Vec::new(), Vec::new())
+            } else if count == 1 {
+                let index = mask.trailing_zeros() as usize;
+                (0.0, Vec::new(), vec![detectors[index]])
+            } else if count % 2 == 1 {
+                let mut best: Option<(f64, Vec<(u32, u32)>, Vec<u32>)> = None;
+                for index in 0..detectors.len() {
+                    if mask & (1_u64 << index) == 0 {
+                        continue;
+                    }
+                    let rest = mask & !(1_u64 << index);
+                    let (cost, pairs, mut singles) = solve(rest, detectors, detector_coords, memo);
+                    singles.push(detectors[index]);
+                    if best
+                        .as_ref()
+                        .is_none_or(|(best_cost, _, _)| cost < *best_cost)
+                    {
+                        best = Some((cost, pairs, singles));
+                    }
+                }
+                best.expect("odd non-empty mask must have a singleton candidate")
+            } else {
+                let first = mask.trailing_zeros() as usize;
+                let rest_without_first = mask & !(1_u64 << first);
+                let mut best: Option<(f64, Vec<(u32, u32)>, Vec<u32>)> = None;
+                for second in first + 1..detectors.len() {
+                    if rest_without_first & (1_u64 << second) == 0 {
+                        continue;
+                    }
+                    let rest = rest_without_first & !(1_u64 << second);
+                    let (sub_cost, mut pairs, singles) =
+                        solve(rest, detectors, detector_coords, memo);
+                    let pair = (detectors[first], detectors[second]);
+                    let cost = sub_cost
+                        + DetectorErrorModel::detector_coordinate_distance(
+                            pair.0,
+                            pair.1,
+                            detector_coords,
+                        );
+                    pairs.insert(0, pair);
+                    if best
+                        .as_ref()
+                        .is_none_or(|(best_cost, _, _)| cost < *best_cost)
+                    {
+                        best = Some((cost, pairs, singles));
+                    }
+                }
+                best.expect("even mask with at least two bits must have a pair candidate")
+            };
+
+            memo.insert(mask, result.clone());
+            result
+        }
+
+        let mut memo = BTreeMap::new();
+        let mask = (1_u64 << detectors.len()) - 1;
+        let (_, pairs, singles) = solve(mask, detectors, detector_coords, &mut memo);
+        (pairs, singles)
+    }
+
+    fn greedy_coordinate_terminal_pairs(
+        detectors: &[u32],
+        detector_coords: &BTreeMap<u32, [f64; 3]>,
+    ) -> (Vec<(u32, u32)>, Vec<u32>) {
+        let mut remaining: BTreeSet<u32> = detectors.iter().copied().collect();
+        let mut pairs = Vec::new();
+        let mut singles = Vec::new();
+
+        if remaining.len() % 2 == 1 {
+            let singleton = remaining
+                .iter()
+                .copied()
+                .max_by(|left, right| {
+                    let left_nearest = remaining
+                        .iter()
+                        .copied()
+                        .filter(|candidate| candidate != left)
+                        .map(|candidate| {
+                            Self::detector_coordinate_distance(*left, candidate, detector_coords)
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    let right_nearest = remaining
+                        .iter()
+                        .copied()
+                        .filter(|candidate| candidate != right)
+                        .map(|candidate| {
+                            Self::detector_coordinate_distance(*right, candidate, detector_coords)
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    left_nearest
+                        .partial_cmp(&right_nearest)
+                        .unwrap_or(Ordering::Equal)
+                })
+                .expect("odd non-empty detector set should have a singleton");
+            remaining.remove(&singleton);
+            singles.push(singleton);
+        }
+
+        while let Some(left) = remaining.pop_first() {
+            let Some(right) = remaining.iter().copied().min_by(|a, b| {
+                let da = Self::detector_coordinate_distance(left, *a, detector_coords);
+                let db = Self::detector_coordinate_distance(left, *b, detector_coords);
+                da.partial_cmp(&db)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| a.cmp(b))
+            }) else {
+                singles.push(left);
+                break;
+            };
+            remaining.remove(&right);
+            pairs.push((left, right));
+        }
+
+        (pairs, singles)
+    }
+
+    fn terminal_graphlike_parts(
+        effect: &FaultMechanism,
+        detector_coords: &BTreeMap<u32, [f64; 3]>,
+    ) -> Vec<FaultMechanism> {
+        let (pairs, singles) =
+            Self::min_coordinate_terminal_pairs(&effect.detectors, detector_coords);
+        let mut parts: Vec<FaultMechanism> = pairs
+            .into_iter()
+            .map(|(left, right)| FaultMechanism::from_unsorted([left, right], []))
+            .collect();
+        parts.extend(
+            singles
+                .into_iter()
+                .map(|detector| FaultMechanism::from_unsorted([detector], [])),
+        );
+
+        if parts.is_empty() {
+            if !effect.dem_outputs.is_empty() {
+                parts.push(FaultMechanism::from_unsorted(
+                    std::iter::empty(),
+                    effect.dem_outputs.iter().copied(),
+                ));
+            }
+        } else if !effect.dem_outputs.is_empty() {
+            let last = parts
+                .last_mut()
+                .expect("non-empty parts checked before attaching observables");
+            last.dem_outputs = effect.dem_outputs.clone();
+        }
+
+        parts
+    }
+
+    /// Converts the DEM to a terminal-only graphlike projection.
+    ///
+    /// Contributions are first grouped into the same raw mechanisms as
+    /// [`Self::to_string`]. Each grouped effect is then rendered as graphlike
+    /// components whose XOR is exactly the original detector/observable effect.
+    /// Pair components use only detectors present in the raw effect. Ordinary
+    /// low-weight effects use the exact minimum-total-distance pairing from
+    /// detector coordinates; unusually large effects use a deterministic
+    /// nearest-neighbor fallback to avoid exponential render time. This is a
+    /// decoder-facing projection for graph matchers; it is not source proof.
+    #[must_use]
+    pub fn to_string_terminal_graphlike_decomposed(&self) -> String {
+        let mut lines = Vec::new();
+
+        for det in &self.detectors {
+            if let Some([x, y, z]) = det.coords {
+                lines.push(format!("detector({x}, {y}, {z}) D{}", det.id));
+            } else {
+                lines.push(format!("detector D{}", det.id));
+            }
+        }
+
+        for obs in &self.observables {
+            lines.push(format!("logical_observable L{}", obs.id));
+        }
+
+        let mut by_effect: BTreeMap<FaultMechanism, f64> = BTreeMap::new();
+        for contrib in &self.contributions {
+            by_effect
+                .entry(contrib.effect.standard_effect())
+                .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
+                .or_insert(contrib.probability);
+        }
+
+        let detector_coords = self.detector_coordinate_map();
+        let mut by_targets: BTreeMap<String, f64> = BTreeMap::new();
+        for (effect, total_prob) in by_effect {
+            if effect.is_standard_empty() || total_prob <= 0.0 {
+                continue;
+            }
+
+            let targets = Self::format_decomposed_parts(Self::terminal_graphlike_parts(
+                &effect,
+                &detector_coords,
+            ));
+            if !targets.is_empty() {
+                by_targets
+                    .entry(targets)
+                    .and_modify(|p| *p = combine_independent_probs(*p, total_prob))
+                    .or_insert(total_prob);
+            }
+        }
+
+        for (targets, total_prob) in by_targets {
+            if !targets.is_empty() && total_prob > 0.0 {
+                lines.push(format!(
+                    "error({}) {}",
+                    format_probability(total_prob),
+                    targets
+                ));
+            }
+        }
+
+        lines.join("\n")
+    }
+
     fn collect_singleton_index(&self) -> SingletonDecompositionIndex {
         SingletonDecompositionIndex::from_contributions(&self.contributions)
     }
@@ -6905,6 +7170,38 @@ mod tests {
 
         assert!(maximal.contains("error(0.01) D0 ^ D1"));
         assert!(!maximal.contains("error(0.01) D0 D1"));
+    }
+
+    #[test]
+    fn test_terminal_graphlike_decomposed_uses_min_coordinate_terminal_pairs() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([10.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(2).with_coords([1.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(3).with_coords([11.0, 0.0, 0.0]));
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2, 3], []), 0.01);
+
+        let projected = dem.to_string_terminal_graphlike_decomposed();
+
+        assert!(projected.contains("error(0.01) D0 D2 ^ D1 D3"));
+        assert!(!projected.contains("D0 D1 ^ D2 D3"));
+    }
+
+    #[test]
+    fn test_terminal_graphlike_decomposed_attaches_observable_to_terminal_component() {
+        let mut dem = DetectorErrorModel::new();
+
+        dem.add_detector(DetectorDef::new(0).with_coords([0.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([1.0, 0.0, 0.0]));
+        dem.add_detector(DetectorDef::new(2).with_coords([10.0, 0.0, 0.0]));
+        dem.add_dem_output(DemOutput::new(0));
+        dem.add_direct_contribution(FaultMechanism::from_unsorted([0, 1, 2], [0]), 0.01);
+
+        let projected = dem.to_string_terminal_graphlike_decomposed();
+
+        assert!(projected.contains("logical_observable L0"));
+        assert!(projected.contains("error(0.01) D0 D1 ^ D2 L0"));
     }
 
     #[test]

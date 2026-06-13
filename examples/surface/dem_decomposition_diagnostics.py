@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -26,6 +27,7 @@ import numpy as np
 ERROR_RE = re.compile(r"error\(([^)]+)\)\s*(.*)")
 DET_RE = re.compile(r"\bD(\d+)\b")
 OBS_RE = re.compile(r"\bL(\d+)\b")
+DETECTOR_COORD_RE = re.compile(r"detector\(([^)]*)\) D(\d+)")
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,111 @@ def compare_raw_dems(native_dem: str, stim_dem: str) -> RawDemComparison:
         max_rel_probability_diff=max_rel,
         l1_probability_diff=l1,
     )
+
+
+def parse_detector_coords(dem_text: str) -> dict[int, tuple[float, ...]]:
+    """Parse detector coordinate annotations from DEM text."""
+    coords: dict[int, tuple[float, ...]] = {}
+    for line in dem_text.splitlines():
+        match = DETECTOR_COORD_RE.match(line.strip())
+        if not match:
+            continue
+        values = tuple(float(value.strip()) for value in match.group(1).split(",") if value.strip())
+        coords[int(match.group(2))] = values
+    return coords
+
+
+def detector_coord_distance(
+    left: int,
+    right: int,
+    coords: dict[int, tuple[float, ...]],
+) -> float:
+    """Coordinate distance with detector-id fallback for missing annotations."""
+    left_coords = coords.get(left, (float(left),))
+    right_coords = coords.get(right, (float(right),))
+    dims = max(len(left_coords), len(right_coords))
+    left_coords = left_coords + (0.0,) * (dims - len(left_coords))
+    right_coords = right_coords + (0.0,) * (dims - len(right_coords))
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(left_coords, right_coords, strict=True)))
+
+
+def min_coord_terminal_pairs(
+    detectors: tuple[int, ...],
+    coords: dict[int, tuple[float, ...]],
+) -> tuple[list[tuple[int, int]], list[int]]:
+    """Pair terminals by minimum coordinate distance, leaving one singleton if odd."""
+    if len(detectors) <= 1:
+        return [], list(detectors)
+    if len(detectors) == 2:
+        return [(detectors[0], detectors[1])], []
+
+    best_cost: float | None = None
+    best_pairs: list[tuple[int, int]] = []
+    best_singles: list[int] = []
+    for left_index, left in enumerate(detectors):
+        for right in detectors[left_index + 1 :]:
+            rest = tuple(detector for detector in detectors if detector not in {left, right})
+            pairs, singles = min_coord_terminal_pairs(rest, coords)
+            pairs = [(left, right), *pairs]
+            cost = sum(detector_coord_distance(a, b, coords) for a, b in pairs)
+            if best_cost is None or cost < best_cost:
+                best_cost = cost
+                best_pairs = pairs
+                best_singles = singles
+    return best_pairs, best_singles
+
+
+def terminal_graphlike_projection(raw_dem: str) -> str:
+    """Project raw DEM effects into minimum-span terminal-only graphlike pieces.
+
+    Each raw mechanism keeps its combined detector/observable effect exactly,
+    but the rendered decomposition uses only detectors present in that raw
+    effect. This avoids cancellation/path detectors introduced by graph-path
+    decompositions while still producing graphlike components for matching
+    decoders.
+    """
+    coords = parse_detector_coords(raw_dem)
+    annotation_lines: list[str] = []
+    by_targets: dict[str, float] = {}
+
+    for line in raw_dem.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("detector", "logical_observable")):
+            annotation_lines.append(line)
+            continue
+
+        match = ERROR_RE.match(stripped)
+        if not match:
+            continue
+        probability = float(match.group(1))
+        effect = _canonical_effect_key(match.group(2))
+        detectors = tuple(sorted(int(detector) for detector in DET_RE.findall(effect)))
+        observables = sorted(int(observable) for observable in OBS_RE.findall(effect))
+        pairs, singles = min_coord_terminal_pairs(detectors, coords)
+
+        components = [f"D{left} D{right}" for left, right in pairs]
+        components.extend(f"D{detector}" for detector in singles)
+        if not components and observables:
+            # PyMatching cannot use a pure logical component. Preserve the raw
+            # effect so construction fails instead of silently changing it.
+            components = [f"L{observable}" for observable in observables]
+        else:
+            for observable in observables:
+                components[-1] = f"{components[-1]} L{observable}"
+
+        rendered_targets = " ^ ".join(components)
+        if rendered_targets:
+            by_targets[rendered_targets] = _combine_independent_probabilities(
+                by_targets.get(rendered_targets, 0.0),
+                probability,
+            )
+
+    rendered_lines = [
+        f"error({probability:.16g}) {targets}"
+        for targets, probability in sorted(by_targets.items())
+        if probability > 0.0
+    ]
+    return "\n".join([*annotation_lines, *rendered_lines])
 
 
 def dem_stats(dem_text: str) -> DemStats:
@@ -304,6 +411,7 @@ def two_fault_pair_analysis(
     native_raw: str,
     native_decomposed: str,
     stim_decomposed: str,
+    terminal_decomposed: str,
     max_effects: int,
 ) -> list[PairAnalysisSummary] | None:
     """Exhaustively compare decoders on all two-mechanism XOR combinations."""
@@ -348,6 +456,16 @@ def two_fault_pair_analysis(
         ),
         "stim_decomp_pymatching_correlated": pymatching_predictions(
             stim_decomposed,
+            pair_detection_events,
+            correlated=True,
+        ),
+        "terminal_decomp_pymatching": pymatching_predictions(
+            terminal_decomposed,
+            pair_detection_events,
+            correlated=False,
+        ),
+        "terminal_decomp_pymatching_correlated": pymatching_predictions(
+            terminal_decomposed,
             pair_detection_events,
             correlated=True,
         ),
@@ -434,6 +552,21 @@ def run_case(
         circuit_source="traced_qis",
         interaction_basis=interaction_basis,
     )
+    try:
+        terminal_decomposed = generate_circuit_level_dem_from_builder(
+            patch,
+            rounds,
+            noise,
+            basis=basis,
+            decompose_errors=True,
+            dem_decomposition="terminal_graphlike",
+            circuit_source="traced_qis",
+            interaction_basis=interaction_basis,
+        )
+    except RuntimeError as exc:
+        if "terminal graphlike" not in str(exc):
+            raise
+        terminal_decomposed = terminal_graphlike_projection(native_raw)
     stim_raw = generate_dem_from_tick_circuit_via_stim(
         tick_circuit,
         decompose_errors=False,
@@ -511,6 +644,26 @@ def run_case(
                 ),
                 shots,
             ),
+            _timed_decode(
+                "terminal_decomp_pymatching",
+                lambda: decode_with_pymatching(
+                    terminal_decomposed,
+                    detection_events,
+                    observable_flips,
+                    correlated=False,
+                ),
+                shots,
+            ),
+            _timed_decode(
+                "terminal_decomp_pymatching_correlated",
+                lambda: decode_with_pymatching(
+                    terminal_decomposed,
+                    detection_events,
+                    observable_flips,
+                    correlated=True,
+                ),
+                shots,
+            ),
         ],
     )
 
@@ -527,12 +680,14 @@ def run_case(
             "native_decomposed": dem_stats(native_decomposed),
             "stim_raw": dem_stats(stim_raw),
             "stim_decomposed": dem_stats(stim_decomposed),
+            "terminal_decomposed": dem_stats(terminal_decomposed),
         },
         decoders=decoders,
         pair_analysis=two_fault_pair_analysis(
             native_raw=native_raw,
             native_decomposed=native_decomposed,
             stim_decomposed=stim_decomposed,
+            terminal_decomposed=terminal_decomposed,
             max_effects=pair_analysis_max_effects,
         )
         if pair_analysis

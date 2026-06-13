@@ -1646,6 +1646,16 @@ impl PyDetectorErrorModel {
         self.inner.to_string_source_graphlike_decomposed()
     }
 
+    /// Convert the DEM to a terminal-only graphlike projection.
+    ///
+    /// Raw mechanisms are first grouped exactly as in `to_string()`. Each raw
+    /// effect is then projected to graphlike terminal components using detector
+    /// coordinates. This is a decoder-facing representation for graph matchers,
+    /// not source-proof decomposition.
+    fn to_string_terminal_graphlike_decomposed(&self) -> String {
+        self.inner.to_string_terminal_graphlike_decomposed()
+    }
+
     /// Convert the DEM using the explicit historical graphlike-search renderer.
     ///
     /// This may decompose residual hyperedges by searching for graphlike

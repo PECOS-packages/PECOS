@@ -61,6 +61,8 @@ if TYPE_CHECKING:
 
 P1Weights = Mapping[str, float] | Sequence[tuple[str, float]]
 P2Weights = Mapping[str, float] | Sequence[tuple[str, float]]
+NativeDemDecomposition = Literal["source_graphlike", "terminal_graphlike"]
+CircuitLevelDemMode = Literal["native_full", "native_decomposed", "native_terminal_graphlike"]
 
 
 def _validate_probability(name: str, value: float) -> float:
@@ -1834,6 +1836,7 @@ def _dem_string_from_cached_surface_topology(
     noise: NoiseModel,
     *,
     decompose_errors: bool,
+    dem_decomposition: NativeDemDecomposition = "source_graphlike",
 ) -> str:
     """Build a DEM string from cached topology and fresh noise parameters."""
     from pecos.qec import DemBuilder
@@ -1858,10 +1861,19 @@ def _dem_string_from_cached_surface_topology(
     )
     if not decompose_errors:
         return dem.to_string()
-    source_graphlike = getattr(dem, "to_string_source_graphlike_decomposed", None)
-    if source_graphlike is not None:
-        return source_graphlike()
-    return dem.to_string_decomposed()
+    if dem_decomposition == "source_graphlike":
+        source_graphlike = getattr(dem, "to_string_source_graphlike_decomposed", None)
+        if source_graphlike is not None:
+            return source_graphlike()
+        return dem.to_string_decomposed()
+    if dem_decomposition == "terminal_graphlike":
+        terminal_graphlike = getattr(dem, "to_string_terminal_graphlike_decomposed", None)
+        if terminal_graphlike is None:
+            msg = "This pecos_rslib build does not support terminal graphlike DEM decomposition"
+            raise RuntimeError(msg)
+        return terminal_graphlike()
+    msg = f"Unknown native DEM decomposition mode {dem_decomposition!r}"
+    raise ValueError(msg)
 
 
 @cache
@@ -1879,6 +1891,7 @@ def _cached_surface_native_dem_string(
     p_meas: float,
     p_prep: float,
     decompose_errors: bool,
+    dem_decomposition: NativeDemDecomposition = "source_graphlike",
     p2_weights: tuple[tuple[str, float], ...] | None = None,
     p2_replacement_approximation: str | None = None,
     p_idle: float | None = None,
@@ -1962,6 +1975,7 @@ def _cached_surface_native_dem_string(
             p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
         ),
         decompose_errors=decompose_errors,
+        dem_decomposition=dem_decomposition,
     )
 
 
@@ -2033,6 +2047,7 @@ def generate_circuit_level_dem_from_builder(
     basis: str = "Z",
     *,
     decompose_errors: bool = False,
+    dem_decomposition: NativeDemDecomposition = "source_graphlike",
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
@@ -2060,6 +2075,11 @@ def generate_circuit_level_dem_from_builder(
             decomposition preserves correlated mechanism metadata with ``^``
             separators, but graph decoders may still approximate hyperedge
             correlations.
+        dem_decomposition: Which native graphlike projection to use when
+            ``decompose_errors=True``. ``"source_graphlike"`` preserves the
+            existing source-informed decomposition. ``"terminal_graphlike"``
+            groups raw mechanisms first, then pairs only detector terminals
+            present in each raw effect by coordinate distance.
         ancilla_budget: Optional cap on simultaneously live ancillas. When
             provided below the total stabilizer count, the native DEM is built
             from the same batched ancilla-reuse circuit family used by Guppy.
@@ -2113,7 +2133,32 @@ def generate_circuit_level_dem_from_builder(
             topology,
             noise,
             decompose_errors=decompose_errors,
+            dem_decomposition=dem_decomposition,
         )
+
+    cache_kwargs = {
+        "p2_weights": noise.p2_weights,
+        "p2_replacement_approximation": noise.p2_replacement_approximation,
+        "p_idle": noise.p_idle,
+        "t1": noise.t1,
+        "t2": noise.t2,
+        "p_idle_linear_rate": noise.p_idle_linear_rate,
+        "p_idle_quadratic_rate": noise.p_idle_quadratic_rate,
+        "p_idle_x_linear_rate": noise.p_idle_x_linear_rate,
+        "p_idle_y_linear_rate": noise.p_idle_y_linear_rate,
+        "p_idle_z_linear_rate": noise.p_idle_z_linear_rate,
+        "p_idle_x_quadratic_rate": noise.p_idle_x_quadratic_rate,
+        "p_idle_y_quadratic_rate": noise.p_idle_y_quadratic_rate,
+        "p_idle_z_quadratic_rate": noise.p_idle_z_quadratic_rate,
+        "p_idle_quadratic_sine_rate": noise.p_idle_quadratic_sine_rate,
+        "p_idle_x_quadratic_sine_rate": noise.p_idle_x_quadratic_sine_rate,
+        "p_idle_y_quadratic_sine_rate": noise.p_idle_y_quadratic_sine_rate,
+        "p_idle_z_quadratic_sine_rate": noise.p_idle_z_quadratic_sine_rate,
+        "twirl": twirl,
+        "interaction_basis": interaction_basis,
+    }
+    if dem_decomposition != "source_graphlike":
+        cache_kwargs["dem_decomposition"] = dem_decomposition
 
     return _cached_surface_native_dem_string(
         patch_key,
@@ -2129,25 +2174,7 @@ def generate_circuit_level_dem_from_builder(
         noise.p_meas,
         noise.p_prep,
         decompose_errors=decompose_errors,
-        p2_weights=noise.p2_weights,
-        p2_replacement_approximation=noise.p2_replacement_approximation,
-        p_idle=noise.p_idle,
-        t1=noise.t1,
-        t2=noise.t2,
-        p_idle_linear_rate=noise.p_idle_linear_rate,
-        p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-        p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-        p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-        p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-        p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-        p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-        p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-        p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
-        p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
-        p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
-        p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
-        twirl=twirl,
-        interaction_basis=interaction_basis,
+        **cache_kwargs,
     )
 
 
@@ -2523,7 +2550,7 @@ class SurfaceDecoder:
         ] = "pymatching",
         *,
         use_circuit_level_dem: bool = True,
-        circuit_level_dem_mode: Literal["native_full", "native_decomposed"] = "native_full",
+        circuit_level_dem_mode: CircuitLevelDemMode = "native_full",
         circuit_level_dem_source: Literal["abstract", "traced_qis"] = "abstract",
         ancilla_budget: int | None = None,
         interaction_basis: str = "cx",
@@ -2549,9 +2576,11 @@ class SurfaceDecoder:
             circuit_level_dem_mode: Which PECOS-native DEM representation to use
                 when circuit-level DEMs are enabled. ``"native_full"`` preserves
                 the current non-decomposed DEM output. ``"native_decomposed"``
-                returns PECOS's graphlike decomposed DEM output for graph
-                decoders such as PyMatching. This is a decoder-facing
-                approximation of hyperedge correlations, not an exact raw DEM.
+                returns the source-informed graphlike output for graph decoders.
+                ``"native_terminal_graphlike"`` first groups raw mechanisms,
+                then projects each mechanism onto graphlike terminal components.
+                Decomposed modes are decoder-facing approximations of hyperedge
+                correlations, not exact raw DEMs.
             circuit_level_dem_source: Which ideal circuit to analyze when
                 building native circuit-level DEMs. ``"abstract"`` uses the
                 high-level surface TickCircuit, while ``"traced_qis"`` traces
@@ -2570,6 +2599,13 @@ class SurfaceDecoder:
         self.noise = noise or NoiseModel(p2=0.01, p_meas=0.01)
         self.decoder_type = DecoderType(decoder_type)
         self.use_circuit_level_dem = use_circuit_level_dem
+        if circuit_level_dem_mode not in {
+            "native_full",
+            "native_decomposed",
+            "native_terminal_graphlike",
+        }:
+            msg = f"Unknown circuit_level_dem_mode {circuit_level_dem_mode!r}"
+            raise ValueError(msg)
         self.circuit_level_dem_mode = circuit_level_dem_mode
         self.circuit_level_dem_source = circuit_level_dem_source
         self.ancilla_budget = ancilla_budget
@@ -2602,12 +2638,18 @@ class SurfaceDecoder:
         Returns:
             DEM string in Stim format
         """
+        dem_decomposition: NativeDemDecomposition = (
+            "terminal_graphlike"
+            if self.circuit_level_dem_mode == "native_terminal_graphlike"
+            else "source_graphlike"
+        )
         dem = generate_circuit_level_dem_from_builder(
             self.patch,
             self.num_rounds,
             self.noise,
             basis=basis,
-            decompose_errors=self.circuit_level_dem_mode == "native_decomposed",
+            decompose_errors=self.circuit_level_dem_mode != "native_full",
+            dem_decomposition=dem_decomposition,
             circuit_source=self.circuit_level_dem_source,
             ancilla_budget=self.ancilla_budget,
             interaction_basis=self.interaction_basis,

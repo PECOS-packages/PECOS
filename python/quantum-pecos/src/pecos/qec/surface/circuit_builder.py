@@ -2943,6 +2943,8 @@ def tick_circuit_to_stim(
         "H": ("H", "single"),
         "SX": ("SQRT_X", "single"),
         "SXdg": ("SQRT_X_DAG", "single"),
+        "SY": ("SQRT_Y", "single"),
+        "SYdg": ("SQRT_Y_DAG", "single"),
         "SZ": ("S", "single"),
         "SZdg": ("S_DAG", "single"),
         "X": ("X", "single"),
@@ -2993,6 +2995,12 @@ def tick_circuit_to_stim(
                 return [("S_DAG", qubits)], "single"
             msg = f"Unsupported traced Clifford RZ angle: {angle!r}"
             raise ValueError(msg)
+
+        if gate_name == "F":
+            return [("S_DAG", qubits), ("H", qubits)], "single"
+
+        if gate_name == "Fdg":
+            return [("H", qubits), ("S", qubits)], "single"
 
         if gate_name == "RZZ":
             if not gate.angles:

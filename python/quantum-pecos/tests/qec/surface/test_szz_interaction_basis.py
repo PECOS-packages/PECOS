@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import numpy as np
 import pecos as pc
@@ -25,6 +26,7 @@ from pecos.qec.surface.circuit_builder import (
     build_surface_code_circuit,
     generate_dag_circuit_from_patch,
     generate_dem_from_tick_circuit,
+    generate_dem_from_tick_circuit_via_stim,
     generate_stim_from_patch,
     generate_tick_circuit_from_patch,
 )
@@ -70,6 +72,16 @@ SZZ = np.cos(np.pi / 4) * I4 - 1j * np.sin(np.pi / 4) * ZZ
 SZZDG = SZZ.conj().T
 CX = _kron(I2, H) @ CZ @ _kron(I2, H)
 SXX = _kron(H, H) @ SZZ @ _kron(H, H)
+
+
+def _raw_dem_errors(dem_text: str) -> dict[str, float]:
+    errors: dict[str, float] = {}
+    for line in dem_text.splitlines():
+        match = re.match(r"error\(([^)]+)\)\s*(.*)", line.strip())
+        if match:
+            target = match.group(2).strip()
+            errors[target] = errors.get(target, 0.0) + float(match.group(1))
+    return errors
 
 
 def _equiv_up_to_global_phase(left: np.ndarray, right: np.ndarray, *, atol: float = 1e-10) -> bool:
@@ -594,6 +606,87 @@ def test_szz_prefix_lowering_preserves_p2_influence_dem(basis: str) -> None:
 
 
 @pytest.mark.parametrize("basis", ["Z", "X"])
+def test_szz_lowered_native_dem_matches_stim_for_prefix_noise(basis: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+    tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=3,
+        basis=basis,
+        interaction_basis="szz",
+        szz_physical_prefixes=True,
+    )
+    p2 = 0.006
+    noise_args = {
+        "p1": p2 / 30,
+        "p2": p2,
+        "p_meas": p2 / 3,
+        "p_prep": p2 / 3,
+    }
+
+    native_errors = _raw_dem_errors(
+        generate_dem_from_tick_circuit(
+            tick_circuit,
+            decompose_errors=False,
+            **noise_args,
+        ),
+    )
+    stim_errors = _raw_dem_errors(
+        generate_dem_from_tick_circuit_via_stim(
+            tick_circuit,
+            decompose_errors=False,
+            **noise_args,
+        ),
+    )
+
+    assert set(native_errors) == set(stim_errors)
+    for target, native_probability in native_errors.items():
+        stim_probability = stim_errors[target]
+        rel_diff = abs(native_probability - stim_probability) / max(
+            native_probability,
+            stim_probability,
+            1e-12,
+        )
+        assert rel_diff < 0.005, (
+            f"{basis} lowered SZZ DEM mismatch for {target}: "
+            f"PECOS={native_probability:.8f}, Stim={stim_probability:.8f}"
+        )
+
+
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_szz_abstract_p2_only_raw_dem_matches_cx(basis: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+    noise_args = {
+        "p1": 0.0,
+        "p2": 0.006,
+        "p_meas": 0.0,
+        "p_prep": 0.0,
+    }
+    cx_tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=3,
+        basis=basis,
+        interaction_basis="cx",
+    )
+    szz_tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=3,
+        basis=basis,
+        interaction_basis="szz",
+        szz_physical_prefixes=False,
+    )
+
+    assert generate_dem_from_tick_circuit(
+        cx_tick_circuit,
+        decompose_errors=False,
+        **noise_args,
+    ) == generate_dem_from_tick_circuit(
+        szz_tick_circuit,
+        decompose_errors=False,
+        **noise_args,
+    )
+
+
+@pytest.mark.parametrize("basis", ["Z", "X"])
 def test_szz_prefix_lowering_emits_dedicated_prefix_ticks(basis: str) -> None:
     patch = SurfacePatch.create(distance=3)
     tick_circuit = generate_tick_circuit_from_patch(
@@ -655,7 +748,7 @@ def test_szz_native_dem_rejects_traced_qis_idle_noise() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"dedicated idle noise with circuit_source='traced_qis'.*post-flow prefix pulse locations",
+        match=r"dedicated idle noise with circuit_source='traced_qis'.*explicit post-flow idle locations",
     ):
         generate_circuit_level_dem_from_builder(
             patch,
@@ -666,17 +759,68 @@ def test_szz_native_dem_rejects_traced_qis_idle_noise() -> None:
         )
 
 
-def test_szz_native_dem_rejects_traced_qis_p1() -> None:
-    patch = SurfacePatch.create(distance=3)
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
+    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
+    from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
-    with pytest.raises(ValueError, match=r"p1 with circuit_source='traced_qis'.*post-flow prefix pulse locations"):
-        generate_circuit_level_dem_from_builder(
-            patch,
-            num_rounds=1,
-            noise=NoiseModel(p1=0.001),
-            interaction_basis="szz",
-            circuit_source="traced_qis",
+    patch = SurfacePatch.create(distance=3)
+    tick_circuit = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=1,
+        basis=basis,
+        circuit_source="traced_qis",
+        interaction_basis="szz",
+    )
+    normalize_traced_qis_tick_circuit(tick_circuit, context="SZZ traced-QIS p1 test")
+    noise_args = {
+        "p1": 0.001,
+        "p2": 0.0,
+        "p_meas": 0.0,
+        "p_prep": 0.0,
+    }
+
+    native_errors = _raw_dem_errors(
+        generate_dem_from_tick_circuit(
+            tick_circuit,
+            decompose_errors=False,
+            **noise_args,
+        ),
+    )
+    stim_errors = _raw_dem_errors(
+        generate_dem_from_tick_circuit_via_stim(
+            tick_circuit,
+            decompose_errors=False,
+            **noise_args,
+        ),
+    )
+
+    assert set(native_errors) == set(stim_errors)
+    for target, native_probability in native_errors.items():
+        stim_probability = stim_errors[target]
+        rel_diff = abs(native_probability - stim_probability) / max(
+            native_probability,
+            stim_probability,
+            1e-12,
         )
+        assert rel_diff < 0.005, (
+            f"{basis} traced-QIS SZZ p1 DEM mismatch for {target}: "
+            f"PECOS={native_probability:.8f}, Stim={stim_probability:.8f}"
+        )
+
+
+def test_szz_public_native_dem_accepts_traced_qis_p1() -> None:
+    patch = SurfacePatch.create(distance=3)
+    dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=1,
+        noise=NoiseModel(p1=0.001),
+        interaction_basis="szz",
+        circuit_source="traced_qis",
+    )
+
+    assert "error(" in dem
+    assert stim.DetectorErrorModel(dem).num_detectors > 0
 
 
 def test_szz_native_dem_accepts_p1_with_physical_prefix_lowering() -> None:

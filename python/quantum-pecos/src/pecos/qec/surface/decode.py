@@ -1616,12 +1616,10 @@ def _reject_szz_unlowered_physical_noise(
     interaction_basis: str,
     circuit_source: Literal["abstract", "traced_qis"],
 ) -> None:
-    """Reject SZZ surface DEM noise that still needs post-flow pulse locations."""
+    """Reject SZZ surface DEM noise without well-defined gate locations."""
     if interaction_basis != "szz":
         return
     reasons: list[str] = []
-    if noise.p1 > 0.0 and circuit_source != "abstract":
-        reasons.append("p1 with circuit_source='traced_qis'")
     if _noise_uses_dedicated_idle_noise(noise) and circuit_source != "abstract":
         reasons.append("dedicated idle noise with circuit_source='traced_qis'")
     if not reasons:
@@ -1629,9 +1627,8 @@ def _reject_szz_unlowered_physical_noise(
     joined = ", ".join(reasons)
     msg = (
         "interaction_basis='szz' surface DEM generation does not yet support "
-        f"{joined} because the DEM must use post-flow prefix pulse locations "
-        "rather than the abstract H/SX/SZ scaffold; use circuit_source='abstract' "
-        "for p1 or dedicated idle noise"
+        f"{joined} because idle noise needs explicit post-flow idle locations; "
+        "use circuit_source='abstract' for dedicated idle noise"
     )
     raise ValueError(msg)
 

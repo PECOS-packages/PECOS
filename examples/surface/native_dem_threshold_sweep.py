@@ -568,18 +568,18 @@ def _create_dem_decoder(decoder_type: str, dem_str: str, *, tesseract_beam: int 
     via DemAwareDecoder which extracts the check matrix from the DEM.
     """
     if decoder_type == "tesseract":
-        from pecos_rslib.decoders import TesseractDecoder
+        from pecos.decoders import TesseractDecoder
 
         dem_filtered = "\n".join(line for line in dem_str.split("\n") if not line.startswith("logical_observable"))
         return TesseractDecoder.from_dem(dem_filtered, preset="fast", det_beam=tesseract_beam)
 
     if decoder_type in _CHECK_MATRIX_DECODERS:
-        from pecos_rslib.decoders import DemAwareDecoder
+        from pecos.decoders import DemAwareDecoder
 
         dem_filtered = "\n".join(line for line in dem_str.split("\n") if not line.startswith("logical_observable"))
         return DemAwareDecoder.from_dem(dem_filtered, decoder_type=decoder_type)
 
-    from pecos_rslib.decoders import PyMatchingDecoder
+    from pecos.decoders import PyMatchingDecoder
 
     return PyMatchingDecoder.from_dem(dem_str)
 
@@ -618,7 +618,7 @@ def _decode_all_shots(
     )
 
     # PyMatching batch: takes flattened (num_shots * num_detectors) u8 array
-    from pecos_rslib.decoders import PyMatchingDecoder
+    from pecos.decoders import PyMatchingDecoder
 
     if isinstance(dem_decoder, PyMatchingDecoder):
         flat = detection_events.astype(np.uint8).flatten().tolist()
@@ -628,7 +628,7 @@ def _decode_all_shots(
         return int(np.sum(predicted != true_flips))
 
     # Tesseract batch: takes list of syndromes, parallel rayon
-    from pecos_rslib.decoders import TesseractDecoder
+    from pecos.decoders import TesseractDecoder
 
     if isinstance(dem_decoder, TesseractDecoder):
         syndromes = [detection_events[i].astype(np.uint8).tolist() for i in range(num_shots)]
@@ -696,6 +696,13 @@ def _decoder_runtime(
     )
 
 
+def _native_sampler_model_for_decoder(decoder_type: str) -> str:
+    """Choose the native sampler model paired with a DEM decoder."""
+    if decoder_type == "pymatching":
+        return "dem"
+    return "influence_dem"
+
+
 @cache
 def _native_sampler_runtime(
     distance: int,
@@ -737,6 +744,7 @@ def _native_sampler_runtime(
         circuit_source=native_circuit_source,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
+        sampling_model=_native_sampler_model_for_decoder(decoder_type),
     )
     # PyMatching needs decomposed (graph-like) DEMs; Tesseract and check-matrix
     # decoders handle hyperedges natively and should get the full DEM.

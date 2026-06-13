@@ -28,6 +28,14 @@ ERROR_RE = re.compile(r"error\(([^)]+)\)\s*(.*)")
 DET_RE = re.compile(r"\bD(\d+)\b")
 OBS_RE = re.compile(r"\bL(\d+)\b")
 DETECTOR_COORD_RE = re.compile(r"detector\(([^)]*)\) D(\d+)")
+GRAPHLIKE_DECODER_CHOICES = [
+    "native_decomp_pymatching",
+    "native_decomp_pymatching_correlated",
+    "stim_decomp_pymatching",
+    "stim_decomp_pymatching_correlated",
+    "terminal_decomp_pymatching",
+    "terminal_decomp_pymatching_correlated",
+]
 
 
 @dataclass(frozen=True)
@@ -503,6 +511,7 @@ def run_case(
     shots: int,
     seed: int,
     tesseract_beams: list[int],
+    decoder_names: set[str],
     pair_analysis: bool,
     pair_analysis_max_effects: int,
 ) -> CaseResult:
@@ -602,69 +611,66 @@ def run_case(
         )
         for beam in tesseract_beams
     ]
+    graphlike_decoder_specs = [
+        (
+            "native_decomp_pymatching",
+            lambda: decode_with_pymatching(
+                native_decomposed,
+                detection_events,
+                observable_flips,
+                correlated=False,
+            ),
+        ),
+        (
+            "native_decomp_pymatching_correlated",
+            lambda: decode_with_pymatching(
+                native_decomposed,
+                detection_events,
+                observable_flips,
+                correlated=True,
+            ),
+        ),
+        (
+            "stim_decomp_pymatching",
+            lambda: decode_with_pymatching(
+                stim_decomposed,
+                detection_events,
+                observable_flips,
+                correlated=False,
+            ),
+        ),
+        (
+            "stim_decomp_pymatching_correlated",
+            lambda: decode_with_pymatching(
+                stim_decomposed,
+                detection_events,
+                observable_flips,
+                correlated=True,
+            ),
+        ),
+        (
+            "terminal_decomp_pymatching",
+            lambda: decode_with_pymatching(
+                terminal_decomposed,
+                detection_events,
+                observable_flips,
+                correlated=False,
+            ),
+        ),
+        (
+            "terminal_decomp_pymatching_correlated",
+            lambda: decode_with_pymatching(
+                terminal_decomposed,
+                detection_events,
+                observable_flips,
+                correlated=True,
+            ),
+        ),
+    ]
     decoders.extend(
-        [
-            _timed_decode(
-                "native_decomp_pymatching",
-                lambda: decode_with_pymatching(
-                    native_decomposed,
-                    detection_events,
-                    observable_flips,
-                    correlated=False,
-                ),
-                shots,
-            ),
-            _timed_decode(
-                "native_decomp_pymatching_correlated",
-                lambda: decode_with_pymatching(
-                    native_decomposed,
-                    detection_events,
-                    observable_flips,
-                    correlated=True,
-                ),
-                shots,
-            ),
-            _timed_decode(
-                "stim_decomp_pymatching",
-                lambda: decode_with_pymatching(
-                    stim_decomposed,
-                    detection_events,
-                    observable_flips,
-                    correlated=False,
-                ),
-                shots,
-            ),
-            _timed_decode(
-                "stim_decomp_pymatching_correlated",
-                lambda: decode_with_pymatching(
-                    stim_decomposed,
-                    detection_events,
-                    observable_flips,
-                    correlated=True,
-                ),
-                shots,
-            ),
-            _timed_decode(
-                "terminal_decomp_pymatching",
-                lambda: decode_with_pymatching(
-                    terminal_decomposed,
-                    detection_events,
-                    observable_flips,
-                    correlated=False,
-                ),
-                shots,
-            ),
-            _timed_decode(
-                "terminal_decomp_pymatching_correlated",
-                lambda: decode_with_pymatching(
-                    terminal_decomposed,
-                    detection_events,
-                    observable_flips,
-                    correlated=True,
-                ),
-                shots,
-            ),
-        ],
+        _timed_decode(name, callback, shots)
+        for name, callback in graphlike_decoder_specs
+        if name in decoder_names
     )
 
     return CaseResult(
@@ -752,6 +758,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260613)
     parser.add_argument("--tesseract-beams", nargs="+", type=int, default=[5])
     parser.add_argument(
+        "--skip-tesseract",
+        action="store_true",
+        help="Skip raw-DEM Tesseract decoding for larger graphlike-only sampled comparisons.",
+    )
+    parser.add_argument(
+        "--decoders",
+        nargs="+",
+        choices=GRAPHLIKE_DECODER_CHOICES,
+        default=GRAPHLIKE_DECODER_CHOICES,
+        help="Graphlike decoder variants to run in sampled comparisons.",
+    )
+    parser.add_argument(
         "--pair-analysis",
         action="store_true",
         help="Exhaustively compare decoders on all two-fault combinations when the effect count is small enough.",
@@ -777,7 +795,8 @@ def main() -> int:
                         p=p,
                         shots=args.shots,
                         seed=args.seed,
-                        tesseract_beams=args.tesseract_beams,
+                        tesseract_beams=[] if args.skip_tesseract else args.tesseract_beams,
+                        decoder_names=set(args.decoders),
                         pair_analysis=args.pair_analysis,
                         pair_analysis_max_effects=args.pair_analysis_max_effects,
                     )

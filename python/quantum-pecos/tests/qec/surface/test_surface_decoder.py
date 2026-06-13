@@ -262,6 +262,37 @@ class TestSurfaceDecoder:
         assert decoder.get_dem("Z", circuit_level=True) == "error(0.01) D0\n"
         assert seen["interaction_basis"] == "szz"
 
+    def test_get_dem_passes_terminal_graphlike_mode_to_native_builder(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The terminal graphlike mode should select the terminal DEM projection."""
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **kwargs: object) -> str:
+            seen["decompose_errors"] = kwargs.get("decompose_errors")
+            seen["dem_decomposition"] = kwargs.get("dem_decomposition")
+            return "error(0.01) D0\n"
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            circuit_level_dem_mode="native_terminal_graphlike",
+        )
+
+        assert decoder.get_dem("Z", circuit_level=True) == "error(0.01) D0\n"
+        assert seen == {
+            "decompose_errors": True,
+            "dem_decomposition": "terminal_graphlike",
+        }
+
     def test_decode_trivial_syndrome_z(self) -> None:
         """Decode trivial Z syndrome (no errors)."""
         patch = SurfacePatch.create(distance=3)

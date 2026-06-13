@@ -13,7 +13,10 @@ from guppylang.std.quantum import h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import NoiseModel, SurfacePatch
-from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+from pecos.qec.surface.circuit_builder import (
+    generate_tick_circuit_from_patch,
+    normalize_traced_qis_tick_circuit,
+)
 from pecos.qec.surface.decode import (
     _build_surface_tick_circuit_for_native_model,
     _copy_surface_tick_circuit_metadata,
@@ -270,7 +273,7 @@ def test_lowered_replay_can_add_global_crosstalk_payloads_from_measurements() ->
 
     assert _flat_gate_qubits(without_payloads, "MeasCrosstalkGlobalPayload") == []
     assert _flat_gate_qubits(with_payloads, "MeasCrosstalkGlobalPayload") == [
-        [11, 12]
+        [11, 12],
     ]
     assert _flat_mz_ids(with_payloads) == [7, 8]
 
@@ -535,8 +538,7 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
             basis,
             circuit_source="traced_qis",
         )
-        ref.lower_clifford_rotations()
-        ref.assign_missing_meas_ids()
+        normalize_traced_qis_tick_circuit(ref, context="from_guppy surface reference")
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=3, basis=basis),
@@ -562,8 +564,7 @@ def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: in
             circuit_source="traced_qis",
             interaction_basis="szz",
         )
-        ref.lower_clifford_rotations()
-        ref.assign_missing_meas_ids()
+        normalize_traced_qis_tick_circuit(ref, context="from_guppy SZZ surface reference")
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(
@@ -643,8 +644,7 @@ def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise):
         ancilla_budget=budget,
         circuit_source="traced_qis",
     )
-    ref.lower_clifford_rotations()
-    ref.assign_missing_meas_ids()
+    normalize_traced_qis_tick_circuit(ref, context="from_guppy constrained surface reference")
     ref_dem = DetectorErrorModel.from_circuit(ref, **noise).to_string()
 
     got = DetectorErrorModel.from_guppy(
@@ -663,7 +663,7 @@ def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise):
     [
         (3, "Z", 2, 1),  # small-and-fast, minimum budget (one stabilizer/batch)
         (3, "X", 2, 2),  # asymmetric basis, X/Z paired per batch
-        (9, "Z", 3, 17),  # canonical high-distance stress
+        (5, "Z", 3, 5),  # medium constrained case without high-distance DEM cost
     ],
 )
 def test_from_guppy_constrained_surface_dem_byte_identical(

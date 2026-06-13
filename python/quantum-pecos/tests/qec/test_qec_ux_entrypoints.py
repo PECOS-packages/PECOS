@@ -54,6 +54,24 @@ def test_surface_code_memory_runs_native_zero_noise_quick_start() -> None:
     assert result.num_rounds == 1
     assert result.logical_error_rate == 0.0
     assert result.raw_error_rate == 0.0
+    assert result.interaction_basis == "cx"
+
+
+def test_surface_code_memory_accepts_szz_interaction_basis() -> None:
+    from pecos.qec.surface import surface_code_memory
+
+    result = surface_code_memory(
+        distance=3,
+        physical_error_rate=0.0,
+        shots=4,
+        rounds=1,
+        seed=123,
+        interaction_basis="szz",
+    )
+
+    assert result.interaction_basis == "szz"
+    assert result.logical_error_rate == 0.0
+    assert result.raw_error_rate == 0.0
 
 
 def test_surface_code_memory_rejects_ambiguous_noise_inputs() -> None:

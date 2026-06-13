@@ -2527,6 +2527,7 @@ class SurfaceDecoder:
         circuit_level_dem_mode: Literal["native_full", "native_decomposed"] = "native_full",
         circuit_level_dem_source: Literal["abstract", "traced_qis"] = "abstract",
         ancilla_budget: int | None = None,
+        interaction_basis: str = "cx",
     ) -> None:
         """Initialize decoder from surface code patch.
 
@@ -2559,7 +2560,11 @@ class SurfaceDecoder:
                 the native circuit-level DEM path. When provided, the decoder
                 builds its DEM from the corresponding batched ancilla-reuse
                 circuit instead of the default dedicated-ancilla circuit.
+            interaction_basis: Surface-memory two-qubit interaction basis,
+                ``"cx"`` or ``"szz"``.
         """
+        from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
+
         self.patch = patch
         self.num_rounds = num_rounds
         self.noise = noise or NoiseModel(p2=0.01, p_meas=0.01)
@@ -2568,6 +2573,7 @@ class SurfaceDecoder:
         self.circuit_level_dem_mode = circuit_level_dem_mode
         self.circuit_level_dem_source = circuit_level_dem_source
         self.ancilla_budget = ancilla_budget
+        self.interaction_basis = _normalize_interaction_basis(interaction_basis)
 
         # Lazily create decoders
         self._x_decoder = None
@@ -2604,6 +2610,7 @@ class SurfaceDecoder:
             decompose_errors=self.circuit_level_dem_mode == "native_decomposed",
             circuit_source=self.circuit_level_dem_source,
             ancilla_budget=self.ancilla_budget,
+            interaction_basis=self.interaction_basis,
         )
         if basis.upper() == "Z":
             self._z_dem = dem
@@ -3461,6 +3468,7 @@ class SimulationResult:
         raw_error_rate: Raw error rate (no decoding)
         decoded: Whether decoding was applied
         decoder_type: Decoder backend used (if decoded)
+        interaction_basis: Surface-memory two-qubit interaction basis.
     """
 
     distance: int
@@ -3473,6 +3481,7 @@ class SimulationResult:
     raw_error_rate: float
     decoded: bool
     decoder_type: str | None = None
+    interaction_basis: str = "cx"
 
 
 def _memory_noise_model(
@@ -3502,6 +3511,7 @@ def surface_code_memory(
     decode: bool = True,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     ancilla_budget: int | None = None,
+    interaction_basis: str = "cx",
 ) -> SimulationResult:
     """Run the recommended native surface-code memory workflow.
 
@@ -3523,6 +3533,8 @@ def surface_code_memory(
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
         ancilla_budget: Optional cap on simultaneously live ancillas.
+        interaction_basis: Surface-memory two-qubit interaction basis,
+            ``"cx"`` or ``"szz"``.
 
     Returns:
         ``SimulationResult`` with logical and raw error counts/rates.
@@ -3534,8 +3546,10 @@ def surface_code_memory(
         0.0
     """
     from pecos.qec import ParsedDem
+    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
     from pecos.qec.surface.patch import SurfacePatch
 
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
     if distance < 1:
         msg = f"distance must be >= 1, got {distance}"
         raise ValueError(msg)
@@ -3557,6 +3571,7 @@ def surface_code_memory(
         decompose_errors=True,
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
+        interaction_basis=interaction_basis,
     )
     batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(shots, seed)
     num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_mask(shot) != 0)
@@ -3573,6 +3588,7 @@ def surface_code_memory(
         raw_error_rate=num_raw_errors / shots if shots else 0.0,
         decoded=decode,
         decoder_type=decoder_type if decode else None,
+        interaction_basis=interaction_basis,
     )
 
 
@@ -3585,6 +3601,7 @@ def run_noisy_memory_experiment(
     *,
     decode: bool = True,
     decoder_type: str = "pymatching",
+    interaction_basis: str = "cx",
 ) -> SimulationResult:
     """Run a noisy surface code memory experiment with optional decoding.
 
@@ -3602,6 +3619,8 @@ def run_noisy_memory_experiment(
         noise: Noise model parameters
         decode: If True, use decoding to correct errors
         decoder_type: Decoder backend (pymatching, fusion_blossom, bp_osd, etc.)
+        interaction_basis: Surface-memory two-qubit interaction basis,
+            ``"cx"`` or ``"szz"``.
 
     Returns:
         SimulationResult with error rate statistics
@@ -3624,7 +3643,9 @@ def run_noisy_memory_experiment(
     from pecos.compilation_pipeline import compile_guppy_to_hugr
     from pecos.guppy.surface import get_num_qubits, make_surface_code
     from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
+    interaction_basis = _normalize_interaction_basis(interaction_basis)
     # Create patch and decoder
     patch = SurfacePatch.create(distance=distance)
     geom = patch.geometry
@@ -3645,11 +3666,17 @@ def run_noisy_memory_experiment(
             num_rounds=num_rounds,
             noise=noise,
             decoder_type=dt,
+            interaction_basis=interaction_basis,
         )
 
     # Build and compile circuit
-    num_qubits = get_num_qubits(distance)
-    prog = make_surface_code(distance=distance, num_rounds=num_rounds, basis=basis)
+    num_qubits = get_num_qubits(distance, interaction_basis=interaction_basis)
+    prog = make_surface_code(
+        distance=distance,
+        num_rounds=num_rounds,
+        basis=basis,
+        interaction_basis=interaction_basis,
+    )
     hugr_bytes = compile_guppy_to_hugr(prog)
     instance = build(hugr_bytes, name=f"surface_d{distance}")
 
@@ -3724,6 +3751,7 @@ def run_noisy_memory_experiment(
         raw_error_rate=num_raw_errors / num_shots if num_shots > 0 else 0.0,
         decoded=decode,
         decoder_type=decoder_type if decode else None,
+        interaction_basis=interaction_basis,
     )
 
 

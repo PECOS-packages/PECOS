@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+from pecos.qec.surface import get_measurement_order_from_tick_circuit
 
 if TYPE_CHECKING:
     from pecos.quantum import DagCircuit, TickCircuit
@@ -21,34 +22,8 @@ stim = pytest.importorskip("stim")
 
 
 def extract_measurement_order(tc: "TickCircuit") -> list[int]:
-    """Extract measurement order from TickCircuit.
-
-    Returns a list of qubit indices in the order they were measured.
-    This is needed to map detector record offsets (which use TickCircuit
-    measurement indices) to influence map indices (which use DAG order).
-
-    Args:
-        tc: TickCircuit to extract measurement order from.
-
-    Returns:
-        List of qubit indices in measurement execution order.
-    """
-    measurement_order = []
-
-    for tick_idx in range(tc.num_ticks()):
-        tick = tc.get_tick(tick_idx)
-        if tick is None:
-            continue
-        for gate in tick.gate_batches():
-            gate_type = str(gate.gate_type)
-            if "MZ" in gate_type:
-                for qubit in gate.qubits:
-                    if hasattr(qubit, "index"):
-                        measurement_order.append(qubit.index())
-                    else:
-                        measurement_order.append(int(qubit))
-
-    return measurement_order
+    """Extract measurement order from TickCircuit."""
+    return get_measurement_order_from_tick_circuit(tc)
 
 
 def parse_dem_string(dem_str: str) -> dict[tuple, float]:
@@ -174,7 +149,11 @@ class TestDemSamplerVsStim:
             **noise_params,
             decompose_errors=False,
         )
-        stim_dem = generate_dem_from_tick_circuit_via_stim(tc, **noise_params)
+        stim_dem = generate_dem_from_tick_circuit_via_stim(
+            tc,
+            **noise_params,
+            decompose_errors=False,
+        )
 
         comparison = compare_dems(pecos_dem, stim_dem)
 

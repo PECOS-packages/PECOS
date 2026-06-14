@@ -29,7 +29,7 @@ Covers:
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import result
-from guppylang.std.quantum import measure, qubit, x
+from guppylang.std.quantum import cx, h, measure, qubit
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 
@@ -40,9 +40,9 @@ from pecos.qec import DetectorErrorModel
 # tag_c -> [2] (ordinals of the measurements the tags actually record, not
 # the order of the result() calls).
 #
-# Each qubit gets a *different* number of single-qubit gates before measure
-# (qa: 0, qb: 1, qc: 2). With p1 > 0 those gates contribute distinct error
-# mechanisms touching only that qubit's measurement, so the DEMs for
+# The nontrivial pre-history entangles qb and qc after an H on qb. With
+# p1/p2 > 0 this produces distinct mechanisms for detectors anchored to qa,
+# qb, and qc, so the DEMs for
 # detectors anchored to records [-3], [-2], [-1] differ in their (number of)
 # mechanisms / probabilities. A test asserting result_tags equals positional
 # records is then load-bearing: a wrong ordinal mapping would produce a
@@ -54,9 +54,8 @@ def _scrambled_three_measurements() -> None:
     qa = qubit()
     qb = qubit()
     qc = qubit()
-    x(qb)
-    x(qc)
-    x(qc)
+    h(qb)
+    cx(qb, qc)
     a = measure(qa)
     b = measure(qb)
     c = measure(qc)
@@ -65,7 +64,7 @@ def _scrambled_three_measurements() -> None:
     result("tag_b", b)
 
 
-_NOISE = {"p1": 0.01, "p2": 0.0, "p_meas": 0.1, "p_prep": 0.005}
+_NOISE = {"p1": 0.01, "p2": 0.02, "p_meas": 0.1, "p_prep": 0.005}
 
 
 def _from_guppy(detectors_json: str, *, observables_json: str = "[]") -> str:

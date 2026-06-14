@@ -51,6 +51,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from pecos.qec.surface._check_plan import resolve_surface_check_plan
+
 if TYPE_CHECKING:
     import stim
     from numpy.typing import NDArray
@@ -80,11 +82,27 @@ class DecoderType(str, Enum):
     """Available decoder backends."""
 
     PYMATCHING = "pymatching"
+    PYMATCHING_CORRELATED = "pymatching_correlated"
+    PYMATCHING_UNCORRELATED = "pymatching_uncorrelated"
     FUSION_BLOSSOM = "fusion_blossom"
     BP_OSD = "bp_osd"
     BP_LSD = "bp_lsd"
     UNION_FIND = "union_find"
     TESSERACT = "tesseract"
+
+
+DEM_DECODER_TYPES = {
+    DecoderType.PYMATCHING,
+    DecoderType.PYMATCHING_CORRELATED,
+    DecoderType.PYMATCHING_UNCORRELATED,
+    DecoderType.TESSERACT,
+}
+
+PYMATCHING_DECODER_TYPES = {
+    DecoderType.PYMATCHING,
+    DecoderType.PYMATCHING_CORRELATED,
+    DecoderType.PYMATCHING_UNCORRELATED,
+}
 
 
 @dataclass
@@ -301,6 +319,10 @@ class _CachedNativeSurfaceTopology:
     num_detectors: int
     num_observables: int
     num_pauli_sites: int
+    interaction_basis: str
+    check_plan: str
+    resolved_check_plan: dict[str, Any]
+    resolved_check_plan_hash: str
 
 
 def _surface_patch_cache_key(patch: SurfacePatch) -> tuple[int, int, str, bool]:
@@ -918,7 +940,7 @@ def _replay_qis_trace_into_tick_circuit(
     from pecos_rslib.quantum import TickCircuit
 
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology
+        measurement_crosstalk_topology,
     )
     tick_circuit = TickCircuit()
     active_slots: dict[int, int] = {}
@@ -1058,13 +1080,14 @@ def _replay_qis_trace_into_tick_circuit(
             program_id, result_id = tuple_args(payload, op_name, 2)
             measurement_qubit = mapped_slot(int(program_id), op_name)
             if _should_add_global_measurement_crosstalk_payload(
-                measurement_crosstalk_topology
+                measurement_crosstalk_topology,
             ):
                 # Global crosstalk payload qubits are guaranteed not to be
                 # affected; for measurement-induced global crosstalk this is
                 # exactly the measured payload.
                 tick_circuit.tick().add_gate(
-                    "MeasCrosstalkGlobalPayload", [measurement_qubit]
+                    "MeasCrosstalkGlobalPayload",
+                    [measurement_qubit],
                 )
             # Stamp the QIS-provided result_id as the MeasId rather than
             # discarding it and letting assign_missing_meas_ids() invent
@@ -1120,7 +1143,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
     from pecos_rslib.quantum import TickCircuit
 
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology
+        measurement_crosstalk_topology,
     )
     tick_circuit = TickCircuit()
 
@@ -1169,13 +1192,14 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                     msg = f"Lowered MZ gate carries {len(meas_ids)} measurement_result_ids for {len(qubits)} qubit(s)"
                     raise ValueError(msg)
                 if _should_add_global_measurement_crosstalk_payload(
-                    measurement_crosstalk_topology
+                    measurement_crosstalk_topology,
                 ):
                     # Global crosstalk payload qubits are guaranteed not to be
                     # affected; for measurement-induced global crosstalk this is
                     # exactly the measured payload.
                     tick_circuit.tick().add_gate(
-                        "MeasCrosstalkGlobalPayload", qubits
+                        "MeasCrosstalkGlobalPayload",
+                        qubits,
                     )
                 tick.mz_with_ids(qubits, [int(meas_id) for meas_id in meas_ids])
             elif gate_type == "MeasCrosstalkGlobalPayload":
@@ -1273,7 +1297,7 @@ def _replay_qis_trace_chunks_into_tick_circuit(
 ) -> Any:
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology
+        measurement_crosstalk_topology,
     )
     if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
         _reject_partially_lowered_trace(chunks)
@@ -1378,6 +1402,8 @@ def trace_guppy_into_tick_circuit(
         runtime: Optional Selene runtime selector/plugin. ``None`` selects the
             default Selene runtime. Runtime plugin objects are passed through to
             ``pecos.selene_engine(runtime)``.
+        measurement_crosstalk_topology: Optional measurement-crosstalk replay
+            mode for stamping global measurement-crosstalk payload markers.
 
     Returns:
         A ``TickCircuit`` with no detector/observable metadata attached; the
@@ -1820,6 +1846,7 @@ def _surface_native_topology(
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
 ) -> _CachedNativeSurfaceTopology:
     """Build topology-only native analysis shared across noise parameters."""
@@ -1833,6 +1860,8 @@ def _surface_native_topology(
         normalize_traced_qis_tick_circuit,
     )
 
+    resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
+    interaction_basis = resolved_plan.interaction_basis
     patch = _cached_surface_patch(patch_key)
     tc = _build_surface_tick_circuit_for_native_model(
         patch,
@@ -1896,6 +1925,10 @@ def _surface_native_topology(
         num_detectors=len(det_records),
         num_observables=len(obs_records),
         num_pauli_sites=num_pauli_sites,
+        interaction_basis=resolved_plan.interaction_basis,
+        check_plan=resolved_plan.plan_id,
+        resolved_check_plan=resolved_plan.resolved_metadata,
+        resolved_check_plan_hash=resolved_plan.resolved_hash,
     )
 
 
@@ -1910,9 +1943,12 @@ def _cached_surface_native_topology(
     *,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
+    resolved_check_plan_hash: str = "",
 ) -> _CachedNativeSurfaceTopology:
     """Cache topology-only native analysis shared across noise parameters."""
+    _ = resolved_check_plan_hash
     return _surface_native_topology(
         patch_key,
         num_rounds,
@@ -1922,6 +1958,7 @@ def _cached_surface_native_topology(
         include_idle_gates,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
         szz_physical_prefixes=szz_physical_prefixes,
     )
 
@@ -2006,8 +2043,11 @@ def _cached_surface_native_dem_string(
     p_idle_z_quadratic_sine_rate: float | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    check_plan: str | None = None,
+    resolved_check_plan_hash: str = "",
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
+    _ = resolved_check_plan_hash
     include_idle_gates = _uses_dedicated_idle_noise(
         p_idle=p_idle,
         t1=t1,
@@ -2039,7 +2079,9 @@ def _cached_surface_native_dem_string(
         include_idle_gates,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
         szz_physical_prefixes=szz_physical_prefixes,
+        resolved_check_plan_hash=resolved_check_plan_hash,
     )
     return _dem_string_from_cached_surface_topology(
         topology,
@@ -2132,6 +2174,10 @@ def _build_native_sampler_from_cached_surface_topology(
         pauli_frame_lookup=topology.pauli_frame_lookup,
         num_pauli_sites=topology.num_pauli_sites,
         sampling_model=sampling_model,
+        interaction_basis=topology.interaction_basis,
+        check_plan=topology.check_plan,
+        resolved_check_plan=topology.resolved_check_plan,
+        resolved_check_plan_hash=topology.resolved_check_plan_hash,
     )
 
 
@@ -2147,7 +2193,8 @@ def generate_circuit_level_dem_from_builder(
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> str:
     """Generate circuit-level DEM using PECOS native fault propagation.
 
@@ -2191,11 +2238,14 @@ def generate_circuit_level_dem_from_builder(
         twirl: Optional Pauli-frame randomization layout. Canonical Guppy
             frame-output mode is normalized to the same abstract raw lookup
             and DEM topology.
-        interaction_basis: Surface-memory two-qubit interaction basis. The
-            staged ``"szz"`` path currently assumes a virtual-Z device model:
-            Z/SZ/SZdg frame updates are p1-free. That is a device assumption
-            keyed from this basis selector, not a general claim about CX
-            hardware.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset. This is the source of
+            truth when supplied; ``interaction_basis`` must agree if also
+            supplied. The staged SZZ plan currently assumes a virtual-Z device
+            model: Z/SZ/SZdg frame updates are p1-free. That is a device
+            assumption keyed from the resolved plan, not a general claim about
+            CX hardware.
 
     Returns:
         DEM string in standard format
@@ -2209,9 +2259,9 @@ def generate_circuit_level_dem_from_builder(
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
     twirl = _abstract_twirl_config(twirl)
-    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
+    interaction_basis = resolved_plan.interaction_basis
     _reject_szz_unlowered_physical_noise(noise, interaction_basis, circuit_source)
     patch_key = _surface_patch_cache_key(patch)
     include_idle_gates = _noise_uses_dedicated_idle_noise(noise)
@@ -2227,6 +2277,7 @@ def generate_circuit_level_dem_from_builder(
             runtime=runtime,
             twirl=twirl,
             interaction_basis=interaction_basis,
+            check_plan=resolved_plan.plan_id,
             szz_physical_prefixes=szz_physical_prefixes,
         )
         return _dem_string_from_cached_surface_topology(
@@ -2256,6 +2307,8 @@ def generate_circuit_level_dem_from_builder(
         "p_idle_z_quadratic_sine_rate": noise.p_idle_z_quadratic_sine_rate,
         "twirl": twirl,
         "interaction_basis": interaction_basis,
+        "check_plan": resolved_plan.plan_id,
+        "resolved_check_plan_hash": resolved_plan.resolved_hash,
     }
     if dem_decomposition != "source_graphlike":
         cache_kwargs["dem_decomposition"] = dem_decomposition
@@ -2642,6 +2695,8 @@ class SurfaceDecoder:
         noise: NoiseModel | None = None,
         decoder_type: Literal[
             "pymatching",
+            "pymatching_correlated",
+            "pymatching_uncorrelated",
             "fusion_blossom",
             "bp_osd",
             "bp_lsd",
@@ -2662,7 +2717,13 @@ class SurfaceDecoder:
             num_rounds: Number of syndrome extraction rounds
             noise: Noise model for edge weights (defaults to uniform)
             decoder_type: Decoder backend to use:
-                - "pymatching": Fast C++ MWPM decoder (default)
+                - "pymatching": Fast C++ MWPM decoder (default). For
+                  decomposed circuit-level DEMs, this enables PyMatching's
+                  DEM-correlation metadata when available.
+                - "pymatching_correlated": Explicit alias for the circuit-level
+                  correlated PyMatching path.
+                - "pymatching_uncorrelated": Plain graphlike PyMatching path,
+                  useful for A/B diagnostics.
                 - "fusion_blossom": Pure Rust MWPM decoder
                 - "bp_osd": Belief Propagation + OSD
                 - "bp_lsd": Belief Propagation + LSD
@@ -2800,10 +2861,7 @@ class SurfaceDecoder:
         """Get or create decoder for Z-basis memory (decodes Z syndromes for X errors)."""
         if self._z_decoder is None:
             # For PyMatching and Tesseract with circuit-level DEMs, use DEM directly
-            if self.use_circuit_level_dem and self.decoder_type in (
-                DecoderType.PYMATCHING,
-                DecoderType.TESSERACT,
-            ):
+            if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
                 self._z_decoder = self._create_decoder_from_dem("Z")
             else:
                 self._z_decoder = self._create_decoder(self._get_z_check_matrix())
@@ -2821,8 +2879,12 @@ class SurfaceDecoder:
         data_weight = self._compute_weight(p_data)
         meas_weight = self._compute_weight(p_meas)
 
-        if self.decoder_type == DecoderType.PYMATCHING:
-            from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
+        if self.decoder_type in PYMATCHING_DECODER_TYPES:
+            from pecos.decoders import CheckMatrix, PyMatchingDecoder
+
+            if self.decoder_type == DecoderType.PYMATCHING_CORRELATED:
+                msg = "pymatching_correlated requires circuit-level DEM decoding"
+                raise ValueError(msg)
 
             weights = [data_weight] * num_data
             check_matrix = CheckMatrix.from_dense(H.tolist()).with_weights(weights)
@@ -2836,7 +2898,7 @@ class SurfaceDecoder:
             )
 
         if self.decoder_type == DecoderType.FUSION_BLOSSOM:
-            from pecos_rslib.decoders import FusionBlossomDecoder
+            from pecos.decoders import FusionBlossomDecoder
 
             # FusionBlossom uses check matrix directly
             # For multi-round, we need to construct the space-time graph manually
@@ -2887,13 +2949,22 @@ class SurfaceDecoder:
         else:
             self._x_dem = dem
 
-        if self.decoder_type == DecoderType.PYMATCHING:
-            from pecos_rslib.decoders import PyMatchingDecoder
+        if self.decoder_type in PYMATCHING_DECODER_TYPES:
+            from pecos.decoders import PyMatchingDecoder
 
-            return PyMatchingDecoder.from_dem(dem)
+            if self.circuit_level_dem_mode == "native_full":
+                if self.decoder_type == DecoderType.PYMATCHING_CORRELATED:
+                    msg = "pymatching_correlated requires a decomposed circuit-level DEM mode"
+                    raise ValueError(msg)
+                return PyMatchingDecoder.from_dem(dem)
+
+            if self.decoder_type == DecoderType.PYMATCHING_UNCORRELATED:
+                return PyMatchingDecoder.from_dem(dem)
+
+            return PyMatchingDecoder.from_dem_with_correlations(dem, enable_correlations=True)
 
         if self.decoder_type == DecoderType.TESSERACT:
-            from pecos_rslib.decoders import TesseractDecoder
+            from pecos.decoders import TesseractDecoder
 
             # Tesseract's remove_zero_probability_errors() doesn't handle
             # DEM_LOGICAL_OBSERVABLE instructions. Filter them out - the
@@ -2911,7 +2982,7 @@ class SurfaceDecoder:
         meas_weight: float,
     ) -> Any:
         """Create FusionBlossom decoder with space-time matching graph."""
-        from pecos_rslib.decoders import FusionBlossomDecoder
+        from pecos.decoders import FusionBlossomDecoder
 
         num_stab = H.shape[0]
         num_data = H.shape[1]
@@ -2971,12 +3042,12 @@ class SurfaceDecoder:
         p_data: float,
     ) -> Any:
         """Create LDPC decoder (BP+OSD, BP+LSD, or UnionFind)."""
-        from pecos_rslib.decoders import SparseMatrix
+        from pecos.decoders import SparseMatrix
 
         sparse_H = SparseMatrix(H.tolist())
 
         if self.decoder_type == DecoderType.BP_OSD:
-            from pecos_rslib.decoders import BpOsdBuilder
+            from pecos.decoders import BpOsdBuilder
 
             return (
                 BpOsdBuilder(sparse_H, error_rate=p_data)
@@ -2988,12 +3059,12 @@ class SurfaceDecoder:
             )
 
         if self.decoder_type == DecoderType.BP_LSD:
-            from pecos_rslib.decoders import BpLsdBuilder
+            from pecos.decoders import BpLsdBuilder
 
             return BpLsdBuilder(sparse_H, error_rate=p_data).max_iter(100).bp_method("product_sum").lsd_order(0).build()
 
         if self.decoder_type == DecoderType.UNION_FIND:
-            from pecos_rslib.decoders import UnionFindBuilder
+            from pecos.decoders import UnionFindBuilder
 
             return UnionFindBuilder(sparse_H).method("inversion").build()
 
@@ -3007,7 +3078,7 @@ class SurfaceDecoder:
         _p_meas: float,
     ) -> Any:
         """Create Tesseract decoder from check matrix by generating DEM."""
-        from pecos_rslib.decoders import TesseractDecoder
+        from pecos.decoders import TesseractDecoder
 
         # Determine stabilizer type based on check matrix shape
         z_check = self._get_z_check_matrix()
@@ -3073,10 +3144,7 @@ class SurfaceDecoder:
         """Get or create decoder for X-basis memory (decodes X syndromes for Z errors)."""
         if self._x_decoder is None:
             # For PyMatching and Tesseract with circuit-level DEMs, use DEM directly
-            if self.use_circuit_level_dem and self.decoder_type in (
-                DecoderType.PYMATCHING,
-                DecoderType.TESSERACT,
-            ):
+            if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
                 self._x_decoder = self._create_decoder_from_dem("X")
             else:
                 self._x_decoder = self._create_decoder(self._get_x_check_matrix())
@@ -3086,6 +3154,8 @@ class SurfaceDecoder:
         """Check if using an MWPM or Tesseract decoder (vs LDPC)."""
         return self.decoder_type in (
             DecoderType.PYMATCHING,
+            DecoderType.PYMATCHING_CORRELATED,
+            DecoderType.PYMATCHING_UNCORRELATED,
             DecoderType.FUSION_BLOSSOM,
             DecoderType.TESSERACT,
         )
@@ -3378,10 +3448,7 @@ class SurfaceDecoder:
         final_parity = sum(final[q] for q in logical_z_qubits) % 2
 
         # DEM-based path: compute full detection events matching DEM detector order
-        if self.use_circuit_level_dem and self.decoder_type in (
-            DecoderType.PYMATCHING,
-            DecoderType.TESSERACT,
-        ):
+        if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
             events = self._compute_dem_detection_events_z(synx_list, synz_list, final, init_synx=init_synx)
             events_flat = events.ravel().astype(np.uint8)
 
@@ -3477,10 +3544,7 @@ class SurfaceDecoder:
         final_parity = sum(final[q] for q in logical_x_qubits) % 2
 
         # DEM-based path: compute full detection events matching DEM detector order
-        if self.use_circuit_level_dem and self.decoder_type in (
-            DecoderType.PYMATCHING,
-            DecoderType.TESSERACT,
-        ):
+        if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
             events = self._compute_dem_detection_events_x(synx_list, synz_list, final, init_synz=init_synz)
             events_flat = events.ravel().astype(np.uint8)
 
@@ -3615,6 +3679,9 @@ class SimulationResult:
         decoded: Whether decoding was applied
         decoder_type: Decoder backend used (if decoded)
         interaction_basis: Surface-memory two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
+        resolved_check_plan: Canonical resolved check-plan metadata.
+        resolved_check_plan_hash: SHA-256 hash of the resolved plan semantics.
     """
 
     distance: int
@@ -3628,6 +3695,9 @@ class SimulationResult:
     decoded: bool
     decoder_type: str | None = None
     interaction_basis: str = "cx"
+    check_plan: str = "cx_standard_v1"
+    resolved_check_plan: dict[str, Any] | None = None
+    resolved_check_plan_hash: str = ""
 
 
 def _memory_noise_model(
@@ -3644,6 +3714,13 @@ def _memory_noise_model(
     return NoiseModel.uniform(p)
 
 
+def _recommended_graphlike_decomposition_for_decoder(decoder_type: str) -> NativeDemDecomposition:
+    base = decoder_type.split(":", 1)[0]
+    if base in {"pymatching", "pymatching_correlated", "pymatching_uncorrelated"}:
+        return "terminal_graphlike"
+    return "source_graphlike"
+
+
 def surface_code_memory(
     *,
     distance: int = 3,
@@ -3657,7 +3734,8 @@ def surface_code_memory(
     decode: bool = True,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     ancilla_budget: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> SimulationResult:
     """Run the recommended native surface-code memory workflow.
 
@@ -3675,12 +3753,17 @@ def surface_code_memory(
         rounds: Number of syndrome-extraction rounds. Defaults to ``distance``.
         basis: Memory basis, ``"Z"`` or ``"X"``.
         decoder_type: Decoder backend passed to ``SampleBatch.decode_count``.
+            PyMatching-family decoders use PECOS's terminal graphlike DEM
+            projection for this recommended workflow.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
         ancilla_budget: Optional cap on simultaneously live ancillas.
-        interaction_basis: Surface-memory two-qubit interaction basis,
-            ``"cx"`` or ``"szz"``.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset. This is the source of
+            truth when supplied; ``interaction_basis`` must agree if also
+            supplied.
 
     Returns:
         ``SimulationResult`` with logical and raw error counts/rates.
@@ -3692,10 +3775,10 @@ def surface_code_memory(
         0.0
     """
     from pecos.qec import ParsedDem
-    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
     from pecos.qec.surface.patch import SurfacePatch
 
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
+    interaction_basis = resolved_plan.interaction_basis
     if distance < 1:
         msg = f"distance must be >= 1, got {distance}"
         raise ValueError(msg)
@@ -3715,9 +3798,11 @@ def surface_code_memory(
         noise=noise_model,
         basis=basis,
         decompose_errors=True,
+        dem_decomposition=_recommended_graphlike_decomposition_for_decoder(decoder_type),
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
     )
     batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(shots, seed)
     num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_mask(shot) != 0)
@@ -3735,6 +3820,9 @@ def surface_code_memory(
         decoded=decode,
         decoder_type=decoder_type if decode else None,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
+        resolved_check_plan=resolved_plan.resolved_metadata,
+        resolved_check_plan_hash=resolved_plan.resolved_hash,
     )
 
 
@@ -3747,7 +3835,8 @@ def run_noisy_memory_experiment(
     *,
     decode: bool = True,
     decoder_type: str = "pymatching",
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> SimulationResult:
     """Run a noisy surface code memory experiment with optional decoding.
 
@@ -3765,8 +3854,11 @@ def run_noisy_memory_experiment(
         noise: Noise model parameters
         decode: If True, use decoding to correct errors
         decoder_type: Decoder backend (pymatching, fusion_blossom, bp_osd, etc.)
-        interaction_basis: Surface-memory two-qubit interaction basis,
-            ``"cx"`` or ``"szz"``.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset. This is the source of
+            truth when supplied; ``interaction_basis`` must agree if also
+            supplied.
 
     Returns:
         SimulationResult with error rate statistics
@@ -3789,9 +3881,9 @@ def run_noisy_memory_experiment(
     from pecos.compilation_pipeline import compile_guppy_to_hugr
     from pecos.guppy.surface import get_num_qubits, make_surface_code
     from pecos.qec.surface import SurfacePatch
-    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
+    interaction_basis = resolved_plan.interaction_basis
     # Create patch and decoder
     patch = SurfacePatch.create(distance=distance)
     geom = patch.geometry
@@ -3898,6 +3990,9 @@ def run_noisy_memory_experiment(
         decoded=decode,
         decoder_type=decoder_type if decode else None,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
+        resolved_check_plan=resolved_plan.resolved_metadata,
+        resolved_check_plan_hash=resolved_plan.resolved_hash,
     )
 
 
@@ -3930,6 +4025,11 @@ class NativeSampler:
         sampling_model: Which native sampling backend is active
         dem_string: Optional graphlike-decomposed DEM string used to build the
             sampler. Populated when the ``"dem"`` sampling model is selected.
+        interaction_basis: Surface-memory two-qubit interaction basis resolved
+            from ``check_plan``.
+        check_plan: Named surface check-plan preset.
+        resolved_check_plan: Canonical resolved check-plan metadata.
+        resolved_check_plan_hash: SHA-256 hash of the resolved plan semantics.
     """
 
     sampler: Any
@@ -3943,6 +4043,10 @@ class NativeSampler:
         "dem"  # "mnm" accepted for compat, mapped to "influence_dem"
     )
     dem_string: str | None = None
+    interaction_basis: str = "cx"
+    check_plan: str = "cx_standard_v1"
+    resolved_check_plan: dict[str, Any] | None = None
+    resolved_check_plan_hash: str = ""
 
     def sample(
         self,
@@ -3992,12 +4096,13 @@ def build_native_sampler(
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
     sampling_model: Literal[
         "dem",
         "influence_dem",
         "mnm",
     ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
+    check_plan: str | None = None,
 ) -> NativeSampler:
     """Build a PECOS native sampler for threshold estimation.
 
@@ -4024,7 +4129,8 @@ def build_native_sampler(
             before native PECOS fault analysis.
         twirl: Optional Pauli-frame randomization layout. Canonical runtime
             frame-output mode is normalized to the same abstract raw lookup.
-        interaction_basis: Surface-memory two-qubit interaction basis.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
         sampling_model: Which native sampling backend to use. ``"dem"``
             samples the generated source-graphlike DEM projection and is the
             default; this is a decoder-facing approximation of raw hyperedges,
@@ -4032,6 +4138,9 @@ def build_native_sampler(
             ``"influence_dem"`` uses the influence-map-based DemSampler with
             detector definitions. ``"mnm"`` is accepted for compatibility
             and maps to ``"influence_dem"``.
+        check_plan: Named surface check-plan preset. This is the source of
+            truth when supplied; ``interaction_basis`` must agree if also
+            supplied.
 
     Returns:
         NativeSampler that can generate samples for threshold estimation
@@ -4045,9 +4154,9 @@ def build_native_sampler(
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
     twirl = _abstract_twirl_config(twirl)
-    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
+    interaction_basis = resolved_plan.interaction_basis
     _reject_szz_unlowered_physical_noise(noise, interaction_basis, circuit_source)
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
@@ -4061,7 +4170,9 @@ def build_native_sampler(
         _noise_uses_dedicated_idle_noise(noise),
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
+        resolved_check_plan_hash=resolved_plan.resolved_hash,
     )
     if sampling_model == "dem":
         dem_str = _cached_surface_native_dem_string(
@@ -4097,6 +4208,8 @@ def build_native_sampler(
             p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
             twirl=twirl,
             interaction_basis=interaction_basis,
+            check_plan=resolved_plan.plan_id,
+            resolved_check_plan_hash=resolved_plan.resolved_hash,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(
@@ -4109,6 +4222,10 @@ def build_native_sampler(
             num_pauli_sites=topology.num_pauli_sites,
             sampling_model=sampling_model,
             dem_string=dem_str,
+            interaction_basis=resolved_plan.interaction_basis,
+            check_plan=resolved_plan.plan_id,
+            resolved_check_plan=resolved_plan.resolved_metadata,
+            resolved_check_plan_hash=resolved_plan.resolved_hash,
         )
     return _build_native_sampler_from_cached_surface_topology(
         topology,
@@ -4126,7 +4243,8 @@ def build_native_sampler_from_dem(
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> NativeSampler:
     """Build a native sampler from a caller-supplied decomposed DEM string.
 
@@ -4137,9 +4255,9 @@ def build_native_sampler_from_dem(
     """
     ancilla_budget = _canonical_ancilla_budget(patch, ancilla_budget)
     twirl = _abstract_twirl_config(twirl)
-    from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
+    interaction_basis = resolved_plan.interaction_basis
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
     topology = _cached_surface_native_topology(
@@ -4151,6 +4269,8 @@ def build_native_sampler_from_dem(
         include_idle_gates=False,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
+        resolved_check_plan_hash=resolved_plan.resolved_hash,
     )
     sampler = _cached_parsed_dem(decomposed_dem).to_dem_sampler()
     return NativeSampler(
@@ -4163,6 +4283,10 @@ def build_native_sampler_from_dem(
         num_pauli_sites=topology.num_pauli_sites,
         sampling_model="dem",
         dem_string=decomposed_dem,
+        interaction_basis=resolved_plan.interaction_basis,
+        check_plan=resolved_plan.plan_id,
+        resolved_check_plan=resolved_plan.resolved_metadata,
+        resolved_check_plan_hash=resolved_plan.resolved_hash,
     )
 
 

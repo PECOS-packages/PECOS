@@ -1,10 +1,10 @@
 """Compare two surface-sweep JSON artifacts.
 
-This helper is intentionally lightweight: it reads the JSON files emitted by
-``native_dem_threshold_sweep.py`` and prints Markdown tables with matched
-logical-error rates, Wilson binomial intervals, ratios, differences, and
-normal-approximation z-scores. It is useful for comparing CX vs SZZ/SZZdg
-surface-code runs that used the same sweep grid.
+This helper reads the JSON files emitted by ``native_dem_threshold_sweep.py``
+and prints Markdown tables with matched logical-error rates, binomial
+intervals, ratios, differences, and descriptive normal-approximation z-scores.
+It is useful for comparing CX vs SZZ/SZZdg surface-code runs that used the same
+sweep grid.
 
 Example:
     python examples/surface/compare_surface_sweep_json.py \\
@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 Z_95 = 1.959963984540054
+CI_METHODS = {"jeffreys", "wilson"}
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,31 @@ def wilson_interval(errors: int, shots: int, z: float = Z_95) -> tuple[float, fl
     return max(0.0, center - half), min(1.0, center + half)
 
 
+def jeffreys_interval(errors: int, shots: int, confidence: float = 0.95) -> tuple[float, float]:
+    """Return a Jeffreys equal-tailed interval for one binomial proportion."""
+    if shots <= 0:
+        return math.nan, math.nan
+    from scipy.stats import beta
+
+    alpha = (1.0 - confidence) / 2.0
+    lower = 0.0 if errors == 0 else float(beta.ppf(alpha, errors + 0.5, shots - errors + 0.5))
+    upper = (
+        1.0
+        if errors == shots
+        else float(beta.ppf(1.0 - alpha, errors + 0.5, shots - errors + 0.5))
+    )
+    return lower, upper
+
+
+def binomial_interval(errors: int, shots: int, method: str) -> tuple[float, float]:
+    if method == "jeffreys":
+        return jeffreys_interval(errors, shots)
+    if method == "wilson":
+        return wilson_interval(errors, shots)
+    msg = f"unknown interval method {method!r}"
+    raise ValueError(msg)
+
+
 def standard_error(errors: int, shots: int) -> float:
     if shots <= 0:
         return math.nan
@@ -111,11 +137,11 @@ def ratio(left: Point, right: Point) -> float:
     return right.rate / left.rate
 
 
-def format_rate(point: Point, *, include_ci: bool) -> str:
+def format_rate(point: Point, *, include_ci: bool, interval_method: str) -> str:
     base = f"{point.rate:.4g} ({point.errors}/{point.shots})"
     if not include_ci:
         return base
-    low, high = wilson_interval(point.errors, point.shots)
+    low, high = binomial_interval(point.errors, point.shots, interval_method)
     return f"{base} [{low:.4g}, {high:.4g}]"
 
 
@@ -156,6 +182,7 @@ def emit_point_table(
     left_label: str,
     right_label: str,
     include_ci: bool,
+    interval_method: str,
 ) -> str:
     lines = [
         "## Matched Points",
@@ -170,8 +197,8 @@ def emit_point_table(
         lines.append(
             "| "
             f"{backend} | {basis} | {distance} | {rounds} | {p:g} | "
-            f"{format_rate(left, include_ci=include_ci)} | "
-            f"{format_rate(right, include_ci=include_ci)} | "
+            f"{format_rate(left, include_ci=include_ci, interval_method=interval_method)} | "
+            f"{format_rate(right, include_ci=include_ci, interval_method=interval_method)} | "
             f"{format_float(ratio(left, right))} | "
             f"{right.rate - left.rate:+.4g} | "
             f"{format_float(z_score(left, right))} |",
@@ -185,6 +212,7 @@ def emit_aggregate_table(
     left_label: str,
     right_label: str,
     include_ci: bool,
+    interval_method: str,
 ) -> str:
     grouped: dict[tuple[str, str, int, int], list[Comparison]] = defaultdict(list)
     for comparison in comparisons:
@@ -205,8 +233,8 @@ def emit_aggregate_table(
         lines.append(
             "| "
             f"{backend} | {basis} | {distance} | {rounds} | "
-            f"{format_rate(left, include_ci=include_ci)} | "
-            f"{format_rate(right, include_ci=include_ci)} | "
+            f"{format_rate(left, include_ci=include_ci, interval_method=interval_method)} | "
+            f"{format_rate(right, include_ci=include_ci, interval_method=interval_method)} | "
             f"{format_float(ratio(left, right))} | "
             f"{right.rate - left.rate:+.4g} | "
             f"{format_float(z_score(left, right))} |",
@@ -214,12 +242,13 @@ def emit_aggregate_table(
     return "\n".join(lines)
 
 
-def emit_overall_table(
+def emit_cross_distance_pooled_table(
     comparisons: list[Comparison],
     *,
     left_label: str,
     right_label: str,
     include_ci: bool,
+    interval_method: str,
 ) -> str:
     grouped: dict[tuple[str, str], list[Comparison]] = defaultdict(list)
     for comparison in comparisons:
@@ -227,7 +256,11 @@ def emit_overall_table(
         grouped[(backend, basis)].append(comparison)
 
     lines = [
-        "## Overall By Backend And Basis",
+        "## Pooled Across Distances By Backend And Basis",
+        "",
+        "This table intentionally pools across distances. It is useful as a rough",
+        "event-count summary, but it is dominated by lower-distance points and is",
+        "not a scaling or threshold statement.",
         "",
         f"| backend | basis | {left_label} | {right_label} | ratio | diff | z |",
         "|---------|-------|------|------|-------|------|---|",
@@ -240,8 +273,8 @@ def emit_overall_table(
         lines.append(
             "| "
             f"{backend} | {basis} | "
-            f"{format_rate(left, include_ci=include_ci)} | "
-            f"{format_rate(right, include_ci=include_ci)} | "
+            f"{format_rate(left, include_ci=include_ci, interval_method=interval_method)} | "
+            f"{format_rate(right, include_ci=include_ci, interval_method=interval_method)} | "
             f"{format_float(ratio(left, right))} | "
             f"{right.rate - left.rate:+.4g} | "
             f"{format_float(z_score(left, right))} |",
@@ -256,6 +289,8 @@ def build_report(
     left_label: str,
     right_label: str,
     include_ci: bool,
+    interval_method: str,
+    include_cross_distance_pooled: bool,
 ) -> str:
     left = load_points(left_path)
     right = load_points(right_path)
@@ -274,12 +309,18 @@ def build_report(
         f"- matched points: {len(comparisons)}",
         f"- left-only points: {left_only}",
         f"- right-only points: {right_only}",
+        f"- intervals: {'none' if not include_ci else f'{interval_method} 95%'}",
+        "- z-scores: descriptive unpooled Wald z-scores, uncorrected for multiple comparisons",
+        "- read low-count and zero-count rows cautiously",
+        "- cross-distance pooled totals are omitted by default; use "
+        "`--include-cross-distance-pooled` for a rough event-count summary",
         "",
         emit_point_table(
             comparisons,
             left_label=left_label,
             right_label=right_label,
             include_ci=include_ci,
+            interval_method=interval_method,
         ),
         "",
         emit_aggregate_table(
@@ -287,15 +328,22 @@ def build_report(
             left_label=left_label,
             right_label=right_label,
             include_ci=include_ci,
-        ),
-        "",
-        emit_overall_table(
-            comparisons,
-            left_label=left_label,
-            right_label=right_label,
-            include_ci=include_ci,
+            interval_method=interval_method,
         ),
     ]
+    if include_cross_distance_pooled:
+        lines.extend(
+            [
+                "",
+                emit_cross_distance_pooled_table(
+                    comparisons,
+                    left_label=left_label,
+                    right_label=right_label,
+                    include_ci=include_ci,
+                    interval_method=interval_method,
+                ),
+            ],
+        )
     return "\n".join(lines)
 
 
@@ -305,7 +353,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("right", type=Path, help="Second native_dem_threshold_sweep.py JSON artifact.")
     parser.add_argument("--left-label", default="left", help="Label for the first artifact.")
     parser.add_argument("--right-label", default="right", help="Label for the second artifact.")
-    parser.add_argument("--no-ci", action="store_true", help="Omit Wilson 95% binomial intervals.")
+    parser.add_argument(
+        "--ci",
+        choices=sorted(CI_METHODS),
+        default="jeffreys",
+        help="Binomial interval method to report when intervals are enabled.",
+    )
+    parser.add_argument("--no-ci", action="store_true", help="Omit 95% binomial intervals.")
+    parser.add_argument(
+        "--include-cross-distance-pooled",
+        action="store_true",
+        help=(
+            "Also emit totals pooled across all distances by backend and basis. "
+            "This is not a scaling or threshold summary."
+        ),
+    )
     parser.add_argument("--output", type=Path, default=None, help="Optional Markdown output path.")
     return parser.parse_args()
 
@@ -318,6 +380,8 @@ def main() -> int:
         left_label=args.left_label,
         right_label=args.right_label,
         include_ci=not args.no_ci,
+        interval_method=args.ci,
+        include_cross_distance_pooled=args.include_cross_distance_pooled,
     )
     if args.output is None:
         print(report)

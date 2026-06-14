@@ -2217,7 +2217,7 @@ fn create_observable_decoder(
     };
 
     match decoder_type {
-        "pymatching" => {
+        "pymatching" | "pymatching_correlated" => {
             // Default: correlated matching enabled (exploits X-Z correlations
             // from depolarizing noise for ~20% fewer errors at d>=5).
             let d = PyMatchingDecoder::from_dem_with_correlations(dem, true)
@@ -3454,8 +3454,9 @@ impl PySampleBatch {
     ///
     /// Args:
     ///     dem: DEM string in standard DEM text format for the decoder.
-    ///     `decoder_type`: "pymatching", "tesseract", "`bp_osd`", "`bp_lsd`", "`union_find`",
-    ///                   "`relay_bp`", or "`min_sum_bp`".
+    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
+    ///                   "`pymatching_uncorrelated`", "tesseract", "`bp_osd`",
+    ///                   "`bp_lsd`", "`union_find`", "`relay_bp`", or "`min_sum_bp`".
     ///
     /// Returns:
     ///     Number of logical errors.
@@ -4428,7 +4429,9 @@ impl PyDemSampler {
     /// Args:
     ///     dem: DEM string in standard DEM text format for the decoder.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     `decoder_type`: "pymatching" or "tesseract".
+    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
+    ///                   "`pymatching_uncorrelated`", "tesseract", or another
+    ///                   decoder accepted by `create_observable_decoder`.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
@@ -4473,7 +4476,9 @@ impl PyDemSampler {
     /// Args:
     ///     dem: DEM string in standard DEM text format for the decoder.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     `decoder_type`: "pymatching", "tesseract", "`bp_osd`", "`bp_lsd`", or "`union_find`".
+    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
+    ///                   "`pymatching_uncorrelated`", "tesseract", "`bp_osd`",
+    ///                   "`bp_lsd`", or "`union_find`".
     ///     seed: Optional base random seed. Each thread gets seed + `thread_id`.
     ///     `num_workers`: Number of parallel workers (default: number of CPUs).
     ///
@@ -6420,6 +6425,7 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
     let base = decoder_type.split(':').next().unwrap_or(decoder_type);
     match base {
         "pymatching"
+        | "pymatching_correlated"
         | "pymatching_uncorrelated"
         | "fusion_blossom"
         | "fusion_blossom_serial"

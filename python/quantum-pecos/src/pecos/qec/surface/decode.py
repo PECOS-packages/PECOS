@@ -80,11 +80,27 @@ class DecoderType(str, Enum):
     """Available decoder backends."""
 
     PYMATCHING = "pymatching"
+    PYMATCHING_CORRELATED = "pymatching_correlated"
+    PYMATCHING_UNCORRELATED = "pymatching_uncorrelated"
     FUSION_BLOSSOM = "fusion_blossom"
     BP_OSD = "bp_osd"
     BP_LSD = "bp_lsd"
     UNION_FIND = "union_find"
     TESSERACT = "tesseract"
+
+
+DEM_DECODER_TYPES = {
+    DecoderType.PYMATCHING,
+    DecoderType.PYMATCHING_CORRELATED,
+    DecoderType.PYMATCHING_UNCORRELATED,
+    DecoderType.TESSERACT,
+}
+
+PYMATCHING_DECODER_TYPES = {
+    DecoderType.PYMATCHING,
+    DecoderType.PYMATCHING_CORRELATED,
+    DecoderType.PYMATCHING_UNCORRELATED,
+}
 
 
 @dataclass
@@ -918,7 +934,7 @@ def _replay_qis_trace_into_tick_circuit(
     from pecos_rslib.quantum import TickCircuit
 
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology
+        measurement_crosstalk_topology,
     )
     tick_circuit = TickCircuit()
     active_slots: dict[int, int] = {}
@@ -1058,13 +1074,14 @@ def _replay_qis_trace_into_tick_circuit(
             program_id, result_id = tuple_args(payload, op_name, 2)
             measurement_qubit = mapped_slot(int(program_id), op_name)
             if _should_add_global_measurement_crosstalk_payload(
-                measurement_crosstalk_topology
+                measurement_crosstalk_topology,
             ):
                 # Global crosstalk payload qubits are guaranteed not to be
                 # affected; for measurement-induced global crosstalk this is
                 # exactly the measured payload.
                 tick_circuit.tick().add_gate(
-                    "MeasCrosstalkGlobalPayload", [measurement_qubit]
+                    "MeasCrosstalkGlobalPayload",
+                    [measurement_qubit],
                 )
             # Stamp the QIS-provided result_id as the MeasId rather than
             # discarding it and letting assign_missing_meas_ids() invent
@@ -1120,7 +1137,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
     from pecos_rslib.quantum import TickCircuit
 
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology
+        measurement_crosstalk_topology,
     )
     tick_circuit = TickCircuit()
 
@@ -1169,13 +1186,14 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                     msg = f"Lowered MZ gate carries {len(meas_ids)} measurement_result_ids for {len(qubits)} qubit(s)"
                     raise ValueError(msg)
                 if _should_add_global_measurement_crosstalk_payload(
-                    measurement_crosstalk_topology
+                    measurement_crosstalk_topology,
                 ):
                     # Global crosstalk payload qubits are guaranteed not to be
                     # affected; for measurement-induced global crosstalk this is
                     # exactly the measured payload.
                     tick_circuit.tick().add_gate(
-                        "MeasCrosstalkGlobalPayload", qubits
+                        "MeasCrosstalkGlobalPayload",
+                        qubits,
                     )
                 tick.mz_with_ids(qubits, [int(meas_id) for meas_id in meas_ids])
             elif gate_type == "MeasCrosstalkGlobalPayload":
@@ -1273,7 +1291,7 @@ def _replay_qis_trace_chunks_into_tick_circuit(
 ) -> Any:
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
-        measurement_crosstalk_topology
+        measurement_crosstalk_topology,
     )
     if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
         _reject_partially_lowered_trace(chunks)
@@ -1378,6 +1396,8 @@ def trace_guppy_into_tick_circuit(
         runtime: Optional Selene runtime selector/plugin. ``None`` selects the
             default Selene runtime. Runtime plugin objects are passed through to
             ``pecos.selene_engine(runtime)``.
+        measurement_crosstalk_topology: Optional measurement-crosstalk replay
+            mode for stamping global measurement-crosstalk payload markers.
 
     Returns:
         A ``TickCircuit`` with no detector/observable metadata attached; the
@@ -2642,6 +2662,8 @@ class SurfaceDecoder:
         noise: NoiseModel | None = None,
         decoder_type: Literal[
             "pymatching",
+            "pymatching_correlated",
+            "pymatching_uncorrelated",
             "fusion_blossom",
             "bp_osd",
             "bp_lsd",
@@ -2662,7 +2684,13 @@ class SurfaceDecoder:
             num_rounds: Number of syndrome extraction rounds
             noise: Noise model for edge weights (defaults to uniform)
             decoder_type: Decoder backend to use:
-                - "pymatching": Fast C++ MWPM decoder (default)
+                - "pymatching": Fast C++ MWPM decoder (default). For
+                  decomposed circuit-level DEMs, this enables PyMatching's
+                  DEM-correlation metadata when available.
+                - "pymatching_correlated": Explicit alias for the circuit-level
+                  correlated PyMatching path.
+                - "pymatching_uncorrelated": Plain graphlike PyMatching path,
+                  useful for A/B diagnostics.
                 - "fusion_blossom": Pure Rust MWPM decoder
                 - "bp_osd": Belief Propagation + OSD
                 - "bp_lsd": Belief Propagation + LSD
@@ -2800,10 +2828,7 @@ class SurfaceDecoder:
         """Get or create decoder for Z-basis memory (decodes Z syndromes for X errors)."""
         if self._z_decoder is None:
             # For PyMatching and Tesseract with circuit-level DEMs, use DEM directly
-            if self.use_circuit_level_dem and self.decoder_type in (
-                DecoderType.PYMATCHING,
-                DecoderType.TESSERACT,
-            ):
+            if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
                 self._z_decoder = self._create_decoder_from_dem("Z")
             else:
                 self._z_decoder = self._create_decoder(self._get_z_check_matrix())
@@ -2821,8 +2846,12 @@ class SurfaceDecoder:
         data_weight = self._compute_weight(p_data)
         meas_weight = self._compute_weight(p_meas)
 
-        if self.decoder_type == DecoderType.PYMATCHING:
-            from pecos_rslib.decoders import CheckMatrix, PyMatchingDecoder
+        if self.decoder_type in PYMATCHING_DECODER_TYPES:
+            from pecos.decoders import CheckMatrix, PyMatchingDecoder
+
+            if self.decoder_type == DecoderType.PYMATCHING_CORRELATED:
+                msg = "pymatching_correlated requires circuit-level DEM decoding"
+                raise ValueError(msg)
 
             weights = [data_weight] * num_data
             check_matrix = CheckMatrix.from_dense(H.tolist()).with_weights(weights)
@@ -2836,7 +2865,7 @@ class SurfaceDecoder:
             )
 
         if self.decoder_type == DecoderType.FUSION_BLOSSOM:
-            from pecos_rslib.decoders import FusionBlossomDecoder
+            from pecos.decoders import FusionBlossomDecoder
 
             # FusionBlossom uses check matrix directly
             # For multi-round, we need to construct the space-time graph manually
@@ -2887,13 +2916,22 @@ class SurfaceDecoder:
         else:
             self._x_dem = dem
 
-        if self.decoder_type == DecoderType.PYMATCHING:
-            from pecos_rslib.decoders import PyMatchingDecoder
+        if self.decoder_type in PYMATCHING_DECODER_TYPES:
+            from pecos.decoders import PyMatchingDecoder
 
-            return PyMatchingDecoder.from_dem(dem)
+            if self.circuit_level_dem_mode == "native_full":
+                if self.decoder_type == DecoderType.PYMATCHING_CORRELATED:
+                    msg = "pymatching_correlated requires a decomposed circuit-level DEM mode"
+                    raise ValueError(msg)
+                return PyMatchingDecoder.from_dem(dem)
+
+            if self.decoder_type == DecoderType.PYMATCHING_UNCORRELATED:
+                return PyMatchingDecoder.from_dem(dem)
+
+            return PyMatchingDecoder.from_dem_with_correlations(dem, enable_correlations=True)
 
         if self.decoder_type == DecoderType.TESSERACT:
-            from pecos_rslib.decoders import TesseractDecoder
+            from pecos.decoders import TesseractDecoder
 
             # Tesseract's remove_zero_probability_errors() doesn't handle
             # DEM_LOGICAL_OBSERVABLE instructions. Filter them out - the
@@ -2911,7 +2949,7 @@ class SurfaceDecoder:
         meas_weight: float,
     ) -> Any:
         """Create FusionBlossom decoder with space-time matching graph."""
-        from pecos_rslib.decoders import FusionBlossomDecoder
+        from pecos.decoders import FusionBlossomDecoder
 
         num_stab = H.shape[0]
         num_data = H.shape[1]
@@ -2971,12 +3009,12 @@ class SurfaceDecoder:
         p_data: float,
     ) -> Any:
         """Create LDPC decoder (BP+OSD, BP+LSD, or UnionFind)."""
-        from pecos_rslib.decoders import SparseMatrix
+        from pecos.decoders import SparseMatrix
 
         sparse_H = SparseMatrix(H.tolist())
 
         if self.decoder_type == DecoderType.BP_OSD:
-            from pecos_rslib.decoders import BpOsdBuilder
+            from pecos.decoders import BpOsdBuilder
 
             return (
                 BpOsdBuilder(sparse_H, error_rate=p_data)
@@ -2988,12 +3026,12 @@ class SurfaceDecoder:
             )
 
         if self.decoder_type == DecoderType.BP_LSD:
-            from pecos_rslib.decoders import BpLsdBuilder
+            from pecos.decoders import BpLsdBuilder
 
             return BpLsdBuilder(sparse_H, error_rate=p_data).max_iter(100).bp_method("product_sum").lsd_order(0).build()
 
         if self.decoder_type == DecoderType.UNION_FIND:
-            from pecos_rslib.decoders import UnionFindBuilder
+            from pecos.decoders import UnionFindBuilder
 
             return UnionFindBuilder(sparse_H).method("inversion").build()
 
@@ -3007,7 +3045,7 @@ class SurfaceDecoder:
         _p_meas: float,
     ) -> Any:
         """Create Tesseract decoder from check matrix by generating DEM."""
-        from pecos_rslib.decoders import TesseractDecoder
+        from pecos.decoders import TesseractDecoder
 
         # Determine stabilizer type based on check matrix shape
         z_check = self._get_z_check_matrix()
@@ -3073,10 +3111,7 @@ class SurfaceDecoder:
         """Get or create decoder for X-basis memory (decodes X syndromes for Z errors)."""
         if self._x_decoder is None:
             # For PyMatching and Tesseract with circuit-level DEMs, use DEM directly
-            if self.use_circuit_level_dem and self.decoder_type in (
-                DecoderType.PYMATCHING,
-                DecoderType.TESSERACT,
-            ):
+            if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
                 self._x_decoder = self._create_decoder_from_dem("X")
             else:
                 self._x_decoder = self._create_decoder(self._get_x_check_matrix())
@@ -3086,6 +3121,8 @@ class SurfaceDecoder:
         """Check if using an MWPM or Tesseract decoder (vs LDPC)."""
         return self.decoder_type in (
             DecoderType.PYMATCHING,
+            DecoderType.PYMATCHING_CORRELATED,
+            DecoderType.PYMATCHING_UNCORRELATED,
             DecoderType.FUSION_BLOSSOM,
             DecoderType.TESSERACT,
         )
@@ -3378,10 +3415,7 @@ class SurfaceDecoder:
         final_parity = sum(final[q] for q in logical_z_qubits) % 2
 
         # DEM-based path: compute full detection events matching DEM detector order
-        if self.use_circuit_level_dem and self.decoder_type in (
-            DecoderType.PYMATCHING,
-            DecoderType.TESSERACT,
-        ):
+        if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
             events = self._compute_dem_detection_events_z(synx_list, synz_list, final, init_synx=init_synx)
             events_flat = events.ravel().astype(np.uint8)
 
@@ -3477,10 +3511,7 @@ class SurfaceDecoder:
         final_parity = sum(final[q] for q in logical_x_qubits) % 2
 
         # DEM-based path: compute full detection events matching DEM detector order
-        if self.use_circuit_level_dem and self.decoder_type in (
-            DecoderType.PYMATCHING,
-            DecoderType.TESSERACT,
-        ):
+        if self.use_circuit_level_dem and self.decoder_type in DEM_DECODER_TYPES:
             events = self._compute_dem_detection_events_x(synx_list, synz_list, final, init_synz=init_synz)
             events_flat = events.ravel().astype(np.uint8)
 
@@ -3644,6 +3675,13 @@ def _memory_noise_model(
     return NoiseModel.uniform(p)
 
 
+def _recommended_graphlike_decomposition_for_decoder(decoder_type: str) -> NativeDemDecomposition:
+    base = decoder_type.split(":", 1)[0]
+    if base in {"pymatching", "pymatching_correlated", "pymatching_uncorrelated"}:
+        return "terminal_graphlike"
+    return "source_graphlike"
+
+
 def surface_code_memory(
     *,
     distance: int = 3,
@@ -3675,6 +3713,8 @@ def surface_code_memory(
         rounds: Number of syndrome-extraction rounds. Defaults to ``distance``.
         basis: Memory basis, ``"Z"`` or ``"X"``.
         decoder_type: Decoder backend passed to ``SampleBatch.decode_count``.
+            PyMatching-family decoders use PECOS's terminal graphlike DEM
+            projection for this recommended workflow.
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
@@ -3715,6 +3755,7 @@ def surface_code_memory(
         noise=noise_model,
         basis=basis,
         decompose_errors=True,
+        dem_decomposition=_recommended_graphlike_decomposition_for_decoder(decoder_type),
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
         interaction_basis=interaction_basis,

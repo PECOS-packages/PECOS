@@ -187,6 +187,134 @@ class TestSurfaceDecoder:
         d3 = SurfaceDecoder(patch, decoder_type="bp_osd", noise=noise)
         assert d3.decoder_type.value == "bp_osd"
 
+        # Explicit PyMatching DEM-correlation modes
+        d4 = SurfaceDecoder(patch, decoder_type="pymatching_correlated", noise=noise)
+        assert d4.decoder_type.value == "pymatching_correlated"
+
+        d5 = SurfaceDecoder(patch, decoder_type="pymatching_uncorrelated", noise=noise)
+        assert d5.decoder_type.value == "pymatching_uncorrelated"
+
+    def test_circuit_level_pymatching_uses_correlations_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The production circuit-level PyMatching path should consume DEM correlation metadata."""
+        import pecos.decoders as decoders_module
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **_kwargs: object) -> str:
+            return "error(0.01) D0 ^ D1 L0\n"
+
+        class DummyPyMatchingDecoder:
+            @classmethod
+            def from_dem_with_correlations(cls, dem: str, *, enable_correlations: bool) -> object:
+                seen["method"] = "from_dem_with_correlations"
+                seen["dem"] = dem
+                seen["enable_correlations"] = enable_correlations
+                return object()
+
+            @classmethod
+            def from_dem(cls, _dem: str) -> object:
+                raise AssertionError
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+        monkeypatch.setattr(decoders_module, "PyMatchingDecoder", DummyPyMatchingDecoder)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            decoder_type="pymatching",
+            circuit_level_dem_mode="native_decomposed",
+        )
+
+        assert decoder._get_z_decoder() is not None  # noqa: SLF001
+        assert seen == {
+            "method": "from_dem_with_correlations",
+            "dem": "error(0.01) D0 ^ D1 L0\n",
+            "enable_correlations": True,
+        }
+
+    def test_circuit_level_uncorrelated_pymatching_uses_plain_dem(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The explicit uncorrelated option remains available for A/B diagnostics."""
+        import pecos.decoders as decoders_module
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **_kwargs: object) -> str:
+            return "error(0.01) D0 ^ D1 L0\n"
+
+        class DummyPyMatchingDecoder:
+            @classmethod
+            def from_dem_with_correlations(cls, _dem: str, **_kwargs: object) -> object:
+                raise AssertionError
+
+            @classmethod
+            def from_dem(cls, dem: str) -> object:
+                seen["method"] = "from_dem"
+                seen["dem"] = dem
+                return object()
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+        monkeypatch.setattr(decoders_module, "PyMatchingDecoder", DummyPyMatchingDecoder)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            decoder_type="pymatching_uncorrelated",
+            circuit_level_dem_mode="native_decomposed",
+        )
+
+        assert decoder._get_z_decoder() is not None  # noqa: SLF001
+        assert seen == {
+            "method": "from_dem",
+            "dem": "error(0.01) D0 ^ D1 L0\n",
+        }
+
+    def test_correlated_pymatching_requires_circuit_level_dem(self) -> None:
+        """The correlated option needs DEM metadata and should fail without it."""
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        decoder = SurfaceDecoder(
+            patch,
+            decoder_type="pymatching_correlated",
+            noise=noise,
+            use_circuit_level_dem=False,
+        )
+
+        with pytest.raises(ValueError, match="requires circuit-level DEM"):
+            decoder._get_z_decoder()  # noqa: SLF001
+
+    def test_correlated_pymatching_requires_decomposed_dem_mode(self) -> None:
+        """The explicit correlated option needs decomposed DEM metadata."""
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        decoder = SurfaceDecoder(
+            patch,
+            decoder_type="pymatching_correlated",
+            noise=noise,
+            circuit_level_dem_mode="native_full",
+        )
+
+        with pytest.raises(ValueError, match="requires a decomposed"):
+            decoder._get_z_decoder()  # noqa: SLF001
+
+    def test_recommended_memory_workflow_uses_terminal_graphlike_for_pymatching(self) -> None:
+        """The high-level memory helper should use the best measured graphlike projection."""
+        import pecos.qec.surface.decode as decode_module
+
+        for decoder_type in ["pymatching", "pymatching_correlated", "pymatching_uncorrelated"]:
+            assert (
+                decode_module._recommended_graphlike_decomposition_for_decoder(decoder_type)  # noqa: SLF001
+                == "terminal_graphlike"
+            )
+        assert decode_module._recommended_graphlike_decomposition_for_decoder("tesseract") == "source_graphlike"  # noqa: SLF001
+
     def test_get_dem(self) -> None:
         """Test DEM generation via decoder."""
         patch = SurfacePatch.create(distance=3)

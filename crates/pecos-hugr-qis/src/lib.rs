@@ -80,6 +80,9 @@ pub use result_tags::{extract_result_tag_measurements, measurement_op_count};
 // Re-export inkwell's OptimizationLevel for convenience
 pub use tket::hugr::llvm::inkwell::OptimizationLevel;
 
+// Re-export the QSystem platform selector used by `CompileArgs`/`HugrCompilerConfig`
+pub use tket_qsystem::QSystemPlatform;
+
 // Extension registry used throughout the crate
 
 // Convenience functions
@@ -101,6 +104,8 @@ pub struct HugrCompilerConfig {
     pub target_triple: Option<String>,
     /// Optimization level (defaults to O2)
     pub opt_level: Option<OptimizationLevel>,
+    /// Target `QSystem` platform (defaults to [`QSystemPlatform::Helios`] when `None`)
+    pub platform: Option<QSystemPlatform>,
 }
 
 impl HugrCompilerConfig {
@@ -112,6 +117,7 @@ impl HugrCompilerConfig {
             save_hugr: self.save_hugr.clone(),
             target_triple: self.target_triple.clone(),
             opt_level: self.opt_level.unwrap_or(OptimizationLevel::Default),
+            platform: self.platform.unwrap_or(QSystemPlatform::Helios),
         }
     }
 }

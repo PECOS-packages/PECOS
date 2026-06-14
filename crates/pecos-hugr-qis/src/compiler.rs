@@ -67,9 +67,6 @@ use crate::utils::read_hugr_envelope;
 
 const LLVM_MAIN: &str = "qmain";
 const METADATA: &[(&str, &[&str])] = &[("name", &["mainlib"])];
-// PECOS targets the Selene Helios QIS runtime; keep the qsystem lowering
-// platform explicit so new tket-qsystem platforms do not silently change codegen.
-const QSYSTEM_PLATFORM: QSystemPlatform = QSystemPlatform::Helios;
 
 // Extension registry is defined in the parent module
 
@@ -86,6 +83,14 @@ pub struct CompileArgs {
     pub target_triple: Option<String>,
     /// Optimization level
     pub opt_level: OptimizationLevel,
+    /// Target `QSystem` platform for lowering and codegen.
+    ///
+    /// PECOS targets the Quantinuum Helios QIS runtime (the Selene Helios
+    /// plugin), so this defaults to [`QSystemPlatform::Helios`]. Set it
+    /// explicitly to select another supported platform such as
+    /// [`QSystemPlatform::Sol`]; unsupported platforms are rejected with a
+    /// clear error when compilation starts.
+    pub platform: QSystemPlatform,
 }
 
 impl Default for CompileArgs {
@@ -96,7 +101,25 @@ impl Default for CompileArgs {
             save_hugr: None,
             target_triple: None,
             opt_level: OptimizationLevel::Default,
+            // PECOS targets the Selene Helios QIS runtime by default.
+            platform: QSystemPlatform::Helios,
         }
+    }
+}
+
+/// Reject `QSystem` platforms that PECOS has not wired through its QIS pipeline.
+///
+/// [`QSystemPlatform`] is `#[non_exhaustive]`; fail loudly on any future variant
+/// rather than silently lowering for a platform PECOS has not validated
+/// end-to-end (codegen extensions + Selene runtime).
+fn ensure_supported_platform(platform: QSystemPlatform) -> Result<()> {
+    match platform {
+        QSystemPlatform::Helios | QSystemPlatform::Sol => Ok(()),
+        other => Err(anyhow!(
+            "Unsupported QSystem platform {other:?}: pecos-hugr-qis supports Helios and Sol. \
+             Wire a newer tket-qsystem platform through the QIS codegen and Selene runtime \
+             before selecting it."
+        )),
     }
 }
 
@@ -104,13 +127,13 @@ impl Default for CompileArgs {
 ///
 /// Note: `QSystemPass` internally calls `inline_constant_functions` when the
 /// `llvm` feature is enabled, so we don't need to call it separately.
-fn process_hugr(hugr: &mut Hugr) -> Result<()> {
-    QSystemPass::defaults(QSYSTEM_PLATFORM).run(hugr)?;
+fn process_hugr(hugr: &mut Hugr, platform: QSystemPlatform) -> Result<()> {
+    QSystemPass::defaults(platform).run(hugr)?;
     Ok(())
 }
 
 /// Build codegen extensions for LLVM generation
-fn codegen_extensions() -> CodegenExtsMap<'static, Hugr> {
+fn codegen_extensions(platform: QSystemPlatform) -> CodegenExtsMap<'static, Hugr> {
     use crate::array::SeleneHeapArrayCodegen;
     let pcg = QISPreludeCodegen;
 
@@ -124,7 +147,7 @@ fn codegen_extensions() -> CodegenExtsMap<'static, Hugr> {
         .add_default_static_array_extensions()
         .add_default_borrow_array_extensions(pcg.clone())
         .add_extension(FuturesCodegenExtension)
-        .add_extension(QSystemCodegenExtension::new(QSYSTEM_PLATFORM, pcg.clone()))
+        .add_extension(QSystemCodegenExtension::new(platform, pcg.clone()))
         .add_extension(RandomCodegenExtension)
         .add_extension(ResultsCodegenExtension::new(
             SeleneHeapArrayCodegen::LOWERING,
@@ -196,7 +219,7 @@ fn get_module_with_std_exts<'c>(
     namer: Rc<Namer>,
     hugr: &'c mut Hugr,
 ) -> Result<Module<'c>> {
-    process_hugr(hugr)?;
+    process_hugr(hugr, args.platform)?;
 
     if let Some(filename) = &args.save_hugr {
         let file = fs::File::create(filename)?;
@@ -208,7 +231,7 @@ fn get_module_with_std_exts<'c>(
         namer,
         hugr,
         &args.name,
-        Rc::new(codegen_extensions()),
+        Rc::new(codegen_extensions(args.platform)),
     )
 }
 
@@ -335,6 +358,9 @@ fn compile<'c, 'hugr: 'c>(
     ctx: &'c Context,
     hugr: &'hugr mut Hugr,
 ) -> Result<Module<'c>> {
+    // Fail fast before any expensive work if the platform is unsupported.
+    ensure_supported_platform(args.platform)?;
+
     log::debug!("starting primary compilation");
     let namer = Rc::new(Namer::new("__hugr__.", true));
 

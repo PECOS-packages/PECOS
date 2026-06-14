@@ -5,6 +5,17 @@ use std::fs;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+/// Map a platform name to a [`QSystemPlatform`], failing loudly on unknown input.
+fn parse_qsystem_platform(name: &str) -> PyResult<QSystemPlatform> {
+    match name.to_ascii_lowercase().as_str() {
+        "helios" => Ok(QSystemPlatform::Helios),
+        "sol" => Ok(QSystemPlatform::Sol),
+        other => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Unknown QSystem platform {other:?}; expected 'helios' or 'sol'"
+        ))),
+    }
+}
+
 /// Compile HUGR to QIS (LLVM IR with quantum instructions)
 ///
 /// This function takes HUGR bytes (envelope format) and compiles them to QIS,
@@ -13,12 +24,22 @@ use pyo3::types::PyDict;
 /// Args:
 ///     `hugr_bytes`: HUGR program as envelope bytes
 ///     `output_path`: Optional path to write the QIS output
+///     `platform`: Target `QSystem` platform, `'helios'` (default) or `'sol'`
 ///
 /// Returns:
 ///     QIS (LLVM IR) as a string
-#[pyfunction(name = "compile_hugr_to_qis", signature = (hugr_bytes, output_path=None))]
-pub fn py_compile_hugr_to_qis(hugr_bytes: &[u8], output_path: Option<&str>) -> PyResult<String> {
-    let llvm_ir = compile_hugr_bytes_to_string(hugr_bytes)
+#[pyfunction(name = "compile_hugr_to_qis", signature = (hugr_bytes, output_path=None, platform=None))]
+pub fn py_compile_hugr_to_qis(
+    hugr_bytes: &[u8],
+    output_path: Option<&str>,
+    platform: Option<&str>,
+) -> PyResult<String> {
+    let mut args = CompileArgs::default();
+    if let Some(name) = platform {
+        args.platform = parse_qsystem_platform(name)?;
+    }
+
+    let llvm_ir = compile_hugr_bytes_to_string_with_options(hugr_bytes, &args)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
     if let Some(path) = output_path {
@@ -48,6 +69,7 @@ pub fn get_compilation_backends(py: Python<'_>) -> PyResult<Py<PyDict>> {
     backends.set_item("hugr-llvm", hugr_llvm_backend)?;
 
     result.set_item("backends", backends)?;
+    result.set_item("qsystem_platforms", vec!["helios", "sol"])?;
 
     Ok(result.into())
 }

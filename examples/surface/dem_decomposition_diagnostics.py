@@ -41,6 +41,7 @@ GRAPHLIKE_DECODER_CHOICES = [
 # virtual operations. CX-vs-SZZ p1 location comparisons include this assumption
 # as well as the gate-basis difference.
 SZZ_Z_FRAME_P1_GATE_RATES = {"Z": 0.0, "SZ": 0.0, "SZdg": 0.0}
+RESULT_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -89,12 +90,16 @@ class PairAnalysisSummary:
 
 @dataclass(frozen=True)
 class CaseResult:
+    result_schema_version: int
     distance: int
     rounds: int
     basis: str
     interaction_basis: str
     p: float
     shots: int
+    seed: int
+    pair_analysis_requested: bool
+    pair_analysis_max_effects: int
     raw_comparison: RawDemComparison
     dem_stats: dict[str, DemStats]
     decoders: list[DecodeSummary]
@@ -686,12 +691,16 @@ def run_case(
     )
 
     return CaseResult(
+        result_schema_version=RESULT_SCHEMA_VERSION,
         distance=distance,
         rounds=rounds,
         basis=basis,
         interaction_basis=interaction_basis,
         p=p,
         shots=shots,
+        seed=seed,
+        pair_analysis_requested=pair_analysis,
+        pair_analysis_max_effects=pair_analysis_max_effects,
         raw_comparison=compare_raw_dems(native_raw, stim_raw),
         dem_stats={
             "native_raw": dem_stats(native_raw),
@@ -764,15 +773,93 @@ def print_case(result: CaseResult) -> None:
         )
 
 
-def write_results_json(path: Path, results: list[CaseResult]) -> None:
+def result_payload(result: CaseResult | dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON-serializable case payload."""
+    if isinstance(result, CaseResult):
+        return asdict(result)
+    return result
+
+
+def write_results_json(path: Path, results: list[CaseResult | dict[str, Any]]) -> None:
     """Write completed case results to JSON.
 
     Diagnostics can be expensive for larger distance/round combinations, so the
     CLI writes after every finished case instead of only at process exit.
     """
-    payload = [asdict(result) for result in results]
+    payload = [result_payload(result) for result in results]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def expected_decoder_labels(args: argparse.Namespace) -> tuple[str, ...]:
+    """Return the decoder labels expected for this run configuration."""
+    labels = [] if args.skip_tesseract else [f"native_raw_tesseract_b{beam}" for beam in args.tesseract_beams]
+    labels.extend(args.decoders)
+    return tuple(labels)
+
+
+def case_key(
+    *,
+    distance: int,
+    rounds: int,
+    basis: str,
+    interaction_basis: str,
+    p: float,
+    shots: int,
+    seed: int,
+    decoder_labels: tuple[str, ...],
+    pair_analysis: bool,
+    pair_analysis_max_effects: int,
+) -> tuple[Any, ...]:
+    """Build a strict cache key for one sampled diagnostic case."""
+    return (
+        RESULT_SCHEMA_VERSION,
+        distance,
+        rounds,
+        basis,
+        interaction_basis,
+        f"{p:.17g}",
+        shots,
+        seed,
+        decoder_labels,
+        pair_analysis,
+        pair_analysis_max_effects,
+    )
+
+
+def cached_case_key(payload: dict[str, Any]) -> tuple[Any, ...] | None:
+    """Return the cache key for a saved case, or ``None`` if it is incomplete."""
+    try:
+        decoder_labels = tuple(decoder["decoder"] for decoder in payload["decoders"])
+        return (
+            payload["result_schema_version"],
+            payload["distance"],
+            payload["rounds"],
+            payload["basis"],
+            payload["interaction_basis"],
+            f"{float(payload['p']):.17g}",
+            payload["shots"],
+            payload["seed"],
+            decoder_labels,
+            payload["pair_analysis_requested"],
+            payload["pair_analysis_max_effects"],
+        )
+    except KeyError:
+        return None
+
+
+def load_cached_results(path: Path) -> tuple[list[dict[str, Any]], dict[tuple[Any, ...], dict[str, Any]]]:
+    """Load resumable diagnostic results from a previous JSON file."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError(f"Expected a list of case results in {path}")
+    results = [item for item in payload if isinstance(item, dict)]
+    by_key = {
+        key: result
+        for result in results
+        if (key := cached_case_key(result)) is not None
+    }
+    return results, by_key
 
 
 def parse_args() -> argparse.Namespace:
@@ -804,12 +891,26 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pair-analysis-max-effects", type=int, default=400)
     parser.add_argument("--save-json", type=Path, default=None)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse matching completed cases from --save-json instead of recomputing them.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    results: list[CaseResult] = []
+    if args.resume and args.save_json is None:
+        raise ValueError("--resume requires --save-json so completed cases have a source")
+
+    results: list[CaseResult | dict[str, Any]] = []
+    cached_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+    if args.resume and args.save_json is not None and args.save_json.exists():
+        results, cached_by_key = load_cached_results(args.save_json)
+        print(f"Loaded {len(cached_by_key)} resumable cases from {args.save_json}", flush=True)
+
+    decoder_labels = expected_decoder_labels(args)
     total_cases = len(args.distances) * len(args.bases) * len(args.interaction_bases) * len(args.p)
     case_index = 0
     for distance in args.distances:
@@ -822,6 +923,22 @@ def main() -> int:
                         f"d={distance} r={rounds} basis={basis} "
                         f"basis2q={interaction_basis} p={p:g} shots={args.shots}"
                     )
+                    key = case_key(
+                        distance=distance,
+                        rounds=rounds,
+                        basis=basis,
+                        interaction_basis=interaction_basis,
+                        p=p,
+                        shots=args.shots,
+                        seed=args.seed,
+                        decoder_labels=decoder_labels,
+                        pair_analysis=args.pair_analysis,
+                        pair_analysis_max_effects=args.pair_analysis_max_effects,
+                    )
+                    if key in cached_by_key:
+                        print(f"\n[{case_index}/{total_cases}] Reusing cached {label}", flush=True)
+                        continue
+
                     print(f"\n[{case_index}/{total_cases}] Starting {label}", flush=True)
                     start = time.perf_counter()
                     result = run_case(
@@ -838,6 +955,7 @@ def main() -> int:
                         pair_analysis_max_effects=args.pair_analysis_max_effects,
                     )
                     results.append(result)
+                    cached_by_key[key] = result_payload(result)
                     elapsed = time.perf_counter() - start
                     print(f"[{case_index}/{total_cases}] Finished {label} in {elapsed:.3f}s", flush=True)
                     print_case(result)

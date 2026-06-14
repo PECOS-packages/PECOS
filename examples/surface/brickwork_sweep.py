@@ -8,7 +8,7 @@ The mirrored brickwork guarantees output = |0...0>, so logical errors
 are unambiguous.
 
 Decoder names:
-    observable_subgraph:INNER  -- OSD with inner decoder (pymatching, pecos_uf:fast, etc.)
+    logical_subgraph:INNER  -- logical-subgraph decoder with inner decoder (pymatching, pecos_uf:fast, etc.)
     logical_circuit:BUDGET:INNER  -- LogicalCircuitDecoder (unlimited, windowed, 10ms, etc.)
     logical_algorithm:INNER  -- LogicalAlgorithmDecoder (full-circuit, no budget)
 
@@ -16,13 +16,13 @@ Example:
     uv run python examples/surface/brickwork_sweep.py \
         --distances 3 5 --widths 2 3 4 --depths 1 2 3 \
         --error-rates 0.001 0.002 \
-        --decoders observable_subgraph:pymatching \
+        --decoders logical_subgraph:pymatching \
         --shots 5000 --output-dir /tmp/brickwork_sweep
 
     uv run python examples/surface/brickwork_sweep.py \
         --distances 3 5 --widths 2 3 --depths 1 2 \
         --error-rates 0.001 \
-        --decoders observable_subgraph:pymatching logical_circuit:windowed:pymatching \
+        --decoders logical_subgraph:pymatching logical_circuit:windowed:pymatching \
         --shots 2000 --save-html --open
 """
 
@@ -159,7 +159,7 @@ def run_sweep(
 ) -> BrickworkShard:
     """Run the full brickwork sweep."""
     from pecos.qec.surface import SurfacePatch
-    from pecos_rslib.qec import ObservableSubgraphDecoder, ParsedDem
+    from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
 
     config = {
         "distances": distances,
@@ -230,19 +230,19 @@ def run_sweep(
                             desc = b.build_algorithm_descriptor(p1=p, p2=p, p_meas=p, p_prep=p)
                             algo = LogicalAlgorithmDecoder(desc, inner)
                             errors = algo.decode_count(batch)
-                        elif decoder_name.startswith("observable_subgraph"):
+                        elif decoder_name.startswith("logical_subgraph"):
                             parts = decoder_name.split(":", 1)
                             inner = parts[1] if len(parts) > 1 else "pymatching"
-                            osd = ObservableSubgraphDecoder(dem_str, sc, inner)
+                            decoder = LogicalSubgraphDecoder(dem_str, sc, inner)
                             # Use parallel decode for large shot counts
                             if shots >= 5000:
-                                errors = osd.decode_count_parallel(batch, dem_str, sc, inner)
+                                errors = decoder.decode_count_parallel(batch, dem_str, sc, inner)
                             else:
-                                errors = osd.decode_count(batch)
+                                errors = decoder.decode_count(batch)
                         else:
                             msg = (
                                 f"Unknown decoder: '{decoder_name}'. "
-                                f"Supported: observable_subgraph:INNER, "
+                                f"Supported: logical_subgraph:INNER, "
                                 f"logical_circuit:BUDGET:INNER, "
                                 f"logical_algorithm:INNER"
                             )
@@ -430,9 +430,9 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         "<h4>Budget strategies</h4>",
         "<p>The decoder framework selects a strategy based on the user-specified reaction time budget:</p>",
         "<ul>",
-        "<li><code>unlimited</code> &mdash; Full-circuit OSD. Maximum accuracy. "
+        "<li><code>unlimited</code> &mdash; Full-circuit logical-subgraph decoder. Maximum accuracy. "
         "Appropriate for Clifford circuits or offline analysis.</li>",
-        "<li><code>windowed</code> / <code>10ms</code> &mdash; Windowed OSD with "
+        "<li><code>windowed</code> / <code>10ms</code> &mdash; Windowed logical-subgraph decoder with "
         "overlap buffers inside each per-observable subgraph. Bounded latency, full "
         "accuracy with sufficient overlap.</li>",
         "<li><code>100us</code> / <code>1us</code> &mdash; Tight budget. Windowed "
@@ -592,7 +592,7 @@ def main():
         help="Override --depths: set depth=2^((d+1)/2) per distance",
     )
     parser.add_argument("--error-rates", type=float, nargs="+", default=[0.001])
-    parser.add_argument("--decoders", nargs="+", default=["observable_subgraph:pymatching"])
+    parser.add_argument("--decoders", nargs="+", default=["logical_subgraph:pymatching"])
     parser.add_argument("--shots", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--rounds-per-layer", type=int, default=2)
@@ -680,7 +680,7 @@ def main():
     # T-injection circuits
     if args.include_t_injection or args.t_injection_only:
         from pecos.qec.surface import SurfacePatch
-        from pecos_rslib.qec import ObservableSubgraphDecoder, ParsedDem
+        from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
 
         print("\n--- T-Injection Circuits ---")
         for d in args.distances:
@@ -721,15 +721,15 @@ def main():
                         desc = b.build_algorithm_descriptor(p1=p, p2=p, p_meas=p, p_prep=p)
                         algo = LogicalAlgorithmDecoder(desc, inner)
                         errors = algo.decode_count(batch)
-                    elif decoder_name.startswith("observable_subgraph"):
+                    elif decoder_name.startswith("logical_subgraph"):
                         parts = decoder_name.split(":", 1)
                         inner = parts[1] if len(parts) > 1 else "pymatching"
-                        osd = ObservableSubgraphDecoder(dem_str, sc, inner)
-                        errors = osd.decode_count(batch)
+                        decoder = LogicalSubgraphDecoder(dem_str, sc, inner)
+                        errors = decoder.decode_count(batch)
                     else:
                         msg = (
                             f"Unknown decoder: '{decoder_name}'. "
-                            f"Supported: observable_subgraph:INNER, "
+                            f"Supported: logical_subgraph:INNER, "
                             f"logical_circuit:BUDGET:INNER, "
                             f"logical_algorithm:INNER"
                         )

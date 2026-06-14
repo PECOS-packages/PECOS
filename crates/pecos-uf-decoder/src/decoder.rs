@@ -144,8 +144,9 @@ pub struct UfDecoder {
     adj_offset: Vec<u32>,
     /// Number of detectors.
     num_detectors: usize,
-    /// Config.
-    config: UfDecoderConfig,
+    /// Config. Crate-visible so wrappers (e.g. `BpUfDecoder`) honour the same
+    /// flags (notably `predecoder`) instead of silently ignoring them.
+    pub(crate) config: UfDecoderConfig,
 
     // === Per-shot reusable buffers ===
     /// Disjoint-set forest: parent[i] = parent of node i.
@@ -193,7 +194,44 @@ impl UfDecoder {
         &self.adj_data[start..end]
     }
 
+    /// Check that every edge weight in `graph` is non-negative.
+    ///
+    /// The predecoder's shortcut proofs ("lightest edge is the min-weight
+    /// correction", "direct pair <= boundary split") require non-negative
+    /// weights. `ln((1-p)/p)` guarantees that for priors p <= 0.5, but a raw
+    /// `error(p)` DEM line with p > 0.5 produces a negative weight. Call this
+    /// at any boundary where DEM text enters, so bad input is rejected as an
+    /// error instead of panicking in `from_matching_graph`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError::InvalidConfiguration` naming the first offending
+    /// edge (negative or NaN weight).
+    pub fn check_non_negative_weights(graph: &DemMatchingGraph) -> Result<(), DecoderError> {
+        if let Some((idx, e)) = graph
+            .edges
+            .iter()
+            .enumerate()
+            .find(|(_, e)| e.weight < 0.0 || e.weight.is_nan())
+        {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "UfDecoder requires non-negative edge weights (error priors p <= 0.5), \
+                 but edge {idx} (node {} -- {:?}) has weight {}",
+                e.node1, e.node2, e.weight,
+            )));
+        }
+        Ok(())
+    }
+
     /// Build from a `DemMatchingGraph`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any edge weight is negative or NaN: the predecoder's
+    /// optimality proofs depend on non-negative weights, so violating that
+    /// premise must fail loudly rather than silently mis-decode. Callers
+    /// holding untrusted DEM input should pre-validate with
+    /// [`Self::check_non_negative_weights`] to get an error instead.
     #[must_use]
     pub fn from_matching_graph(graph: &DemMatchingGraph, config: UfDecoderConfig) -> Self {
         let num_detectors = graph.num_detectors;
@@ -223,6 +261,17 @@ impl UfDecoder {
             temp_adj[n1 as usize].push((idx, n2));
             temp_adj[n2 as usize].push((idx, n1));
         }
+
+        // Construction-time invariant: edge weights are non-negative (true for
+        // `ln((1-p)/p)` when p <= 0.5, i.e. real sub-threshold priors). The
+        // predecoder's shortcut proofs ("lightest edge is the min-weight
+        // correction", "direct pair <= boundary split") depend on it; a negative
+        // weight would silently break them, so this is a hard assert (a raw
+        // `error(p > 0.5)` DEM line violates it). Checked once here, not per shot.
+        assert!(
+            edges.iter().all(|e| e.weight >= 0.0),
+            "UfDecoder requires non-negative edge weights (error priors p <= 0.5)"
+        );
 
         // Sort each node's adjacency by weight (lightest first).
         for adj in &mut temp_adj {
@@ -273,9 +322,12 @@ impl UfDecoder {
     ///
     /// # Errors
     ///
-    /// Returns `DecoderError` if the DEM is malformed.
+    /// Returns `DecoderError` if the DEM is malformed or contains an error
+    /// prior p > 0.5 (negative edge weight, which the predecoder's optimality
+    /// proofs do not admit).
     pub fn from_dem(dem: &str, config: UfDecoderConfig) -> Result<Self, DecoderError> {
         let graph = DemMatchingGraph::from_dem_str(dem)?;
+        Self::check_non_negative_weights(&graph)?;
         Ok(Self::from_matching_graph(&graph, config))
     }
 
@@ -456,8 +508,9 @@ impl UfDecoder {
             let root = component[di];
 
             if comp_size[root] == 1 {
-                // Isolated defect: match to boundary.
-                obs_mask ^= self.predecode_single(defect_list[di]);
+                // Isolated defect: provably optimal only if its lightest edge
+                // is a direct boundary edge; otherwise fall through (`?`).
+                obs_mask ^= self.predecode_single(defect_list[di])?;
                 handled[di] = true;
             } else if comp_size[root] == 2 {
                 // Find the other defect in this component.
@@ -473,61 +526,56 @@ impl UfDecoder {
                 let d0 = defect_list[di];
                 let d1 = defect_list[ni];
 
-                // Find lightest direct edge and lightest boundary alternatives.
-                let mut direct_w = f64::INFINITY;
-                let mut direct_obs = 0u64;
-                for &(e, nbr) in self.adj(d0 as usize) {
-                    if nbr == d1 && self.edges[e].weight < direct_w {
-                        direct_w = self.edges[e].weight;
-                        direct_obs = self.edges[e].obs_mask;
+                // Pairing the two defects directly is provably the global
+                // minimum-weight correction ONLY when the shared edge is the
+                // lightest incident edge of BOTH defects (a "mutually nearest"
+                // adjacent pair -- the signature of a single bulk fault):
+                //   - any d0-d1 path costs >= each defect's lightest edge, so
+                //     the direct edge is the cheapest pairing, and
+                //   - any split to the boundary costs >= lb0 + lb1 = 2*direct_w
+                //     > direct_w.
+                // In every other case the boundary route (possibly a
+                // logical-flipping bulk path) may be cheaper, so we fall through
+                // to the full decoder rather than guess from direct edges alone.
+                let e0 = self.adj(d0 as usize).first().copied();
+                let e1 = self.adj(d1 as usize).first().copied();
+                match (e0, e1) {
+                    (Some((edge_idx, nbr0)), Some((_, nbr1))) if nbr0 == d1 && nbr1 == d0 => {
+                        obs_mask ^= self.edges[edge_idx].obs_mask;
+                        handled[di] = true;
+                        handled[ni] = true;
                     }
+                    _ => return None,
                 }
-
-                let mut b0_w = f64::INFINITY;
-                let mut b0_obs = 0u64;
-                for &(e, nbr) in self.adj(d0 as usize) {
-                    if nbr == boundary && self.edges[e].weight < b0_w {
-                        b0_w = self.edges[e].weight;
-                        b0_obs = self.edges[e].obs_mask;
-                    }
-                }
-
-                let mut b1_w = f64::INFINITY;
-                let mut b1_obs = 0u64;
-                for &(e, nbr) in self.adj(d1 as usize) {
-                    if nbr == boundary && self.edges[e].weight < b1_w {
-                        b1_w = self.edges[e].weight;
-                        b1_obs = self.edges[e].obs_mask;
-                    }
-                }
-
-                // Pick min-weight correction.
-                if direct_w <= b0_w + b1_w {
-                    obs_mask ^= direct_obs;
-                } else {
-                    obs_mask ^= b0_obs ^ b1_obs;
-                }
-
-                handled[di] = true;
-                handled[ni] = true;
             }
         }
 
         Some(obs_mask)
     }
 
-    /// Predecode: single defect matches to boundary.
-    fn predecode_single(&self, defect: u32) -> u64 {
+    /// Predecode an isolated single defect, if it is provably optimal.
+    ///
+    /// The optimal correction for an isolated defect is the minimum-weight path
+    /// to the boundary, whose weight is at least that of the defect's lightest
+    /// incident edge (adjacency is sorted by weight, so that is `adj[0]`). The
+    /// predecoder can therefore resolve it cheaply ONLY when the lightest edge
+    /// goes directly to the boundary -- then that single edge IS the optimal
+    /// path. Otherwise the optimal path routes through the bulk (and may flip an
+    /// observable that a direct boundary edge would miss), so we return `None`
+    /// and fall through to the full decoder.
+    ///
+    /// (Returning a direct boundary edge that is not the lightest -- or `0` when
+    /// no direct boundary edge exists -- was the historical bug that broke
+    /// distance suppression: e.g. a bulk defect whose min-weight correction is a
+    /// logical-flipping path was silently decoded as no-flip.)
+    fn predecode_single(&self, defect: u32) -> Option<u64> {
         let boundary = self.num_detectors as u32;
-        // Find the lightest boundary edge from this defect.
-        // Adjacency is sorted by weight, so iterate and pick first boundary edge.
-        for &(edge_idx, neighbor) in self.adj(defect as usize) {
-            if neighbor == boundary {
-                return self.edges[edge_idx].obs_mask;
-            }
+        let &(edge_idx, neighbor) = self.adj(defect as usize).first()?;
+        if neighbor == boundary {
+            Some(self.edges[edge_idx].obs_mask)
+        } else {
+            None
         }
-        // No boundary edge found (shouldn't happen for valid surface codes).
-        0
     }
 
     /// Returns true if a cluster (given by its root) still needs to grow.

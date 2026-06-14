@@ -10,12 +10,25 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Per-observable subgraph decoder for transversal gates.
+//! Logical-operator subgraph decoder for transversal gates.
 //!
-//! Based on the insight (proved independently by Serra-Peralta et al.
-//! arXiv:2505.13599 and Cain et al. arXiv:2505.13587) that per-observable
-//! subgraphs of a transversal-gate DEM are always graphlike — even when
-//! the full DEM contains weight-3+ hyperedges.
+//! This decodes a *logical operator's subgraph of the DEM* — not the full DEM.
+//! In the Heisenberg picture a detector error model records how errors meet
+//! evolving operators: stabilizers evolve into **detectors**, logical operators
+//! evolve into **observables**. This decoder groups detectors by their
+//! stabilizer (X/Z, per qubit) and restricts the DEM to one logical operator at
+//! a time — the errors that can flip it. Each logical operator is effectively
+//! its own channel through the circuit (e.g. a transversal CX propagates
+//! `XI → XX`, `IZ → ZZ`), so the per-operator problems decouple.
+//!
+//! The payoff (proved independently by Serra-Peralta et al. arXiv:2505.13599
+//! and Cain et al. arXiv:2505.13587): restricted to one logical operator, the
+//! subgraph is always graphlike — only 1-2 detector edges, matchable — even
+//! when the full DEM contains weight-3+ hyperedges. So any MWPM-style decoder
+//! handles each piece, and the results combine.
+//!
+//! Naming: abbreviate this "LS decoder" if needed — never "LSD", which collides
+//! with BP-LSD (Localised Statistics Decoding) elsewhere in the workspace.
 //!
 //! # Algorithm
 //!
@@ -25,7 +38,7 @@
 //!    to identify which (qubit, `stab_type`) groups form its observing region
 //! 3. Extract a sub-DEM restricted to those detectors
 //! 4. Run any MWPM-compatible decoder on each subgraph independently
-//! 5. Combine per-observable corrections
+//! 5. Combine per-logical-operator corrections
 //!
 //! # Observing Region
 //!
@@ -36,245 +49,14 @@
 //! - ALL detectors in those groups form the observing region
 //! - This preserves the graphlike property of each subgraph
 
+pub mod committed;
+pub mod window_plan;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ObservableDecoder;
-use crate::dem::{DemMatchingGraph, MatchingEdge};
+use crate::dem::{DemMatchingGraph, MatchingEdge, SparseDem};
 use crate::errors::DecoderError;
-
-/// Sparse representation of a parsed DEM, avoiding the dense matrix
-/// allocation of [`DemCheckMatrix`]. Also collects detector coordinates
-/// in a single pass to avoid re-scanning the DEM string.
-struct SparseDem {
-    /// Per-mechanism: (probability, `detector_ids`, `observable_ids`).
-    mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
-    /// Detector id → coordinates (spatial + time).
-    detector_coords: BTreeMap<usize, Vec<f64>>,
-    num_detectors: usize,
-    num_observables: usize,
-}
-
-/// Parse ASCII digits into u32. Faster than `str::parse` for the common case.
-#[inline]
-fn parse_u32_fast(s: &[u8]) -> Option<u32> {
-    if s.is_empty() {
-        return None;
-    }
-    let mut n: u32 = 0;
-    for &b in s {
-        if !b.is_ascii_digit() {
-            return None;
-        }
-        n = n.wrapping_mul(10).wrapping_add(u32::from(b - b'0'));
-    }
-    Some(n)
-}
-
-impl SparseDem {
-    fn from_dem_str(dem: &str) -> Result<Self, DecoderError> {
-        // Estimate capacity: ~1 mechanism per 55 bytes of DEM string.
-        let est_mechs = dem.len() / 55;
-        let mut mechanisms = Vec::with_capacity(est_mechs);
-        let mut detector_coords = BTreeMap::new();
-        let mut max_detector: u32 = 0;
-        let mut max_observable: u32 = 0;
-        let mut has_any_detector = false;
-
-        let bytes = dem.as_bytes();
-        let mut pos = 0;
-        let len = bytes.len();
-
-        while pos < len {
-            // Skip to start of line content (skip whitespace/newlines)
-            while pos < len
-                && (bytes[pos] == b' '
-                    || bytes[pos] == b'\n'
-                    || bytes[pos] == b'\r'
-                    || bytes[pos] == b'\t')
-            {
-                pos += 1;
-            }
-            if pos >= len {
-                break;
-            }
-
-            if bytes[pos] == b'e' && pos + 6 < len && &bytes[pos..pos + 6] == b"error(" {
-                // Parse error line at byte level.
-                pos += 6;
-                // Find closing paren — probability string
-                let prob_start = pos;
-                while pos < len && bytes[pos] != b')' {
-                    pos += 1;
-                }
-                if pos >= len {
-                    return Err(DecoderError::InvalidConfiguration(
-                        "Missing ) in error line".into(),
-                    ));
-                }
-                let prob: f64 = std::str::from_utf8(&bytes[prob_start..pos])
-                    .unwrap_or("0")
-                    .parse()
-                    .map_err(|_| DecoderError::InvalidConfiguration("Bad probability".into()))?;
-                pos += 1; // skip ')'
-
-                // Scan for ^ to decide fast vs slow path
-                let line_start = pos;
-                while pos < len && bytes[pos] != b'\n' {
-                    pos += 1;
-                }
-                let line_end = pos;
-                let line_bytes = &bytes[line_start..line_end];
-
-                if line_bytes.contains(&b'^') {
-                    // Slow path: XOR decomposition
-                    let line_str = std::str::from_utf8(line_bytes).unwrap_or("");
-                    let mut det_set = BTreeSet::new();
-                    let mut obs_set = BTreeSet::new();
-                    for component in line_str.split('^') {
-                        for token in component.split_whitespace() {
-                            if let Some(d_str) = token.strip_prefix('D') {
-                                if let Some(d) = parse_u32_fast(d_str.as_bytes()) {
-                                    if !det_set.remove(&d) {
-                                        det_set.insert(d);
-                                    }
-                                    if d > max_detector {
-                                        max_detector = d;
-                                        has_any_detector = true;
-                                    }
-                                }
-                            } else if let Some(l_str) = token.strip_prefix('L')
-                                && let Some(l) = parse_u32_fast(l_str.as_bytes())
-                            {
-                                if !obs_set.remove(&l) {
-                                    obs_set.insert(l);
-                                }
-                                if l > max_observable {
-                                    max_observable = l;
-                                }
-                            }
-                        }
-                    }
-                    mechanisms.push((
-                        prob,
-                        det_set.into_iter().collect(),
-                        obs_set.into_iter().collect(),
-                    ));
-                } else {
-                    // Fast path: no XOR. Parse tokens directly into Vecs.
-                    let mut dets = Vec::with_capacity(3);
-                    let mut obs = Vec::with_capacity(1);
-                    let mut i = 0;
-                    while i < line_bytes.len() {
-                        // Skip whitespace
-                        while i < line_bytes.len() && line_bytes[i] == b' ' {
-                            i += 1;
-                        }
-                        if i >= line_bytes.len() {
-                            break;
-                        }
-
-                        if line_bytes[i] == b'D' {
-                            i += 1;
-                            let start = i;
-                            while i < line_bytes.len()
-                                && line_bytes[i] >= b'0'
-                                && line_bytes[i] <= b'9'
-                            {
-                                i += 1;
-                            }
-                            if let Some(d) = parse_u32_fast(&line_bytes[start..i]) {
-                                dets.push(d);
-                                if d > max_detector {
-                                    max_detector = d;
-                                    has_any_detector = true;
-                                }
-                            }
-                        } else if line_bytes[i] == b'L' {
-                            i += 1;
-                            let start = i;
-                            while i < line_bytes.len()
-                                && line_bytes[i] >= b'0'
-                                && line_bytes[i] <= b'9'
-                            {
-                                i += 1;
-                            }
-                            if let Some(l) = parse_u32_fast(&line_bytes[start..i]) {
-                                obs.push(l);
-                                if l > max_observable {
-                                    max_observable = l;
-                                }
-                            }
-                        } else {
-                            // Skip unknown token
-                            while i < line_bytes.len() && line_bytes[i] != b' ' {
-                                i += 1;
-                            }
-                        }
-                    }
-                    mechanisms.push((prob, dets, obs));
-                }
-            } else if bytes[pos] == b'd' && pos + 9 < len && &bytes[pos..pos + 9] == b"detector(" {
-                // Parse detector coordinate declaration.
-                pos += 9;
-                let coord_start = pos;
-                while pos < len && bytes[pos] != b')' {
-                    pos += 1;
-                }
-                if pos < len {
-                    let coord_str = std::str::from_utf8(&bytes[coord_start..pos]).unwrap_or("");
-                    let coords: Vec<f64> = coord_str
-                        .split(',')
-                        .filter_map(|s| s.trim().parse().ok())
-                        .collect();
-                    pos += 1; // skip ')'
-                    // Find detector ID: "D123"
-                    while pos < len && bytes[pos] == b' ' {
-                        pos += 1;
-                    }
-                    if pos < len && bytes[pos] == b'D' {
-                        pos += 1;
-                        let start = pos;
-                        while pos < len && bytes[pos] >= b'0' && bytes[pos] <= b'9' {
-                            pos += 1;
-                        }
-                        if let Some(d) = parse_u32_fast(&bytes[start..pos]) {
-                            detector_coords.insert(d as usize, coords);
-                            if d > max_detector {
-                                max_detector = d;
-                                has_any_detector = true;
-                            }
-                        }
-                    }
-                }
-                // Skip rest of line
-                while pos < len && bytes[pos] != b'\n' {
-                    pos += 1;
-                }
-            } else {
-                // Skip unknown line
-                while pos < len && bytes[pos] != b'\n' {
-                    pos += 1;
-                }
-            }
-        }
-
-        let has_any_obs = max_observable > 0 || mechanisms.iter().any(|(_, _, o)| !o.is_empty());
-        Ok(Self {
-            mechanisms,
-            detector_coords,
-            num_detectors: if has_any_detector {
-                max_detector as usize + 1
-            } else {
-                0
-            },
-            num_observables: if has_any_obs {
-                max_observable as usize + 1
-            } else {
-                0
-            },
-        })
-    }
-}
 
 // ============================================================================
 // Stabilizer coordinate mapping
@@ -346,7 +128,7 @@ pub fn classify_detector(x: f64, y: f64, stab_coords: &StabCoords) -> Option<Det
 
 /// A sub-DEM for one observable's observing region.
 #[derive(Debug, Clone)]
-pub struct ObservableSubgraph {
+pub struct LogicalSubgraph {
     /// Which observable this subgraph decodes.
     pub observable_idx: usize,
     /// Maps subgraph detector index → full DEM detector index.
@@ -357,7 +139,7 @@ pub struct ObservableSubgraph {
     pub graph: DemMatchingGraph,
 }
 
-/// Partition a DEM into per-observable subgraphs using stabilizer coordinates.
+/// Partition a DEM into per-logical-operator subgraphs using stabilizer coordinates.
 ///
 /// This is the correct algorithm: uses the physical structure (which detectors
 /// belong to which stabilizer type on which qubit) to determine observing
@@ -372,8 +154,10 @@ pub struct ObservableSubgraph {
 ///
 /// # Errors
 ///
-/// Returns error if the DEM is malformed or detector coordinates don't
-/// match any stabilizer position.
+/// Returns an error if the DEM is malformed, if a detector used in an error
+/// mechanism has coordinates that match no stabilizer position in
+/// `stab_coords`, or if the DEM declares more than 64 observables (the u64
+/// observable mask cannot hold more).
 ///
 /// Extra time padding around each boundary edge.
 /// `None` = exact boundary edge times only (default, matches lomatching).
@@ -381,44 +165,116 @@ pub struct ObservableSubgraph {
 /// edge time `t`, for additional matching context.
 pub type MaxTimeRadius = Option<i64>;
 
-pub fn partition_dem_by_observable(
+pub fn partition_dem_by_logical(
     dem_str: &str,
     stab_coords: &StabCoords,
-) -> Result<Vec<ObservableSubgraph>, DecoderError> {
-    partition_dem_by_observable_windowed(dem_str, stab_coords, None)
+) -> Result<Vec<LogicalSubgraph>, DecoderError> {
+    partition_dem_by_logical_windowed(dem_str, stab_coords, None)
 }
 
-pub fn partition_dem_by_observable_windowed(
+pub fn partition_dem_by_logical_windowed(
     dem_str: &str,
     stab_coords: &StabCoords,
     max_time_radius: MaxTimeRadius,
-) -> Result<Vec<ObservableSubgraph>, DecoderError> {
-    // Single-pass sparse DEM parsing: mechanisms + detector coordinates.
+) -> Result<Vec<LogicalSubgraph>, DecoderError> {
+    // Region source (coordinate classification) -> shared subgraph extractor.
     let sdem = SparseDem::from_dem_str(dem_str)?;
+    let membership = coordinate_membership_from_dem(&sdem, stab_coords, max_time_radius)?;
+    subgraphs_from_membership(&sdem, &membership)
+}
+
+/// Per-observable detector membership: entry `k` is the sorted full-DEM detector
+/// ids in logical observable `k`'s observing region.
+///
+/// This is the seam between a *region source* and the *subgraph extractor*
+/// ([`subgraphs_from_membership`]). The coordinate region source lives here
+/// ([`coordinate_membership_from_dem`]); a back-propagation source can live in a
+/// higher crate (e.g. `pecos-qec`) — it only needs to produce this same
+/// membership and hand it down, which preserves the `pecos-qec ->
+/// pecos-decoder-core` dependency direction.
+pub type ObservingRegions = Vec<Vec<usize>>;
+
+/// Region source: derive each observable's detector membership from the DEM's
+/// spatial stabilizer coordinates and boundary edges.
+///
+/// This is the algorithm `lomatching` ships for vertex selection
+/// (`get_detector_indices_for_subgraphs`): find the 1-detector mechanisms that
+/// flip each observable, bucket their detectors into `(qubit, stab_type)` groups
+/// by coordinate, and include every detector of those groups at the boundary
+/// times. `max_time_radius` widens the per-time inclusion (default `None` =
+/// exact boundary times, matching lomatching).
+///
+/// # Errors
+///
+/// Returns an error if a detector used in an error mechanism has coordinates
+/// that match no stabilizer position in `stab_coords`.
+pub fn coordinate_membership_from_dem(
+    sdem: &SparseDem,
+    stab_coords: &StabCoords,
+    max_time_radius: MaxTimeRadius,
+) -> Result<ObservingRegions, DecoderError> {
     let coord_map = &sdem.detector_coords;
 
-    // Classify each detector into a (qubit, stab_type) group.
-    let mut det_group: Vec<Option<DetectorGroup>> = vec![None; sdem.num_detectors];
-    let mut group_detectors: BTreeMap<DetectorGroup, BTreeSet<usize>> = BTreeMap::new();
-
-    for (d, group_slot) in det_group.iter_mut().enumerate().take(sdem.num_detectors) {
-        if let Some(coords) = coord_map.get(&d)
-            && coords.len() >= 2
-        {
-            let (x, y) = (coords[0], coords[1]);
-            if let Some(group) = classify_detector(x, y, stab_coords) {
-                *group_slot = Some(group);
-                group_detectors.entry(group).or_default().insert(d);
+    // Detectors that appear in an error mechanism are the only ones that affect
+    // decoding. Any such detector that fails to classify would be silently
+    // dropped from every observing region and corrupt the decode, so treat that
+    // as a configuration error rather than a silent fallback. Detectors that are
+    // declared but never used (numbering gaps, unused ancillas) are ignored.
+    let mut used = vec![false; sdem.num_detectors];
+    for (_, dets, _) in &sdem.mechanisms {
+        for &d in dets {
+            if (d as usize) < sdem.num_detectors {
+                used[d as usize] = true;
             }
         }
     }
 
-    // For each observable, find its observing region.
-    let mut subgraphs = Vec::with_capacity(sdem.num_observables);
+    // Classify each detector into a (qubit, stab_type) group.
+    let mut det_group: Vec<Option<DetectorGroup>> = vec![None; sdem.num_detectors];
+    let mut group_detectors: BTreeMap<DetectorGroup, BTreeSet<usize>> = BTreeMap::new();
+    let mut unclassified: Vec<usize> = Vec::new();
+
+    for (d, group_slot) in det_group.iter_mut().enumerate().take(sdem.num_detectors) {
+        let group = match coord_map.get(&d) {
+            Some(coords) if coords.len() >= 2 => {
+                classify_detector(coords[0], coords[1], stab_coords)
+            }
+            _ => None,
+        };
+        match group {
+            Some(g) => {
+                *group_slot = Some(g);
+                group_detectors.entry(g).or_default().insert(d);
+            }
+            None if used[d] => unclassified.push(d),
+            None => {}
+        }
+    }
+
+    if !unclassified.is_empty() {
+        let shown: Vec<String> = unclassified
+            .iter()
+            .take(5)
+            .map(|&d| match coord_map.get(&d) {
+                Some(c) => format!("D{d} at {c:?}"),
+                None => format!("D{d} (no coordinates)"),
+            })
+            .collect();
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "{} detector(s) used in error mechanisms could not be classified against \
+             stab_coords (missing coordinates, or a coordinate scale / completeness \
+             mismatch). Examples: {}",
+            unclassified.len(),
+            shown.join(", "),
+        )));
+    }
+
+    // For each observable, collect its observing region.
+    let mut membership: ObservingRegions = Vec::with_capacity(sdem.num_observables);
 
     for obs_idx in 0..sdem.num_observables {
-        // Step 1: Find boundary edges — 1-detector mechanisms that flip
-        // this observable. Collect (group, time) from each boundary detector.
+        // Step 1: Find boundary edges — 1-detector mechanisms that flip this
+        // observable. Collect (group, time) from each boundary detector.
         let mut group_times: BTreeMap<DetectorGroup, BTreeSet<i64>> = BTreeMap::new();
 
         for (_, dets, obs) in &sdem.mechanisms {
@@ -437,11 +293,11 @@ pub fn partition_dem_by_observable_windowed(
             }
         }
 
-        // Step 2: For each (group, time) boundary edge, include ALL
-        // detectors of that group at that time. This matches lomatching's
-        // per-time-step approach: detectors are included only at times
-        // where boundary edges exist, not across the full time range.
-        // With max_time_radius, extend each boundary time by ±radius.
+        // Step 2: For each (group, time) boundary edge, include ALL detectors of
+        // that group at that time. This matches lomatching's per-time-step
+        // approach: detectors are included only at times where boundary edges
+        // exist, not across the full time range. With max_time_radius, extend
+        // each boundary time by ±radius.
         let mut region_detectors = BTreeSet::new();
         for (group, times) in &group_times {
             if let Some(dets) = group_detectors.get(group) {
@@ -462,8 +318,39 @@ pub fn partition_dem_by_observable_windowed(
             }
         }
 
-        if region_detectors.is_empty() {
-            subgraphs.push(ObservableSubgraph {
+        membership.push(region_detectors.into_iter().collect());
+    }
+
+    Ok(membership)
+}
+
+/// Subgraph extractor: turn per-observable detector membership into decodable
+/// graphlike subgraphs. The membership may come from any region source — the
+/// coordinate one ([`coordinate_membership_from_dem`]) or a back-propagation
+/// builder in a higher crate.
+///
+/// # Errors
+///
+/// Returns an error if `membership` has more than 64 entries: observable flips
+/// are packed into a u64 mask (bit `i` = observable `i`), so any region source
+/// feeding this extractor inherits the 64-observable limit.
+pub fn subgraphs_from_membership(
+    sdem: &SparseDem,
+    membership: &[Vec<usize>],
+) -> Result<Vec<LogicalSubgraph>, DecoderError> {
+    if membership.len() > 64 {
+        return Err(DecoderError::InvalidConfiguration(format!(
+            "LogicalSubgraphDecoder packs observable flips into a u64 mask and \
+             supports at most 64 observables, but got membership for {}",
+            membership.len(),
+        )));
+    }
+
+    let mut subgraphs = Vec::with_capacity(membership.len());
+
+    for (obs_idx, detectors) in membership.iter().enumerate() {
+        if detectors.is_empty() {
+            subgraphs.push(LogicalSubgraph {
                 observable_idx: obs_idx,
                 detector_map: Vec::new(),
                 inverse_map: vec![None; sdem.num_detectors],
@@ -478,14 +365,25 @@ pub fn partition_dem_by_observable_windowed(
             continue;
         }
 
-        // Step 3: Build detector mapping.
-        let detector_map: Vec<usize> = region_detectors.into_iter().collect();
+        // Build detector mapping (full DEM id -> subgraph-local index).
+        // Validate caller-provided ids first: an out-of-range id would index
+        // past `inverse_map` and panic, so return a decoder error instead.
+        let detector_map: Vec<usize> = detectors.clone();
+        if let Some(&bad) = detector_map.iter().find(|&&d| d >= sdem.num_detectors) {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "subgraphs_from_membership: observable {obs_idx} membership references \
+                 detector {bad}, but the DEM has only {} detectors (D0..D{})",
+                sdem.num_detectors,
+                sdem.num_detectors.saturating_sub(1),
+            )));
+        }
         let mut inverse_map = vec![None; sdem.num_detectors];
         for (sub_idx, &full_idx) in detector_map.iter().enumerate() {
             inverse_map[full_idx] = Some(sub_idx);
         }
 
-        // Step 4: Extract edges for this subgraph.
+        // Extract edges for this subgraph by projecting mechanisms onto the
+        // membership detectors.
         let mut edges = Vec::new();
         let mut skipped = 0;
 
@@ -494,7 +392,6 @@ pub fn partition_dem_by_observable_windowed(
                 continue;
             }
 
-            // Map mechanism detectors to subgraph indices.
             let sub_dets: Vec<u32> = dets
                 .iter()
                 .filter_map(|&d| inverse_map[d as usize].map(|s| s as u32))
@@ -532,7 +429,7 @@ pub fn partition_dem_by_observable_windowed(
         let num_sub = detector_map.len();
         let edges = DemMatchingGraph::merge_parallel_edges(edges);
 
-        subgraphs.push(ObservableSubgraph {
+        subgraphs.push(LogicalSubgraph {
             observable_idx: obs_idx,
             detector_map,
             inverse_map,
@@ -553,19 +450,19 @@ pub fn partition_dem_by_observable_windowed(
 // Decoder
 // ============================================================================
 
-/// Per-observable subgraph decoder.
+/// Per-logical-operator subgraph decoder.
 ///
 /// Wraps a factory function that creates per-subgraph inner decoders.
 /// Any `ObservableDecoder` works as the inner decoder (UF, Fusion Blossom,
 /// perturbed ensemble, etc.).
-pub struct ObservableSubgraphDecoder {
-    subgraphs: Vec<ObservableSubgraph>,
+pub struct LogicalSubgraphDecoder {
+    subgraphs: Vec<LogicalSubgraph>,
     decoders: Vec<Box<dyn ObservableDecoder + Send + Sync>>,
     num_observables: usize,
     sub_syndromes: Vec<Vec<u8>>,
 }
 
-impl ObservableSubgraphDecoder {
+impl LogicalSubgraphDecoder {
     /// Build from a DEM string, stabilizer coordinates, and inner decoder factory.
     ///
     /// # Errors
@@ -595,7 +492,49 @@ impl ObservableSubgraphDecoder {
             &DemMatchingGraph,
         ) -> Result<Box<dyn ObservableDecoder + Send + Sync>, DecoderError>,
     {
-        let subgraphs = partition_dem_by_observable_windowed(dem, stab_coords, max_time_radius)?;
+        let subgraphs = partition_dem_by_logical_windowed(dem, stab_coords, max_time_radius)?;
+        let num_observables = subgraphs.len();
+
+        let mut decoders = Vec::with_capacity(subgraphs.len());
+        let mut sub_syndromes = Vec::with_capacity(subgraphs.len());
+        for sg in &subgraphs {
+            decoders.push(factory(&sg.graph)?);
+            sub_syndromes.push(vec![0u8; sg.detector_map.len()]);
+        }
+
+        Ok(Self {
+            subgraphs,
+            decoders,
+            num_observables,
+            sub_syndromes,
+        })
+    }
+
+    /// Build from a precomputed per-observable detector membership instead of
+    /// from `stab_coords`.
+    ///
+    /// The membership may come from ANY region source — the coordinate path
+    /// ([`coordinate_membership_from_dem`]) or a back-propagation / detecting-
+    /// region source. This is the entry point for comparing alternative
+    /// observing-region constructions (e.g. the paper's back-propagation region
+    /// vs the coordinate group-fill) on the same DEM and decoders.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DEM is malformed, the membership has more than 64
+    /// entries, or the factory fails.
+    pub fn from_membership<F>(
+        dem: &str,
+        membership: &[Vec<usize>],
+        mut factory: F,
+    ) -> Result<Self, DecoderError>
+    where
+        F: FnMut(
+            &DemMatchingGraph,
+        ) -> Result<Box<dyn ObservableDecoder + Send + Sync>, DecoderError>,
+    {
+        let sdem = SparseDem::from_dem_str(dem)?;
+        let subgraphs = subgraphs_from_membership(&sdem, membership)?;
         let num_observables = subgraphs.len();
 
         let mut decoders = Vec::with_capacity(subgraphs.len());
@@ -621,8 +560,36 @@ impl ObservableSubgraphDecoder {
 
     /// Access a subgraph.
     #[must_use]
-    pub fn subgraph(&self, obs_idx: usize) -> Option<&ObservableSubgraph> {
+    pub fn subgraph(&self, obs_idx: usize) -> Option<&LogicalSubgraph> {
         self.subgraphs.get(obs_idx)
+    }
+
+    /// Build a coord-preserving per-observable window plan from these subgraphs
+    /// and the full-DEM detector coordinates (indexed by global detector id).
+    ///
+    /// Subgraph matching graphs drop detector coordinates, so the windowed
+    /// decoders need the full-DEM coords re-injected to time-window correctly.
+    /// The plan also reports whether real windowing would happen or it
+    /// degenerates to a single-window full decode (see
+    /// [`window_plan::LogicalSubgraphWindowPlan`]).
+    #[must_use]
+    pub fn window_plan(
+        &self,
+        full_coords: &[Option<Vec<f64>>],
+    ) -> window_plan::LogicalSubgraphWindowPlan {
+        window_plan::LogicalSubgraphWindowPlan::new(&self.subgraphs, full_coords)
+    }
+
+    /// Per-observable observing regions: entry `k` is the sorted full-DEM
+    /// detector ids in observable `k`'s subgraph. This is the membership the
+    /// region source produced — exposed for differential testing against
+    /// reference implementations (e.g. lomatching).
+    #[must_use]
+    pub fn observing_regions(&self) -> ObservingRegions {
+        self.subgraphs
+            .iter()
+            .map(|sg| sg.detector_map.clone())
+            .collect()
     }
 
     /// Batch decode multiple syndromes, returning error count.
@@ -643,12 +610,7 @@ impl ObservableSubgraphDecoder {
         // Per-shot observable predictions, accumulated across subgraphs.
         let mut shot_obs: Vec<u64> = vec![0u64; num_shots];
 
-        for (i, (sg, dec)) in self
-            .subgraphs
-            .iter()
-            .zip(self.decoders.iter_mut())
-            .enumerate()
-        {
+        for (sg, dec) in self.subgraphs.iter().zip(self.decoders.iter_mut()) {
             let n = sg.detector_map.len();
             if n == 0 {
                 continue;
@@ -672,7 +634,9 @@ impl ObservableSubgraphDecoder {
 
             for (shot_idx, &sub_obs) in sub_masks.iter().enumerate() {
                 if sub_obs & 1 != 0 {
-                    shot_obs[shot_idx] |= 1 << i;
+                    // Flip the subgraph's GLOBAL observable bit, not the list
+                    // position: construction guarantees < 64 observables.
+                    shot_obs[shot_idx] |= 1u64 << sg.observable_idx;
                 }
             }
         }
@@ -688,7 +652,7 @@ impl ObservableSubgraphDecoder {
     }
 }
 
-impl ObservableDecoder for ObservableSubgraphDecoder {
+impl ObservableDecoder for LogicalSubgraphDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         let mut obs_mask = 0u64;
 
@@ -715,7 +679,9 @@ impl ObservableDecoder for ObservableSubgraphDecoder {
             let sub_obs = dec.decode_to_observables(&buf[..n])?;
 
             if sub_obs & 1 != 0 {
-                obs_mask |= 1 << i;
+                // Flip the subgraph's GLOBAL observable bit, not the list
+                // position: construction guarantees < 64 observables.
+                obs_mask |= 1u64 << sg.observable_idx;
             }
         }
 
@@ -723,13 +689,13 @@ impl ObservableDecoder for ObservableSubgraphDecoder {
     }
 }
 
-/// Parallel per-observable subgraph decoder using rayon.
-pub struct ParallelObservableSubgraphDecoder {
-    subgraphs: Vec<ObservableSubgraph>,
+/// Parallel per-logical-operator subgraph decoder using rayon.
+pub struct ParallelLogicalSubgraphDecoder {
+    subgraphs: Vec<LogicalSubgraph>,
     decoders: Vec<std::sync::Mutex<Box<dyn ObservableDecoder + Send>>>,
 }
 
-impl ParallelObservableSubgraphDecoder {
+impl ParallelLogicalSubgraphDecoder {
     /// Build from a DEM string, stabilizer coordinates, and inner decoder factory.
     ///
     /// # Errors
@@ -743,7 +709,7 @@ impl ParallelObservableSubgraphDecoder {
     where
         F: FnMut(&DemMatchingGraph) -> Result<Box<dyn ObservableDecoder + Send>, DecoderError>,
     {
-        let subgraphs = partition_dem_by_observable(dem, stab_coords)?;
+        let subgraphs = partition_dem_by_logical(dem, stab_coords)?;
 
         let mut decoders = Vec::with_capacity(subgraphs.len());
         for sg in &subgraphs {
@@ -790,9 +756,11 @@ impl ParallelObservableSubgraphDecoder {
             .collect();
 
         let mut obs_mask = 0u64;
-        for (i, result) in results.into_iter().enumerate() {
+        for (sg, result) in self.subgraphs.iter().zip(results) {
             if result? {
-                obs_mask |= 1 << i;
+                // Flip the subgraph's GLOBAL observable bit, not the list
+                // position: construction guarantees < 64 observables.
+                obs_mask |= 1u64 << sg.observable_idx;
             }
         }
         Ok(obs_mask)
@@ -876,7 +844,7 @@ mod tests {
             "error(0.01) D0 L0\n", // boundary edge → D0 is (qubit 0, X)
         );
         let sc = simple_stab_coords();
-        let sgs = partition_dem_by_observable(dem, &sc).unwrap();
+        let sgs = partition_dem_by_logical(dem, &sc).unwrap();
         assert_eq!(sgs.len(), 1);
         // Boundary edge D0 L0 → D0 is qubit 0 X-type.
         // Observing region = all qubit-0 X-type detectors = {D0}.
@@ -885,6 +853,110 @@ mod tests {
         // observing region. The edge D0-D1 projects to D0-boundary within
         // the subgraph.
         assert_eq!(sgs[0].detector_map, vec![0]);
+    }
+
+    #[test]
+    fn test_membership_seam_matches_partition() {
+        // coordinate_membership_from_dem + subgraphs_from_membership must equal
+        // the all-in-one partition (the seam is behaviour-preserving).
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n",
+            "detector(0, 1, 0) D1\n",
+            "detector(3, 0, 0) D2\n",
+            "detector(2, 1, 0) D3\n",
+            "error(0.01) D0 L0\n",
+            "error(0.01) D0 D1\n",
+            "error(0.01) D2 L1\n",
+            "error(0.01) D2 D3\n",
+        );
+        let sc = simple_stab_coords();
+
+        let sdem = SparseDem::from_dem_str(dem).unwrap();
+        let membership = coordinate_membership_from_dem(&sdem, &sc, None).unwrap();
+        assert_eq!(membership, vec![vec![0usize], vec![2usize]]);
+
+        let via_seam = subgraphs_from_membership(&sdem, &membership).unwrap();
+        let direct = partition_dem_by_logical(dem, &sc).unwrap();
+        assert_eq!(via_seam.len(), direct.len());
+        for (a, b) in via_seam.iter().zip(direct.iter()) {
+            assert_eq!(a.detector_map, b.detector_map);
+        }
+    }
+
+    #[test]
+    fn test_subgraphs_from_external_membership() {
+        // A region source (e.g. a future back-propagation builder) can hand in
+        // its own membership and the extractor builds the subgraphs from it.
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n",
+            "detector(1, 0, 1) D1\n",
+            "error(0.01) D0 L0\n",
+            "error(0.01) D0 D1\n",
+        );
+        let sdem = SparseDem::from_dem_str(dem).unwrap();
+        // Membership the coordinate path would NOT produce on its own (both times).
+        let membership = vec![vec![0usize, 1usize]];
+        let sgs = subgraphs_from_membership(&sdem, &membership).unwrap();
+        assert_eq!(sgs.len(), 1);
+        assert_eq!(sgs[0].detector_map, vec![0, 1]);
+
+        // >64 observable membership is rejected by the extractor regardless of source.
+        let big: Vec<Vec<usize>> = (0..65).map(|_| Vec::new()).collect();
+        assert!(matches!(
+            subgraphs_from_membership(&sdem, &big),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
+
+        // An out-of-range membership detector id must error, not panic
+        // (the DEM has 2 detectors D0,D1; detector 5 is past `inverse_map`).
+        assert!(matches!(
+            subgraphs_from_membership(&sdem, &[vec![5usize]]),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
+    }
+
+    #[test]
+    fn test_membership_exact_time_vs_radius() {
+        // D0 and D1 are both qubit-0 X at times 0 and 1. The boundary edge is at
+        // time 0. Default (None) includes only the boundary time; a radius pulls
+        // in the neighbouring time step.
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n", // qubit 0 X, time 0
+            "detector(1, 0, 1) D1\n", // qubit 0 X, time 1
+            "error(0.01) D0 L0\n",    // boundary at time 0
+            "error(0.01) D0 D1\n",
+        );
+        let sc = simple_stab_coords();
+        let sdem = SparseDem::from_dem_str(dem).unwrap();
+
+        let exact = coordinate_membership_from_dem(&sdem, &sc, None).unwrap();
+        assert_eq!(exact, vec![vec![0usize]], "None = exact boundary time only");
+
+        let widened = coordinate_membership_from_dem(&sdem, &sc, Some(1)).unwrap();
+        assert_eq!(
+            widened,
+            vec![vec![0usize, 1usize]],
+            "radius pulls in time 1"
+        );
+    }
+
+    #[test]
+    fn test_decomposed_mechanism_partitions() {
+        // A `^`-decomposed mechanism is XOR-combined into one 2-detector
+        // mechanism, so it is NOT a boundary edge and does not seed the region;
+        // the single-detector `D0 L0` does. Partition must still succeed.
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n",
+            "detector(0, 1, 0) D1\n",
+            "error(0.01) D0 L0\n",      // boundary → qubit 0 X
+            "error(0.02) D0 ^ D1 L0\n", // decomposed; XOR -> {D0, D1}
+        );
+        let sc = simple_stab_coords();
+        let sdem = SparseDem::from_dem_str(dem).unwrap();
+        // The `^` line parsed as one mechanism with both detectors.
+        assert_eq!(sdem.mechanisms.len(), 2);
+        let membership = coordinate_membership_from_dem(&sdem, &sc, None).unwrap();
+        assert_eq!(membership, vec![vec![0usize]]); // D1 (qubit-0 Z) excluded
     }
 
     #[test]
@@ -900,7 +972,7 @@ mod tests {
             "error(0.01) D2 D3\n", // D2-D3 edge
         );
         let sc = simple_stab_coords();
-        let sgs = partition_dem_by_observable(dem, &sc).unwrap();
+        let sgs = partition_dem_by_logical(dem, &sc).unwrap();
         assert_eq!(sgs.len(), 2);
         assert_eq!(sgs[0].detector_map, vec![0]); // qubit 0 X-type only
         assert_eq!(sgs[1].detector_map, vec![2]); // qubit 1 X-type only
@@ -915,7 +987,7 @@ mod tests {
             "error(0.01) D1 L1\n",
         );
         let sc = simple_stab_coords();
-        let mut dec = ObservableSubgraphDecoder::from_dem(dem, &sc, |_| {
+        let mut dec = LogicalSubgraphDecoder::from_dem(dem, &sc, |_| {
             Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>)
         })
         .unwrap();
@@ -930,6 +1002,67 @@ mod tests {
     }
 
     #[test]
+    fn test_unclassified_used_detector_errors() {
+        // D1 is used in a mechanism but sits at coords matching no stabilizer.
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n",
+            "detector(99, 99, 0) D1\n",
+            "error(0.01) D0 L0\n",
+            "error(0.01) D0 D1\n", // D1 used here, but won't classify
+        );
+        let sc = simple_stab_coords();
+        let err = partition_dem_by_logical(dem, &sc).unwrap_err();
+        assert!(
+            matches!(err, DecoderError::InvalidConfiguration(_)),
+            "expected InvalidConfiguration, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_unclassified_unused_detector_ignored() {
+        // D1 has bad coords but is never used in a mechanism -> ignored, no error.
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n",
+            "detector(99, 99, 0) D1\n",
+            "error(0.01) D0 L0\n",
+        );
+        let sc = simple_stab_coords();
+        assert!(partition_dem_by_logical(dem, &sc).is_ok());
+    }
+
+    #[test]
+    fn test_single_detector_d0() {
+        // Regression: a DEM whose only detector is D0 must parse with
+        // num_detectors == 1 (not 0). D0 used to never set has_any_detector
+        // because `0 > max_detector` is false, yielding an empty det_group
+        // and an out-of-bounds panic downstream.
+        let dem = concat!(
+            "detector(1, 0, 0) D0\n", // qubit 0 X
+            "error(0.01) D0 L0\n",    // boundary edge on D0
+        );
+        let sc = simple_stab_coords();
+        let sgs = partition_dem_by_logical(dem, &sc).unwrap();
+        assert_eq!(sgs.len(), 1);
+        assert_eq!(sgs[0].detector_map, vec![0]);
+    }
+
+    #[test]
+    fn test_too_many_observables_errors() {
+        // 65 observables exceeds the u64 mask capacity.
+        use std::fmt::Write;
+        let mut dem = String::from("detector(1, 0, 0) D0\n");
+        for l in 0..65 {
+            writeln!(dem, "error(0.01) D0 L{l}").unwrap();
+        }
+        let sc = simple_stab_coords();
+        let err = partition_dem_by_logical(&dem, &sc).unwrap_err();
+        assert!(
+            matches!(err, DecoderError::InvalidConfiguration(_)),
+            "expected InvalidConfiguration, got {err:?}"
+        );
+    }
+
+    #[test]
     fn test_parallel_decoder() {
         let dem = concat!(
             "detector(1, 0, 0) D0\n",
@@ -938,7 +1071,7 @@ mod tests {
             "error(0.01) D1 L1\n",
         );
         let sc = simple_stab_coords();
-        let dec = ParallelObservableSubgraphDecoder::from_dem(dem, &sc, |_| {
+        let dec = ParallelLogicalSubgraphDecoder::from_dem(dem, &sc, |_| {
             Ok(Box::new(NullDecoder) as Box<dyn ObservableDecoder + Send>)
         })
         .unwrap();

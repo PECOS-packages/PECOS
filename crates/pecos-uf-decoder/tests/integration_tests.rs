@@ -171,3 +171,38 @@ fn test_buffer_reuse_correctness() {
         let _ = dec.decode_syndrome(&defect_syndrome);
     }
 }
+
+/// A DEM line with an error prior p > 0.5 produces a negative edge weight
+/// (`ln((1-p)/p) < 0`), which the predecoder's optimality proofs do not admit.
+/// The DEM-text constructors must reject it as an error, not mis-decode.
+#[test]
+fn test_from_dem_rejects_negative_weight_priors() {
+    let dem = "error(0.6) D0 L0\nerror(0.01) D0 D1\n";
+    assert!(UfDecoder::from_dem(dem, UfDecoderConfig::balanced()).is_err());
+    assert!(
+        pecos_uf_decoder::BpUfDecoder::from_dem(dem, pecos_uf_decoder::BpUfConfig::balanced())
+            .is_err()
+    );
+    assert!(
+        pecos_uf_decoder::CssUfDecoder::from_dems(dem, dem, UfDecoderConfig::balanced()).is_err()
+    );
+}
+
+/// The graph-level constructor asserts the same premise loudly for callers
+/// that build graphs directly (contract violation, not user input).
+#[test]
+#[should_panic(expected = "non-negative edge weights")]
+fn test_from_matching_graph_asserts_non_negative_weights() {
+    let dem = "error(0.6) D0 L0\n";
+    let graph = DemMatchingGraph::from_dem_str(dem).unwrap();
+    let _ = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::balanced());
+}
+
+/// Weight-zero edges (p = 0.5) are benign: the shortcut proofs hold as ties.
+#[test]
+fn test_from_dem_accepts_weight_zero_edges() {
+    let dem = "error(0.5) D0 L0\nerror(0.01) D0 D1\n";
+    let mut dec = UfDecoder::from_dem(dem, UfDecoderConfig::balanced()).unwrap();
+    let syndrome = vec![0u8; dec.num_detectors()];
+    assert_eq!(dec.decode_syndrome(&syndrome), 0);
+}

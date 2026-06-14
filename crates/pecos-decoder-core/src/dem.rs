@@ -103,7 +103,11 @@ pub mod utils {
     /// Returns [`DecoderError`] if the DEM format is invalid
     pub fn parse_dem_metadata(dem: &str) -> Result<(usize, usize), DecoderError> {
         let mut max_detector = None;
-        let mut observables = std::collections::BTreeSet::new();
+        // Count as `max index + 1` (not distinct-id count) to match the other
+        // parsers (`SparseDem`, `DemCheckMatrix`, `DemMatchingGraph`) and to size
+        // index-addressed buffers correctly when ids are non-contiguous
+        // (e.g. only `L2` present -> 3 observables, not 1).
+        let mut max_observable: Option<usize> = None;
 
         for line in dem.lines() {
             let line = line.trim();
@@ -111,21 +115,38 @@ pub mod utils {
                 continue;
             }
 
+            // This is a flat single-pass counter; reject loop/offset commands
+            // rather than miscounting them (same contract as the other parsers).
+            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
+                return Err(DecoderError::InvalidConfiguration(
+                    "parse_dem_metadata requires a flattened DEM: `repeat` / \
+                     `shift_detectors` are not supported. Flatten the DEM first."
+                        .into(),
+                ));
+            }
+
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.is_empty() {
                 continue;
             }
 
-            // Handle commands with probability parameters like "error(0.01)"
+            // Normalize commands that carry parenthesized parameters:
+            // `error(0.01) ...` and `detector(x,y,t) Dk`. Stim emits bare
+            // `detector Dk` for declarations without coordinates; that form
+            // already matches via `parts[0]` below.
             let command = if parts[0].starts_with("error(") {
                 "error"
+            } else if parts[0].starts_with("detector(") {
+                "detector"
             } else {
                 parts[0]
             };
 
             match command {
-                "error" => {
-                    // Parse error line for detector and observable indices
+                // `error` and `logical_observable` both contribute observable
+                // ids; `logical_observable` declares deterministic logicals that
+                // Stim emits with no flipping mechanism but still count.
+                "error" | "logical_observable" => {
                     for part in &parts[1..] {
                         if let Some(d_str) = part.strip_prefix('D') {
                             if let Ok(d) = d_str.parse::<usize>() {
@@ -134,7 +155,7 @@ pub mod utils {
                         } else if let Some(l_str) = part.strip_prefix('L')
                             && let Ok(l) = l_str.parse::<usize>()
                         {
-                            observables.insert(l);
+                            max_observable = Some(max_observable.map_or(l, |m: usize| m.max(l)));
                         }
                     }
                 }
@@ -153,7 +174,7 @@ pub mod utils {
         }
 
         let detector_count = max_detector.map_or(0, |m| m + 1);
-        let observable_count = observables.len();
+        let observable_count = max_observable.map_or(0, |m| m + 1);
 
         Ok((detector_count, observable_count))
     }
@@ -197,6 +218,170 @@ pub mod utils {
         }
 
         Ok(())
+    }
+}
+
+/// Sparse parse of a DEM: the error mechanisms plus detector coordinates,
+/// without the dense matrices of [`DemCheckMatrix`].
+///
+/// Each `error(p) ...` line becomes one `(probability, detector_ids,
+/// observable_ids)` entry. Decomposed mechanisms (`D0 ^ D1`) are XOR-combined;
+/// graphlike mechanisms keep their DEM token order. `detector(x, y, t) D_i`
+/// declarations are collected into `detector_coords`.
+///
+/// Parsing runs once at decoder construction (never in a decode hot loop), so
+/// this is plain line-based parsing — a byte-level variant was profiled and
+/// gave no measurable speedup over this.
+///
+/// # Example
+///
+/// ```
+/// use pecos_decoder_core::dem::SparseDem;
+///
+/// let dem = "detector(1, 0, 0) D0\nerror(0.01) D0 D1 L0\nerror(0.02) D1";
+/// let sdem = SparseDem::from_dem_str(dem).unwrap();
+/// assert_eq!(sdem.num_detectors, 2);
+/// assert_eq!(sdem.num_observables, 1);
+/// assert_eq!(sdem.mechanisms.len(), 2);
+/// ```
+#[derive(Debug, Clone)]
+pub struct SparseDem {
+    /// Per-mechanism: `(probability, detector_ids, observable_ids)`.
+    pub mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
+    /// Detector id → coordinates (spatial + time), from `detector(...)` lines.
+    pub detector_coords: std::collections::BTreeMap<usize, Vec<f64>>,
+    /// Number of detectors: max detector id + 1, across both mechanisms and
+    /// `detector(...)` declarations (0 if none).
+    pub num_detectors: usize,
+    /// Number of observables: max observable id + 1 (0 if none).
+    pub num_observables: usize,
+}
+
+impl SparseDem {
+    /// Parse a DEM string into its sparse mechanism + coordinate form.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if an `error(...)` line is malformed.
+    pub fn from_dem_str(dem: &str) -> Result<Self, DecoderError> {
+        let mut mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)> = Vec::new();
+        let mut detector_coords = std::collections::BTreeMap::new();
+        let mut max_detector: Option<u32> = None;
+        let mut max_observable: Option<u32> = None;
+
+        for line in dem.lines() {
+            let line = line.trim();
+
+            // This is a flat, single-pass parser: it does not expand `repeat`
+            // blocks or apply `shift_detectors`. Silently mis-parsing those would
+            // corrupt detector ids, so refuse them and tell the caller to flatten
+            // (e.g. stim's `DetectorErrorModel.flattened()`).
+            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
+                return Err(DecoderError::InvalidConfiguration(
+                    "SparseDem requires a flattened DEM: `repeat` / `shift_detectors` \
+                     are not supported. Flatten the DEM first (e.g. stim's \
+                     DetectorErrorModel.flattened())."
+                        .into(),
+                ));
+            }
+
+            if let Some(rest) = line.strip_prefix("error(") {
+                let close = rest.find(')').ok_or_else(|| {
+                    DecoderError::InvalidConfiguration("Missing ) in error line".into())
+                })?;
+                let probability: f64 = rest[..close].parse().map_err(|_| {
+                    DecoderError::InvalidConfiguration(format!(
+                        "Invalid probability: {}",
+                        &rest[..close]
+                    ))
+                })?;
+                let tokens = &rest[close + 1..];
+
+                let (detectors, observables) = if tokens.contains('^') {
+                    // Decomposed mechanism: XOR-combine components into sorted sets.
+                    let mut det_set = std::collections::BTreeSet::new();
+                    let mut obs_set = std::collections::BTreeSet::new();
+                    for token in tokens.split('^').flat_map(str::split_whitespace) {
+                        if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            if !det_set.remove(&d) {
+                                det_set.insert(d);
+                            }
+                            max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                        } else if let Some(l) =
+                            token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            if !obs_set.remove(&l) {
+                                obs_set.insert(l);
+                            }
+                            max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                        }
+                    }
+                    (det_set.into_iter().collect(), obs_set.into_iter().collect())
+                } else {
+                    // Graphlike mechanism: keep DEM token order.
+                    let mut detectors = Vec::new();
+                    let mut observables = Vec::new();
+                    for token in tokens.split_whitespace() {
+                        if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            detectors.push(d);
+                            max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                        } else if let Some(l) =
+                            token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok())
+                        {
+                            observables.push(l);
+                            max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                        }
+                    }
+                    (detectors, observables)
+                };
+
+                mechanisms.push((probability, detectors, observables));
+            } else if let Some(rest) = line.strip_prefix("detector") {
+                // `detector(x,y,t) Dk` carries coordinates; Stim emits bare
+                // `detector Dk` for declarations without coordinates. Both
+                // declare the id, which counts toward `num_detectors` even if
+                // no error mechanism references it.
+                let (coords, targets) = if let Some(after) = rest.strip_prefix('(') {
+                    let Some(close) = after.find(')') else {
+                        continue;
+                    };
+                    let coords: Vec<f64> = after[..close]
+                        .split(',')
+                        .filter_map(|s| s.trim().parse().ok())
+                        .collect();
+                    (Some(coords), &after[close + 1..])
+                } else {
+                    (None, rest)
+                };
+                for token in targets.split_whitespace() {
+                    if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok()) {
+                        if let Some(c) = &coords {
+                            detector_coords.insert(d as usize, c.clone());
+                        }
+                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("logical_observable") {
+                // Stim emits `logical_observable Lk` for observables that no
+                // error mechanism flips (deterministic / unflipped logicals).
+                // Honour the declared count so a trailing unflipped observable
+                // is not silently dropped from `num_observables`.
+                for token in rest.split_whitespace() {
+                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
+                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            mechanisms,
+            detector_coords,
+            num_detectors: max_detector.map_or(0, |m| m as usize + 1),
+            num_observables: max_observable.map_or(0, |m| m as usize + 1),
+        })
     }
 }
 
@@ -259,8 +444,45 @@ impl DemCheckMatrix {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
+            if let Some(rest) = line.strip_prefix("logical_observable") {
+                // Count declared observables that no mechanism flips.
+                for token in rest.split_whitespace() {
+                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
+                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                    }
+                }
+                continue;
+            }
+            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
+                return Err(DecoderError::InvalidConfiguration(
+                    "DemCheckMatrix requires a flattened DEM: `repeat` / \
+                     `shift_detectors` are not supported. Flatten the DEM first."
+                        .into(),
+                ));
+            }
+            if let Some(rest) = line.strip_prefix("detector") {
+                // Count the declared detector id, which may not be referenced by
+                // any error mechanism. Stim emits `detector(x,y,t) Dk` when
+                // coordinates are attached and bare `detector Dk` when not; both
+                // declare the id. All parsers agree on
+                // `max(declared, error-referenced) + 1`.
+                let targets = if let Some(after) = rest.strip_prefix('(') {
+                    match after.find(')') {
+                        Some(close) => &after[close + 1..],
+                        None => continue,
+                    }
+                } else {
+                    rest
+                };
+                for token in targets.split_whitespace() {
+                    if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok()) {
+                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                    }
+                }
+                continue;
+            }
             if !line.starts_with("error(") {
-                // Skip non-error lines (detector, logical_observable, etc.)
+                // Skip other non-error lines (logical_observable handled above).
                 continue;
             }
 
@@ -441,6 +663,42 @@ impl DemMatchingGraph {
 
         for line in dem.lines() {
             let line = line.trim();
+            if let Some(rest) = line.strip_prefix("logical_observable") {
+                // Count declared observables that no mechanism flips.
+                for token in rest.split_whitespace() {
+                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
+                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
+                    }
+                }
+                continue;
+            }
+            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
+                return Err(DecoderError::InvalidConfiguration(
+                    "DemMatchingGraph requires a flattened DEM: `repeat` / \
+                     `shift_detectors` are not supported. Flatten the DEM first."
+                        .into(),
+                ));
+            }
+            if let Some(rest) = line.strip_prefix("detector") {
+                // Count the declared detector id (may not be error-referenced) so
+                // `num_detectors` matches the other parsers and its coordinate is
+                // not later dropped from `detector_coords`. Stim emits bare
+                // `detector Dk` (no parentheses) for coordinate-less declarations.
+                let targets = if let Some(after) = rest.strip_prefix('(') {
+                    match after.find(')') {
+                        Some(close) => &after[close + 1..],
+                        None => continue,
+                    }
+                } else {
+                    rest
+                };
+                for token in targets.split_whitespace() {
+                    if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok()) {
+                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
+                    }
+                }
+                continue;
+            }
             if line.is_empty() || line.starts_with('#') || !line.starts_with("error(") {
                 continue;
             }
@@ -864,6 +1122,96 @@ mod tests {
         let (detectors, observables) = utils::parse_dem_metadata(dem).unwrap();
         assert_eq!(detectors, 5); // D0 through D4
         assert_eq!(observables, 2); // L0 and L1
+    }
+
+    #[test]
+    fn test_logical_observable_declaration_counts() {
+        // L1 has no flipping mechanism; Stim emits `logical_observable L1`.
+        // All parsers must still count it so the trailing observable is not
+        // silently dropped.
+        let dem = "error(0.01) D0 L0\ndetector(0, 0, 0) D0\nlogical_observable L1\n";
+
+        let sdem = SparseDem::from_dem_str(dem).unwrap();
+        assert_eq!(sdem.num_observables, 2, "SparseDem must count L1");
+
+        let dcm = DemCheckMatrix::from_dem_str(dem).unwrap();
+        assert_eq!(dcm.num_observables, 2, "DemCheckMatrix must count L1");
+
+        let graph = DemMatchingGraph::from_dem_str(dem).unwrap();
+        assert_eq!(graph.num_observables, 2, "DemMatchingGraph must count L1");
+
+        let (_dets, obs) = utils::parse_dem_metadata(dem).unwrap();
+        assert_eq!(obs, 2, "parse_dem_metadata must count L1");
+    }
+
+    #[test]
+    fn test_parsers_count_declared_but_unreferenced_detectors() {
+        // A detector declared via `detector(coords) Dk` but never referenced by
+        // an error mechanism must still count (max declared id + 1). All four
+        // parsers must agree; index-addressed buffers depend on it.
+        let dem = "detector(0, 0, 0) D2\nlogical_observable L0\n";
+        assert_eq!(SparseDem::from_dem_str(dem).unwrap().num_detectors, 3);
+        assert_eq!(DemCheckMatrix::from_dem_str(dem).unwrap().num_detectors, 3);
+        assert_eq!(
+            DemMatchingGraph::from_dem_str(dem).unwrap().num_detectors,
+            3
+        );
+        let (dets, _obs) = utils::parse_dem_metadata(dem).unwrap();
+        assert_eq!(
+            dets, 3,
+            "parse_dem_metadata must count declared detector D2"
+        );
+    }
+
+    #[test]
+    fn test_parsers_count_bare_detector_declarations() {
+        // Stim emits coordinate-less declarations as bare `detector Dk` (no
+        // parentheses). All four parsers must count it like the parenthesized
+        // form; three of them previously gated on `detector(` and dropped it.
+        let dem = "error(0.01) D0 L0\ndetector D7\n";
+        assert_eq!(SparseDem::from_dem_str(dem).unwrap().num_detectors, 8);
+        assert_eq!(DemCheckMatrix::from_dem_str(dem).unwrap().num_detectors, 8);
+        assert_eq!(
+            DemMatchingGraph::from_dem_str(dem).unwrap().num_detectors,
+            8
+        );
+        let (dets, _obs) = utils::parse_dem_metadata(dem).unwrap();
+        assert_eq!(dets, 8, "parse_dem_metadata must count bare detector D7");
+    }
+
+    #[test]
+    fn test_parser_observable_count_is_max_plus_one_for_noncontiguous_ids() {
+        // Only L2 present: index-addressed buffers need 3 slots, not 1. All
+        // parsers must agree on `max + 1`, not distinct-id count.
+        let dem = "error(0.01) D0 L2\ndetector(0,0,0) D0\n";
+        assert_eq!(
+            DemMatchingGraph::from_dem_str(dem).unwrap().num_observables,
+            3
+        );
+        assert_eq!(
+            DemCheckMatrix::from_dem_str(dem).unwrap().num_observables,
+            3
+        );
+        let (_d, obs) = utils::parse_dem_metadata(dem).unwrap();
+        assert_eq!(
+            obs, 3,
+            "parse_dem_metadata must agree (max+1, not distinct count)"
+        );
+    }
+
+    #[test]
+    fn test_non_flattened_dem_rejected() {
+        // repeat blocks and shift_detectors would corrupt detector ids if parsed
+        // line-by-line; all parsers must refuse rather than silently mis-parse.
+        let repeat_dem = "repeat 3 {\n    error(0.01) D0 L0\n    shift_detectors 1\n}\n";
+        assert!(SparseDem::from_dem_str(repeat_dem).is_err());
+        assert!(DemCheckMatrix::from_dem_str(repeat_dem).is_err());
+        assert!(DemMatchingGraph::from_dem_str(repeat_dem).is_err());
+        assert!(utils::parse_dem_metadata(repeat_dem).is_err());
+
+        let shift_dem = "error(0.01) D0 L0\nshift_detectors 1\nerror(0.01) D0 L0\n";
+        assert!(SparseDem::from_dem_str(shift_dem).is_err());
+        assert!(utils::parse_dem_metadata(shift_dem).is_err());
     }
 
     #[test]

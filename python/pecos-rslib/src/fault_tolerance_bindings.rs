@@ -2746,6 +2746,10 @@ fn create_observable_decoder(
                     |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
                 )?;
 
+            // Reject negative-weight edges (error priors p > 0.5) as a Python
+            // error rather than panicking in `from_matching_graph`.
+            pecos_decoders::UfDecoder::check_non_negative_weights(&graph)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let uf = pecos_decoders::UfDecoder::from_matching_graph(
                 &graph,
                 pecos_decoders::UfDecoderConfig::balanced(),
@@ -3278,19 +3282,19 @@ fn create_observable_decoder(
             }
             Ok(Box::new(EnsembleDecoder::new(members)))
         }
-        // Per-observable subgraph decoder: requires stab_coords from Python.
+        // Per-logical-operator subgraph decoder: requires stab_coords from Python.
         // This is NOT callable from the string-based create_observable_decoder API.
-        // Use the Python ObservableSubgraphDecoder class directly instead.
-        s if s == "observable_subgraph" || s.starts_with("observable_subgraph:") => {
+        // Use the Python LogicalSubgraphDecoder class directly instead.
+        s if s == "logical_subgraph" || s.starts_with("logical_subgraph:") => {
             Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "observable_subgraph decoder requires stab_coords. \
-                 Use pecos_rslib.qec.ObservableSubgraphDecoder class directly.",
+                "logical_subgraph decoder requires stab_coords. \
+                 Use pecos_rslib.qec.LogicalSubgraphDecoder class directly.",
             ))
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
             "Unsupported decoder_type: {decoder_type}. \
              Supported: pymatching, tesseract, mwpf, pecos_uf (or pecos_uf:fast/balanced/accurate), \
-             observable_subgraph, ensemble:d1,d2,..., bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
+             logical_subgraph, ensemble:d1,d2,..., bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
         ))),
     }
 }
@@ -3489,6 +3493,35 @@ impl PySampleBatch {
             }
         }
         Ok(errors)
+    }
+
+    /// Decode every shot and return the predicted observable mask per shot.
+    ///
+    /// Mirrors `decode_count` but returns the raw per-shot predictions instead
+    /// of an aggregate error count, so callers can localize disagreements
+    /// against a reference decoder.
+    ///
+    /// Args:
+    ///     dem: DEM string for the decoder.
+    ///     `decoder_type`: Decoder type string.
+    ///
+    /// Returns:
+    ///     List of predicted observable masks, one per shot.
+    #[pyo3(signature = (dem, decoder_type="pymatching"))]
+    fn decode_each(&self, dem: &str, decoder_type: &str) -> PyResult<Vec<u64>> {
+        let mut decoder = create_observable_decoder(dem, decoder_type)?;
+        let mut predictions = Vec::with_capacity(self.num_shots);
+        let mut syndrome = vec![0u8; self.num_detectors];
+        for i in 0..self.num_shots {
+            self.extract_syndrome(i, &mut syndrome);
+            // Propagate a decode failure rather than masking it as a sentinel
+            // observable value (which would read as a spurious disagreement).
+            let predicted = decoder
+                .decode_to_observables(&syndrome)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            predictions.push(predicted);
+        }
+        Ok(predictions)
     }
 
     /// Parallel decode: distributes samples across rayon workers.
@@ -5326,40 +5359,76 @@ impl PyCssUfDecoder {
 // Observable Subgraph Decoder (Python class)
 // =============================================================================
 
-/// Per-observable subgraph decoder for transversal gates.
+/// Per-logical-operator subgraph decoder for transversal gates.
 ///
-/// Partitions a DEM into per-observable graphlike subgraphs using
+/// Partitions a DEM into per-logical-operator graphlike subgraphs using
 /// stabilizer coordinate information, then decodes each independently.
 ///
 /// Args:
 ///     dem: DEM string with detector coordinate declarations.
 ///     `stab_coords`: List of dicts, one per logical qubit. Each dict has
 ///         keys "X" and "Z" mapping to lists of (x, y) ancilla coordinates.
-///     `inner_decoder`: Inner decoder type string (default "`pecos_uf:fast`").
+///     `inner_decoder`: Inner decoder type string (default
+///         "`fusion_blossom_serial`", exact MWPM -- accurate and fast across
+///         distances, bundled). The best choice is circuit-dependent:
+///         `pecos_uf:bp` (PECOS-native belief-propagation + union-find,
+///         dependency-free) is competitive on memory and at small distance and is
+///         the right pick when you want the pure-native path, but its grow+peel
+///         matching is both LESS accurate and SLOWER at higher distance /
+///         multi-observable circuits. `belief_matching` matches fusion's accuracy
+///         but is slower.
 ///
 /// Example:
-///     >>> decoder = `ObservableSubgraphDecoder`(
+///     >>> decoder = `LogicalSubgraphDecoder`(
 ///     ...     `dem_str`,
 ///     ...     [{"X": [(1,0), (3,1)], "Z": [(0,3), (1,1)]}],
-///     ...     "`pecos_uf:fast`",
+///     ...     "`fusion_blossom_serial`",
 ///     ... )
 ///     >>> obs = decoder.decode(syndrome)
-#[pyclass(name = "ObservableSubgraphDecoder", module = "pecos_rslib.qec")]
-pub struct PyObservableSubgraphDecoder {
-    inner: pecos_decoder_core::observable_subgraph::ObservableSubgraphDecoder,
+#[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
+pub struct PyLogicalSubgraphDecoder {
+    inner: pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder,
+    /// The inner per-observable decoder backend selected at construction
+    /// (e.g. `"fusion_blossom_serial"`). `decode_count_parallel` reuses this so
+    /// the parallel workers match the serial path unless the caller overrides.
+    inner_decoder: String,
 }
 
 #[pymethods]
-impl PyObservableSubgraphDecoder {
+impl PyLogicalSubgraphDecoder {
+    // Default inner is `fusion_blossom_serial`: exact MWPM on each per-observable
+    // subgraph, bundled (no optional dependency). This is now backed by a powered
+    // threshold/CI study (`examples/surface/inner_decoder_study.py`; memory +
+    // transversal-CX, d=3/5/7, 3 seeds pooled = 150-300k shots/cell, Jeffreys
+    // intervals), NOT just policy:
+    //   * Accuracy: fusion is statistically tied with pymatching/belief_matching/
+    //     tesseract (these per-observable DEMs are graphlike, so exact MWPM is
+    //     optimal) and STRICTLY beats `pecos_uf:bp` at every d>=5 cell -- 1.4-2.7x
+    //     lower LER with DISJOINT Jeffreys intervals, both families. Tied at d=3.
+    //   * Threshold: fusion ~0.9% vs `pecos_uf:bp` ~0.7% (bp also breaks down sooner).
+    //   * Speed: at d=7 bp's grow+peel blows up (CX 7.1ms/shot vs fusion 1.2ms);
+    //     "bp is the fast native one" is false at depth.
+    // Only `pymatching` is faster (~6x) but it is an EXTERNAL dep with zero accuracy
+    // or threshold gain, so it is the documented speed option, not the default.
+    // SCOPE: the study families are graphlike, so it does not distinguish fusion
+    // from hyperedge decoders (tesseract/mwpf) -- re-run with those if non-graphlike
+    // per-observable DEMs (biased/correlated noise) ever arise. See
+    // pecos-docs/design/inner-decoder-threshold-study.md.
+    //
+    // `pecos_uf:bp` remains the pure-native, dependency-free path (it does suppress
+    // with distance -- the predecoder bug that broke it at d>=5 is fixed -- just at
+    // a worse prefactor and lower threshold). See
+    // pecos-docs/design/lomatching-paper-additional-learnings.md and
+    // logical-subgraph-backprop-region-builder.md.
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="pecos_uf:fast", max_time_radius=None))]
+    #[pyo3(signature = (dem, stab_coords, inner_decoder="fusion_blossom_serial", max_time_radius=None))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
         inner_decoder: &str,
         max_time_radius: Option<i64>,
     ) -> PyResult<Self> {
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
         // Parse stab_coords from Python dicts
         let mut rust_stab_coords = Vec::with_capacity(stab_coords.len());
@@ -5378,7 +5447,7 @@ impl PyObservableSubgraphDecoder {
             });
         }
 
-        let inner = ObservableSubgraphDecoder::from_dem_windowed(
+        let inner = LogicalSubgraphDecoder::from_dem_windowed(
             dem,
             &rust_stab_coords,
             max_time_radius,
@@ -5392,7 +5461,41 @@ impl PyObservableSubgraphDecoder {
         )
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            inner_decoder: inner_decoder.to_string(),
+        })
+    }
+
+    /// Build from a precomputed per-observable detector membership instead of
+    /// from `stab_coords`.
+    ///
+    /// `membership` is a list (one entry per observable) of full-DEM detector
+    /// ids. This lets callers supply an alternative observing-region
+    /// construction (e.g. the paper's back-propagation / detecting-region set)
+    /// and decode with the same machinery for direct comparison.
+    #[staticmethod]
+    #[pyo3(signature = (dem, membership, inner_decoder="fusion_blossom_serial"))]
+    fn from_membership(
+        dem: &str,
+        membership: Vec<Vec<usize>>,
+        inner_decoder: &str,
+    ) -> PyResult<Self> {
+        use pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder;
+
+        let inner = LogicalSubgraphDecoder::from_membership(dem, &membership, |subgraph| {
+            let sub_dem = subgraph_to_dem_string(subgraph);
+            let decoder = create_observable_decoder(&sub_dem, inner_decoder)
+                .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
+            Ok(Box::new(SendWrapper(decoder))
+                as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
+        })
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+        Ok(Self {
+            inner,
+            inner_decoder: inner_decoder.to_string(),
+        })
     }
 
     /// Decode a syndrome and return observable flip predictions.
@@ -5406,6 +5509,15 @@ impl PyObservableSubgraphDecoder {
     /// Number of observables this decoder handles.
     fn num_observables(&self) -> usize {
         self.inner.num_observables()
+    }
+
+    /// The inner per-observable decoder backend selected at construction.
+    ///
+    /// `decode_count_parallel` reuses this unless the caller overrides it, so
+    /// the serial and parallel paths agree by default.
+    #[getter]
+    fn inner_decoder(&self) -> &str {
+        &self.inner_decoder
     }
 
     /// Decode a batch of syndromes and return observable predictions.
@@ -5456,18 +5568,20 @@ impl PyObservableSubgraphDecoder {
     /// Decode a `SampleBatch` in parallel using rayon.
     ///
     /// Creates per-worker decoder instances to avoid lock contention.
-    /// Requires the DEM string and inner decoder type for reconstruction.
-    #[pyo3(signature = (batch, dem, stab_coords, inner_decoder="pymatching", num_workers=None, max_time_radius=None))]
+    /// Requires the DEM string for reconstruction. `inner_decoder` defaults to
+    /// the backend selected at construction (so the parallel path matches the
+    /// serial `decode_count` path); pass an explicit value only to override it.
+    #[pyo3(signature = (batch, dem, stab_coords, inner_decoder=None, num_workers=None, max_time_radius=None))]
     fn decode_count_parallel(
         &self,
         batch: &PySampleBatch,
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
-        inner_decoder: &str,
+        inner_decoder: Option<&str>,
         num_workers: Option<usize>,
         max_time_radius: Option<i64>,
     ) -> PyResult<usize> {
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
         use rayon::prelude::*;
 
         // Parse stab_coords
@@ -5488,7 +5602,11 @@ impl PyObservableSubgraphDecoder {
         }
 
         let dem_str = dem.to_string();
-        let inner_str = inner_decoder.to_string();
+        // Reuse the backend chosen at construction unless the caller overrides,
+        // so parallel workers decode identically to the serial path.
+        let inner_str = inner_decoder
+            .unwrap_or(self.inner_decoder.as_str())
+            .to_string();
         let n = batch.num_shots;
 
         // Materialize row-major data for parallel decode.
@@ -5506,7 +5624,10 @@ impl PyObservableSubgraphDecoder {
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        let errors: usize = pool.install(|| {
+        // Propagate worker construction and decode errors instead of panicking
+        // across the FFI boundary or silently scoring a failed chunk as
+        // all-failures (which would inflate the reported logical error rate).
+        let errors: Result<usize, pecos_decoders::DecoderError> = pool.install(|| {
             // Split into chunks, each chunk gets its own decoder + batch decode
             let chunk_size = n.div_ceil(rayon::current_num_threads());
             (0..n)
@@ -5514,7 +5635,7 @@ impl PyObservableSubgraphDecoder {
                 .par_chunks(chunk_size.max(1))
                 .map(|chunk| {
                     // Build a fresh decoder for this worker
-                    let mut dec = ObservableSubgraphDecoder::from_dem_windowed(
+                    let mut dec = LogicalSubgraphDecoder::from_dem_windowed(
                         &dem_str,
                         &sc,
                         max_time_radius,
@@ -5527,20 +5648,18 @@ impl PyObservableSubgraphDecoder {
                             Ok(Box::new(SendWrapper(d))
                                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
                         },
-                    )
-                    .unwrap();
+                    )?;
 
                     // Collect chunk syndromes and masks for batch decode
                     let chunk_syns: Vec<Vec<u8>> =
                         chunk.iter().map(|&i| events[i].clone()).collect();
                     let chunk_masks: Vec<u64> = chunk.iter().map(|&i| masks[i]).collect();
                     dec.decode_count_batched(&chunk_syns, &chunk_masks)
-                        .unwrap_or(chunk.len())
                 })
-                .sum()
+                .try_reduce(|| 0, |a, b| Ok(a + b))
         });
 
-        Ok(errors)
+        errors.map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Number of detectors in each subgraph.
@@ -5548,6 +5667,15 @@ impl PyObservableSubgraphDecoder {
         (0..self.inner.num_observables())
             .map(|i| self.inner.subgraph(i).map_or(0, |sg| sg.detector_map.len()))
             .collect()
+    }
+
+    /// Per-observable observing regions: a list (one entry per observable) of
+    /// sorted full-DEM detector ids in that observable's subgraph.
+    ///
+    /// Exposed for differential testing against reference implementations such
+    /// as `lomatching.get_detector_indices_for_subgraphs`.
+    fn observing_regions(&self) -> Vec<Vec<usize>> {
+        self.inner.observing_regions()
     }
 
     /// Diagnostics: (`num_edges`, `skipped_hyperedges`) for each subgraph.
@@ -5571,7 +5699,7 @@ impl PyObservableSubgraphDecoder {
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<(usize, usize)> {
         use pecos_decoder_core::ghost_protocol::extract_ghost_edges_from_dem;
-        use pecos_decoder_core::observable_subgraph::QubitStabCoords;
+        use pecos_decoder_core::logical_subgraph::QubitStabCoords;
 
         let mut sc = Vec::with_capacity(stab_coords.len());
         for dict in &stab_coords {
@@ -5594,10 +5722,15 @@ impl PyObservableSubgraphDecoder {
         Ok((edges.len(), num_qubits))
     }
 
-    /// Get the per-subgraph DEM strings (graphlike, suitable for windowed decoding).
+    /// Get the per-subgraph DEM strings (graphlike, local detector IDs 0..N).
     ///
-    /// Each string is a DEM with local detector IDs (0..N) that can be
-    /// passed to windowed or sandwich decoders.
+    /// NOTE: these strings carry NO `detector(...)` coordinate lines (subgraph
+    /// graphs drop coordinates), so they are NOT suitable for *time-windowed*
+    /// decoding -- a windowed decoder would see no detector times and collapse to
+    /// a single window. For windowing, use the coord-preserving
+    /// `LogicalSubgraphWindowPlan` path (the `WindowedLogicalSubgraphDecoder` /
+    /// logical-circuit windowed budget already do). These strings are fine for
+    /// full (non-windowed) per-subgraph decoding.
     fn subgraph_dems(&self) -> Vec<String> {
         (0..self.inner.num_observables())
             .map(|i| {
@@ -5621,38 +5754,41 @@ impl PyObservableSubgraphDecoder {
 }
 
 // =============================================================================
-// Windowed OSD Decoder (Python class)
+// Windowed logical-subgraph decoding Decoder (Python class)
 // =============================================================================
 
 /// Windowed observable subgraph decoder for deep circuits.
 ///
-/// Splits the DEM into time windows, runs OSD within each window.
+/// Splits the DEM into time windows, runs logical-subgraph decoder within each window.
 /// Prevents the observing region from spanning the full circuit.
+///
+/// Partitions the DEM per observable, then windows each subgraph with proper
+/// sliding-window core-commit (only correction edges whose both endpoints lie
+/// in a window's core are committed). The inner decoder is the native
+/// edge-tracking union-find decoder, which core-commit requires.
 ///
 /// Args:
 ///     dem: DEM string.
 ///     `stab_coords`: Stabilizer coordinates per logical qubit.
-///     `inner_decoder`: Inner MWPM decoder type.
 ///     step: Core window size in time steps.
-///     buffer: Buffer size on each side (0 = non-overlapping).
-#[pyclass(name = "WindowedOsdDecoder", module = "pecos_rslib.qec")]
-pub struct PyWindowedOsdDecoder {
-    inner: pecos_decoder_core::windowed_osd::WindowedOsdDecoder,
+///     buffer: Buffer size on each side for matching context (0 =
+///         non-overlapping; recommend ~code distance).
+#[pyclass(name = "WindowedLogicalSubgraphDecoder", module = "pecos_rslib.qec")]
+pub struct PyWindowedLogicalSubgraphDecoder {
+    inner: pecos_decoders::WindowedLogicalSubgraphDecoder,
 }
 
 #[pymethods]
-impl PyWindowedOsdDecoder {
+impl PyWindowedLogicalSubgraphDecoder {
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="pymatching", step=8, buffer=4))]
+    #[pyo3(signature = (dem, stab_coords, step=8, buffer=4))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
-        inner_decoder: &str,
         step: usize,
         buffer: usize,
     ) -> PyResult<Self> {
-        use pecos_decoder_core::observable_subgraph::QubitStabCoords;
-        use pecos_decoder_core::windowed_osd::{WindowedOsdConfig, WindowedOsdDecoder};
+        use pecos_decoder_core::logical_subgraph::QubitStabCoords;
 
         let mut sc = Vec::with_capacity(stab_coords.len());
         for dict in &stab_coords {
@@ -5670,16 +5806,15 @@ impl PyWindowedOsdDecoder {
             });
         }
 
-        let config = WindowedOsdConfig { step, buffer };
+        let config = pecos_decoders::WindowedConfig {
+            step_size: step,
+            buffer_size: buffer,
+            ..Default::default()
+        };
 
-        let inner = WindowedOsdDecoder::from_dem(dem, &sc, &config, |subgraph| {
-            let sub_dem = subgraph_to_dem_string(subgraph);
-            let d = create_observable_decoder(&sub_dem, inner_decoder)
-                .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
-            Ok(Box::new(SendWrapper(d))
-                as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
-        })
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let inner =
+            pecos_decoders::WindowedLogicalSubgraphDecoder::from_dem(dem, &sc, None, config)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         Ok(Self { inner })
     }
@@ -5709,7 +5844,7 @@ impl PyWindowedOsdDecoder {
     }
 
     fn num_windows(&self) -> usize {
-        self.inner.windows.len()
+        self.inner.num_windows()
     }
 }
 
@@ -5717,7 +5852,7 @@ impl PyWindowedOsdDecoder {
 // Logical Algorithm Decoder (Python class)
 // =============================================================================
 
-/// Decoder for logical quantum algorithms with per-segment OSD and
+/// Decoder for logical quantum algorithms with per-segment logical-subgraph decoder and
 /// Pauli frame propagation at transversal gate boundaries.
 ///
 /// Built from a descriptor dict produced by
@@ -5736,7 +5871,7 @@ impl PyLogicalAlgorithmDecoder {
     ///
     /// Args:
     ///     descriptor: Dict from ``LogicalCircuitBuilder.build_algorithm_descriptor()``.
-    ///     `inner_decoder`: Decoder type string for each segment's OSD inner decoder.
+    ///     `inner_decoder`: Decoder type string for each segment's logical-subgraph decoder inner decoder.
     #[new]
     #[pyo3(signature = (descriptor, inner_decoder="pymatching"))]
     fn new(
@@ -5746,9 +5881,9 @@ impl PyLogicalAlgorithmDecoder {
         use pecos_decoder_core::logical_algorithm::{
             AlgorithmDescriptor, BoundaryGate, LogicalAlgorithmDecoder, SegmentDescriptor,
         };
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
-        // Parse full DEM and stab_coords for full-circuit OSD
+        // Parse full DEM and stab_coords for full-circuit logical-subgraph decoder
         let full_dem: String = descriptor
             .get_item("full_dem")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
@@ -5790,8 +5925,8 @@ impl PyLogicalAlgorithmDecoder {
 
         let inner_str = inner_decoder.to_string();
 
-        // Build full-circuit OSD from the full DEM
-        let full_osd = ObservableSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
+        // Build full-circuit logical-subgraph decoder from the full DEM
+        let full_osd = LogicalSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
             let d = create_observable_decoder(&sub_dem, &inner_str)
                 .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
@@ -5960,8 +6095,8 @@ impl PyLogicalAlgorithmDecoder {
 /// Budget-aware decoder for logical quantum circuits.
 ///
 /// Selects decode strategy based on available reaction time:
-/// - ``"unlimited"``: full-circuit OSD (Clifford circuits, offline)
-/// - ``"windowed"``: default windowed OSD (~1ms reaction time)
+/// - ``"unlimited"``: full-circuit logical-subgraph decoder (Clifford circuits, offline)
+/// - ``"windowed"``: default windowed logical-subgraph decoder (~1ms reaction time)
 /// - ``"10ms"``, ``"1000us"``, etc.: explicit reaction time budget
 ///
 /// The reaction time is the time available at feed-forward decision
@@ -5976,23 +6111,34 @@ impl PyLogicalAlgorithmDecoder {
 #[pyclass(name = "LogicalCircuitDecoder", module = "pecos_rslib.qec")]
 pub struct PyLogicalCircuitDecoder {
     inner: pecos_decoder_core::logical_algorithm::LogicalCircuitDecoder,
+    /// How the decode actually windows: "unlimited" (full circuit),
+    /// "full_fallback" (per-observable full decode behind a windowed budget),
+    /// or "real_windowed" (genuine sliding-window; not yet enabled).
+    effective_windowing: String,
+    /// Window count actually used, one entry per non-empty subgraph (1 == full
+    /// decode); not indexed by global observable id.
+    actual_num_windows: Vec<usize>,
+    /// Whether genuine time-windowing is *possible* for this circuit (deep
+    /// enough), independent of whether it is enabled. False for "unlimited".
+    can_window: bool,
 }
 
 #[pymethods]
 impl PyLogicalCircuitDecoder {
     #[new]
-    #[pyo3(signature = (descriptor, budget="unlimited", inner_decoder="pymatching"))]
+    #[pyo3(signature = (descriptor, budget="unlimited", inner_decoder="pymatching", strict=false))]
     fn new(
         descriptor: &pyo3::Bound<'_, pyo3::types::PyDict>,
         budget: &str,
         inner_decoder: &str,
+        strict: bool,
     ) -> PyResult<Self> {
         use pecos_decoder_core::decode_budget::DecodeBudget;
         use pecos_decoder_core::logical_algorithm::{
             AlgorithmDescriptor, BoundaryGate, FullCircuitStrategy, LogicalCircuitDecoder,
             SegmentDescriptor,
         };
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
         // Parse full DEM
         let full_dem: String = descriptor
@@ -6034,7 +6180,7 @@ impl PyLogicalCircuitDecoder {
         let num_qubits = rust_sc.len();
 
         let inner_str = inner_decoder.to_string();
-        let full_osd = ObservableSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
+        let full_osd = LogicalSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
             let d = create_observable_decoder(&sub_dem, &inner_str)
                 .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
@@ -6117,10 +6263,24 @@ impl PyLogicalCircuitDecoder {
 
         // Select budget: "unlimited" for full-circuit, "windowed" for
         // bounded-latency, or a cycle time in microseconds like "1000us".
-        let mut distance = 0usize;
-        while distance.saturating_mul(distance) < num_qubits {
-            distance += 1;
-        }
+        //
+        // Use the REAL physical code distance from the descriptor (used for the
+        // windowing step / latency bound). `num_qubits = rust_sc.len()` is the
+        // number of logical patches, NOT a distance -- deriving distance from it
+        // (e.g. sqrt) is wrong (a single d=7 patch would yield distance 1 and
+        // make `can_window`/`strict` dishonest). Fall back to the old patch-count
+        // heuristic only for legacy descriptors that predate the `distance` field.
+        let distance: usize = descriptor
+            .get_item("distance")?
+            .and_then(|v| v.extract::<usize>().ok())
+            .filter(|&d| d > 0)
+            .unwrap_or_else(|| {
+                let mut d = 0usize;
+                while d.saturating_mul(d) < num_qubits {
+                    d += 1;
+                }
+                d.max(1)
+            });
         let decode_budget = match budget {
             "unlimited" | "offline" => DecodeBudget::unlimited(),
             "windowed" => {
@@ -6150,47 +6310,115 @@ impl PyLogicalCircuitDecoder {
         };
 
         // Select strategy based on budget.
+        let mut effective_windowing = String::from("unlimited");
+        let mut actual_num_windows: Vec<usize> = Vec::new();
+        let mut can_window = false;
         let strategy: Box<dyn pecos_decoder_core::decode_budget::DecodeStrategy + Send + Sync> =
             if decode_budget.is_unlimited() {
-                // Unlimited: full-circuit OSD (maximum accuracy)
+                // Unlimited: full-circuit logical-subgraph decoder (maximum accuracy)
                 Box::new(FullCircuitStrategy::new(Box::new(full_osd)))
             } else {
-                // Windowed: per-subgraph sandwich decoding.
-                // Extract per-subgraph DEMs and detector maps from the full OSD.
-                use pecos_decoder_core::logical_algorithm::WindowedOsdStrategy;
+                // A bounded-latency ("windowed") budget was requested. Genuine
+                // per-observable sliding-window LOM decoding does not yet
+                // suppress (the windowed-LOM time-like-snake limitation; needs
+                // the anti-snake machinery), so we do an EXPLICIT full-decode
+                // fallback per observable -- accurate, but NOT bounded latency --
+                // and surface that honestly via `effective_windowing()` /
+                // `actual_num_windows()`. No silent fallback. `strict=True` turns
+                // the unmet latency budget into a hard error.
+                use pecos_decoder_core::logical_algorithm::WindowedLogicalSubgraphStrategy;
+                use pecos_decoder_core::logical_subgraph::window_plan::EffectiveWindowing;
 
-                let mut sub_dems = Vec::new();
-                let mut det_maps = Vec::new();
-                for i in 0..full_osd.num_observables() {
-                    if let Some(sg) = full_osd.subgraph(i) {
-                        sub_dems.push(subgraph_to_dem_string(&sg.graph));
-                        det_maps.push(sg.detector_map.clone());
-                    }
+                // Coord-preserving window plan (reports whether real windowing is
+                // even possible for this circuit depth).
+                let full_coords = pecos_decoder_core::DemMatchingGraph::from_dem_str(&full_dem)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+                    .detector_coords;
+                let plan = full_osd.window_plan(&full_coords);
+                let step = decode_budget.code_distance.max(1);
+                can_window = plan.effective_windowing(step) == EffectiveWindowing::RealWindowed;
+
+                // `strict` rejects only when genuine windowing was POSSIBLE (the
+                // circuit is deep enough) but is being skipped. When `!can_window`
+                // the circuit is a single window anyway, so a full decode IS the
+                // bounded-latency answer -- no degradation to reject.
+                if strict && can_window {
+                    return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "bounded-latency ('windowed') budget requested with strict=True, \
+                         but accurate windowed logical-subgraph decoding is not yet \
+                         available (windowed-LOM anti-snake machinery pending). This \
+                         circuit is deep enough to time-window (can_window=True), so a \
+                         full per-observable decode would forgo the requested latency \
+                         bound. Use budget='unlimited', or pass strict=False to accept \
+                         the full-decode fallback."
+                            .to_string(),
+                    ));
                 }
 
-                let d = decode_budget.code_distance;
-                let buf = decode_budget.overlap_rounds.min(d * 2); // cap at 2d
-                let windowed_str = if buf > 0 {
-                    format!("windowed:step={d},buf={buf},wmax=2.5")
-                } else {
-                    // No overlap: use plain PM (faster, but accuracy limited
-                    // to non-overlapping windowed matching)
-                    format!("windowed:step={d},buf=0")
-                };
+                let sub_dems = plan.sub_dems();
+                let det_maps = plan.detector_maps();
+                let obs_indices: Vec<usize> =
+                    plan.entries().iter().map(|e| e.observable_idx).collect();
+                // The fallback runs a full (non-windowed) inner per observable, so
+                // the actual window count is 1 each by construction. (The Layer C
+                // real-windowed path must instead derive these from the windowed
+                // inners.) The label is single-sourced from the plan's enum.
+                effective_windowing = EffectiveWindowing::FullFallback.as_str().to_string();
+                actual_num_windows = vec![1usize; sub_dems.len()];
 
-                let wosd = WindowedOsdStrategy::new(sub_dems, det_maps, |dem_str| {
-                    let dec = create_observable_decoder(dem_str, &windowed_str)
-                        .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
-                    Ok(Box::new(SendWrapper(dec))
-                        as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
-                })
+                let fallback_inner = inner_decoder.to_string();
+                let wosd = WindowedLogicalSubgraphStrategy::new(
+                    sub_dems,
+                    det_maps,
+                    obs_indices,
+                    |dem_str| {
+                        let dec =
+                            create_observable_decoder(dem_str, &fallback_inner).map_err(|e| {
+                                pecos_decoders::DecoderError::InternalError(e.to_string())
+                            })?;
+                        Ok(Box::new(SendWrapper(dec))
+                            as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
+                    },
+                )
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
                 Box::new(wosd)
             };
 
         let inner = LogicalCircuitDecoder::new(algo_desc, strategy, decode_budget, num_qubits);
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            effective_windowing,
+            actual_num_windows,
+            can_window,
+        })
+    }
+
+    /// How the decode actually windows: ``"unlimited"`` (full-circuit decode),
+    /// ``"full_fallback"`` (per-observable full decode behind a windowed
+    /// budget -- accurate but NOT bounded latency), or ``"real_windowed"``
+    /// (genuine sliding-window; not yet enabled pending the windowed-LOM
+    /// anti-snake machinery). Lets callers/tests assert the effective mode
+    /// instead of trusting a silent fallback.
+    #[getter]
+    fn effective_windowing(&self) -> &str {
+        &self.effective_windowing
+    }
+
+    /// Window count actually used, one entry per *non-empty* subgraph in
+    /// surviving-subgraph order (empty-region observables are dropped, so this
+    /// is not indexed by global observable id). ``1`` == full decode. All ``1``
+    /// in the current full-fallback path; empty for the unlimited budget.
+    #[getter]
+    fn actual_num_windows(&self) -> Vec<usize> {
+        self.actual_num_windows.clone()
+    }
+
+    /// Whether genuine time-windowing is *possible* for this circuit (deep
+    /// enough), independent of whether it is enabled. ``False`` for unlimited.
+    #[getter]
+    fn can_window(&self) -> bool {
+        self.can_window
     }
 
     /// Decode a single syndrome.
@@ -6479,8 +6707,8 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<PyCssUfDecoder>()?;
-    qec.add_class::<PyObservableSubgraphDecoder>()?;
-    qec.add_class::<PyWindowedOsdDecoder>()?;
+    qec.add_class::<PyLogicalSubgraphDecoder>()?;
+    qec.add_class::<PyWindowedLogicalSubgraphDecoder>()?;
     qec.add_class::<PyLogicalAlgorithmDecoder>()?;
     qec.add_class::<PyLogicalCircuitDecoder>()?;
     qec.add_class::<PyDecodeStats>()?;

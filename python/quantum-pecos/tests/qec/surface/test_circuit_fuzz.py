@@ -594,9 +594,9 @@ class TestDecoderPipeline:
         # At d=3 p=0.001, LER should be very low
         assert ler < 0.05, f"LER too high: {ler}"
 
-    def test_observable_subgraph_decoder(self, patch, nq):
-        """OSD with PECOS DEM on CX circuit."""
-        from pecos_rslib.qec import ObservableSubgraphDecoder, ParsedDem
+    def test_logical_subgraph_decoder(self, patch, nq):
+        """logical-subgraph decoder with PECOS DEM on CX circuit."""
+        from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
 
         b = LogicalCircuitBuilder()
         b.add_patch(patch, "C", qubit_offset=0)
@@ -607,10 +607,10 @@ class TestDecoderPipeline:
 
         dem_str = b.build_dem(p1=0.001, p2=0.001, p_meas=0.001)
         sc = b.stab_coords()
-        osd = ObservableSubgraphDecoder(dem_str, sc, "pecos_uf:fast")
-        assert osd.num_observables() == 2
+        decoder = LogicalSubgraphDecoder(dem_str, sc, "pecos_uf:fast")
+        assert decoder.num_observables() == 2
 
-        sizes = osd.subgraph_sizes()
+        sizes = decoder.subgraph_sizes()
         for s in sizes:
             assert s > 0, "Empty subgraph"
 
@@ -812,17 +812,17 @@ class TestNoisyComposition:
 
 
 # ---------------------------------------------------------------------------
-# OSD accuracy comparison
+# logical-subgraph decoder accuracy comparison
 # ---------------------------------------------------------------------------
 
 
-class TestOSDAccuracy:
+class TestLogicalSubgraphAccuracy:
     """Compare observable subgraph decoder accuracy against baseline."""
 
-    def test_osd_better_than_naive_on_cx(self, patch, nq):
-        """OSD should outperform naive decomposed MWPM on CX circuits."""
+    def test_logical_subgraph_better_than_naive_on_cx(self, patch, nq):
+        """logical-subgraph decoder should outperform naive decomposed MWPM on CX circuits."""
         import stim
-        from pecos_rslib.qec import ObservableSubgraphDecoder, ParsedDem
+        from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
 
         b = LogicalCircuitBuilder()
         b.add_patch(patch, "C", qubit_offset=0)
@@ -846,31 +846,31 @@ class TestOSDAccuracy:
         naive_errors = batch_naive.decode_count(str(dem_decomp), "pecos_uf:fast")
         naive_ler = naive_errors / 20000
 
-        # OSD with FB
+        # logical-subgraph decoder with FB
         sc = b.stab_coords()
-        osd = ObservableSubgraphDecoder(dem_str, sc, "fusion_blossom_serial")
-        osd_errors = sum(
+        decoder = LogicalSubgraphDecoder(dem_str, sc, "fusion_blossom_serial")
+        subgraph_errors = sum(
             1
             for i in range(20000)
-            if osd.decode(det_events[i].tolist()) != sum((1 << j) for j in range(obs_flips.shape[1]) if obs_flips[i, j])
+            if decoder.decode(det_events[i].tolist()) != sum((1 << j) for j in range(obs_flips.shape[1]) if obs_flips[i, j])
         )
-        osd_ler = osd_errors / 20000
+        subgraph_ler = subgraph_errors / 20000
 
-        # OSD should be at least as good (usually much better)
-        assert osd_ler <= naive_ler * 1.5 + 0.001, f"OSD ({osd_ler:.5f}) much worse than naive ({naive_ler:.5f})"
+        # logical-subgraph decoder should be at least as good (usually much better)
+        assert subgraph_ler <= naive_ler * 1.5 + 0.001, f"logical-subgraph decoder ({subgraph_ler:.5f}) much worse than naive ({naive_ler:.5f})"
 
 
 # ---------------------------------------------------------------------------
-# PECOS-native DEM with OSD decoder on CX
+# PECOS-native DEM with logical-subgraph decoder decoder on CX
 # ---------------------------------------------------------------------------
 
 
-class TestPecosDemWithOSD:
+class TestPecosDemWithLogicalSubgraph:
     """Test PECOS-native DEM pipeline with observable subgraph decoder."""
 
-    def test_pecos_dem_osd_cx(self, patch, nq):
-        """PECOS DEM → OSD decoder on CX circuit."""
-        from pecos_rslib.qec import ObservableSubgraphDecoder, ParsedDem
+    def test_pecos_dem_logical_subgraph_cx(self, patch, nq):
+        """PECOS DEM → logical-subgraph decoder decoder on CX circuit."""
+        from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
 
         b = LogicalCircuitBuilder()
         b.add_patch(patch, "C", qubit_offset=0)
@@ -885,17 +885,17 @@ class TestPecosDemWithOSD:
         errors = [line for line in dem_str.split("\n") if line.startswith("error(")]
         assert len(errors) > 0
 
-        # Build OSD decoder from PECOS DEM
+        # Build logical-subgraph decoder decoder from PECOS DEM
         sc = b.stab_coords()
-        osd = ObservableSubgraphDecoder(dem_str, sc, "pecos_uf:fast")
-        assert osd.num_observables() == 2
+        decoder = LogicalSubgraphDecoder(dem_str, sc, "pecos_uf:fast")
+        assert decoder.num_observables() == 2
 
         # Sample and decode
         parsed = ParsedDem.from_string(dem_str)
         batch = parsed.to_dem_sampler().generate_samples(5000, seed=42)
         errors = batch.decode_count(dem_str, "pecos_uf:fast")
         ler = errors / 5000
-        assert ler < 0.1, f"PECOS DEM + OSD CX LER too high: {ler}"
+        assert ler < 0.1, f"PECOS DEM + logical-subgraph decoder CX LER too high: {ler}"
 
 
 # ---------------------------------------------------------------------------

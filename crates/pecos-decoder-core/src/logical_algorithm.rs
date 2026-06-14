@@ -18,8 +18,8 @@
 //!
 //! # Decoding Modes
 //!
-//! - **Full-circuit**: Uses the full DEM's OSD for maximum accuracy.
-//!   Equivalent to `ObservableSubgraphDecoder` on the full circuit.
+//! - **Full-circuit**: Uses the full DEM's logical-subgraph decoder for maximum accuracy.
+//!   Equivalent to `LogicalSubgraphDecoder` on the full circuit.
 //! - **Per-segment** (future streaming): Each segment decoded independently
 //!   with buffer overlap at gate boundaries.
 
@@ -91,17 +91,17 @@ pub struct AlgorithmDescriptor {
 
 /// Decoder for logical quantum algorithms.
 ///
-/// Wraps a full-circuit decoder (OSD) with segment metadata. The
+/// Wraps a full-circuit decoder (logical-subgraph decoder) with segment metadata. The
 /// segment structure enables:
 /// - Tracking which gates occur at which point in the circuit
 /// - Pauli frame propagation for T-gate/measurement corrections
 /// - Future streaming mode with per-segment windowed decoding
 ///
 /// In the current implementation, `decode_shot` delegates to the
-/// full-circuit OSD for maximum accuracy. The segment structure is
+/// full-circuit logical-subgraph decoder for maximum accuracy. The segment structure is
 /// metadata for frame tracking and streaming (step 5).
 pub struct LogicalAlgorithmDecoder {
-    /// Full-circuit decoder (OSD on the complete DEM).
+    /// Full-circuit decoder (logical-subgraph decoder on the complete DEM).
     full_decoder: Box<dyn ObservableDecoder + Send + Sync>,
     /// Segment metadata for streaming/frame tracking.
     segments: Vec<SegmentDescriptor>,
@@ -114,7 +114,7 @@ pub struct LogicalAlgorithmDecoder {
 impl LogicalAlgorithmDecoder {
     /// Build from a full-circuit decoder and algorithm descriptor.
     ///
-    /// The `full_decoder` is typically an `ObservableSubgraphDecoder`
+    /// The `full_decoder` is typically an `LogicalSubgraphDecoder`
     /// built from the full circuit DEM.
     #[must_use]
     pub fn new(
@@ -213,7 +213,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 
 /// Streaming wrapper for `LogicalAlgorithmDecoder`.
 ///
-/// Buffers syndrome data round-by-round. The full-circuit OSD decodes
+/// Buffers syndrome data round-by-round. The full-circuit logical-subgraph decoder decodes
 /// the entire accumulated syndrome at `flush()` for maximum accuracy.
 ///
 /// The segment structure tracks which rounds belong to which segment.
@@ -257,7 +257,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 /// assert_eq!(obs, 1);
 /// ```
 pub struct StreamingLogicalDecoder {
-    /// The underlying batch decoder (full-circuit OSD).
+    /// The underlying batch decoder (full-circuit logical-subgraph decoder).
     inner: LogicalAlgorithmDecoder,
     /// Accumulated syndrome buffer (full circuit size).
     syndrome: Vec<u8>,
@@ -305,7 +305,7 @@ impl StreamingLogicalDecoder {
         self.rounds_fed += 1;
     }
 
-    /// Decode the accumulated syndrome using the full-circuit OSD.
+    /// Decode the accumulated syndrome using the full-circuit logical-subgraph decoder.
     ///
     /// Returns the observable correction mask. This is the final
     /// correction to apply to raw measurement outcomes.
@@ -395,7 +395,7 @@ use crate::decode_budget::{DecodeBudget, DecodeStrategy, DetectorRegion};
 ///
 /// - **Offline** (ion trap / simulation): `FullCircuitStrategy` — buffer
 ///   everything, decode at end. Maximum accuracy.
-/// - **Streaming** (neutral atom): `CommittedOsdStrategy` — decode and
+/// - **Streaming** (neutral atom): `CommittedLogicalSubgraphStrategy` — decode and
 ///   commit at segment boundaries. Bounded memory.
 /// - **Real-time** (superconducting): windowed UF with ghost protocol
 ///   (future).
@@ -457,7 +457,7 @@ impl LogicalCircuitDecoder {
 
     /// Decode a full shot (batch mode).
     ///
-    /// For offline/ion trap budgets: equivalent to full-circuit OSD.
+    /// For offline/ion trap budgets: equivalent to full-circuit logical-subgraph decoder.
     /// For streaming budgets: decodes and commits each segment.
     pub fn decode_shot(&mut self, full_syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.reset();
@@ -561,7 +561,7 @@ pub struct FullCircuitStrategy {
 }
 
 impl FullCircuitStrategy {
-    /// Wrap any `ObservableDecoder` (typically OSD).
+    /// Wrap any `ObservableDecoder` (typically logical-subgraph decoder).
     #[must_use]
     pub fn new(decoder: Box<dyn ObservableDecoder + Send + Sync>) -> Self {
         Self { inner: decoder }
@@ -588,49 +588,77 @@ impl DecodeStrategy for FullCircuitStrategy {
 }
 
 // ============================================================================
-// Strategy: Windowed OSD (neutral atom / medium budget)
+// Strategy: Windowed logical-subgraph decoding (neutral atom / medium budget)
 // ============================================================================
 
-/// Windowed OSD strategy: per-observable subgraph windowed decoding.
+/// Windowed logical-subgraph strategy: per-logical-operator subgraph windowed decoding.
 ///
 /// Each observable's subgraph is graphlike (no hyperedges). A windowed
 /// decoder (sandwich or plain PM) runs inside each subgraph with bounded
 /// latency. The full matching graph is pre-built; only syndrome routing
 /// and per-window matching are per-shot work.
 ///
-/// This achieves bounded-latency streaming with OSD-level accuracy.
-pub struct WindowedOsdStrategy {
+/// This achieves bounded-latency streaming with logical-subgraph decoder-level accuracy.
+pub struct WindowedLogicalSubgraphStrategy {
     /// Per-subgraph decoders (windowed or plain).
     subgraph_decoders: Vec<Box<dyn ObservableDecoder + Send + Sync>>,
     /// Per-subgraph detector maps: `subgraph_detector_maps`[i][local] = global.
     detector_maps: Vec<Vec<usize>>,
+    /// Global observable (logical) index each subgraph decodes. Required because
+    /// callers may pass only the non-empty subgraphs (empty-region observables
+    /// dropped), so the subgraph's list position is NOT its observable index.
+    observable_indices: Vec<usize>,
     /// Per-subgraph sub-syndrome buffers (reusable).
     sub_syndromes: Vec<Vec<u8>>,
-    /// Number of observables.
-    _num_observables: usize,
 }
 
-impl WindowedOsdStrategy {
-    /// Build from pre-extracted subgraph DEMs and detector maps.
+impl WindowedLogicalSubgraphStrategy {
+    /// Build from pre-extracted subgraph DEMs, detector maps, and the global
+    /// observable index each subgraph decodes.
     ///
-    /// `subgraph_dems`: per-observable DEM strings (graphlike).
-    /// `detector_maps`: per-observable local→global detector index maps.
+    /// `subgraph_dems`: per-subgraph DEM strings (graphlike).
+    /// `detector_maps`: per-subgraph local→global detector index maps.
+    /// `observable_indices`: the global observable bit each subgraph flips
+    ///   (each subgraph reports its observable as local bit 0). MUST line up
+    ///   with `subgraph_dems` — when empty-region observables are filtered out,
+    ///   pass the surviving observables' true indices, not `0..n`.
     /// `factory`: creates the inner decoder for each subgraph DEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if the factory fails, if the three input vectors
+    /// disagree in length, or if any observable index is >= 64 (the u64
+    /// observable mask cannot hold it).
     pub fn new<F>(
         subgraph_dems: Vec<String>,
         detector_maps: Vec<Vec<usize>>,
+        observable_indices: Vec<usize>,
         mut factory: F,
     ) -> Result<Self, DecoderError>
     where
         F: FnMut(&str) -> Result<Box<dyn ObservableDecoder + Send + Sync>, DecoderError>,
     {
-        let num_observables = subgraph_dems.len();
-        let mut decoders = Vec::with_capacity(num_observables);
-        let mut sub_syndromes = Vec::with_capacity(num_observables);
+        let num = subgraph_dems.len();
+        if detector_maps.len() != num || observable_indices.len() != num {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "WindowedLogicalSubgraphStrategy: mismatched inputs (dems={num}, \
+                 maps={}, obs={})",
+                detector_maps.len(),
+                observable_indices.len(),
+            )));
+        }
+        if let Some(&bad) = observable_indices.iter().find(|&&o| o >= 64) {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "WindowedLogicalSubgraphStrategy: observable index {bad} >= 64 \
+                 exceeds the u64 observable-mask capacity"
+            )));
+        }
 
+        let mut decoders = Vec::with_capacity(num);
+        let mut sub_syndromes = Vec::with_capacity(num);
         for (i, dem_str) in subgraph_dems.iter().enumerate() {
             let dec = factory(dem_str)?;
-            let n = detector_maps.get(i).map_or(0, std::vec::Vec::len);
+            let n = detector_maps[i].len();
             sub_syndromes.push(vec![0u8; n]);
             decoders.push(dec);
         }
@@ -638,13 +666,13 @@ impl WindowedOsdStrategy {
         Ok(Self {
             subgraph_decoders: decoders,
             detector_maps,
+            observable_indices,
             sub_syndromes,
-            _num_observables: num_observables,
         })
     }
 }
 
-impl DecodeStrategy for WindowedOsdStrategy {
+impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         let mut obs_mask = 0u64;
 
@@ -669,10 +697,12 @@ impl DecodeStrategy for WindowedOsdStrategy {
                 };
             }
 
-            // Decode this subgraph
+            // Decode this subgraph: it reports its observable as local bit 0;
+            // map that to the subgraph's *global* observable bit (not its list
+            // position `i`, which differs once empty observables are filtered).
             let sub_obs = dec.decode_to_observables(&buf[..n])?;
             if sub_obs & 1 != 0 {
-                obs_mask |= 1 << i;
+                obs_mask |= 1u64 << self.observable_indices[i];
             }
         }
 
@@ -680,7 +710,13 @@ impl DecodeStrategy for WindowedOsdStrategy {
     }
 
     fn commit(&mut self, _region: &DetectorRegion) -> Result<u64, DecoderError> {
-        // Commitment is handled internally by the windowed inner decoders
+        // NOTE (abstraction caveat): this strategy is currently a *batch* decoder
+        // exposed through the streaming `DecodeStrategy` trait. It decodes the
+        // whole syndrome in one `decode()` call; per-observable subgraph windowing
+        // (when enabled) is handled inside each inner decoder, not via incremental
+        // region commits. So `commit()` is intentionally a no-op and
+        // `committed_obs()` returns 0. Real streaming commit semantics are a
+        // follow-up (see the windowed logical-subgraph proper-solution design).
         Ok(0)
     }
 
@@ -718,6 +754,49 @@ mod tests {
         };
         let mut dec = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b01)), desc);
         assert_eq!(dec.decode_shot(&[0, 1, 0, 1]).unwrap(), 0b01);
+    }
+
+    #[test]
+    fn windowed_strategy_maps_to_global_observable_index() {
+        // Two surviving subgraphs whose true (global) observable indices are
+        // NON-contiguous -- as happens when earlier observables had empty
+        // regions and were filtered out. Each reports its observable as local
+        // bit 0; the strategy must flip the GLOBAL bit, not the list position.
+        // (The pre-fix `1 << i` would have produced bits {0,1} = 0b0011.)
+        let mut strat = WindowedLogicalSubgraphStrategy::new(
+            vec![
+                "error(0.1) D0 L0".to_string(),
+                "error(0.1) D0 L0".to_string(),
+            ],
+            vec![vec![0usize], vec![1usize]],
+            vec![1usize, 3usize],
+            |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
+        )
+        .unwrap();
+        let obs = strat.decode(&[1, 1]).unwrap();
+        assert_eq!(obs, (1u64 << 1) | (1u64 << 3));
+    }
+
+    #[test]
+    fn windowed_strategy_rejects_observable_index_over_63() {
+        let r = WindowedLogicalSubgraphStrategy::new(
+            vec!["error(0.1) D0 L0".to_string()],
+            vec![vec![0usize]],
+            vec![64usize],
+            |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
+        );
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn windowed_strategy_rejects_mismatched_input_lengths() {
+        let r = WindowedLogicalSubgraphStrategy::new(
+            vec!["error(0.1) D0 L0".to_string()],
+            vec![vec![0usize], vec![1usize]], // 2 maps for 1 dem
+            vec![0usize],
+            |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
+        );
+        assert!(r.is_err());
     }
 
     #[test]

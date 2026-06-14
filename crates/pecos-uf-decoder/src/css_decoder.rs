@@ -113,6 +113,8 @@ impl CssUfDecoder {
     ) -> Result<Self, DecoderError> {
         let x_graph = DemMatchingGraph::from_dem_str(x_dem)?;
         let z_graph = DemMatchingGraph::from_dem_str(z_dem)?;
+        UfDecoder::check_non_negative_weights(&x_graph)?;
+        UfDecoder::check_non_negative_weights(&z_graph)?;
 
         // Auto-detect qubit-edge mapping from detector coordinates.
         let qubit_map = Self::build_qubit_mapping(&x_graph, &z_graph);

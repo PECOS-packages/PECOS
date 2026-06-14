@@ -925,6 +925,7 @@ fn build_rust_tick_circuit_from_gates(
                 "QAlloc" | "PZ" | "Prep" => {
                     pz_qubits.extend(qubit_ids);
                 }
+                "TrackedPauli" | "TrackedPauliMeta" => {}
                 _ => {
                     let core_gate = build_gate_from_python(gate, &gate_name, &qubit_ids)?;
                     other_gates.push(core_gate);
@@ -1357,6 +1358,7 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                 "I" | "Idle" => {
                     // Identity/Idle gates: skip (no-op for simulation)
                 }
+                "TrackedPauli" | "TrackedPauliMeta" => {}
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                         "Unsupported gate type '{name}' in extract_commands. \

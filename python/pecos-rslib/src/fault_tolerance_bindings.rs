@@ -1445,6 +1445,22 @@ fn contribution_record_to_pydict(
         dict.set_item("direct_source_family", family_label)?;
     }
     dict.set_item("replacement_branch", contribution.replacement_branch)?;
+    if let Some(parts) = &contribution.source_component_effects {
+        dict.set_item(
+            "source_component_detectors",
+            parts
+                .iter()
+                .map(|part| part.detectors.to_vec())
+                .collect::<Vec<_>>(),
+        )?;
+        dict.set_item(
+            "source_component_dem_outputs",
+            parts
+                .iter()
+                .map(|part| part.dem_outputs.to_vec())
+                .collect::<Vec<_>>(),
+        )?;
+    }
 
     match contribution.source_type {
         RustFaultSourceType::Direct => {

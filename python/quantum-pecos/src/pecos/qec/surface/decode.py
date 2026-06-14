@@ -1846,6 +1846,7 @@ def _surface_native_topology(
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
 ) -> _CachedNativeSurfaceTopology:
     """Build topology-only native analysis shared across noise parameters."""
@@ -1859,6 +1860,8 @@ def _surface_native_topology(
         normalize_traced_qis_tick_circuit,
     )
 
+    resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
+    interaction_basis = resolved_plan.interaction_basis
     patch = _cached_surface_patch(patch_key)
     tc = _build_surface_tick_circuit_for_native_model(
         patch,
@@ -1906,7 +1909,6 @@ def _surface_native_topology(
         pauli_frame_lookup = PauliFrameLookup.from_circuit(dag, det_records, obs_records)
         num_pauli_sites = pauli_frame_lookup.num_pauli_sites
 
-    resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis)
     return _CachedNativeSurfaceTopology(
         dag_circuit=dag,
         influence_map=influence_map,
@@ -1941,6 +1943,7 @@ def _cached_surface_native_topology(
     *,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
     resolved_check_plan_hash: str = "",
 ) -> _CachedNativeSurfaceTopology:
@@ -1955,6 +1958,7 @@ def _cached_surface_native_topology(
         include_idle_gates,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
         szz_physical_prefixes=szz_physical_prefixes,
     )
 
@@ -2039,6 +2043,7 @@ def _cached_surface_native_dem_string(
     p_idle_z_quadratic_sine_rate: float | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str = "cx",
+    check_plan: str | None = None,
     resolved_check_plan_hash: str = "",
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
@@ -2074,6 +2079,7 @@ def _cached_surface_native_dem_string(
         include_idle_gates,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
         szz_physical_prefixes=szz_physical_prefixes,
         resolved_check_plan_hash=resolved_check_plan_hash,
     )
@@ -2271,6 +2277,7 @@ def generate_circuit_level_dem_from_builder(
             runtime=runtime,
             twirl=twirl,
             interaction_basis=interaction_basis,
+            check_plan=resolved_plan.plan_id,
             szz_physical_prefixes=szz_physical_prefixes,
         )
         return _dem_string_from_cached_surface_topology(
@@ -2300,6 +2307,7 @@ def generate_circuit_level_dem_from_builder(
         "p_idle_z_quadratic_sine_rate": noise.p_idle_z_quadratic_sine_rate,
         "twirl": twirl,
         "interaction_basis": interaction_basis,
+        "check_plan": resolved_plan.plan_id,
         "resolved_check_plan_hash": resolved_plan.resolved_hash,
     }
     if dem_decomposition != "source_graphlike":
@@ -4162,6 +4170,7 @@ def build_native_sampler(
         _noise_uses_dedicated_idle_noise(noise),
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
         resolved_check_plan_hash=resolved_plan.resolved_hash,
     )
@@ -4199,6 +4208,7 @@ def build_native_sampler(
             p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
             twirl=twirl,
             interaction_basis=interaction_basis,
+            check_plan=resolved_plan.plan_id,
             resolved_check_plan_hash=resolved_plan.resolved_hash,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
@@ -4259,6 +4269,7 @@ def build_native_sampler_from_dem(
         include_idle_gates=False,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
         resolved_check_plan_hash=resolved_plan.resolved_hash,
     )
     sampler = _cached_parsed_dem(decomposed_dem).to_dem_sampler()

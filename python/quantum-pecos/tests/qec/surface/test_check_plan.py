@@ -110,6 +110,7 @@ def test_native_sampler_records_resolved_check_plan() -> None:
         num_rounds=1,
         noise=NoiseModel(p2=0.001),
         check_plan="szz_current_v1",
+        sampling_model="influence_dem",
     )
 
     assert sampler.interaction_basis == "szz"

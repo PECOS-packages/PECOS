@@ -1295,7 +1295,11 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                 "Tdg" => {
                     cb = cb.tdg(&qubits);
                 }
-                "MZ" => {
+                "MZ" | "Measure" | "MeasureFree" => {
+                    // Z-basis measurement; ``MeasureFree`` additionally frees the
+                    // qubit, which is a no-op for the fixed-width simulator. Kept
+                    // consistent with build_rust_tick_circuit_from_gates and the
+                    // surface DEM path, which treat all three as Z measurements.
                     cb = cb.mz(&qubits);
                 }
                 "RX" => {

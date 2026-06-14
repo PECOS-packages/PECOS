@@ -238,12 +238,11 @@ impl QisEngineBuilder {
                         platform: self.platform,
                         ..Default::default()
                     };
-                    self.program_source = Some(
-                        pecos_hugr_qis::compile_hugr_bytes_to_string_with_options(
+                    self.program_source =
+                        Some(pecos_hugr_qis::compile_hugr_bytes_to_string_with_options(
                             &hugr_prog.hugr,
                             &args,
-                        )?,
-                    );
+                        )?);
                 }
                 #[cfg(not(feature = "hugr"))]
                 {

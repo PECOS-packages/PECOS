@@ -302,15 +302,25 @@ impl SparseDem {
                     let mut det_set = std::collections::BTreeSet::new();
                     let mut obs_set = std::collections::BTreeSet::new();
                     for token in tokens.split('^').flat_map(str::split_whitespace) {
-                        if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok())
-                        {
+                        // Reject a malformed `D<bad>` / `L<bad>` token rather than
+                        // silently dropping it -- matches DemCheckMatrix /
+                        // DemMatchingGraph so all parsers agree on what is valid.
+                        if let Some(d_str) = token.strip_prefix('D') {
+                            let d: u32 = d_str.parse().map_err(|_| {
+                                DecoderError::InvalidConfiguration(format!(
+                                    "Invalid detector: {token}"
+                                ))
+                            })?;
                             if !det_set.remove(&d) {
                                 det_set.insert(d);
                             }
                             max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                        } else if let Some(l) =
-                            token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok())
-                        {
+                        } else if let Some(l_str) = token.strip_prefix('L') {
+                            let l: u32 = l_str.parse().map_err(|_| {
+                                DecoderError::InvalidConfiguration(format!(
+                                    "Invalid observable: {token}"
+                                ))
+                            })?;
                             if !obs_set.remove(&l) {
                                 obs_set.insert(l);
                             }
@@ -323,13 +333,22 @@ impl SparseDem {
                     let mut detectors = Vec::new();
                     let mut observables = Vec::new();
                     for token in tokens.split_whitespace() {
-                        if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok())
-                        {
+                        // Reject malformed `D<bad>` / `L<bad>` (parser-agreement
+                        // contract, see the decomposed branch above).
+                        if let Some(d_str) = token.strip_prefix('D') {
+                            let d: u32 = d_str.parse().map_err(|_| {
+                                DecoderError::InvalidConfiguration(format!(
+                                    "Invalid detector: {token}"
+                                ))
+                            })?;
                             detectors.push(d);
                             max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                        } else if let Some(l) =
-                            token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok())
-                        {
+                        } else if let Some(l_str) = token.strip_prefix('L') {
+                            let l: u32 = l_str.parse().map_err(|_| {
+                                DecoderError::InvalidConfiguration(format!(
+                                    "Invalid observable: {token}"
+                                ))
+                            })?;
                             observables.push(l);
                             max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
                         }
@@ -1177,6 +1196,25 @@ mod tests {
         );
         let (dets, _obs) = utils::parse_dem_metadata(dem).unwrap();
         assert_eq!(dets, 8, "parse_dem_metadata must count bare detector D7");
+    }
+
+    #[test]
+    fn test_parsers_reject_malformed_detector_token() {
+        // A `D<bad>` / `L<bad>` token in an error line is malformed. All three
+        // error-line parsers must reject it (not silently drop it) so they agree
+        // on what a valid DEM is. SparseDem previously skipped these silently.
+        let bad_det = "error(0.01) Dfoo L0\n";
+        assert!(SparseDem::from_dem_str(bad_det).is_err());
+        assert!(DemCheckMatrix::from_dem_str(bad_det).is_err());
+        assert!(DemMatchingGraph::from_dem_str(bad_det).is_err());
+
+        let bad_obs = "error(0.01) D0 Lbar\n";
+        assert!(SparseDem::from_dem_str(bad_obs).is_err());
+        assert!(DemCheckMatrix::from_dem_str(bad_obs).is_err());
+        assert!(DemMatchingGraph::from_dem_str(bad_obs).is_err());
+
+        // A well-formed line still parses.
+        assert!(SparseDem::from_dem_str("error(0.01) D0 D1 L0\n").is_ok());
     }
 
     #[test]

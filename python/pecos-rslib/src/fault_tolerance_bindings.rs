@@ -4936,6 +4936,23 @@ impl PyWindowedLogicalSubgraphDecoder {
 // Logical Algorithm Decoder (Python class)
 // =============================================================================
 
+/// Read a required `u32` bit field off a boundary-gate descriptor dict, returning
+/// a clear `PyErr` (not a panic) when a malformed descriptor omits the field.
+/// Shared by the two algorithm-decoder bindings below.
+fn req_bit(
+    dict: &pyo3::Bound<'_, pyo3::types::PyDict>,
+    key: &str,
+    gate_type: &str,
+) -> PyResult<u32> {
+    dict.get_item(key)?
+        .ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "boundary gate '{gate_type}' missing required field '{key}'"
+            ))
+        })?
+        .extract()
+}
+
 /// Decoder for logical quantum algorithms with per-segment logical-subgraph decoder and
 /// Pauli frame propagation at transversal gate boundaries.
 ///
@@ -4986,7 +5003,11 @@ impl PyLogicalAlgorithmDecoder {
             .extract()?;
 
         // Parse stab_coords from the first segment (original orientation)
-        let first_seg = &seg_list[0];
+        let first_seg = seg_list.first().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "algorithm descriptor has no segments",
+            )
+        })?;
         let sc_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = first_seg
             .get_item("stab_coords")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("stab_coords"))?
@@ -5048,32 +5069,28 @@ impl PyLogicalAlgorithmDecoder {
                     .extract()?;
                 match gate_type.as_str() {
                     "Hadamard" => {
-                        let x: u32 = gate_dict.get_item("x_obs_bit")?.unwrap().extract()?;
-                        let z: u32 = gate_dict.get_item("z_obs_bit")?.unwrap().extract()?;
                         bg_vec.push(BoundaryGate::Hadamard {
-                            x_obs_bit: x,
-                            z_obs_bit: z,
+                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
+                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
                         });
                     }
                     "Cnot" => {
                         bg_vec.push(BoundaryGate::Cnot {
-                            ctrl_x_bit: gate_dict.get_item("ctrl_x_bit")?.unwrap().extract()?,
-                            ctrl_z_bit: gate_dict.get_item("ctrl_z_bit")?.unwrap().extract()?,
-                            tgt_x_bit: gate_dict.get_item("tgt_x_bit")?.unwrap().extract()?,
-                            tgt_z_bit: gate_dict.get_item("tgt_z_bit")?.unwrap().extract()?,
+                            ctrl_x_bit: req_bit(gate_dict, "ctrl_x_bit", &gate_type)?,
+                            ctrl_z_bit: req_bit(gate_dict, "ctrl_z_bit", &gate_type)?,
+                            tgt_x_bit: req_bit(gate_dict, "tgt_x_bit", &gate_type)?,
+                            tgt_z_bit: req_bit(gate_dict, "tgt_z_bit", &gate_type)?,
                         });
                     }
                     "SGate" => {
-                        let x: u32 = gate_dict.get_item("x_obs_bit")?.unwrap().extract()?;
-                        let z: u32 = gate_dict.get_item("z_obs_bit")?.unwrap().extract()?;
                         bg_vec.push(BoundaryGate::SGate {
-                            x_obs_bit: x,
-                            z_obs_bit: z,
+                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
+                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
                         });
                     }
                     "TGateInjection" => {
-                        let z: u32 = gate_dict.get_item("z_obs_bit")?.unwrap().extract()?;
-                        let a: u32 = gate_dict.get_item("ancilla_z_bit")?.unwrap().extract()?;
+                        let z = req_bit(gate_dict, "z_obs_bit", &gate_type)?;
+                        let a = req_bit(gate_dict, "ancilla_z_bit", &gate_type)?;
                         bg_vec.push(BoundaryGate::TGateInjection {
                             z_obs_bit: z,
                             ancilla_z_bit: a,
@@ -5241,7 +5258,11 @@ impl PyLogicalCircuitDecoder {
             .extract()?;
 
         // Parse stab_coords from first segment
-        let first_seg = &seg_list[0];
+        let first_seg = seg_list.first().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "algorithm descriptor has no segments",
+            )
+        })?;
         let sc_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = first_seg
             .get_item("stab_coords")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("stab_coords"))?
@@ -5303,27 +5324,27 @@ impl PyLogicalCircuitDecoder {
                 match gate_type.as_str() {
                     "Hadamard" => {
                         bg_vec.push(BoundaryGate::Hadamard {
-                            x_obs_bit: gate_dict.get_item("x_obs_bit")?.unwrap().extract()?,
-                            z_obs_bit: gate_dict.get_item("z_obs_bit")?.unwrap().extract()?,
+                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
+                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
                         });
                     }
                     "Cnot" => {
                         bg_vec.push(BoundaryGate::Cnot {
-                            ctrl_x_bit: gate_dict.get_item("ctrl_x_bit")?.unwrap().extract()?,
-                            ctrl_z_bit: gate_dict.get_item("ctrl_z_bit")?.unwrap().extract()?,
-                            tgt_x_bit: gate_dict.get_item("tgt_x_bit")?.unwrap().extract()?,
-                            tgt_z_bit: gate_dict.get_item("tgt_z_bit")?.unwrap().extract()?,
+                            ctrl_x_bit: req_bit(gate_dict, "ctrl_x_bit", &gate_type)?,
+                            ctrl_z_bit: req_bit(gate_dict, "ctrl_z_bit", &gate_type)?,
+                            tgt_x_bit: req_bit(gate_dict, "tgt_x_bit", &gate_type)?,
+                            tgt_z_bit: req_bit(gate_dict, "tgt_z_bit", &gate_type)?,
                         });
                     }
                     "SGate" => {
                         bg_vec.push(BoundaryGate::SGate {
-                            x_obs_bit: gate_dict.get_item("x_obs_bit")?.unwrap().extract()?,
-                            z_obs_bit: gate_dict.get_item("z_obs_bit")?.unwrap().extract()?,
+                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
+                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
                         });
                     }
                     "TGateInjection" => {
-                        let z: u32 = gate_dict.get_item("z_obs_bit")?.unwrap().extract()?;
-                        let a: u32 = gate_dict.get_item("ancilla_z_bit")?.unwrap().extract()?;
+                        let z = req_bit(gate_dict, "z_obs_bit", &gate_type)?;
+                        let a = req_bit(gate_dict, "ancilla_z_bit", &gate_type)?;
                         bg_vec.push(BoundaryGate::TGateInjection {
                             z_obs_bit: z,
                             ancilla_z_bit: a,

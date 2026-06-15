@@ -496,20 +496,27 @@ impl QisEngine {
         self.num_physical_slots = 0;
     }
 
-    fn allocate_qubit_slot(&mut self, program_id: usize) -> usize {
+    fn allocate_qubit_slot(&mut self, program_id: usize) -> Result<usize, PecosError> {
         if let Some(&slot) = self.active_qubit_slots.get(&program_id) {
-            return slot;
+            return Ok(slot);
         }
 
         let slot = if let Some(slot) = self.free_qubit_slots.pop_first() {
             slot
         } else {
+            if let Some(limit) = self.num_qubits_hint
+                && self.num_physical_slots >= limit
+            {
+                return Err(PecosError::Generic(format!(
+                    "QIS program requires more than the configured {limit} physical qubit slots while allocating program qubit {program_id}"
+                )));
+            }
             self.num_physical_slots
         };
         self.num_physical_slots = self.num_physical_slots.max(slot + 1);
         self.active_qubit_slots.insert(program_id, slot);
         self.seen_program_qubits.insert(program_id);
-        slot
+        Ok(slot)
     }
 
     fn release_qubit_slot(&mut self, program_id: usize) {
@@ -529,7 +536,7 @@ impl QisEngine {
             )));
         }
 
-        Ok(self.allocate_qubit_slot(program_id))
+        self.allocate_qubit_slot(program_id)
     }
 
     /// Convert dynamic QIS operations into a `ByteMessage` for the quantum engine.
@@ -548,7 +555,7 @@ impl QisEngine {
             for op in ops {
                 match op {
                     Operation::AllocateQubit { id } => {
-                        let slot = self.allocate_qubit_slot(*id);
+                        let slot = self.allocate_qubit_slot(*id)?;
                         builder.pz(&[slot]);
                     }
                     Operation::ReleaseQubit { id } => {
@@ -1275,11 +1282,11 @@ impl ClassicalEngine for QisEngine {
         // return the physical-slot high-water mark instead. The runtime can
         // report its own baseline (e.g. from `allocated_qubits` metadata) and
         // we take the larger of the two.
-        let num_qubits = self
-            .runtime
-            .num_qubits()
-            .max(self.num_physical_slots)
-            .max(self.num_qubits_hint.unwrap_or(0));
+        let num_qubits = if let Some(hint) = self.num_qubits_hint {
+            hint
+        } else {
+            self.runtime.num_qubits().max(self.num_physical_slots)
+        };
         debug!("QisEngine: num_qubits() returning {num_qubits}");
         num_qubits
     }
@@ -1881,6 +1888,50 @@ mod tests {
 
         assert!(
             err.to_string().contains("not currently active"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_num_qubits_hint_is_physical_capacity_for_sparse_handles() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        engine.set_num_qubits_hint(98);
+        let ops = vec![
+            Operation::AllocateQubit { id: 81 },
+            Operation::AllocateQubit { id: 105 },
+            QuantumOp::CX(81, 105).into(),
+        ];
+
+        let commands = engine
+            .operations_to_bytemessage(&ops)
+            .expect("sparse handles should map onto live physical slots");
+
+        let lowered = commands.quantum_ops().expect("parse lowered commands");
+        assert_eq!(lowered[0].qubits.as_slice(), &[pecos_core::QubitId(0)]);
+        assert_eq!(lowered[1].qubits.as_slice(), &[pecos_core::QubitId(1)]);
+        assert_eq!(
+            lowered[2].qubits.as_slice(),
+            &[pecos_core::QubitId(0), pecos_core::QubitId(1)]
+        );
+        assert_eq!(engine.num_physical_slots, 2);
+        assert_eq!(engine.num_qubits(), 98);
+    }
+
+    #[test]
+    fn test_qubit_hint_rejects_too_many_live_physical_slots() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        engine.set_num_qubits_hint(1);
+        let ops = vec![
+            Operation::AllocateQubit { id: 81 },
+            Operation::AllocateQubit { id: 105 },
+        ];
+
+        let Err(err) = engine.operations_to_bytemessage(&ops) else {
+            panic!("allocating beyond the physical qubit hint should error");
+        };
+
+        assert!(
+            err.to_string().contains("more than the configured 1"),
             "unexpected error: {err}"
         );
     }

@@ -6,7 +6,7 @@
 use crate::runtime::{ClassicalState, QisRuntime, Result, RuntimeError, Shot};
 use log::{debug, trace};
 use pecos_qis_ffi_types::{Operation, OperationCollector, QuantumOp};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CString, c_void};
 use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
@@ -217,6 +217,21 @@ pub struct SeleneRuntime {
     /// Number of qubits
     num_qubits: usize,
 
+    /// Explicit physical runtime capacity requested by the caller.
+    ///
+    /// Some generated programs use sparse, monotonically increasing logical
+    /// handles while guaranteeing a smaller maximum number of live physical
+    /// slots. In those cases the `.qubits(...)` hint is the runtime capacity;
+    /// if the program actually exceeds it, plugin qalloc fails loudly.
+    num_qubits_hint: Option<usize>,
+
+    /// Whether the loaded operation stream uses explicit qalloc/qfree records.
+    ///
+    /// In this mode program qubit IDs are logical handles, not dense physical
+    /// runtime slots. Runtime plugin capacity must therefore follow the maximum
+    /// simultaneously-live allocation count instead of `max(program_id) + 1`.
+    uses_explicit_qubit_allocation: bool,
+
     /// Number of allocated result slots
     num_results: usize,
 
@@ -270,6 +285,8 @@ impl SeleneRuntime {
             operations_buffer: Vec::new(),
             batch_size: 100,
             num_qubits: 0,
+            num_qubits_hint: None,
+            uses_explicit_qubit_allocation: false,
             num_results: 0,
             interface: None,
             current_op_index: 0,
@@ -321,11 +338,14 @@ impl SeleneRuntime {
             self.interface.as_ref().map_or(0, |i| i.operations.len())
         );
 
-        // Update capacities from both explicit allocation records and direct
-        // program handles used by older QIR/LLVM examples.
+        // Update capacities from explicit allocation records when available,
+        // otherwise fall back to direct program handles used by older QIR/LLVM
+        // examples.
         let (num_qubits, num_results) = collector_capacity(&operations);
         self.num_qubits = num_qubits;
         self.num_results = num_results;
+        self.uses_explicit_qubit_allocation =
+            has_explicit_qubit_allocations(&operations.operations);
 
         self.interface = Some(operations);
         self.current_op_index = 0;
@@ -340,11 +360,12 @@ impl SeleneRuntime {
         }
 
         self.apply_library_search_dirs()?;
+        let plugin_num_qubits = self.plugin_num_qubits();
 
         debug!(
             "Loading Selene plugin from {} with {} qubits, {} results, and {} init args",
             self.plugin_path,
-            self.num_qubits,
+            plugin_num_qubits,
             self.num_results,
             self.init_args.len()
         );
@@ -383,7 +404,7 @@ impl SeleneRuntime {
             let mut instance: *mut c_void = std::ptr::null_mut();
             let errno = init_fn(
                 &raw mut instance,
-                self.num_qubits as u64,
+                plugin_num_qubits as u64,
                 0, // start time
                 arg_ptrs.len() as u32,
                 argv,
@@ -397,7 +418,7 @@ impl SeleneRuntime {
 
             self.library = Some(ManuallyDrop::new(lib));
             self.instance = Some(instance);
-            self.initialized_num_qubits = Some(self.num_qubits);
+            self.initialized_num_qubits = Some(plugin_num_qubits);
         }
 
         self.apply_pending_shot_start()?;
@@ -409,16 +430,21 @@ impl SeleneRuntime {
             return Ok(());
         };
 
-        if self.num_qubits <= initialized_num_qubits {
+        let plugin_num_qubits = self.plugin_num_qubits();
+        if plugin_num_qubits <= initialized_num_qubits {
             return Ok(());
         }
 
         debug!(
             "Reinitializing Selene plugin capacity from {} to {} qubits",
-            initialized_num_qubits, self.num_qubits
+            initialized_num_qubits, plugin_num_qubits
         );
         self.reset_plugin_instance()?;
         self.load_plugin()
+    }
+
+    fn plugin_num_qubits(&self) -> usize {
+        self.num_qubits_hint.unwrap_or(self.num_qubits)
     }
 
     fn reset_plugin_instance(&mut self) -> Result<()> {
@@ -550,7 +576,6 @@ impl SeleneRuntime {
                 }
                 Operation::AllocateQubit { id } => {
                     trace!("Allocating qubit {id}");
-                    self.num_qubits = self.num_qubits.max(id + 1);
                     self.current_op_index += 1;
                 }
                 Operation::AllocateResult { id } => {
@@ -606,7 +631,9 @@ impl SeleneRuntime {
         let runtime_qubit = self.runtime_qalloc()?;
         self.program_to_runtime_qubits
             .insert(program_qubit, runtime_qubit);
-        self.num_qubits = self.num_qubits.max(program_qubit + 1);
+        if !self.uses_explicit_qubit_allocation {
+            self.num_qubits = self.num_qubits.max(program_qubit + 1);
+        }
         Ok(runtime_qubit)
     }
 
@@ -877,6 +904,8 @@ impl SeleneRuntime {
             QuantumOp::Measure(qubit, result_id) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_measure(runtime_qubit, *result_id)?;
+                self.program_to_runtime_qubits.remove(qubit);
+                self.runtime_qfree(runtime_qubit)?;
             }
             QuantumOp::Reset(qubit) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
@@ -1119,6 +1148,8 @@ impl Clone for SeleneRuntime {
             operations_buffer: self.operations_buffer.clone(),
             batch_size: self.batch_size,
             num_qubits: self.num_qubits,
+            num_qubits_hint: self.num_qubits_hint,
+            uses_explicit_qubit_allocation: self.uses_explicit_qubit_allocation,
             num_results: self.num_results,
             interface: self.interface.clone(),
             current_op_index: self.current_op_index,
@@ -1134,10 +1165,14 @@ impl Clone for SeleneRuntime {
 }
 
 fn collector_capacity(interface: &OperationCollector) -> (usize, usize) {
-    let (mut num_qubits, mut num_results) = operation_capacity(&interface.operations);
+    let uses_explicit_allocations = has_explicit_qubit_allocations(&interface.operations);
+    let (mut num_qubits, mut num_results) =
+        operation_capacity_with_mode(&interface.operations, uses_explicit_allocations);
 
-    for &qubit in &interface.allocated_qubits {
-        include_qubit(&mut num_qubits, qubit);
+    if !uses_explicit_allocations {
+        for &qubit in &interface.allocated_qubits {
+            include_qubit(&mut num_qubits, qubit);
+        }
     }
     for &result in &interface.allocated_results {
         include_result(&mut num_results, result);
@@ -1146,17 +1181,38 @@ fn collector_capacity(interface: &OperationCollector) -> (usize, usize) {
     (num_qubits, num_results)
 }
 
-fn operation_capacity(operations: &[Operation]) -> (usize, usize) {
+fn has_explicit_qubit_allocations(operations: &[Operation]) -> bool {
+    operations.iter().any(|op| {
+        matches!(
+            op,
+            Operation::AllocateQubit { .. } | Operation::ReleaseQubit { .. }
+        )
+    })
+}
+
+fn operation_capacity_with_mode(
+    operations: &[Operation],
+    uses_explicit_allocations: bool,
+) -> (usize, usize) {
     let mut num_qubits = 0;
     let mut num_results = 0;
+    let mut live_qubits = BTreeSet::new();
+    let mut max_live_qubits = 0;
 
     for op in operations {
         match op {
-            Operation::Quantum(qop) => {
+            Operation::Quantum(qop) if !uses_explicit_allocations => {
                 include_quantum_op_capacity(qop, &mut num_qubits, &mut num_results)
             }
-            Operation::AllocateQubit { id } | Operation::ReleaseQubit { id } => {
-                include_qubit(&mut num_qubits, *id);
+            Operation::Quantum(qop) => {
+                include_quantum_result_capacity(qop, &mut num_results);
+            }
+            Operation::AllocateQubit { id } => {
+                live_qubits.insert(*id);
+                max_live_qubits = max_live_qubits.max(live_qubits.len());
+            }
+            Operation::ReleaseQubit { id } => {
+                live_qubits.remove(id);
             }
             Operation::AllocateResult { id } => include_result(&mut num_results, *id),
             Operation::RecordOutput { result_id, .. } => {
@@ -1165,8 +1221,17 @@ fn operation_capacity(operations: &[Operation]) -> (usize, usize) {
             Operation::Barrier => {}
         }
     }
+    if uses_explicit_allocations {
+        num_qubits = max_live_qubits;
+    }
 
     (num_qubits, num_results)
+}
+
+fn include_quantum_result_capacity(qop: &QuantumOp, num_results: &mut usize) {
+    if let QuantumOp::Measure(_, result) = qop {
+        include_result(num_results, *result);
+    }
 }
 
 fn include_quantum_op_capacity(qop: &QuantumOp, num_qubits: &mut usize, num_results: &mut usize) {
@@ -1222,12 +1287,13 @@ impl QisRuntime for SeleneRuntime {
             interface.operations.len()
         );
 
-        // Count qubits and results from both explicit allocation records and
-        // direct program handles. Some legacy LLVM/QIR inputs use qubit handles
-        // like 0 and 1 without emitting __quantum__rt__qubit_allocate calls.
+        // Count qubits from explicit allocation records when present,
+        // otherwise from direct program handles. Some legacy LLVM/QIR inputs
+        // use qubit handles like 0 and 1 without emitting allocation calls.
         let (num_qubits, num_results) = collector_capacity(&interface);
         self.num_qubits = num_qubits;
         self.num_results = num_results;
+        self.uses_explicit_qubit_allocation = has_explicit_qubit_allocations(&interface.operations);
 
         debug!(
             "Interface has {} qubits and {} result slots",
@@ -1257,7 +1323,11 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn lower_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
-        let (num_qubits, num_results) = operation_capacity(operations);
+        if has_explicit_qubit_allocations(operations) {
+            self.uses_explicit_qubit_allocation = true;
+        }
+        let (num_qubits, num_results) =
+            operation_capacity_with_mode(operations, self.uses_explicit_qubit_allocation);
         self.num_qubits = self.num_qubits.max(num_qubits);
         self.num_results = self.num_results.max(num_results);
         self.ensure_plugin_capacity()?;
@@ -1354,10 +1424,11 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn num_qubits(&self) -> usize {
-        self.num_qubits
+        self.plugin_num_qubits()
     }
 
     fn set_num_qubits(&mut self, num_qubits: usize) {
+        self.num_qubits_hint = Some(num_qubits);
         self.num_qubits = self.num_qubits.max(num_qubits);
     }
 
@@ -1520,9 +1591,38 @@ mod tests {
         let mut collector = OperationCollector::new();
         collector.queue_operation(Operation::AllocateQubit { id: 5 });
         collector.queue_operation(Operation::AllocateResult { id: 2 });
-        collector.queue_operation(QuantumOp::H(1).into());
+        collector.queue_operation(QuantumOp::H(5).into());
 
-        assert_eq!(collector_capacity(&collector), (6, 3));
+        assert_eq!(collector_capacity(&collector), (1, 3));
+    }
+
+    #[test]
+    fn test_collector_capacity_uses_max_live_explicit_allocations() {
+        let mut collector = OperationCollector::new();
+        collector.queue_operation(Operation::AllocateQubit { id: 81 });
+        collector.queue_operation(Operation::AllocateQubit { id: 97 });
+        collector.queue_operation(QuantumOp::CX(81, 97).into());
+        collector.queue_operation(Operation::ReleaseQubit { id: 97 });
+        collector.queue_operation(Operation::AllocateQubit { id: 105 });
+        collector.queue_operation(QuantumOp::Measure(105, 9).into());
+
+        assert_eq!(collector_capacity(&collector), (2, 10));
+    }
+
+    #[test]
+    fn test_explicit_qubit_hint_caps_plugin_capacity() {
+        let mut runtime = SeleneRuntime::new("/path/to/selene.so");
+        runtime.set_num_qubits(98);
+
+        let (num_qubits, _) = operation_capacity_with_mode(
+            &[QuantumOp::CX(81, 105).into()],
+            runtime.uses_explicit_qubit_allocation,
+        );
+        runtime.num_qubits = runtime.num_qubits.max(num_qubits);
+
+        assert_eq!(runtime.num_qubits, 106);
+        assert_eq!(runtime.plugin_num_qubits(), 98);
+        assert_eq!(runtime.num_qubits(), 98);
     }
 
     #[test]

@@ -50,3 +50,25 @@ def test_constrained_ancilla_surface_code_traces_to_native_tick_circuit() -> Non
 
     assert circuit.get_meta("ancilla_budget") == "2"
     assert int(circuit.get_meta("num_measurements")) > 0
+
+
+def test_constrained_szz_surface_code_traces_to_native_tick_circuit() -> None:
+    """Budgeted SZZ/SZZdg surface programs should share the constrained Guppy path."""
+    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+
+    patch = SurfacePatch.create(distance=3)
+    circuit = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=1,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+        interaction_basis="szz",
+    )
+
+    gate_counts = circuit.gate_counts_by_type()
+    assert circuit.get_meta("ancilla_budget") == "2"
+    assert int(circuit.get_meta("num_measurements")) > 0
+    assert gate_counts.get("RZZ", 0) > 0
+    assert gate_counts.get("CX", 0) == 0

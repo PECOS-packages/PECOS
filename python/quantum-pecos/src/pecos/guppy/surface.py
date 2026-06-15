@@ -173,8 +173,8 @@ def generate_guppy_source(
         num_rounds: Number of syndrome rounds to render. Required when
             ``twirl`` is enabled because twirled source is unrolled per round.
         interaction_basis: Surface-memory interaction basis: ``"cx"`` or
-            ``"szz"``. SZZ Guppy generation currently supports only the
-            unconstrained, non-twirled memory shape.
+            ``"szz"``. SZZ Guppy generation supports the same non-twirled
+            unconstrained and constrained ancilla shapes as the CX template.
 
     Returns:
         Python/Guppy source code as a string.
@@ -206,13 +206,6 @@ def generate_guppy_source(
     total_ancilla = num_x_stab + num_z_stab
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
     constrained = effective_budget < total_ancilla
-    if interaction_basis == "szz" and constrained:
-        msg = (
-            "interaction_basis='szz' does not yet support constrained ancilla "
-            f"budgets on the Guppy runtime path (ancilla_budget={ancilla_budget} "
-            f"< total_ancilla={total_ancilla})"
-        )
-        raise ValueError(msg)
     if interaction_basis == "szz" and twirl is not None:
         msg = "interaction_basis='szz' Guppy runtime twirl integration is staged later"
         raise ValueError(msg)
@@ -498,6 +491,9 @@ def generate_guppy_source(
         lines.append(
             f'    """Extract full syndrome in {len(batches)} ancilla-reuse batches (budget={effective_budget})."""',
         )
+        if interaction_basis == "szz":
+            lines.append("    # Unpack data qubits")
+            _append_szz_data_unpack(lines, "    ")
         idx = 0
         for batch_idx, batch in enumerate(batches):
             lines.append("")
@@ -514,13 +510,18 @@ def generate_guppy_source(
                 batch_anc_var[(stab_type, stab_idx)] = var
                 lines.append(f"    {var} = qubit()")
 
-            x_in_batch = [(t, i) for (t, i) in batch if t == "X"]
-            if x_in_batch:
-                lines.append("    # Hadamard on X ancillas in this batch")
-                for stab_type, stab_idx in x_in_batch:
+            if interaction_basis == "cx":
+                x_in_batch = [(t, i) for (t, i) in batch if t == "X"]
+                if x_in_batch:
+                    lines.append("    # Hadamard on X ancillas in this batch")
+                    for stab_type, stab_idx in x_in_batch:
+                        lines.append(f"    h({batch_anc_var[(stab_type, stab_idx)]})")
+            else:
+                lines.append("    # Hadamard on SZZ ancillas in this batch")
+                for stab_type, stab_idx in batch:
                     lines.append(f"    h({batch_anc_var[(stab_type, stab_idx)]})")
 
-            # Filter the full CX schedule to just this batch's stabilizers.
+            # Filter the full interaction schedule to just this batch's stabilizers.
             batch_keys = set(batch_anc_var.keys())
             for rnd_idx, rnd_gates in enumerate(rounds):
                 rnd_in_batch = [
@@ -532,17 +533,36 @@ def generate_guppy_source(
                     continue
                 lines.append("")
                 lines.append(f"    # Batch {batch_idx + 1} round {rnd_idx + 1}")
-                for stab_type, stab_idx, data_q in rnd_in_batch:
-                    anc = batch_anc_var[(stab_type, stab_idx)]
-                    if stab_type == "X":
-                        lines.append(f"    cx({anc}, surf.data[{data_q}])")
-                    else:
-                        lines.append(f"    cx(surf.data[{data_q}], {anc})")
+                if interaction_basis == "cx":
+                    for stab_type, stab_idx, data_q in rnd_in_batch:
+                        anc = batch_anc_var[(stab_type, stab_idx)]
+                        if stab_type == "X":
+                            lines.append(f"    cx({anc}, surf.data[{data_q}])")
+                        else:
+                            lines.append(f"    cx(surf.data[{data_q}], {anc})")
+                else:
+                    _append_szz_layer(
+                        lines,
+                        "    ",
+                        rnd_idx,
+                        rnd_in_batch,
+                        lambda stab_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
+                            (stab_type, stab_idx)
+                        ],
+                        _szz_data_expr,
+                    )
 
-            if x_in_batch:
+            if interaction_basis == "cx":
+                x_in_batch = [(t, i) for (t, i) in batch if t == "X"]
+                if x_in_batch:
+                    lines.append("")
+                    lines.append("    # Hadamard on X ancillas in this batch")
+                    for stab_type, stab_idx in x_in_batch:
+                        lines.append(f"    h({batch_anc_var[(stab_type, stab_idx)]})")
+            else:
                 lines.append("")
-                lines.append("    # Hadamard on X ancillas in this batch")
-                for stab_type, stab_idx in x_in_batch:
+                lines.append("    # Hadamard on SZZ ancillas in this batch")
+                for stab_type, stab_idx in batch:
                     lines.append(f"    h({batch_anc_var[(stab_type, stab_idx)]})")
 
             lines.append("")
@@ -670,8 +690,13 @@ def generate_guppy_source(
                     batch_anc_var[(selected_type, stab_idx)] = var
                     lines.append(f"    {var} = qubit()")
 
-                if stab_type == "X":
-                    lines.append("    # Hadamard on X ancillas in this batch")
+                if interaction_basis == "cx":
+                    if stab_type == "X":
+                        lines.append("    # Hadamard on X ancillas in this batch")
+                        for selected_type, stab_idx in init_batch:
+                            lines.append(f"    h({batch_anc_var[(selected_type, stab_idx)]})")
+                else:
+                    lines.append("    # Hadamard on SZZ ancillas in this batch")
                     for selected_type, stab_idx in init_batch:
                         lines.append(f"    h({batch_anc_var[(selected_type, stab_idx)]})")
 
@@ -686,16 +711,34 @@ def generate_guppy_source(
                         continue
                     lines.append("")
                     lines.append(f"    # Batch {batch_idx + 1} round {rnd_idx + 1}")
-                    for selected_type, stab_idx, data_q in rnd_in_batch:
-                        anc = batch_anc_var[(selected_type, stab_idx)]
-                        if selected_type == "X":
-                            lines.append(f"    cx({anc}, surf.data[{data_q}])")
-                        else:
-                            lines.append(f"    cx(surf.data[{data_q}], {anc})")
+                    if interaction_basis == "cx":
+                        for selected_type, stab_idx, data_q in rnd_in_batch:
+                            anc = batch_anc_var[(selected_type, stab_idx)]
+                            if selected_type == "X":
+                                lines.append(f"    cx({anc}, surf.data[{data_q}])")
+                            else:
+                                lines.append(f"    cx(surf.data[{data_q}], {anc})")
+                    else:
+                        _append_szz_layer(
+                            lines,
+                            "    ",
+                            rnd_idx,
+                            rnd_in_batch,
+                            lambda selected_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
+                                (selected_type, stab_idx)
+                            ],
+                            _szz_data_expr,
+                        )
 
-                if stab_type == "X":
+                if interaction_basis == "cx":
+                    if stab_type == "X":
+                        lines.append("")
+                        lines.append("    # Hadamard on X ancillas in this batch")
+                        for selected_type, stab_idx in init_batch:
+                            lines.append(f"    h({batch_anc_var[(selected_type, stab_idx)]})")
+                else:
                     lines.append("")
-                    lines.append("    # Hadamard on X ancillas in this batch")
+                    lines.append("    # Hadamard on SZZ ancillas in this batch")
                     for selected_type, stab_idx in init_batch:
                         lines.append(f"    h({batch_anc_var[(selected_type, stab_idx)]})")
 
@@ -1649,9 +1692,6 @@ def get_num_qubits(
         num_data = d * d
         total_ancilla = d * d - 1
 
-    if interaction_basis == "szz" and normalize_ancilla_budget(total_ancilla, ancilla_budget) < total_ancilla:
-        msg = "interaction_basis='szz' does not yet support constrained ancilla budgets on the Guppy runtime path"
-        raise ValueError(msg)
     if interaction_basis == "szz" and twirl is not None:
         msg = "interaction_basis='szz' Guppy runtime twirl integration is staged later"
         raise ValueError(msg)

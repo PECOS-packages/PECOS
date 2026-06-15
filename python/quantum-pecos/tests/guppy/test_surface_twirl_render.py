@@ -51,10 +51,17 @@ def test_szz_source_uses_signed_zz_phase_template(patch: SurfacePatch) -> None:
     assert "s(d" in src
 
 
-def test_szz_source_rejects_staged_later_runtime_shapes(patch: SurfacePatch) -> None:
-    with pytest.raises(ValueError, match="constrained ancilla budgets"):
-        generate_guppy_source(patch, interaction_basis="szz", ancilla_budget=1)
+def test_szz_source_supports_constrained_ancilla_budget(patch: SurfacePatch) -> None:
+    src = generate_guppy_source(patch, interaction_basis="szz", ancilla_budget=1)
 
+    assert "zz_phase(" in src
+    assert "cx(" not in src
+    assert '"""Extract full syndrome in 8 ancilla-reuse batches (budget=1)."""' in src
+    assert "_a_b0_p0 = qubit()" in src
+    assert "_init_a_b0_p0 = qubit()" in src
+
+
+def test_szz_source_rejects_staged_later_runtime_shapes(patch: SurfacePatch) -> None:
     with pytest.raises(ValueError, match="twirl integration is staged later"):
         generate_guppy_source(
             patch,

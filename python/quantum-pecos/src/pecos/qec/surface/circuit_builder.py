@@ -882,12 +882,6 @@ def build_surface_code_circuit(
     cnot_rounds = compute_cnot_schedule(patch)
 
     if interaction_basis == "szz":
-        if effective_ancilla_budget != total_ancilla:
-            msg = (
-                "interaction_basis='szz' does not yet support constrained "
-                "ancilla budgets; pass ancilla_budget=None or a budget >= total_ancilla"
-            )
-            raise ValueError(msg)
         if twirl is not None:
             msg = "interaction_basis='szz' twirl integration is staged later; omit twirl for Stage 1"
             raise ValueError(msg)
@@ -1213,8 +1207,64 @@ def _build_surface_code_circuit_szz(
     def anc_q(stabilizer_type: str, stab_idx: int) -> int:
         return x_anc_q(stab_idx) if stabilizer_type == "X" else z_anc_q(stab_idx)
 
-    def stabilizers_for(stabilizer_type: str) -> list:
-        return geom.x_stabilizers if stabilizer_type == "X" else geom.z_stabilizers
+    def stabilizer_batches_for(selected_type: str | None = None) -> list[list[tuple[str, int]]]:
+        """Return the same ancilla-reuse batches used by the CX template."""
+        total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
+        allocation_ancilla_count = len(set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits))
+        if allocation_ancilla_count >= total_ancilla:
+            batch = [("X", s.index) for s in geom.x_stabilizers]
+            batch.extend(("Z", s.index) for s in geom.z_stabilizers)
+            batches = [batch]
+        else:
+            batches = _batched_stabilizers(patch, allocation_ancilla_count)
+
+        if selected_type is None:
+            return batches
+        return [
+            [(stab_type, stab_idx) for stab_type, stab_idx in batch if stab_type == selected_type]
+            for batch in batches
+            if any(stab_type == selected_type for stab_type, _stab_idx in batch)
+        ]
+
+    def append_prepare_szz_ancillas(target_ops: list[SurfaceCircuitStep], batch: list[tuple[str, int]]) -> None:
+        target_ops.extend(
+            SurfaceCircuitStep(
+                OpType.ALLOC,
+                [anc_q(stab_type, stab_idx)],
+                f"a{stab_type.lower()}{stab_idx}",
+            )
+            for stab_type, stab_idx in batch
+        )
+        target_ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
+        target_ops.extend(
+            SurfaceCircuitStep(
+                OpType.H,
+                [anc_q(stab_type, stab_idx)],
+                f"a{stab_type.lower()}{stab_idx}",
+            )
+            for stab_type, stab_idx in batch
+        )
+
+    def append_measure_szz_ancillas(target_ops: list[SurfaceCircuitStep], batch: list[tuple[str, int]]) -> None:
+        target_ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
+        target_ops.extend(
+            SurfaceCircuitStep(
+                OpType.H,
+                [anc_q(stab_type, stab_idx)],
+                f"a{stab_type.lower()}{stab_idx}",
+            )
+            for stab_type, stab_idx in batch
+        )
+
+        target_ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+        target_ops.extend(
+            SurfaceCircuitStep(
+                OpType.MEASURE,
+                [anc_q(stab_type, stab_idx)],
+                f"{'sx' if stab_type == 'X' else 'sz'}{stab_idx}",
+            )
+            for stab_type, stab_idx in batch
+        )
 
     def append_szz_layer(
         target_ops: list[SurfaceCircuitStep],
@@ -1265,90 +1315,54 @@ def _build_surface_code_circuit_szz(
     # init_{basis}_basis syndrome establishment
     # =========================================================================
     init_stabilizer_type = "X" if basis.upper() == "Z" else "Z"
-    init_stabilizers = list(stabilizers_for(init_stabilizer_type))
     ops.append(
         SurfaceCircuitStep(
             OpType.COMMENT,
             label=f"init_{init_stabilizer_type.lower()}_syndrome",
         ),
     )
-    ops.extend(
-        SurfaceCircuitStep(
-            OpType.ALLOC,
-            [anc_q(init_stabilizer_type, s.index)],
-            f"a{init_stabilizer_type.lower()}{s.index}",
-        )
-        for s in init_stabilizers
-    )
-    ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
-    ops.extend(
-        SurfaceCircuitStep(
-            OpType.H,
-            [anc_q(init_stabilizer_type, s.index)],
-            f"a{init_stabilizer_type.lower()}{s.index}",
-        )
-        for s in init_stabilizers
-    )
-    ops.append(SurfaceCircuitStep(OpType.TICK))
-
-    for rnd_idx, cnot_round in enumerate(cnot_rounds):
-        layer_gates = [
-            (stab_type, stab_idx, data_idx)
-            for stab_type, stab_idx, data_idx in cnot_round
-            if stab_type == init_stabilizer_type
-        ]
-        append_szz_layer(ops, rnd_idx, layer_gates)
+    for init_batch in stabilizer_batches_for(init_stabilizer_type):
+        append_prepare_szz_ancillas(ops, init_batch)
         ops.append(SurfaceCircuitStep(OpType.TICK))
 
-    ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
-    ops.extend(
-        SurfaceCircuitStep(
-            OpType.H,
-            [anc_q(init_stabilizer_type, s.index)],
-            f"a{init_stabilizer_type.lower()}{s.index}",
-        )
-        for s in init_stabilizers
-    )
+        init_keys = set(init_batch)
+        for rnd_idx, cnot_round in enumerate(cnot_rounds):
+            layer_gates = [
+                (stab_type, stab_idx, data_idx)
+                for stab_type, stab_idx, data_idx in cnot_round
+                if (stab_type, stab_idx) in init_keys
+            ]
+            append_szz_layer(ops, rnd_idx, layer_gates)
+            ops.append(SurfaceCircuitStep(OpType.TICK))
 
-    ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
-    init_label_prefix = "sx" if init_stabilizer_type == "X" else "sz"
-    ops.extend(
-        SurfaceCircuitStep(
-            OpType.MEASURE,
-            [anc_q(init_stabilizer_type, s.index)],
-            f"{init_label_prefix}{s.index}",
-        )
-        for s in init_stabilizers
-    )
-    ops.append(SurfaceCircuitStep(OpType.TICK))
+        append_measure_szz_ancillas(ops, init_batch)
+        ops.append(SurfaceCircuitStep(OpType.TICK))
 
     # =========================================================================
     # syndrome_extraction
     # =========================================================================
+    stabilizer_batches = stabilizer_batches_for()
     for rnd in range(num_rounds):
         ops.append(
             SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {rnd + 1}"),
         )
-        ops.extend(SurfaceCircuitStep(OpType.ALLOC, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
-        ops.extend(SurfaceCircuitStep(OpType.ALLOC, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
 
-        ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
-        ops.extend(SurfaceCircuitStep(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
-        ops.extend(SurfaceCircuitStep(OpType.H, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
-        ops.append(SurfaceCircuitStep(OpType.TICK))
-
-        for rnd_idx, cnot_round in enumerate(cnot_rounds):
-            append_szz_layer(ops, rnd_idx, list(cnot_round))
+        for batch in stabilizer_batches:
+            append_prepare_szz_ancillas(ops, batch)
             ops.append(SurfaceCircuitStep(OpType.TICK))
 
-        ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on SZZ ancillas"))
-        ops.extend(SurfaceCircuitStep(OpType.H, [x_anc_q(s.index)], f"ax{s.index}") for s in geom.x_stabilizers)
-        ops.extend(SurfaceCircuitStep(OpType.H, [z_anc_q(s.index)], f"az{s.index}") for s in geom.z_stabilizers)
+            batch_keys = set(batch)
+            for rnd_idx, cnot_round in enumerate(cnot_rounds):
+                layer_gates = [
+                    (stab_type, stab_idx, data_idx)
+                    for stab_type, stab_idx, data_idx in cnot_round
+                    if (stab_type, stab_idx) in batch_keys
+                ]
+                append_szz_layer(ops, rnd_idx, layer_gates)
+                ops.append(SurfaceCircuitStep(OpType.TICK))
 
-        ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
-        ops.extend(SurfaceCircuitStep(OpType.MEASURE, [x_anc_q(s.index)], f"sx{s.index}") for s in geom.x_stabilizers)
-        ops.extend(SurfaceCircuitStep(OpType.MEASURE, [z_anc_q(s.index)], f"sz{s.index}") for s in geom.z_stabilizers)
-        ops.append(SurfaceCircuitStep(OpType.TICK))
+            append_measure_szz_ancillas(ops, batch)
+            ops.append(SurfaceCircuitStep(OpType.TICK))
 
     # =========================================================================
     # measure_z_basis / measure_x_basis

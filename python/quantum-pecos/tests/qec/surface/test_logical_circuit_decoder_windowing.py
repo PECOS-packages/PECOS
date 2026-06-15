@@ -38,6 +38,18 @@ def _memory_descriptor(d: int, rounds: int) -> dict:
     return b.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
 
 
+def _h_boundary_descriptor() -> dict:
+    patch = SurfacePatch.create(3)
+    b = LogicalCircuitBuilder()
+    b.add_patch(patch, "A")
+    b.add_memory("A", 3, "Z")
+    b.add_transversal_h("A")
+    b.add_memory("A", 3, "X")
+    desc = b.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
+    assert desc["boundary_gates"][0][0]["type"] == "Hadamard"
+    return desc
+
+
 def test_unlimited_budget_reports_unlimited():
     dec = LogicalCircuitDecoder(_memory_descriptor(3, 9), budget="unlimited")
     assert dec.effective_windowing == "unlimited"
@@ -87,6 +99,33 @@ def test_windowed_full_fallback_still_decodes():
     ndet = sum(1 for ln in desc["full_dem"].splitlines() if ln.strip().startswith("detector("))
     # Zero syndrome -> zero correction.
     assert dec.decode([0] * ndet) == 0
+
+
+def test_logical_circuit_decoder_rejects_empty_segments():
+    """Malformed algorithm descriptors should raise a Python error, not panic."""
+    desc = _memory_descriptor(3, 3)
+    desc["segments"] = []
+
+    with pytest.raises(ValueError, match="no segments"):
+        LogicalCircuitDecoder(desc, budget="unlimited")
+
+
+def test_logical_circuit_decoder_rejects_missing_boundary_gate_bit():
+    """Boundary gate descriptors must fail loudly when required bit fields are absent."""
+    desc = _h_boundary_descriptor()
+    del desc["boundary_gates"][0][0]["x_obs_bit"]
+
+    with pytest.raises(ValueError, match="missing required field 'x_obs_bit'"):
+        LogicalCircuitDecoder(desc, budget="unlimited")
+
+
+def test_logical_circuit_decoder_rejects_out_of_range_boundary_gate_bit():
+    """Boundary gate bits index a u64 observable frame and must be below 64."""
+    desc = _h_boundary_descriptor()
+    desc["boundary_gates"][0][0]["x_obs_bit"] = 64
+
+    with pytest.raises(ValueError, match="exceeds the 64-observable frame limit"):
+        LogicalCircuitDecoder(desc, budget="unlimited")
 
 
 if __name__ == "__main__":

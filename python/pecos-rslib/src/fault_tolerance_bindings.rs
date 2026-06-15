@@ -4944,13 +4944,22 @@ fn req_bit(
     key: &str,
     gate_type: &str,
 ) -> PyResult<u32> {
-    dict.get_item(key)?
+    let bit: u32 = dict
+        .get_item(key)?
         .ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "boundary gate '{gate_type}' missing required field '{key}'"
             ))
         })?
-        .extract()
+        .extract()?;
+    // Every boundary-gate bit indexes a u64 observable frame (`1u64 << bit`), so
+    // it must be < 64 -- reject out-of-range here rather than shift-overflow later.
+    if bit >= 64 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "boundary gate '{gate_type}' field '{key}' = {bit} exceeds the 64-observable frame limit"
+        )));
+    }
+    Ok(bit)
 }
 
 /// Decoder for logical quantum algorithms with per-segment logical-subgraph decoder and

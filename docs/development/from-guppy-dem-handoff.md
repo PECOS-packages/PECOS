@@ -15,7 +15,7 @@ entry point. The intended shape is:
 
 This should support calls like:
 
-```python
+```python,notest
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 
@@ -44,7 +44,7 @@ dem = DetectorErrorModel.from_guppy(
 `pecos_rslib.qec.DetectorErrorModel` is not currently subclassable from Python.
 Defining:
 
-```python
+```python,notest
 class DetectorErrorModel(_RustDetectorErrorModel):
     ...
 ```
@@ -58,7 +58,7 @@ TypeError: type 'pecos_rslib.qec.DetectorErrorModel' is not an acceptable base t
 The current local fix is to re-export the Rust class directly and attach the
 Python convenience constructor:
 
-```python
+```python,notest
 DetectorErrorModel = _RustDetectorErrorModel
 DetectorErrorModel.from_guppy = classmethod(...)
 ```

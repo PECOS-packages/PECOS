@@ -202,6 +202,9 @@ pub struct SeleneRuntime {
     #[allow(dead_code)]
     instance: Option<*mut c_void>,
 
+    /// Number of qubits the current runtime instance was initialized with.
+    initialized_num_qubits: Option<usize>,
+
     /// Current classical state
     state: ClassicalState,
 
@@ -241,6 +244,9 @@ pub struct SeleneRuntime {
 
     /// End timestamp of the last scheduled physical operation per runtime qubit.
     last_gate_time_end_nanos: Vec<u64>,
+
+    /// Shot metadata waiting for a lazily loaded runtime plugin.
+    pending_shot_start: Option<(u64, Option<u64>)>,
 }
 
 // SAFETY: SeleneRuntime owns its instance pointer exclusively.
@@ -259,6 +265,7 @@ impl SeleneRuntime {
             library_search_dirs: Vec::new(),
             library: None,
             instance: None,
+            initialized_num_qubits: None,
             state: ClassicalState::default(),
             operations_buffer: Vec::new(),
             batch_size: 100,
@@ -272,6 +279,7 @@ impl SeleneRuntime {
             program_to_runtime_results: BTreeMap::new(),
             runtime_to_program_results: BTreeMap::new(),
             last_gate_time_end_nanos: Vec::new(),
+            pending_shot_start: None,
         }
     }
 
@@ -313,17 +321,11 @@ impl SeleneRuntime {
             self.interface.as_ref().map_or(0, |i| i.operations.len())
         );
 
-        // Update qubit and result counts from new execution
-        self.num_qubits = operations
-            .allocated_qubits
-            .iter()
-            .max()
-            .map_or(0, |&q| q + 1);
-        self.num_results = operations
-            .allocated_results
-            .iter()
-            .max()
-            .map_or(0, |&r| r + 1);
+        // Update capacities from both explicit allocation records and direct
+        // program handles used by older QIR/LLVM examples.
+        let (num_qubits, num_results) = collector_capacity(&operations);
+        self.num_qubits = num_qubits;
+        self.num_results = num_results;
 
         self.interface = Some(operations);
         self.current_op_index = 0;
@@ -395,8 +397,85 @@ impl SeleneRuntime {
 
             self.library = Some(ManuallyDrop::new(lib));
             self.instance = Some(instance);
+            self.initialized_num_qubits = Some(self.num_qubits);
         }
 
+        self.apply_pending_shot_start()?;
+        Ok(())
+    }
+
+    fn ensure_plugin_capacity(&mut self) -> Result<()> {
+        let Some(initialized_num_qubits) = self.initialized_num_qubits else {
+            return Ok(());
+        };
+
+        if self.num_qubits <= initialized_num_qubits {
+            return Ok(());
+        }
+
+        debug!(
+            "Reinitializing Selene plugin capacity from {} to {} qubits",
+            initialized_num_qubits, self.num_qubits
+        );
+        self.reset_plugin_instance()?;
+        self.load_plugin()
+    }
+
+    fn reset_plugin_instance(&mut self) -> Result<()> {
+        if let Some(lib) = &self.library
+            && let Some(instance) = self.instance
+        {
+            unsafe {
+                if let Ok(exit_fn) =
+                    lib.get::<unsafe extern "C" fn(*mut c_void) -> i32>(b"selene_runtime_exit")
+                {
+                    let errno = exit_fn(instance);
+                    if errno != 0 {
+                        return Err(RuntimeError::ExecutionError(format!(
+                            "Selene runtime exit failed with errno {errno}"
+                        )));
+                    }
+                }
+            }
+        }
+
+        self.instance = None;
+        self.library = None;
+        self.initialized_num_qubits = None;
+        self.program_to_runtime_qubits.clear();
+        self.program_to_runtime_results.clear();
+        self.runtime_to_program_results.clear();
+        self.last_gate_time_end_nanos.clear();
+        Ok(())
+    }
+
+    fn apply_pending_shot_start(&mut self) -> Result<()> {
+        let Some((shot_id, seed)) = self.pending_shot_start else {
+            return Ok(());
+        };
+        let Some(lib) = &self.library else {
+            return Ok(());
+        };
+        let Some(instance) = self.instance else {
+            return Ok(());
+        };
+
+        unsafe {
+            if let Ok(shot_start_fn) = lib
+                .get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
+                    b"selene_runtime_shot_start",
+                )
+            {
+                let errno = shot_start_fn(instance, shot_id, seed.unwrap_or(0));
+                if errno != 0 {
+                    return Err(RuntimeError::ExecutionError(format!(
+                        "Shot start failed with errno {errno}"
+                    )));
+                }
+            }
+        }
+
+        self.pending_shot_start = None;
         Ok(())
     }
 
@@ -1035,6 +1114,7 @@ impl Clone for SeleneRuntime {
             library_search_dirs: self.library_search_dirs.clone(),
             library: None,  // Will be reloaded on demand
             instance: None, // Will be recreated on demand
+            initialized_num_qubits: None,
             state: self.state.clone(),
             operations_buffer: self.operations_buffer.clone(),
             batch_size: self.batch_size,
@@ -1048,8 +1128,91 @@ impl Clone for SeleneRuntime {
             program_to_runtime_results: self.program_to_runtime_results.clone(),
             runtime_to_program_results: self.runtime_to_program_results.clone(),
             last_gate_time_end_nanos: self.last_gate_time_end_nanos.clone(),
+            pending_shot_start: self.pending_shot_start,
         }
     }
+}
+
+fn collector_capacity(interface: &OperationCollector) -> (usize, usize) {
+    let (mut num_qubits, mut num_results) = operation_capacity(&interface.operations);
+
+    for &qubit in &interface.allocated_qubits {
+        include_qubit(&mut num_qubits, qubit);
+    }
+    for &result in &interface.allocated_results {
+        include_result(&mut num_results, result);
+    }
+
+    (num_qubits, num_results)
+}
+
+fn operation_capacity(operations: &[Operation]) -> (usize, usize) {
+    let mut num_qubits = 0;
+    let mut num_results = 0;
+
+    for op in operations {
+        match op {
+            Operation::Quantum(qop) => {
+                include_quantum_op_capacity(qop, &mut num_qubits, &mut num_results)
+            }
+            Operation::AllocateQubit { id } | Operation::ReleaseQubit { id } => {
+                include_qubit(&mut num_qubits, *id);
+            }
+            Operation::AllocateResult { id } => include_result(&mut num_results, *id),
+            Operation::RecordOutput { result_id, .. } => {
+                include_result(&mut num_results, *result_id);
+            }
+            Operation::Barrier => {}
+        }
+    }
+
+    (num_qubits, num_results)
+}
+
+fn include_quantum_op_capacity(qop: &QuantumOp, num_qubits: &mut usize, num_results: &mut usize) {
+    match qop {
+        QuantumOp::H(qubit)
+        | QuantumOp::X(qubit)
+        | QuantumOp::Y(qubit)
+        | QuantumOp::Z(qubit)
+        | QuantumOp::S(qubit)
+        | QuantumOp::Sdg(qubit)
+        | QuantumOp::T(qubit)
+        | QuantumOp::Tdg(qubit)
+        | QuantumOp::RX(_, qubit)
+        | QuantumOp::RY(_, qubit)
+        | QuantumOp::RZ(_, qubit)
+        | QuantumOp::RXY(_, _, qubit)
+        | QuantumOp::Idle(_, qubit)
+        | QuantumOp::Reset(qubit) => include_qubit(num_qubits, *qubit),
+        QuantumOp::CX(qubit_1, qubit_2)
+        | QuantumOp::CY(qubit_1, qubit_2)
+        | QuantumOp::CZ(qubit_1, qubit_2)
+        | QuantumOp::CH(qubit_1, qubit_2)
+        | QuantumOp::CRZ(_, qubit_1, qubit_2)
+        | QuantumOp::ZZ(qubit_1, qubit_2)
+        | QuantumOp::RZZ(_, qubit_1, qubit_2) => {
+            include_qubit(num_qubits, *qubit_1);
+            include_qubit(num_qubits, *qubit_2);
+        }
+        QuantumOp::CCX(qubit_1, qubit_2, qubit_3) => {
+            include_qubit(num_qubits, *qubit_1);
+            include_qubit(num_qubits, *qubit_2);
+            include_qubit(num_qubits, *qubit_3);
+        }
+        QuantumOp::Measure(qubit, result) => {
+            include_qubit(num_qubits, *qubit);
+            include_result(num_results, *result);
+        }
+    }
+}
+
+fn include_qubit(num_qubits: &mut usize, qubit: usize) {
+    *num_qubits = (*num_qubits).max(qubit + 1);
+}
+
+fn include_result(num_results: &mut usize, result: usize) {
+    *num_results = (*num_results).max(result + 1);
 }
 
 impl QisRuntime for SeleneRuntime {
@@ -1059,17 +1222,12 @@ impl QisRuntime for SeleneRuntime {
             interface.operations.len()
         );
 
-        // Count qubits and results
-        self.num_qubits = interface
-            .allocated_qubits
-            .iter()
-            .max()
-            .map_or(0, |&q| q + 1);
-        self.num_results = interface
-            .allocated_results
-            .iter()
-            .max()
-            .map_or(0, |&r| r + 1);
+        // Count qubits and results from both explicit allocation records and
+        // direct program handles. Some legacy LLVM/QIR inputs use qubit handles
+        // like 0 and 1 without emitting __quantum__rt__qubit_allocate calls.
+        let (num_qubits, num_results) = collector_capacity(&interface);
+        self.num_qubits = num_qubits;
+        self.num_results = num_results;
 
         debug!(
             "Interface has {} qubits and {} result slots",
@@ -1099,6 +1257,10 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn lower_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
+        let (num_qubits, num_results) = operation_capacity(operations);
+        self.num_qubits = self.num_qubits.max(num_qubits);
+        self.num_results = self.num_results.max(num_results);
+        self.ensure_plugin_capacity()?;
         self.load_plugin()?;
         let mut lowered_ops = Vec::new();
 
@@ -1216,30 +1378,6 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn shot_start(&mut self, shot_id: u64, seed: Option<u64>) -> Result<()> {
-        // Try to load the plugin if not already loaded
-        if self.library.is_none() && std::path::Path::new(&self.plugin_path).exists() {
-            self.load_plugin()?;
-        }
-
-        if let Some(lib) = &self.library
-            && let Some(instance) = self.instance
-        {
-            unsafe {
-                if let Ok(shot_start_fn) = lib
-                    .get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
-                        b"selene_runtime_shot_start",
-                    )
-                {
-                    let errno = shot_start_fn(instance, shot_id, seed.unwrap_or(0));
-                    if errno != 0 {
-                        return Err(RuntimeError::ExecutionError(format!(
-                            "Shot start failed with errno {errno}"
-                        )));
-                    }
-                }
-            }
-        }
-
         // Reset state for new shot
         self.state = ClassicalState::default();
         self.current_op_index = 0;
@@ -1249,6 +1387,8 @@ impl QisRuntime for SeleneRuntime {
         self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
         self.last_gate_time_end_nanos.clear();
+        self.pending_shot_start = Some((shot_id, seed));
+        self.apply_pending_shot_start()?;
 
         Ok(())
     }
@@ -1265,6 +1405,7 @@ impl QisRuntime for SeleneRuntime {
                 }
             }
         }
+        self.pending_shot_start = None;
 
         // Return the shot with measurements and registers
         let shot = Shot {
@@ -1277,27 +1418,14 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn reset(&mut self) -> Result<()> {
-        // Clean up the runtime instance
-        if let Some(lib) = &self.library
-            && let Some(instance) = self.instance
-        {
-            unsafe {
-                if let Ok(exit_fn) =
-                    lib.get::<unsafe extern "C" fn(*mut c_void) -> i32>(b"selene_runtime_exit")
-                {
-                    let _ = exit_fn(instance);
-                }
-            }
-        }
-
-        self.instance = None;
-        self.library = None;
+        self.reset_plugin_instance()?;
         self.state = ClassicalState::default();
         self.current_op_index = 0;
         self.program_to_runtime_qubits.clear();
         self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
         self.last_gate_time_end_nanos.clear();
+        self.pending_shot_start = None;
 
         Ok(())
     }
@@ -1371,5 +1499,62 @@ mod tests {
             ops,
             vec![QuantumOp::Idle(20e-9, 0), QuantumOp::RXY(1.0, 0.5, 0)]
         );
+    }
+
+    #[test]
+    fn test_collector_capacity_includes_direct_program_handles() {
+        let mut collector = OperationCollector::new();
+        collector.queue_operation(QuantumOp::H(0).into());
+        collector.queue_operation(QuantumOp::CX(0, 3).into());
+        collector.queue_operation(QuantumOp::Measure(3, 7).into());
+        collector.queue_operation(Operation::RecordOutput {
+            result_id: 7,
+            register_name: "c".to_string(),
+        });
+
+        assert_eq!(collector_capacity(&collector), (4, 8));
+    }
+
+    #[test]
+    fn test_collector_capacity_includes_explicit_allocations() {
+        let mut collector = OperationCollector::new();
+        collector.queue_operation(Operation::AllocateQubit { id: 5 });
+        collector.queue_operation(Operation::AllocateResult { id: 2 });
+        collector.queue_operation(QuantumOp::H(1).into());
+
+        assert_eq!(collector_capacity(&collector), (6, 3));
+    }
+
+    #[test]
+    fn test_shot_start_defers_until_plugin_load() {
+        let mut runtime = SeleneRuntime::new("/path/to/selene.so");
+        runtime.shot_start(42, Some(1234)).unwrap();
+
+        assert_eq!(runtime.pending_shot_start, Some((42, Some(1234))));
+
+        runtime.shot_end().unwrap();
+        assert_eq!(runtime.pending_shot_start, None);
+    }
+
+    #[test]
+    fn test_clone_does_not_reuse_initialized_plugin_capacity() {
+        let mut runtime = SeleneRuntime::new("/path/to/selene.so");
+        runtime.num_qubits = 3;
+        runtime.initialized_num_qubits = Some(3);
+
+        let cloned = runtime.clone();
+
+        assert_eq!(cloned.num_qubits, 3);
+        assert_eq!(cloned.initialized_num_qubits, None);
+    }
+
+    #[test]
+    fn test_reset_clears_initialized_plugin_capacity() {
+        let mut runtime = SeleneRuntime::new("/path/to/selene.so");
+        runtime.initialized_num_qubits = Some(3);
+
+        runtime.reset().unwrap();
+
+        assert_eq!(runtime.initialized_num_qubits, None);
     }
 }

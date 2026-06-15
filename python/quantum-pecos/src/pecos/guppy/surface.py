@@ -22,6 +22,7 @@ from pecos.qec.surface.schedule import compute_cnot_schedule
 
 if TYPE_CHECKING:
     from pecos.qec.surface import GuppyRngMaskConfig, SurfacePatch, TwirlConfig
+    from pecos.qec.surface._check_plan import ResolvedSurfaceCheckPlan
 
 
 # Module state container (avoids global statement)
@@ -33,7 +34,7 @@ class _ModuleState:
     # Keyed by full patch identity + effective budget (dx, dz, orientation,
     # rotated, effective_budget) so distinct patch geometries -- e.g. rotated
     # vs non-rotated at the same dx/dz -- never collide on a cached module.
-    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str], dict]] = {}
+    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str, str], dict]] = {}
 
 
 _state = _ModuleState()
@@ -43,6 +44,19 @@ def _normalize_surface_interaction_basis(interaction_basis: str) -> str:
     from pecos.qec.surface.circuit_builder import _normalize_interaction_basis
 
     return _normalize_interaction_basis(interaction_basis)
+
+
+def _resolve_surface_check_plan(
+    *,
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
+) -> "ResolvedSurfaceCheckPlan":
+    from pecos.qec.surface._check_plan import resolve_surface_check_plan
+
+    return resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
 
 
 def _get_temp_dir() -> Path:
@@ -126,7 +140,8 @@ def generate_guppy_source(
     twirl: "TwirlConfig | None" = None,
     rng: "GuppyRngMaskConfig | None" = None,
     num_rounds: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> str:
     """Generate Guppy source code for a surface code patch.
 
@@ -172,9 +187,12 @@ def generate_guppy_source(
             per-shot quantum entropy when ``twirl`` is enabled.
         num_rounds: Number of syndrome rounds to render. Required when
             ``twirl`` is enabled because twirled source is unrolled per round.
-        interaction_basis: Surface-memory interaction basis: ``"cx"`` or
-            ``"szz"``. SZZ Guppy generation supports the same non-twirled
-            unconstrained and constrained ancilla shapes as the CX template.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset. This is the source of
+            truth when supplied; ``interaction_basis`` must agree if also
+            supplied. Current Guppy generation maps the resolved plan to the
+            corresponding CX or SZZ/SZZdg concrete template.
 
     Returns:
         Python/Guppy source code as a string.
@@ -185,7 +203,11 @@ def generate_guppy_source(
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
     from pecos.qec.surface.circuit_builder import _default_szz_residual_plan
 
-    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
+    resolved_plan = _resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
+    interaction_basis = resolved_plan.interaction_basis
     if (twirl is None) != (rng is None):
         msg = f"twirl and rng must be supplied together; got twirl={twirl!r} rng={rng!r}"
         raise ValueError(msg)
@@ -260,6 +282,7 @@ def generate_guppy_source(
         f"Z stabilizers: {num_z_stab}",
         f"Ancilla qubits: {num_x_stab + num_z_stab} (one per stabilizer)",
         f"Interaction basis: {interaction_basis}",
+        f"Check plan: {resolved_plan.plan_id}",
         '"""',
         "",
         *imports,
@@ -1493,7 +1516,8 @@ def _guppy_module_cache_key(
     twirl: "TwirlConfig | None" = None,
     rng: "GuppyRngMaskConfig | None" = None,
     num_rounds: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> str:
     """Filesystem-safe cache key spanning full patch identity + budget + twirl.
 
@@ -1508,9 +1532,17 @@ def _guppy_module_cache_key(
     """
     geom = patch.geometry
     rotated = "rot" if geom.rotated else "unrot"
-    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
+    resolved_plan = _resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
+    interaction_basis = resolved_plan.interaction_basis
     interaction_part = "" if interaction_basis == "cx" else f"_ib{interaction_basis}"
-    base = f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}_b{effective_budget}{interaction_part}"
+    check_plan_part = "" if check_plan is None else f"_cp{resolved_plan.plan_id}"
+    base = (
+        f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}"
+        f"_b{effective_budget}{interaction_part}{check_plan_part}"
+    )
     if twirl is None:
         return base
     if rng is None or num_rounds is None:
@@ -1532,7 +1564,8 @@ def _load_guppy_module(
     twirl: "TwirlConfig | None" = None,
     rng: "GuppyRngMaskConfig | None" = None,
     num_rounds: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> dict:
     """Load a Guppy module for a patch, using caching.
 
@@ -1550,14 +1583,20 @@ def _load_guppy_module(
         twirl: Pauli-twirl-site declaration (structural)
         rng: Runtime mask RNG seed (must be supplied with ``twirl``)
         num_rounds: Syndrome-round count for unrolled twirled source.
-        interaction_basis: Surface-memory interaction basis.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
 
     Returns:
         Module dictionary with generated functions
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
-    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
+    resolved_plan = _resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
+    interaction_basis = resolved_plan.interaction_basis
     geom = patch.geometry
     total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
@@ -1568,6 +1607,7 @@ def _load_guppy_module(
         rng,
         num_rounds,
         interaction_basis,
+        resolved_plan.plan_id if check_plan is not None else None,
     )
 
     if cache_key in _state.module_cache:
@@ -1580,6 +1620,7 @@ def _load_guppy_module(
         rng=rng,
         num_rounds=num_rounds,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
     )
 
     # Write to temp file (required for Guppy introspection).
@@ -1610,7 +1651,8 @@ def generate_memory_experiment(
     ancilla_budget: int | None = None,
     twirl: "TwirlConfig | None" = None,
     rng: "GuppyRngMaskConfig | None" = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> object:
     """Generate a memory experiment for a patch.
 
@@ -1621,7 +1663,9 @@ def generate_memory_experiment(
         ancilla_budget: Optional cap on simultaneously live ancillas
         twirl: Pauli-twirl-site declaration; must be supplied with ``rng``.
         rng: Runtime mask RNG seed; must be supplied with ``twirl``.
-        interaction_basis: Surface-memory interaction basis.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
 
     Returns:
         Guppy function for the experiment
@@ -1633,6 +1677,7 @@ def generate_memory_experiment(
         rng=rng,
         num_rounds=num_rounds if twirl is not None else None,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
     )
 
     if basis.upper() == "Z":
@@ -1652,7 +1697,8 @@ def get_num_qubits(
     patch: "SurfacePatch | None" = None,
     ancilla_budget: int | None = None,
     twirl: "TwirlConfig | None" = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> int:
     """Get the peak simultaneously-live qubit count for a surface-code program.
 
@@ -1678,7 +1724,11 @@ def get_num_qubits(
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
-    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
+    resolved_plan = _resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
+    interaction_basis = resolved_plan.interaction_basis
     if (d is None) == (patch is None):
         msg = "get_num_qubits requires exactly one of d=... or patch=..."
         raise ValueError(msg)
@@ -1704,7 +1754,8 @@ def generate_surface_code_module(
     d: int,
     *,
     ancilla_budget: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> str:
     """Generate source code for a distance-d surface code module.
 
@@ -1712,7 +1763,9 @@ def generate_surface_code_module(
         d: Code distance (must be odd >= 3)
         ancilla_budget: Optional cap on simultaneously live ancillas;
             forwarded to ``generate_guppy_source``.
-        interaction_basis: Surface-memory interaction basis.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
 
     Returns:
         Python/Guppy source code as a string
@@ -1726,6 +1779,7 @@ def generate_surface_code_module(
         patch,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
     )
 
 
@@ -1733,7 +1787,8 @@ def _surface_code_module_for_patch(
     patch: "SurfacePatch",
     *,
     ancilla_budget: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> dict:
     """Load + cache a surface-code module for an arbitrary patch.
 
@@ -1745,11 +1800,23 @@ def _surface_code_module_for_patch(
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
-    interaction_basis = _normalize_surface_interaction_basis(interaction_basis)
+    resolved_plan = _resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
+    interaction_basis = resolved_plan.interaction_basis
     geom = patch.geometry
     total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
-    cache_key = (patch.dx, patch.dz, geom.orientation.name, geom.rotated, effective_budget, interaction_basis)
+    cache_key = (
+        patch.dx,
+        patch.dz,
+        geom.orientation.name,
+        geom.rotated,
+        effective_budget,
+        interaction_basis,
+        resolved_plan.plan_id,
+    )
 
     if cache_key in _state.distance_module_cache:
         return _state.distance_module_cache[cache_key]
@@ -1758,6 +1825,7 @@ def _surface_code_module_for_patch(
         patch,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
     )
 
     # Metadata derived from the actual patch geometry.
@@ -1766,6 +1834,9 @@ def _surface_code_module_for_patch(
     module["num_stab"] = total_ancilla
     module["ancilla_budget"] = effective_budget
     module["interaction_basis"] = interaction_basis
+    module["check_plan"] = resolved_plan.plan_id
+    module["resolved_check_plan"] = resolved_plan.resolved_metadata
+    module["resolved_check_plan_hash"] = resolved_plan.resolved_hash
 
     _state.distance_module_cache[cache_key] = module
     return module
@@ -1775,14 +1846,17 @@ def get_surface_code_module(
     d: int,
     *,
     ancilla_budget: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> dict:
     """Get a loaded surface code module for distance d.
 
     Args:
         d: Code distance (must be odd >= 3)
         ancilla_budget: Optional cap on simultaneously live ancillas
-        interaction_basis: Surface-memory interaction basis.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
 
     Returns:
         Dictionary with module contents and metadata
@@ -1795,6 +1869,7 @@ def get_surface_code_module(
         patch,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
     )
 
 
@@ -1804,7 +1879,8 @@ def make_surface_code(
     basis: str,
     *,
     ancilla_budget: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> object:
     """Create a surface code memory experiment.
 
@@ -1817,7 +1893,9 @@ def make_surface_code(
             a finite budget emits a stabilizer-batched program that
             matches the abstract circuit's
             ``batched_stabilizers(patch, effective_budget)`` schedule.
-        interaction_basis: Surface-memory interaction basis.
+        interaction_basis: Backward-compatible selector for the default
+            ``check_plan`` of a two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
 
     Returns:
         Compiled Guppy program
@@ -1830,6 +1908,7 @@ def make_surface_code(
         distance,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
     )
 
     factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]

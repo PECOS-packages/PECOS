@@ -1422,7 +1422,8 @@ def _generate_traced_surface_tick_circuit(
     basis: str,
     *,
     ancilla_budget: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
     runtime: object | None = None,
 ) -> Any:
     """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit.
@@ -1445,6 +1446,7 @@ def _generate_traced_surface_tick_circuit(
         basis,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
         runtime=runtime,
     )
     return tc
@@ -1456,7 +1458,8 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
     basis: str,
     *,
     ancilla_budget: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
     runtime: object | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
@@ -1468,6 +1471,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
         basis,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
     )
     return trace_guppy_into_tick_circuit_with_result_traces(
         program,
@@ -1475,6 +1479,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
             patch=patch,
             ancilla_budget=ancilla_budget,
             interaction_basis=interaction_basis,
+            check_plan=check_plan,
         ),
         seed=0,
         runtime=runtime,
@@ -1490,7 +1495,8 @@ def _build_surface_tick_circuit_for_native_model(
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
 ) -> Any:
     """Build the TickCircuit used by the native DEM and sampler paths."""
@@ -1498,7 +1504,11 @@ def _build_surface_tick_circuit_for_native_model(
 
     if twirl is not None:
         twirl.validate_runtime_supported()
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    resolved_plan = resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
+    interaction_basis = _normalize_interaction_basis(resolved_plan.interaction_basis)
     if szz_physical_prefixes and (interaction_basis != "szz" or circuit_source != "abstract"):
         msg = "SZZ physical-prefix lowering requires interaction_basis='szz' and circuit_source='abstract'"
         raise ValueError(msg)
@@ -1530,6 +1540,7 @@ def _build_surface_tick_circuit_for_native_model(
         basis,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
         runtime=runtime,
     )
 
@@ -1572,7 +1583,7 @@ def build_memory_circuit(
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
 ) -> Any:
     """Build the standard surface-code memory ``TickCircuit``.
 
@@ -1845,7 +1856,7 @@ def _surface_native_topology(
     *,
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
 ) -> _CachedNativeSurfaceTopology:
@@ -1872,6 +1883,7 @@ def _surface_native_topology(
         runtime=runtime,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
     )
     if circuit_source == "traced_qis":
@@ -1942,7 +1954,7 @@ def _cached_surface_native_topology(
     include_idle_gates: bool,
     *,
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
     resolved_check_plan_hash: str = "",

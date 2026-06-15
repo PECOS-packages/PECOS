@@ -45,6 +45,43 @@ def test_check_plan_and_interaction_basis_mismatch_fails_loudly() -> None:
         )
 
 
+def test_guppy_surface_code_module_records_resolved_check_plan() -> None:
+    from pecos.guppy import get_surface_code_module
+
+    module = get_surface_code_module(3, check_plan="szz_current_v1")
+
+    assert module["interaction_basis"] == "szz"
+    assert module["check_plan"] == "szz_current_v1"
+    assert module["resolved_check_plan"]["semantic_content"]["interaction_basis"] == "szz"
+    assert len(module["resolved_check_plan_hash"]) == 64
+
+
+def test_guppy_surface_code_rejects_plan_basis_mismatch() -> None:
+    from pecos.guppy import make_surface_code
+
+    with pytest.raises(ValueError, match="conflicts with check_plan"):
+        make_surface_code(
+            distance=3,
+            num_rounds=1,
+            basis="Z",
+            interaction_basis="cx",
+            check_plan="szz_current_v1",
+        )
+
+
+def test_guppy_surface_code_accepts_check_plan_as_source_of_truth() -> None:
+    from pecos.guppy import make_surface_code
+
+    program = make_surface_code(
+        distance=3,
+        num_rounds=1,
+        basis="Z",
+        check_plan="szz_current_v1",
+    )
+
+    assert program is not None
+
+
 def test_surface_code_memory_records_resolved_check_plan() -> None:
     from pecos.qec.surface import surface_code_memory
 

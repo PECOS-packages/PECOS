@@ -145,6 +145,44 @@ impl std::fmt::Display for TrackedPauliSamplingError {
 
 impl std::error::Error for TrackedPauliSamplingError {}
 
+/// Error returned when a sampler's observables do not fit the `u64` decoder mask.
+///
+/// Decoder-facing observable masks are packed into a `u64` (bit `i` = observable
+/// `i`), so observable id `>= 64` cannot be represented. Rather than silently
+/// dropping those observables from the truth mask (which would under-count
+/// logical failures), the sampler errors. Lifting this limit is the
+/// wider-observable-mask follow-up (see the `ObsMask` plan).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservableMaskCapacityError {
+    num_observables: usize,
+}
+
+impl ObservableMaskCapacityError {
+    fn new(num_observables: usize) -> Self {
+        Self { num_observables }
+    }
+
+    /// Number of observables the sampler carries (exceeds the 64-bit capacity).
+    #[must_use]
+    pub fn num_observables(&self) -> usize {
+        self.num_observables
+    }
+}
+
+impl std::fmt::Display for ObservableMaskCapacityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "sampler has {} observables, but decoder observable masks are packed \
+             into a u64 and support at most 64. Observable ids >= 64 cannot be \
+             represented; refusing to silently drop them.",
+            self.num_observables
+        )
+    }
+}
+
+impl std::error::Error for ObservableMaskCapacityError {}
+
 /// Output mode for the unified sampler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
@@ -697,21 +735,32 @@ impl DemSampler {
 
     /// Bit mask selecting observable outputs.
     ///
-    /// Existing decoder APIs use `u64` observable masks, so outputs with index
-    /// \>= 64 are not representable here and are ignored consistently with the
-    /// existing mask-based paths.
-    #[must_use]
-    pub fn observable_dem_output_mask(&self) -> u64 {
-        self.observable_ids()
-            .into_iter()
-            .filter(|&idx| idx < u64::BITS as usize)
-            .fold(0u64, |acc, idx| acc | (1u64 << idx))
+    /// Bitmask of which DEM outputs are decoder-facing observables.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ObservableMaskCapacityError`] if any observable id is `>= 64`:
+    /// decoder observable masks are packed into a `u64`, so such ids are not
+    /// representable. Erroring (rather than silently dropping them) keeps the
+    /// logical-failure count correct. Compute this once, up front, and pass the
+    /// result to [`Self::observable_mask_from_dem_output_flips`] per shot.
+    pub fn observable_dem_output_mask(&self) -> Result<u64, ObservableMaskCapacityError> {
+        let ids = self.observable_ids();
+        if let Some(&max_id) = ids.iter().max()
+            && max_id >= u64::BITS as usize
+        {
+            return Err(ObservableMaskCapacityError::new(ids.len()));
+        }
+        Ok(ids.into_iter().fold(0u64, |acc, idx| acc | (1u64 << idx)))
     }
 
     /// Converts a sampled DEM-output flip vector into an observable-only mask.
+    ///
+    /// `observable_mask` is the value returned by
+    /// [`Self::observable_dem_output_mask`] (validated to fit a `u64`); pass it
+    /// in so the per-shot path neither recomputes it nor needs to re-validate.
     #[must_use]
-    pub fn observable_mask_from_dem_output_flips(&self, flips: &[bool]) -> u64 {
-        let observable_mask = self.observable_dem_output_mask();
+    pub fn observable_mask_from_dem_output_flips(&self, flips: &[bool], observable_mask: u64) -> u64 {
         flips
             .iter()
             .enumerate()
@@ -1877,6 +1926,41 @@ mod tests {
     }
 
     #[test]
+    fn observable_dem_output_mask_errors_above_64_observables() {
+        // >64 observables cannot be packed into a u64 mask. The sampler must
+        // ERROR rather than silently dropping observables with id >= 64 (which
+        // would under-count logical failures). Pins the Phase-0 fail-loud fix.
+        use super::super::builder::DemBuilder;
+        use pecos_quantum::Attribute;
+
+        let n: usize = 65;
+        let mut circuit = DagCircuit::new();
+        for i in 0..n {
+            circuit.pz(&[i]);
+        }
+        for i in 0..n {
+            circuit.mz(&[i]);
+        }
+        circuit.set_attr("num_measurements", Attribute::String(n.to_string()));
+        let obs: Vec<String> = (0..n)
+            .map(|i| format!(r#"{{"id":{i},"records":[{}]}}"#, i as i64 - n as i64))
+            .collect();
+        circuit.set_attr(
+            "observables",
+            Attribute::String(format!("[{}]", obs.join(","))),
+        );
+
+        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0);
+        let sampler = DemSampler::from_detector_error_model(&dem);
+        assert_eq!(sampler.num_dem_outputs(), n);
+
+        let err = sampler
+            .observable_dem_output_mask()
+            .expect_err("65 observables must not fit a u64 mask");
+        assert_eq!(err.num_observables(), n);
+    }
+
+    #[test]
     fn raw_mode_without_dem_outputs_reports_zero_dem_outputs() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
@@ -1923,9 +2007,16 @@ mod tests {
                 .num_tracked_paulis(),
             1
         );
-        assert_eq!(sampler.observable_dem_output_mask(), 1);
-        assert_eq!(sampler.observable_mask_from_dem_output_flips(&[false]), 0);
-        assert_eq!(sampler.observable_mask_from_dem_output_flips(&[true]), 1);
+        let obs_mask = sampler.observable_dem_output_mask().unwrap();
+        assert_eq!(obs_mask, 1);
+        assert_eq!(
+            sampler.observable_mask_from_dem_output_flips(&[false], obs_mask),
+            0
+        );
+        assert_eq!(
+            sampler.observable_mask_from_dem_output_flips(&[true], obs_mask),
+            1
+        );
     }
 
     #[test]

@@ -3626,7 +3626,10 @@ impl PyDemSampler {
         let mut rng = PecosRng::seed_from_u64(actual_seed);
 
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
-        let observable_mask = self.inner.observable_dem_output_mask();
+        let observable_mask = self
+            .inner
+            .observable_dem_output_mask()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
 
         // Tight sample+decode loop -- no Python involvement.
         // Single-threaded: sample and decode sequentially.
@@ -3635,7 +3638,9 @@ impl PyDemSampler {
             let (det_events, obs_flips) = self.inner.sample(&mut rng);
             let syndrome: Vec<u8> = det_events.iter().map(|&b| u8::from(b)).collect();
             let predicted_mask = decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX);
-            let true_mask = self.inner.observable_mask_from_dem_output_flips(&obs_flips);
+            let true_mask = self
+                .inner
+                .observable_mask_from_dem_output_flips(&obs_flips, observable_mask);
             if (predicted_mask & observable_mask) != true_mask {
                 errors += 1;
             }
@@ -3683,7 +3688,9 @@ impl PyDemSampler {
         let remainder = num_shots % n_workers;
 
         let sampler = &self.inner;
-        let observable_mask = sampler.observable_dem_output_mask();
+        let observable_mask = sampler
+            .observable_dem_output_mask()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
         let dem_str = dem.to_string();
         let dt = decoder_type.to_string();
 
@@ -3710,7 +3717,8 @@ impl PyDemSampler {
                         let syndrome: Vec<u8> = det_events.iter().map(|&b| u8::from(b)).collect();
                         let predicted =
                             decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX);
-                        let truth = my_sampler.observable_mask_from_dem_output_flips(&obs_flips);
+                        let truth = my_sampler
+                            .observable_mask_from_dem_output_flips(&obs_flips, observable_mask);
                         if (predicted & observable_mask) != truth {
                             errors += 1;
                         }

@@ -23,7 +23,12 @@
 //! 5. Peel a spanning forest (BFS from boundary) to extract the correction:
 //!    an edge is in the correction iff its subtree has odd parity.
 //!
-//! All data structures are flat arrays. Zero per-shot allocation after init.
+//! All data structures are flat arrays; the full grow+peel decode path does zero
+//! per-shot allocation after init. The optional cluster predecoder
+//! ([`UfDecoder::predecode_clusters`]) is the exception: it runs on `&self`
+//! (before the per-shot state is reset) and allocates two small scratch buffers
+//! per call. It is only entered for trivial syndromes (0-2 isolated defects),
+//! falling through to the zero-alloc path otherwise.
 
 use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;

@@ -77,6 +77,32 @@ impl BoundaryGate {
     pub fn is_decision_point(&self) -> bool {
         matches!(self, Self::TGateInjection { .. })
     }
+
+    /// All observable-frame bit indices this gate references. Each must be < 64
+    /// (they index a `u64` frame). Used to assert that invariant at apply time.
+    #[must_use]
+    pub fn obs_bits(&self) -> Vec<u32> {
+        match self {
+            Self::Hadamard {
+                x_obs_bit,
+                z_obs_bit,
+            }
+            | Self::SGate {
+                x_obs_bit,
+                z_obs_bit,
+            } => vec![*x_obs_bit, *z_obs_bit],
+            Self::Cnot {
+                ctrl_x_bit,
+                ctrl_z_bit,
+                tgt_x_bit,
+                tgt_z_bit,
+            } => vec![*ctrl_x_bit, *ctrl_z_bit, *tgt_x_bit, *tgt_z_bit],
+            Self::TGateInjection {
+                z_obs_bit,
+                ancilla_z_bit,
+            } => vec![*z_obs_bit, *ancilla_z_bit],
+        }
+    }
 }
 
 /// Full description of a logical algorithm for decoding.
@@ -149,6 +175,14 @@ impl LogicalAlgorithmDecoder {
     /// Apply boundary gate to a Pauli frame.
     /// Used when consuming the frame at logical operations.
     pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) {
+        // All bits index the u64 observable frame, so each must be < 64. The
+        // Python descriptor binding enforces this fail-loud at construction; this
+        // documents and guards the invariant for direct Rust callers (a shift by
+        // >= 64 is otherwise an overflow panic in debug / unspecified in release).
+        debug_assert!(
+            gate.obs_bits().iter().all(|&b| b < 64),
+            "boundary gate observable bit >= 64"
+        );
         match gate {
             BoundaryGate::Hadamard {
                 x_obs_bit,
@@ -810,6 +844,46 @@ mod tests {
             },
         );
         assert_eq!(frame, 0b10); // X became Z
+    }
+
+    #[test]
+    fn test_boundary_gate_obs_bits_cover_all_fields() {
+        // The apply-time `< 64` assert relies on obs_bits() listing EVERY bit a
+        // gate references -- a missed field would let an out-of-range shift slip.
+        assert_eq!(
+            BoundaryGate::Hadamard {
+                x_obs_bit: 2,
+                z_obs_bit: 5
+            }
+            .obs_bits(),
+            vec![2, 5]
+        );
+        assert_eq!(
+            BoundaryGate::Cnot {
+                ctrl_x_bit: 1,
+                ctrl_z_bit: 2,
+                tgt_x_bit: 3,
+                tgt_z_bit: 4
+            }
+            .obs_bits(),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            BoundaryGate::SGate {
+                x_obs_bit: 7,
+                z_obs_bit: 9
+            }
+            .obs_bits(),
+            vec![7, 9]
+        );
+        assert_eq!(
+            BoundaryGate::TGateInjection {
+                z_obs_bit: 6,
+                ancilla_z_bit: 8
+            }
+            .obs_bits(),
+            vec![6, 8]
+        );
     }
 
     #[test]

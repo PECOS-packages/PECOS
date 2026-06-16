@@ -4491,6 +4491,29 @@ impl PyCssUfDecoder {
 ///     ...     "`fusion_blossom_serial`",
 ///     ... )
 ///     >>> obs = decoder.decode(syndrome)
+/// Convert a wide observable mask to a Python integer (arbitrary precision).
+///
+/// `<= 64` observables become a plain `int` from the single `u64` (identical to
+/// the historical return); `> 64` observables become a big `int` built from the
+/// mask's little-endian words, with no truncation.
+fn obsmask_to_py(
+    py: Python<'_>,
+    mask: &pecos_decoder_core::obs_mask::ObsMask,
+) -> PyResult<Py<pyo3::PyAny>> {
+    if let Some(v) = mask.to_u64() {
+        return Ok(v.into_pyobject(py)?.into_any().unbind());
+    }
+    let mut bytes = Vec::with_capacity(mask.words().len() * 8);
+    for &word in mask.words() {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
+    let int_type = py.get_type::<pyo3::types::PyInt>();
+    Ok(int_type
+        .call_method1("from_bytes", (py_bytes, "little"))?
+        .unbind())
+}
+
 #[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyLogicalSubgraphDecoder {
     inner: pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder,
@@ -4605,11 +4628,17 @@ impl PyLogicalSubgraphDecoder {
     }
 
     /// Decode a syndrome and return observable flip predictions.
-    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<u64> {
+    ///
+    /// Returns a Python ``int`` (bit ``i`` = observable ``i``). The integer is
+    /// arbitrary precision, so decoders with more than 64 observables are
+    /// returned without truncation.
+    fn decode(&mut self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Py<pyo3::PyAny>> {
         use pecos_decoder_core::ObservableDecoder;
-        self.inner
-            .decode_to_observables(&syndrome)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        let mask = self
+            .inner
+            .decode_obs(&syndrome)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        obsmask_to_py(py, &mask)
     }
 
     /// Number of observables this decoder handles.
@@ -4632,16 +4661,21 @@ impl PyLogicalSubgraphDecoder {
     ///     syndromes: 2D numpy array of shape (`num_shots`, `num_detectors`).
     ///
     /// Returns:
-    ///     List of observable flip masks (one per shot).
-    fn decode_batch(&mut self, syndromes: Vec<Vec<u8>>) -> PyResult<Vec<u64>> {
+    ///     List of observable flip masks (one Python ``int`` per shot; arbitrary
+    ///     precision, so more than 64 observables are not truncated).
+    fn decode_batch(
+        &mut self,
+        py: Python<'_>,
+        syndromes: Vec<Vec<u8>>,
+    ) -> PyResult<Vec<Py<pyo3::PyAny>>> {
         use pecos_decoder_core::ObservableDecoder;
         let mut results = Vec::with_capacity(syndromes.len());
         for syn in &syndromes {
-            let obs = self
+            let mask = self
                 .inner
-                .decode_to_observables(syn)
+                .decode_obs(syn)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            results.push(obs);
+            results.push(obsmask_to_py(py, &mask)?);
         }
         Ok(results)
     }

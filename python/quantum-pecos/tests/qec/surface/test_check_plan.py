@@ -21,7 +21,7 @@ def test_check_plan_default_resolves_to_cx_metadata() -> None:
 
     plan = resolve_surface_check_plan()
 
-    assert surface_check_plan_ids() == ("cx_standard_v1", "szz_current_v1")
+    assert surface_check_plan_ids() == ("cx_standard_v1", "szz_boundary_first_v1", "szz_current_v1")
     assert default_surface_check_plan_id() == "cx_standard_v1"
     assert default_surface_check_plan_id("SZZ") == "szz_current_v1"
     assert plan.plan_id == "cx_standard_v1"
@@ -54,6 +54,23 @@ def test_check_plan_is_source_of_truth_for_basis() -> None:
         "interaction_order": "pecos-default",
         "ancilla_schedule": "default",
     }
+
+
+def test_boundary_first_szz_check_plan_resolves_to_concrete_synthesis() -> None:
+    from pecos.qec.surface._check_plan import resolve_surface_check_plan
+
+    plan = resolve_surface_check_plan(check_plan="szz_boundary_first_v1")
+
+    assert plan.plan_id == "szz_boundary_first_v1"
+    assert plan.interaction_basis == "szz"
+    assert plan.synthesis_identity == {
+        "family": "szz",
+        "szz_phase_pattern": "boundary-first",
+        "interaction_order": "pecos-default",
+        "ancilla_schedule": "default",
+    }
+    assert plan.semantic_content["x_check"]["sign_policy"] == "boundary_first_szz_sign_vector_v1"
+    assert plan.semantic_content["z_check"]["sign_policy"] == "boundary_first_szz_sign_vector_v1"
 
 
 def test_current_renderer_rejects_unimplemented_plan_semantics() -> None:
@@ -225,6 +242,57 @@ def test_direct_surface_renderers_accept_check_plan_as_source_of_truth() -> None
 
     guppy_source = generate_guppy_from_patch(patch, check_plan="szz_current_v1")
     assert "Check plan: szz_current_v1" in guppy_source
+
+
+def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> None:
+    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface.circuit_builder import (
+        OpType,
+        build_surface_code_circuit,
+        generate_guppy_from_patch,
+        generate_tick_circuit_from_patch,
+    )
+
+    patch = SurfacePatch.create(distance=3)
+
+    current_ops, _ = build_surface_code_circuit(
+        patch,
+        num_rounds=1,
+        check_plan="szz_current_v1",
+    )
+    boundary_first_ops, _ = build_surface_code_circuit(
+        patch,
+        num_rounds=1,
+        check_plan="szz_boundary_first_v1",
+    )
+
+    def szz_gate_signature(ops: object) -> list[tuple[str, tuple[int, ...], str]]:
+        return [
+            (op.op_type.name, tuple(op.qubits), op.label)
+            for op in ops
+            if op.op_type in {OpType.SZZ, OpType.SZZDG}
+        ]
+
+    assert szz_gate_signature(boundary_first_ops) != szz_gate_signature(current_ops)
+    assert sum(op.op_type == OpType.SZZDG for op in boundary_first_ops) == sum(
+        op.op_type == OpType.SZZDG for op in current_ops
+    )
+
+    current_tick = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        check_plan="szz_current_v1",
+    )
+    boundary_first_tick = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        check_plan="szz_boundary_first_v1",
+    )
+    assert boundary_first_tick.get_meta("detectors") == current_tick.get_meta("detectors")
+    assert boundary_first_tick.get_meta("observables") == current_tick.get_meta("observables")
+
+    source = generate_guppy_from_patch(patch, check_plan="szz_boundary_first_v1")
+    assert "Check plan: szz_boundary_first_v1" in source
 
 
 def test_direct_surface_renderers_reject_plan_basis_mismatch() -> None:

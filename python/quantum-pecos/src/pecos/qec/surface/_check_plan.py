@@ -91,6 +91,34 @@ _PLAN_SEMANTICS: dict[str, dict[str, Any]] = {
         },
         "prefix_policy": "forward_flow_virtual_z_v1",
     },
+    "szz_boundary_first_v1": {
+        "plan_id": "szz_boundary_first_v1",
+        "interaction_basis": "szz",
+        "synthesis_identity": {
+            "family": "szz",
+            "szz_phase_pattern": "boundary-first",
+            "interaction_order": "pecos-default",
+            "ancilla_schedule": "default",
+        },
+        "schedule": {
+            "round_policy": "constant",
+            "site_policy": "global",
+            "edge_order": "current_surface_cnot_schedule_v1",
+        },
+        "x_check": {
+            "template": "current_szz_x_check_v1",
+            "sign_policy": "boundary_first_szz_sign_vector_v1",
+            "residual_policy": "per_touch_compensated",
+            "measurement_sign_policy": "explicit_template_metadata",
+        },
+        "z_check": {
+            "template": "current_szz_z_check_v1",
+            "sign_policy": "boundary_first_szz_sign_vector_v1",
+            "residual_policy": "per_touch_compensated",
+            "measurement_sign_policy": "explicit_template_metadata",
+        },
+        "prefix_policy": "forward_flow_virtual_z_v1",
+    },
 }
 
 
@@ -188,20 +216,26 @@ def require_current_surface_check_plan_renderer(
     synthesis = resolved_plan.synthesis_identity
     schedule = semantic.get("schedule", {})
 
-    expected_synthesis = {
-        "cx": {
+    if resolved_plan.interaction_basis == "cx":
+        expected_synthesis = {
             "family": "cx",
             "szz_phase_pattern": "none",
             "interaction_order": "pecos-default",
             "ancilla_schedule": "default",
-        },
-        "szz": {
+        }
+    else:
+        expected_synthesis = {
             "family": "szz",
-            "szz_phase_pattern": "standard",
+            "szz_phase_pattern": synthesis.get("szz_phase_pattern"),
             "interaction_order": "pecos-default",
             "ancilla_schedule": "default",
-        },
-    }[resolved_plan.interaction_basis]
+        }
+        if synthesis.get("szz_phase_pattern") not in {"standard", "boundary-first"}:
+            msg = (
+                f"{context} cannot realize check_plan={resolved_plan.plan_id!r} "
+                f"with {CURRENT_SURFACE_CHECK_PLAN_RENDERER}; synthesis_identity={synthesis!r}"
+            )
+            raise NotImplementedError(msg)
     expected_schedule = {
         "round_policy": "constant",
         "site_policy": "global",
@@ -228,17 +262,22 @@ def require_current_surface_check_plan_renderer(
             },
         }
     else:
+        szz_sign_policy_by_pattern = {
+            "standard": "default_szz_sign_vector_v1",
+            "boundary-first": "boundary_first_szz_sign_vector_v1",
+        }
+        sign_policy = szz_sign_policy_by_pattern[str(synthesis["szz_phase_pattern"])]
         expected_checks = {
             "prefix_policy": "forward_flow_virtual_z_v1",
             "x_check": {
                 "template": "current_szz_x_check_v1",
-                "sign_policy": "default_szz_sign_vector_v1",
+                "sign_policy": sign_policy,
                 "residual_policy": "per_touch_compensated",
                 "measurement_sign_policy": "explicit_template_metadata",
             },
             "z_check": {
                 "template": "current_szz_z_check_v1",
-                "sign_policy": "default_szz_sign_vector_v1",
+                "sign_policy": sign_policy,
                 "residual_policy": "per_touch_compensated",
                 "measurement_sign_policy": "explicit_template_metadata",
             },

@@ -286,8 +286,19 @@ def test_szz_builder_emits_szz_template_and_rejects_stage_later_features() -> No
     )
     assert data_compensation_count == szz_gate_count
 
-    with pytest.raises(ValueError, match="does not yet support constrained ancilla budgets"):
-        build_surface_code_circuit(patch, num_rounds=1, ancilla_budget=1, interaction_basis="szz")
+    constrained_szz_ops, _ = build_surface_code_circuit(
+        patch,
+        num_rounds=1,
+        ancilla_budget=1,
+        interaction_basis="szz",
+    )
+    constrained_szz_gate_count = sum(op.op_type in {OpType.SZZ, OpType.SZZDG} for op in constrained_szz_ops)
+    constrained_compensation_count = sum(
+        op.label.startswith("szz_touch_comp:") and op.op_type in {OpType.SX, OpType.SXDG, OpType.SZ, OpType.SZDG}
+        for op in constrained_szz_ops
+    )
+    assert constrained_szz_gate_count == szz_gate_count
+    assert constrained_compensation_count == constrained_szz_gate_count
 
     with pytest.raises(ValueError, match="twirl integration is staged later"):
         build_surface_code_circuit(

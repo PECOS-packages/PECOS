@@ -47,6 +47,7 @@ from pecos.qec.surface.patch import (
 from pecos.quantum import PHYSICAL_DURATION_META_KEY
 
 if TYPE_CHECKING:
+    from pecos.qec.surface._check_plan import ResolvedSurfaceCheckPlan
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import (
         LogicalDescriptor,
@@ -298,6 +299,34 @@ def _default_szz_sign_vector(patch: SurfacePatch) -> tuple[SzzTouchSign, ...]:
     return tuple(sorted(signs))
 
 
+def _boundary_first_szz_sign_vector(patch: SurfacePatch) -> tuple[SzzTouchSign, ...]:
+    """Return the SZZ sign vector with boundary daggers on first operands.
+
+    This is the first non-default SZZ/SZZdg source-level check plan. It keeps
+    the same schedule and compensation model as the default plan but changes
+    the concrete signed SZZ touch chosen on each weight-2 boundary check.
+    """
+    signs: list[SzzTouchSign] = []
+    for stabilizer_type, stabilizer_index, data_qubits, is_boundary in _iter_surface_stabilizer_touches(patch):
+        if is_boundary and len(data_qubits) != 2:
+            msg = (
+                "SZZ boundary-first expects boundary stabilizers to have weight 2; "
+                f"{stabilizer_type}{stabilizer_index} has weight {len(data_qubits)}"
+            )
+            raise ValueError(msg)
+        for touch_index, data_qubit in enumerate(data_qubits):
+            sign = -1 if is_boundary and touch_index == 0 else 1
+            signs.append(
+                SzzTouchSign(
+                    stabilizer_type=stabilizer_type,
+                    stabilizer_index=stabilizer_index,
+                    data_qubit=data_qubit,
+                    sign=sign,
+                ),
+            )
+    return tuple(sorted(signs))
+
+
 def _validate_szz_sign_vector(
     patch: SurfacePatch,
     signs: tuple[SzzTouchSign, ...],
@@ -395,6 +424,25 @@ def _validate_szz_sign_vector(
 def _default_szz_residual_plan(patch: SurfacePatch) -> SzzResidualPlan:
     """Return the validated v1 SZZ residual plan for a patch."""
     return _validate_szz_sign_vector(patch, _default_szz_sign_vector(patch))
+
+
+def _szz_residual_plan_for_check_plan(
+    patch: SurfacePatch,
+    resolved_plan: ResolvedSurfaceCheckPlan,
+) -> SzzResidualPlan:
+    """Return the concrete SZZ residual plan for a resolved check plan."""
+    if resolved_plan.interaction_basis != "szz":
+        msg = f"SZZ residual plans require interaction_basis='szz', got {resolved_plan.interaction_basis!r}"
+        raise ValueError(msg)
+
+    pattern = str(resolved_plan.synthesis_identity["szz_phase_pattern"])
+    if pattern == "standard":
+        return _default_szz_residual_plan(patch)
+    if pattern == "boundary-first":
+        return _validate_szz_sign_vector(patch, _boundary_first_szz_sign_vector(patch))
+
+    msg = f"unsupported SZZ phase pattern {pattern!r} for check_plan={resolved_plan.plan_id!r}"
+    raise NotImplementedError(msg)
 
 
 def _propagate_szz_frame_bits(x_a: bool, z_a: bool, x_b: bool, z_b: bool) -> tuple[bool, bool, bool, bool]:
@@ -905,7 +953,7 @@ def build_surface_code_circuit(
                 basis,
                 allocation,
                 cnot_rounds,
-                _default_szz_residual_plan(patch),
+                _szz_residual_plan_for_check_plan(patch, resolved_plan),
             ),
             allocation,
         )

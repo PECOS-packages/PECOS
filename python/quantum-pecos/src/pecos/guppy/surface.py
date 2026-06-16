@@ -202,7 +202,7 @@ def generate_guppy_source(
     """
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
     from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer
-    from pecos.qec.surface.circuit_builder import _default_szz_residual_plan
+    from pecos.qec.surface.circuit_builder import _szz_residual_plan_for_check_plan
 
     resolved_plan = _resolve_surface_check_plan(
         interaction_basis=interaction_basis,
@@ -360,7 +360,7 @@ def generate_guppy_source(
     rounds = compute_cnot_schedule(patch)
     szz_sign_by_touch: dict[tuple[str, int, int], int] = {}
     if interaction_basis == "szz":
-        residual_plan = _default_szz_residual_plan(patch)
+        residual_plan = _szz_residual_plan_for_check_plan(patch, resolved_plan)
         szz_sign_by_touch = {
             (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): entry.sign
             for entry in residual_plan.signs

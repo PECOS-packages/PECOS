@@ -177,6 +177,26 @@ pub trait ObservableDecoder {
     /// Returns [`DecoderError`] if decoding fails.
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError>;
 
+    /// Decode a dense syndrome and return predicted observable flips as an
+    /// [`ObsMask`](crate::obs_mask::ObsMask), which supports more than 64
+    /// observables.
+    ///
+    /// This is the general entry point used by the transport layer
+    /// (`SampleBatch`, the Python bindings). The default implementation bridges
+    /// [`Self::decode_to_observables`] — the 64-observable `u64` fast path that
+    /// inner decoders implement. Decoders that can produce more than 64
+    /// observables (the per-observable aggregators) override this to build a
+    /// wide mask directly, with no truncation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if decoding fails.
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+        Ok(crate::obs_mask::ObsMask::from_u64(
+            self.decode_to_observables(syndrome)?,
+        ))
+    }
+
     /// Batch decode: flat buffer of `num_shots × num_detectors` bytes.
     /// Returns one `u64` observable mask per shot.
     ///

@@ -57,6 +57,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ObservableDecoder;
 use crate::dem::{DemMatchingGraph, MatchingEdge, SparseDem};
 use crate::errors::DecoderError;
+use crate::obs_mask::ObsMask;
 
 // ============================================================================
 // Stabilizer coordinate mapping
@@ -653,8 +654,22 @@ impl LogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for LogicalSubgraphDecoder {
+    /// Narrowing wrapper over [`Self::decode_obs`]. Errors (rather than
+    /// truncating) if the decoder has more than 64 observables; callers that may
+    /// exceed 64 should use [`ObservableDecoder::decode_obs`].
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        let mut obs_mask = 0u64;
+        self.decode_obs(syndrome)?.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
+            )
+        })
+    }
+
+    /// Decode every per-observable subgraph and pack the flips into a wide
+    /// [`ObsMask`], mapping each subgraph's local result to its GLOBAL observable
+    /// index. Supports more than 64 observables with no truncation.
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        let mut obs_mask = ObsMask::new();
 
         for (i, (sg, dec)) in self
             .subgraphs
@@ -679,9 +694,7 @@ impl ObservableDecoder for LogicalSubgraphDecoder {
             let sub_obs = dec.decode_to_observables(&buf[..n])?;
 
             if sub_obs & 1 != 0 {
-                // Flip the subgraph's GLOBAL observable bit, not the list
-                // position: construction guarantees < 64 observables.
-                obs_mask |= 1u64 << sg.observable_idx;
+                obs_mask.set(sg.observable_idx);
             }
         }
 

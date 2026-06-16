@@ -1341,11 +1341,16 @@ def capture_guppy_operation_trace(
 ) -> list[dict[str, Any]]:
     """Capture a Guppy/QIS program's Selene operation trace chunks."""
     import pecos
+    import pecos_rslib
 
+    # Trace capture records the runtime-lowered QIS operations and result tags;
+    # DEM validation/fault propagation happens after replay.  Use a permissive
+    # trace backend instead of asking stabilizer evolution to validate every
+    # runtime-emitted rotation while we are only collecting provenance.
     sim_builder = (
         pecos.sim(program)
         .classical(pecos.selene_engine(runtime))
-        .quantum(pecos.stabilizer())
+        .quantum(pecos_rslib.coin_toss())
         .qubits(num_qubits)
         .seed(seed)
     )

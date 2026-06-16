@@ -95,6 +95,16 @@ impl WindowedLogicalSubgraphDecoder {
         let mut subgraphs = Vec::with_capacity(plan.num_observables());
         let mut max_local = 0usize;
         for entry in plan.entries() {
+            // The windowed path packs observable flips into a u64 mask; reject
+            // >64 here (the non-windowed `LogicalSubgraphDecoder` supports more
+            // via `decode_obs`, but the windowed core-commit path does not yet).
+            if entry.observable_idx >= 64 {
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "WindowedLogicalSubgraphDecoder packs flips into a u64 mask and supports at \
+                     most 64 observables, but saw observable index {}",
+                    entry.observable_idx,
+                )));
+            }
             let decoder =
                 OverlappingWindowedDecoder::from_dem(&entry.sub_dem, window_config, |wdem| {
                     UfDecoder::from_dem(wdem, UfDecoderConfig::windowed())
@@ -142,8 +152,8 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
             }
             // The subgraph decodes a single observable as its local bit 0; map
             // that back to this observable's global bit. `observable_idx < 64` is
-            // guaranteed upstream (`subgraphs_from_membership` rejects >64
-            // observables); assert it locally where the u64 shift consumes it.
+            // guaranteed by the hard reject in `from_dem`; assert it locally where
+            // the u64 shift consumes it.
             debug_assert!(
                 sg.observable_idx < 64,
                 "observable index {} exceeds u64 observable-mask capacity",

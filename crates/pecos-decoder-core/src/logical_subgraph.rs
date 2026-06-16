@@ -332,20 +332,14 @@ pub fn coordinate_membership_from_dem(
 ///
 /// # Errors
 ///
-/// Returns an error if `membership` has more than 64 entries: observable flips
-/// are packed into a u64 mask (bit `i` = observable `i`), so any region source
-/// feeding this extractor inherits the 64-observable limit.
+/// Supports arbitrarily many observables: flips are packed into a wide
+/// [`ObsMask`] by [`ObservableDecoder::decode_obs`]. (The `u64`
+/// [`ObservableDecoder::decode_to_observables`] convenience errors above 64; the
+/// windowed paths still cap at 64 — see their constructors.)
 pub fn subgraphs_from_membership(
     sdem: &SparseDem,
     membership: &[Vec<usize>],
 ) -> Result<Vec<LogicalSubgraph>, DecoderError> {
-    if membership.len() > 64 {
-        return Err(DecoderError::InvalidConfiguration(format!(
-            "LogicalSubgraphDecoder packs observable flips into a u64 mask and \
-             supports at most 64 observables, but got membership for {}",
-            membership.len(),
-        )));
-    }
 
     let mut subgraphs = Vec::with_capacity(membership.len());
 
@@ -767,15 +761,19 @@ impl ParallelLogicalSubgraphDecoder {
             })
             .collect();
 
-        let mut obs_mask = 0u64;
+        let mut obs_mask = ObsMask::new();
         for (sg, result) in self.subgraphs.iter().zip(results) {
             if result? {
-                // Flip the subgraph's GLOBAL observable bit, not the list
-                // position: construction guarantees < 64 observables.
-                obs_mask |= 1u64 << sg.observable_idx;
+                obs_mask.set(sg.observable_idx);
             }
         }
-        Ok(obs_mask)
+        // This convenience returns a u64; error (don't truncate) above 64.
+        obs_mask.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; the parallel u64 path supports at most 64"
+                    .into(),
+            )
+        })
     }
 }
 
@@ -912,12 +910,9 @@ mod tests {
         assert_eq!(sgs.len(), 1);
         assert_eq!(sgs[0].detector_map, vec![0, 1]);
 
-        // >64 observable membership is rejected by the extractor regardless of source.
+        // >64 observable membership is now SUPPORTED (wide ObsMask), not rejected.
         let big: Vec<Vec<usize>> = (0..65).map(|_| Vec::new()).collect();
-        assert!(matches!(
-            subgraphs_from_membership(&sdem, &big),
-            Err(DecoderError::InvalidConfiguration(_))
-        ));
+        assert_eq!(subgraphs_from_membership(&sdem, &big).unwrap().len(), 65);
 
         // An out-of-range membership detector id must error, not panic
         // (the DEM has 2 detectors D0,D1; detector 5 is past `inverse_map`).
@@ -1059,18 +1054,55 @@ mod tests {
     }
 
     #[test]
-    fn test_too_many_observables_errors() {
-        // 65 observables exceeds the u64 mask capacity.
+    fn test_more_than_64_observables_decode_wide() {
+        // 65 observables: construction now SUCCEEDS (no >64 reject), and the wide
+        // `decode_obs` / `decode_count_batched` paths represent observable 64
+        // without truncation. The `u64` convenience method errors instead.
         use std::fmt::Write;
         let mut dem = String::from("detector(1, 0, 0) D0\n");
         for l in 0..65 {
             writeln!(dem, "error(0.01) D0 L{l}").unwrap();
         }
         let sc = simple_stab_coords();
-        let err = partition_dem_by_logical(&dem, &sc).unwrap_err();
-        assert!(
-            matches!(err, DecoderError::InvalidConfiguration(_)),
-            "expected InvalidConfiguration, got {err:?}"
+
+        // Every per-observable subgraph flips its observable when D0 fires.
+        let mut dec = LogicalSubgraphDecoder::from_dem(&dem, &sc, |_| {
+            Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>)
+        })
+        .unwrap();
+
+        // Wide decode: all 65 observables flip when D0 is set; bit 64 is present.
+        let wide = dec.decode_obs(&[1]).unwrap();
+        assert_eq!(wide.count_ones(), 65);
+        assert!(wide.get(64), "observable 64 must be representable");
+        assert_eq!(wide.to_u64(), None, "65 bits does not fit a u64");
+
+        // The u64 convenience errors rather than truncating.
+        assert!(matches!(
+            dec.decode_to_observables(&[1]),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
+
+        // Batch decode-count compares wide masks: an all-flip expected mask
+        // matches the all-flip prediction (zero errors); a narrower expected
+        // mask (missing observable 64) is counted as an error.
+        let mut all_flip = ObsMask::new();
+        for l in 0..65 {
+            all_flip.set(l);
+        }
+        let mut missing_64 = ObsMask::new();
+        for l in 0..64 {
+            missing_64.set(l);
+        }
+        assert_eq!(
+            dec.decode_count_batched(&[vec![1]], std::slice::from_ref(&all_flip))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            dec.decode_count_batched(&[vec![1]], std::slice::from_ref(&missing_64))
+                .unwrap(),
+            1
         );
     }
 

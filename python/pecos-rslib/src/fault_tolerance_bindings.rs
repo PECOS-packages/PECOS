@@ -2614,7 +2614,7 @@ impl PySampleBatch {
         }
     }
 
-    /// Extract observable mask for one shot.
+    /// Extract observable mask for one shot (`u64`; observables 0..=63 only).
     fn extract_obs_mask(&self, shot: usize) -> u64 {
         let word_idx = shot / 64;
         let bit_mask = 1u64 << (shot % 64);
@@ -2622,6 +2622,20 @@ impl PySampleBatch {
         for (obs_idx, col) in self.obs_columns.iter().enumerate() {
             if col[word_idx] & bit_mask != 0 {
                 mask |= 1u64 << obs_idx;
+            }
+        }
+        mask
+    }
+
+    /// Extract the observable mask for one shot as a wide [`ObsMask`], with no
+    /// 64-observable cap (the columnar storage already supports >64 columns).
+    fn extract_obs_mask_wide(&self, shot: usize) -> pecos_decoder_core::obs_mask::ObsMask {
+        let word_idx = shot / 64;
+        let bit_mask = 1u64 << (shot % 64);
+        let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
+        for (obs_idx, col) in self.obs_columns.iter().enumerate() {
+            if col[word_idx] & bit_mask != 0 {
+                mask.set(obs_idx);
             }
         }
         mask
@@ -4649,8 +4663,8 @@ impl PyLogicalSubgraphDecoder {
                 s
             })
             .collect();
-        let observable_masks: Vec<u64> = (0..batch.num_shots)
-            .map(|i| batch.extract_obs_mask(i))
+        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> = (0..batch.num_shots)
+            .map(|i| batch.extract_obs_mask_wide(i))
             .collect();
         self.inner
             .decode_count_batched(&detection_events, &observable_masks)
@@ -4709,7 +4723,8 @@ impl PyLogicalSubgraphDecoder {
                 s
             })
             .collect();
-        let masks: Vec<u64> = (0..n).map(|i| batch.extract_obs_mask(i)).collect();
+        let masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
+            (0..n).map(|i| batch.extract_obs_mask_wide(i)).collect();
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_workers.unwrap_or(0))
@@ -4745,7 +4760,8 @@ impl PyLogicalSubgraphDecoder {
                     // Collect chunk syndromes and masks for batch decode
                     let chunk_syns: Vec<Vec<u8>> =
                         chunk.iter().map(|&i| events[i].clone()).collect();
-                    let chunk_masks: Vec<u64> = chunk.iter().map(|&i| masks[i]).collect();
+                    let chunk_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
+                        chunk.iter().map(|&i| masks[i].clone()).collect();
                     dec.decode_count_batched(&chunk_syns, &chunk_masks)
                 })
                 .try_reduce(|| 0, |a, b| Ok(a + b))

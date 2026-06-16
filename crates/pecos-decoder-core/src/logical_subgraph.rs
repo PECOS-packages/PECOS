@@ -601,15 +601,16 @@ impl LogicalSubgraphDecoder {
     pub fn decode_count_batched(
         &mut self,
         syndromes: &[Vec<u8>],
-        expected_masks: &[u64],
+        expected_masks: &[ObsMask],
     ) -> Result<usize, DecoderError> {
         let num_shots = syndromes.len();
         if num_shots == 0 {
             return Ok(0);
         }
 
-        // Per-shot observable predictions, accumulated across subgraphs.
-        let mut shot_obs: Vec<u64> = vec![0u64; num_shots];
+        // Per-shot observable predictions, accumulated across subgraphs. Wide
+        // (`ObsMask`) so >64 observables are not truncated.
+        let mut shot_obs: Vec<ObsMask> = vec![ObsMask::new(); num_shots];
 
         for (sg, dec) in self.subgraphs.iter().zip(self.decoders.iter_mut()) {
             let n = sg.detector_map.len();
@@ -635,9 +636,7 @@ impl LogicalSubgraphDecoder {
 
             for (shot_idx, &sub_obs) in sub_masks.iter().enumerate() {
                 if sub_obs & 1 != 0 {
-                    // Flip the subgraph's GLOBAL observable bit, not the list
-                    // position: construction guarantees < 64 observables.
-                    shot_obs[shot_idx] |= 1u64 << sg.observable_idx;
+                    shot_obs[shot_idx].set(sg.observable_idx);
                 }
             }
         }

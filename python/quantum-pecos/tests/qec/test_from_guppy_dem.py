@@ -28,7 +28,9 @@ from pecos.qec.surface.decode import (
     _replay_qis_trace_into_tick_circuit,
     _surface_runtime_measurement_remap_from_result_traces,
     _validate_result_tag_remap_against_traced_measurements,
+    capture_guppy_operation_trace,
     generate_circuit_level_dem_from_builder,
+    named_result_traces_from_operation_trace,
     trace_guppy_into_tick_circuit_with_result_traces,
 )
 
@@ -51,6 +53,20 @@ def _measurement_feedback() -> None:
     b1 = measure(q1)
     result("b0", b0)
     result("b1", b1)
+
+
+def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    import pecos
+
+    def forbidden_stabilizer():
+        raise AssertionError("trace capture should not validate operations with stabilizer evolution")
+
+    monkeypatch.setattr(pecos, "stabilizer", forbidden_stabilizer)
+
+    chunks = capture_guppy_operation_trace(_single_measurement, num_qubits=1, seed=0)
+    result_names = [trace.get("name") for trace in named_result_traces_from_operation_trace(chunks)]
+
+    assert "m" in result_names
 
 
 def _dem_text(*, detectors_json: str = "[]", observables_json: str = "[]") -> str:

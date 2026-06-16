@@ -40,6 +40,7 @@ pub mod logical_algorithm;
 pub mod logical_subgraph;
 pub mod matrix;
 pub mod multi_decoder;
+pub mod obs_mask;
 pub mod pauli_frame;
 pub mod perturbed;
 pub mod preprocessor;

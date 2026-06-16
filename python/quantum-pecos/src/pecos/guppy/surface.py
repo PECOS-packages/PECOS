@@ -201,11 +201,16 @@ def generate_guppy_source(
         ValueError: If exactly one of ``twirl`` / ``rng`` is supplied.
     """
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
+    from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer
     from pecos.qec.surface.circuit_builder import _default_szz_residual_plan
 
     resolved_plan = _resolve_surface_check_plan(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
+    )
+    require_current_surface_check_plan_renderer(
+        resolved_plan,
+        context="Guppy surface-code source generation",
     )
     interaction_basis = resolved_plan.interaction_basis
     if (twirl is None) != (rng is None):

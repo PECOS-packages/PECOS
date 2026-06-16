@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from pecos.qec.surface._check_plan import resolve_surface_check_plan
+from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 
 if TYPE_CHECKING:
     import stim
@@ -1508,6 +1508,10 @@ def _build_surface_tick_circuit_for_native_model(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
     )
+    require_current_surface_check_plan_renderer(
+        resolved_plan,
+        context="surface native TickCircuit generation",
+    )
     interaction_basis = _normalize_interaction_basis(resolved_plan.interaction_basis)
     if szz_physical_prefixes and (interaction_basis != "szz" or circuit_source != "abstract"):
         msg = "SZZ physical-prefix lowering requires interaction_basis='szz' and circuit_source='abstract'"
@@ -1872,6 +1876,10 @@ def _surface_native_topology(
     )
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
+    require_current_surface_check_plan_renderer(
+        resolved_plan,
+        context="surface native topology construction",
+    )
     interaction_basis = resolved_plan.interaction_basis
     patch = _cached_surface_patch(patch_key)
     tc = _build_surface_tick_circuit_for_native_model(

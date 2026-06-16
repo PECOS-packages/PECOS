@@ -6,17 +6,32 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 
 import pytest
 
 
 def test_check_plan_default_resolves_to_cx_metadata() -> None:
-    from pecos.qec.surface._check_plan import canonical_check_plan_json, resolve_surface_check_plan
+    from pecos.qec.surface._check_plan import (
+        canonical_check_plan_json,
+        default_surface_check_plan_id,
+        resolve_surface_check_plan,
+        surface_check_plan_ids,
+    )
 
     plan = resolve_surface_check_plan()
 
+    assert surface_check_plan_ids() == ("cx_standard_v1", "szz_current_v1")
+    assert default_surface_check_plan_id() == "cx_standard_v1"
+    assert default_surface_check_plan_id("SZZ") == "szz_current_v1"
     assert plan.plan_id == "cx_standard_v1"
     assert plan.interaction_basis == "cx"
+    assert plan.synthesis_identity == {
+        "family": "cx",
+        "szz_phase_pattern": "none",
+        "interaction_order": "pecos-default",
+        "ancilla_schedule": "default",
+    }
     assert plan.resolved_metadata["metadata_version"] == 1
     assert plan.resolved_metadata["hash_algorithm"] == "sha256"
     assert plan.resolved_metadata["hash_serialization"] == "canonical-json-v1"
@@ -33,6 +48,34 @@ def test_check_plan_is_source_of_truth_for_basis() -> None:
 
     assert plan.plan_id == "szz_current_v1"
     assert plan.interaction_basis == "szz"
+    assert plan.synthesis_identity == {
+        "family": "szz",
+        "szz_phase_pattern": "standard",
+        "interaction_order": "pecos-default",
+        "ancilla_schedule": "default",
+    }
+
+
+def test_current_renderer_rejects_unimplemented_plan_semantics() -> None:
+    from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
+
+    plan = resolve_surface_check_plan(check_plan="szz_current_v1")
+    unsupported = dict(plan.semantic_content)
+    unsupported["synthesis_identity"] = {
+        **dict(plan.synthesis_identity),
+        "szz_phase_pattern": "checkerboard",
+    }
+    unsupported_plan = replace(
+        plan,
+        synthesis_identity=dict(unsupported["synthesis_identity"]),
+        semantic_content=unsupported,
+    )
+
+    with pytest.raises(NotImplementedError, match=r"unit-test.*checkerboard"):
+        require_current_surface_check_plan_renderer(
+            unsupported_plan,
+            context="unit-test",
+        )
 
 
 def test_check_plan_and_interaction_basis_mismatch_fails_loudly() -> None:

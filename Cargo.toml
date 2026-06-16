@@ -15,6 +15,9 @@ members = [
   "crates/pecos*",
   "crates/benchmarks",
   "exp/pecos*",
+  "exp/zlup",
+  "exp/guppy-zlup",
+  "exp/zluppy",
 ]
 
 [workspace.package]

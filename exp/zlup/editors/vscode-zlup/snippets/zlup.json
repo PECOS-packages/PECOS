@@ -1,0 +1,176 @@
+{
+    "Main Function": {
+        "prefix": "main",
+        "body": [
+            "pub fn main() -> unit {",
+            "    $0",
+            "    return unit;",
+            "}"
+        ],
+        "description": "Main function template"
+    },
+    "Function": {
+        "prefix": "fn",
+        "body": [
+            "fn ${1:name}(${2:params}) -> ${3:unit} {",
+            "    $0",
+            "}"
+        ],
+        "description": "Function definition"
+    },
+    "Public Function": {
+        "prefix": "pubfn",
+        "body": [
+            "pub fn ${1:name}(${2:params}) -> ${3:unit} {",
+            "    $0",
+            "}"
+        ],
+        "description": "Public function definition"
+    },
+    "Qubit Allocation": {
+        "prefix": "qalloc",
+        "body": [
+            "${1:q} := qalloc(${2:2});"
+        ],
+        "description": "Allocate qubits"
+    },
+    "Bell State": {
+        "prefix": "bell",
+        "body": [
+            "// Bell state preparation",
+            "${1:q} := qalloc(2);",
+            "pz ${1:q};",
+            "h ${1:q}[0];",
+            "cx (${1:q}[0], ${1:q}[1]);",
+            "$0"
+        ],
+        "description": "Bell state preparation"
+    },
+    "GHZ State": {
+        "prefix": "ghz",
+        "body": [
+            "// GHZ state preparation",
+            "${1:q} := qalloc(${2:4});",
+            "pz ${1:q};",
+            "h ${1:q}[0];",
+            "for i in 1..${2:4} {",
+            "    cx (${1:q}[0], ${1:q}[i]);",
+            "}",
+            "$0"
+        ],
+        "description": "GHZ state preparation"
+    },
+    "For Loop": {
+        "prefix": "for",
+        "body": [
+            "for ${1:i} in ${2:0}..${3:n} {",
+            "    $0",
+            "}"
+        ],
+        "description": "For loop"
+    },
+    "If Statement": {
+        "prefix": "if",
+        "body": [
+            "if ${1:condition} {",
+            "    $0",
+            "}"
+        ],
+        "description": "If statement"
+    },
+    "If-Else Statement": {
+        "prefix": "ife",
+        "body": [
+            "if ${1:condition} {",
+            "    $2",
+            "} else {",
+            "    $0",
+            "}"
+        ],
+        "description": "If-else statement"
+    },
+    "Tick Block": {
+        "prefix": "tick",
+        "body": [
+            "tick {",
+            "    $0",
+            "}"
+        ],
+        "description": "Tick block for parallel quantum operations"
+    },
+    "Typed Measurement": {
+        "prefix": "meas",
+        "body": [
+            "${1:results}: [${2:2}]u1 = mz([${2:2}]u1) [${3:q[0], q[1]}];"
+        ],
+        "description": "Typed measurement"
+    },
+    "Struct Definition": {
+        "prefix": "struct",
+        "body": [
+            "const ${1:Name} = struct {",
+            "    ${2:field}: ${3:type},",
+            "};"
+        ],
+        "description": "Struct definition"
+    },
+    "Enum Definition": {
+        "prefix": "enum",
+        "body": [
+            "const ${1:Name} = enum {",
+            "    ${2:variant1},",
+            "    ${3:variant2},",
+            "};"
+        ],
+        "description": "Enum definition"
+    },
+    "Import": {
+        "prefix": "import",
+        "body": [
+            "${1:std} := @import(\"${2:std}\");"
+        ],
+        "description": "Import statement"
+    },
+    "Constant": {
+        "prefix": "const",
+        "body": [
+            "const ${1:NAME}: ${2:type} = ${3:value};"
+        ],
+        "description": "Constant declaration"
+    },
+    "Hadamard Gate": {
+        "prefix": "hadamard",
+        "body": [
+            "h ${1:q}[${2:0}];"
+        ],
+        "description": "Hadamard gate"
+    },
+    "CNOT Gate": {
+        "prefix": "cnot",
+        "body": [
+            "cx (${1:q}[${2:0}], ${1:q}[${3:1}]);"
+        ],
+        "description": "CNOT gate"
+    },
+    "Rotation X": {
+        "prefix": "rotx",
+        "body": [
+            "rx(${1:0.5}turn) ${2:q}[${3:0}];"
+        ],
+        "description": "Rotation around X axis"
+    },
+    "Rotation Y": {
+        "prefix": "roty",
+        "body": [
+            "ry(${1:0.5}turn) ${2:q}[${3:0}];"
+        ],
+        "description": "Rotation around Y axis"
+    },
+    "Rotation Z": {
+        "prefix": "rotz",
+        "body": [
+            "rz(${1:0.5}turn) ${2:q}[${3:0}];"
+        ],
+        "description": "Rotation around Z axis"
+    }
+}

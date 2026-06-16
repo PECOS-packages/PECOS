@@ -1,0 +1,86 @@
+[package]
+name = "zlup"
+version = "0.1.0"
+edition = "2024"
+description = "Zlup: Experimental quantum language with Zig semantics and Rust/Python syntax for reliable QEC"
+license = "Apache-2.0"
+repository = "https://github.com/PECOS-packages/PECOS"
+readme = "README.md"
+keywords = ["quantum", "programming-language", "experimental"]
+categories = ["science", "compilers"]
+
+# This is an experimental crate - not for production use
+[badges]
+maintenance = { status = "experimental" }
+
+[lib]
+name = "zlup"
+
+# CLI binary
+[[bin]]
+name = "zlup"
+path = "src/main.rs"
+required-features = ["cli"]
+
+# LSP server binary
+[[bin]]
+name = "zlups"
+path = "src/lsp/main.rs"
+required-features = ["lsp"]
+
+[dependencies]
+# Parser generator
+pest = "2.7"
+pest_derive = "2.7"
+
+# Error handling
+thiserror = "1.0"
+miette = { version = "7.0", features = ["fancy"] }
+
+# Utilities
+smol_str = "0.3"  # Interned strings for identifiers
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Serialization (for SLR-AST JSON bridge)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Config file parsing
+toml = "0.8"
+
+# CLI (optional)
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
+
+# HUGR codegen (optional)
+tket = { workspace = true, optional = true }
+
+# LSP server (optional)
+tower-lsp = { version = "0.20", optional = true }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "io-std"], optional = true }
+once_cell = { version = "1.19", optional = true }
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+insta = "1.40"  # Snapshot testing
+tket.workspace = true  # For testing HUGR codegen
+tempfile = "3.10"  # For module system tests
+criterion = { version = "0.5", features = ["html_reports"] }  # Benchmarking
+proptest = "1.4"  # Property-based testing
+
+[[bench]]
+name = "compiler"
+harness = false
+
+[features]
+default = []
+# Enable CLI binary
+cli = ["dep:clap"]
+# Enable HUGR code generation
+hugr = ["dep:tket"]
+# Enable LSP server
+lsp = ["dep:tower-lsp", "dep:tokio", "dep:once_cell"]
+# All features for full build
+full = ["cli", "hugr", "lsp"]

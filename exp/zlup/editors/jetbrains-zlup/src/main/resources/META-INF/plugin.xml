@@ -1,0 +1,96 @@
+<idea-plugin>
+    <id>com.zlup.ide</id>
+    <name>Zlup</name>
+    <vendor email="support@example.com" url="https://github.com/PECOS-packages/PECOS">PECOS</vendor>
+
+    <description><![CDATA[
+    <p>Language support for Zlup - a quantum programming language.</p>
+
+    <h3>Features</h3>
+    <ul>
+        <li>Syntax highlighting for .zlp files</li>
+        <li>Code completion for keywords, types, and quantum gates</li>
+        <li>Code folding for functions and blocks</li>
+        <li>Brace matching and auto-completion</li>
+        <li>Line and block commenting</li>
+        <li>Customizable color settings</li>
+    </ul>
+
+    <h3>Supported Constructs</h3>
+    <ul>
+        <li>Quantum gates: h, x, y, z, cx, cz, rx, ry, rz, etc.</li>
+        <li>Measurement: mz, mx, my</li>
+        <li>Preparation: pz, px, py</li>
+        <li>Control flow: if/else, for, while, tick</li>
+        <li>Types: qubit, bit, u32, i64, f64, a64, etc.</li>
+    </ul>
+    ]]></description>
+
+    <change-notes><![CDATA[
+    <h3>0.2.0</h3>
+    <ul>
+        <li>Added code completion for keywords, types, and gates</li>
+        <li>Added code folding support</li>
+        <li>Added color settings page</li>
+        <li>Expanded keyword and type recognition</li>
+        <li>Added support for more quantum gates</li>
+    </ul>
+    <h3>0.1.0</h3>
+    <ul>
+        <li>Initial release</li>
+        <li>Basic syntax highlighting</li>
+        <li>Brace matching</li>
+    </ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- File type registration -->
+        <fileType
+            name="Zlup"
+            implementationClass="com.zlup.ide.ZlupFileType"
+            fieldName="INSTANCE"
+            language="Zlup"
+            extensions="zlp"/>
+
+        <!-- Language registration -->
+        <lang.parserDefinition
+            language="Zlup"
+            implementationClass="com.zlup.ide.ZlupParserDefinition"/>
+
+        <!-- Syntax highlighter -->
+        <lang.syntaxHighlighterFactory
+            language="Zlup"
+            implementationClass="com.zlup.ide.ZlupSyntaxHighlighterFactory"/>
+
+        <!-- Commenter -->
+        <lang.commenter
+            language="Zlup"
+            implementationClass="com.zlup.ide.ZlupCommenter"/>
+
+        <!-- Brace matching -->
+        <lang.braceMatcher
+            language="Zlup"
+            implementationClass="com.zlup.ide.ZlupBraceMatcher"/>
+
+        <!-- Code folding -->
+        <lang.foldingBuilder
+            language="Zlup"
+            implementationClass="com.zlup.ide.ZlupFoldingBuilder"/>
+
+        <!-- Code completion -->
+        <completion.contributor
+            language="Zlup"
+            implementationClass="com.zlup.ide.ZlupCompletionContributor"/>
+
+        <!-- Color settings page -->
+        <colorSettingsPage
+            implementationClass="com.zlup.ide.ZlupColorSettingsPage"/>
+
+        <!-- Live templates -->
+        <defaultLiveTemplates file="/liveTemplates/Zlup.xml"/>
+        <liveTemplateContext
+            implementation="com.zlup.ide.ZlupTemplateContextType"/>
+    </extensions>
+</idea-plugin>

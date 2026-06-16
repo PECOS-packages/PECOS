@@ -1,0 +1,105 @@
+<templateSet group="Zlup">
+    <template name="fn" value="fn $NAME$($PARAMS$) -> $RETURN$ {&#10;    $END$&#10;}" description="Function definition" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+        <variable name="PARAMS" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+        <variable name="RETURN" expression="" defaultValue="&quot;unit&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="pubfn" value="pub fn $NAME$($PARAMS$) -> $RETURN$ {&#10;    $END$&#10;}" description="Public function definition" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
+        <variable name="PARAMS" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+        <variable name="RETURN" expression="" defaultValue="&quot;unit&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="main" value="pub fn main() -> unit {&#10;    $END$&#10;    return unit;&#10;}" description="Main function" toReformat="true" toShortenFQNames="true">
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="qalloc" value="$NAME$ := qalloc($SIZE$);" description="Allocate qubits" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;q&quot;" alwaysStopAt="true"/>
+        <variable name="SIZE" expression="" defaultValue="&quot;2&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="bell" value="// Bell state preparation&#10;$Q$ := qalloc(2);&#10;pz $Q$;&#10;h $Q$[0];&#10;cx ($Q$[0], $Q$[1]);&#10;$END$" description="Bell state preparation" toReformat="true" toShortenFQNames="true">
+        <variable name="Q" expression="" defaultValue="&quot;q&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="ghz" value="// GHZ state preparation&#10;$Q$ := qalloc($N$);&#10;pz $Q$;&#10;h $Q$[0];&#10;for i in 1..$N$ {&#10;    cx ($Q$[0], $Q$[i]);&#10;}&#10;$END$" description="GHZ state preparation" toReformat="true" toShortenFQNames="true">
+        <variable name="Q" expression="" defaultValue="&quot;q&quot;" alwaysStopAt="true"/>
+        <variable name="N" expression="" defaultValue="&quot;4&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="for" value="for $VAR$ in $START$..$END$ {&#10;    $BODY$&#10;}" description="For loop" toReformat="true" toShortenFQNames="true">
+        <variable name="VAR" expression="" defaultValue="&quot;i&quot;" alwaysStopAt="true"/>
+        <variable name="START" expression="" defaultValue="&quot;0&quot;" alwaysStopAt="true"/>
+        <variable name="END" expression="" defaultValue="&quot;n&quot;" alwaysStopAt="true"/>
+        <variable name="BODY" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="if" value="if $COND$ {&#10;    $END$&#10;}" description="If statement" toReformat="true" toShortenFQNames="true">
+        <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="ife" value="if $COND$ {&#10;    $THEN$&#10;} else {&#10;    $ELSE$&#10;}" description="If-else statement" toReformat="true" toShortenFQNames="true">
+        <variable name="COND" expression="" defaultValue="&quot;condition&quot;" alwaysStopAt="true"/>
+        <variable name="THEN" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+        <variable name="ELSE" expression="" defaultValue="&quot;&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="tick" value="tick {&#10;    $END$&#10;}" description="Tick block (parallel quantum operations)" toReformat="true" toShortenFQNames="true">
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="meas" value="$RESULT$: [$SIZE$]u1 = mz([$SIZE$]u1) [$TARGETS$];" description="Typed measurement" toReformat="true" toShortenFQNames="true">
+        <variable name="RESULT" expression="" defaultValue="&quot;results&quot;" alwaysStopAt="true"/>
+        <variable name="SIZE" expression="" defaultValue="&quot;2&quot;" alwaysStopAt="true"/>
+        <variable name="TARGETS" expression="" defaultValue="&quot;q[0], q[1]&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="struct" value="const $NAME$ = struct {&#10;    $FIELDS$&#10;};" description="Struct definition" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;MyStruct&quot;" alwaysStopAt="true"/>
+        <variable name="FIELDS" expression="" defaultValue="&quot;field: type&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <template name="import" value="$NAME$ := @import(&quot;$PATH$&quot;);" description="Import statement" toReformat="true" toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;std&quot;" alwaysStopAt="true"/>
+        <variable name="PATH" expression="" defaultValue="&quot;std&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+</templateSet>

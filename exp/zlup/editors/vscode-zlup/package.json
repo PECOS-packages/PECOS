@@ -1,0 +1,45 @@
+{
+    "name": "zlup",
+    "displayName": "Zlup",
+    "description": "Language support for Zlup - a quantum programming language",
+    "version": "0.1.0",
+    "publisher": "pecos",
+    "engines": {
+        "vscode": "^1.74.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/PECOS-packages/PECOS"
+    },
+    "contributes": {
+        "languages": [
+            {
+                "id": "zlup",
+                "aliases": [
+                    "Zlup",
+                    "zlup"
+                ],
+                "extensions": [
+                    ".zlp"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "zlup",
+                "scopeName": "source.zlup",
+                "path": "./syntaxes/zlup.tmLanguage.json"
+            }
+        ],
+        "snippets": [
+            {
+                "language": "zlup",
+                "path": "./snippets/zlup.json"
+            }
+        ]
+    }
+}

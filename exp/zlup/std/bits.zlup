@@ -1,0 +1,176 @@
+/// Bitwise utilities for working with measurement results.
+/// Provides functions for bit manipulation and parity calculations.
+
+// =============================================================================
+// Bit Counting
+// =============================================================================
+
+/// Count the number of set bits (population count/Hamming weight).
+/// Useful for computing parity of measurement results.
+///
+/// Example:
+/// ```zlup
+/// result: u8 = 0b10110100;
+/// weight := popcount_u8(result);  // 4
+/// ```
+pub fn popcount_u8(x: u8) -> u8 {
+    mut count: u8 = 0;
+    mut val := x;
+    for i in 0..8 {
+        count += val & 1;
+        val = val >> 1;
+    }
+    return count;
+}
+
+/// Count set bits in a u16.
+pub fn popcount_u16(x: u16) -> u16 {
+    mut count: u16 = 0;
+    mut val := x;
+    for i in 0..16 {
+        count += val & 1;
+        val = val >> 1;
+    }
+    return count;
+}
+
+/// Count set bits in a u32.
+pub fn popcount_u32(x: u32) -> u32 {
+    mut count: u32 = 0;
+    mut val := x;
+    for i in 0..32 {
+        count += val & 1;
+        val = val >> 1;
+    }
+    return count;
+}
+
+/// Count set bits in a u64.
+pub fn popcount_u64(x: u64) -> u64 {
+    mut count: u64 = 0;
+    mut val := x;
+    for i in 0..64 {
+        count += val & 1;
+        val = val >> 1;
+    }
+    return count;
+}
+
+// =============================================================================
+// Parity
+// =============================================================================
+
+/// Compute the parity (XOR of all bits) of a u8.
+/// Returns 0 if even number of 1s, 1 if odd.
+///
+/// Example:
+/// ```zlup
+/// // Syndrome parity check
+/// syndrome: u8 = mz(pack u8) ancillas;
+/// if parity_u8(syndrome) == 1 {
+///     // Odd parity - error detected
+/// }
+/// ```
+pub fn parity_u8(x: u8) -> u1 {
+    return (popcount_u8(x) & 1);
+}
+
+/// Compute parity of a u16.
+pub fn parity_u16(x: u16) -> u1 {
+    return (popcount_u16(x) & 1);
+}
+
+/// Compute parity of a u32.
+pub fn parity_u32(x: u32) -> u1 {
+    return (popcount_u32(x) & 1);
+}
+
+/// Compute parity of a u64.
+pub fn parity_u64(x: u64) -> u1 {
+    return (popcount_u64(x) & 1);
+}
+
+// =============================================================================
+// Bit Extraction
+// =============================================================================
+
+/// Extract a single bit from a u8 at the given index.
+/// Index 0 is the least significant bit.
+///
+/// Example:
+/// ```zlup
+/// result: u8 = 0b10110100;
+/// bit2 := get_bit_u8(result, 2);  // 1
+/// bit0 := get_bit_u8(result, 0);  // 0
+/// ```
+pub fn get_bit_u8(x: u8, index: u8) -> u1 {
+    return (x >> index) & 1;
+}
+
+/// Extract a single bit from a u16.
+pub fn get_bit_u16(x: u16, index: u16) -> u1 {
+    return (x >> index) & 1;
+}
+
+/// Extract a single bit from a u32.
+pub fn get_bit_u32(x: u32, index: u32) -> u1 {
+    return (x >> index) & 1;
+}
+
+/// Extract a single bit from a u64.
+pub fn get_bit_u64(x: u64, index: u64) -> u1 {
+    return (x >> index) & 1;
+}
+
+// =============================================================================
+// Bit Manipulation
+// =============================================================================
+
+/// Set a bit to 1 at the given index.
+pub fn set_bit_u8(x: u8, index: u8) -> u8 {
+    return x | (1 << index);
+}
+
+/// Clear a bit to 0 at the given index.
+pub fn clear_bit_u8(x: u8, index: u8) -> u8 {
+    return x & ~(1 << index);
+}
+
+/// Toggle a bit at the given index.
+pub fn toggle_bit_u8(x: u8, index: u8) -> u8 {
+    return x ^ (1 << index);
+}
+
+// =============================================================================
+// Byte Order
+// =============================================================================
+
+/// Reverse the bits in a u8.
+///
+/// Example:
+/// ```zlup
+/// x: u8 = 0b10110100;
+/// reversed := reverse_bits_u8(x);  // 0b00101101
+/// ```
+pub fn reverse_bits_u8(x: u8) -> u8 {
+    mut result: u8 = 0;
+    mut val := x;
+    for i in 0..8 {
+        result = (result << 1) | (val & 1);
+        val = val >> 1;
+    }
+    return result;
+}
+
+/// Swap bytes in a u16 (big-endian to little-endian or vice versa).
+pub fn swap_bytes_u16(x: u16) -> u16 {
+    return ((x & 0xFF) << 8) | ((x >> 8) & 0xFF);
+}
+
+/// Swap bytes in a u32.
+pub fn swap_bytes_u32(x: u32) -> u32 {
+    return ((x & 0xFF) << 24) |
+           ((x & 0xFF00) << 8) |
+           ((x >> 8) & 0xFF00) |
+           ((x >> 24) & 0xFF);
+}

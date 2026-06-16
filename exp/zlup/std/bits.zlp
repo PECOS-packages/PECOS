@@ -1,0 +1,458 @@
+/// Standard library: Bitwise operations for syndrome processing
+///
+/// Usage:
+///   std := @import("std");
+///   weight := std.bits.popcount_u8(syndrome);
+///   parity := std.bits.parity_u8(syndrome);
+
+// =============================================================================
+// Popcount (Count Set Bits)
+// =============================================================================
+
+/// Count the number of 1 bits in a u8
+pub fn popcount_u8(x: u8) -> u8 {
+    // Brian Kernighan's algorithm
+    mut count: u8 = 0;
+    mut n := x;
+    for _ in 0..8 {
+        if n == 0 {
+            break;
+        }
+        n = n & (n - 1);
+        count = count + 1;
+    }
+    return count;
+}
+
+/// Count the number of 1 bits in a u16
+pub fn popcount_u16(x: u16) -> u16 {
+    mut count: u16 = 0;
+    mut n := x;
+    for _ in 0..16 {
+        if n == 0 {
+            break;
+        }
+        n = n & (n - 1);
+        count = count + 1;
+    }
+    return count;
+}
+
+/// Count the number of 1 bits in a u32
+pub fn popcount_u32(x: u32) -> u32 {
+    mut count: u32 = 0;
+    mut n := x;
+    for _ in 0..32 {
+        if n == 0 {
+            break;
+        }
+        n = n & (n - 1);
+        count = count + 1;
+    }
+    return count;
+}
+
+/// Count the number of 1 bits in a u64
+pub fn popcount_u64(x: u64) -> u64 {
+    mut count: u64 = 0;
+    mut n := x;
+    for _ in 0..64 {
+        if n == 0 {
+            break;
+        }
+        n = n & (n - 1);
+        count = count + 1;
+    }
+    return count;
+}
+
+// =============================================================================
+// Parity (XOR of All Bits)
+// =============================================================================
+
+/// Compute parity of a u8 (1 if odd number of 1s, 0 if even)
+pub fn parity_u8(x: u8) -> u8 {
+    mut p := x;
+    p = p ^ (p >> 4);
+    p = p ^ (p >> 2);
+    p = p ^ (p >> 1);
+    return p & 1;
+}
+
+/// Compute parity of a u16
+pub fn parity_u16(x: u16) -> u16 {
+    mut p := x;
+    p = p ^ (p >> 8);
+    p = p ^ (p >> 4);
+    p = p ^ (p >> 2);
+    p = p ^ (p >> 1);
+    return p & 1;
+}
+
+/// Compute parity of a u32
+pub fn parity_u32(x: u32) -> u32 {
+    mut p := x;
+    p = p ^ (p >> 16);
+    p = p ^ (p >> 8);
+    p = p ^ (p >> 4);
+    p = p ^ (p >> 2);
+    p = p ^ (p >> 1);
+    return p & 1;
+}
+
+/// Compute parity of a u64
+pub fn parity_u64(x: u64) -> u64 {
+    mut p := x;
+    p = p ^ (p >> 32);
+    p = p ^ (p >> 16);
+    p = p ^ (p >> 8);
+    p = p ^ (p >> 4);
+    p = p ^ (p >> 2);
+    p = p ^ (p >> 1);
+    return p & 1;
+}
+
+// =============================================================================
+// Bit Extraction and Manipulation
+// =============================================================================
+
+/// Get a single bit from a u8 (returns 0 or 1)
+pub fn get_bit_u8(x: u8, index: u8) -> u8 {
+    if index >= 8 {
+        return 0;
+    }
+    return (x >> index) & 1;
+}
+
+/// Get a single bit from a u32 (returns 0 or 1)
+pub fn get_bit_u32(x: u32, index: u32) -> u32 {
+    if index >= 32 {
+        return 0;
+    }
+    return (x >> index) & 1;
+}
+
+/// Get a single bit from a u64 (returns 0 or 1)
+pub fn get_bit_u64(x: u64, index: u64) -> u64 {
+    if index >= 64 {
+        return 0;
+    }
+    return (x >> index) & 1;
+}
+
+/// Set a single bit in a u8
+pub fn set_bit_u8(x: u8, index: u8, value: u8) -> u8 {
+    if index >= 8 {
+        return x;
+    }
+    mask: u8 = 1 << index;
+    if value == 1 {
+        return x | mask;
+    } else {
+        return x & (~mask);
+    }
+}
+
+/// Set a single bit in a u32
+pub fn set_bit_u32(x: u32, index: u32, value: u32) -> u32 {
+    if index >= 32 {
+        return x;
+    }
+    mask: u32 = 1 << index;
+    if value == 1 {
+        return x | mask;
+    } else {
+        return x & (~mask);
+    }
+}
+
+/// Set a single bit in a u64
+pub fn set_bit_u64(x: u64, index: u64, value: u64) -> u64 {
+    if index >= 64 {
+        return x;
+    }
+    mask: u64 = 1 << index;
+    if value == 1 {
+        return x | mask;
+    } else {
+        return x & (~mask);
+    }
+}
+
+/// Toggle a single bit in a u8
+pub fn toggle_bit_u8(x: u8, index: u8) -> u8 {
+    if index >= 8 {
+        return x;
+    }
+    mask: u8 = 1 << index;
+    return x ^ mask;
+}
+
+/// Toggle a single bit in a u32
+pub fn toggle_bit_u32(x: u32, index: u32) -> u32 {
+    if index >= 32 {
+        return x;
+    }
+    mask: u32 = 1 << index;
+    return x ^ mask;
+}
+
+/// Toggle a single bit in a u64
+pub fn toggle_bit_u64(x: u64, index: u64) -> u64 {
+    if index >= 64 {
+        return x;
+    }
+    mask: u64 = 1 << index;
+    return x ^ mask;
+}
+
+/// Extract a range of bits from a u32
+/// Returns bits [start, start+len) shifted to LSB position
+pub fn extract_bits_u32(x: u32, start: u32, len: u32) -> u32 {
+    if start >= 32 or len == 0 {
+        return 0;
+    }
+    mut actual_len := len;
+    if start + len > 32 {
+        actual_len = 32 - start;
+    }
+    one: u32 = 1;
+    mask := (one << actual_len) - 1;
+    return (x >> start) & mask;
+}
+
+/// Extract a range of bits from a u64
+pub fn extract_bits_u64(x: u64, start: u64, len: u64) -> u64 {
+    if start >= 64 or len == 0 {
+        return 0;
+    }
+    mut actual_len := len;
+    if start + len > 64 {
+        actual_len = 64 - start;
+    }
+    one: u64 = 1;
+    mask := (one << actual_len) - 1;
+    return (x >> start) & mask;
+}
+
+// =============================================================================
+// Rotation
+// =============================================================================
+
+/// Rotate left for u32
+pub fn rotl_u32(x: u32, n: u32) -> u32 {
+    shift := n % 32;
+    if shift == 0 {
+        return x;
+    }
+    return (x << shift) | (x >> (32 - shift));
+}
+
+/// Rotate right for u32
+pub fn rotr_u32(x: u32, n: u32) -> u32 {
+    shift := n % 32;
+    if shift == 0 {
+        return x;
+    }
+    return (x >> shift) | (x << (32 - shift));
+}
+
+/// Rotate left for u64
+pub fn rotl_u64(x: u64, n: u64) -> u64 {
+    shift := n % 64;
+    if shift == 0 {
+        return x;
+    }
+    return (x << shift) | (x >> (64 - shift));
+}
+
+/// Rotate right for u64
+pub fn rotr_u64(x: u64, n: u64) -> u64 {
+    shift := n % 64;
+    if shift == 0 {
+        return x;
+    }
+    return (x >> shift) | (x << (64 - shift));
+}
+
+// =============================================================================
+// Leading/Trailing Zeros
+// =============================================================================
+
+/// Count leading zeros in a u32
+pub fn clz_u32(x: u32) -> u32 {
+    if x == 0 {
+        return 32;
+    }
+    mut n: u32 = 0;
+    mut val := x;
+    if (val & 0xFFFF0000) == 0 { n = n + 16; val = val << 16; }
+    if (val & 0xFF000000) == 0 { n = n + 8; val = val << 8; }
+    if (val & 0xF0000000) == 0 { n = n + 4; val = val << 4; }
+    if (val & 0xC0000000) == 0 { n = n + 2; val = val << 2; }
+    if (val & 0x80000000) == 0 { n = n + 1; }
+    return n;
+}
+
+/// Count trailing zeros in a u32
+pub fn ctz_u32(x: u32) -> u32 {
+    if x == 0 {
+        return 32;
+    }
+    mut n: u32 = 0;
+    mut val := x;
+    if (val & 0x0000FFFF) == 0 { n = n + 16; val = val >> 16; }
+    if (val & 0x000000FF) == 0 { n = n + 8; val = val >> 8; }
+    if (val & 0x0000000F) == 0 { n = n + 4; val = val >> 4; }
+    if (val & 0x00000003) == 0 { n = n + 2; val = val >> 2; }
+    if (val & 0x00000001) == 0 { n = n + 1; }
+    return n;
+}
+
+/// Count leading zeros in a u64
+pub fn clz_u64(x: u64) -> u64 {
+    if x == 0 {
+        return 64;
+    }
+    // Check high 32 bits first
+    if (x >> 32) != 0 {
+        // High bits have data, count zeros there
+        mut n: u64 = 0;
+        mut val := x >> 32;
+        if (val & 0xFFFF0000) == 0 { n = n + 16; val = val << 16; }
+        if (val & 0xFF000000) == 0 { n = n + 8; val = val << 8; }
+        if (val & 0xF0000000) == 0 { n = n + 4; val = val << 4; }
+        if (val & 0xC0000000) == 0 { n = n + 2; val = val << 2; }
+        if (val & 0x80000000) == 0 { n = n + 1; }
+        return n;
+    }
+    // High bits are zero, count in low bits + 32
+    mut n: u64 = 32;
+    mut val := x;
+    if (val & 0xFFFF0000) == 0 { n = n + 16; val = val << 16; }
+    if (val & 0xFF000000) == 0 { n = n + 8; val = val << 8; }
+    if (val & 0xF0000000) == 0 { n = n + 4; val = val << 4; }
+    if (val & 0xC0000000) == 0 { n = n + 2; val = val << 2; }
+    if (val & 0x80000000) == 0 { n = n + 1; }
+    return n;
+}
+
+/// Count trailing zeros in a u64
+pub fn ctz_u64(x: u64) -> u64 {
+    if x == 0 {
+        return 64;
+    }
+    // Check low 32 bits first
+    if (x & 0xFFFFFFFF) != 0 {
+        // Low bits have data
+        mut n: u64 = 0;
+        mut val := x;
+        if (val & 0x0000FFFF) == 0 { n = n + 16; val = val >> 16; }
+        if (val & 0x000000FF) == 0 { n = n + 8; val = val >> 8; }
+        if (val & 0x0000000F) == 0 { n = n + 4; val = val >> 4; }
+        if (val & 0x00000003) == 0 { n = n + 2; val = val >> 2; }
+        if (val & 0x00000001) == 0 { n = n + 1; }
+        return n;
+    }
+    // Low bits are zero, count in high bits + 32
+    mut n: u64 = 32;
+    mut val := x >> 32;
+    if (val & 0x0000FFFF) == 0 { n = n + 16; val = val >> 16; }
+    if (val & 0x000000FF) == 0 { n = n + 8; val = val >> 8; }
+    if (val & 0x0000000F) == 0 { n = n + 4; val = val >> 4; }
+    if (val & 0x00000003) == 0 { n = n + 2; val = val >> 2; }
+    if (val & 0x00000001) == 0 { n = n + 1; }
+    return n;
+}
+
+// =============================================================================
+// Bit Reversal
+// =============================================================================
+
+/// Reverse bits in a u8
+pub fn reverse_u8(x: u8) -> u8 {
+    mut v := x;
+    v = ((v & 0xF0) >> 4) | ((v & 0x0F) << 4);
+    v = ((v & 0xCC) >> 2) | ((v & 0x33) << 2);
+    v = ((v & 0xAA) >> 1) | ((v & 0x55) << 1);
+    return v;
+}
+
+/// Reverse bits in a u32
+pub fn reverse_u32(x: u32) -> u32 {
+    mut v := x;
+    v = ((v & 0xFFFF0000) >> 16) | ((v & 0x0000FFFF) << 16);
+    v = ((v & 0xFF00FF00) >> 8) | ((v & 0x00FF00FF) << 8);
+    v = ((v & 0xF0F0F0F0) >> 4) | ((v & 0x0F0F0F0F) << 4);
+    v = ((v & 0xCCCCCCCC) >> 2) | ((v & 0x33333333) << 2);
+    v = ((v & 0xAAAAAAAA) >> 1) | ((v & 0x55555555) << 1);
+    return v;
+}
+
+// =============================================================================
+// Byte Swap
+// =============================================================================
+
+/// Swap bytes in a u16 (endianness conversion)
+pub fn byte_swap_u16(x: u16) -> u16 {
+    return ((x & 0xFF) << 8) | ((x >> 8) & 0xFF);
+}
+
+/// Swap bytes in a u32 (endianness conversion)
+pub fn byte_swap_u32(x: u32) -> u32 {
+    return ((x & 0x000000FF) << 24) |
+           ((x & 0x0000FF00) << 8) |
+           ((x & 0x00FF0000) >> 8) |
+           ((x & 0xFF000000) >> 24);
+}
+
+/// Swap bytes in a u64 (endianness conversion)
+pub fn byte_swap_u64(x: u64) -> u64 {
+    mut v := x;
+    v = ((v & 0x00000000FFFFFFFF) << 32) | ((v >> 32) & 0x00000000FFFFFFFF);
+    v = ((v & 0x0000FFFF0000FFFF) << 16) | ((v >> 16) & 0x0000FFFF0000FFFF);
+    v = ((v & 0x00FF00FF00FF00FF) << 8) | ((v >> 8) & 0x00FF00FF00FF00FF);
+    return v;
+}
+
+// =============================================================================
+// Syndrome-specific Operations
+// =============================================================================
+
+/// XOR two syndromes (for computing syndrome differences)
+pub fn xor_u64(a: u64, b: u64) -> u64 {
+    return a ^ b;
+}
+
+/// Check if syndrome indicates no errors (all zeros)
+pub fn is_trivial_syndrome(syndrome: u64) -> bool {
+    return syndrome == 0;
+}
+
+/// Get the index of the lowest set bit (useful for finding first defect)
+/// Returns 64 if no bits are set
+pub fn lowest_set_bit_u64(x: u64) -> u64 {
+    if x == 0 {
+        return 64;
+    }
+    return ctz_u64(x);
+}
+
+/// Get the index of the highest set bit
+/// Returns 64 if no bits are set
+pub fn highest_set_bit_u64(x: u64) -> u64 {
+    if x == 0 {
+        return 64;
+    }
+    return 63 - clz_u64(x);
+}
+
+/// Clear the lowest set bit
+pub fn clear_lowest_bit_u64(x: u64) -> u64 {
+    return x & (x - 1);
+}
+
+/// Isolate the lowest set bit (returns value with only that bit set)
+pub fn isolate_lowest_bit_u64(x: u64) -> u64 {
+    return x & (~x + 1);
+}

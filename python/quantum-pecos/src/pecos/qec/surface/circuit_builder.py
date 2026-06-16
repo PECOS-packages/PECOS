@@ -35,6 +35,7 @@ from pecos.qec.surface._ancilla_batching import (
 from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_budget as _normalize_ancilla_budget,
 )
+from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 
 # Stabilizer geometry helpers live in the low-level patch module (single
 # source of truth). Only the two used by the circuit renderer are imported
@@ -753,7 +754,8 @@ def build_surface_code_circuit(
     ancilla_budget: int | None = None,
     *,
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> tuple[list[SurfaceCircuitStep], QubitAllocation]:
     """Build abstract circuit operations for a surface code memory experiment.
 
@@ -780,6 +782,9 @@ def build_surface_code_circuit(
             ``"cx"`` preserves the existing CNOT extraction circuit. ``"szz"``
             emits the direct-renderer SZZ/SZZdg abstract template with local
             data-qubit compensation.
+        check_plan: Named surface check-plan preset. This is the source of
+            truth when supplied; ``interaction_basis`` must agree if also
+            supplied.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -792,7 +797,15 @@ def build_surface_code_circuit(
     num_z_anc = len(geom.z_stabilizers)
     total_ancilla = num_x_anc + num_z_anc
     effective_ancilla_budget = _normalize_ancilla_budget(total_ancilla, ancilla_budget)
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    resolved_plan = resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
+    require_current_surface_check_plan_renderer(
+        resolved_plan,
+        context="abstract surface-code circuit generation",
+    )
+    interaction_basis = _normalize_interaction_basis(resolved_plan.interaction_basis)
     if twirl is not None:
         twirl.validate_runtime_supported()
     twirl_site_schedule = None if twirl is None else twirl.site_schedule
@@ -2560,7 +2573,8 @@ def generate_stim_from_patch(
     basis: str = "Z",
     *,
     ancilla_budget: int | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
     p1: float = 0.0,
     p2: float = 0.0,
     p_meas: float = 0.0,
@@ -2575,6 +2589,7 @@ def generate_stim_from_patch(
         basis: 'Z' or 'X'
         ancilla_budget: Optional cap on simultaneously live ancillas
         interaction_basis: Surface-memory two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
         p1: Single-qubit error rate
         p2: Two-qubit error rate
         p_meas: Measurement error rate
@@ -2584,13 +2599,13 @@ def generate_stim_from_patch(
     Returns:
         Stim circuit string
     """
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
     ops, allocation = build_surface_code_circuit(
         patch,
         num_rounds,
         basis,
         ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
     )
     renderer = StimRenderer(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep, add_detectors=add_detectors)
     return renderer.render(ops, allocation, patch, num_rounds, basis)
@@ -2601,7 +2616,8 @@ def generate_guppy_from_patch(
     _num_rounds: int = 1,
     _basis: str = "Z",
     *,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> str:
     """Generate Guppy code from SurfacePatch.
 
@@ -2618,13 +2634,14 @@ def generate_guppy_from_patch(
         _num_rounds: Unused (factory functions accept this at runtime)
         _basis: Unused (module includes both Z and X basis functions)
         interaction_basis: Surface-memory two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
 
     Returns:
         Guppy source code string (full module)
     """
     from pecos.guppy.surface import generate_guppy_source
 
-    return generate_guppy_source(patch, interaction_basis=interaction_basis)
+    return generate_guppy_source(patch, interaction_basis=interaction_basis, check_plan=check_plan)
 
 
 def generate_dag_circuit_from_patch(
@@ -2633,7 +2650,8 @@ def generate_dag_circuit_from_patch(
     basis: str = "Z",
     ancilla_budget: int | None = None,
     *,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> DagCircuit:
     """Generate PECOS DagCircuit from SurfacePatch.
 
@@ -2643,6 +2661,7 @@ def generate_dag_circuit_from_patch(
         basis: 'Z' or 'X'
         ancilla_budget: Optional cap on simultaneously live ancillas
         interaction_basis: Surface-memory two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
 
     Returns:
         PECOS DagCircuit instance
@@ -2653,6 +2672,7 @@ def generate_dag_circuit_from_patch(
         basis,
         ancilla_budget,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
     )
     renderer = DagCircuitRenderer()
     return renderer.render(ops, allocation, patch, num_rounds, basis)
@@ -2667,7 +2687,8 @@ def generate_tick_circuit_from_patch(
     add_typed_annotations: bool = True,
     ancilla_budget: int | None = None,
     twirl: TwirlConfig | None = None,
-    interaction_basis: str = "cx",
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
 ) -> TickCircuit:
     """Generate PECOS TickCircuit from SurfacePatch.
@@ -2697,13 +2718,22 @@ def generate_tick_circuit_from_patch(
             ``add_typed_annotations`` is false; that flag controls detector
             and observable typed annotations, not the twirl lookup channel.
         interaction_basis: Surface-memory two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
         szz_physical_prefixes: If true, lower the abstract SZZ single-qubit
             scaffold into physical prefix pulses for native DEM analysis.
 
     Returns:
         PECOS TickCircuit instance
     """
-    interaction_basis = _normalize_interaction_basis(interaction_basis)
+    resolved_plan = resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
+    require_current_surface_check_plan_renderer(
+        resolved_plan,
+        context="abstract surface TickCircuit generation",
+    )
+    interaction_basis = _normalize_interaction_basis(resolved_plan.interaction_basis)
     if szz_physical_prefixes and interaction_basis != "szz":
         msg = "szz_physical_prefixes=True requires interaction_basis='szz'"
         raise ValueError(msg)
@@ -2714,6 +2744,7 @@ def generate_tick_circuit_from_patch(
         ancilla_budget,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
     )
     if szz_physical_prefixes:
         ops = _lower_szz_forward_flow_ops(ops)

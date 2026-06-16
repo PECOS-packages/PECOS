@@ -181,6 +181,76 @@ def test_check_plan_does_not_change_current_szz_dem() -> None:
     assert by_plan == by_basis
 
 
+def test_direct_surface_renderers_accept_check_plan_as_source_of_truth() -> None:
+    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface.circuit_builder import (
+        generate_dag_circuit_from_patch,
+        generate_guppy_from_patch,
+        generate_stim_from_patch,
+        generate_tick_circuit_from_patch,
+    )
+    from pecos.qec.surface.decode import build_memory_circuit
+
+    patch = SurfacePatch.create(distance=3)
+
+    stim_text = generate_stim_from_patch(
+        patch,
+        num_rounds=1,
+        check_plan="szz_current_v1",
+        add_detectors=False,
+    )
+    assert "CX" not in stim_text
+    assert "SQRT_ZZ" in stim_text
+
+    dag_circuit = generate_dag_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        check_plan="szz_current_v1",
+    )
+    assert "SZZ" in {dag_circuit.gate(node).gate_type.name for node in dag_circuit.nodes()}
+
+    tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        check_plan="szz_current_v1",
+    )
+    assert int(tick_circuit.get_meta("num_detectors")) > 0
+
+    memory_circuit = build_memory_circuit(
+        patch=patch,
+        rounds=1,
+        check_plan="szz_current_v1",
+    )
+    assert int(memory_circuit.get_meta("num_detectors")) == int(tick_circuit.get_meta("num_detectors"))
+
+    guppy_source = generate_guppy_from_patch(patch, check_plan="szz_current_v1")
+    assert "Check plan: szz_current_v1" in guppy_source
+
+
+def test_direct_surface_renderers_reject_plan_basis_mismatch() -> None:
+    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+    from pecos.qec.surface.decode import build_memory_circuit
+
+    patch = SurfacePatch.create(distance=3)
+
+    with pytest.raises(ValueError, match="conflicts with check_plan"):
+        generate_tick_circuit_from_patch(
+            patch,
+            num_rounds=1,
+            interaction_basis="cx",
+            check_plan="szz_current_v1",
+        )
+
+    with pytest.raises(ValueError, match="conflicts with check_plan"):
+        build_memory_circuit(
+            patch=patch,
+            rounds=1,
+            interaction_basis="cx",
+            check_plan="szz_current_v1",
+        )
+
+
 def test_native_sampler_records_resolved_check_plan() -> None:
     from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
 

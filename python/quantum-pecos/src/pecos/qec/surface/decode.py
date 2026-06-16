@@ -1525,6 +1525,7 @@ def _build_surface_tick_circuit_for_native_model(
         add_typed_annotations=False,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
     )
 
@@ -1588,6 +1589,7 @@ def build_memory_circuit(
     runtime: object | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str | None = None,
+    check_plan: str | None = None,
 ) -> Any:
     """Build the standard surface-code memory ``TickCircuit``.
 
@@ -1611,6 +1613,7 @@ def build_memory_circuit(
             rejected because a runtime trace would bake one sampled mask into
             the circuit and can lose canonical result-id provenance.
         interaction_basis: Surface-memory two-qubit interaction basis.
+        check_plan: Named surface check-plan preset.
 
     Returns:
         A Rust-backed ``TickCircuit`` with detector and observable metadata.
@@ -1644,6 +1647,7 @@ def build_memory_circuit(
         runtime=runtime,
         twirl=twirl,
         interaction_basis=interaction_basis,
+        check_plan=check_plan,
     )
 
 

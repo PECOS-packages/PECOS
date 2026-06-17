@@ -16,3 +16,7 @@ pecos-engines.workspace = true
 pecos-core.workspace = true
 pliron = { path = "/home/ciaranra/Repos/pliron" }
 awint = "0.18"
+
+[dev-dependencies]
+# The existing QIS->PHIR->sim path, for the strangler differential (compare this port against it).
+pecos-phir.workspace = true

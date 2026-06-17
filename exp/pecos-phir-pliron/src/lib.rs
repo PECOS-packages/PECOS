@@ -1478,10 +1478,125 @@ pub fn run_milestone_7() {
     println!("[milestone-7 adaptive_branch.ll -> qec.if branch TAKEN from parsed input] OK -- r1(final_q1)==r2(mid) all 200 shots, mid 0 and 1 both seen");
 }
 
+/// Coverage for a measurement INSIDE the conditional branch: `b2`'s length varies with the taken
+/// branch (taken: `[m1, f0, f1]`; skipped: `[f0, f1]`), so the engine's outcome reconstruction must
+/// walk the actually-emitted measures, not a fixed layout. The in-branch measure is not recorded
+/// (a cross-region SSA escape needs yield -- Phase 2); recorded outputs are the unconditional finals.
+pub fn run_branch_measure() {
+    let ctx = &mut Context::new();
+    let src = include_str!("../fixtures/branch_measure.ll");
+    let (module, bb, reg) = parse_qprog_ll(ctx, src);
+    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[branch_measure verify] FAILED: {}", e.disp(ctx)));
+    let plan = plan_from_if_ir(ctx, bb, &reg);
+    // structural: the then-branch really does contain a measurement (this is what we are covering),
+    // and the in-branch measure (result-id 3) is NOT in the export list.
+    assert!(plan.then_cmds.iter().any(|c| matches!(c, Cmd::Mz(..))), "then-branch must contain a measurement");
+    assert_eq!(plan.export, vec![0, 1], "only the unconditional finals are recorded (in-branch m1 is not)");
+    let engine = PlironIfEngine {
+        batch1: plan.batch1,
+        cond_outcome_idx: plan.cond_outcome_idx,
+        then_cmds: plan.then_cmds,
+        else_cmds: plan.else_cmds,
+        post: plan.post,
+        export: plan.export,
+        stage: 0,
+        b1: Vec::new(),
+        b2: Vec::new(),
+    };
+    let mut hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(engine))
+        .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+        .build();
+    let (mut all_eq, mut saw0, mut saw1) = (true, false, false);
+    for _ in 0..200 {
+        let shot = hybrid.run_shot().unwrap();
+        // r0 = final_q0 (== mid), r1 = final_q1 (== mid). The in-branch measure of q1 leaves q1 == mid.
+        let r0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0 (final_q0)");
+        let r1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1 (final_q1)");
+        if r0 != r1 {
+            all_eq = false;
+        }
+        saw0 |= r0 == 0;
+        saw1 |= r0 == 1;
+        Engine::reset(&mut hybrid).unwrap();
+    }
+    assert!(all_eq, "branch_measure: final_q0 (r0) must equal final_q1 (r1) -- variable-length b2 reconstructed correctly");
+    assert!(saw0 && saw1, "branch_measure: branch must both fire and not (r0 both 0 and 1)");
+    println!("[branch_measure measure-inside-branch -> variable-length b2 reconstruction] OK -- r0==r1 all 200 shots, both 0 and 1 seen");
+}
+
 // ===================== regression tests (the milestones, run via `cargo test`) =====================
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- strangler differential vs the existing pecos-phir QIS->PHIR->sim path ----
+    // Not an equivalence proof: on these fixtures pecos-phir produces nothing / errors, so the
+    // honest result is a *characterization* of where the pliron port supersedes the murky path.
+    // These assert pecos-phir's CURRENT behavior so a future change there trips the test and we
+    // re-examine the cutover criterion.
+
+    /// bell.ll export divergence: the port lowers `result_record_output` to `r{id}` registers and
+    /// produces the Bell pair; pecos-phir *elides* `result_record_output` (and bell.ll has no other
+    /// export source), so its `Shot` is empty.
+    #[test]
+    fn differential_bell_ll_export_convention() {
+        let bell = include_str!("../../../examples/llvm/bell.ll");
+
+        // port side: bell.ll -> pliron qec -> ByteMessage -> seeded StateVecEngine -> Bell pair.
+        let ctx = &mut Context::new();
+        let (_m, bb) = parse_bell_ll(ctx, bell);
+        let msg = emit_bytemessage(ctx, bb);
+        let mut sim = StateVecEngine::with_seed(2, 7);
+        let (mut saw0, mut saw3) = (false, false);
+        for _ in 0..200 {
+            sim.reset().unwrap();
+            let o = sim.process(msg.clone()).unwrap().outcomes().unwrap();
+            let c = (o[1] << 1) | o[0]; // register "c": q1 q0
+            assert!(c == 0 || c == 3, "port bell.ll must be Bell-correlated (00/11), got {c}");
+            saw0 |= c == 0;
+            saw3 |= c == 3;
+        }
+        assert!(saw0 && saw3, "port bell.ll must see both 00 and 11");
+
+        // pecos-phir side: same bell.ll, run through its real engine -> empty Shot (no exports).
+        let module = pecos_phir::parse_qis_to_quantum(bell).expect("pecos-phir parses bell.ll");
+        let pe = pecos_phir::PhirEngine::new(module).expect("pecos-phir builds an engine");
+        let mut hybrid = pecos_engines::hybrid::HybridEngineBuilder::new()
+            .with_classical_engine(Box::new(pe))
+            .with_quantum_engine(Box::new(StateVecEngine::with_seed(2, 7)))
+            .build();
+        let shot = hybrid.run_shot().unwrap();
+        assert!(
+            shot.data.is_empty(),
+            "DIVERGENCE: pecos-phir elides result_record_output, so bell.ll yields no exported \
+             registers; the port exports r0/r1. pecos-phir gave: {:?}",
+            shot.data.keys().collect::<Vec<_>>()
+        );
+        println!("[differential bell.ll] port -> register \"c\" Bell pair; pecos-phir -> empty Shot (record_output elided)");
+    }
+
+    /// qprog.ll rotation divergence: the port lowers `rz/rx/ry/zz` (M6 runs it end-to-end), while
+    /// pecos-phir's `qis_to_quantum` currently cannot resolve the `rz` angle to a constant and errors.
+    #[test]
+    fn differential_qprog_ll_rotation_support() {
+        let qprog = include_str!("../../../examples/llvm/qprog.ll");
+
+        // port side: lowers without error (full end-to-end physics is m6).
+        let ctx = &mut Context::new();
+        let (module, _bb, _reg) = parse_qprog_ll(ctx, qprog);
+        verify_op(&module, ctx).expect("port lowers qprog.ll (rotations + qec.if) and verifies");
+
+        // pecos-phir side: errors lowering the rotation angle.
+        let err = pecos_phir::parse_qis_to_quantum(qprog)
+            .expect_err("DIVERGENCE: pecos-phir is expected to fail lowering qprog.ll's rotations");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("angle") || msg.contains("rz"),
+            "expected the divergence to be the rz-angle resolution; got: {msg}"
+        );
+        println!("[differential qprog.ll] port lowers rotations + qec.if; pecos-phir errors: {msg}");
+    }
 
     #[test]
     fn m0_hand_built_bell_seam() {
@@ -1514,6 +1629,10 @@ mod tests {
     #[test]
     fn m7_branch_taken_qec_if() {
         run_milestone_7();
+    }
+    #[test]
+    fn measure_inside_branch_variable_length_b2() {
+        run_branch_measure();
     }
 
     /// The measurement-SSA registry is the metadata home: every `qec.measure` value resolves to its

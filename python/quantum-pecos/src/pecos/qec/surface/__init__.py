@@ -18,6 +18,16 @@ Functions:
 """
 
 # Circuit generation from geometry (unified abstraction)
+from pecos.qec.surface._clifford_deformation import (
+    LocalCliffordFrame,
+    ResolvedPauliCheck,
+    ResolvedPauliLogical,
+    ResolvedSurfaceCliffordFrame,
+    SignedPauli,
+    global_surface_frame,
+    normalize_surface_frame_policy,
+    resolve_surface_clifford_frame,
+)
 from pecos.qec.surface._detection_events import extract_detection_events_and_observables
 from pecos.qec.surface._twirl_config import GuppyRngMaskConfig, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
@@ -117,6 +127,15 @@ __all__ = [
     # Twirling config (Pauli-frame randomization)
     "GuppyRngMaskConfig",
     "TwirlConfig",
+    # Clifford-deformed surface-code metadata
+    "LocalCliffordFrame",
+    "ResolvedPauliCheck",
+    "ResolvedPauliLogical",
+    "ResolvedSurfaceCliffordFrame",
+    "SignedPauli",
+    "global_surface_frame",
+    "normalize_surface_frame_policy",
+    "resolve_surface_clifford_frame",
     # Rotated lattice (most common, default)
     "compute_rotated_x_stabilizers",
     "compute_rotated_z_stabilizers",

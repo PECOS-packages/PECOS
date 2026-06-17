@@ -36,6 +36,9 @@ from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_budget as _normalize_ancilla_budget,
 )
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
+from pecos.qec.surface._clifford_deformation import (
+    resolve_surface_clifford_frame,
+)
 
 # Stabilizer geometry helpers live in the low-level patch module (single
 # source of truth). Only the two used by the circuit renderer are imported
@@ -48,6 +51,11 @@ from pecos.quantum import PHYSICAL_DURATION_META_KEY
 
 if TYPE_CHECKING:
     from pecos.qec.surface._check_plan import ResolvedSurfaceCheckPlan
+    from pecos.qec.surface._clifford_deformation import (
+        PauliAxis,
+        ResolvedPauliCheck,
+        ResolvedSurfaceCliffordFrame,
+    )
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import (
         LogicalDescriptor,
@@ -445,6 +453,58 @@ def _szz_residual_plan_for_check_plan(
     raise NotImplementedError(msg)
 
 
+def _resolve_szz_clifford_frame_for_builder(
+    patch: SurfacePatch,
+    *,
+    interaction_basis: str,
+    clifford_frame_policy: str | None,
+) -> ResolvedSurfaceCliffordFrame | None:
+    """Resolve an optional source-level Clifford frame for SZZ rendering."""
+    if clifford_frame_policy is None:
+        return None
+    if interaction_basis != "szz":
+        msg = "clifford_frame_policy currently requires interaction_basis='szz'"
+        raise NotImplementedError(msg)
+    resolved_frame = resolve_surface_clifford_frame(patch, policy=clifford_frame_policy)
+    unsupported = [check for check in resolved_frame.checks if not check.is_uniform_axis]
+    if unsupported:
+        preview = ", ".join(f"{check.source_kind}{check.stabilizer_index}:{check.axes}" for check in unsupported[:5])
+        suffix = f", ... {len(unsupported) - 5} more" if len(unsupported) > 5 else ""
+        msg = (
+            "clifford_frame_policy currently supports only uniform-axis "
+            f"stabilizer checks; mixed checks: {preview}{suffix}"
+        )
+        raise NotImplementedError(msg)
+    return resolved_frame
+
+
+def _szz_memory_physical_axis(
+    basis: str,
+    resolved_clifford_frame: ResolvedSurfaceCliffordFrame | None,
+) -> PauliAxis:
+    """Return the physical data-measurement axis for a source memory basis."""
+    source_basis = basis.upper()
+    if source_basis not in {"X", "Z"}:
+        msg = f"basis must be 'X' or 'Z', got {basis!r}"
+        raise ValueError(msg)
+    if resolved_clifford_frame is None:
+        return source_basis  # type: ignore[return-value]
+
+    logical = (
+        resolved_clifford_frame.logical_x
+        if source_basis == "X"
+        else resolved_clifford_frame.logical_z
+    )
+    if not logical.is_uniform_axis or logical.uniform_axis is None:
+        msg = (
+            f"clifford frame policy {resolved_clifford_frame.policy!r} maps "
+            f"source {source_basis}-memory to a mixed logical measurement "
+            f"axis {logical.axes}; mixed final readout is not implemented yet"
+        )
+        raise NotImplementedError(msg)
+    return logical.uniform_axis
+
+
 def _propagate_szz_frame_bits(x_a: bool, z_a: bool, x_b: bool, z_b: bool) -> tuple[bool, bool, bool, bool]:
     """Propagate local Pauli-frame bits through uncompensated SZZ/SZZdg."""
     common = x_a ^ x_b
@@ -804,6 +864,7 @@ def build_surface_code_circuit(
     twirl: TwirlConfig | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> tuple[list[SurfaceCircuitStep], QubitAllocation]:
     """Build abstract circuit operations for a surface code memory experiment.
 
@@ -833,6 +894,9 @@ def build_surface_code_circuit(
         check_plan: Named surface check-plan preset. This is the source of
             truth when supplied; ``interaction_basis`` must agree if also
             supplied.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy. Currently supported only by the SZZ renderer for global
+            uniform-axis frames.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -854,6 +918,11 @@ def build_surface_code_circuit(
         context="abstract surface-code circuit generation",
     )
     interaction_basis = _normalize_interaction_basis(resolved_plan.interaction_basis)
+    resolved_clifford_frame = _resolve_szz_clifford_frame_for_builder(
+        patch,
+        interaction_basis=interaction_basis,
+        clifford_frame_policy=clifford_frame_policy,
+    )
     if twirl is not None:
         twirl.validate_runtime_supported()
     twirl_site_schedule = None if twirl is None else twirl.site_schedule
@@ -954,6 +1023,7 @@ def build_surface_code_circuit(
                 allocation,
                 cnot_rounds,
                 _szz_residual_plan_for_check_plan(patch, resolved_plan),
+                resolved_clifford_frame,
             ),
             allocation,
         )
@@ -1233,28 +1303,27 @@ def _build_surface_code_circuit_szz(
     allocation: QubitAllocation,
     cnot_rounds: list[list[tuple[str, int, int]]],
     residual_plan: SzzResidualPlan,
+    resolved_clifford_frame: ResolvedSurfaceCliffordFrame | None = None,
 ) -> list[SurfaceCircuitStep]:
     """Build the abstract SZZ/SZZdg surface-memory template."""
     geom = patch.geometry
     num_data = geom.num_data
+    check_by_key: dict[tuple[str, int], ResolvedPauliCheck] = {}
+    if resolved_clifford_frame is not None:
+        check_by_key.update({("X", check.stabilizer_index): check for check in resolved_clifford_frame.x_checks})
+        check_by_key.update({("Z", check.stabilizer_index): check for check in resolved_clifford_frame.z_checks})
     sign_by_touch = {
         (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): entry.sign for entry in residual_plan.signs
-    }
-    data_compensation_by_touch = {
-        (entry.stabilizer_type, entry.stabilizer_index, entry.data_qubit): {
-            ("X", 1): OpType.SXDG,
-            ("X", -1): OpType.SX,
-            ("Z", 1): OpType.SZDG,
-            ("Z", -1): OpType.SZ,
-        }[(entry.stabilizer_type, entry.sign)]
-        for entry in residual_plan.signs
     }
     gate_name_by_type = {
         OpType.SX: "SX",
         OpType.SXDG: "SXDG",
+        OpType.SY: "SY",
+        OpType.SYDG: "SYDG",
         OpType.SZ: "SZ",
         OpType.SZDG: "SZDG",
     }
+    basis_axis = _szz_memory_physical_axis(basis, resolved_clifford_frame)
 
     def data_q(i: int) -> int:
         return allocation.data_qubits[i]
@@ -1267,6 +1336,55 @@ def _build_surface_code_circuit_szz(
 
     def anc_q(stabilizer_type: str, stab_idx: int) -> int:
         return x_anc_q(stab_idx) if stabilizer_type == "X" else z_anc_q(stab_idx)
+
+    def physical_axis_for_touch(stabilizer_type: str, stab_idx: int, data_idx: int) -> PauliAxis:
+        if resolved_clifford_frame is None:
+            return "X" if stabilizer_type == "X" else "Z"
+        check = check_by_key[(stabilizer_type, stab_idx)]
+        try:
+            offset = check.data_qubits.index(data_idx)
+        except ValueError as exc:
+            msg = f"data qubit {data_idx} is not in resolved check {stabilizer_type}{stab_idx}"
+            raise ValueError(msg) from exc
+        return check.paulis[offset].axis
+
+    def append_axis_rotation_to_z(
+        target_ops: list[SurfaceCircuitStep],
+        axis: PauliAxis,
+        qubit: int,
+        label_prefix: str,
+    ) -> None:
+        gate = {
+            "X": OpType.H,
+            "Y": OpType.SXDG,
+            "Z": None,
+        }[axis]
+        if gate is not None:
+            target_ops.append(SurfaceCircuitStep(gate, [qubit], f"{label_prefix}:to_z"))
+
+    def append_axis_rotation_from_z(
+        target_ops: list[SurfaceCircuitStep],
+        axis: PauliAxis,
+        qubit: int,
+        label_prefix: str,
+    ) -> None:
+        gate = {
+            "X": OpType.H,
+            "Y": OpType.SX,
+            "Z": None,
+        }[axis]
+        if gate is not None:
+            target_ops.append(SurfaceCircuitStep(gate, [qubit], f"{label_prefix}:from_z"))
+
+    def szz_touch_compensation(axis: PauliAxis, sign: int) -> OpType:
+        return {
+            ("X", 1): OpType.SXDG,
+            ("X", -1): OpType.SX,
+            ("Y", 1): OpType.SYDG,
+            ("Y", -1): OpType.SY,
+            ("Z", 1): OpType.SZDG,
+            ("Z", -1): OpType.SZ,
+        }[(axis, sign)]
 
     def stabilizer_batches_for(selected_type: str | None = None) -> list[list[tuple[str, int]]]:
         """Return the same ancilla-reuse batches used by the CX template."""
@@ -1333,9 +1451,14 @@ def _build_surface_code_circuit_szz(
         layer_gates: list[tuple[str, int, int]],
     ) -> None:
         target_ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"SZZ round {rnd_idx + 1}"))
-        x_touches = [(stab_idx, data_idx) for stab_type, stab_idx, data_idx in layer_gates if stab_type == "X"]
-        for _stab_idx, data_idx in x_touches:
-            target_ops.append(SurfaceCircuitStep(OpType.H, [data_q(data_idx)], f"szz_x_touch_pre_d{data_idx}"))
+        for stab_type, stab_idx, data_idx in layer_gates:
+            axis = physical_axis_for_touch(stab_type, stab_idx, data_idx)
+            append_axis_rotation_to_z(
+                target_ops,
+                axis,
+                data_q(data_idx),
+                f"szz_{axis.lower()}_touch_pre:{stab_type}{stab_idx}:d{data_idx}",
+            )
 
         for stab_type, stab_idx, data_idx in layer_gates:
             sign = sign_by_touch[(stab_type, stab_idx, data_idx)]
@@ -1348,16 +1471,24 @@ def _build_surface_code_circuit_szz(
                 ),
             )
 
-        for _stab_idx, data_idx in x_touches:
-            target_ops.append(SurfaceCircuitStep(OpType.H, [data_q(data_idx)], f"szz_x_touch_post_d{data_idx}"))
+        for stab_type, stab_idx, data_idx in layer_gates:
+            axis = physical_axis_for_touch(stab_type, stab_idx, data_idx)
+            append_axis_rotation_from_z(
+                target_ops,
+                axis,
+                data_q(data_idx),
+                f"szz_{axis.lower()}_touch_post:{stab_type}{stab_idx}:d{data_idx}",
+            )
 
         for stab_type, stab_idx, data_idx in layer_gates:
-            compensation = data_compensation_by_touch[(stab_type, stab_idx, data_idx)]
+            axis = physical_axis_for_touch(stab_type, stab_idx, data_idx)
+            sign = sign_by_touch[(stab_type, stab_idx, data_idx)]
+            compensation = szz_touch_compensation(axis, sign)
             target_ops.append(
                 SurfaceCircuitStep(
                     compensation,
                     [data_q(data_idx)],
-                    f"szz_touch_comp:{gate_name_by_type[compensation]}:{stab_type}{stab_idx}:d{data_idx}",
+                    f"szz_touch_comp:{gate_name_by_type[compensation]}:{axis}:{stab_type}{stab_idx}:d{data_idx}",
                 ),
             )
 
@@ -1368,8 +1499,13 @@ def _build_surface_code_circuit_szz(
     # =========================================================================
     ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"prep_{basis.lower()}_basis"))
     ops.extend(SurfaceCircuitStep(OpType.ALLOC, [data_q(i)], f"data[{i}]") for i in range(num_data))
-    if basis.upper() == "X":
-        ops.extend(SurfaceCircuitStep(OpType.H, [data_q(i)]) for i in range(num_data))
+    for i in range(num_data):
+        append_axis_rotation_to_z(
+            ops,
+            basis_axis,
+            data_q(i),
+            f"prep_{basis_axis.lower()}_basis_d{i}",
+        )
     ops.append(SurfaceCircuitStep(OpType.TICK))
 
     # =========================================================================
@@ -1429,8 +1565,13 @@ def _build_surface_code_circuit_szz(
     # measure_z_basis / measure_x_basis
     # =========================================================================
     ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"measure_{basis.lower()}_basis"))
-    if basis.upper() == "X":
-        ops.extend(SurfaceCircuitStep(OpType.H, [data_q(i)]) for i in range(num_data))
+    for i in range(num_data):
+        append_axis_rotation_from_z(
+            ops,
+            basis_axis,
+            data_q(i),
+            f"measure_{basis_axis.lower()}_basis_d{i}",
+        )
     ops.extend(SurfaceCircuitStep(OpType.MEASURE, [data_q(i)], f"final[{i}]") for i in range(num_data))
 
     _analyze_szz_forward_flow(ops)
@@ -2738,6 +2879,7 @@ def generate_tick_circuit_from_patch(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
+    clifford_frame_policy: str | None = None,
 ) -> TickCircuit:
     """Generate PECOS TickCircuit from SurfacePatch.
 
@@ -2769,6 +2911,9 @@ def generate_tick_circuit_from_patch(
         check_plan: Named surface check-plan preset.
         szz_physical_prefixes: If true, lower the abstract SZZ single-qubit
             scaffold into physical prefix pulses for native DEM analysis.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for SZZ generation. Currently supports global uniform-axis
+            frames.
 
     Returns:
         PECOS TickCircuit instance
@@ -2793,6 +2938,7 @@ def generate_tick_circuit_from_patch(
         twirl=twirl,
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
+        clifford_frame_policy=clifford_frame_policy,
     )
     if szz_physical_prefixes:
         ops = _lower_szz_forward_flow_ops(ops)

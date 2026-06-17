@@ -1340,8 +1340,9 @@ def capture_guppy_operation_trace(
     runtime: object | None = None,
 ) -> list[dict[str, Any]]:
     """Capture a Guppy/QIS program's Selene operation trace chunks."""
-    import pecos
     import pecos_rslib
+
+    import pecos
 
     # Trace capture records the runtime-lowered QIS operations and result tags;
     # DEM validation/fault propagation happens after replay.  Use a permissive
@@ -1503,6 +1504,7 @@ def _build_surface_tick_circuit_for_native_model(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
+    clifford_frame_policy: str | None = None,
 ) -> Any:
     """Build the TickCircuit used by the native DEM and sampler paths."""
     from pecos.qec.surface.circuit_builder import _normalize_interaction_basis, generate_tick_circuit_from_patch
@@ -1521,6 +1523,13 @@ def _build_surface_tick_circuit_for_native_model(
     if szz_physical_prefixes and (interaction_basis != "szz" or circuit_source != "abstract"):
         msg = "SZZ physical-prefix lowering requires interaction_basis='szz' and circuit_source='abstract'"
         raise ValueError(msg)
+    if clifford_frame_policy is not None and circuit_source != "abstract":
+        msg = (
+            "clifford_frame_policy currently requires circuit_source='abstract'; "
+            "traced-QIS support must generate the Guppy program from the same "
+            "concrete Clifford-deformed checks before binding result-tag metadata"
+        )
+        raise NotImplementedError(msg)
 
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
@@ -1532,6 +1541,7 @@ def _build_surface_tick_circuit_for_native_model(
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
     if circuit_source == "abstract":
@@ -1595,6 +1605,7 @@ def build_memory_circuit(
     twirl: TwirlConfig | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> Any:
     """Build the standard surface-code memory ``TickCircuit``.
 
@@ -1619,6 +1630,8 @@ def build_memory_circuit(
             the circuit and can lose canonical result-id provenance.
         interaction_basis: Surface-memory two-qubit interaction basis.
         check_plan: Named surface check-plan preset.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for native abstract SZZ generation.
 
     Returns:
         A Rust-backed ``TickCircuit`` with detector and observable metadata.
@@ -1653,6 +1666,7 @@ def build_memory_circuit(
         twirl=twirl,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
 
@@ -1872,6 +1886,7 @@ def _surface_native_topology(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
+    clifford_frame_policy: str | None = None,
 ) -> _CachedNativeSurfaceTopology:
     """Build topology-only native analysis shared across noise parameters."""
     import json
@@ -1902,6 +1917,7 @@ def _surface_native_topology(
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
+        clifford_frame_policy=clifford_frame_policy,
     )
     if circuit_source == "traced_qis":
         # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
@@ -1975,6 +1991,7 @@ def _cached_surface_native_topology(
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
     resolved_check_plan_hash: str = "",
+    clifford_frame_policy: str | None = None,
 ) -> _CachedNativeSurfaceTopology:
     """Cache topology-only native analysis shared across noise parameters."""
     _ = resolved_check_plan_hash
@@ -1989,6 +2006,7 @@ def _cached_surface_native_topology(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
         szz_physical_prefixes=szz_physical_prefixes,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
 
@@ -2074,6 +2092,7 @@ def _cached_surface_native_dem_string(
     interaction_basis: str = "cx",
     check_plan: str | None = None,
     resolved_check_plan_hash: str = "",
+    clifford_frame_policy: str | None = None,
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
     _ = resolved_check_plan_hash
@@ -2111,6 +2130,7 @@ def _cached_surface_native_dem_string(
         check_plan=check_plan,
         szz_physical_prefixes=szz_physical_prefixes,
         resolved_check_plan_hash=resolved_check_plan_hash,
+        clifford_frame_policy=clifford_frame_policy,
     )
     return _dem_string_from_cached_surface_topology(
         topology,
@@ -2224,6 +2244,7 @@ def generate_circuit_level_dem_from_builder(
     twirl: TwirlConfig | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> str:
     """Generate circuit-level DEM using PECOS native fault propagation.
 
@@ -2275,6 +2296,10 @@ def generate_circuit_level_dem_from_builder(
             model: Z/SZ/SZdg frame updates are p1-free. That is a device
             assumption keyed from the resolved plan, not a general claim about
             CX hardware.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for native abstract SZZ generation. Traced-QIS support
+            requires Guppy to emit the same concrete deformed checks and is
+            rejected until that path is implemented.
 
     Returns:
         DEM string in standard format
@@ -2308,6 +2333,7 @@ def generate_circuit_level_dem_from_builder(
             interaction_basis=interaction_basis,
             check_plan=resolved_plan.plan_id,
             szz_physical_prefixes=szz_physical_prefixes,
+            clifford_frame_policy=clifford_frame_policy,
         )
         return _dem_string_from_cached_surface_topology(
             topology,
@@ -2338,6 +2364,7 @@ def generate_circuit_level_dem_from_builder(
         "interaction_basis": interaction_basis,
         "check_plan": resolved_plan.plan_id,
         "resolved_check_plan_hash": resolved_plan.resolved_hash,
+        "clifford_frame_policy": clifford_frame_policy,
     }
     if dem_decomposition != "source_graphlike":
         cache_kwargs["dem_decomposition"] = dem_decomposition
@@ -3765,6 +3792,7 @@ def surface_code_memory(
     ancilla_budget: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> SimulationResult:
     """Run the recommended native surface-code memory workflow.
 
@@ -3793,6 +3821,8 @@ def surface_code_memory(
         check_plan: Named surface check-plan preset. This is the source of
             truth when supplied; ``interaction_basis`` must agree if also
             supplied.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for native abstract SZZ generation.
 
     Returns:
         ``SimulationResult`` with logical and raw error counts/rates.
@@ -3832,6 +3862,7 @@ def surface_code_memory(
         circuit_source=circuit_source,
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
+        clifford_frame_policy=clifford_frame_policy,
     )
     batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(shots, seed)
     num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_mask(shot) != 0)
@@ -4132,6 +4163,7 @@ def build_native_sampler(
         "mnm",
     ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> NativeSampler:
     """Build a PECOS native sampler for threshold estimation.
 
@@ -4170,6 +4202,8 @@ def build_native_sampler(
         check_plan: Named surface check-plan preset. This is the source of
             truth when supplied; ``interaction_basis`` must agree if also
             supplied.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for native abstract SZZ generation.
 
     Returns:
         NativeSampler that can generate samples for threshold estimation
@@ -4202,6 +4236,7 @@ def build_native_sampler(
         check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
         resolved_check_plan_hash=resolved_plan.resolved_hash,
+        clifford_frame_policy=clifford_frame_policy,
     )
     if sampling_model == "dem":
         dem_str = _cached_surface_native_dem_string(
@@ -4239,6 +4274,7 @@ def build_native_sampler(
             interaction_basis=interaction_basis,
             check_plan=resolved_plan.plan_id,
             resolved_check_plan_hash=resolved_plan.resolved_hash,
+            clifford_frame_policy=clifford_frame_policy,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(
@@ -4274,6 +4310,7 @@ def build_native_sampler_from_dem(
     twirl: TwirlConfig | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> NativeSampler:
     """Build a native sampler from a caller-supplied decomposed DEM string.
 
@@ -4300,6 +4337,7 @@ def build_native_sampler_from_dem(
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         resolved_check_plan_hash=resolved_plan.resolved_hash,
+        clifford_frame_policy=clifford_frame_policy,
     )
     sampler = _cached_parsed_dem(decomposed_dem).to_dem_sampler()
     return NativeSampler(

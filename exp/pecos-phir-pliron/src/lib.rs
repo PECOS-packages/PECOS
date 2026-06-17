@@ -101,9 +101,49 @@ mod angle_attr {
     dict_key!(BITS, "qec_angle_bits");
 }
 
-mod result_attr {
-    use pliron::dict_key;
-    dict_key!(ID, "qec_result_id");
+// ===================== measurement-SSA registry (measurement-id-system.md, Phase 1) =====================
+// A `qec.measure` op produces an SSA `Value` -- that value IS the measurement's identity. Per the
+// design note, all per-measurement metadata (qubit, basis, export label) lives in a side table
+// keyed by that Value, NOT bolted onto the op as attributes: ops stay lightweight, and the hot
+// path (plan/engine) keys lookups by Value. No position-dependent indices anywhere.
+
+/// Measurement basis. Every measurement in the current QIS path is a Z measurement (`mz`); the field
+/// gives the side-table a home for basis so a future X/Y measurement needs no schema change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Basis {
+    X,
+    Y,
+    Z,
+}
+
+/// Side-table metadata for one measurement-SSA value (kept off the op, per the design note).
+#[derive(Clone, Copy, Debug)]
+pub struct MeasurementInfo {
+    pub qubit: usize,
+    pub basis: Basis,
+    pub export_label: u64, // QIS result-id: the name this measurement records under
+}
+
+/// The circuit's measurement side-table: `measurement-SSA Value -> MeasurementInfo`. Populated as
+/// `qec.measure` ops are built; the plan/engine look measurements up by Value. `HashMap` (not
+/// `BTreeMap`) because pliron `Value` is not `Ord`, and the table is only point-queried -- never
+/// iterated for output, so there is no determinism concern (export order comes from `qec.record`).
+#[derive(Clone, Default)]
+pub struct MeasurementRegistry {
+    info: HashMap<Value, MeasurementInfo>,
+}
+impl MeasurementRegistry {
+    /// Record a freshly built measurement-SSA value and its metadata.
+    pub fn record(&mut self, value: Value, info: MeasurementInfo) {
+        self.info.insert(value, info);
+    }
+    /// Look up a measurement-SSA value; panics (fail loud) if the value was never registered.
+    pub fn get(&self, value: Value) -> MeasurementInfo {
+        *self
+            .info
+            .get(&value)
+            .unwrap_or_else(|| panic!("measurement-SSA value not in the measurement registry"))
+    }
 }
 
 /// Store an f64 angle on an op as the bit pattern in an IntegerAttr (pliron has no float attr here).
@@ -209,25 +249,16 @@ impl Verify for CxOp {
     }
 }
 
-/// `%result = qec.measure(qubitref) [result_id=N]` -- a measurement. Its result `%result` IS the
-/// measurement-SSA value; `result_id` is the QIS export label (the 2nd `i64` of `m__body`), carried
-/// so a later `qec.record` can name exactly which measurement becomes a program output.
+/// `%result = qec.measure(qubitref)` -- a measurement. Its result `%result` IS the measurement-SSA
+/// value (the identity); all per-measurement metadata (qubit, basis, export label) lives in the
+/// `MeasurementRegistry` side-table keyed by that value, not on the op (ops stay lightweight).
 #[pliron_op(name = "qec.measure", format, interfaces = [NOpdsInterface<1>, OneResultInterface, NResultsInterface<1>])]
 pub struct MeasureOp;
 impl MeasureOp {
-    pub fn new(ctx: &mut Context, qref: Value, result_id: u64) -> Self {
+    pub fn new(ctx: &mut Context, qref: Value) -> Self {
         let i1 = IntegerType::get(ctx, 1, Signedness::Signless);
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![i1.into()], vec![qref], vec![], 0);
-        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
-        let attr = IntegerAttr::new(i64_ty, APInt::from_u64(result_id, bw(64)));
-        op.deref_mut(ctx).attributes.0.insert(result_attr::ID.clone(), Box::new(attr));
         MeasureOp { op }
-    }
-    pub fn result_id(&self, ctx: &Context) -> u64 {
-        let op = self.get_operation().deref(ctx);
-        let attr: AttrObj = op.attributes.0.get(&*result_attr::ID).expect("measure result-id attr").clone();
-        let ia = attr.downcast::<IntegerAttr>().unwrap_or_else(|_| panic!("result-id not IntegerAttr"));
-        Into::<APInt>::into(*ia).to_u64()
     }
 }
 impl Verify for MeasureOp {
@@ -390,8 +421,8 @@ pub fn build_bell_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>) {
     push!(PrepareOp::new(ctx, s1v));
     push!(HOp::new(ctx, s0v));
     push!(CxOp::new(ctx, s0v, s1v));
-    push!(MeasureOp::new(ctx, s0v, 0));
-    push!(MeasureOp::new(ctx, s1v, 1));
+    push!(MeasureOp::new(ctx, s0v));
+    push!(MeasureOp::new(ctx, s1v));
     push!(EndOp::new(ctx));
     (module, bb)
 }
@@ -633,7 +664,7 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>
                 push!(CxOp::new(ctx, slot_of[&a[0]], slot_of[&a[1]]));
             }
             "m" => {
-                push!(MeasureOp::new(ctx, slot_of[&a[0]], a[1] as u64));
+                push!(MeasureOp::new(ctx, slot_of[&a[0]]));
             }
             _ => {}
         }
@@ -681,8 +712,9 @@ pub struct AdaptivePlan {
 }
 
 /// Walk a `qec` block once and split it into the two-batch adaptive plan at the `cond_x` boundary.
-/// Qubit identity comes only from the explicit slot-index map (same discipline as the Bell port).
-pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>) -> AdaptivePlan {
+/// Gate qubits come from the explicit slot-index map; measurement metadata (qubit + export label)
+/// comes from the `MeasurementRegistry`, keyed by the measure op's SSA value.
+pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegistry) -> AdaptivePlan {
     let mut qubit_of: HashMap<Value, usize> = HashMap::new();
     let (mut batch1, mut batch2): (Vec<Cmd>, Vec<Cmd>) = (Vec::new(), Vec::new());
     let mut after_cond = false;
@@ -704,14 +736,13 @@ pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>) -> AdaptivePlan {
             let t = qubit_of[&opn.deref(ctx).get_operand(1)];
             if after_cond { batch2.push(Cmd::Cx(c, t)) } else { batch1.push(Cmd::Cx(c, t)) }
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
-            let q = qubit_of[&m.get_operation().deref(ctx).get_operand(0)];
-            let rid = m.result_id(ctx);
+            let info = reg.get(m.get_result(ctx));
             if after_cond {
-                batch2.push(Cmd::Mz(q, rid));
+                batch2.push(Cmd::Mz(info.qubit, info.export_label));
             } else {
                 cond_outcome_idx = mz_b1;
                 mz_b1 += 1;
-                batch1.push(Cmd::Mz(q, rid));
+                batch1.push(Cmd::Mz(info.qubit, info.export_label));
             }
         } else if let Some(c) = Operation::get_op::<CondXOp>(op, ctx) {
             cond_target = qubit_of[&c.get_operation().deref(ctx).get_operand(1)];
@@ -840,7 +871,7 @@ impl ControlEngine for PlironAdaptiveEngine {
     }
 }
 
-pub fn build_adaptive_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>) {
+pub fn build_adaptive_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>, MeasurementRegistry) {
     let module = ModuleOp::new(ctx, "adaptive".try_into().unwrap());
     let func_ty = FunctionType::get(ctx, vec![], vec![]);
     let func = FuncOp::new(ctx, "main".try_into().unwrap(), func_ty);
@@ -858,21 +889,24 @@ pub fn build_adaptive_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>) {
     push!(PrepareOp::new(ctx, s0v));
     push!(PrepareOp::new(ctx, s1v));
     push!(HOp::new(ctx, s0v));
-    let m0 = push!(MeasureOp::new(ctx, s0v, 0)); // mid measure (conditioning), result-id 0
+    let mut reg = MeasurementRegistry::default();
+    let m0 = push!(MeasureOp::new(ctx, s0v)); // mid measure (conditioning)
     let m0v = m0.get_result(ctx);
+    reg.record(m0v, MeasurementInfo { qubit: 0, basis: Basis::Z, export_label: 0 });
     push!(CondXOp::new(ctx, m0v, s1v)); // X q1 iff m0 == 1
-    push!(MeasureOp::new(ctx, s1v, 1)); // final measure, result-id 1
+    let m1 = push!(MeasureOp::new(ctx, s1v)); // final measure
+    reg.record(m1.get_result(ctx), MeasurementInfo { qubit: 1, basis: Basis::Z, export_label: 1 });
     push!(EndOp::new(ctx));
-    (module, bb)
+    (module, bb, reg)
 }
 
 pub fn run_milestone_4() {
     let ctx = &mut Context::new();
-    let (module, bb) = build_adaptive_ir(ctx);
+    let (module, bb, reg) = build_adaptive_ir(ctx);
     println!("=== adaptive (mid-measure -> cond_x -> final) pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-4 verify] FAILED: {}", e.disp(ctx)));
-    let plan = plan_from_ir(ctx, bb);
+    let plan = plan_from_ir(ctx, bb, &reg);
     let engine = PlironAdaptiveEngine { plan, stage: 0, b1: Vec::new(), b2: Vec::new() };
 
     // Drive through the REAL HybridEngine this time (closes the "wrapper unrun" gap from round 3).
@@ -904,7 +938,8 @@ pub fn run_milestone_4() {
 // region across batches. This proves region-based control flow (vision-aligned; no CFG flattening).
 
 /// Lower the ops of a single block (a `qec.if` region body) to a Cmd list, reusing the slot map.
-pub fn block_to_cmds(ctx: &Context, block: Ptr<BasicBlock>, qubit_of: &HashMap<Value, usize>) -> Vec<Cmd> {
+/// Gate qubits come from `qubit_of`; measurement qubit + export label come from the registry.
+pub fn block_to_cmds(ctx: &Context, block: Ptr<BasicBlock>, qubit_of: &HashMap<Value, usize>, reg: &MeasurementRegistry) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
         if let Some(x) = Operation::get_op::<XOp>(op, ctx) {
@@ -917,7 +952,8 @@ pub fn block_to_cmds(ctx: &Context, block: Ptr<BasicBlock>, qubit_of: &HashMap<V
             let opn = cx.get_operation();
             cmds.push(Cmd::Cx(qubit_of[&opn.deref(ctx).get_operand(0)], qubit_of[&opn.deref(ctx).get_operand(1)]));
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
-            cmds.push(Cmd::Mz(qubit_of[&m.get_operation().deref(ctx).get_operand(0)], m.result_id(ctx)));
+            let info = reg.get(m.get_result(ctx));
+            cmds.push(Cmd::Mz(info.qubit, info.export_label));
         }
     }
     cmds
@@ -933,8 +969,8 @@ pub struct IfPlan {
 }
 
 /// Walk the func block; split at the `qec.if` boundary, reading the two region bodies as the
-/// then/else command lists.
-pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>) -> IfPlan {
+/// then/else command lists. Measurement metadata + export order come from the registry.
+pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegistry) -> IfPlan {
     let mut qubit_of: HashMap<Value, usize> = HashMap::new();
     let (mut batch1, mut post, mut then_cmds, mut else_cmds) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut after_if = false;
@@ -973,25 +1009,23 @@ pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>) -> IfPlan {
             let bq = qubit_of[&opn.deref(ctx).get_operand(1)];
             if after_if { post.push(Cmd::Szz(a, bq)) } else { batch1.push(Cmd::Szz(a, bq)) }
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
-            let q = qubit_of[&m.get_operation().deref(ctx).get_operand(0)];
-            let rid = m.result_id(ctx);
+            let info = reg.get(m.get_result(ctx));
             if after_if {
-                post.push(Cmd::Mz(q, rid));
+                post.push(Cmd::Mz(info.qubit, info.export_label));
             } else {
                 cond_outcome_idx = mz_b1;
                 mz_b1 += 1;
-                batch1.push(Cmd::Mz(q, rid));
+                batch1.push(Cmd::Mz(info.qubit, info.export_label));
             }
         } else if let Some(ifop) = Operation::get_op::<IfOp>(op, ctx) {
-            then_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 0), &qubit_of);
-            else_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 1), &qubit_of);
+            then_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 0), &qubit_of, reg);
+            else_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 1), &qubit_of, reg);
             after_if = true;
         } else if let Some(rec) = Operation::get_op::<RecordOp>(op, ctx) {
-            // export order = textual order of qec.record; resolve the recorded measurement-SSA back
-            // to its QIS result-id via the operand's defining qec.measure.
+            // export order = textual order of qec.record; resolve the recorded measurement-SSA value
+            // to its export label via the registry (the value is the identity).
             let recorded = rec.get_operation().deref(ctx).get_operand(0);
-            let mop = recorded.defining_op().and_then(|o| Operation::get_op::<MeasureOp>(o, ctx)).expect("qec.record operand must be a qec.measure result");
-            export.push(mop.result_id(ctx));
+            export.push(reg.get(recorded).export_label);
         }
     }
     IfPlan { batch1, cond_outcome_idx, then_cmds, else_cmds, post, export }
@@ -1100,7 +1134,7 @@ impl ControlEngine for PlironIfEngine {
     fn reset(&mut self) -> std::result::Result<(), PecosError> { Engine::reset(self) }
 }
 
-pub fn build_if_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>) {
+pub fn build_if_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>, MeasurementRegistry) {
     let module = ModuleOp::new(ctx, "adaptive_if".try_into().unwrap());
     let func_ty = FunctionType::get(ctx, vec![], vec![]);
     let func = FuncOp::new(ctx, "main".try_into().unwrap(), func_ty);
@@ -1118,27 +1152,30 @@ pub fn build_if_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>) {
     push!(PrepareOp::new(ctx, s0v));
     push!(PrepareOp::new(ctx, s1v));
     push!(HOp::new(ctx, s0v));
-    let m0 = push!(MeasureOp::new(ctx, s0v, 0)); // mid measure (conditioning), result-id 0
+    let mut reg = MeasurementRegistry::default();
+    let m0 = push!(MeasureOp::new(ctx, s0v)); // mid measure (conditioning)
     let m0v = m0.get_result(ctx);
+    reg.record(m0v, MeasurementInfo { qubit: 0, basis: Basis::Z, export_label: 0 });
     let ifop = push!(IfOp::new(ctx, m0v)); // if m0 { x q1 } else { }
     let then_bb = ifop.make_region_block(ctx, 0);
     XOp::new(ctx, s1v).get_operation().insert_at_back(then_bb, ctx);
     let _else_bb = ifop.make_region_block(ctx, 1);
-    let m1 = push!(MeasureOp::new(ctx, s1v, 1)); // final measure, result-id 1
+    let m1 = push!(MeasureOp::new(ctx, s1v)); // final measure
     let m1v = m1.get_result(ctx);
+    reg.record(m1v, MeasurementInfo { qubit: 1, basis: Basis::Z, export_label: 1 });
     push!(RecordOp::new(ctx, m0v)); // record mid  -> register r0
     push!(RecordOp::new(ctx, m1v)); // record final -> register r1
     push!(EndOp::new(ctx));
-    (module, bb)
+    (module, bb, reg)
 }
 
 pub fn run_milestone_5() {
     let ctx = &mut Context::new();
-    let (module, bb) = build_if_ir(ctx);
+    let (module, bb, reg) = build_if_ir(ctx);
     println!("=== region-based conditional (qec.if) pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-5 verify] FAILED: {}", e.disp(ctx)));
-    let plan = plan_from_if_ir(ctx, bb);
+    let plan = plan_from_if_ir(ctx, bb, &reg);
     let engine = PlironIfEngine {
         batch1: plan.batch1,
         cond_outcome_idx: plan.cond_outcome_idx,
@@ -1226,9 +1263,10 @@ pub fn collect_qubits(ops: &[ParsedOp], set: &mut BTreeSet<usize>) {
         }
     }
 }
-/// Emit one parsed op into `block`. `measured` accumulates `result-id -> measurement-SSA Value`
-/// so a later `ParsedOp::Record` resolves exactly which `qec.measure` becomes a program output.
-pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot_of: &HashMap<usize, Value>, measured: &mut HashMap<u64, Value>) {
+/// Emit one parsed op into `block`. `measured` accumulates `result-id -> measurement-SSA Value` so a
+/// later `ParsedOp::Record` resolves exactly which `qec.measure` becomes a program output; `reg`
+/// gets each measurement's metadata (qubit, basis, export label) keyed by its SSA value.
+pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot_of: &HashMap<usize, Value>, measured: &mut HashMap<u64, Value>, reg: &mut MeasurementRegistry) {
     match *p {
         ParsedOp::H(q) => { HOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
         ParsedOp::Rz(q, t) => { RzOp::new(ctx, slot_of[&q], t).get_operation().insert_at_back(block, ctx); }
@@ -1237,9 +1275,11 @@ pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot
         ParsedOp::Szz(a, b) => { SzzOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
         ParsedOp::X(q) => { XOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
         ParsedOp::M(q, rid) => {
-            let m = MeasureOp::new(ctx, slot_of[&q], rid);
+            let m = MeasureOp::new(ctx, slot_of[&q]);
             m.get_operation().insert_at_back(block, ctx);
-            measured.insert(rid, m.get_result(ctx));
+            let v = m.get_result(ctx);
+            measured.insert(rid, v);
+            reg.record(v, MeasurementInfo { qubit: q, basis: Basis::Z, export_label: rid });
         }
         ParsedOp::Record(rid) => {
             let v = *measured.get(&rid).unwrap_or_else(|| panic!("result_record_output references unknown result-id {rid}"));
@@ -1249,7 +1289,7 @@ pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot
 }
 
 /// Parse qprog.ll's diamond CFG, lifting the conditional branch into a `qec.if`.
-pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>) {
+pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>, MeasurementRegistry) {
     // pass 1: collect ops per block label (entry = "") and the conditional-branch targets.
     let mut blocks: Vec<(String, Vec<ParsedOp>)> = Vec::new();
     let mut cur_label = String::new();
@@ -1324,37 +1364,39 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock
     }
     // result-id -> measurement-SSA Value, so result_record_output can name the recorded measurement.
     let mut measured: HashMap<u64, Value> = HashMap::new();
+    let mut reg = MeasurementRegistry::default();
     // entry gates (everything before the trailing mid-measure), then the mid measure (the cond).
     let (mid_q, mid_rid) = match entry_ops.last() {
         Some(ParsedOp::M(q, rid)) => (*q, *rid),
         _ => panic!("expected entry block to end with a measurement (qprog mid-measure)"),
     };
-    for p in &entry_ops[..entry_ops.len() - 1] { emit_parsed(ctx, p, bb, &slot_of, &mut measured); }
-    let m0 = MeasureOp::new(ctx, slot_of[&mid_q], mid_rid);
+    for p in &entry_ops[..entry_ops.len() - 1] { emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg); }
+    let m0 = MeasureOp::new(ctx, slot_of[&mid_q]);
     m0.get_operation().insert_at_back(bb, ctx);
     let m0v = m0.get_result(ctx);
     measured.insert(mid_rid, m0v);
+    reg.record(m0v, MeasurementInfo { qubit: mid_q, basis: Basis::Z, export_label: mid_rid });
     // lift the diamond into qec.if(mid) { then } { else }
     let ifop = IfOp::new(ctx, m0v);
     ifop.get_operation().insert_at_back(bb, ctx);
     let then_bb = ifop.make_region_block(ctx, 0);
-    for p in &then_ops { emit_parsed(ctx, p, then_bb, &slot_of, &mut measured); }
+    for p in &then_ops { emit_parsed(ctx, p, then_bb, &slot_of, &mut measured, &mut reg); }
     let else_bb = ifop.make_region_block(ctx, 1);
-    for p in &else_ops { emit_parsed(ctx, p, else_bb, &slot_of, &mut measured); }
+    for p in &else_ops { emit_parsed(ctx, p, else_bb, &slot_of, &mut measured, &mut reg); }
     // final measurements + result_record_output ops (the export list)
-    for p in &merge_ops { emit_parsed(ctx, p, bb, &slot_of, &mut measured); }
+    for p in &merge_ops { emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg); }
     EndOp::new(ctx).get_operation().insert_at_back(bb, ctx);
-    (module, bb)
+    (module, bb, reg)
 }
 
 pub fn run_milestone_6() {
     let ctx = &mut Context::new();
     let src = include_str!("../../../examples/llvm/qprog.ll");
-    let (module, bb) = parse_qprog_ll(ctx, src);
+    let (module, bb, reg) = parse_qprog_ll(ctx, src);
     println!("=== qprog.ll parsed into pliron qec IR (rotations + qec.if) ===");
     println!("{}", module.get_operation().disp(ctx));
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-6 verify] FAILED: {}", e.disp(ctx)));
-    let plan = plan_from_if_ir(ctx, bb);
+    let plan = plan_from_if_ir(ctx, bb, &reg);
     let engine = PlironIfEngine {
         batch1: plan.batch1,
         cond_outcome_idx: plan.cond_outcome_idx,
@@ -1397,11 +1439,11 @@ pub fn run_milestone_6() {
 pub fn run_milestone_7() {
     let ctx = &mut Context::new();
     let src = include_str!("../fixtures/adaptive_branch.ll");
-    let (module, bb) = parse_qprog_ll(ctx, src);
+    let (module, bb, reg) = parse_qprog_ll(ctx, src);
     println!("=== adaptive_branch.ll parsed into pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-7 verify] FAILED: {}", e.disp(ctx)));
-    let plan = plan_from_if_ir(ctx, bb);
+    let plan = plan_from_if_ir(ctx, bb, &reg);
     assert_eq!(plan.export, vec![2, 1], "milestone-7: result_record_output order must be [2,1] (mid, final_q1)");
     let engine = PlironIfEngine {
         batch1: plan.batch1,
@@ -1472,6 +1514,30 @@ mod tests {
     #[test]
     fn m7_branch_taken_qec_if() {
         run_milestone_7();
+    }
+
+    /// The measurement-SSA registry is the metadata home: every `qec.measure` value resolves to its
+    /// (qubit, basis, export-label) via the side-table, with no attribute on the op. Keyed by the
+    /// SSA value -- the value IS the identity.
+    #[test]
+    fn registry_holds_measurement_metadata() {
+        let ctx = &mut Context::new();
+        let src = include_str!("../../../examples/llvm/qprog.ll");
+        let (_module, bb, reg) = parse_qprog_ll(ctx, src);
+        let mut infos: Vec<(usize, Basis, u64)> = bb
+            .deref(ctx)
+            .iter(ctx)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|op| Operation::get_op::<MeasureOp>(op, ctx))
+            .map(|m| {
+                let i = reg.get(m.get_result(ctx));
+                (i.qubit, i.basis, i.export_label)
+            })
+            .collect();
+        infos.sort_by_key(|&(q, _, label)| (label, q));
+        // qprog.ll: result-id 0 = final q0, 1 = final q1, 2 = mid q0 -- all Z measurements.
+        assert_eq!(infos, vec![(0, Basis::Z, 0), (1, Basis::Z, 1), (0, Basis::Z, 2)]);
     }
 
     // ---- negative tests: prove the verifiers and seam invariants actually bite ----

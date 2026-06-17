@@ -1,0 +1,18 @@
+# Experimental: the round-2 decision gate for build-PHIR-on-pliron.
+# Drives a Bell program built as pliron IR through the UNCHANGED pecos-engines sim seam.
+# See pecos-docs design/slr-phir-vision.md §7.1 + slr-phir-vision-qis-port-sketch.md.
+[package]
+name = "pecos-phir-pliron"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+pecos-engines.workspace = true
+pecos-core.workspace = true
+pliron = { path = "/home/ciaranra/Repos/pliron" }
+awint = "0.18"

@@ -34,7 +34,7 @@ class _ModuleState:
     # Keyed by full patch identity + effective budget (dx, dz, orientation,
     # rotated, effective_budget) so distinct patch geometries -- e.g. rotated
     # vs non-rotated at the same dx/dz -- never collide on a cached module.
-    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str, str], dict]] = {}
+    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str, str, str | None], dict]] = {}
 
 
 _state = _ModuleState()
@@ -142,6 +142,7 @@ def generate_guppy_source(
     num_rounds: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> str:
     """Generate Guppy source code for a surface code patch.
 
@@ -193,6 +194,8 @@ def generate_guppy_source(
             truth when supplied; ``interaction_basis`` must agree if also
             supplied. Current Guppy generation maps the resolved plan to the
             corresponding CX or SZZ/SZZdg concrete template.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy. Currently supported for global uniform-axis SZZ frames.
 
     Returns:
         Python/Guppy source code as a string.
@@ -202,7 +205,11 @@ def generate_guppy_source(
     """
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
     from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer
-    from pecos.qec.surface.circuit_builder import _szz_residual_plan_for_check_plan
+    from pecos.qec.surface.circuit_builder import (
+        _resolve_szz_clifford_frame_for_builder,
+        _szz_memory_physical_axis,
+        _szz_residual_plan_for_check_plan,
+    )
 
     resolved_plan = _resolve_surface_check_plan(
         interaction_basis=interaction_basis,
@@ -213,6 +220,11 @@ def generate_guppy_source(
         context="Guppy surface-code source generation",
     )
     interaction_basis = resolved_plan.interaction_basis
+    resolved_clifford_frame = _resolve_szz_clifford_frame_for_builder(
+        patch,
+        interaction_basis=interaction_basis,
+        clifford_frame_policy=clifford_frame_policy,
+    )
     if (twirl is None) != (rng is None):
         msg = f"twirl and rng must be supplied together; got twirl={twirl!r} rng={rng!r}"
         raise ValueError(msg)
@@ -266,7 +278,7 @@ def generate_guppy_source(
             "from guppylang.std.angles import angle",
             "from guppylang.std.builtins import array, owned, result",
             "from guppylang.std.qsystem.functional import zz_phase",
-            "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, z",
+            "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, y, z",
         ]
     else:
         imports = [
@@ -334,11 +346,90 @@ def generate_guppy_source(
     def _szz_data_expr(data_q: int) -> str:
         return f"d{data_q}"
 
+    szz_check_by_key = {}
+    if resolved_clifford_frame is not None:
+        szz_check_by_key.update({("X", check.stabilizer_index): check for check in resolved_clifford_frame.x_checks})
+        szz_check_by_key.update({("Z", check.stabilizer_index): check for check in resolved_clifford_frame.z_checks})
+
+    def _szz_physical_axis_for_touch(stabilizer_type: str, stab_idx: int, data_q: int) -> str:
+        if resolved_clifford_frame is None:
+            return "X" if stabilizer_type == "X" else "Z"
+        check = szz_check_by_key[(stabilizer_type, stab_idx)]
+        try:
+            offset = check.data_qubits.index(data_q)
+        except ValueError as exc:
+            msg = f"data qubit {data_q} is not in resolved check {stabilizer_type}{stab_idx}"
+            raise ValueError(msg) from exc
+        return check.paulis[offset].axis
+
+    def _szz_physical_axis_for_memory_basis(source_basis: str) -> str:
+        return _szz_memory_physical_axis(source_basis, resolved_clifford_frame)
+
+    def _szz_physical_axis_for_logical(source_logical: str) -> str:
+        if resolved_clifford_frame is None:
+            return source_logical
+        logical = resolved_clifford_frame.logical_x if source_logical == "X" else resolved_clifford_frame.logical_z
+        if not logical.is_uniform_axis or logical.uniform_axis is None:
+            msg = (
+                f"clifford frame policy {resolved_clifford_frame.policy!r} maps "
+                f"source logical {source_logical} to mixed axes {logical.axes}; "
+                "mixed logical operator rendering is not implemented yet"
+            )
+            raise NotImplementedError(msg)
+        return logical.uniform_axis
+
+    def _append_szz_axis_rotation_to_z(target: list[str], indent: str, axis: str, qubit_expr: str) -> None:
+        if axis == "X":
+            target.append(f"{indent}h({qubit_expr})")
+        elif axis == "Y":
+            target.append(f"{indent}vdg({qubit_expr})")
+        elif axis != "Z":
+            msg = f"unsupported Pauli axis {axis!r}"
+            raise ValueError(msg)
+
+    def _append_szz_axis_rotation_from_z(target: list[str], indent: str, axis: str, qubit_expr: str) -> None:
+        if axis == "X":
+            target.append(f"{indent}h({qubit_expr})")
+        elif axis == "Y":
+            target.append(f"{indent}v({qubit_expr})")
+        elif axis != "Z":
+            msg = f"unsupported Pauli axis {axis!r}"
+            raise ValueError(msg)
+
+    def _append_szz_y_compensation(target: list[str], indent: str, qubit_expr: str, *, dagger: bool) -> None:
+        target.append(f"{indent}sdg({qubit_expr})")
+        target.append(f"{indent}{'vdg' if dagger else 'v'}({qubit_expr})")
+        target.append(f"{indent}s({qubit_expr})")
+
+    def _append_szz_touch_compensation(target: list[str], indent: str, axis: str, sign: int, qubit_expr: str) -> None:
+        if axis == "X":
+            target.append(f"{indent}{'vdg' if sign > 0 else 'v'}({qubit_expr})")
+        elif axis == "Y":
+            _append_szz_y_compensation(target, indent, qubit_expr, dagger=sign > 0)
+        elif axis == "Z":
+            target.append(f"{indent}{'sdg' if sign > 0 else 's'}({qubit_expr})")
+        else:
+            msg = f"unsupported Pauli axis {axis!r}"
+            raise ValueError(msg)
+
+    def _append_szz_logical_pauli(target: list[str], indent: str, axis: str, qubit_expr: str) -> None:
+        if axis == "X":
+            target.append(f"{indent}x({qubit_expr})")
+        elif axis == "Y":
+            target.append(f"{indent}y({qubit_expr})")
+        elif axis == "Z":
+            target.append(f"{indent}z({qubit_expr})")
+        else:
+            msg = f"unsupported Pauli axis {axis!r}"
+            raise ValueError(msg)
+
     # Generate state preparation functions
     lines.extend(["# === State Preparation ===", "", "@guppy", f"def prep_z_basis() -> SurfaceCode_{dx}x{dz}:"])
     lines.append('    """Prepare logical |0_L> state."""')
     if interaction_basis == "szz":
         lines.extend(f"    d{i} = qubit()" for i in range(num_data))
+        for i in range(num_data):
+            _append_szz_axis_rotation_to_z(lines, "    ", _szz_physical_axis_for_memory_basis("Z"), f"d{i}")
         lines.append(f"    return SurfaceCode_{dx}x{dz}({szz_data_args})")
     else:
         lines.append(f"    data = array(qubit() for _ in range({num_data}))")
@@ -347,7 +438,8 @@ def generate_guppy_source(
     lines.append('    """Prepare logical |+_L> state."""')
     if interaction_basis == "szz":
         lines.extend(f"    d{i} = qubit()" for i in range(num_data))
-        lines.extend(f"    h(d{i})" for i in range(num_data))
+        for i in range(num_data):
+            _append_szz_axis_rotation_to_z(lines, "    ", _szz_physical_axis_for_memory_basis("X"), f"d{i}")
         lines.append(f"    return SurfaceCode_{dx}x{dz}({szz_data_args})")
     else:
         lines.append(f"    data = array(qubit() for _ in range({num_data}))")
@@ -379,9 +471,9 @@ def generate_guppy_source(
     ) -> None:
         target.append("")
         target.append(f"{indent}# SZZ round {rnd_idx + 1}")
-        x_touches = [(stab_idx, data_q) for stab_type, stab_idx, data_q in layer_gates if stab_type == "X"]
-        for _stab_idx, data_q in x_touches:
-            target.append(f"{indent}h({data_expr(data_q)})")
+        for stab_type, stab_idx, data_q in layer_gates:
+            axis = _szz_physical_axis_for_touch(stab_type, stab_idx, data_q)
+            _append_szz_axis_rotation_to_z(target, indent, axis, data_expr(data_q))
 
         for stab_type, stab_idx, data_q in layer_gates:
             sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
@@ -391,18 +483,14 @@ def generate_guppy_source(
                 f"zz_phase({ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)}, angle({half_turns}))",
             )
 
-        for _stab_idx, data_q in x_touches:
-            target.append(f"{indent}h({data_expr(data_q)})")
+        for stab_type, stab_idx, data_q in layer_gates:
+            axis = _szz_physical_axis_for_touch(stab_type, stab_idx, data_q)
+            _append_szz_axis_rotation_from_z(target, indent, axis, data_expr(data_q))
 
         for stab_type, stab_idx, data_q in layer_gates:
             sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
-            compensation = {
-                ("X", 1): "vdg",
-                ("X", -1): "v",
-                ("Z", 1): "sdg",
-                ("Z", -1): "s",
-            }[(stab_type, sign)]
-            target.append(f"{indent}{compensation}({data_expr(data_q)})")
+            axis = _szz_physical_axis_for_touch(stab_type, stab_idx, data_q)
+            _append_szz_touch_compensation(target, indent, axis, sign, data_expr(data_q))
 
     lines.extend(
         [
@@ -801,6 +889,8 @@ def generate_guppy_source(
     )
     if interaction_basis == "szz":
         _append_szz_data_unpack(lines, "    ")
+        for i in range(num_data):
+            _append_szz_axis_rotation_from_z(lines, "    ", _szz_physical_axis_for_memory_basis("Z"), f"d{i}")
         z_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
         lines.append(f"    return array({z_meas})")
     else:
@@ -816,7 +906,8 @@ def generate_guppy_source(
     )
     if interaction_basis == "szz":
         _append_szz_data_unpack(lines, "    ")
-        lines.extend(f"    h(d{i})" for i in range(num_data))
+        for i in range(num_data):
+            _append_szz_axis_rotation_from_z(lines, "    ", _szz_physical_axis_for_memory_basis("X"), f"d{i}")
         x_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
         lines.append(f"    return array({x_meas})")
     else:
@@ -839,7 +930,9 @@ def generate_guppy_source(
         ],
     )
     if interaction_basis == "szz":
-        lines.extend(f"    x(surf.d{q})" for q in logical_x_qubits)
+        logical_x_axis = _szz_physical_axis_for_logical("X")
+        for q in logical_x_qubits:
+            _append_szz_logical_pauli(lines, "    ", logical_x_axis, f"surf.d{q}")
     else:
         lines.extend(f"    x(surf.data[{q}])" for q in logical_x_qubits)
 
@@ -853,7 +946,9 @@ def generate_guppy_source(
         ],
     )
     if interaction_basis == "szz":
-        lines.extend(f"    z(surf.d{q})" for q in logical_z_qubits)
+        logical_z_axis = _szz_physical_axis_for_logical("Z")
+        for q in logical_z_qubits:
+            _append_szz_logical_pauli(lines, "    ", logical_z_axis, f"surf.d{q}")
     else:
         lines.extend(f"    z(surf.data[{q}])" for q in logical_z_qubits)
 
@@ -1523,6 +1618,7 @@ def _guppy_module_cache_key(
     num_rounds: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> str:
     """Filesystem-safe cache key spanning full patch identity + budget + twirl.
 
@@ -1544,9 +1640,10 @@ def _guppy_module_cache_key(
     interaction_basis = resolved_plan.interaction_basis
     interaction_part = "" if interaction_basis == "cx" else f"_ib{interaction_basis}"
     check_plan_part = "" if check_plan is None else f"_cp{resolved_plan.plan_id}"
+    frame_part = "" if clifford_frame_policy is None else f"_cf{str(clifford_frame_policy).lower().replace('-', '_')}"
     base = (
         f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}"
-        f"_b{effective_budget}{interaction_part}{check_plan_part}"
+        f"_b{effective_budget}{interaction_part}{check_plan_part}{frame_part}"
     )
     if twirl is None:
         return base
@@ -1571,6 +1668,7 @@ def _load_guppy_module(
     num_rounds: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> dict:
     """Load a Guppy module for a patch, using caching.
 
@@ -1591,6 +1689,8 @@ def _load_guppy_module(
         interaction_basis: Backward-compatible selector for the default
             ``check_plan`` of a two-qubit interaction basis.
         check_plan: Named surface check-plan preset.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for SZZ/SZZdg surface-code generation.
 
     Returns:
         Module dictionary with generated functions
@@ -1613,6 +1713,7 @@ def _load_guppy_module(
         num_rounds,
         interaction_basis,
         resolved_plan.plan_id if check_plan is not None else None,
+        clifford_frame_policy,
     )
 
     if cache_key in _state.module_cache:
@@ -1626,6 +1727,7 @@ def _load_guppy_module(
         num_rounds=num_rounds,
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
     # Write to temp file (required for Guppy introspection).
@@ -1658,6 +1760,7 @@ def generate_memory_experiment(
     rng: "GuppyRngMaskConfig | None" = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> object:
     """Generate a memory experiment for a patch.
 
@@ -1671,6 +1774,8 @@ def generate_memory_experiment(
         interaction_basis: Backward-compatible selector for the default
             ``check_plan`` of a two-qubit interaction basis.
         check_plan: Named surface check-plan preset.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for SZZ/SZZdg surface-code generation.
 
     Returns:
         Guppy function for the experiment
@@ -1683,6 +1788,7 @@ def generate_memory_experiment(
         num_rounds=num_rounds if twirl is not None else None,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
     if basis.upper() == "Z":
@@ -1704,6 +1810,7 @@ def get_num_qubits(
     twirl: "TwirlConfig | None" = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> int:
     """Get the peak simultaneously-live qubit count for a surface-code program.
 
@@ -1747,6 +1854,19 @@ def get_num_qubits(
         num_data = d * d
         total_ancilla = d * d - 1
 
+    if clifford_frame_policy is not None:
+        if patch is None:
+            from pecos.qec.surface import SurfacePatch
+
+            patch = SurfacePatch.create(distance=d)
+        from pecos.qec.surface.circuit_builder import _resolve_szz_clifford_frame_for_builder
+
+        _resolve_szz_clifford_frame_for_builder(
+            patch,
+            interaction_basis=interaction_basis,
+            clifford_frame_policy=clifford_frame_policy,
+        )
+
     if interaction_basis == "szz" and twirl is not None:
         msg = "interaction_basis='szz' Guppy runtime twirl integration is staged later"
         raise ValueError(msg)
@@ -1761,6 +1881,7 @@ def generate_surface_code_module(
     ancilla_budget: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> str:
     """Generate source code for a distance-d surface code module.
 
@@ -1771,6 +1892,8 @@ def generate_surface_code_module(
         interaction_basis: Backward-compatible selector for the default
             ``check_plan`` of a two-qubit interaction basis.
         check_plan: Named surface check-plan preset.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for SZZ/SZZdg surface-code generation.
 
     Returns:
         Python/Guppy source code as a string
@@ -1785,6 +1908,7 @@ def generate_surface_code_module(
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
 
@@ -1794,6 +1918,7 @@ def _surface_code_module_for_patch(
     ancilla_budget: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> dict:
     """Load + cache a surface-code module for an arbitrary patch.
 
@@ -1821,6 +1946,7 @@ def _surface_code_module_for_patch(
         effective_budget,
         interaction_basis,
         resolved_plan.plan_id,
+        None if clifford_frame_policy is None else str(clifford_frame_policy).lower().replace("-", "_"),
     )
 
     if cache_key in _state.distance_module_cache:
@@ -1831,6 +1957,7 @@ def _surface_code_module_for_patch(
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
     # Metadata derived from the actual patch geometry.
@@ -1840,6 +1967,7 @@ def _surface_code_module_for_patch(
     module["ancilla_budget"] = effective_budget
     module["interaction_basis"] = interaction_basis
     module["check_plan"] = resolved_plan.plan_id
+    module["clifford_frame_policy"] = clifford_frame_policy
     module["resolved_check_plan"] = resolved_plan.resolved_metadata
     module["resolved_check_plan_hash"] = resolved_plan.resolved_hash
 
@@ -1853,6 +1981,7 @@ def get_surface_code_module(
     ancilla_budget: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> dict:
     """Get a loaded surface code module for distance d.
 
@@ -1862,6 +1991,8 @@ def get_surface_code_module(
         interaction_basis: Backward-compatible selector for the default
             ``check_plan`` of a two-qubit interaction basis.
         check_plan: Named surface check-plan preset.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for SZZ/SZZdg surface-code generation.
 
     Returns:
         Dictionary with module contents and metadata
@@ -1875,6 +2006,7 @@ def get_surface_code_module(
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
 
@@ -1886,6 +2018,7 @@ def make_surface_code(
     ancilla_budget: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> object:
     """Create a surface code memory experiment.
 
@@ -1901,6 +2034,8 @@ def make_surface_code(
         interaction_basis: Backward-compatible selector for the default
             ``check_plan`` of a two-qubit interaction basis.
         check_plan: Named surface check-plan preset.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for SZZ/SZZdg surface-code generation.
 
     Returns:
         Compiled Guppy program
@@ -1914,6 +2049,7 @@ def make_surface_code(
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
     factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]

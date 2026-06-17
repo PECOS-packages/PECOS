@@ -2807,6 +2807,7 @@ def generate_guppy_from_patch(
     *,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> str:
     """Generate Guppy code from SurfacePatch.
 
@@ -2824,13 +2825,20 @@ def generate_guppy_from_patch(
         _basis: Unused (module includes both Z and X basis functions)
         interaction_basis: Surface-memory two-qubit interaction basis.
         check_plan: Named surface check-plan preset.
+        clifford_frame_policy: Optional source-level Clifford-deformation
+            policy for SZZ/SZZdg surface-code generation.
 
     Returns:
         Guppy source code string (full module)
     """
     from pecos.guppy.surface import generate_guppy_source
 
-    return generate_guppy_source(patch, interaction_basis=interaction_basis, check_plan=check_plan)
+    return generate_guppy_source(
+        patch,
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
+    )
 
 
 def generate_dag_circuit_from_patch(

@@ -1431,6 +1431,7 @@ def _generate_traced_surface_tick_circuit(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     runtime: object | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> Any:
     """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit.
 
@@ -1454,6 +1455,7 @@ def _generate_traced_surface_tick_circuit(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
         runtime=runtime,
+        clifford_frame_policy=clifford_frame_policy,
     )
     return tc
 
@@ -1467,6 +1469,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     runtime: object | None = None,
+    clifford_frame_policy: str | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
     from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
@@ -1478,6 +1481,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
     )
     return trace_guppy_into_tick_circuit_with_result_traces(
         program,
@@ -1486,6 +1490,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
             ancilla_budget=ancilla_budget,
             interaction_basis=interaction_basis,
             check_plan=check_plan,
+            clifford_frame_policy=clifford_frame_policy,
         ),
         seed=0,
         runtime=runtime,
@@ -1523,14 +1528,6 @@ def _build_surface_tick_circuit_for_native_model(
     if szz_physical_prefixes and (interaction_basis != "szz" or circuit_source != "abstract"):
         msg = "SZZ physical-prefix lowering requires interaction_basis='szz' and circuit_source='abstract'"
         raise ValueError(msg)
-    if clifford_frame_policy is not None and circuit_source != "abstract":
-        msg = (
-            "clifford_frame_policy currently requires circuit_source='abstract'; "
-            "traced-QIS support must generate the Guppy program from the same "
-            "concrete Clifford-deformed checks before binding result-tag metadata"
-        )
-        raise NotImplementedError(msg)
-
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
         num_rounds,
@@ -1562,6 +1559,7 @@ def _build_surface_tick_circuit_for_native_model(
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         runtime=runtime,
+        clifford_frame_policy=clifford_frame_policy,
     )
 
     measurement_index_remap = _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
@@ -2297,9 +2295,9 @@ def generate_circuit_level_dem_from_builder(
             assumption keyed from the resolved plan, not a general claim about
             CX hardware.
         clifford_frame_policy: Optional source-level Clifford-deformation
-            policy for native abstract SZZ generation. Traced-QIS support
-            requires Guppy to emit the same concrete deformed checks and is
-            rejected until that path is implemented.
+            policy for native SZZ generation. For ``circuit_source="traced_qis"``,
+            the Guppy program is generated from the same concrete deformed
+            checks before runtime result tags are bound to surface metadata.
 
     Returns:
         DEM string in standard format
@@ -3822,7 +3820,7 @@ def surface_code_memory(
             truth when supplied; ``interaction_basis`` must agree if also
             supplied.
         clifford_frame_policy: Optional source-level Clifford-deformation
-            policy for native abstract SZZ generation.
+            policy for native SZZ generation.
 
     Returns:
         ``SimulationResult`` with logical and raw error counts/rates.

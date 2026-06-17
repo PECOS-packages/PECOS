@@ -147,13 +147,17 @@ def test_global_axis_cycle_f_native_abstract_dem_path_accepts_frame_policy() -> 
     assert isinstance(dem, str)
 
 
-def test_clifford_frame_policy_rejects_traced_qis_until_guppy_matches_frame() -> None:
-    with pytest.raises(NotImplementedError, match="requires circuit_source='abstract'"):
-        build_memory_circuit(
-            distance=3,
-            rounds=1,
-            basis="Z",
-            circuit_source="traced_qis",
-            interaction_basis="szz",
-            clifford_frame_policy="global_axis_cycle_f",
-        )
+def test_clifford_frame_policy_traced_qis_binds_runtime_result_tags() -> None:
+    tick_circuit = build_memory_circuit(
+        distance=3,
+        rounds=1,
+        basis="Z",
+        circuit_source="traced_qis",
+        interaction_basis="szz",
+        clifford_frame_policy="global_axis_cycle_f",
+    )
+
+    assert tick_circuit.get_meta("surface_metadata_record_binding") == "runtime_result_tags"
+    assert tick_circuit.get_meta("basis") == "Z"
+    assert tick_circuit.get_meta("detectors")
+    assert tick_circuit.get_meta("observables")

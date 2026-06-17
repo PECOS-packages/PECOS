@@ -15,6 +15,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use awint::bw;
 use pecos_engines::byte_message::ByteMessage;
+use pecos_engines::hybrid::builder::HybridEngineBuilder;
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::{ClassicalEngine, ControlEngine, Data, Engine, EngineStage, PecosError, Shot};
 use pliron::{
@@ -197,6 +198,27 @@ impl Verify for MeasureOp {
     fn verify(&self, ctx: &Context) -> Result<()> {
         if self.get_operation().deref(ctx).get_operand(0).get_type(ctx) != qubitref_ty(ctx) {
             return verify_err!(self.loc(ctx), "qec.measure operand must be a qec.qubitref");
+        }
+        Ok(())
+    }
+}
+
+/// `qec.cond_x(cond: i1, target: qubitref)` -- apply X to `target` iff the measurement result
+/// `cond` is 1. The measurement-conditioned gate that forces a classical decision between batches.
+#[pliron_op(name = "qec.cond_x", format, interfaces = [NOpdsInterface<2>, NResultsInterface<0>])]
+pub struct CondXOp;
+impl CondXOp {
+    pub fn new(ctx: &mut Context, cond: Value, target: Value) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![cond, target], vec![], 0);
+        CondXOp { op }
+    }
+}
+impl Verify for CondXOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        // target (operand 1) must be a qubitref; the condition (operand 0) is a measurement-result
+        // i1 by construction (constructing the i1 type needs &mut Context, unavailable in verify).
+        if self.get_operation().deref(ctx).get_operand(1).get_type(ctx) != qubitref_ty(ctx) {
+            return verify_err!(self.loc(ctx), "qec.cond_x target must be a qec.qubitref");
         }
         Ok(())
     }
@@ -499,9 +521,244 @@ fn run_milestone_3() {
     run_and_check("milestone-3 bell.ll -> pliron qec -> sim", msg, 200);
 }
 
+// ===================== Milestone 4: adaptive, multi-batch, measurement-conditioned =====================
+// Program: prepare q0,q1; h q0; m0 = measure q0; cond_x(m0, q1); mf1 = measure q1.
+// The engine must send batch1 (gates + mz q0), get m0, make a CLASSICAL decision, then send a
+// SECOND batch (conditionally x q1, then mz q1). Invariant: mf1 == m0 (q1 flips iff m0==1) -- which
+// only holds if the measurement-conditioned feedback works across the two quantum batches.
+
+#[derive(Clone, Copy)]
+enum Cmd {
+    Pz(usize),
+    H(usize),
+    Cx(usize, usize),
+    Mz(usize),
+}
+
+#[derive(Clone)]
+struct AdaptivePlan {
+    batch1: Vec<Cmd>,        // gates + the conditioning Mz
+    cond_outcome_idx: usize, // index in batch1's mz-outcomes that gates cond_x
+    cond_target: usize,      // qubit to X iff that outcome == 1
+    batch2: Vec<Cmd>,        // post-condition ops (final Mz)
+}
+
+/// Walk a `qec` block once and split it into the two-batch adaptive plan at the `cond_x` boundary.
+/// Qubit identity comes only from the explicit slot-index map (same discipline as the Bell port).
+fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>) -> AdaptivePlan {
+    let mut qubit_of: HashMap<Value, usize> = HashMap::new();
+    let (mut batch1, mut batch2): (Vec<Cmd>, Vec<Cmd>) = (Vec::new(), Vec::new());
+    let mut after_cond = false;
+    let mut mz_b1 = 0usize;
+    let (mut cond_outcome_idx, mut cond_target) = (0usize, 0usize);
+    let ops: Vec<Ptr<Operation>> = block.deref(ctx).iter(ctx).collect();
+    for op in ops {
+        if let Some(s) = Operation::get_op::<SlotOp>(op, ctx) {
+            qubit_of.insert(s.get_result(ctx), s.index(ctx) as usize);
+        } else if let Some(p) = Operation::get_op::<PrepareOp>(op, ctx) {
+            let q = qubit_of[&p.get_operation().deref(ctx).get_operand(0)];
+            if after_cond { batch2.push(Cmd::Pz(q)) } else { batch1.push(Cmd::Pz(q)) }
+        } else if let Some(h) = Operation::get_op::<HOp>(op, ctx) {
+            let q = qubit_of[&h.get_operation().deref(ctx).get_operand(0)];
+            if after_cond { batch2.push(Cmd::H(q)) } else { batch1.push(Cmd::H(q)) }
+        } else if let Some(cx) = Operation::get_op::<CxOp>(op, ctx) {
+            let opn = cx.get_operation();
+            let c = qubit_of[&opn.deref(ctx).get_operand(0)];
+            let t = qubit_of[&opn.deref(ctx).get_operand(1)];
+            if after_cond { batch2.push(Cmd::Cx(c, t)) } else { batch1.push(Cmd::Cx(c, t)) }
+        } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
+            let q = qubit_of[&m.get_operation().deref(ctx).get_operand(0)];
+            if after_cond {
+                batch2.push(Cmd::Mz(q));
+            } else {
+                cond_outcome_idx = mz_b1;
+                mz_b1 += 1;
+                batch1.push(Cmd::Mz(q));
+            }
+        } else if let Some(c) = Operation::get_op::<CondXOp>(op, ctx) {
+            cond_target = qubit_of[&c.get_operation().deref(ctx).get_operand(1)];
+            after_cond = true;
+        }
+    }
+    AdaptivePlan { batch1, cond_outcome_idx, cond_target, batch2 }
+}
+
+fn emit_cmds(b: &mut pecos_engines::byte_message::ByteMessageBuilder, cmds: &[Cmd]) {
+    for c in cmds {
+        match *c {
+            Cmd::Pz(q) => { b.pz(&[q]); }
+            Cmd::H(q) => { b.h(&[q]); }
+            Cmd::Cx(c0, t) => { b.cx(&[(c0, t)]); }
+            Cmd::Mz(q) => { b.mz(&[q]); }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PlironAdaptiveEngine {
+    plan: AdaptivePlan,
+    stage: u8, // 0 fresh, 1 batch1 sent, 2 batch2 sent
+    b1: Vec<u32>,
+    b2: Vec<u32>,
+}
+
+impl PlironAdaptiveEngine {
+    fn batch1_msg(&self) -> ByteMessage {
+        let mut b = ByteMessage::quantum_operations_builder();
+        emit_cmds(&mut b, &self.plan.batch1);
+        b.build()
+    }
+    fn batch2_msg(&self) -> ByteMessage {
+        let mut b = ByteMessage::quantum_operations_builder();
+        // the classical decision: apply X iff the conditioning measurement was 1
+        if self.b1.get(self.plan.cond_outcome_idx).copied() == Some(1) {
+            b.x(&[self.plan.cond_target]);
+        }
+        emit_cmds(&mut b, &self.plan.batch2);
+        b.build()
+    }
+}
+
+impl Engine for PlironAdaptiveEngine {
+    type Input = ();
+    type Output = Shot;
+    fn process(&mut self, _i: ()) -> std::result::Result<Shot, PecosError> {
+        self.get_results()
+    }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> {
+        self.stage = 0;
+        self.b1.clear();
+        self.b2.clear();
+        Ok(())
+    }
+}
+
+impl ClassicalEngine for PlironAdaptiveEngine {
+    fn num_qubits(&self) -> usize {
+        2
+    }
+    fn generate_commands(&mut self) -> std::result::Result<ByteMessage, PecosError> {
+        if self.stage == 0 {
+            self.stage = 1;
+            Ok(self.batch1_msg())
+        } else {
+            Ok(ByteMessage::create_empty())
+        }
+    }
+    fn handle_measurements(&mut self, m: ByteMessage) -> std::result::Result<(), PecosError> {
+        let o = m.outcomes()?;
+        if self.stage == 1 { self.b1 = o } else { self.b2 = o }
+        Ok(())
+    }
+    fn get_results(&self) -> std::result::Result<Shot, PecosError> {
+        let mut shot = Shot::default();
+        shot.add_register("mid", self.b1.first().copied().unwrap_or(0), 1);
+        shot.add_register("final", self.b2.first().copied().unwrap_or(0), 1);
+        Ok(shot)
+    }
+    fn compile(&self) -> std::result::Result<(), PecosError> {
+        Ok(())
+    }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> {
+        Engine::reset(self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl ControlEngine for PlironAdaptiveEngine {
+    type Input = ();
+    type Output = Shot;
+    type EngineInput = ByteMessage;
+    type EngineOutput = ByteMessage;
+    fn start(&mut self, _i: ()) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
+        self.stage = 0;
+        self.b1.clear();
+        self.b2.clear();
+        self.stage = 1;
+        Ok(EngineStage::NeedsProcessing(self.batch1_msg()))
+    }
+    fn continue_processing(&mut self, meas: ByteMessage) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
+        if self.stage == 1 {
+            self.b1 = meas.outcomes()?;
+            self.stage = 2;
+            Ok(EngineStage::NeedsProcessing(self.batch2_msg()))
+        } else {
+            self.b2 = meas.outcomes()?;
+            Ok(EngineStage::Complete(self.get_results()?))
+        }
+    }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> {
+        Engine::reset(self)
+    }
+}
+
+fn build_adaptive_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>) {
+    let module = ModuleOp::new(ctx, "adaptive".try_into().unwrap());
+    let func_ty = FunctionType::get(ctx, vec![], vec![]);
+    let func = FuncOp::new(ctx, "main".try_into().unwrap(), func_ty);
+    module.append_operation(ctx, func.get_operation(), 0);
+    let bb = func.get_entry_block(ctx);
+    macro_rules! push {
+        ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+    }
+    let q = push!(QallocOp::new(ctx));
+    let qv = q.get_result(ctx);
+    let s0 = push!(SlotOp::new(ctx, qv, 0));
+    let s0v = s0.get_result(ctx);
+    let s1 = push!(SlotOp::new(ctx, qv, 1));
+    let s1v = s1.get_result(ctx);
+    push!(PrepareOp::new(ctx, s0v));
+    push!(PrepareOp::new(ctx, s1v));
+    push!(HOp::new(ctx, s0v));
+    let m0 = push!(MeasureOp::new(ctx, s0v));
+    let m0v = m0.get_result(ctx);
+    push!(CondXOp::new(ctx, m0v, s1v)); // X q1 iff m0 == 1
+    push!(MeasureOp::new(ctx, s1v));
+    push!(EndOp::new(ctx));
+    (module, bb)
+}
+
+fn run_milestone_4() {
+    let ctx = &mut Context::new();
+    let (module, bb) = build_adaptive_ir(ctx);
+    println!("=== adaptive (mid-measure -> cond_x -> final) pliron qec IR ===");
+    println!("{}", module.get_operation().disp(ctx));
+    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-4 verify] FAILED: {}", e.disp(ctx)));
+    let plan = plan_from_ir(ctx, bb);
+    let engine = PlironAdaptiveEngine { plan, stage: 0, b1: Vec::new(), b2: Vec::new() };
+
+    // Drive through the REAL HybridEngine this time (closes the "wrapper unrun" gap from round 3).
+    let mut hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(engine))
+        .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+        .build();
+
+    let (mut all_eq, mut saw_mid0, mut saw_mid1) = (true, false, false);
+    for _ in 0..200 {
+        let shot = hybrid.run_shot().unwrap();
+        let mid = shot.data.get("mid").and_then(Data::as_u32).expect("mid");
+        let fin = shot.data.get("final").and_then(Data::as_u32).expect("final");
+        if fin != mid {
+            all_eq = false;
+        }
+        saw_mid0 |= mid == 0;
+        saw_mid1 |= mid == 1;
+        Engine::reset(&mut hybrid).unwrap();
+    }
+    assert!(all_eq, "milestone-4: final must equal mid in every shot (measurement-conditioned X feedback)");
+    assert!(saw_mid0 && saw_mid1, "milestone-4: expected both mid=0 and mid=1 over 200 shots");
+    println!("[milestone-4 adaptive multi-batch via HybridEngine] OK -- final==mid in all 200 shots, saw mid 0 and 1");
+}
+
 fn main() {
     run_and_check("milestone-0 hand-built Bell", bell_message(), 200);
     run_milestone_1();
     run_milestone_2();
     run_milestone_3();
+    run_milestone_4();
 }

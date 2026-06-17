@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -187,7 +186,7 @@ def measure_cell(
                 ler=wrong / n,
                 build_seconds=t1 - t0,
                 decode_seconds=t2 - t1,
-            )
+            ),
         )
     return cells
 
@@ -222,7 +221,14 @@ def run_suppress(path: Path) -> None:
     done = {(c.family, c.distance, c.p, c.seed, c.inner) for c in _load(path)}
     plan = [
         ("memory", [3, 5, 7], [0.002, 0.003, 0.005], CANDIDATES, [1, 2, 3], 100_000),
-        ("cx", [3, 5, 7], [0.002, 0.003, 0.005], ["fusion_blossom_serial", "pecos_uf:bp", "belief_matching"], [1, 2, 3], 50_000),
+        (
+            "cx",
+            [3, 5, 7],
+            [0.002, 0.003, 0.005],
+            ["fusion_blossom_serial", "pecos_uf:bp", "belief_matching"],
+            [1, 2, 3],
+            50_000,
+        ),
     ]
     for family, ds, ps, inners, seeds, n in plan:
         for d in ds:
@@ -433,8 +439,10 @@ def analyze(out_dir: Path) -> str:
                     rlo, rhi = jeffreys_ci(rk, rn)
                     sep = "DISJOINT" if bhi < rlo else "overlap"
                     ratio = (rk / rn) / (bk / bn) if bk else float("inf")
-                    w(f"- d={d}: best **{bi}** {bk / bn:.2e} vs {bench} {rk / rn:.2e} "
-                      f"({ratio:.1f}x) -- Jeffreys intervals {sep}")
+                    w(
+                        f"- d={d}: best **{bi}** {bk / bn:.2e} vs {bench} {rk / rn:.2e} "
+                        f"({ratio:.1f}x) -- Jeffreys intervals {sep}",
+                    )
                 w()
             # Suppression check + exponent per inner (pooled across seeds).
             w(f"### {fam}: suppression exponent (LER ~ (p/p_th)^((d+1)/2))")
@@ -446,16 +454,14 @@ def analyze(out_dir: Path) -> str:
                     if len(seq) < 2:
                         continue
                     suppresses = all(
-                        seq[i + 1][1][0] / seq[i + 1][1][1] < seq[i][1][0] / seq[i][1][1]
-                        for i in range(len(seq) - 1)
+                        seq[i + 1][1][0] / seq[i + 1][1][1] < seq[i][1][0] / seq[i][1][1] for i in range(len(seq) - 1)
                     )
                     ratios = [
                         (seq[i][1][0] / seq[i][1][1]) / (seq[i + 1][1][0] / seq[i + 1][1][1])
                         for i in range(len(seq) - 1)
                     ]
                     tag = "suppresses" if suppresses else "NOT monotone"
-                    w(f"- p={p} {inner}: {tag}; per-step LER ratio "
-                      + ", ".join(f"{r:.1f}x" for r in ratios))
+                    w(f"- p={p} {inner}: {tag}; per-step LER ratio " + ", ".join(f"{r:.1f}x" for r in ratios))
             w()
 
     if thr:
@@ -486,8 +492,10 @@ def analyze(out_dir: Path) -> str:
                     cross = p
                     break
             w()
-            w(f"- threshold estimate (d={d_hi} stops beating d={d_lo}): "
-              + (f"~{cross}" if cross else f"above {ps[-1]} (not reached)"))
+            w(
+                f"- threshold estimate (d={d_hi} stops beating d={d_lo}): "
+                + (f"~{cross}" if cross else f"above {ps[-1]} (not reached)"),
+            )
             w()
 
     if spd:
@@ -497,8 +505,7 @@ def analyze(out_dir: Path) -> str:
         w("|---|---|---:|---:|---:|")
         for c in sorted(spd, key=lambda c: (c.family, c.decode_seconds)):
             us = c.decode_seconds / c.num_shots * 1e6
-            w(f"| {c.family} | {c.inner} | {c.build_seconds * 1e3:.1f} | "
-              f"{c.decode_seconds:.2f} | {us:.1f} |")
+            w(f"| {c.family} | {c.inner} | {c.build_seconds * 1e3:.1f} | {c.decode_seconds:.2f} | {us:.1f} |")
         w()
 
     return "\n".join(lines)
@@ -521,8 +528,10 @@ def main() -> None:
         cells = measure_cell("memory", 3, 3, 0.005, 1, ["fusion_blossom_serial", "pecos_uf:bp"], 2000)
         for c in cells:
             lo, hi = jeffreys_ci(c.num_errors, c.num_shots)
-            print(f"smoke {c.inner}: {c.num_errors}/{c.num_shots} ler={c.ler:.4f} "
-                  f"CI=[{lo:.4f},{hi:.4f}] build={c.build_seconds * 1e3:.1f}ms decode={c.decode_seconds:.3f}s")
+            print(
+                f"smoke {c.inner}: {c.num_errors}/{c.num_shots} ler={c.ler:.4f} "
+                f"CI=[{lo:.4f},{hi:.4f}] build={c.build_seconds * 1e3:.1f}ms decode={c.decode_seconds:.3f}s",
+            )
         cx = measure_cell("cx", 3, 3, 0.005, 1, ["fusion_blossom_serial"], 2000)
         print(f"smoke cx: {cx[0].num_errors}/{cx[0].num_shots} ler={cx[0].ler:.4f}")
         return

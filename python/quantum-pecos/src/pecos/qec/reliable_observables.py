@@ -147,12 +147,15 @@ def _observing_region(circuit: stim.Circuit, observable: int) -> PauliRegion:
             continue
         new_circuit.append(
             stim.CircuitInstruction(
-                name="OBSERVABLE_INCLUDE", gate_args=[0], targets=instr.targets_copy()
-            )
+                name="OBSERVABLE_INCLUDE",
+                gate_args=[0],
+                targets=instr.targets_copy(),
+            ),
         )
     target = stim.DemTarget("L0")
     regions = new_circuit.detecting_regions(
-        targets=[target], ignore_anticommutation_errors=True
+        targets=[target],
+        ignore_anticommutation_errors=True,
     )
     return regions.get(target, {})
 

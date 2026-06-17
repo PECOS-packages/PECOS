@@ -180,4 +180,3 @@ binomial per (family, d, p, inner). `k/n` = failures / shots.
 | memory | belief_matching | 27.7 | 24.13 | 482.5 |
 | memory | tesseract | 16.9 | 44.44 | 888.8 |
 | memory | pecos_uf:bp | 26.3 | 49.61 | 992.2 |
-

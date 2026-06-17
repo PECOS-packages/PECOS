@@ -15,11 +15,9 @@ from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
 
 
 def _wide_dem(n: int) -> tuple[str, list[list[int]]]:
-    """A DEM with ``n`` observables, each on its own detector ``D_l``/``L_l``."""
-    dem = "".join(f"detector({l},0,0) D{l}\n" for l in range(n)) + "".join(
-        f"error(0.1) D{l} L{l}\n" for l in range(n)
-    )
-    membership = [[l] for l in range(n)]
+    """A DEM with ``n`` observables, each on its own detector ``D_k``/``L_k``."""
+    dem = "".join(f"detector({k},0,0) D{k}\n" for k in range(n)) + "".join(f"error(0.1) D{k} L{k}\n" for k in range(n))
+    membership = [[k] for k in range(n)]
     return dem, membership
 
 

@@ -35,6 +35,7 @@
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
+use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::logical_subgraph::window_plan::LogicalSubgraphWindowPlan;
 use pecos_decoder_core::logical_subgraph::{
     MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
@@ -95,16 +96,6 @@ impl WindowedLogicalSubgraphDecoder {
         let mut subgraphs = Vec::with_capacity(plan.num_observables());
         let mut max_local = 0usize;
         for entry in plan.entries() {
-            // The windowed path packs observable flips into a u64 mask; reject
-            // >64 here (the non-windowed `LogicalSubgraphDecoder` supports more
-            // via `decode_obs`, but the windowed core-commit path does not yet).
-            if entry.observable_idx >= 64 {
-                return Err(DecoderError::InvalidConfiguration(format!(
-                    "WindowedLogicalSubgraphDecoder packs flips into a u64 mask and supports at \
-                     most 64 observables, but saw observable index {}",
-                    entry.observable_idx,
-                )));
-            }
             let decoder =
                 OverlappingWindowedDecoder::from_dem(&entry.sub_dem, window_config, |wdem| {
                     UfDecoder::from_dem(wdem, UfDecoderConfig::windowed())
@@ -139,8 +130,20 @@ impl WindowedLogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
+    /// Narrowing wrapper over [`Self::decode_obs`]; errors (rather than
+    /// truncating) above 64 observables.
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        let mut obs_mask = 0u64;
+        self.decode_obs(syndrome)?.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
+            )
+        })
+    }
+
+    /// Decode every windowed per-observable subgraph and pack the flips into a
+    /// wide [`ObsMask`] at each subgraph's GLOBAL observable index (no >64 cap).
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        let mut obs_mask = ObsMask::new();
         for sg in &mut self.subgraphs {
             let n = sg.num_local;
             for (local, &global) in sg.detector_map.iter().enumerate() {
@@ -151,17 +154,10 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
                 };
             }
             // The subgraph decodes a single observable as its local bit 0; map
-            // that back to this observable's global bit. `observable_idx < 64` is
-            // guaranteed by the hard reject in `from_dem`; assert it locally where
-            // the u64 shift consumes it.
-            debug_assert!(
-                sg.observable_idx < 64,
-                "observable index {} exceeds u64 observable-mask capacity",
-                sg.observable_idx
-            );
+            // that back to this observable's global bit.
             let sub_obs = sg.decoder.decode_to_observables(&self.local_syn[..n])?;
             if sub_obs & 1 != 0 {
-                obs_mask |= 1u64 << sg.observable_idx;
+                obs_mask.set(sg.observable_idx);
             }
         }
         Ok(obs_mask)

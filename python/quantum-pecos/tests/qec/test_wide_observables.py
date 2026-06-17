@@ -11,7 +11,7 @@ and ``decode_count`` comparing wide masks end-to-end.
 
 from __future__ import annotations
 
-from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem
+from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem, SampleBatch
 
 
 def _wide_dem(n: int) -> tuple[str, list[list[int]]]:
@@ -53,6 +53,28 @@ def test_decode_batch_above_64_observables() -> None:
     results = dec.decode_batch(syndromes)
     assert results[0] == 1 << 64
     assert results[1] == 1
+
+
+def test_sample_batch_big_int_truth_masks() -> None:
+    # The SampleBatch constructor accepts arbitrary-precision Python ints as
+    # observable masks (bit 64 = observable 64), and decode_count compares the
+    # wide truth mask against the wide prediction with no truncation.
+    n = 65
+    dem, membership = _wide_dem(n)
+    dec = LogicalSubgraphDecoder.from_membership(dem, membership, "pecos_uf:fast")
+
+    # Two shots, each flipping detector 64 (so the decoder predicts observable 64).
+    syn = [0] * n
+    syn[64] = 1
+    detection_events = [syn, syn]
+
+    # Truth that MATCHES the prediction (obs 64) -> zero logical errors.
+    matching = SampleBatch(detection_events, [1 << 64, 1 << 64])
+    assert dec.decode_count(matching) == 0
+
+    # Truth that MISMATCHES (obs 0, not 64) -> both shots are errors.
+    mismatching = SampleBatch(detection_events, [1, 1])
+    assert dec.decode_count(mismatching) == 2
 
 
 def test_decode_count_above_64_observables() -> None:

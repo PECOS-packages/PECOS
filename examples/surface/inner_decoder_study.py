@@ -201,11 +201,7 @@ def _append(path: Path, cells: list[Cell]) -> None:
 def _load(path: Path) -> list[Cell]:
     if not path.exists():
         return []
-    out = []
-    for line in path.read_text().splitlines():
-        if line.strip():
-            out.append(Cell(**json.loads(line)))
-    return out
+    return [Cell(**json.loads(line)) for line in path.read_text().splitlines() if line.strip()]
 
 
 # --------------------------------------------------------------------------- #
@@ -435,8 +431,8 @@ def analyze(out_dir: Path) -> str:
                     if (fam, d, p, bench) not in agg or bi == bench:
                         continue
                     rk, rn = agg[(fam, d, p, bench)]
-                    blo, bhi = jeffreys_ci(bk, bn)
-                    rlo, rhi = jeffreys_ci(rk, rn)
+                    _blo, bhi = jeffreys_ci(bk, bn)
+                    rlo, _rhi = jeffreys_ci(rk, rn)
                     sep = "DISJOINT" if bhi < rlo else "overlap"
                     ratio = (rk / rn) / (bk / bn) if bk else float("inf")
                     w(

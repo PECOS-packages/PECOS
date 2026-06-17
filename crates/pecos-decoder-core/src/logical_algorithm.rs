@@ -354,6 +354,18 @@ impl StreamingLogicalDecoder {
         Ok(obs)
     }
 
+    /// Wide variant of [`Self::flush`]: returns an [`ObsMask`] supporting more
+    /// than 64 observables (no truncation).
+    pub fn flush_obs(&mut self) -> Result<ObsMask, DecoderError> {
+        self.inner.decode_obs(&self.syndrome)
+    }
+
+    /// Wide variant of [`Self::decode_shot`]: feed + flush as an [`ObsMask`].
+    pub fn decode_shot_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.feed_dense(syndrome);
+        self.flush_obs()
+    }
+
     /// Decode a full syndrome at once (convenience for batch mode).
     pub fn decode_shot(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.feed_dense(syndrome);

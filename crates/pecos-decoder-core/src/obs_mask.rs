@@ -27,7 +27,7 @@
 //! vs one-word `[5]` all compare as expected.
 
 use smallvec::{SmallVec, smallvec};
-use std::ops::BitXorAssign;
+use std::ops::{BitAndAssign, BitXorAssign};
 
 const WORD_BITS: usize = u64::BITS as usize;
 
@@ -140,6 +140,16 @@ impl BitXorAssign<&ObsMask> for ObsMask {
     }
 }
 
+impl BitAndAssign<&ObsMask> for ObsMask {
+    fn bitand_assign(&mut self, rhs: &ObsMask) {
+        // Keep only bits set in both; words beyond `rhs` become zero (rhs has no
+        // bits there). Value equality ignores the resulting trailing zero words.
+        for (i, w) in self.words.iter_mut().enumerate() {
+            *w &= rhs.words.get(i).copied().unwrap_or(0);
+        }
+    }
+}
+
 impl PartialEq for ObsMask {
     fn eq(&self, other: &Self) -> bool {
         // Value equality: compare every word, treating missing words as zero, so
@@ -224,6 +234,22 @@ mod tests {
         let snapshot = w.clone();
         w ^= &snapshot;
         assert!(w.is_zero());
+    }
+
+    #[test]
+    fn and_restricts_to_common_bits() {
+        let mut a = ObsMask::new();
+        a.set(1);
+        a.set(64);
+        a.set(130);
+        let mut mask = ObsMask::new();
+        mask.set(1);
+        mask.set(64); // mask omits 130
+        a &= &mask;
+        assert!(a.get(1));
+        assert!(a.get(64));
+        assert!(!a.get(130), "bit outside the mask is cleared");
+        assert_eq!(a.count_ones(), 2);
     }
 
     #[test]

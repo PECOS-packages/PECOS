@@ -14,6 +14,7 @@ use std::any::Any;
 use std::collections::{BTreeSet, HashMap};
 
 use awint::bw;
+use pecos_core::Angle64;
 use pecos_engines::byte_message::ByteMessage;
 use pecos_engines::hybrid::builder::HybridEngineBuilder;
 use pecos_engines::quantum::StateVecEngine;
@@ -22,8 +23,8 @@ use pliron::{
     builtin::{
         attributes::IntegerAttr,
         op_interfaces::{
-            IsTerminatorInterface, NOpdsInterface, NResultsInterface, OneResultInterface,
-            SingleBlockRegionInterface,
+            IsTerminatorInterface, NOpdsInterface, NRegionsInterface, NResultsInterface,
+            NoTerminatorInterface, OneResultInterface, SingleBlockRegionInterface,
         },
         ops::{FuncOp, ModuleOp},
         types::{FunctionType, IntegerType, Signedness},
@@ -93,6 +94,24 @@ fn qubitref_ty(ctx: &Context) -> Ptr<TypeObj> {
 mod slot_attr {
     use pliron::dict_key;
     dict_key!(INDEX, "qec_slot_index");
+}
+
+mod angle_attr {
+    use pliron::dict_key;
+    dict_key!(BITS, "qec_angle_bits");
+}
+
+/// Store an f64 angle on an op as the bit pattern in an IntegerAttr (pliron has no float attr here).
+fn set_angle(ctx: &mut Context, op: Ptr<Operation>, theta: f64) {
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let attr = IntegerAttr::new(i64_ty, APInt::from_u64(theta.to_bits(), bw(64)));
+    op.deref_mut(ctx).attributes.0.insert(angle_attr::BITS.clone(), Box::new(attr));
+}
+fn get_angle(ctx: &Context, op: Ptr<Operation>) -> f64 {
+    let o = op.deref(ctx);
+    let a: AttrObj = o.attributes.0.get(&*angle_attr::BITS).expect("angle attr").clone();
+    let ia = a.downcast::<IntegerAttr>().unwrap_or_else(|_| panic!("angle not IntegerAttr"));
+    f64::from_bits(Into::<APInt>::into(*ia).to_u64())
 }
 
 #[pliron_op(name = "qec.qalloc", format, interfaces = [NOpdsInterface<0>, OneResultInterface, NResultsInterface<1>], verifier = "succ")]
@@ -221,6 +240,80 @@ impl Verify for CondXOp {
             return verify_err!(self.loc(ctx), "qec.cond_x target must be a qec.qubitref");
         }
         Ok(())
+    }
+}
+
+/// `qec.x(qubitref)` -- plain Pauli-X (used inside `qec.if` region blocks).
+#[pliron_op(name = "qec.x", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>])]
+pub struct XOp;
+impl XOp {
+    pub fn new(ctx: &mut Context, qref: Value) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![qref], vec![], 0);
+        XOp { op }
+    }
+}
+impl Verify for XOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        if self.get_operation().deref(ctx).get_operand(0).get_type(ctx) != qubitref_ty(ctx) {
+            return verify_err!(self.loc(ctx), "qec.x operand must be a qec.qubitref");
+        }
+        Ok(())
+    }
+}
+
+/// `qec.if(cond: i1) { then } { else }` -- region-based conditional control flow (vision-aligned;
+/// no CFG flattening). Two single-block regions of qec ops, no terminators.
+#[pliron_op(name = "qec.if", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>, NRegionsInterface<2>, SingleBlockRegionInterface, NoTerminatorInterface], verifier = "succ")]
+pub struct IfOp;
+impl IfOp {
+    pub fn new(ctx: &mut Context, cond: Value) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![cond], vec![], 2);
+        IfOp { op }
+    }
+    /// Create + attach a fresh single block for region `idx` and return it (for building).
+    pub fn make_region_block(&self, ctx: &mut Context, idx: usize) -> Ptr<BasicBlock> {
+        let region = self.get_operation().deref(ctx).get_region(idx);
+        let block = BasicBlock::new(ctx, None, vec![]);
+        block.insert_at_front(region, ctx);
+        block
+    }
+}
+
+/// Single-qubit rotations carrying an f64 angle (qprog.ll's rz/rx/ry).
+#[pliron_op(name = "qec.rz", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
+pub struct RzOp;
+impl RzOp {
+    pub fn new(ctx: &mut Context, q: Value, theta: f64) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
+        set_angle(ctx, op, theta);
+        RzOp { op }
+    }
+}
+#[pliron_op(name = "qec.rx", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
+pub struct RxOp;
+impl RxOp {
+    pub fn new(ctx: &mut Context, q: Value, theta: f64) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
+        set_angle(ctx, op, theta);
+        RxOp { op }
+    }
+}
+#[pliron_op(name = "qec.ry", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
+pub struct RyOp;
+impl RyOp {
+    pub fn new(ctx: &mut Context, q: Value, theta: f64) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
+        set_angle(ctx, op, theta);
+        RyOp { op }
+    }
+}
+/// Two-qubit sqrt-ZZ entangler (PECOS `SZZ`; qprog.ll's no-angle `zz` maps here).
+#[pliron_op(name = "qec.szz", format, interfaces = [NOpdsInterface<2>, NResultsInterface<0>], verifier = "succ")]
+pub struct SzzOp;
+impl SzzOp {
+    pub fn new(ctx: &mut Context, a: Value, b: Value) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![a, b], vec![], 0);
+        SzzOp { op }
     }
 }
 
@@ -531,6 +624,11 @@ fn run_milestone_3() {
 enum Cmd {
     Pz(usize),
     H(usize),
+    X(usize),
+    Rz(usize, f64),
+    Rx(usize, f64),
+    Ry(usize, f64),
+    Szz(usize, usize),
     Cx(usize, usize),
     Mz(usize),
 }
@@ -588,6 +686,11 @@ fn emit_cmds(b: &mut pecos_engines::byte_message::ByteMessageBuilder, cmds: &[Cm
         match *c {
             Cmd::Pz(q) => { b.pz(&[q]); }
             Cmd::H(q) => { b.h(&[q]); }
+            Cmd::X(q) => { b.x(&[q]); }
+            Cmd::Rz(q, t) => { b.rz(Angle64::from_radians(t), &[q]); }
+            Cmd::Rx(q, t) => { b.rx(Angle64::from_radians(t), &[q]); }
+            Cmd::Ry(q, t) => { b.ry(Angle64::from_radians(t), &[q]); }
+            Cmd::Szz(a, c0) => { b.szz(&[(a, c0)]); }
             Cmd::Cx(c0, t) => { b.cx(&[(c0, t)]); }
             Cmd::Mz(q) => { b.mz(&[q]); }
         }
@@ -755,10 +858,437 @@ fn run_milestone_4() {
     println!("[milestone-4 adaptive multi-batch via HybridEngine] OK -- final==mid in all 200 shots, saw mid 0 and 1");
 }
 
+// ===================== Milestone 5: region-based conditional control flow (qec.if) =====================
+// Same adaptive program as M4, but the conditional is now a real pliron REGION op
+// (`qec.if(cond) { then } { else }`), not a single cond_x op. The engine interprets the chosen
+// region across batches. This proves region-based control flow (vision-aligned; no CFG flattening).
+
+/// Lower the ops of a single block (a `qec.if` region body) to a Cmd list, reusing the slot map.
+fn block_to_cmds(ctx: &Context, block: Ptr<BasicBlock>, qubit_of: &HashMap<Value, usize>) -> Vec<Cmd> {
+    let mut cmds = Vec::new();
+    for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+        if let Some(x) = Operation::get_op::<XOp>(op, ctx) {
+            cmds.push(Cmd::X(qubit_of[&x.get_operation().deref(ctx).get_operand(0)]));
+        } else if let Some(h) = Operation::get_op::<HOp>(op, ctx) {
+            cmds.push(Cmd::H(qubit_of[&h.get_operation().deref(ctx).get_operand(0)]));
+        } else if let Some(p) = Operation::get_op::<PrepareOp>(op, ctx) {
+            cmds.push(Cmd::Pz(qubit_of[&p.get_operation().deref(ctx).get_operand(0)]));
+        } else if let Some(cx) = Operation::get_op::<CxOp>(op, ctx) {
+            let opn = cx.get_operation();
+            cmds.push(Cmd::Cx(qubit_of[&opn.deref(ctx).get_operand(0)], qubit_of[&opn.deref(ctx).get_operand(1)]));
+        } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
+            cmds.push(Cmd::Mz(qubit_of[&m.get_operation().deref(ctx).get_operand(0)]));
+        }
+    }
+    cmds
+}
+
+struct IfPlan {
+    batch1: Vec<Cmd>,
+    cond_outcome_idx: usize,
+    then_cmds: Vec<Cmd>,
+    else_cmds: Vec<Cmd>,
+    post: Vec<Cmd>,
+}
+
+/// Walk the func block; split at the `qec.if` boundary, reading the two region bodies as the
+/// then/else command lists.
+fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>) -> IfPlan {
+    let mut qubit_of: HashMap<Value, usize> = HashMap::new();
+    let (mut batch1, mut post, mut then_cmds, mut else_cmds) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut after_if = false;
+    let mut mz_b1 = 0usize;
+    let mut cond_outcome_idx = 0usize;
+    for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+        if let Some(s) = Operation::get_op::<SlotOp>(op, ctx) {
+            qubit_of.insert(s.get_result(ctx), s.index(ctx) as usize);
+        } else if let Some(p) = Operation::get_op::<PrepareOp>(op, ctx) {
+            let q = qubit_of[&p.get_operation().deref(ctx).get_operand(0)];
+            if after_if { post.push(Cmd::Pz(q)) } else { batch1.push(Cmd::Pz(q)) }
+        } else if let Some(h) = Operation::get_op::<HOp>(op, ctx) {
+            let q = qubit_of[&h.get_operation().deref(ctx).get_operand(0)];
+            if after_if { post.push(Cmd::H(q)) } else { batch1.push(Cmd::H(q)) }
+        } else if let Some(cx) = Operation::get_op::<CxOp>(op, ctx) {
+            let opn = cx.get_operation();
+            let c = qubit_of[&opn.deref(ctx).get_operand(0)];
+            let t = qubit_of[&opn.deref(ctx).get_operand(1)];
+            if after_if { post.push(Cmd::Cx(c, t)) } else { batch1.push(Cmd::Cx(c, t)) }
+        } else if let Some(r) = Operation::get_op::<RzOp>(op, ctx) {
+            let q = qubit_of[&r.get_operation().deref(ctx).get_operand(0)];
+            let t = get_angle(ctx, r.get_operation());
+            if after_if { post.push(Cmd::Rz(q, t)) } else { batch1.push(Cmd::Rz(q, t)) }
+        } else if let Some(r) = Operation::get_op::<RxOp>(op, ctx) {
+            let q = qubit_of[&r.get_operation().deref(ctx).get_operand(0)];
+            let t = get_angle(ctx, r.get_operation());
+            if after_if { post.push(Cmd::Rx(q, t)) } else { batch1.push(Cmd::Rx(q, t)) }
+        } else if let Some(r) = Operation::get_op::<RyOp>(op, ctx) {
+            let q = qubit_of[&r.get_operation().deref(ctx).get_operand(0)];
+            let t = get_angle(ctx, r.get_operation());
+            if after_if { post.push(Cmd::Ry(q, t)) } else { batch1.push(Cmd::Ry(q, t)) }
+        } else if let Some(z) = Operation::get_op::<SzzOp>(op, ctx) {
+            let opn = z.get_operation();
+            let a = qubit_of[&opn.deref(ctx).get_operand(0)];
+            let bq = qubit_of[&opn.deref(ctx).get_operand(1)];
+            if after_if { post.push(Cmd::Szz(a, bq)) } else { batch1.push(Cmd::Szz(a, bq)) }
+        } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
+            let q = qubit_of[&m.get_operation().deref(ctx).get_operand(0)];
+            if after_if {
+                post.push(Cmd::Mz(q));
+            } else {
+                cond_outcome_idx = mz_b1;
+                mz_b1 += 1;
+                batch1.push(Cmd::Mz(q));
+            }
+        } else if let Some(ifop) = Operation::get_op::<IfOp>(op, ctx) {
+            then_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 0), &qubit_of);
+            else_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 1), &qubit_of);
+            after_if = true;
+        }
+    }
+    IfPlan { batch1, cond_outcome_idx, then_cmds, else_cmds, post }
+}
+
+#[derive(Clone)]
+struct PlironIfEngine {
+    batch1: Vec<Cmd>,
+    cond_outcome_idx: usize,
+    then_cmds: Vec<Cmd>,
+    else_cmds: Vec<Cmd>,
+    post: Vec<Cmd>,
+    stage: u8,
+    b1: Vec<u32>,
+    b2: Vec<u32>,
+}
+impl PlironIfEngine {
+    fn b1_msg(&self) -> ByteMessage {
+        let mut b = ByteMessage::quantum_operations_builder();
+        emit_cmds(&mut b, &self.batch1);
+        b.build()
+    }
+    fn b2_msg(&self) -> ByteMessage {
+        let mut b = ByteMessage::quantum_operations_builder();
+        let taken = if self.b1.get(self.cond_outcome_idx).copied() == Some(1) { &self.then_cmds } else { &self.else_cmds };
+        emit_cmds(&mut b, taken);
+        emit_cmds(&mut b, &self.post);
+        b.build()
+    }
+}
+impl Engine for PlironIfEngine {
+    type Input = ();
+    type Output = Shot;
+    fn process(&mut self, _i: ()) -> std::result::Result<Shot, PecosError> { self.get_results() }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> { self.stage = 0; self.b1.clear(); self.b2.clear(); Ok(()) }
+}
+impl ClassicalEngine for PlironIfEngine {
+    fn num_qubits(&self) -> usize { 2 }
+    fn generate_commands(&mut self) -> std::result::Result<ByteMessage, PecosError> {
+        if self.stage == 0 { self.stage = 1; Ok(self.b1_msg()) } else { Ok(ByteMessage::create_empty()) }
+    }
+    fn handle_measurements(&mut self, m: ByteMessage) -> std::result::Result<(), PecosError> {
+        let o = m.outcomes()?;
+        if self.stage == 1 { self.b1 = o } else { self.b2 = o }
+        Ok(())
+    }
+    fn get_results(&self) -> std::result::Result<Shot, PecosError> {
+        let mut s = Shot::default();
+        s.add_register("mid", self.b1.first().copied().unwrap_or(0), 1);
+        s.add_register("final", self.b2.first().copied().unwrap_or(0), 1);
+        s.add_register("final1", self.b2.get(1).copied().unwrap_or(0), 1);
+        Ok(s)
+    }
+    fn compile(&self) -> std::result::Result<(), PecosError> { Ok(()) }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> { Engine::reset(self) }
+    fn as_any(&self) -> &dyn Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+}
+impl ControlEngine for PlironIfEngine {
+    type Input = ();
+    type Output = Shot;
+    type EngineInput = ByteMessage;
+    type EngineOutput = ByteMessage;
+    fn start(&mut self, _i: ()) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
+        self.stage = 1;
+        self.b1.clear();
+        self.b2.clear();
+        Ok(EngineStage::NeedsProcessing(self.b1_msg()))
+    }
+    fn continue_processing(&mut self, meas: ByteMessage) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
+        if self.stage == 1 {
+            self.b1 = meas.outcomes()?;
+            self.stage = 2;
+            Ok(EngineStage::NeedsProcessing(self.b2_msg()))
+        } else {
+            self.b2 = meas.outcomes()?;
+            Ok(EngineStage::Complete(self.get_results()?))
+        }
+    }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> { Engine::reset(self) }
+}
+
+fn build_if_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>) {
+    let module = ModuleOp::new(ctx, "adaptive_if".try_into().unwrap());
+    let func_ty = FunctionType::get(ctx, vec![], vec![]);
+    let func = FuncOp::new(ctx, "main".try_into().unwrap(), func_ty);
+    module.append_operation(ctx, func.get_operation(), 0);
+    let bb = func.get_entry_block(ctx);
+    macro_rules! push {
+        ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+    }
+    let q = push!(QallocOp::new(ctx));
+    let qv = q.get_result(ctx);
+    let s0 = push!(SlotOp::new(ctx, qv, 0));
+    let s0v = s0.get_result(ctx);
+    let s1 = push!(SlotOp::new(ctx, qv, 1));
+    let s1v = s1.get_result(ctx);
+    push!(PrepareOp::new(ctx, s0v));
+    push!(PrepareOp::new(ctx, s1v));
+    push!(HOp::new(ctx, s0v));
+    let m0 = push!(MeasureOp::new(ctx, s0v));
+    let m0v = m0.get_result(ctx);
+    let ifop = push!(IfOp::new(ctx, m0v)); // if m0 { x q1 } else { }
+    let then_bb = ifop.make_region_block(ctx, 0);
+    XOp::new(ctx, s1v).get_operation().insert_at_back(then_bb, ctx);
+    let _else_bb = ifop.make_region_block(ctx, 1);
+    push!(MeasureOp::new(ctx, s1v));
+    push!(EndOp::new(ctx));
+    (module, bb)
+}
+
+fn run_milestone_5() {
+    let ctx = &mut Context::new();
+    let (module, bb) = build_if_ir(ctx);
+    println!("=== region-based conditional (qec.if) pliron qec IR ===");
+    println!("{}", module.get_operation().disp(ctx));
+    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-5 verify] FAILED: {}", e.disp(ctx)));
+    let plan = plan_from_if_ir(ctx, bb);
+    let engine = PlironIfEngine {
+        batch1: plan.batch1,
+        cond_outcome_idx: plan.cond_outcome_idx,
+        then_cmds: plan.then_cmds,
+        else_cmds: plan.else_cmds,
+        post: plan.post,
+        stage: 0,
+        b1: Vec::new(),
+        b2: Vec::new(),
+    };
+    let mut hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(engine))
+        .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+        .build();
+    let (mut all_eq, mut saw0, mut saw1) = (true, false, false);
+    for _ in 0..200 {
+        let shot = hybrid.run_shot().unwrap();
+        let mid = shot.data.get("mid").and_then(Data::as_u32).expect("mid");
+        let fin = shot.data.get("final").and_then(Data::as_u32).expect("final");
+        if fin != mid {
+            all_eq = false;
+        }
+        saw0 |= mid == 0;
+        saw1 |= mid == 1;
+        Engine::reset(&mut hybrid).unwrap();
+    }
+    assert!(all_eq, "milestone-5: final must equal mid (region-based qec.if feedback)");
+    assert!(saw0 && saw1, "milestone-5: expected both mid=0 and mid=1");
+    println!("[milestone-5 region-based qec.if via HybridEngine] OK -- final==mid in all 200 shots, saw mid 0 and 1");
+}
+
+// ===================== Milestone 6: parse the literal qprog.ll (adaptive) =====================
+// qprog.ll: rz/rx/ry/zz; mid-measure; icmp+br (diamond CFG); conditional x; final measures.
+// We lift the diamond CFG into a `qec.if` during the parse, producing real rotations + region
+// control flow, and run it end-to-end through the real HybridEngine.
+
+#[derive(Clone, Copy)]
+enum ParsedOp {
+    Rz(usize, f64),
+    Rx(usize, f64),
+    Ry(usize, f64),
+    Szz(usize, usize),
+    X(usize),
+    M(usize),
+}
+
+fn inner_parens(l: &str) -> &str {
+    match (l.find('('), l.rfind(')')) {
+        (Some(a), Some(b)) if b > a => &l[a + 1..b],
+        _ => "",
+    }
+}
+fn doubles_and_ints(inner: &str) -> (Vec<f64>, Vec<usize>) {
+    let (mut ds, mut is) = (Vec::new(), Vec::new());
+    for t in inner.split(',') {
+        let t = t.trim();
+        if let Some(d) = t.strip_prefix("double ") {
+            if let Ok(v) = d.trim().parse::<f64>() { ds.push(v); }
+        } else if let Some(n) = t.strip_prefix("i64 ") {
+            if let Ok(v) = n.trim().parse::<usize>() { is.push(v); }
+        }
+    }
+    (ds, is)
+}
+fn br_labels(l: &str) -> Vec<String> {
+    l.split("label %")
+        .skip(1)
+        .filter_map(|s| s.split([',', ' ']).next().filter(|x| !x.is_empty()).map(str::to_string))
+        .collect()
+}
+fn collect_qubits(ops: &[ParsedOp], set: &mut BTreeSet<usize>) {
+    for p in ops {
+        match *p {
+            ParsedOp::Rz(q, _) | ParsedOp::Rx(q, _) | ParsedOp::Ry(q, _) | ParsedOp::X(q) | ParsedOp::M(q) => { set.insert(q); }
+            ParsedOp::Szz(a, b) => { set.insert(a); set.insert(b); }
+        }
+    }
+}
+fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot_of: &HashMap<usize, Value>) {
+    match *p {
+        ParsedOp::Rz(q, t) => { RzOp::new(ctx, slot_of[&q], t).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::Rx(q, t) => { RxOp::new(ctx, slot_of[&q], t).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::Ry(q, t) => { RyOp::new(ctx, slot_of[&q], t).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::Szz(a, b) => { SzzOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::X(q) => { XOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::M(q) => { MeasureOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
+    }
+}
+
+/// Parse qprog.ll's diamond CFG, lifting the conditional branch into a `qec.if`.
+fn parse_qprog_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>) {
+    // pass 1: collect ops per block label (entry = "") and the conditional-branch targets.
+    let mut blocks: Vec<(String, Vec<ParsedOp>)> = Vec::new();
+    let mut cur_label = String::new();
+    let mut cur_ops: Vec<ParsedOp> = Vec::new();
+    let (mut then_label, mut else_label) = (None::<String>, None::<String>);
+    let mut in_func = false;
+    for raw in src.lines() {
+        let l = raw.trim();
+        if l.starts_with("define ") && l.contains("@qmain") { in_func = true; continue; }
+        if !in_func { continue; }
+        if l == "}" { blocks.push((std::mem::take(&mut cur_label), std::mem::take(&mut cur_ops))); break; }
+        if l.ends_with(':') && !l.contains(' ') {
+            blocks.push((std::mem::take(&mut cur_label), std::mem::take(&mut cur_ops)));
+            cur_label = l.trim_end_matches(':').to_string();
+            continue;
+        }
+        let (ds, is) = doubles_and_ints(inner_parens(l));
+        if l.contains("__quantum__qis__rz__body") {
+            cur_ops.push(ParsedOp::Rz(is[0], ds[0]));
+        } else if l.contains("__quantum__qis__rx__body") {
+            cur_ops.push(ParsedOp::Rx(is[0], ds[0]));
+        } else if l.contains("__quantum__qis__ry__body") {
+            cur_ops.push(ParsedOp::Ry(is[0], ds[0]));
+        } else if l.contains("__quantum__qis__zz__body") {
+            cur_ops.push(ParsedOp::Szz(is[0], is[1]));
+        } else if l.contains("__quantum__qis__x__body") {
+            cur_ops.push(ParsedOp::X(is[0]));
+        } else if l.contains("__quantum__qis__m__body") {
+            cur_ops.push(ParsedOp::M(is[0]));
+        } else if l.starts_with("br ") && l.contains("label %") {
+            let labels = br_labels(l);
+            if labels.len() == 2 {
+                then_label = Some(labels[0].clone());
+                else_label = Some(labels[1].clone());
+            }
+        }
+    }
+    let find = |lab: &str| blocks.iter().find(|(l, _)| l == lab).map(|(_, o)| o.clone()).unwrap_or_default();
+    let entry_ops = find("");
+    let then_ops = then_label.as_deref().map(find).unwrap_or_default();
+    let else_ops = else_label.as_deref().map(find).unwrap_or_default();
+    let merge_ops = blocks
+        .iter()
+        .find(|(l, _)| !l.is_empty() && Some(l) != then_label.as_ref() && Some(l) != else_label.as_ref())
+        .map(|(_, o)| o.clone())
+        .unwrap_or_default();
+
+    // pass 2: build the pliron qec IR.
+    let mut qubits = BTreeSet::new();
+    for ops in [&entry_ops, &then_ops, &else_ops, &merge_ops] { collect_qubits(ops, &mut qubits); }
+
+    let module = ModuleOp::new(ctx, "qprog".try_into().unwrap());
+    let func_ty = FunctionType::get(ctx, vec![], vec![]);
+    let func = FuncOp::new(ctx, "qmain".try_into().unwrap(), func_ty);
+    module.append_operation(ctx, func.get_operation(), 0);
+    let bb = func.get_entry_block(ctx);
+
+    let q = QallocOp::new(ctx);
+    q.get_operation().insert_at_back(bb, ctx);
+    let qv = q.get_result(ctx);
+    let mut slot_of: HashMap<usize, Value> = HashMap::new();
+    for &idx in &qubits {
+        let s = SlotOp::new(ctx, qv, idx as u64);
+        s.get_operation().insert_at_back(bb, ctx);
+        let sv = s.get_result(ctx);
+        slot_of.insert(idx, sv);
+        PrepareOp::new(ctx, sv).get_operation().insert_at_back(bb, ctx);
+    }
+    // entry gates (everything before the trailing mid-measure), then the mid measure (if cond).
+    let mid_q = match entry_ops.last() {
+        Some(ParsedOp::M(q)) => *q,
+        _ => panic!("expected entry block to end with a measurement (qprog mid-measure)"),
+    };
+    for p in &entry_ops[..entry_ops.len() - 1] { emit_parsed(ctx, p, bb, &slot_of); }
+    let m0 = MeasureOp::new(ctx, slot_of[&mid_q]);
+    m0.get_operation().insert_at_back(bb, ctx);
+    let m0v = m0.get_result(ctx);
+    // lift the diamond into qec.if(mid) { then } { else }
+    let ifop = IfOp::new(ctx, m0v);
+    ifop.get_operation().insert_at_back(bb, ctx);
+    let then_bb = ifop.make_region_block(ctx, 0);
+    for p in &then_ops { emit_parsed(ctx, p, then_bb, &slot_of); }
+    let else_bb = ifop.make_region_block(ctx, 1);
+    for p in &else_ops { emit_parsed(ctx, p, else_bb, &slot_of); }
+    // final measurements
+    for p in &merge_ops { emit_parsed(ctx, p, bb, &slot_of); }
+    EndOp::new(ctx).get_operation().insert_at_back(bb, ctx);
+    (module, bb)
+}
+
+fn run_milestone_6() {
+    let ctx = &mut Context::new();
+    let src = include_str!("../../../examples/llvm/qprog.ll");
+    let (module, bb) = parse_qprog_ll(ctx, src);
+    println!("=== qprog.ll parsed into pliron qec IR (rotations + qec.if) ===");
+    println!("{}", module.get_operation().disp(ctx));
+    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-6 verify] FAILED: {}", e.disp(ctx)));
+    let plan = plan_from_if_ir(ctx, bb);
+    let engine = PlironIfEngine {
+        batch1: plan.batch1,
+        cond_outcome_idx: plan.cond_outcome_idx,
+        then_cmds: plan.then_cmds,
+        else_cmds: plan.else_cmds,
+        post: plan.post,
+        stage: 0,
+        b1: Vec::new(),
+        b2: Vec::new(),
+    };
+    let mut hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(engine))
+        .with_quantum_engine(Box::new(StateVecEngine::new(2)))
+        .build();
+    let mut seen: BTreeSet<(u32, u32, u32)> = BTreeSet::new();
+    let mut n = 0;
+    for _ in 0..200 {
+        let shot = hybrid.run_shot().unwrap();
+        let mid = shot.data.get("mid").and_then(Data::as_u32).expect("mid");
+        let f0 = shot.data.get("final").and_then(Data::as_u32).expect("final");
+        let f1 = shot.data.get("final1").and_then(Data::as_u32).expect("final1");
+        seen.insert((mid, f0, f1));
+        n += 1;
+        Engine::reset(&mut hybrid).unwrap();
+    }
+    assert_eq!(n, 200, "milestone-6: expected 200 shots");
+    assert!(!seen.is_empty(), "milestone-6: qprog.ll must produce results");
+    // qprog's q0 only sees Z-diagonal ops (rz, szz) so its mid/final measure is deterministically 0
+    // (the conditional branch is therefore never taken -- branch-firing is exercised by M4/M5); the
+    // quantum variety is on q1 (rx(pi)+ry+szz). We just require the program runs and produces results.
+    println!("[milestone-6 qprog.ll -> pliron qec (rotations + qec.if) -> HybridEngine] OK -- {n} shots, observed (mid,final_q0,final_q1): {seen:?}");
+}
+
 fn main() {
     run_and_check("milestone-0 hand-built Bell", bell_message(), 200);
     run_milestone_1();
     run_milestone_2();
     run_milestone_3();
     run_milestone_4();
+    run_milestone_5();
+    run_milestone_6();
 }

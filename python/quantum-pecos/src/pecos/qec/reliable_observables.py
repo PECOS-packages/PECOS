@@ -72,9 +72,10 @@ def reliable_observables(circuit: stim.Circuit) -> list[set[int]]:
         msg = f"`circuit` must be a stim.Circuit, got {type(circuit)}"
         raise TypeError(msg)
 
-    resets = _reset_pauli_regions(circuit)
+    flat = circuit.flattened()
+    resets = _reset_pauli_regions(flat)
     num_obs = circuit.num_observables
-    obs_regions = {o: _observing_region(circuit, o) for o in range(num_obs)}
+    obs_regions = {o: _observing_region(flat, o) for o in range(num_obs)}
 
     # A[reset, obs] = 1 iff the reset and the observable's region anticommute.
     a = np.zeros((len(resets), num_obs), dtype=np.uint8)
@@ -92,11 +93,12 @@ def is_reliable(circuit: stim.Circuit, observable: set[int] | int) -> bool:
     A combination is reliable iff its region commutes with every reset.
     """
     obs = {observable} if isinstance(observable, int) else set(observable)
-    resets = _reset_pauli_regions(circuit)
+    flat = circuit.flattened()
+    resets = _reset_pauli_regions(flat)
     # Combine the regions of the chosen observables by tick-wise Pauli product.
     combined: PauliRegion = {}
     for o in obs:
-        for tick, ps in _observing_region(circuit, o).items():
+        for tick, ps in _observing_region(flat, o).items():
             combined[tick] = combined[tick] * ps if tick in combined else ps
     return all(not _anticommute(r, combined) for r in resets.values())
 
@@ -106,9 +108,12 @@ def is_reliable(circuit: stim.Circuit, observable: set[int] | int) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def _reset_pauli_regions(circuit: stim.Circuit) -> dict[int, PauliRegion]:
-    """Per-reset single-tick Pauli region: the reset's Pauli on its qubit."""
-    flat = circuit.flattened()
+def _reset_pauli_regions(flat: stim.Circuit) -> dict[int, PauliRegion]:
+    """Per-reset single-tick Pauli region: the reset's Pauli on its qubit.
+
+    ``flat`` must already be flattened (``circuit.flattened()``); callers flatten
+    once and share it across observables to avoid repeated flattening.
+    """
     n = flat.num_qubits
     resets: dict[int, PauliRegion] = {}
     reset_idx = 0
@@ -132,14 +137,15 @@ def _reset_pauli_regions(circuit: stim.Circuit) -> dict[int, PauliRegion]:
     return resets
 
 
-def _observing_region(circuit: stim.Circuit, observable: int) -> PauliRegion:
+def _observing_region(flat: stim.Circuit, observable: int) -> PauliRegion:
     """Back-propagated observing region of one observable, via stim.
 
-    Rewrites the circuit so only `observable` survives, renamed to L0, then uses
-    `stim.Circuit.detecting_regions` to get its {tick: PauliString} region.
+    Rewrites the (already-flattened) circuit so only `observable` survives,
+    renamed to L0, then uses `stim.Circuit.detecting_regions` to get its
+    {tick: PauliString} region.
     """
     new_circuit = stim.Circuit()
-    for instr in circuit.flattened():
+    for instr in flat:
         if instr.name != "OBSERVABLE_INCLUDE":
             new_circuit.append(instr)
             continue

@@ -1946,8 +1946,12 @@ mod tests {
             circuit.mz(&[i]);
         }
         circuit.set_attr("num_measurements", Attribute::String(n.to_string()));
+        let n_i64 = i64::try_from(n).unwrap();
         let obs: Vec<String> = (0..n)
-            .map(|i| format!(r#"{{"id":{i},"records":[{}]}}"#, i as i64 - n as i64))
+            .map(|i| {
+                let rec = i64::try_from(i).unwrap() - n_i64;
+                format!(r#"{{"id":{i},"records":[{rec}]}}"#)
+            })
             .collect();
         circuit.set_attr(
             "observables",

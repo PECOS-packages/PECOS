@@ -26,7 +26,7 @@
 //! storage, so `ObsMask::from_u64(0)`, `ObsMask::new()`, and a two-word `[5, 0]`
 //! vs one-word `[5]` all compare as expected.
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::ops::BitXorAssign;
 
 const WORD_BITS: usize = u64::BITS as usize;

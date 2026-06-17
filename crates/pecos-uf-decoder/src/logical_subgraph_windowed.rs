@@ -35,11 +35,11 @@
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
-use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::logical_subgraph::window_plan::LogicalSubgraphWindowPlan;
 use pecos_decoder_core::logical_subgraph::{
     MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
 };
+use pecos_decoder_core::obs_mask::ObsMask;
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
 use crate::windowed::{OverlappingWindowedDecoder, WindowedConfig};

@@ -760,7 +760,11 @@ impl DemSampler {
     /// [`Self::observable_dem_output_mask`] (validated to fit a `u64`); pass it
     /// in so the per-shot path neither recomputes it nor needs to re-validate.
     #[must_use]
-    pub fn observable_mask_from_dem_output_flips(&self, flips: &[bool], observable_mask: u64) -> u64 {
+    pub fn observable_mask_from_dem_output_flips(
+        &self,
+        flips: &[bool],
+        observable_mask: u64,
+    ) -> u64 {
         flips
             .iter()
             .enumerate()

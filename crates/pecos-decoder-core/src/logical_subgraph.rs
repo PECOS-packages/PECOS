@@ -340,7 +340,6 @@ pub fn subgraphs_from_membership(
     sdem: &SparseDem,
     membership: &[Vec<usize>],
 ) -> Result<Vec<LogicalSubgraph>, DecoderError> {
-
     let mut subgraphs = Vec::with_capacity(membership.len());
 
     for (obs_idx, detectors) in membership.iter().enumerate() {

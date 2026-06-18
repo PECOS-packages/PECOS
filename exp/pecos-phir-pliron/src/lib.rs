@@ -33,13 +33,13 @@ use pliron::{
     basic_block::BasicBlock,
     common_traits::Verify,
     context::{Context, Ptr},
-    derive::{pliron_op, pliron_type},
+    derive::{pliron_attr, pliron_op, pliron_type},
     linked_list::ContainsLinkedList,
     op::{verify_op, Op},
     operation::Operation,
     printable::Printable,
     result::Result,
-    r#type::{TypeObj, Typed},
+    r#type::{TypeObj, TypePtr, Typed},
     utils::apint::APInt,
     value::Value,
     verify_err,
@@ -98,7 +98,23 @@ mod slot_attr {
 
 mod angle_attr {
     use pliron::dict_key;
-    dict_key!(BITS, "qec_angle_bits");
+    dict_key!(ANGLE, "qec_angle");
+}
+
+/// A PECOS-native angle attribute: stores `Angle64`'s fixed-point *fraction* (a fraction of a full
+/// turn, full circle = `2^64`) exactly -- no lossy f64 round-trip in the IR. `qec.rz/rx/ry` carry one.
+#[pliron_attr(name = "qec.angle", format = "$0", verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub struct Angle64Attr(u64);
+impl From<Angle64> for Angle64Attr {
+    fn from(a: Angle64) -> Self {
+        Angle64Attr(a.fraction())
+    }
+}
+impl From<Angle64Attr> for Angle64 {
+    fn from(a: Angle64Attr) -> Self {
+        Angle64::new(a.0)
+    }
 }
 
 // ===================== measurement-SSA registry (measurement-id-system.md, Phase 1) =====================
@@ -146,17 +162,15 @@ impl MeasurementRegistry {
     }
 }
 
-/// Store an f64 angle on an op as the bit pattern in an IntegerAttr (pliron has no float attr here).
-pub fn set_angle(ctx: &mut Context, op: Ptr<Operation>, theta: f64) {
-    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
-    let attr = IntegerAttr::new(i64_ty, APInt::from_u64(theta.to_bits(), bw(64)));
-    op.deref_mut(ctx).attributes.0.insert(angle_attr::BITS.clone(), Box::new(attr));
+/// Store a fixed-point `Angle64` on an op as a `qec.angle` attribute.
+pub fn set_angle(ctx: &Context, op: Ptr<Operation>, angle: Angle64) {
+    op.deref_mut(ctx).attributes.0.insert(angle_attr::ANGLE.clone(), Box::new(Angle64Attr::from(angle)));
 }
-pub fn get_angle(ctx: &Context, op: Ptr<Operation>) -> f64 {
+pub fn get_angle(ctx: &Context, op: Ptr<Operation>) -> Angle64 {
     let o = op.deref(ctx);
-    let a: AttrObj = o.attributes.0.get(&*angle_attr::BITS).expect("angle attr").clone();
-    let ia = a.downcast::<IntegerAttr>().unwrap_or_else(|_| panic!("angle not IntegerAttr"));
-    f64::from_bits(Into::<APInt>::into(*ia).to_u64())
+    let a: AttrObj = o.attributes.0.get(&*angle_attr::ANGLE).expect("angle attr").clone();
+    let aa = a.downcast::<Angle64Attr>().unwrap_or_else(|_| panic!("angle not Angle64Attr"));
+    Angle64::from(*aa)
 }
 
 #[pliron_op(name = "qec.qalloc", format, interfaces = [NOpdsInterface<0>, OneResultInterface, NResultsInterface<1>], verifier = "succ")]
@@ -320,8 +334,14 @@ impl CondXOp {
 }
 impl Verify for CondXOp {
     fn verify(&self, ctx: &Context) -> Result<()> {
-        // target (operand 1) must be a qubitref; the condition (operand 0) is a measurement-result
-        // i1 by construction (constructing the i1 type needs &mut Context, unavailable in verify).
+        // condition (operand 0) must be an i1 (a measurement result); target (operand 1) a qubitref.
+        // We inspect the operand's actual type read-only (TypePtr::from_ptr + width) rather than
+        // construct the expected i1 -- constructing a parameterized type needs &mut Context.
+        let cond_ty = self.get_operation().deref(ctx).get_operand(0).get_type(ctx);
+        let cond_is_i1 = TypePtr::<IntegerType>::from_ptr(cond_ty, ctx).is_ok_and(|tp| tp.deref(ctx).width() == 1);
+        if !cond_is_i1 {
+            return verify_err!(self.loc(ctx), "qec.cond_x condition (operand 0) must be an i1 measurement result");
+        }
         if self.get_operation().deref(ctx).get_operand(1).get_type(ctx) != qubitref_ty(ctx) {
             return verify_err!(self.loc(ctx), "qec.cond_x target must be a qec.qubitref");
         }
@@ -365,31 +385,31 @@ impl IfOp {
     }
 }
 
-/// Single-qubit rotations carrying an f64 angle (qprog.ll's rz/rx/ry).
+/// Single-qubit rotations carrying a fixed-point `Angle64` (qprog.ll's rz/rx/ry).
 #[pliron_op(name = "qec.rz", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
 pub struct RzOp;
 impl RzOp {
-    pub fn new(ctx: &mut Context, q: Value, theta: f64) -> Self {
+    pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
-        set_angle(ctx, op, theta);
+        set_angle(ctx, op, angle);
         RzOp { op }
     }
 }
 #[pliron_op(name = "qec.rx", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
 pub struct RxOp;
 impl RxOp {
-    pub fn new(ctx: &mut Context, q: Value, theta: f64) -> Self {
+    pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
-        set_angle(ctx, op, theta);
+        set_angle(ctx, op, angle);
         RxOp { op }
     }
 }
 #[pliron_op(name = "qec.ry", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
 pub struct RyOp;
 impl RyOp {
-    pub fn new(ctx: &mut Context, q: Value, theta: f64) -> Self {
+    pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
-        set_angle(ctx, op, theta);
+        set_angle(ctx, op, angle);
         RyOp { op }
     }
 }
@@ -724,9 +744,9 @@ pub enum Cmd {
     Pz(usize),
     H(usize),
     X(usize),
-    Rz(usize, f64),
-    Rx(usize, f64),
-    Ry(usize, f64),
+    Rz(usize, Angle64),
+    Rx(usize, Angle64),
+    Ry(usize, Angle64),
     Szz(usize, usize),
     Cx(usize, usize),
     Mz(usize, u64), // (qubit, QIS result-id); the id rides through to the export/register mapping
@@ -787,9 +807,9 @@ pub fn emit_cmds(b: &mut pecos_engines::byte_message::ByteMessageBuilder, cmds: 
             Cmd::Pz(q) => { b.pz(&[q]); }
             Cmd::H(q) => { b.h(&[q]); }
             Cmd::X(q) => { b.x(&[q]); }
-            Cmd::Rz(q, t) => { b.rz(Angle64::from_radians(t), &[q]); }
-            Cmd::Rx(q, t) => { b.rx(Angle64::from_radians(t), &[q]); }
-            Cmd::Ry(q, t) => { b.ry(Angle64::from_radians(t), &[q]); }
+            Cmd::Rz(q, a) => { b.rz(a, &[q]); }
+            Cmd::Rx(q, a) => { b.rx(a, &[q]); }
+            Cmd::Ry(q, a) => { b.ry(a, &[q]); }
             Cmd::Szz(a, c0) => { b.szz(&[(a, c0)]); }
             Cmd::Cx(c0, t) => { b.cx(&[(c0, t)]); }
             Cmd::Mz(q, _rid) => { b.mz(&[q]); } // result-id is bookkeeping, not a simulator op
@@ -1298,9 +1318,10 @@ pub fn collect_qubits(ops: &[ParsedOp], set: &mut BTreeSet<usize>) {
 pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot_of: &HashMap<usize, Value>, measured: &mut HashMap<u64, Value>, reg: &mut MeasurementRegistry) {
     match *p {
         ParsedOp::H(q) => { HOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::Rz(q, t) => { RzOp::new(ctx, slot_of[&q], t).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::Rx(q, t) => { RxOp::new(ctx, slot_of[&q], t).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::Ry(q, t) => { RyOp::new(ctx, slot_of[&q], t).get_operation().insert_at_back(block, ctx); }
+        // .ll angles are f64 radians (the wire format); convert to fixed-point Angle64 at the boundary.
+        ParsedOp::Rz(q, t) => { RzOp::new(ctx, slot_of[&q], Angle64::from_radians(t)).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::Rx(q, t) => { RxOp::new(ctx, slot_of[&q], Angle64::from_radians(t)).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::Ry(q, t) => { RyOp::new(ctx, slot_of[&q], Angle64::from_radians(t)).get_operation().insert_at_back(block, ctx); }
         ParsedOp::Szz(a, b) => { SzzOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
         ParsedOp::X(q) => { XOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
         ParsedOp::M(q, rid) => {
@@ -1718,6 +1739,27 @@ mod tests {
         let bad = HOp::new(ctx, alloc.get_result(ctx));
         let res = verify_op(&bad, ctx);
         assert!(res.is_err(), "qec.h on a qec.alloc handle must fail verification, got Ok");
+    }
+
+    /// The `qec.angle` attribute round-trips an `Angle64` through the IR exactly (fixed-point, no
+    /// f64 bit-pattern hack): the fraction stored on a `qec.rz` reads back bit-identical.
+    #[test]
+    fn angle_attr_roundtrips_fixed_point() {
+        let ctx = &mut Context::new();
+        let module = ModuleOp::new(ctx, "ang".try_into().unwrap());
+        let func_ty = FunctionType::get(ctx, vec![], vec![]);
+        let func = FuncOp::new(ctx, "main".try_into().unwrap(), func_ty);
+        module.append_operation(ctx, func.get_operation(), 0);
+        let bb = func.get_entry_block(ctx);
+        macro_rules! push {
+            ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+        }
+        let q = push!(QallocOp::new(ctx));
+        let sv = push!(SlotOp::new(ctx, q.get_result(ctx), 0)).get_result(ctx);
+        let angle = Angle64::from_radians(1.07);
+        let rz = push!(RzOp::new(ctx, sv, angle));
+        let got = get_angle(ctx, rz.get_operation());
+        assert_eq!(got.fraction(), angle.fraction(), "qec.angle must round-trip the Angle64 fixed-point fraction exactly");
     }
 
     /// Recording a measurement defined *inside* a `qec.if` region from the OUTER block is a

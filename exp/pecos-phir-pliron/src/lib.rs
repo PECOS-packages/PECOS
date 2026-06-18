@@ -1741,6 +1741,24 @@ mod tests {
         assert!(res.is_err(), "qec.h on a qec.alloc handle must fail verification, got Ok");
     }
 
+    /// `qec.cond_x`'s condition (operand 0) must be an `i1` measurement result. A non-`i1` condition
+    /// (here a qubitref) must be rejected -- guards the read-only type-inspection check in verify.
+    #[test]
+    fn negative_cond_x_non_i1_condition_rejected() {
+        let ctx = &mut Context::new();
+        let alloc = QallocOp::new(ctx);
+        let s0 = SlotOp::new(ctx, alloc.get_result(ctx), 0);
+        let s1 = SlotOp::new(ctx, alloc.get_result(ctx), 1);
+        // use a qubitref (operand 0) as the condition -- it is not an i1 measurement result.
+        let bad = CondXOp::new(ctx, s0.get_result(ctx), s1.get_result(ctx));
+        let err = verify_op(&bad, ctx).expect_err("qec.cond_x with a non-i1 condition must fail verification");
+        assert!(
+            format!("{}", err.disp(ctx)).contains("i1"),
+            "expected the i1-condition rejection, got: {}",
+            err.disp(ctx)
+        );
+    }
+
     /// The `qec.angle` attribute round-trips an `Angle64` through the IR exactly (fixed-point, no
     /// f64 bit-pattern hack): the fraction stored on a `qec.rz` reads back bit-identical.
     #[test]

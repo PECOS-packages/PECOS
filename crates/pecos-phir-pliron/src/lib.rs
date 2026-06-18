@@ -672,10 +672,16 @@ pub fn run_milestone_2() {
 
 // ===================== Milestone 3: parse a real bell.ll into pliron qec IR =====================
 
-/// Minimal QIS-LLVM-IR -> pliron `qec` IR parser for the Bell fixture (`examples/llvm/bell.ll`).
-/// Recognizes `__quantum__qis__{h,cx,m}__body` calls with integer qubit args. This proves the
-/// LLVM-IR frontend ports onto pliron ops (not just hand-built IR) -- the last gate-fidelity item.
-pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>, MeasurementRegistry) {
+/// Structured rejection for anything outside the covered QIS-LLVM subset (see the strangler scope
+/// doc) -- used instead of silently dropping unrecognized calls or panicking on malformed structure.
+fn unsupported_qis(msg: impl Into<String>) -> PecosError {
+    PecosError::Feature(format!("pecos-phir-pliron: unsupported QIS-LLVM-IR -- {}", msg.into()))
+}
+
+/// Minimal QIS-LLVM-IR -> pliron `qec` IR parser for the Bell-style straight-line subset. Recognizes
+/// `__quantum__qis__{h,cx,m}__body` + `__quantum__rt__result_record_output`; any other `__quantum__`
+/// call (or a malformed operand list) is rejected with a structured error rather than dropped.
+pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(ModuleOp, Ptr<BasicBlock>, MeasurementRegistry), PecosError> {
     fn i64_args(line: &str) -> Vec<usize> {
         match (line.find('('), line.rfind(')')) {
             (Some(l), Some(r)) if r > l => line[l + 1..r]
@@ -693,21 +699,31 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>
         if !(l.starts_with("call ") || l.contains("= call ")) {
             continue;
         }
+        let a = i64_args(l);
         if l.contains("__quantum__qis__h__body") {
-            let a = i64_args(l);
-            qubits.insert(a[0]);
+            let q = *a.first().ok_or_else(|| unsupported_qis("h__body missing qubit operand"))?;
+            qubits.insert(q);
             parsed.push(("h", a));
         } else if l.contains("__quantum__qis__cx__body") {
-            let a = i64_args(l);
+            if a.len() < 2 {
+                return Err(unsupported_qis("cx__body needs two qubit operands"));
+            }
             qubits.insert(a[0]);
             qubits.insert(a[1]);
             parsed.push(("cx", a));
         } else if l.contains("__quantum__qis__m__body") {
-            let a = i64_args(l); // (qubit, result_id)
+            if a.len() < 2 {
+                return Err(unsupported_qis("m__body needs (qubit, result_id) operands"));
+            }
             qubits.insert(a[0]);
             parsed.push(("m", a));
         } else if l.contains("__quantum__rt__result_record_output") {
-            parsed.push(("record", i64_args(l))); // (result_id)
+            if a.is_empty() {
+                return Err(unsupported_qis("result_record_output missing result_id operand"));
+            }
+            parsed.push(("record", a));
+        } else if l.contains("__quantum__") {
+            return Err(unsupported_qis(format!("operation not in the covered subset: {l}")));
         }
     }
     // pass 2: build the pliron qec IR + the measurement-SSA registry
@@ -748,20 +764,22 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>
             }
             "record" => {
                 let rid = a[0] as u64;
-                let v = *measured.get(&rid).unwrap_or_else(|| panic!("result_record_output references unknown result-id {rid}"));
+                let v = *measured
+                    .get(&rid)
+                    .ok_or_else(|| unsupported_qis(format!("result_record_output references unknown result-id {rid}")))?;
                 push!(RecordOp::new(ctx, v));
             }
             _ => {}
         }
     }
     push!(EndOp::new(ctx));
-    (module, bb, reg)
+    Ok((module, bb, reg))
 }
 
 pub fn run_milestone_3() {
     let ctx = &mut Context::new();
     let src = include_str!("../../../examples/llvm/bell.ll");
-    let (module, bb, _reg) = parse_bell_ll(ctx, src);
+    let (module, bb, _reg) = parse_bell_ll(ctx, src).expect("milestone-3: parse bell.ll");
     println!("=== bell.ll parsed into pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-3 verify] FAILED: {}", e.disp(ctx)));
@@ -1384,7 +1402,7 @@ pub fn collect_qubits(ops: &[ParsedOp], set: &mut BTreeSet<usize>) {
 /// Emit one parsed op into `block`. `measured` accumulates `result-id -> measurement-SSA Value` so a
 /// later `ParsedOp::Record` resolves exactly which `qec.measure` becomes a program output; `reg`
 /// gets each measurement's metadata (qubit, basis, export label) keyed by its SSA value.
-pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot_of: &HashMap<usize, Value>, measured: &mut HashMap<u64, Value>, reg: &mut MeasurementRegistry) {
+pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot_of: &HashMap<usize, Value>, measured: &mut HashMap<u64, Value>, reg: &mut MeasurementRegistry) -> std::result::Result<(), PecosError> {
     match *p {
         ParsedOp::H(q) => { HOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
         // .ll angles are f64 radians (the wire format); convert to fixed-point Angle64 at the boundary.
@@ -1401,14 +1419,19 @@ pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot
             reg.record(v, MeasurementInfo { qubit: q, basis: Basis::Z, export_label: rid });
         }
         ParsedOp::Record(rid) => {
-            let v = *measured.get(&rid).unwrap_or_else(|| panic!("result_record_output references unknown result-id {rid}"));
+            let v = *measured
+                .get(&rid)
+                .ok_or_else(|| unsupported_qis(format!("result_record_output references unknown result-id {rid}")))?;
             RecordOp::new(ctx, v).get_operation().insert_at_back(block, ctx);
         }
     }
+    Ok(())
 }
 
-/// Parse qprog.ll's diamond CFG, lifting the conditional branch into a `qec.if`.
-pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>, MeasurementRegistry) {
+/// Parse the adaptive single-diamond QIS-LLVM subset, lifting the conditional branch into a `qec.if`.
+/// Rejects (structured error, not silent-drop/panic) anything outside the subset: unrecognized
+/// `__quantum__` calls, malformed operand lists, and more than one conditional branch.
+pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> std::result::Result<(ModuleOp, Ptr<BasicBlock>, MeasurementRegistry), PecosError> {
     // pass 1: collect ops per block label (entry = "") and the conditional-branch targets.
     let mut blocks: Vec<(String, Vec<ParsedOp>)> = Vec::new();
     let mut cur_label = String::new();
@@ -1426,28 +1449,35 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock
             continue;
         }
         let (ds, is) = doubles_and_ints(inner_parens(l));
+        let iq = |i: usize| is.get(i).copied().ok_or_else(|| unsupported_qis(format!("missing i64 operand {i}: {l}")));
+        let da = |i: usize| ds.get(i).copied().ok_or_else(|| unsupported_qis(format!("missing double operand {i}: {l}")));
         if l.contains("__quantum__qis__h__body") {
-            cur_ops.push(ParsedOp::H(is[0]));
+            cur_ops.push(ParsedOp::H(iq(0)?));
         } else if l.contains("__quantum__qis__rz__body") {
-            cur_ops.push(ParsedOp::Rz(is[0], ds[0]));
+            cur_ops.push(ParsedOp::Rz(iq(0)?, da(0)?));
         } else if l.contains("__quantum__qis__rx__body") {
-            cur_ops.push(ParsedOp::Rx(is[0], ds[0]));
+            cur_ops.push(ParsedOp::Rx(iq(0)?, da(0)?));
         } else if l.contains("__quantum__qis__ry__body") {
-            cur_ops.push(ParsedOp::Ry(is[0], ds[0]));
+            cur_ops.push(ParsedOp::Ry(iq(0)?, da(0)?));
         } else if l.contains("__quantum__qis__zz__body") {
-            cur_ops.push(ParsedOp::Szz(is[0], is[1]));
+            cur_ops.push(ParsedOp::Szz(iq(0)?, iq(1)?));
         } else if l.contains("__quantum__qis__x__body") {
-            cur_ops.push(ParsedOp::X(is[0]));
+            cur_ops.push(ParsedOp::X(iq(0)?));
         } else if l.contains("__quantum__qis__m__body") {
-            cur_ops.push(ParsedOp::M(is[0], is[1] as u64)); // m__body(i64 qubit, i64 result_id)
+            cur_ops.push(ParsedOp::M(iq(0)?, iq(1)? as u64)); // m__body(i64 qubit, i64 result_id)
         } else if l.contains("__quantum__rt__result_record_output") {
-            cur_ops.push(ParsedOp::Record(is[0] as u64)); // result_record_output(i64 result_id, i8* null)
+            cur_ops.push(ParsedOp::Record(iq(0)? as u64)); // result_record_output(i64 result_id, i8* null)
         } else if l.starts_with("br ") && l.contains("label %") {
             let labels = br_labels(l);
             if labels.len() == 2 {
+                if then_label.is_some() {
+                    return Err(unsupported_qis("more than one conditional branch -- only a single diamond is supported"));
+                }
                 then_label = Some(labels[0].clone());
                 else_label = Some(labels[1].clone());
             }
+        } else if l.contains("__quantum__") {
+            return Err(unsupported_qis(format!("operation not in the covered subset: {l}")));
         }
     }
     let find = |lab: &str| blocks.iter().find(|(l, _)| l == lab).map(|(_, o)| o.clone()).unwrap_or_default();
@@ -1487,9 +1517,9 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock
     // entry gates (everything before the trailing mid-measure), then the mid measure (the cond).
     let (mid_q, mid_rid) = match entry_ops.last() {
         Some(ParsedOp::M(q, rid)) => (*q, *rid),
-        _ => panic!("expected entry block to end with a measurement (qprog mid-measure)"),
+        _ => return Err(unsupported_qis("entry block must end with a mid-measurement (single-diamond adaptive shape)")),
     };
-    for p in &entry_ops[..entry_ops.len() - 1] { emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg); }
+    for p in &entry_ops[..entry_ops.len() - 1] { emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg)?; }
     let m0 = MeasureOp::new(ctx, slot_of[&mid_q]);
     m0.get_operation().insert_at_back(bb, ctx);
     let m0v = m0.get_result(ctx);
@@ -1499,19 +1529,19 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock
     let ifop = IfOp::new(ctx, m0v);
     ifop.get_operation().insert_at_back(bb, ctx);
     let then_bb = ifop.make_region_block(ctx, 0);
-    for p in &then_ops { emit_parsed(ctx, p, then_bb, &slot_of, &mut measured, &mut reg); }
+    for p in &then_ops { emit_parsed(ctx, p, then_bb, &slot_of, &mut measured, &mut reg)?; }
     let else_bb = ifop.make_region_block(ctx, 1);
-    for p in &else_ops { emit_parsed(ctx, p, else_bb, &slot_of, &mut measured, &mut reg); }
+    for p in &else_ops { emit_parsed(ctx, p, else_bb, &slot_of, &mut measured, &mut reg)?; }
     // final measurements + result_record_output ops (the export list)
-    for p in &merge_ops { emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg); }
+    for p in &merge_ops { emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg)?; }
     EndOp::new(ctx).get_operation().insert_at_back(bb, ctx);
-    (module, bb, reg)
+    Ok((module, bb, reg))
 }
 
 pub fn run_milestone_6() {
     let ctx = &mut Context::new();
     let src = include_str!("../../../examples/llvm/qprog.ll");
-    let (module, bb, reg) = parse_qprog_ll(ctx, src);
+    let (module, bb, reg) = parse_qprog_ll(ctx, src).expect("milestone-6: parse qprog.ll");
     println!("=== qprog.ll parsed into pliron qec IR (rotations + qec.if) ===");
     println!("{}", module.get_operation().disp(ctx));
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-6 verify] FAILED: {}", e.disp(ctx)));
@@ -1558,7 +1588,7 @@ pub fn run_milestone_6() {
 pub fn run_milestone_7() {
     let ctx = &mut Context::new();
     let src = include_str!("../fixtures/adaptive_branch.ll");
-    let (module, bb, reg) = parse_qprog_ll(ctx, src);
+    let (module, bb, reg) = parse_qprog_ll(ctx, src).expect("milestone-7: parse adaptive_branch.ll");
     println!("=== adaptive_branch.ll parsed into pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-7 verify] FAILED: {}", e.disp(ctx)));
@@ -1604,7 +1634,7 @@ pub fn run_milestone_7() {
 pub fn run_branch_measure() {
     let ctx = &mut Context::new();
     let src = include_str!("../fixtures/branch_measure.ll");
-    let (module, bb, reg) = parse_qprog_ll(ctx, src);
+    let (module, bb, reg) = parse_qprog_ll(ctx, src).expect("branch_measure: parse");
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[branch_measure verify] FAILED: {}", e.disp(ctx)));
     let plan = plan_from_if_ir(ctx, bb, &reg);
     // structural: the then-branch really does contain a measurement (this is what we are covering),
@@ -1668,9 +1698,9 @@ fn has_conditional_branch(src: &str) -> bool {
 pub fn from_qis_llvm_ir_pliron(src: &str) -> std::result::Result<Box<dyn ClassicalControlEngine>, PecosError> {
     let ctx = &mut Context::new();
     let (module, bb, reg) = if has_conditional_branch(src) {
-        parse_qprog_ll(ctx, src)
+        parse_qprog_ll(ctx, src)?
     } else {
-        parse_bell_ll(ctx, src)
+        parse_bell_ll(ctx, src)?
     };
     verify_op(&module, ctx)
         .map_err(|e| PecosError::Compilation(format!("pliron qec verification failed: {}", e.disp(ctx))))?;
@@ -1710,7 +1740,7 @@ mod tests {
         // port side: bell.ll -> pliron qec (incl. qec.record + registry) -> the SAME export path as
         // qprog (plan_from_if_ir + PlironIfEngine) -> r0/r1 registers. No IfOp -> a single batch.
         let ctx = &mut Context::new();
-        let (module, bb, reg) = parse_bell_ll(ctx, bell);
+        let (module, bb, reg) = parse_bell_ll(ctx, bell).expect("port lowers bell.ll");
         verify_op(&module, ctx).expect("port lowers bell.ll (with qec.record) and verifies");
         let plan = plan_from_if_ir(ctx, bb, &reg);
         assert_eq!(plan.export, vec![0, 1], "bell.ll records result-ids 0 (q0) then 1 (q1)");
@@ -1766,7 +1796,7 @@ mod tests {
 
         // port side: lowers without error (full end-to-end physics is m6).
         let ctx = &mut Context::new();
-        let (module, _bb, _reg) = parse_qprog_ll(ctx, qprog);
+        let (module, _bb, _reg) = parse_qprog_ll(ctx, qprog).expect("port lowers qprog.ll");
         verify_op(&module, ctx).expect("port lowers qprog.ll (rotations + qec.if) and verifies");
 
         // pecos-phir side: errors lowering the rotation angle.
@@ -1890,7 +1920,7 @@ mod tests {
     fn registry_holds_measurement_metadata() {
         let ctx = &mut Context::new();
         let src = include_str!("../../../examples/llvm/qprog.ll");
-        let (_module, bb, reg) = parse_qprog_ll(ctx, src);
+        let (_module, bb, reg) = parse_qprog_ll(ctx, src).expect("parse qprog.ll");
         let mut infos: Vec<(usize, Basis, u64)> = bb
             .deref(ctx)
             .iter(ctx)
@@ -2062,11 +2092,10 @@ mod tests {
         assert!(!empty.as_bytes().is_empty(), "create_empty().as_bytes() is NOT byte-empty -- that is the footgun");
     }
 
-    /// A `result_record_output` that names a result-id no measurement produced must fail loud, not
-    /// silently record a default 0. Guards the explicit measurement-SSA -> export resolution.
+    /// A `result_record_output` that names a result-id no measurement produced must return a
+    /// structured error (not silently record a default 0, not panic). Guards the export resolution.
     #[test]
-    #[should_panic(expected = "unknown result-id 9")]
-    fn negative_record_of_unknown_result_id_panics() {
+    fn negative_record_of_unknown_result_id_errors() {
         const BAD: &str = "\
 define i64 @qmain(i64 %arg) #0 {
     call void @__quantum__qis__h__body(i64 0)
@@ -2085,6 +2114,66 @@ final:
 }
 ";
         let ctx = &mut Context::new();
-        let _ = parse_qprog_ll(ctx, BAD); // records result-id 9, which no measurement defines
+        let Err(err) = parse_qprog_ll(ctx, BAD) else {
+            panic!("recording an unknown result-id must error, but the parse succeeded");
+        };
+        assert!(
+            format!("{err}").contains("unknown result-id 9"),
+            "expected the unknown-result-id rejection, got: {err}"
+        );
+    }
+
+    /// A QIS call outside the covered subset (here an `s` gate) must be rejected with a structured
+    /// error, NOT silently dropped (the old behavior).
+    #[test]
+    fn negative_unsupported_gate_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    call void @__quantum__qis__h__body(i64 0)
+    call void @__quantum__qis__s__body(i64 0)
+    %r0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+    call void @__quantum__rt__result_record_output(i64 0, i8* null)
+    ret i64 0
+}
+";
+        let ctx = &mut Context::new();
+        let Err(err) = parse_bell_ll(ctx, BAD) else {
+            panic!("an unsupported gate must error, but the parse succeeded");
+        };
+        assert!(
+            format!("{err}").contains("not in the covered subset"),
+            "expected the unsupported-operation rejection, got: {err}"
+        );
+    }
+
+    /// More than one conditional branch is outside the single-diamond subset and must be rejected
+    /// (not misparsed by taking only the first branch).
+    #[test]
+    fn negative_multiple_conditional_branches_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+    %c0 = icmp eq i32 %m0, 1
+    br i1 %c0, label %a, label %b
+a:
+    %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+    %c1 = icmp eq i32 %m1, 1
+    br i1 %c1, label %c, label %d
+b:
+    br label %d
+c:
+    br label %d
+d:
+    ret i64 0
+}
+";
+        let ctx = &mut Context::new();
+        let Err(err) = parse_qprog_ll(ctx, BAD) else {
+            panic!("more than one conditional branch must error, but the parse succeeded");
+        };
+        assert!(
+            format!("{err}").contains("more than one conditional branch"),
+            "expected the unsupported-control-flow rejection, got: {err}"
+        );
     }
 }

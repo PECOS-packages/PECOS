@@ -133,7 +133,20 @@ def test_global_axis_cycle_f_emits_uniform_y_szz_check_scaffold() -> None:
     assert any(op.op_type == OpType.MEASURE and op.label.startswith("sz") for op in ops)
 
 
-def test_checkerboard_xzzx_emits_mixed_szz_check_scaffold() -> None:
+@pytest.mark.parametrize(
+    ("policy", "rotated_data", "unrotated_data", "x_touch_data", "z_touch_data"),
+    [
+        ("checkerboard_xzzx", 0, 1, 1, 2),
+        ("checkerboard_zxxz", 1, 0, 2, 1),
+    ],
+)
+def test_checkerboard_frames_emit_mixed_szz_check_scaffold(
+    policy: str,
+    rotated_data: int,
+    unrotated_data: int,
+    x_touch_data: int,
+    z_touch_data: int,
+) -> None:
     patch = SurfacePatch.create(distance=3)
 
     ops, _allocation = build_surface_code_circuit(
@@ -141,15 +154,23 @@ def test_checkerboard_xzzx_emits_mixed_szz_check_scaffold() -> None:
         num_rounds=1,
         basis="Z",
         interaction_basis="szz",
-        clifford_frame_policy="checkerboard_xzzx",
+        clifford_frame_policy=policy,
     )
 
-    assert any(op.op_type == OpType.H and op.label == "prep_x_basis_d0:to_z" for op in ops)
-    assert any(op.op_type == OpType.H and op.label == "measure_x_basis_d0:from_z" for op in ops)
-    assert not any(op.label == "prep_x_basis_d1:to_z" for op in ops)
-    assert any("szz_x_touch_pre:X1:d1:to_z" in op.label for op in ops)
-    assert any("szz_touch_comp:SXDG:X:X1:d1" in op.label for op in ops)
-    assert any("szz_touch_comp:SZDG:Z:X1:d2" in op.label for op in ops)
+    assert any(
+        op.op_type == OpType.H
+        and op.label == f"prep_x_basis_d{rotated_data}:to_z"
+        for op in ops
+    )
+    assert any(
+        op.op_type == OpType.H
+        and op.label == f"measure_x_basis_d{rotated_data}:from_z"
+        for op in ops
+    )
+    assert not any(op.label == f"prep_x_basis_d{unrotated_data}:to_z" for op in ops)
+    assert any(f"szz_x_touch_pre:X1:d{x_touch_data}:to_z" in op.label for op in ops)
+    assert any(f"szz_touch_comp:SXDG:X:X1:d{x_touch_data}" in op.label for op in ops)
+    assert any(f"szz_touch_comp:SZDG:Z:X1:d{z_touch_data}" in op.label for op in ops)
 
 
 def test_global_axis_cycle_f_tick_circuit_keeps_source_detector_metadata() -> None:
@@ -170,7 +191,8 @@ def test_global_axis_cycle_f_tick_circuit_keeps_source_detector_metadata() -> No
     assert tick_circuit.get_meta("basis") == "Z"
 
 
-def test_checkerboard_xzzx_tick_circuit_keeps_source_detector_metadata() -> None:
+@pytest.mark.parametrize("policy", ["checkerboard_xzzx", "checkerboard_zxxz"])
+def test_checkerboard_tick_circuit_keeps_source_detector_metadata(policy: str) -> None:
     patch = SurfacePatch.create(distance=3)
 
     tick_circuit = generate_tick_circuit_from_patch(
@@ -178,7 +200,7 @@ def test_checkerboard_xzzx_tick_circuit_keeps_source_detector_metadata() -> None
         num_rounds=1,
         basis="Z",
         interaction_basis="szz",
-        clifford_frame_policy="checkerboard_xzzx",
+        clifford_frame_policy=policy,
     )
 
     assert tick_circuit.get_meta("basis") == "Z"
@@ -202,7 +224,8 @@ def test_global_axis_cycle_f_native_abstract_dem_path_accepts_frame_policy() -> 
     assert isinstance(dem, str)
 
 
-def test_checkerboard_xzzx_native_abstract_dem_path_accepts_frame_policy() -> None:
+@pytest.mark.parametrize("policy", ["checkerboard_xzzx", "checkerboard_zxxz"])
+def test_checkerboard_native_abstract_dem_path_accepts_frame_policy(policy: str) -> None:
     patch = SurfacePatch.create(distance=3)
 
     dem = generate_circuit_level_dem_from_builder(
@@ -212,7 +235,7 @@ def test_checkerboard_xzzx_native_abstract_dem_path_accepts_frame_policy() -> No
         basis="Z",
         circuit_source="abstract",
         interaction_basis="szz",
-        clifford_frame_policy="checkerboard_xzzx",
+        clifford_frame_policy=policy,
     )
 
     assert isinstance(dem, str)
@@ -234,14 +257,15 @@ def test_clifford_frame_policy_traced_qis_binds_runtime_result_tags() -> None:
     assert tick_circuit.get_meta("observables")
 
 
-def test_checkerboard_xzzx_traced_qis_binds_runtime_result_tags() -> None:
+@pytest.mark.parametrize("policy", ["checkerboard_xzzx", "checkerboard_zxxz"])
+def test_checkerboard_traced_qis_binds_runtime_result_tags(policy: str) -> None:
     tick_circuit = build_memory_circuit(
         distance=3,
         rounds=1,
         basis="Z",
         circuit_source="traced_qis",
         interaction_basis="szz",
-        clifford_frame_policy="checkerboard_xzzx",
+        clifford_frame_policy=policy,
     )
 
     assert tick_circuit.get_meta("surface_metadata_record_binding") == "runtime_result_tags"

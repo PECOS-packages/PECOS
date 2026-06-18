@@ -288,6 +288,22 @@ impl Verify for RecordOp {
         if !records_a_measure {
             return verify_err!(self.loc(ctx), "qec.record operand must be a qec.measure result");
         }
+        // Region scope: the recorded measurement must be visible from this record op -- i.e. its
+        // defining block must be the record's block or an enclosing one. Recording a measurement
+        // defined inside a `qec.if` region from the outer block is a cross-region SSA escape that
+        // needs block-args/yield (measurement-SSA Phase 2); reject it rather than silently allow it.
+        let meas_block = opnd.get_defining_block(ctx);
+        let mut cur = self.get_operation().deref(ctx).get_parent_block();
+        let visible = loop {
+            match cur {
+                Some(b) if Some(b) == meas_block => break true,
+                Some(b) => cur = b.deref(ctx).get_parent_block(ctx),
+                None => break false,
+            }
+        };
+        if !visible {
+            return verify_err!(self.loc(ctx), "qec.record operand is defined in a non-enclosing region (cross-region escape needs yield)");
+        }
         Ok(())
     }
 }
@@ -603,7 +619,7 @@ pub fn run_milestone_2() {
 /// Minimal QIS-LLVM-IR -> pliron `qec` IR parser for the Bell fixture (`examples/llvm/bell.ll`).
 /// Recognizes `__quantum__qis__{h,cx,m}__body` calls with integer qubit args. This proves the
 /// LLVM-IR frontend ports onto pliron ops (not just hand-built IR) -- the last gate-fidelity item.
-pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>) {
+pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>, MeasurementRegistry) {
     fn i64_args(line: &str) -> Vec<usize> {
         match (line.find('('), line.rfind(')')) {
             (Some(l), Some(r)) if r > l => line[l + 1..r]
@@ -613,7 +629,7 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>
             _ => Vec::new(),
         }
     }
-    // pass 1: collect the gate/measure stream + the set of qubits referenced
+    // pass 1: collect the gate/measure/record stream + the set of qubits referenced
     let mut parsed: Vec<(&str, Vec<usize>)> = Vec::new();
     let mut qubits: BTreeSet<usize> = BTreeSet::new();
     for line in src.lines() {
@@ -631,12 +647,14 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>
             qubits.insert(a[1]);
             parsed.push(("cx", a));
         } else if l.contains("__quantum__qis__m__body") {
-            let a = i64_args(l);
+            let a = i64_args(l); // (qubit, result_id)
             qubits.insert(a[0]);
             parsed.push(("m", a));
+        } else if l.contains("__quantum__rt__result_record_output") {
+            parsed.push(("record", i64_args(l))); // (result_id)
         }
     }
-    // pass 2: build the pliron qec IR
+    // pass 2: build the pliron qec IR + the measurement-SSA registry
     let module = ModuleOp::new(ctx, "bell_from_ll".try_into().unwrap());
     let func_ty = FunctionType::get(ctx, vec![], vec![]);
     let func = FuncOp::new(ctx, "qmain".try_into().unwrap(), func_ty);
@@ -655,6 +673,8 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>
         slot_of.insert(idx, sv);
         push!(PrepareOp::new(ctx, sv)); // QIS qubits start |0>; that implicit init IS a prepare in the qec model
     }
+    let mut reg = MeasurementRegistry::default();
+    let mut measured: HashMap<u64, Value> = HashMap::new(); // result-id -> measurement-SSA Value
     for (op, a) in &parsed {
         match *op {
             "h" => {
@@ -664,19 +684,28 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> (ModuleOp, Ptr<BasicBlock>
                 push!(CxOp::new(ctx, slot_of[&a[0]], slot_of[&a[1]]));
             }
             "m" => {
-                push!(MeasureOp::new(ctx, slot_of[&a[0]]));
+                let m = push!(MeasureOp::new(ctx, slot_of[&a[0]]));
+                let v = m.get_result(ctx);
+                let rid = a[1] as u64;
+                measured.insert(rid, v);
+                reg.record(v, MeasurementInfo { qubit: a[0], basis: Basis::Z, export_label: rid });
+            }
+            "record" => {
+                let rid = a[0] as u64;
+                let v = *measured.get(&rid).unwrap_or_else(|| panic!("result_record_output references unknown result-id {rid}"));
+                push!(RecordOp::new(ctx, v));
             }
             _ => {}
         }
     }
     push!(EndOp::new(ctx));
-    (module, bb)
+    (module, bb, reg)
 }
 
 pub fn run_milestone_3() {
     let ctx = &mut Context::new();
     let src = include_str!("../../../examples/llvm/bell.ll");
-    let (module, bb) = parse_bell_ll(ctx, src);
+    let (module, bb, _reg) = parse_bell_ll(ctx, src);
     println!("=== bell.ll parsed into pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
     verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-3 verify] FAILED: {}", e.disp(ctx)));
@@ -1536,28 +1565,47 @@ mod tests {
     // These assert pecos-phir's CURRENT behavior so a future change there trips the test and we
     // re-examine the cutover criterion.
 
-    /// bell.ll export divergence: the port lowers `result_record_output` to `r{id}` registers and
-    /// produces the Bell pair; pecos-phir *elides* `result_record_output` (and bell.ll has no other
+    /// bell.ll export divergence: the port lowers `result_record_output` to `qec.record` ops and
+    /// exports `r{id}` registers through the measurement registry (here exercising that real export
+    /// path, not a manual pack); pecos-phir *elides* `result_record_output` (and bell.ll has no other
     /// export source), so its `Shot` is empty.
     #[test]
     fn differential_bell_ll_export_convention() {
         let bell = include_str!("../../../examples/llvm/bell.ll");
 
-        // port side: bell.ll -> pliron qec -> ByteMessage -> seeded StateVecEngine -> Bell pair.
+        // port side: bell.ll -> pliron qec (incl. qec.record + registry) -> the SAME export path as
+        // qprog (plan_from_if_ir + PlironIfEngine) -> r0/r1 registers. No IfOp -> a single batch.
         let ctx = &mut Context::new();
-        let (_m, bb) = parse_bell_ll(ctx, bell);
-        let msg = emit_bytemessage(ctx, bb);
-        let mut sim = StateVecEngine::with_seed(2, 7);
-        let (mut saw0, mut saw3) = (false, false);
+        let (module, bb, reg) = parse_bell_ll(ctx, bell);
+        verify_op(&module, ctx).expect("port lowers bell.ll (with qec.record) and verifies");
+        let plan = plan_from_if_ir(ctx, bb, &reg);
+        assert_eq!(plan.export, vec![0, 1], "bell.ll records result-ids 0 (q0) then 1 (q1)");
+        let engine = PlironIfEngine {
+            batch1: plan.batch1,
+            cond_outcome_idx: plan.cond_outcome_idx,
+            then_cmds: plan.then_cmds,
+            else_cmds: plan.else_cmds,
+            post: plan.post,
+            export: plan.export,
+            stage: 0,
+            b1: Vec::new(),
+            b2: Vec::new(),
+        };
+        let mut hybrid = pecos_engines::hybrid::HybridEngineBuilder::new()
+            .with_classical_engine(Box::new(engine))
+            .with_quantum_engine(Box::new(StateVecEngine::with_seed(2, 7)))
+            .build();
+        let (mut saw0, mut saw1) = (false, false);
         for _ in 0..200 {
-            sim.reset().unwrap();
-            let o = sim.process(msg.clone()).unwrap().outcomes().unwrap();
-            let c = (o[1] << 1) | o[0]; // register "c": q1 q0
-            assert!(c == 0 || c == 3, "port bell.ll must be Bell-correlated (00/11), got {c}");
-            saw0 |= c == 0;
-            saw3 |= c == 3;
+            let shot = hybrid.run_shot().unwrap();
+            let r0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0 (q0)");
+            let r1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1 (q1)");
+            assert_eq!(r0, r1, "port bell.ll via qec.record export must be Bell-correlated, got r0={r0} r1={r1}");
+            saw0 |= r0 == 0;
+            saw1 |= r0 == 1;
+            Engine::reset(&mut hybrid).unwrap();
         }
-        assert!(saw0 && saw3, "port bell.ll must see both 00 and 11");
+        assert!(saw0 && saw1, "port bell.ll must see both 00 and 11");
 
         // pecos-phir side: same bell.ll, run through its real engine -> empty Shot (no exports).
         let module = pecos_phir::parse_qis_to_quantum(bell).expect("pecos-phir parses bell.ll");
@@ -1573,7 +1621,7 @@ mod tests {
              registers; the port exports r0/r1. pecos-phir gave: {:?}",
             shot.data.keys().collect::<Vec<_>>()
         );
-        println!("[differential bell.ll] port -> register \"c\" Bell pair; pecos-phir -> empty Shot (record_output elided)");
+        println!("[differential bell.ll] port -> r0==r1 Bell pair via qec.record export; pecos-phir -> empty Shot (record_output elided)");
     }
 
     /// qprog.ll rotation divergence: the port lowers `rz/rx/ry/zz` (M6 runs it end-to-end), while
@@ -1670,6 +1718,47 @@ mod tests {
         let bad = HOp::new(ctx, alloc.get_result(ctx));
         let res = verify_op(&bad, ctx);
         assert!(res.is_err(), "qec.h on a qec.alloc handle must fail verification, got Ok");
+    }
+
+    /// Recording a measurement defined *inside* a `qec.if` region from the OUTER block is a
+    /// cross-region SSA escape (it needs block-args/yield -- Phase 2). `qec.record`'s verifier must
+    /// reject it, not silently accept it.
+    #[test]
+    fn negative_record_of_in_region_measurement_rejected() {
+        let ctx = &mut Context::new();
+        let module = ModuleOp::new(ctx, "bad_region".try_into().unwrap());
+        let func_ty = FunctionType::get(ctx, vec![], vec![]);
+        let func = FuncOp::new(ctx, "main".try_into().unwrap(), func_ty);
+        module.append_operation(ctx, func.get_operation(), 0);
+        let bb = func.get_entry_block(ctx);
+        macro_rules! push {
+            ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+        }
+        let q = push!(QallocOp::new(ctx));
+        let qv = q.get_result(ctx);
+        let s0v = push!(SlotOp::new(ctx, qv, 0)).get_result(ctx);
+        let s1v = push!(SlotOp::new(ctx, qv, 1)).get_result(ctx);
+        push!(PrepareOp::new(ctx, s0v));
+        push!(PrepareOp::new(ctx, s1v));
+        push!(HOp::new(ctx, s0v));
+        let m0v = push!(MeasureOp::new(ctx, s0v)).get_result(ctx);
+        let ifop = push!(IfOp::new(ctx, m0v));
+        let then_bb = ifop.make_region_block(ctx, 0);
+        let m1 = MeasureOp::new(ctx, s1v); // measure INSIDE the then-region
+        m1.get_operation().insert_at_back(then_bb, ctx);
+        let m1v = m1.get_result(ctx);
+        let _else_bb = ifop.make_region_block(ctx, 1);
+        push!(RecordOp::new(ctx, m1v)); // record it from the OUTER block -- the cross-region escape
+        push!(EndOp::new(ctx));
+        let err = verify_op(&module, ctx).expect_err(
+            "recording an in-qec.if-region measurement from the outer block must fail verification",
+        );
+        // bite for the RIGHT reason: the region-scope check, not some incidental failure.
+        assert!(
+            format!("{}", err.disp(ctx)).contains("cross-region escape"),
+            "expected the cross-region-escape rejection, got: {}",
+            err.disp(ctx)
+        );
     }
 
     /// `ByteMessage::create_empty()` is *semantically* empty (`is_empty() == Ok(true)`) even though

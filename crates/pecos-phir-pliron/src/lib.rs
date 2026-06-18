@@ -1,14 +1,14 @@
-//! Bell port — the round-2 decision gate for build-PHIR-on-pliron.
-//! See pecos-docs design/slr-phir-vision.md §7.1 + slr-phir-vision-qis-port-sketch.md.
+//! Parallel, non-default QIS-LLVM-IR -> pliron-PHIR path (the strangler crate, scoped to the
+//! covered QIS-LLVM subset). See pecos-docs design/slr-phir-pliron-strangler-scope.md.
 //!
-//! Milestone 0: prove the pecos-engines sim seam with a hand-built Bell ByteMessage.
-//! Milestone 1: build the SAME Bell program as pliron `qec` IR (allocator/slot model),
-//!   emit the ByteMessage from a pliron op-walk using an EXPLICIT `Value -> qubit index`
-//!   side-table (NOT the `SSAValue`-as-u32 overload that pecos-phir uses), then run it
-//!   through the SAME unchanged pecos-engines StateVecEngine and assert the Bell invariant.
+//! A QIS-LLVM-IR program is lowered to a pliron `qec` dialect (allocator/slot model; measurements
+//! are SSA values with metadata in a side-table registry; `result_record_output -> qec.record`
+//! export) and run through the UNCHANGED pecos-engines seam (`ClassicalControlEngine` /
+//! `ByteMessage` / `Shot`) -- no pliron type leaks into the engine API. Qubit identity comes from an
+//! explicit `Value -> qubit index` map, NOT the `SSAValue`-as-u32 overload the incumbent uses.
 //!
-//! This is the concrete proof the round-2 decision is gated on: typed pliron ops feed the
-//! real backend through explicit qubit/result maps, and the ByteMessage seam is untouched.
+//! [`from_qis_llvm_ir_pliron`] is the narrow opt-in entry point: `.ll` text -> a boxed engine ready
+//! for `HybridEngineBuilder`. The milestones M0-M7 + differential remain as the regression suite.
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -18,7 +18,7 @@ use pecos_core::Angle64;
 use pecos_engines::byte_message::ByteMessage;
 use pecos_engines::hybrid::builder::HybridEngineBuilder;
 use pecos_engines::quantum::StateVecEngine;
-use pecos_engines::{ClassicalEngine, ControlEngine, Data, Engine, EngineStage, PecosError, Shot};
+use pecos_engines::{ClassicalControlEngine, ClassicalEngine, ControlEngine, Data, Engine, EngineStage, PecosError, Shot};
 use pliron::{
     builtin::{
         attributes::IntegerAttr,
@@ -1575,6 +1575,50 @@ pub fn run_branch_measure() {
     println!("[branch_measure measure-inside-branch -> variable-length b2 reconstruction] OK -- r0==r1 all 200 shots, both 0 and 1 seen");
 }
 
+// ===================== public adapter: the opt-in QIS-LLVM-IR -> pliron call path =====================
+
+/// True if the program has a conditional branch (`br i1 ...`) -- i.e. the adaptive single-diamond
+/// shape (qprog-style). Its absence means straight-line (bell-style). This is the dispatch over the
+/// covered QIS-LLVM subset; richer CFGs are out of scope (see the strangler scope doc).
+fn has_conditional_branch(src: &str) -> bool {
+    src.lines().any(|l| l.trim().starts_with("br i1"))
+}
+
+/// Lower a QIS-LLVM-IR program to the pliron `qec` dialect and return a boxed
+/// `ClassicalControlEngine` ready for `HybridEngineBuilder` -- the narrow, opt-in entry point for the
+/// pliron path. The incumbent `pecos-phir` stays the default; callers select this explicitly.
+///
+/// Scope: the covered QIS-LLVM subset -- Bell-style straight-line and the single-diamond adaptive
+/// shape (`h`/`x`/`cx`/`rz`/`rx`/`ry`/`zz`/`m`, one `icmp`+`br` lifted to `qec.if`,
+/// `result_record_output` export). The returned engine reports its own `num_qubits()` for sizing the
+/// quantum backend. Returns a structured error if the lowered IR fails verification.
+///
+/// Known limits (tracked in the scope doc, not yet closed): the parser still panics on malformed
+/// input outside the covered subset (parse-path hardening to structured errors is a separate item),
+/// and `num_qubits()` is currently fixed at 2 (correct for the covered fixtures).
+pub fn from_qis_llvm_ir_pliron(src: &str) -> std::result::Result<Box<dyn ClassicalControlEngine>, PecosError> {
+    let ctx = &mut Context::new();
+    let (module, bb, reg) = if has_conditional_branch(src) {
+        parse_qprog_ll(ctx, src)
+    } else {
+        parse_bell_ll(ctx, src)
+    };
+    verify_op(&module, ctx)
+        .map_err(|e| PecosError::Compilation(format!("pliron qec verification failed: {}", e.disp(ctx))))?;
+    let plan = plan_from_if_ir(ctx, bb, &reg);
+    Ok(Box::new(PlironIfEngine {
+        batch1: plan.batch1,
+        cond_outcome_idx: plan.cond_outcome_idx,
+        then_cmds: plan.then_cmds,
+        else_cmds: plan.else_cmds,
+        post: plan.post,
+        export: plan.export,
+        stage: 0,
+        b1: Vec::new(),
+        b2: Vec::new(),
+    }))
+}
+
 // ===================== regression tests (the milestones, run via `cargo test`) =====================
 #[cfg(test)]
 mod tests {
@@ -1667,6 +1711,47 @@ mod tests {
         println!("[differential qprog.ll] port lowers rotations + qec.if; pecos-phir errors: {msg}");
     }
 
+    /// The real call path: drive the PUBLIC `from_qis_llvm_ir_pliron` adapter (not the internal
+    /// parse/plan/engine pieces) through `HybridEngine`, for both the straight-line (bell) and
+    /// diamond (qprog) shapes -- proving the opt-in entry point produces a usable engine.
+    #[test]
+    fn adapter_real_call_path_bell_and_qprog() {
+        use pecos_engines::hybrid::HybridEngineBuilder;
+
+        // bell.ll (straight-line) -> r0==r1 Bell pair via the registry/qec.record export.
+        let eng = from_qis_llvm_ir_pliron(include_str!("../../../examples/llvm/bell.ll")).expect("adapter lowers bell.ll");
+        let n = eng.num_qubits();
+        let mut hybrid = HybridEngineBuilder::new()
+            .with_classical_engine(eng)
+            .with_quantum_engine(Box::new(StateVecEngine::with_seed(n, 11)))
+            .build();
+        let (mut saw0, mut saw1) = (false, false);
+        for _ in 0..200 {
+            let shot = hybrid.run_shot().unwrap();
+            let r0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0");
+            let r1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1");
+            assert_eq!(r0, r1, "bell via adapter must be Bell-correlated, got r0={r0} r1={r1}");
+            saw0 |= r0 == 0;
+            saw1 |= r0 == 1;
+            Engine::reset(&mut hybrid).unwrap();
+        }
+        assert!(saw0 && saw1, "bell via adapter must see both 00 and 11");
+
+        // qprog.ll (diamond) -> records r0/r1/r2; q0 is Z-diagonal so mid (r2) and final_q0 (r0) are 0.
+        let eng = from_qis_llvm_ir_pliron(include_str!("../../../examples/llvm/qprog.ll")).expect("adapter lowers qprog.ll");
+        let n = eng.num_qubits();
+        let mut hybrid = HybridEngineBuilder::new()
+            .with_classical_engine(eng)
+            .with_quantum_engine(Box::new(StateVecEngine::with_seed(n, 11)))
+            .build();
+        for _ in 0..50 {
+            let shot = hybrid.run_shot().unwrap();
+            assert_eq!(shot.data.get("r2").and_then(Data::as_u32), Some(0), "qprog mid (r2) deterministically 0");
+            assert_eq!(shot.data.get("r0").and_then(Data::as_u32), Some(0), "qprog final_q0 (r0) deterministically 0");
+            assert!(shot.data.get("r1").and_then(Data::as_u32).is_some(), "qprog final_q1 (r1) present");
+            Engine::reset(&mut hybrid).unwrap();
+        }
+    }
     #[test]
     fn m0_hand_built_bell_seam() {
         run_and_check("milestone-0 hand-built Bell", bell_message(), 200);

@@ -369,7 +369,7 @@ impl Verify for XOp {
 
 /// `qec.if(cond: i1) { then } { else }` -- region-based conditional control flow (vision-aligned;
 /// no CFG flattening). Two single-block regions of qec ops, no terminators.
-#[pliron_op(name = "qec.if", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>, NRegionsInterface<2>, SingleBlockRegionInterface, NoTerminatorInterface], verifier = "succ")]
+#[pliron_op(name = "qec.if", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>, NRegionsInterface<2>, SingleBlockRegionInterface, NoTerminatorInterface])]
 pub struct IfOp;
 impl IfOp {
     pub fn new(ctx: &mut Context, cond: Value) -> Self {
@@ -384,9 +384,21 @@ impl IfOp {
         block
     }
 }
+impl Verify for IfOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        // the condition (operand 0) must be an i1 measurement result (region count is enforced by
+        // NRegionsInterface<2>); inspect the operand's type read-only, do not construct it.
+        let cond_ty = self.get_operation().deref(ctx).get_operand(0).get_type(ctx);
+        let is_i1 = TypePtr::<IntegerType>::from_ptr(cond_ty, ctx).is_ok_and(|tp| tp.deref(ctx).width() == 1);
+        if !is_i1 {
+            return verify_err!(self.loc(ctx), "qec.if condition (operand 0) must be an i1 measurement result");
+        }
+        Ok(())
+    }
+}
 
 /// Single-qubit rotations carrying a fixed-point `Angle64` (qprog.ll's rz/rx/ry).
-#[pliron_op(name = "qec.rz", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
+#[pliron_op(name = "qec.rz", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>])]
 pub struct RzOp;
 impl RzOp {
     pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
@@ -395,7 +407,15 @@ impl RzOp {
         RzOp { op }
     }
 }
-#[pliron_op(name = "qec.rx", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
+impl Verify for RzOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        if self.get_operation().deref(ctx).get_operand(0).get_type(ctx) != qubitref_ty(ctx) {
+            return verify_err!(self.loc(ctx), "qec.rz operand must be a qec.qubitref");
+        }
+        Ok(())
+    }
+}
+#[pliron_op(name = "qec.rx", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>])]
 pub struct RxOp;
 impl RxOp {
     pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
@@ -404,13 +424,29 @@ impl RxOp {
         RxOp { op }
     }
 }
-#[pliron_op(name = "qec.ry", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>], verifier = "succ")]
+impl Verify for RxOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        if self.get_operation().deref(ctx).get_operand(0).get_type(ctx) != qubitref_ty(ctx) {
+            return verify_err!(self.loc(ctx), "qec.rx operand must be a qec.qubitref");
+        }
+        Ok(())
+    }
+}
+#[pliron_op(name = "qec.ry", format, interfaces = [NOpdsInterface<1>, NResultsInterface<0>])]
 pub struct RyOp;
 impl RyOp {
     pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
         set_angle(ctx, op, angle);
         RyOp { op }
+    }
+}
+impl Verify for RyOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        if self.get_operation().deref(ctx).get_operand(0).get_type(ctx) != qubitref_ty(ctx) {
+            return verify_err!(self.loc(ctx), "qec.ry operand must be a qec.qubitref");
+        }
+        Ok(())
     }
 }
 /// Two-qubit sqrt-ZZ entangler (PECOS `SZZ`; qprog.ll's no-angle `zz` maps here).
@@ -760,6 +796,21 @@ pub struct AdaptivePlan {
     batch2: Vec<Cmd>,        // post-condition ops (final Mz)
 }
 
+/// Build the `Cmd::Mz` for a `qec.measure`, asserting the registry's qubit agrees with the IR slot
+/// index. The registry is a side-table, so `verify` can't catch a mismatch; this fails loud at
+/// plan-build time if the registry and the IR ever drift apart.
+fn measure_to_mz(ctx: &Context, m: MeasureOp, qubit_of: &HashMap<Value, usize>, reg: &MeasurementRegistry) -> Cmd {
+    let operand = m.get_operation().deref(ctx).get_operand(0);
+    let slot_qubit = qubit_of[&operand];
+    let info = reg.get(m.get_result(ctx));
+    assert_eq!(
+        info.qubit, slot_qubit,
+        "measurement registry qubit ({}) disagrees with the IR slot index ({}) -- registry/IR drift",
+        info.qubit, slot_qubit
+    );
+    Cmd::Mz(info.qubit, info.export_label)
+}
+
 /// Walk a `qec` block once and split it into the two-batch adaptive plan at the `cond_x` boundary.
 /// Gate qubits come from the explicit slot-index map; measurement metadata (qubit + export label)
 /// comes from the `MeasurementRegistry`, keyed by the measure op's SSA value.
@@ -785,13 +836,13 @@ pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegi
             let t = qubit_of[&opn.deref(ctx).get_operand(1)];
             if after_cond { batch2.push(Cmd::Cx(c, t)) } else { batch1.push(Cmd::Cx(c, t)) }
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
-            let info = reg.get(m.get_result(ctx));
+            let mz = measure_to_mz(ctx, m, &qubit_of, reg);
             if after_cond {
-                batch2.push(Cmd::Mz(info.qubit, info.export_label));
+                batch2.push(mz);
             } else {
                 cond_outcome_idx = mz_b1;
                 mz_b1 += 1;
-                batch1.push(Cmd::Mz(info.qubit, info.export_label));
+                batch1.push(mz);
             }
         } else if let Some(c) = Operation::get_op::<CondXOp>(op, ctx) {
             cond_target = qubit_of[&c.get_operation().deref(ctx).get_operand(1)];
@@ -1001,8 +1052,7 @@ pub fn block_to_cmds(ctx: &Context, block: Ptr<BasicBlock>, qubit_of: &HashMap<V
             let opn = cx.get_operation();
             cmds.push(Cmd::Cx(qubit_of[&opn.deref(ctx).get_operand(0)], qubit_of[&opn.deref(ctx).get_operand(1)]));
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
-            let info = reg.get(m.get_result(ctx));
-            cmds.push(Cmd::Mz(info.qubit, info.export_label));
+            cmds.push(measure_to_mz(ctx, m, qubit_of, reg));
         }
     }
     cmds
@@ -1058,13 +1108,13 @@ pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementR
             let bq = qubit_of[&opn.deref(ctx).get_operand(1)];
             if after_if { post.push(Cmd::Szz(a, bq)) } else { batch1.push(Cmd::Szz(a, bq)) }
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
-            let info = reg.get(m.get_result(ctx));
+            let mz = measure_to_mz(ctx, m, &qubit_of, reg);
             if after_if {
-                post.push(Cmd::Mz(info.qubit, info.export_label));
+                post.push(mz);
             } else {
                 cond_outcome_idx = mz_b1;
                 mz_b1 += 1;
-                batch1.push(Cmd::Mz(info.qubit, info.export_label));
+                batch1.push(mz);
             }
         } else if let Some(ifop) = Operation::get_op::<IfOp>(op, ctx) {
             then_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 0), &qubit_of, reg);
@@ -1842,6 +1892,58 @@ mod tests {
             "expected the i1-condition rejection, got: {}",
             err.disp(ctx)
         );
+    }
+
+    /// `qec.rz` (and rx/ry) must reject a non-qubitref operand -- guards the rotation verifiers that
+    /// were tightened from `verifier = "succ"`.
+    #[test]
+    fn negative_rz_on_alloc_rejected() {
+        let ctx = &mut Context::new();
+        let alloc = QallocOp::new(ctx);
+        // rz on a qec.alloc handle (not a qubitref).
+        let bad = RzOp::new(ctx, alloc.get_result(ctx), Angle64::from_radians(0.5));
+        assert!(verify_op(&bad, ctx).is_err(), "qec.rz on a qec.alloc handle must fail verification");
+    }
+
+    /// `qec.if`'s condition must be an `i1`; a non-`i1` (here a qubitref) must be rejected -- guards
+    /// the IfOp verifier tightened from `verifier = "succ"`.
+    #[test]
+    fn negative_if_non_i1_condition_rejected() {
+        let ctx = &mut Context::new();
+        let alloc = QallocOp::new(ctx);
+        let s0v = SlotOp::new(ctx, alloc.get_result(ctx), 0).get_result(ctx);
+        let ifop = IfOp::new(ctx, s0v); // qubitref condition -- not an i1
+        ifop.make_region_block(ctx, 0);
+        ifop.make_region_block(ctx, 1);
+        let err = verify_op(&ifop, ctx).expect_err("qec.if with a non-i1 condition must fail verification");
+        assert!(
+            format!("{}", err.disp(ctx)).contains("i1"),
+            "expected the i1-condition rejection, got: {}",
+            err.disp(ctx)
+        );
+    }
+
+    /// The plan-build assertion catches registry/IR drift: a measurement whose registry qubit
+    /// disagrees with its IR slot index must panic (the registry is a side-table `verify` can't check).
+    #[test]
+    #[should_panic(expected = "registry/IR drift")]
+    fn registry_ir_drift_panics_at_plan_build() {
+        let ctx = &mut Context::new();
+        let module = ModuleOp::new(ctx, "drift".try_into().unwrap());
+        let func_ty = FunctionType::get(ctx, vec![], vec![]);
+        let func = FuncOp::new(ctx, "main".try_into().unwrap(), func_ty);
+        module.append_operation(ctx, func.get_operation(), 0);
+        let bb = func.get_entry_block(ctx);
+        macro_rules! push {
+            ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+        }
+        let qv = push!(QallocOp::new(ctx)).get_result(ctx);
+        let sv = push!(SlotOp::new(ctx, qv, 0)).get_result(ctx); // slot index 0
+        push!(PrepareOp::new(ctx, sv));
+        let m = push!(MeasureOp::new(ctx, sv));
+        let mut reg = MeasurementRegistry::default();
+        reg.record(m.get_result(ctx), MeasurementInfo { qubit: 1, basis: Basis::Z, export_label: 0 }); // qubit 1 != slot 0
+        let _ = plan_from_if_ir(ctx, bb, &reg); // measure_to_mz must assert and panic
     }
 
     /// The `qec.angle` attribute round-trips an `Angle64` through the IR exactly (fixed-point, no

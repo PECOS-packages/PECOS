@@ -68,6 +68,26 @@ def test_axis_cycle_frames_resolve_but_require_deformed_checks() -> None:
         resolved_f2.css_physical_memory_basis("X")
 
 
+def test_checkerboard_frames_resolve_to_mixed_xzzx_zxxz_checks() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    xzzx = resolve_surface_clifford_frame(patch, policy="checkerboard-xzzx")
+    zxxz = resolve_surface_clifford_frame(patch, policy="checkerboard_zxxz")
+
+    assert xzzx.requires_deformed_check_synthesis
+    assert zxxz.requires_deformed_check_synthesis
+    assert {check.axes for check in xzzx.checks if len(check.axes) == 4} == {
+        ("X", "Z", "Z", "X"),
+    }
+    assert {check.axes for check in zxxz.checks if len(check.axes) == 4} == {
+        ("Z", "X", "X", "Z"),
+    }
+    assert not xzzx.logical_x.is_uniform_axis
+    assert not xzzx.logical_z.is_uniform_axis
+    assert not zxxz.logical_x.is_uniform_axis
+    assert not zxxz.logical_z.is_uniform_axis
+
+
 def test_explicit_mixed_local_frame_marks_only_mixed_checks_deformed() -> None:
     patch = SurfacePatch.create(distance=3)
     frames = list(global_surface_frame("identity", patch.num_data))
@@ -113,6 +133,25 @@ def test_global_axis_cycle_f_emits_uniform_y_szz_check_scaffold() -> None:
     assert any(op.op_type == OpType.MEASURE and op.label.startswith("sz") for op in ops)
 
 
+def test_checkerboard_xzzx_emits_mixed_szz_check_scaffold() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    ops, _allocation = build_surface_code_circuit(
+        patch,
+        num_rounds=1,
+        basis="Z",
+        interaction_basis="szz",
+        clifford_frame_policy="checkerboard_xzzx",
+    )
+
+    assert any(op.op_type == OpType.H and op.label == "prep_x_basis_d0:to_z" for op in ops)
+    assert any(op.op_type == OpType.H and op.label == "measure_x_basis_d0:from_z" for op in ops)
+    assert not any(op.label == "prep_x_basis_d1:to_z" for op in ops)
+    assert any("szz_x_touch_pre:X1:d1:to_z" in op.label for op in ops)
+    assert any("szz_touch_comp:SXDG:X:X1:d1" in op.label for op in ops)
+    assert any("szz_touch_comp:SZDG:Z:X1:d2" in op.label for op in ops)
+
+
 def test_global_axis_cycle_f_tick_circuit_keeps_source_detector_metadata() -> None:
     patch = SurfacePatch.create(distance=3)
 
@@ -131,6 +170,22 @@ def test_global_axis_cycle_f_tick_circuit_keeps_source_detector_metadata() -> No
     assert tick_circuit.get_meta("basis") == "Z"
 
 
+def test_checkerboard_xzzx_tick_circuit_keeps_source_detector_metadata() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    tick_circuit = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        basis="Z",
+        interaction_basis="szz",
+        clifford_frame_policy="checkerboard_xzzx",
+    )
+
+    assert tick_circuit.get_meta("basis") == "Z"
+    assert tick_circuit.get_meta("detectors")
+    assert tick_circuit.get_meta("observables")
+
+
 def test_global_axis_cycle_f_native_abstract_dem_path_accepts_frame_policy() -> None:
     patch = SurfacePatch.create(distance=3)
 
@@ -147,6 +202,22 @@ def test_global_axis_cycle_f_native_abstract_dem_path_accepts_frame_policy() -> 
     assert isinstance(dem, str)
 
 
+def test_checkerboard_xzzx_native_abstract_dem_path_accepts_frame_policy() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=1,
+        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        basis="Z",
+        circuit_source="abstract",
+        interaction_basis="szz",
+        clifford_frame_policy="checkerboard_xzzx",
+    )
+
+    assert isinstance(dem, str)
+
+
 def test_clifford_frame_policy_traced_qis_binds_runtime_result_tags() -> None:
     tick_circuit = build_memory_circuit(
         distance=3,
@@ -155,6 +226,22 @@ def test_clifford_frame_policy_traced_qis_binds_runtime_result_tags() -> None:
         circuit_source="traced_qis",
         interaction_basis="szz",
         clifford_frame_policy="global_axis_cycle_f",
+    )
+
+    assert tick_circuit.get_meta("surface_metadata_record_binding") == "runtime_result_tags"
+    assert tick_circuit.get_meta("basis") == "Z"
+    assert tick_circuit.get_meta("detectors")
+    assert tick_circuit.get_meta("observables")
+
+
+def test_checkerboard_xzzx_traced_qis_binds_runtime_result_tags() -> None:
+    tick_circuit = build_memory_circuit(
+        distance=3,
+        rounds=1,
+        basis="Z",
+        circuit_source="traced_qis",
+        interaction_basis="szz",
+        clifford_frame_policy="checkerboard_xzzx",
     )
 
     assert tick_circuit.get_meta("surface_metadata_record_binding") == "runtime_result_tags"

@@ -465,24 +465,14 @@ def _resolve_szz_clifford_frame_for_builder(
     if interaction_basis != "szz":
         msg = "clifford_frame_policy currently requires interaction_basis='szz'"
         raise NotImplementedError(msg)
-    resolved_frame = resolve_surface_clifford_frame(patch, policy=clifford_frame_policy)
-    unsupported = [check for check in resolved_frame.checks if not check.is_uniform_axis]
-    if unsupported:
-        preview = ", ".join(f"{check.source_kind}{check.stabilizer_index}:{check.axes}" for check in unsupported[:5])
-        suffix = f", ... {len(unsupported) - 5} more" if len(unsupported) > 5 else ""
-        msg = (
-            "clifford_frame_policy currently supports only uniform-axis "
-            f"stabilizer checks; mixed checks: {preview}{suffix}"
-        )
-        raise NotImplementedError(msg)
-    return resolved_frame
+    return resolve_surface_clifford_frame(patch, policy=clifford_frame_policy)
 
 
 def _szz_memory_physical_axis(
     basis: str,
     resolved_clifford_frame: ResolvedSurfaceCliffordFrame | None,
 ) -> PauliAxis:
-    """Return the physical data-measurement axis for a source memory basis."""
+    """Return the uniform physical axis for a source memory basis, if any."""
     source_basis = basis.upper()
     if source_basis not in {"X", "Z"}:
         msg = f"basis must be 'X' or 'Z', got {basis!r}"
@@ -490,19 +480,41 @@ def _szz_memory_physical_axis(
     if resolved_clifford_frame is None:
         return source_basis  # type: ignore[return-value]
 
-    logical = (
-        resolved_clifford_frame.logical_x
-        if source_basis == "X"
-        else resolved_clifford_frame.logical_z
-    )
-    if not logical.is_uniform_axis or logical.uniform_axis is None:
+    axes = {
+        frame.image(source_basis).axis
+        for frame in resolved_clifford_frame.data_frames
+    }
+    if len(axes) != 1:
         msg = (
             f"clifford frame policy {resolved_clifford_frame.policy!r} maps "
-            f"source {source_basis}-memory to a mixed logical measurement "
-            f"axis {logical.axes}; mixed final readout is not implemented yet"
+            f"source {source_basis}-memory to mixed data measurement axes "
+            f"{sorted(axes)}; call _szz_memory_physical_axis_for_data instead"
         )
         raise NotImplementedError(msg)
-    return logical.uniform_axis
+    return next(iter(axes))
+
+
+def _szz_memory_physical_axis_for_data(
+    basis: str,
+    resolved_clifford_frame: ResolvedSurfaceCliffordFrame | None,
+    data_idx: int,
+) -> PauliAxis:
+    """Return the physical prep/readout axis for one source-basis data qubit."""
+    source_basis = basis.upper()
+    if source_basis not in {"X", "Z"}:
+        msg = f"basis must be 'X' or 'Z', got {basis!r}"
+        raise ValueError(msg)
+    if resolved_clifford_frame is None:
+        return source_basis  # type: ignore[return-value]
+    try:
+        frame = resolved_clifford_frame.data_frames[data_idx]
+    except IndexError as exc:
+        msg = (
+            f"data qubit {data_idx} is outside resolved frame with "
+            f"{len(resolved_clifford_frame.data_frames)} data frames"
+        )
+        raise ValueError(msg) from exc
+    return frame.image(source_basis).axis
 
 
 def _propagate_szz_frame_bits(x_a: bool, z_a: bool, x_b: bool, z_b: bool) -> tuple[bool, bool, bool, bool]:
@@ -895,8 +907,9 @@ def build_surface_code_circuit(
             truth when supplied; ``interaction_basis`` must agree if also
             supplied.
         clifford_frame_policy: Optional source-level Clifford-deformation
-            policy. Currently supported only by the SZZ renderer for global
-            uniform-axis frames.
+            policy. Currently supported only by the SZZ renderer. Global
+            axis-cycle frames and checkerboard XZZX/ZXXZ frames are rendered
+            as concrete deformed checks.
 
     Returns:
         Tuple of (operations list, qubit allocation info)
@@ -1323,7 +1336,6 @@ def _build_surface_code_circuit_szz(
         OpType.SZ: "SZ",
         OpType.SZDG: "SZDG",
     }
-    basis_axis = _szz_memory_physical_axis(basis, resolved_clifford_frame)
 
     def data_q(i: int) -> int:
         return allocation.data_qubits[i]
@@ -1347,6 +1359,13 @@ def _build_surface_code_circuit_szz(
             msg = f"data qubit {data_idx} is not in resolved check {stabilizer_type}{stab_idx}"
             raise ValueError(msg) from exc
         return check.paulis[offset].axis
+
+    def physical_axis_for_memory_data(data_idx: int) -> PauliAxis:
+        return _szz_memory_physical_axis_for_data(
+            basis,
+            resolved_clifford_frame,
+            data_idx,
+        )
 
     def append_axis_rotation_to_z(
         target_ops: list[SurfaceCircuitStep],
@@ -1500,6 +1519,7 @@ def _build_surface_code_circuit_szz(
     ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"prep_{basis.lower()}_basis"))
     ops.extend(SurfaceCircuitStep(OpType.ALLOC, [data_q(i)], f"data[{i}]") for i in range(num_data))
     for i in range(num_data):
+        basis_axis = physical_axis_for_memory_data(i)
         append_axis_rotation_to_z(
             ops,
             basis_axis,
@@ -1566,6 +1586,7 @@ def _build_surface_code_circuit_szz(
     # =========================================================================
     ops.append(SurfaceCircuitStep(OpType.COMMENT, label=f"measure_{basis.lower()}_basis"))
     for i in range(num_data):
+        basis_axis = physical_axis_for_memory_data(i)
         append_axis_rotation_from_z(
             ops,
             basis_axis,

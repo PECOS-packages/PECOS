@@ -195,7 +195,8 @@ def generate_guppy_source(
             supplied. Current Guppy generation maps the resolved plan to the
             corresponding CX or SZZ/SZZdg concrete template.
         clifford_frame_policy: Optional source-level Clifford-deformation
-            policy. Currently supported for global uniform-axis SZZ frames.
+            policy. Currently supported for SZZ global axis-cycle and
+            checkerboard XZZX/ZXXZ deformed-check frames.
 
     Returns:
         Python/Guppy source code as a string.
@@ -207,7 +208,7 @@ def generate_guppy_source(
     from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer
     from pecos.qec.surface.circuit_builder import (
         _resolve_szz_clifford_frame_for_builder,
-        _szz_memory_physical_axis,
+        _szz_memory_physical_axis_for_data,
         _szz_residual_plan_for_check_plan,
     )
 
@@ -362,21 +363,23 @@ def generate_guppy_source(
             raise ValueError(msg) from exc
         return check.paulis[offset].axis
 
-    def _szz_physical_axis_for_memory_basis(source_basis: str) -> str:
-        return _szz_memory_physical_axis(source_basis, resolved_clifford_frame)
+    def _szz_physical_axis_for_memory_data(source_basis: str, data_q: int) -> str:
+        return _szz_memory_physical_axis_for_data(
+            source_basis,
+            resolved_clifford_frame,
+            data_q,
+        )
 
-    def _szz_physical_axis_for_logical(source_logical: str) -> str:
+    def _szz_physical_axis_for_logical_data(source_logical: str, data_q: int) -> str:
         if resolved_clifford_frame is None:
             return source_logical
         logical = resolved_clifford_frame.logical_x if source_logical == "X" else resolved_clifford_frame.logical_z
-        if not logical.is_uniform_axis or logical.uniform_axis is None:
-            msg = (
-                f"clifford frame policy {resolved_clifford_frame.policy!r} maps "
-                f"source logical {source_logical} to mixed axes {logical.axes}; "
-                "mixed logical operator rendering is not implemented yet"
-            )
-            raise NotImplementedError(msg)
-        return logical.uniform_axis
+        try:
+            offset = logical.data_qubits.index(data_q)
+        except ValueError as exc:
+            msg = f"data qubit {data_q} is not in source logical {source_logical}"
+            raise ValueError(msg) from exc
+        return logical.paulis[offset].axis
 
     def _append_szz_axis_rotation_to_z(target: list[str], indent: str, axis: str, qubit_expr: str) -> None:
         if axis == "X":
@@ -429,7 +432,12 @@ def generate_guppy_source(
     if interaction_basis == "szz":
         lines.extend(f"    d{i} = qubit()" for i in range(num_data))
         for i in range(num_data):
-            _append_szz_axis_rotation_to_z(lines, "    ", _szz_physical_axis_for_memory_basis("Z"), f"d{i}")
+            _append_szz_axis_rotation_to_z(
+                lines,
+                "    ",
+                _szz_physical_axis_for_memory_data("Z", i),
+                f"d{i}",
+            )
         lines.append(f"    return SurfaceCode_{dx}x{dz}({szz_data_args})")
     else:
         lines.append(f"    data = array(qubit() for _ in range({num_data}))")
@@ -439,7 +447,12 @@ def generate_guppy_source(
     if interaction_basis == "szz":
         lines.extend(f"    d{i} = qubit()" for i in range(num_data))
         for i in range(num_data):
-            _append_szz_axis_rotation_to_z(lines, "    ", _szz_physical_axis_for_memory_basis("X"), f"d{i}")
+            _append_szz_axis_rotation_to_z(
+                lines,
+                "    ",
+                _szz_physical_axis_for_memory_data("X", i),
+                f"d{i}",
+            )
         lines.append(f"    return SurfaceCode_{dx}x{dz}({szz_data_args})")
     else:
         lines.append(f"    data = array(qubit() for _ in range({num_data}))")
@@ -890,7 +903,12 @@ def generate_guppy_source(
     if interaction_basis == "szz":
         _append_szz_data_unpack(lines, "    ")
         for i in range(num_data):
-            _append_szz_axis_rotation_from_z(lines, "    ", _szz_physical_axis_for_memory_basis("Z"), f"d{i}")
+            _append_szz_axis_rotation_from_z(
+                lines,
+                "    ",
+                _szz_physical_axis_for_memory_data("Z", i),
+                f"d{i}",
+            )
         z_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
         lines.append(f"    return array({z_meas})")
     else:
@@ -907,7 +925,12 @@ def generate_guppy_source(
     if interaction_basis == "szz":
         _append_szz_data_unpack(lines, "    ")
         for i in range(num_data):
-            _append_szz_axis_rotation_from_z(lines, "    ", _szz_physical_axis_for_memory_basis("X"), f"d{i}")
+            _append_szz_axis_rotation_from_z(
+                lines,
+                "    ",
+                _szz_physical_axis_for_memory_data("X", i),
+                f"d{i}",
+            )
         x_meas = ", ".join(f"measure(d{i})" for i in range(num_data))
         lines.append(f"    return array({x_meas})")
     else:
@@ -930,8 +953,8 @@ def generate_guppy_source(
         ],
     )
     if interaction_basis == "szz":
-        logical_x_axis = _szz_physical_axis_for_logical("X")
         for q in logical_x_qubits:
+            logical_x_axis = _szz_physical_axis_for_logical_data("X", q)
             _append_szz_logical_pauli(lines, "    ", logical_x_axis, f"surf.d{q}")
     else:
         lines.extend(f"    x(surf.data[{q}])" for q in logical_x_qubits)
@@ -946,8 +969,8 @@ def generate_guppy_source(
         ],
     )
     if interaction_basis == "szz":
-        logical_z_axis = _szz_physical_axis_for_logical("Z")
         for q in logical_z_qubits:
+            logical_z_axis = _szz_physical_axis_for_logical_data("Z", q)
             _append_szz_logical_pauli(lines, "    ", logical_z_axis, f"surf.d{q}")
     else:
         lines.extend(f"    z(surf.data[{q}])" for q in logical_z_qubits)

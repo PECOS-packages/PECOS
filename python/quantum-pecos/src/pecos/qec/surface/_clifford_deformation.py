@@ -25,6 +25,8 @@ SurfaceFramePolicy = Literal[
     "global_h",
     "global_axis_cycle_f",
     "global_axis_cycle_f2",
+    "checkerboard_xzzx",
+    "checkerboard_zxxz",
 ]
 
 _SUPPORTED_GLOBAL_FRAME_POLICIES = frozenset(
@@ -34,6 +36,15 @@ _SUPPORTED_GLOBAL_FRAME_POLICIES = frozenset(
         "global_axis_cycle_f",
         "global_axis_cycle_f2",
     },
+)
+_SUPPORTED_CHECKERBOARD_FRAME_POLICIES = frozenset(
+    {
+        "checkerboard_xzzx",
+        "checkerboard_zxxz",
+    },
+)
+_SUPPORTED_FRAME_POLICIES = (
+    _SUPPORTED_GLOBAL_FRAME_POLICIES | _SUPPORTED_CHECKERBOARD_FRAME_POLICIES
 )
 
 
@@ -200,10 +211,10 @@ class ResolvedSurfaceCliffordFrame:
 def normalize_surface_frame_policy(policy: str) -> str:
     """Normalize and validate a named surface Clifford frame policy."""
     normalized = str(policy).lower().replace("-", "_")
-    if normalized not in _SUPPORTED_GLOBAL_FRAME_POLICIES:
+    if normalized not in _SUPPORTED_FRAME_POLICIES:
         msg = (
             f"unknown surface Clifford frame policy {policy!r}; expected one of "
-            f"{sorted(_SUPPORTED_GLOBAL_FRAME_POLICIES)}"
+            f"{sorted(_SUPPORTED_FRAME_POLICIES)}"
         )
         raise ValueError(msg)
     return normalized
@@ -215,6 +226,12 @@ def global_surface_frame(policy: str, num_data: int) -> tuple[LocalCliffordFrame
         msg = f"num_data must be non-negative, got {num_data}"
         raise ValueError(msg)
     normalized = normalize_surface_frame_policy(policy)
+    if normalized not in _SUPPORTED_GLOBAL_FRAME_POLICIES:
+        msg = (
+            f"surface Clifford frame policy {policy!r} is local; call "
+            "resolve_surface_clifford_frame(...) with a patch instead"
+        )
+        raise ValueError(msg)
     frame = _global_frame_element(normalized)
     return tuple(frame for _ in range(num_data))
 
@@ -227,7 +244,11 @@ def resolve_surface_clifford_frame(
 ) -> ResolvedSurfaceCliffordFrame:
     """Resolve source surface checks/logicals through a local Clifford frame."""
     normalized = normalize_surface_frame_policy(policy)
-    frames = tuple(data_frames) if data_frames is not None else global_surface_frame(normalized, patch.num_data)
+    frames = (
+        tuple(data_frames)
+        if data_frames is not None
+        else _surface_frame_for_policy(patch, normalized)
+    )
     if len(frames) != patch.num_data:
         msg = f"data frame length {len(frames)} does not match patch.num_data={patch.num_data}"
         raise ValueError(msg)
@@ -275,3 +296,40 @@ def _global_frame_element(policy: str) -> LocalCliffordFrame:
         return LocalCliffordFrame(SignedPauli("Z"), SignedPauli("Y"))
     msg = f"unknown surface Clifford frame policy {policy!r}"
     raise ValueError(msg)
+
+
+def _surface_frame_for_policy(
+    patch: SurfacePatch,
+    policy: str,
+) -> tuple[LocalCliffordFrame, ...]:
+    """Return the resolved data-qubit frame for a named policy."""
+    if policy in _SUPPORTED_GLOBAL_FRAME_POLICIES:
+        return global_surface_frame(policy, patch.num_data)
+    if policy in _SUPPORTED_CHECKERBOARD_FRAME_POLICIES:
+        return _checkerboard_h_frame(
+            patch,
+            h_on_even=(policy == "checkerboard_xzzx"),
+        )
+    msg = f"unknown surface Clifford frame policy {policy!r}"
+    raise ValueError(msg)
+
+
+def _checkerboard_h_frame(
+    patch: SurfacePatch,
+    *,
+    h_on_even: bool,
+) -> tuple[LocalCliffordFrame, ...]:
+    """Return a checkerboard H deformation for rotated surface checks.
+
+    With H on even-parity data sites, source X and Z checks become XZZX in the
+    data-qubit order used by the rotated-patch stabilizer supports. Flipping the
+    parity gives the paired ZXXZ orientation.
+    """
+    identity = _global_frame_element("identity")
+    hadamard = _global_frame_element("global_h")
+    frames: list[LocalCliffordFrame] = []
+    for data_idx in range(patch.num_data):
+        row, col = patch.geometry.id_to_pos[data_idx]
+        even = (row + col) % 2 == 0
+        frames.append(hadamard if even == h_on_even else identity)
+    return tuple(frames)

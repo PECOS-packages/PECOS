@@ -17,12 +17,12 @@ fn test_user_guide_simulators_rust_2() -> Result<(), Box<dyn std::error::Error>>
     "#;
     let program = Qasm::from_string(qasm_code);
     // SparseStab is used by default
-let results = sim(program.clone()).run(1000)?;
+let results = sim(program.clone()).shots(1000).run()?;
 
 // Or explicitly select it
 let results = sim(program)
     .quantum(sparse_stab())
-    .run(1000)?;
+    .shots(1000).run()?;
 
     Ok(())
 }
@@ -43,7 +43,7 @@ fn test_user_guide_simulators_rust_3() -> Result<(), Box<dyn std::error::Error>>
     let program = Qasm::from_string(qasm_code);
     let results = sim(program)
     .quantum(state_vector())
-    .run(100)?;
+    .shots(100).run()?;
 
     Ok(())
 }
@@ -129,16 +129,16 @@ fn test_user_guide_simulators_rust_6() -> Result<(), Box<dyn std::error::Error>>
 "#);
 
 // Default (sparse stabilizer for Clifford circuits)
-let results = sim(circuit.clone()).run(1000)?;
+let results = sim(circuit.clone()).shots(1000).run()?;
 
 // Explicit simulator selection
 let results = sim(circuit.clone())
     .quantum(state_vector())
-    .run(1000)?;
+    .shots(1000).run()?;
 
 let results = sim(circuit)
     .quantum(sparse_stab())
-    .run(1000)?;
+    .shots(1000).run()?;
 
     Ok(())
 }

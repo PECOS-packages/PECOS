@@ -33,10 +33,10 @@ let qasm_code = r#"
 let program = Qasm::from_string(qasm_code);
 
 // Simple simulation
-let results = sim(program.clone()).run(1000)?;
+let results = sim(program.clone()).shots(1000).run()?;
 
 // With configuration
-let results = sim(program).seed(42).run(1000)?;
+let results = sim(program).seed(42).shots(1000).run()?;
 
     Ok(())
 }
@@ -71,7 +71,7 @@ let qasm_code = r#"
 let program = Qasm::from_string(qasm_code);
 
 // Simple simulation with builder pattern
-let results = sim(program.clone()).run(1000)?;
+let results = sim(program.clone()).shots(1000).run()?;
 
 // With more configuration options
 let results = sim(program)
@@ -79,7 +79,7 @@ let results = sim(program)
     .noise(DepolarizingNoiseModel::builder().with_uniform_probability(0.01))
     .workers(4)  // Explicitly set number of threads
     // .auto_workers()  // Or use all available CPU cores
-    .run(1000)?;
+    .shots(1000).run()?;
 
     Ok(())
 }
@@ -191,7 +191,7 @@ let noise = GeneralNoiseModelBuilder::new()
     .with_seed(42);                    // Deterministic noise
 
 // Use with sim()
-let results = sim(program).noise(noise).run(1000)?;
+let results = sim(program).noise(noise).shots(1000).run()?;
 
     Ok(())
 }
@@ -228,12 +228,12 @@ let program = Qasm::from_string(qasm_code);
 // Sparse stabilizer (default, efficient for Clifford circuits)
 let results = sim(program.clone())
     .quantum(sparse_stab())
-    .run(1000)?;
+    .shots(1000).run()?;
 
 // State vector (for non-Clifford circuits)
 let results = sim(program)
     .quantum(state_vector())
-    .run(1000)?;
+    .shots(1000).run()?;
 
     Ok(())
 }
@@ -266,7 +266,7 @@ let qasm_code = r#"
 "#;
 
 let program = Qasm::from_string(qasm_code);
-let results = sim(program).run(1000)?;
+let results = sim(program).shots(1000).run()?;
 
 // Results come as ShotVec
 println!("Got {} shots", results.len());
@@ -371,7 +371,7 @@ fn ghz_noise_example() -> Result<(), PecosError> {
         .with_seed(12345);                 // Deterministic noise
 
     // Run simulation
-    let results = sim(program).noise(noise).seed(42).run(1000)?;
+    let results = sim(program).noise(noise).seed(42).shots(1000).run()?;
     println!("GHZ state results: {:?}", results);
 
     Ok(())
@@ -410,13 +410,13 @@ let qasm_code = r#"
 let program = Qasm::from_string(qasm_code);
 
 // Single threaded (default)
-let results = sim(program.clone()).workers(1).run(1000)?;
+let results = sim(program.clone()).workers(1).shots(1000).run()?;
 
 // Explicit thread count
-let results = sim(program.clone()).workers(4).run(1000)?;
+let results = sim(program.clone()).workers(4).shots(1000).run()?;
 
 // Automatically use all available cores
-let results = sim(program).auto_workers().run(1000)?;
+let results = sim(program).auto_workers().shots(1000).run()?;
 
     Ok(())
 }

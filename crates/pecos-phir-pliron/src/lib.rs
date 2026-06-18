@@ -852,6 +852,22 @@ pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegi
     AdaptivePlan { batch1, cond_outcome_idx, cond_target, batch2 }
 }
 
+/// Number of qubits a Cmd stream touches = max referenced qubit index + 1 (0 if it touches none).
+/// Lets an engine report its real `num_qubits()` instead of a hard-coded value.
+pub fn cmds_num_qubits(batches: &[&[Cmd]]) -> usize {
+    let mut n = 0;
+    for cmds in batches {
+        for c in *cmds {
+            let hi = match *c {
+                Cmd::Pz(q) | Cmd::H(q) | Cmd::X(q) | Cmd::Rz(q, _) | Cmd::Rx(q, _) | Cmd::Ry(q, _) | Cmd::Mz(q, _) => q,
+                Cmd::Szz(a, b) | Cmd::Cx(a, b) => a.max(b),
+            };
+            n = n.max(hi + 1);
+        }
+    }
+    n
+}
+
 pub fn emit_cmds(b: &mut pecos_engines::byte_message::ByteMessageBuilder, cmds: &[Cmd]) {
     for c in cmds {
         match *c {
@@ -909,7 +925,8 @@ impl Engine for PlironAdaptiveEngine {
 
 impl ClassicalEngine for PlironAdaptiveEngine {
     fn num_qubits(&self) -> usize {
-        2
+        // gates/measures across both batches, plus the conditional-X target qubit.
+        cmds_num_qubits(&[&self.plan.batch1, &self.plan.batch2]).max(self.plan.cond_target + 1)
     }
     fn generate_commands(&mut self) -> std::result::Result<ByteMessage, PecosError> {
         if self.stage == 0 {
@@ -1186,7 +1203,9 @@ impl Engine for PlironIfEngine {
     fn reset(&mut self) -> std::result::Result<(), PecosError> { self.stage = 0; self.b1.clear(); self.b2.clear(); Ok(()) }
 }
 impl ClassicalEngine for PlironIfEngine {
-    fn num_qubits(&self) -> usize { 2 }
+    fn num_qubits(&self) -> usize {
+        cmds_num_qubits(&[&self.batch1, &self.then_cmds, &self.else_cmds, &self.post])
+    }
     fn generate_commands(&mut self) -> std::result::Result<ByteMessage, PecosError> {
         if self.stage == 0 { self.stage = 1; Ok(self.b1_msg()) } else { Ok(ByteMessage::create_empty()) }
     }
@@ -1801,6 +1820,31 @@ mod tests {
             assert!(shot.data.get("r1").and_then(Data::as_u32).is_some(), "qprog final_q1 (r1) present");
             Engine::reset(&mut hybrid).unwrap();
         }
+    }
+    /// Dynamic qubit count: a 3-qubit GHZ through the adapter must report `num_qubits()==3` (not the
+    /// old hard-coded 2) and produce a perfectly correlated triple (r0==r1==r2).
+    #[test]
+    fn adapter_ghz3_dynamic_qubit_count() {
+        use pecos_engines::hybrid::HybridEngineBuilder;
+        let eng = from_qis_llvm_ir_pliron(include_str!("../fixtures/ghz3.ll")).expect("adapter lowers ghz3.ll");
+        assert_eq!(eng.num_qubits(), 3, "GHZ-3 engine must report 3 qubits (dynamic, not hard-coded 2)");
+        let n = eng.num_qubits();
+        let mut hybrid = HybridEngineBuilder::new()
+            .with_classical_engine(eng)
+            .with_quantum_engine(Box::new(StateVecEngine::with_seed(n, 13)))
+            .build();
+        let (mut saw0, mut saw1) = (false, false);
+        for _ in 0..200 {
+            let shot = hybrid.run_shot().unwrap();
+            let r0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0");
+            let r1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1");
+            let r2 = shot.data.get("r2").and_then(Data::as_u32).expect("r2");
+            assert!(r0 == r1 && r1 == r2, "GHZ-3 must be fully correlated, got r0={r0} r1={r1} r2={r2}");
+            saw0 |= r0 == 0;
+            saw1 |= r0 == 1;
+            Engine::reset(&mut hybrid).unwrap();
+        }
+        assert!(saw0 && saw1, "GHZ-3 must see both 000 and 111");
     }
     #[test]
     fn m0_hand_built_bell_seam() {

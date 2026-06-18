@@ -1,6 +1,7 @@
-# Experimental: the round-2 decision gate for build-PHIR-on-pliron.
-# Drives a Bell program built as pliron IR through the UNCHANGED pecos-engines sim seam.
-# See pecos-docs design/slr-phir-vision.md §7.1 + slr-phir-vision-qis-port-sketch.md.
+# Parallel, non-default QIS-LLVM-IR -> pliron-PHIR path (the strangler crate, scoped to the covered
+# QIS-LLVM subset). Lowers to a pliron `qec` dialect and runs through the UNCHANGED pecos-engines
+# seam. pliron comes from crates.io, pinned by Cargo.lock.
+# See pecos-docs design/slr-phir-pliron-strangler-scope.md + slr-phir-vision.md.
 [package]
 name = "pecos-phir-pliron"
 version.workspace = true
@@ -14,7 +15,7 @@ publish = false
 [dependencies]
 pecos-engines.workspace = true
 pecos-core.workspace = true
-pliron = { path = "/home/ciaranra/Repos/pliron" }
+pliron = "0.15"
 awint = "0.18"
 
 [dev-dependencies]

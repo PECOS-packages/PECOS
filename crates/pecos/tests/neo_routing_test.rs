@@ -342,6 +342,35 @@ fn neo_stack_rejects_unmapped_noise() {
 }
 
 #[test]
+fn neo_stack_rejects_nonunit_emission_scale() {
+    // `with_emission_scale` multiplies the emission ratios at build() but the
+    // facade subset surfaces the RAW ratios, so a non-unit scale would map a
+    // DIFFERENT emission rate to neo than engines runs. The facade must reject
+    // it rather than silently diverge. (Codex batch-4 finding 1.)
+    let general = pecos_engines::noise::GeneralNoiseModel::builder()
+        .with_p1_probability(0.3)
+        .with_p1_emission_ratio(0.25)
+        .with_emission_scale(2.0)
+        .with_p2_probability(0.0)
+        .with_prep_probability(0.0)
+        .with_meas_0_probability(0.0)
+        .with_meas_1_probability(0.0)
+        .with_prep_leak_ratio(0.0)
+        .with_p_idle_linear_rate(0.0);
+    let err = sim(deterministic_conditional_qasm())
+        .stack(SimStack::Neo)
+        .noise(general)
+        .shots(5)
+        .run()
+        .expect_err("non-unit emission_scale must not be silently mapped to neo");
+    assert!(
+        err.to_string()
+            .contains("beyond the simple probability subset"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn neo_stack_rejects_unrouted_quantum_backend() {
     let err = sim(deterministic_conditional_qasm())
         .stack(SimStack::Neo)

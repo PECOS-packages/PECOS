@@ -880,7 +880,13 @@ impl GeneralNoiseModelBuilder {
             && one_or_unset(self.p1_scale)
             && one_or_unset(self.p2_scale)
             && one_or_unset(self.p_prep_crosstalk_scale)
-            && one_or_unset(self.p_meas_crosstalk_scale);
+            && one_or_unset(self.p_meas_crosstalk_scale)
+            // `emission_scale` multiplies the emission ratios in `build()`
+            // (`scale_parameters`), but the resolved ratios surfaced here are
+            // RAW. Require it neutral so a non-unit scale falls out of the
+            // subset and is rejected, rather than silently mapping the
+            // un-scaled ratio to neo (cross-stack mismatch).
+            && one_or_unset(self.emission_scale);
 
         let gates_default = self.noiseless_gates.as_ref().is_none_or(BTreeSet::is_empty);
 
@@ -1186,5 +1192,25 @@ mod tests {
         assert!(angle.is_none());
         assert!((p1_emission - 0.25).abs() < 1e-12);
         assert!((p2_emission - 0.75).abs() < 1e-12);
+    }
+
+    /// A non-unit `emission_scale` multiplies the emission ratios at `build()`,
+    /// but the subset surfaces the RAW ratios. It must therefore be rejected
+    /// from the subset rather than silently mapping the un-scaled ratio.
+    #[test]
+    fn pauli_with_angle_scaling_rejects_emission_scale() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_average_p1_probability(0.2)
+            .with_p1_emission_ratio(0.25)
+            .with_emission_scale(2.0)
+            .with_prep_leak_ratio(0.0)
+            .with_p_idle_linear_rate(0.0);
+
+        // The built model applies the scale (0.25 * 2.0 = 0.5)...
+        let built = builder.clone().build();
+        assert!((built.p1_emission_ratio() - 0.5).abs() < 1e-12);
+        // ...so surfacing the raw 0.25 would be a cross-stack mismatch: the
+        // subset must refuse it.
+        assert!(builder.pauli_with_angle_scaling().is_none());
     }
 }

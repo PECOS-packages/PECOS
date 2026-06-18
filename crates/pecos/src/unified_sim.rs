@@ -222,11 +222,16 @@ impl ProgrammedSimBuilder {
     pub fn sampling(mut self, sampling: impl Into<MonteCarloBuilder>) -> Self {
         let mc = sampling.into();
         self.routed.shots = Some(mc.shots());
+        // Worker settings are mutually exclusive and last-writer-wins (see
+        // `workers`/`auto_workers`): apply only what the spec sets, clearing the
+        // other, so the neo route can't end up with both flags live.
         if mc.auto_workers_requested() {
             self.routed.auto_workers = true;
+            self.routed.workers = None;
             self.base_builder = self.base_builder.auto_workers();
         } else if let Some(workers) = mc.worker_count() {
             self.routed.workers = Some(workers);
+            self.routed.auto_workers = false;
             self.base_builder = self.base_builder.workers(workers);
         }
         self
@@ -544,7 +549,11 @@ impl ProgrammedSimBuilder {
     /// Set the number of worker threads (delegates to base builder)
     #[must_use]
     pub fn workers(mut self, workers: usize) -> Self {
+        // Last-writer-wins, matching the engines `SimBuilder`: an explicit
+        // count clears a prior `.auto_workers()` so the two never both apply on
+        // the neo route (where they are resolved separately).
         self.routed.workers = Some(workers);
+        self.routed.auto_workers = false;
         self.base_builder = self.base_builder.workers(workers);
         self
     }
@@ -553,6 +562,7 @@ impl ProgrammedSimBuilder {
     #[must_use]
     pub fn auto_workers(mut self) -> Self {
         self.routed.auto_workers = true;
+        self.routed.workers = None;
         self.base_builder = self.base_builder.auto_workers();
         self
     }

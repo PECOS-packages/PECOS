@@ -263,6 +263,44 @@ impl Verify for CxOp {
     }
 }
 
+#[pliron_op(name = "qec.cz", format, interfaces = [NOpdsInterface<2>, NResultsInterface<0>])]
+pub struct CzOp;
+impl CzOp {
+    pub fn new(ctx: &mut Context, a: Value, b: Value) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![a, b], vec![], 0);
+        CzOp { op }
+    }
+}
+impl Verify for CzOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        for i in 0..2 {
+            if self.get_operation().deref(ctx).get_operand(i).get_type(ctx) != qubitref_ty(ctx) {
+                return verify_err!(self.loc(ctx), "qec.cz operands must be qec.qubitref");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[pliron_op(name = "qec.swap", format, interfaces = [NOpdsInterface<2>, NResultsInterface<0>])]
+pub struct SwapOp;
+impl SwapOp {
+    pub fn new(ctx: &mut Context, a: Value, b: Value) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![a, b], vec![], 0);
+        SwapOp { op }
+    }
+}
+impl Verify for SwapOp {
+    fn verify(&self, ctx: &Context) -> Result<()> {
+        for i in 0..2 {
+            if self.get_operation().deref(ctx).get_operand(i).get_type(ctx) != qubitref_ty(ctx) {
+                return verify_err!(self.loc(ctx), "qec.swap operands must be qec.qubitref");
+            }
+        }
+        Ok(())
+    }
+}
+
 /// `%result = qec.measure(qubitref)` -- a measurement. Its result `%result` IS the measurement-SSA
 /// value (the identity); all per-measurement metadata (qubit, basis, export label) lives in the
 /// `MeasurementRegistry` side-table keyed by that value, not on the op (ops stay lightweight).
@@ -717,6 +755,10 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modul
             let q = *a.first().ok_or_else(|| unsupported_qis("h__body missing qubit operand"))?;
             qubits.insert(q);
             parsed.push(("h", a));
+        } else if l.contains("__quantum__qis__x__body") {
+            let q = *a.first().ok_or_else(|| unsupported_qis("x__body missing qubit operand"))?;
+            qubits.insert(q);
+            parsed.push(("x", a));
         } else if l.contains("__quantum__qis__cx__body") {
             if a.len() < 2 {
                 return Err(unsupported_qis("cx__body needs two qubit operands"));
@@ -724,6 +766,20 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modul
             qubits.insert(a[0]);
             qubits.insert(a[1]);
             parsed.push(("cx", a));
+        } else if l.contains("__quantum__qis__cz__body") {
+            if a.len() < 2 {
+                return Err(unsupported_qis("cz__body needs two qubit operands"));
+            }
+            qubits.insert(a[0]);
+            qubits.insert(a[1]);
+            parsed.push(("cz", a));
+        } else if l.contains("__quantum__qis__swap__body") {
+            if a.len() < 2 {
+                return Err(unsupported_qis("swap__body needs two qubit operands"));
+            }
+            qubits.insert(a[0]);
+            qubits.insert(a[1]);
+            parsed.push(("swap", a));
         } else if l.contains("__quantum__qis__m__body") {
             if a.len() < 2 {
                 return Err(unsupported_qis("m__body needs (qubit, result_id) operands"));
@@ -765,8 +821,17 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modul
             "h" => {
                 push!(HOp::new(ctx, slot_of[&a[0]]));
             }
+            "x" => {
+                push!(XOp::new(ctx, slot_of[&a[0]]));
+            }
             "cx" => {
                 push!(CxOp::new(ctx, slot_of[&a[0]], slot_of[&a[1]]));
+            }
+            "cz" => {
+                push!(CzOp::new(ctx, slot_of[&a[0]], slot_of[&a[1]]));
+            }
+            "swap" => {
+                push!(SwapOp::new(ctx, slot_of[&a[0]], slot_of[&a[1]]));
             }
             "m" => {
                 let m = push!(MeasureOp::new(ctx, slot_of[&a[0]]));
@@ -816,6 +881,8 @@ pub enum Cmd {
     Ry(usize, Angle64),
     Szz(usize, usize),
     Cx(usize, usize),
+    Cz(usize, usize),
+    Swap(usize, usize),
     Mz(usize, u64), // (qubit, QIS result-id); the id rides through to the export/register mapping
 }
 
@@ -855,17 +922,6 @@ pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegi
     for op in ops {
         if let Some(s) = Operation::get_op::<SlotOp>(op, ctx) {
             qubit_of.insert(s.get_result(ctx), s.index(ctx) as usize);
-        } else if let Some(p) = Operation::get_op::<PrepareOp>(op, ctx) {
-            let q = qubit_of[&p.get_operation().deref(ctx).get_operand(0)];
-            if after_cond { batch2.push(Cmd::Pz(q)) } else { batch1.push(Cmd::Pz(q)) }
-        } else if let Some(h) = Operation::get_op::<HOp>(op, ctx) {
-            let q = qubit_of[&h.get_operation().deref(ctx).get_operand(0)];
-            if after_cond { batch2.push(Cmd::H(q)) } else { batch1.push(Cmd::H(q)) }
-        } else if let Some(cx) = Operation::get_op::<CxOp>(op, ctx) {
-            let opn = cx.get_operation();
-            let c = qubit_of[&opn.deref(ctx).get_operand(0)];
-            let t = qubit_of[&opn.deref(ctx).get_operand(1)];
-            if after_cond { batch2.push(Cmd::Cx(c, t)) } else { batch1.push(Cmd::Cx(c, t)) }
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
             let mz = measure_to_mz(ctx, m, &qubit_of, reg);
             if after_cond {
@@ -878,6 +934,8 @@ pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegi
         } else if let Some(c) = Operation::get_op::<CondXOp>(op, ctx) {
             cond_target = qubit_of[&c.get_operation().deref(ctx).get_operand(1)];
             after_cond = true;
+        } else if let Some(cmd) = gate_op_to_cmd(ctx, op, &qubit_of) {
+            if after_cond { batch2.push(cmd) } else { batch1.push(cmd) }
         }
     }
     AdaptivePlan { batch1, cond_outcome_idx, cond_target, batch2 }
@@ -891,7 +949,7 @@ pub fn cmds_num_qubits(batches: &[&[Cmd]]) -> usize {
         for c in *cmds {
             let hi = match *c {
                 Cmd::Pz(q) | Cmd::H(q) | Cmd::X(q) | Cmd::Rz(q, _) | Cmd::Rx(q, _) | Cmd::Ry(q, _) | Cmd::Mz(q, _) => q,
-                Cmd::Szz(a, b) | Cmd::Cx(a, b) => a.max(b),
+                Cmd::Szz(a, b) | Cmd::Cx(a, b) | Cmd::Cz(a, b) | Cmd::Swap(a, b) => a.max(b),
             };
             n = n.max(hi + 1);
         }
@@ -910,6 +968,8 @@ pub fn emit_cmds(b: &mut pecos_engines::byte_message::ByteMessageBuilder, cmds: 
             Cmd::Ry(q, a) => { b.ry(a, &[q]); }
             Cmd::Szz(a, c0) => { b.szz(&[(a, c0)]); }
             Cmd::Cx(c0, t) => { b.cx(&[(c0, t)]); }
+            Cmd::Cz(a, c0) => { b.cz(&[(a, c0)]); }
+            Cmd::Swap(a, c0) => { b.swap(&[(a, c0)]); }
             Cmd::Mz(q, _rid) => { b.mz(&[q]); } // result-id is bookkeeping, not a simulator op
         }
     }
@@ -1087,18 +1147,40 @@ pub fn run_milestone_4() {
 
 /// Lower the ops of a single block (a `qec.if` region body) to a Cmd list, reusing the slot map.
 /// Gate qubits come from `qubit_of`; measurement qubit + export label come from the registry.
+/// Translate a single `qec` *gate* op to its runtime `Cmd`, or `None` if `op` is not a gate (a
+/// `qec.slot`/`qec.if`/`qec.record`/`qec.qalloc`/`qec.end`/`qec.measure`). Shared by every plan
+/// walker so none of them can silently drop a gate another handles (the round-7 drift bug).
+/// Measurement is deliberately excluded -- it needs the registry + per-walker bookkeeping.
+fn gate_op_to_cmd(ctx: &Context, op: Ptr<Operation>, qubit_of: &HashMap<Value, usize>) -> Option<Cmd> {
+    let q = |i: usize, o: Ptr<Operation>| qubit_of[&o.deref(ctx).get_operand(i)];
+    if let Some(p) = Operation::get_op::<PrepareOp>(op, ctx) {
+        Some(Cmd::Pz(q(0, p.get_operation())))
+    } else if let Some(h) = Operation::get_op::<HOp>(op, ctx) {
+        Some(Cmd::H(q(0, h.get_operation())))
+    } else if let Some(x) = Operation::get_op::<XOp>(op, ctx) {
+        Some(Cmd::X(q(0, x.get_operation())))
+    } else if let Some(cx) = Operation::get_op::<CxOp>(op, ctx) {
+        Some(Cmd::Cx(q(0, cx.get_operation()), q(1, cx.get_operation())))
+    } else if let Some(cz) = Operation::get_op::<CzOp>(op, ctx) {
+        Some(Cmd::Cz(q(0, cz.get_operation()), q(1, cz.get_operation())))
+    } else if let Some(sw) = Operation::get_op::<SwapOp>(op, ctx) {
+        Some(Cmd::Swap(q(0, sw.get_operation()), q(1, sw.get_operation())))
+    } else if let Some(r) = Operation::get_op::<RzOp>(op, ctx) {
+        Some(Cmd::Rz(q(0, r.get_operation()), get_angle(ctx, r.get_operation())))
+    } else if let Some(r) = Operation::get_op::<RxOp>(op, ctx) {
+        Some(Cmd::Rx(q(0, r.get_operation()), get_angle(ctx, r.get_operation())))
+    } else if let Some(r) = Operation::get_op::<RyOp>(op, ctx) {
+        Some(Cmd::Ry(q(0, r.get_operation()), get_angle(ctx, r.get_operation())))
+    } else {
+        Operation::get_op::<SzzOp>(op, ctx).map(|z| Cmd::Szz(q(0, z.get_operation()), q(1, z.get_operation())))
+    }
+}
+
 pub fn block_to_cmds(ctx: &Context, block: Ptr<BasicBlock>, qubit_of: &HashMap<Value, usize>, reg: &MeasurementRegistry) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
-        if let Some(x) = Operation::get_op::<XOp>(op, ctx) {
-            cmds.push(Cmd::X(qubit_of[&x.get_operation().deref(ctx).get_operand(0)]));
-        } else if let Some(h) = Operation::get_op::<HOp>(op, ctx) {
-            cmds.push(Cmd::H(qubit_of[&h.get_operation().deref(ctx).get_operand(0)]));
-        } else if let Some(p) = Operation::get_op::<PrepareOp>(op, ctx) {
-            cmds.push(Cmd::Pz(qubit_of[&p.get_operation().deref(ctx).get_operand(0)]));
-        } else if let Some(cx) = Operation::get_op::<CxOp>(op, ctx) {
-            let opn = cx.get_operation();
-            cmds.push(Cmd::Cx(qubit_of[&opn.deref(ctx).get_operand(0)], qubit_of[&opn.deref(ctx).get_operand(1)]));
+        if let Some(cmd) = gate_op_to_cmd(ctx, op, qubit_of) {
+            cmds.push(cmd);
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
             cmds.push(measure_to_mz(ctx, m, qubit_of, reg));
         }
@@ -1127,34 +1209,6 @@ pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementR
     for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
         if let Some(s) = Operation::get_op::<SlotOp>(op, ctx) {
             qubit_of.insert(s.get_result(ctx), s.index(ctx) as usize);
-        } else if let Some(p) = Operation::get_op::<PrepareOp>(op, ctx) {
-            let q = qubit_of[&p.get_operation().deref(ctx).get_operand(0)];
-            if after_if { post.push(Cmd::Pz(q)) } else { batch1.push(Cmd::Pz(q)) }
-        } else if let Some(h) = Operation::get_op::<HOp>(op, ctx) {
-            let q = qubit_of[&h.get_operation().deref(ctx).get_operand(0)];
-            if after_if { post.push(Cmd::H(q)) } else { batch1.push(Cmd::H(q)) }
-        } else if let Some(cx) = Operation::get_op::<CxOp>(op, ctx) {
-            let opn = cx.get_operation();
-            let c = qubit_of[&opn.deref(ctx).get_operand(0)];
-            let t = qubit_of[&opn.deref(ctx).get_operand(1)];
-            if after_if { post.push(Cmd::Cx(c, t)) } else { batch1.push(Cmd::Cx(c, t)) }
-        } else if let Some(r) = Operation::get_op::<RzOp>(op, ctx) {
-            let q = qubit_of[&r.get_operation().deref(ctx).get_operand(0)];
-            let t = get_angle(ctx, r.get_operation());
-            if after_if { post.push(Cmd::Rz(q, t)) } else { batch1.push(Cmd::Rz(q, t)) }
-        } else if let Some(r) = Operation::get_op::<RxOp>(op, ctx) {
-            let q = qubit_of[&r.get_operation().deref(ctx).get_operand(0)];
-            let t = get_angle(ctx, r.get_operation());
-            if after_if { post.push(Cmd::Rx(q, t)) } else { batch1.push(Cmd::Rx(q, t)) }
-        } else if let Some(r) = Operation::get_op::<RyOp>(op, ctx) {
-            let q = qubit_of[&r.get_operation().deref(ctx).get_operand(0)];
-            let t = get_angle(ctx, r.get_operation());
-            if after_if { post.push(Cmd::Ry(q, t)) } else { batch1.push(Cmd::Ry(q, t)) }
-        } else if let Some(z) = Operation::get_op::<SzzOp>(op, ctx) {
-            let opn = z.get_operation();
-            let a = qubit_of[&opn.deref(ctx).get_operand(0)];
-            let bq = qubit_of[&opn.deref(ctx).get_operand(1)];
-            if after_if { post.push(Cmd::Szz(a, bq)) } else { batch1.push(Cmd::Szz(a, bq)) }
         } else if let Some(m) = Operation::get_op::<MeasureOp>(op, ctx) {
             let mz = measure_to_mz(ctx, m, &qubit_of, reg);
             if after_if {
@@ -1168,6 +1222,8 @@ pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementR
             then_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 0), &qubit_of, reg);
             else_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 1), &qubit_of, reg);
             after_if = true;
+        } else if let Some(cmd) = gate_op_to_cmd(ctx, op, &qubit_of) {
+            if after_if { post.push(cmd) } else { batch1.push(cmd) }
         } else if let Some(rec) = Operation::get_op::<RecordOp>(op, ctx) {
             // export order = textual order of qec.record; resolve the recorded measurement-SSA value
             // to its export label via the registry (the value is the identity).
@@ -1370,6 +1426,8 @@ pub enum ParsedOp {
     Rx(usize, f64),
     Ry(usize, f64),
     Szz(usize, usize),
+    Cz(usize, usize),
+    Swap(usize, usize),
     X(usize),
     M(usize, u64),  // (qubit, QIS result-id = 2nd i64 of m__body)
     Record(u64),    // result_record_output(result-id): export this measurement-SSA, in this order
@@ -1682,7 +1740,7 @@ pub fn collect_qubits(ops: &[ParsedOp], set: &mut BTreeSet<usize>) {
     for p in ops {
         match *p {
             ParsedOp::H(q) | ParsedOp::Rz(q, _) | ParsedOp::Rx(q, _) | ParsedOp::Ry(q, _) | ParsedOp::X(q) | ParsedOp::M(q, _) => { set.insert(q); }
-            ParsedOp::Szz(a, b) => { set.insert(a); set.insert(b); }
+            ParsedOp::Szz(a, b) | ParsedOp::Cz(a, b) | ParsedOp::Swap(a, b) => { set.insert(a); set.insert(b); }
             ParsedOp::Record(_) => {}
         }
     }
@@ -1698,6 +1756,8 @@ pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot
         ParsedOp::Rx(q, t) => { RxOp::new(ctx, slot_of[&q], Angle64::from_radians(t)).get_operation().insert_at_back(block, ctx); }
         ParsedOp::Ry(q, t) => { RyOp::new(ctx, slot_of[&q], Angle64::from_radians(t)).get_operation().insert_at_back(block, ctx); }
         ParsedOp::Szz(a, b) => { SzzOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::Cz(a, b) => { CzOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::Swap(a, b) => { SwapOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
         ParsedOp::X(q) => { XOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
         ParsedOp::M(q, rid) => {
             let m = MeasureOp::new(ctx, slot_of[&q]);
@@ -1751,6 +1811,10 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modu
             cur_ops.push(ParsedOp::Ry(iq(0)?, da(0)?));
         } else if l.contains("__quantum__qis__zz__body") {
             cur_ops.push(ParsedOp::Szz(iq(0)?, iq(1)?));
+        } else if l.contains("__quantum__qis__cz__body") {
+            cur_ops.push(ParsedOp::Cz(iq(0)?, iq(1)?));
+        } else if l.contains("__quantum__qis__swap__body") {
+            cur_ops.push(ParsedOp::Swap(iq(0)?, iq(1)?));
         } else if l.contains("__quantum__qis__x__body") {
             cur_ops.push(ParsedOp::X(iq(0)?));
         } else if l.contains("__quantum__qis__m__body") {
@@ -2132,6 +2196,26 @@ mod tests {
     }
     /// Dynamic qubit count: a 3-qubit GHZ through the adapter must report `num_qubits()==3` (not the
     /// old hard-coded 2) and produce a perfectly correlated triple (r0==r1==r2).
+    /// Widened gate set: `cz` + `swap` (+ `x`) lower and run through the adapter with a deterministic
+    /// result (`r0=1, r1=0, r2=1`).
+    #[test]
+    fn adapter_cz_swap_gates() {
+        use pecos_engines::hybrid::HybridEngineBuilder;
+        let eng = from_qis_llvm_ir_pliron(include_str!("../fixtures/cz_swap.ll")).expect("adapter lowers cz_swap.ll");
+        let n = eng.num_qubits();
+        assert_eq!(n, 3, "cz_swap uses qubits 0,1,2");
+        let mut hybrid = HybridEngineBuilder::new()
+            .with_classical_engine(eng)
+            .with_quantum_engine(Box::new(StateVecEngine::with_seed(n, 5)))
+            .build();
+        for _ in 0..50 {
+            let shot = hybrid.run_shot().unwrap();
+            assert_eq!(shot.data.get("r0").and_then(Data::as_u32), Some(1), "cz+h must drive q0 to 1");
+            assert_eq!(shot.data.get("r1").and_then(Data::as_u32), Some(0), "swap moves the 1 off q1");
+            assert_eq!(shot.data.get("r2").and_then(Data::as_u32), Some(1), "swap moves the 1 onto q2");
+            Engine::reset(&mut hybrid).unwrap();
+        }
+    }
     #[test]
     fn adapter_ghz3_dynamic_qubit_count() {
         use pecos_engines::hybrid::HybridEngineBuilder;

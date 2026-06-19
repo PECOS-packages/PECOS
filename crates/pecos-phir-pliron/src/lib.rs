@@ -682,6 +682,8 @@ fn unsupported_qis(msg: impl Into<String>) -> PecosError {
 /// `__quantum__qis__{h,cx,m}__body` + `__quantum__rt__result_record_output`; any other `__quantum__`
 /// call (or a malformed operand list) is rejected with a structured error rather than dropped.
 pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(ModuleOp, Ptr<BasicBlock>, MeasurementRegistry), PecosError> {
+    validate_straight_line_qis_shape(src)?;
+
     fn i64_args(line: &str) -> Vec<usize> {
         match (line.find('('), line.rfind(')')) {
             (Some(l), Some(r)) if r > l => line[l + 1..r]
@@ -694,8 +696,19 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modul
     // pass 1: collect the gate/measure/record stream + the set of qubits referenced
     let mut parsed: Vec<(&str, Vec<usize>)> = Vec::new();
     let mut qubits: BTreeSet<usize> = BTreeSet::new();
+    let mut in_func = false;
     for line in src.lines() {
         let l = line.trim();
+        if l.starts_with("define ") && l.contains("@qmain") {
+            in_func = true;
+            continue;
+        }
+        if !in_func {
+            continue;
+        }
+        if l == "}" {
+            break;
+        }
         if !(l.starts_with("call ") || l.contains("= call ")) {
             continue;
         }
@@ -1390,6 +1403,281 @@ pub fn br_labels(l: &str) -> Vec<String> {
         .filter_map(|s| s.split([',', ' ']).next().filter(|x| !x.is_empty()).map(str::to_string))
         .collect()
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QisLlShape {
+    StraightLine,
+    SingleDiamond,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LastQuantumOp {
+    Measure,
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LlTerminator {
+    Ret,
+    Br(String),
+    CondBr { cond: String, then_label: String, else_label: String },
+}
+
+/// A parsed `%result = icmp <pred> i32 <op>, <op>` -- enough to prove the branch condition's dataflow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IcmpShape {
+    result: String,            // the `%name` the icmp defines
+    measure_ref: Option<String>, // the `%ssa` operand (the measurement result it compares), if any
+    rhs_const: Option<u64>,    // the integer-literal operand, if any
+    pred_eq: bool,             // predicate is `eq`
+}
+
+#[derive(Clone, Debug, Default)]
+struct LlBlockShape {
+    label: String,
+    terminator: Option<LlTerminator>,
+    last_quantum_before_terminator: Option<LastQuantumOp>,
+    measures: Vec<String>, // SSA result names of `m__body` calls, in order
+    icmp: Option<IcmpShape>, // the last `icmp` defined in the block
+}
+
+/// `%name = ...` -> `Some("%name")` (the SSA value a line defines), else `None`.
+fn ssa_lhs(l: &str) -> Option<&str> {
+    let (lhs, _rhs) = l.split_once('=')?;
+    let lhs = lhs.trim();
+    lhs.starts_with('%').then_some(lhs)
+}
+
+/// Parse the RHS of `%result = icmp eq i32 %mid, 1` into an [`IcmpShape`].
+fn parse_icmp(result: &str, rhs: &str) -> Option<IcmpShape> {
+    let rest = rhs.trim().strip_prefix("icmp ")?; // "eq i32 %mid, 1"
+    let mut it = rest.split_whitespace();
+    let pred = it.next()?; // "eq"
+    let _ty = it.next()?; // "i32"
+    let operands = it.collect::<Vec<_>>().join(" "); // "%mid, 1"
+    let (mut measure_ref, mut rhs_const) = (None, None);
+    for op in operands.split(',') {
+        let op = op.trim();
+        if op.starts_with('%') {
+            measure_ref = Some(op.to_string());
+        } else if let Ok(k) = op.parse::<u64>() {
+            rhs_const = Some(k);
+        }
+    }
+    Some(IcmpShape { result: result.to_string(), measure_ref, rhs_const, pred_eq: pred == "eq" })
+}
+
+fn block_name(label: &str) -> &str {
+    if label.is_empty() { "entry" } else { label }
+}
+
+fn collect_qmain_cfg(src: &str) -> std::result::Result<Vec<LlBlockShape>, PecosError> {
+    let mut blocks = Vec::new();
+    let mut cur = LlBlockShape::default();
+    let mut in_func = false;
+    let mut saw_qmain = false;
+    for raw in src.lines() {
+        let l = raw.trim();
+        if !in_func {
+            if l.starts_with("define ") && l.contains("@qmain") {
+                in_func = true;
+                saw_qmain = true;
+                cur = LlBlockShape::default();
+            }
+            continue;
+        }
+        if l.is_empty() || l.starts_with(';') {
+            continue;
+        }
+        if l == "}" {
+            blocks.push(cur);
+            return Ok(blocks);
+        }
+        if l.ends_with(':') && !l.contains(' ') {
+            blocks.push(cur);
+            cur = LlBlockShape { label: l.trim_end_matches(':').to_string(), ..Default::default() };
+            continue;
+        }
+        if cur.terminator.is_some() {
+            return Err(unsupported_qis(format!("instructions after terminator in block {}", block_name(&cur.label))));
+        }
+        if l.starts_with("br ") {
+            let labels = br_labels(l);
+            cur.terminator = Some(if l.starts_with("br i1 ") {
+                if labels.len() != 2 {
+                    return Err(unsupported_qis(format!("conditional branch must name two labels: {l}")));
+                }
+                let cond = l
+                    .strip_prefix("br i1 ")
+                    .and_then(|r| r.split(',').next())
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .to_string();
+                LlTerminator::CondBr { cond, then_label: labels[0].clone(), else_label: labels[1].clone() }
+            } else if labels.len() == 1 {
+                LlTerminator::Br(labels[0].clone())
+            } else {
+                return Err(unsupported_qis(format!("unsupported branch form: {l}")));
+            });
+        } else if l.starts_with("ret ") {
+            cur.terminator = Some(LlTerminator::Ret);
+        } else if l.contains("__quantum__qis__m__body") {
+            cur.last_quantum_before_terminator = Some(LastQuantumOp::Measure);
+            if let Some(name) = ssa_lhs(l) {
+                cur.measures.push(name.to_string()); // record the measurement-result SSA name
+            }
+        } else if l.contains("__quantum__") {
+            cur.last_quantum_before_terminator = Some(LastQuantumOp::Other);
+        } else if let Some(lhs) = ssa_lhs(l)
+            && let Some((_, rhs)) = l.split_once('=')
+            && rhs.trim().starts_with("icmp ")
+        {
+            cur.icmp = parse_icmp(lhs, rhs.trim()); // the branch-condition icmp
+        }
+    }
+    if saw_qmain {
+        Err(unsupported_qis("qmain function missing closing brace"))
+    } else {
+        Err(unsupported_qis("missing @qmain function"))
+    }
+}
+
+fn validate_straight_line_blocks(blocks: &[LlBlockShape]) -> std::result::Result<(), PecosError> {
+    if blocks.len() != 1 || blocks.first().is_some_and(|b| !b.label.is_empty()) {
+        return Err(unsupported_qis("straight-line subset must have exactly one basic block; control-flow labels/branches are unsupported"));
+    }
+    match blocks.first().and_then(|b| b.terminator.as_ref()) {
+        Some(LlTerminator::Br(_)) | Some(LlTerminator::CondBr { .. }) => Err(unsupported_qis("straight-line subset cannot contain branch control flow")),
+        Some(LlTerminator::Ret) | None => Ok(()),
+    }
+}
+
+fn validate_straight_line_qis_shape(src: &str) -> std::result::Result<(), PecosError> {
+    let blocks = collect_qmain_cfg(src)?;
+    validate_straight_line_blocks(&blocks)
+}
+
+fn single_diamond_branch_target(block: &LlBlockShape) -> std::result::Result<&str, PecosError> {
+    match &block.terminator {
+        Some(LlTerminator::Br(target)) => Ok(target.as_str()),
+        _ => Err(unsupported_qis(format!("then/else block {} must end with an unconditional branch to the common merge block", block_name(&block.label)))),
+    }
+}
+
+fn validate_single_diamond_blocks(blocks: &[LlBlockShape]) -> std::result::Result<(), PecosError> {
+    let cond_blocks: Vec<&LlBlockShape> = blocks
+        .iter()
+        .filter(|b| matches!(&b.terminator, Some(LlTerminator::CondBr { .. })))
+        .collect();
+    if cond_blocks.len() > 1 {
+        return Err(unsupported_qis("more than one conditional branch -- only a single diamond is supported"));
+    }
+    if cond_blocks.is_empty() {
+        return Err(unsupported_qis("single-diamond subset requires one conditional branch"));
+    }
+
+    let entry = blocks.iter().find(|b| b.label.is_empty()).ok_or_else(|| unsupported_qis("missing entry block"))?;
+    if !cond_blocks[0].label.is_empty() {
+        return Err(unsupported_qis("single-diamond conditional branch must be in the entry block"));
+    }
+    if entry.last_quantum_before_terminator != Some(LastQuantumOp::Measure) {
+        return Err(unsupported_qis("entry conditional branch must follow a mid-measurement"));
+    }
+
+    let (cond, then_label, else_label) = match &entry.terminator {
+        Some(LlTerminator::CondBr { cond, then_label, else_label }) => (cond, then_label, else_label),
+        _ => return Err(unsupported_qis("entry block must terminate with the single conditional branch")),
+    };
+    if then_label == else_label {
+        return Err(unsupported_qis("conditional branch arms must target distinct blocks"));
+    }
+
+    // Branch-condition dataflow: prove the branch is driven by the trailing mid-measurement, i.e.
+    //   %mid = qis.m ... ; %c = icmp eq i32 %mid, 1 ; br i1 %c, ...
+    // The lowering treats the entry's last measure as the `qec.if` condition and the then-arm as the
+    // `mid==1` case, so we require exactly that: the branch uses an `icmp eq <last-measure>, 1`.
+    // (Without this, a constant condition like `icmp eq i32 0, 1` or a branch on an *earlier*
+    // measurement would pass the shape check and be silently mis-lowered.)
+    let icmp = entry
+        .icmp
+        .as_ref()
+        .ok_or_else(|| unsupported_qis("conditional branch condition must be produced by an `icmp` on the mid-measurement"))?;
+    if icmp.result != *cond {
+        return Err(unsupported_qis("conditional branch does not use the entry `icmp` result"));
+    }
+    if !icmp.pred_eq || icmp.rhs_const != Some(1) {
+        return Err(unsupported_qis("only `icmp eq <mid-measure>, 1` branch conditions are supported"));
+    }
+    let measure_ref = icmp
+        .measure_ref
+        .as_deref()
+        .ok_or_else(|| unsupported_qis("branch condition must compare a measurement result, not a constant"))?;
+    let last_measure = entry
+        .measures
+        .last()
+        .map(String::as_str)
+        .ok_or_else(|| unsupported_qis("entry block has no named measurement to condition on"))?;
+    if measure_ref != last_measure {
+        return Err(unsupported_qis("conditional branch must condition on the trailing mid-measurement, not an earlier one"));
+    }
+
+    let mut by_label: HashMap<&str, &LlBlockShape> = HashMap::new();
+    for block in blocks {
+        if by_label.insert(block.label.as_str(), block).is_some() {
+            return Err(unsupported_qis(format!("duplicate basic-block label {}", block_name(&block.label))));
+        }
+    }
+
+    let then_block = by_label
+        .get(then_label.as_str())
+        .copied()
+        .ok_or_else(|| unsupported_qis(format!("conditional branch target {then_label} is missing")))?;
+    let else_block = by_label
+        .get(else_label.as_str())
+        .copied()
+        .ok_or_else(|| unsupported_qis(format!("conditional branch target {else_label} is missing")))?;
+
+    let then_merge = single_diamond_branch_target(then_block)?;
+    let else_merge = single_diamond_branch_target(else_block)?;
+    if then_merge != else_merge {
+        return Err(unsupported_qis("then/else blocks must branch to the same merge block"));
+    }
+    if then_merge.is_empty() || then_merge == then_label || then_merge == else_label {
+        return Err(unsupported_qis("single-diamond merge target must be a distinct non-entry block"));
+    }
+
+    let merge_block = by_label.get(then_merge).copied().ok_or_else(|| unsupported_qis(format!("merge block {then_merge} is missing")))?;
+    if !matches!(merge_block.terminator, Some(LlTerminator::Ret) | None) {
+        return Err(unsupported_qis("single-diamond merge block must not branch again"));
+    }
+
+    for block in blocks {
+        if !block.label.is_empty() && block.label != *then_label && block.label != *else_label && block.label != then_merge {
+            return Err(unsupported_qis(format!("extra basic block {} outside the single-diamond shape", block_name(&block.label))));
+        }
+    }
+    Ok(())
+}
+
+fn validate_single_diamond_qis_shape(src: &str) -> std::result::Result<(), PecosError> {
+    let blocks = collect_qmain_cfg(src)?;
+    validate_single_diamond_blocks(&blocks)
+}
+
+fn classify_covered_qis_shape(src: &str) -> std::result::Result<QisLlShape, PecosError> {
+    let blocks = collect_qmain_cfg(src)?;
+    let conditional_branches = blocks
+        .iter()
+        .filter(|b| matches!(&b.terminator, Some(LlTerminator::CondBr { .. })))
+        .count();
+    if conditional_branches == 0 {
+        validate_straight_line_blocks(&blocks)?;
+        Ok(QisLlShape::StraightLine)
+    } else {
+        validate_single_diamond_blocks(&blocks)?;
+        Ok(QisLlShape::SingleDiamond)
+    }
+}
 pub fn collect_qubits(ops: &[ParsedOp], set: &mut BTreeSet<usize>) {
     for p in ops {
         match *p {
@@ -1432,6 +1720,8 @@ pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot
 /// Rejects (structured error, not silent-drop/panic) anything outside the subset: unrecognized
 /// `__quantum__` calls, malformed operand lists, and more than one conditional branch.
 pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> std::result::Result<(ModuleOp, Ptr<BasicBlock>, MeasurementRegistry), PecosError> {
+    validate_single_diamond_qis_shape(src)?;
+
     // pass 1: collect ops per block label (entry = "") and the conditional-branch targets.
     let mut blocks: Vec<(String, Vec<ParsedOp>)> = Vec::new();
     let mut cur_label = String::new();
@@ -1676,13 +1966,6 @@ pub fn run_branch_measure() {
 
 // ===================== public adapter: the opt-in QIS-LLVM-IR -> pliron call path =====================
 
-/// True if the program has a conditional branch (`br i1 ...`) -- i.e. the adaptive single-diamond
-/// shape (qprog-style). Its absence means straight-line (bell-style). This is the dispatch over the
-/// covered QIS-LLVM subset; richer CFGs are out of scope (see the strangler scope doc).
-fn has_conditional_branch(src: &str) -> bool {
-    src.lines().any(|l| l.trim().starts_with("br i1"))
-}
-
 /// Lower a QIS-LLVM-IR program to the pliron `qec` dialect and return a boxed
 /// `ClassicalControlEngine` ready for `HybridEngineBuilder` -- the narrow, opt-in entry point for the
 /// pliron path. The incumbent `pecos-phir` stays the default; callers select this explicitly.
@@ -1690,17 +1973,13 @@ fn has_conditional_branch(src: &str) -> bool {
 /// Scope: the covered QIS-LLVM subset -- Bell-style straight-line and the single-diamond adaptive
 /// shape (`h`/`x`/`cx`/`rz`/`rx`/`ry`/`zz`/`m`, one `icmp`+`br` lifted to `qec.if`,
 /// `result_record_output` export). The returned engine reports its own `num_qubits()` for sizing the
-/// quantum backend. Returns a structured error if the lowered IR fails verification.
-///
-/// Known limits (tracked in the scope doc, not yet closed): the parser still panics on malformed
-/// input outside the covered subset (parse-path hardening to structured errors is a separate item),
-/// and `num_qubits()` is currently fixed at 2 (correct for the covered fixtures).
+/// quantum backend. Returns a structured error if the source is outside the covered subset or the
+/// lowered IR fails verification.
 pub fn from_qis_llvm_ir_pliron(src: &str) -> std::result::Result<Box<dyn ClassicalControlEngine>, PecosError> {
     let ctx = &mut Context::new();
-    let (module, bb, reg) = if has_conditional_branch(src) {
-        parse_qprog_ll(ctx, src)?
-    } else {
-        parse_bell_ll(ctx, src)?
+    let (module, bb, reg) = match classify_covered_qis_shape(src)? {
+        QisLlShape::SingleDiamond => parse_qprog_ll(ctx, src)?,
+        QisLlShape::StraightLine => parse_bell_ll(ctx, src)?,
     };
     verify_op(&module, ctx)
         .map_err(|e| PecosError::Compilation(format!("pliron qec verification failed: {}", e.disp(ctx))))?;
@@ -2174,6 +2453,259 @@ d:
         assert!(
             format!("{err}").contains("more than one conditional branch"),
             "expected the unsupported-control-flow rejection, got: {err}"
+        );
+    }
+
+    /// A CFG with only unconditional branches used to route through the straight-line parser and get
+    /// flattened. It must now be rejected by the adapter classifier before lowering.
+    #[test]
+    fn negative_unconditional_cfg_without_conditional_branch_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    call void @__quantum__qis__h__body(i64 0)
+    br label %tail
+tail:
+    %r0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+    call void @__quantum__rt__result_record_output(i64 0, i8* null)
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("unconditional CFG must be rejected, but adapter lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("straight-line subset"),
+            "expected the straight-line CFG rejection, got: {err}"
+        );
+    }
+
+    /// Both conditional branch labels must name real blocks; missing labels must not become empty
+    /// branch bodies via `unwrap_or_default`.
+    #[test]
+    fn negative_missing_conditional_branch_label_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    %mid = call i32 @__quantum__qis__m__body(i64 0, i64 2)
+    %cond = icmp eq i32 %mid, 1
+    br i1 %cond, label %apply_x, label %missing
+apply_x:
+    call void @__quantum__qis__x__body(i64 1)
+    br label %final
+final:
+    %f1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+    call void @__quantum__rt__result_record_output(i64 1, i8* null)
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("missing branch target must error, but adapter lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("target missing is missing"),
+            "expected the missing-label rejection, got: {err}"
+        );
+    }
+
+    /// The single-diamond subset requires both arms to merge to the same block; otherwise the qec.if
+    /// lift would silently pick one post block and misrepresent the CFG.
+    #[test]
+    fn negative_diamond_arms_with_different_merges_error() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    %mid = call i32 @__quantum__qis__m__body(i64 0, i64 2)
+    %cond = icmp eq i32 %mid, 1
+    br i1 %cond, label %apply_x, label %skip_x
+apply_x:
+    call void @__quantum__qis__x__body(i64 1)
+    br label %final_a
+skip_x:
+    br label %final_b
+final_a:
+    ret i64 0
+final_b:
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("diamond with two merge blocks must error, but adapter lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("same merge block"),
+            "expected the wrong-merge rejection, got: {err}"
+        );
+    }
+
+    /// The adaptive branch must be driven by the entry block's trailing mid-measurement, not by an
+    /// unrelated condition that the current qec.if lowering cannot model.
+    #[test]
+    fn negative_conditional_branch_without_mid_measure_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    call void @__quantum__qis__h__body(i64 0)
+    %cond = icmp eq i32 0, 1
+    br i1 %cond, label %apply_x, label %skip_x
+apply_x:
+    call void @__quantum__qis__x__body(i64 1)
+    br label %final
+skip_x:
+    br label %final
+final:
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("conditional branch without mid-measurement must error, but adapter lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("mid-measurement"),
+            "expected the mid-measurement-shape rejection, got: {err}"
+        );
+    }
+
+    /// Extra blocks are outside the one-diamond contract and must not be ignored while choosing the
+    /// first non-arm label as the merge block.
+    #[test]
+    fn negative_extra_block_outside_single_diamond_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    %mid = call i32 @__quantum__qis__m__body(i64 0, i64 2)
+    %cond = icmp eq i32 %mid, 1
+    br i1 %cond, label %apply_x, label %skip_x
+apply_x:
+    call void @__quantum__qis__x__body(i64 1)
+    br label %final
+skip_x:
+    br label %final
+final:
+    ret i64 0
+dead:
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("extra basic block must error, but adapter lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("extra basic block dead"),
+            "expected the extra-block rejection, got: {err}"
+        );
+    }
+
+    // ---- branch-condition dataflow negatives (round-7: prove the branch uses the trailing mid-measure) ----
+
+    /// A constant branch condition (`icmp eq i32 0, 1`) passes the CFG-shape check but is NOT driven
+    /// by the measurement; it must be rejected, not mis-lowered as `qec.if(mid)`.
+    #[test]
+    fn negative_branch_condition_is_constant_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    %mid = call i32 @__quantum__qis__m__body(i64 0, i64 2)
+    %cond = icmp eq i32 0, 1
+    br i1 %cond, label %apply_x, label %skip_x
+apply_x:
+    call void @__quantum__qis__x__body(i64 1)
+    br label %final
+skip_x:
+    br label %final
+final:
+    %f1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+    call void @__quantum__rt__result_record_output(i64 1, i8* null)
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("a constant branch condition must error, but lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("must compare a measurement result"),
+            "expected the constant-condition rejection, got: {err}"
+        );
+    }
+
+    /// Two measurements, branch on the *earlier* one: the lowering conditions on the trailing
+    /// measure, so this would mis-lower. Must be rejected.
+    #[test]
+    fn negative_branch_on_earlier_measurement_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 2)
+    %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 3)
+    %cond = icmp eq i32 %m0, 1
+    br i1 %cond, label %apply_x, label %skip_x
+apply_x:
+    call void @__quantum__qis__x__body(i64 1)
+    br label %final
+skip_x:
+    br label %final
+final:
+    %f1 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+    call void @__quantum__rt__result_record_output(i64 0, i8* null)
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("branching on an earlier measurement must error, but lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("trailing mid-measurement"),
+            "expected the wrong-measurement rejection, got: {err}"
+        );
+    }
+
+    /// The conditional branch uses a value other than the entry `icmp` result -- reject.
+    #[test]
+    fn negative_branch_not_using_icmp_result_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    %mid = call i32 @__quantum__qis__m__body(i64 0, i64 2)
+    %cond = icmp eq i32 %mid, 1
+    br i1 %arg, label %apply_x, label %skip_x
+apply_x:
+    call void @__quantum__qis__x__body(i64 1)
+    br label %final
+skip_x:
+    br label %final
+final:
+    %f1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+    call void @__quantum__rt__result_record_output(i64 1, i8* null)
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("a branch not using the icmp result must error, but lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("does not use the entry `icmp` result"),
+            "expected the branch-not-using-icmp rejection, got: {err}"
+        );
+    }
+
+    /// `icmp eq <mid>, 0` would swap the then/else sense (the lowering assumes mid==1 -> then-arm);
+    /// only `eq ..., 1` is supported.
+    #[test]
+    fn negative_branch_condition_compares_zero_errors() {
+        const BAD: &str = "\
+define i64 @qmain(i64 %arg) #0 {
+    %mid = call i32 @__quantum__qis__m__body(i64 0, i64 2)
+    %cond = icmp eq i32 %mid, 0
+    br i1 %cond, label %apply_x, label %skip_x
+apply_x:
+    call void @__quantum__qis__x__body(i64 1)
+    br label %final
+skip_x:
+    br label %final
+final:
+    %f1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+    call void @__quantum__rt__result_record_output(i64 1, i8* null)
+    ret i64 0
+}
+";
+        let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
+            panic!("an `icmp eq <mid>, 0` condition must error, but lowering succeeded");
+        };
+        assert!(
+            format!("{err}").contains("icmp eq <mid-measure>, 1"),
+            "expected the only-eq-1-supported rejection, got: {err}"
         );
     }
 }

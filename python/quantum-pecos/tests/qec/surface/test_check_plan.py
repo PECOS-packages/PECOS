@@ -21,7 +21,14 @@ def test_check_plan_default_resolves_to_cx_metadata() -> None:
 
     plan = resolve_surface_check_plan()
 
-    assert surface_check_plan_ids() == ("cx_standard_v1", "szz_boundary_first_v1", "szz_current_v1")
+    assert surface_check_plan_ids() == (
+        "cx_balanced_data_v1",
+        "cx_standard_v1",
+        "szz_balanced_data_v1",
+        "szz_boundary_first_balanced_data_v1",
+        "szz_boundary_first_v1",
+        "szz_current_v1",
+    )
     assert default_surface_check_plan_id() == "cx_standard_v1"
     assert default_surface_check_plan_id("SZZ") == "szz_current_v1"
     assert plan.plan_id == "cx_standard_v1"
@@ -71,6 +78,39 @@ def test_boundary_first_szz_check_plan_resolves_to_concrete_synthesis() -> None:
     }
     assert plan.semantic_content["x_check"]["sign_policy"] == "boundary_first_szz_sign_vector_v1"
     assert plan.semantic_content["z_check"]["sign_policy"] == "boundary_first_szz_sign_vector_v1"
+
+
+@pytest.mark.parametrize(
+    ("plan_id", "interaction_basis", "phase_pattern"),
+    [
+        ("cx_balanced_data_v1", "cx", "none"),
+        ("szz_balanced_data_v1", "szz", "standard"),
+        ("szz_boundary_first_balanced_data_v1", "szz", "boundary-first"),
+    ],
+)
+def test_balanced_data_check_plans_resolve_to_explicit_schedule(
+    plan_id: str,
+    interaction_basis: str,
+    phase_pattern: str,
+) -> None:
+    from pecos.qec.surface._check_plan import (
+        ancilla_schedule_for_check_plan,
+        require_current_surface_check_plan_renderer,
+        resolve_surface_check_plan,
+    )
+
+    plan = resolve_surface_check_plan(check_plan=plan_id)
+
+    assert plan.interaction_basis == interaction_basis
+    assert plan.synthesis_identity == {
+        "family": interaction_basis,
+        "szz_phase_pattern": phase_pattern,
+        "interaction_order": "pecos-default",
+        "ancilla_schedule": "balanced-data-v1",
+    }
+    assert plan.semantic_content["schedule"]["ancilla_batch_policy"] == "balanced-data-v1"
+    assert ancilla_schedule_for_check_plan(plan) == "balanced-data-v1"
+    require_current_surface_check_plan_renderer(plan, context="unit-test")
 
 
 def test_current_renderer_rejects_unimplemented_plan_semantics() -> None:
@@ -137,6 +177,28 @@ def test_guppy_surface_code_accepts_check_plan_as_source_of_truth() -> None:
         num_rounds=1,
         basis="Z",
         check_plan="szz_current_v1",
+    )
+
+    assert program is not None
+
+
+@pytest.mark.parametrize(
+    "check_plan",
+    [
+        "cx_balanced_data_v1",
+        "szz_balanced_data_v1",
+        "szz_boundary_first_balanced_data_v1",
+    ],
+)
+def test_guppy_surface_code_accepts_balanced_data_check_plans(check_plan: str) -> None:
+    from pecos.guppy import make_surface_code
+
+    program = make_surface_code(
+        distance=3,
+        num_rounds=1,
+        basis="Z",
+        ancilla_budget=2,
+        check_plan=check_plan,
     )
 
     assert program is not None

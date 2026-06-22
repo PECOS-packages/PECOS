@@ -35,7 +35,11 @@ from pecos.qec.surface._ancilla_batching import (
 from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_budget as _normalize_ancilla_budget,
 )
-from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
+from pecos.qec.surface._check_plan import (
+    ancilla_schedule_for_check_plan,
+    require_current_surface_check_plan_renderer,
+    resolve_surface_check_plan,
+)
 from pecos.qec.surface._clifford_deformation import (
     resolve_surface_clifford_frame,
 )
@@ -930,6 +934,7 @@ def build_surface_code_circuit(
         resolved_plan,
         context="abstract surface-code circuit generation",
     )
+    ancilla_schedule = ancilla_schedule_for_check_plan(resolved_plan)
     interaction_basis = _normalize_interaction_basis(resolved_plan.interaction_basis)
     resolved_clifford_frame = _resolve_szz_clifford_frame_for_builder(
         patch,
@@ -955,7 +960,11 @@ def build_surface_code_circuit(
         ancilla_pool = list(range(num_data, num_data + effective_ancilla_budget))
         x_ancilla_qubits = [-1] * num_x_anc
         z_ancilla_qubits = [-1] * num_z_anc
-        for batch in _batched_stabilizers(patch, effective_ancilla_budget):
+        for batch in _batched_stabilizers(
+            patch,
+            effective_ancilla_budget,
+            ancilla_schedule=ancilla_schedule,
+        ):
             for pool_idx, (stab_type, stab_idx) in enumerate(batch):
                 if stab_type == "X":
                     x_ancilla_qubits[stab_idx] = ancilla_pool[pool_idx]
@@ -1036,6 +1045,7 @@ def build_surface_code_circuit(
                 allocation,
                 cnot_rounds,
                 _szz_residual_plan_for_check_plan(patch, resolved_plan),
+                ancilla_schedule,
                 resolved_clifford_frame,
             ),
             allocation,
@@ -1121,7 +1131,11 @@ def build_surface_code_circuit(
 
         ops.append(SurfaceCircuitStep(OpType.TICK))
     else:
-        stabilizer_batches = _batched_stabilizers(patch, effective_ancilla_budget)
+        stabilizer_batches = _batched_stabilizers(
+            patch,
+            effective_ancilla_budget,
+            ancilla_schedule=ancilla_schedule,
+        )
         for batch in stabilizer_batches:
             init_batch = [(stab_type, stab_idx) for stab_type, stab_idx in batch if stab_type == init_stabilizer_type]
             if not init_batch:
@@ -1226,7 +1240,11 @@ def build_surface_code_circuit(
 
             ops.append(SurfaceCircuitStep(OpType.TICK))
         else:
-            stabilizer_batches = _batched_stabilizers(patch, effective_ancilla_budget)
+            stabilizer_batches = _batched_stabilizers(
+                patch,
+                effective_ancilla_budget,
+                ancilla_schedule=ancilla_schedule,
+            )
             for batch in stabilizer_batches:
                 ops.append(SurfaceCircuitStep(OpType.COMMENT, label="Prepare ancillas"))
                 batch_ancillas = {
@@ -1316,6 +1334,7 @@ def _build_surface_code_circuit_szz(
     allocation: QubitAllocation,
     cnot_rounds: list[list[tuple[str, int, int]]],
     residual_plan: SzzResidualPlan,
+    ancilla_schedule: str,
     resolved_clifford_frame: ResolvedSurfaceCliffordFrame | None = None,
 ) -> list[SurfaceCircuitStep]:
     """Build the abstract SZZ/SZZdg surface-memory template."""
@@ -1414,7 +1433,11 @@ def _build_surface_code_circuit_szz(
             batch.extend(("Z", s.index) for s in geom.z_stabilizers)
             batches = [batch]
         else:
-            batches = _batched_stabilizers(patch, allocation_ancilla_count)
+            batches = _batched_stabilizers(
+                patch,
+                allocation_ancilla_count,
+                ancilla_schedule=ancilla_schedule,
+            )
 
         if selected_type is None:
             return batches

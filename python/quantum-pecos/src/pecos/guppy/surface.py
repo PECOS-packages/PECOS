@@ -205,7 +205,10 @@ def generate_guppy_source(
         ValueError: If exactly one of ``twirl`` / ``rng`` is supplied.
     """
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
-    from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer
+    from pecos.qec.surface._check_plan import (
+        ancilla_schedule_for_check_plan,
+        require_current_surface_check_plan_renderer,
+    )
     from pecos.qec.surface.circuit_builder import (
         _resolve_szz_clifford_frame_for_builder,
         _szz_memory_physical_axis_for_data,
@@ -220,6 +223,7 @@ def generate_guppy_source(
         resolved_plan,
         context="Guppy surface-code source generation",
     )
+    ancilla_schedule = ancilla_schedule_for_check_plan(resolved_plan)
     interaction_basis = resolved_plan.interaction_basis
     resolved_clifford_frame = _resolve_szz_clifford_frame_for_builder(
         patch,
@@ -614,9 +618,13 @@ def generate_guppy_source(
             idx += 1
     else:
         # Constrained: stabilizer-batched. The batch sequence is the
-        # shared `batched_stabilizers(patch, effective_budget)` so the
+        # shared `batched_stabilizers(patch, effective_budget, schedule=...)` so the
         # abstract circuit's measurement order matches by construction.
-        batches = batched_stabilizers(patch, effective_budget)
+        batches = batched_stabilizers(
+            patch,
+            effective_budget,
+            ancilla_schedule=ancilla_schedule,
+        )
         lines.append(
             f'    """Extract full syndrome in {len(batches)} ancilla-reuse batches (budget={effective_budget})."""',
         )
@@ -804,7 +812,11 @@ def generate_guppy_source(
                     lines.append(f"    sz{stab.index} = measure(az{stab.index})")
                     lines.append(f'    result("sz{stab.index}:init:meas:{idx}", sz{stab.index})')
         else:
-            batches = batched_stabilizers(patch, effective_budget)
+            batches = batched_stabilizers(
+                patch,
+                effective_budget,
+                ancilla_schedule=ancilla_schedule,
+            )
             idx = 0
             for batch_idx, batch in enumerate(batches):
                 init_batch = [(t, i) for t, i in batch if t == stab_type]

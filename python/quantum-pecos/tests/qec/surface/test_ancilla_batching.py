@@ -19,8 +19,10 @@ from __future__ import annotations
 import pytest
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface._ancilla_batching import (
+    BALANCED_DATA_ANCILLA_SCHEDULE,
     batched_stabilizers,
     normalize_ancilla_budget,
+    normalize_ancilla_schedule,
 )
 
 # --- normalize_ancilla_budget -----------------------------------------------
@@ -60,6 +62,21 @@ def test_normalize_ancilla_budget_rejects_non_int() -> None:
         normalize_ancilla_budget(8, 1.5)
     with pytest.raises(TypeError, match=r"must be int or None, got str"):
         normalize_ancilla_budget(8, "1")
+
+
+# --- normalize_ancilla_schedule ---------------------------------------------
+
+
+def test_normalize_ancilla_schedule_accepts_named_policies() -> None:
+    assert normalize_ancilla_schedule(None) == "default"
+    assert normalize_ancilla_schedule("default") == "default"
+    assert normalize_ancilla_schedule("balanced_data_v1") == BALANCED_DATA_ANCILLA_SCHEDULE
+    assert normalize_ancilla_schedule("balanced-data-v1") == BALANCED_DATA_ANCILLA_SCHEDULE
+
+
+def test_normalize_ancilla_schedule_rejects_unknown_policy() -> None:
+    with pytest.raises(ValueError, match=r"ancilla_schedule must be one of"):
+        normalize_ancilla_schedule("row-scan")
 
 
 # --- batched_stabilizers (concrete sequences) -------------------------------
@@ -157,6 +174,53 @@ def test_batched_stabilizers_clamps_oversized_budget() -> None:
     huge = batched_stabilizers(patch, 10**6)
     assert len(huge) == 1
     assert len(huge[0]) == total
+
+
+def test_balanced_data_schedule_is_explicit_and_deterministic() -> None:
+    """The balanced schedule is a named non-default policy, not a change to
+    the legacy batching semantics."""
+    patch = SurfacePatch.create(distance=3)
+
+    assert batched_stabilizers(patch, 2) == [
+        [("X", 0), ("Z", 0)],
+        [("X", 1), ("Z", 1)],
+        [("X", 2), ("Z", 2)],
+        [("X", 3), ("Z", 3)],
+    ]
+    assert batched_stabilizers(
+        patch,
+        2,
+        ancilla_schedule=BALANCED_DATA_ANCILLA_SCHEDULE,
+    ) == [
+        [("X", 0), ("Z", 3)],
+        [("X", 3), ("Z", 0)],
+        [("Z", 1), ("Z", 2)],
+        [("X", 2), ("X", 1)],
+    ]
+
+
+def test_balanced_data_schedule_spreads_d9_a17_batches() -> None:
+    """The d=9/a17 target gets equal-size batches and no data qubit whose
+    four adjacent checks all live in one batch."""
+    patch = SurfacePatch.create(distance=9)
+    batches = batched_stabilizers(
+        patch,
+        17,
+        ancilla_schedule=BALANCED_DATA_ANCILLA_SCHEDULE,
+    )
+
+    assert [len(batch) for batch in batches] == [16, 16, 16, 16, 16]
+
+    batch_of = {stabilizer: batch_idx for batch_idx, batch in enumerate(batches) for stabilizer in batch}
+    touches_by_data: dict[int, set[int]] = {}
+    for stab in patch.geometry.x_stabilizers:
+        for data_qubit in stab.data_qubits:
+            touches_by_data.setdefault(data_qubit, set()).add(batch_of[("X", stab.index)])
+    for stab in patch.geometry.z_stabilizers:
+        for data_qubit in stab.data_qubits:
+            touches_by_data.setdefault(data_qubit, set()).add(batch_of[("Z", stab.index)])
+
+    assert min(len(batch_indices) for batch_indices in touches_by_data.values()) > 1
 
 
 # --- D1: pin emitted CX sequences for the constrained Guppy codegen --------

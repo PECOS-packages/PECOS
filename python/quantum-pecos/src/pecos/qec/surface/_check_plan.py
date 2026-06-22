@@ -10,6 +10,12 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from pecos.qec.surface._ancilla_batching import (
+    BALANCED_DATA_ANCILLA_SCHEDULE,
+    DEFAULT_ANCILLA_SCHEDULE,
+    normalize_ancilla_schedule,
+)
+
 CHECK_PLAN_METADATA_FORMAT = "pecos.surface.check_plan"
 CHECK_PLAN_METADATA_VERSION = 1
 CHECK_PLAN_HASH_ALGORITHM = "sha256"
@@ -63,6 +69,31 @@ _PLAN_SEMANTICS: dict[str, dict[str, Any]] = {
         },
         "prefix_policy": "none",
     },
+    "cx_balanced_data_v1": {
+        "plan_id": "cx_balanced_data_v1",
+        "interaction_basis": "cx",
+        "synthesis_identity": {
+            "family": "cx",
+            "szz_phase_pattern": "none",
+            "interaction_order": "pecos-default",
+            "ancilla_schedule": "balanced-data-v1",
+        },
+        "schedule": {
+            "round_policy": "constant",
+            "site_policy": "global",
+            "edge_order": "current_surface_cnot_schedule_v1",
+            "ancilla_batch_policy": "balanced-data-v1",
+        },
+        "x_check": {
+            "template": "current_cx_x_check_v1",
+            "measurement_sign_policy": "none",
+        },
+        "z_check": {
+            "template": "current_cx_z_check_v1",
+            "measurement_sign_policy": "none",
+        },
+        "prefix_policy": "none",
+    },
     "szz_current_v1": {
         "plan_id": "szz_current_v1",
         "interaction_basis": "szz",
@@ -104,6 +135,64 @@ _PLAN_SEMANTICS: dict[str, dict[str, Any]] = {
             "round_policy": "constant",
             "site_policy": "global",
             "edge_order": "current_surface_cnot_schedule_v1",
+        },
+        "x_check": {
+            "template": "current_szz_x_check_v1",
+            "sign_policy": "boundary_first_szz_sign_vector_v1",
+            "residual_policy": "per_touch_compensated",
+            "measurement_sign_policy": "explicit_template_metadata",
+        },
+        "z_check": {
+            "template": "current_szz_z_check_v1",
+            "sign_policy": "boundary_first_szz_sign_vector_v1",
+            "residual_policy": "per_touch_compensated",
+            "measurement_sign_policy": "explicit_template_metadata",
+        },
+        "prefix_policy": "forward_flow_virtual_z_v1",
+    },
+    "szz_balanced_data_v1": {
+        "plan_id": "szz_balanced_data_v1",
+        "interaction_basis": "szz",
+        "synthesis_identity": {
+            "family": "szz",
+            "szz_phase_pattern": "standard",
+            "interaction_order": "pecos-default",
+            "ancilla_schedule": "balanced-data-v1",
+        },
+        "schedule": {
+            "round_policy": "constant",
+            "site_policy": "global",
+            "edge_order": "current_surface_cnot_schedule_v1",
+            "ancilla_batch_policy": "balanced-data-v1",
+        },
+        "x_check": {
+            "template": "current_szz_x_check_v1",
+            "sign_policy": "default_szz_sign_vector_v1",
+            "residual_policy": "per_touch_compensated",
+            "measurement_sign_policy": "explicit_template_metadata",
+        },
+        "z_check": {
+            "template": "current_szz_z_check_v1",
+            "sign_policy": "default_szz_sign_vector_v1",
+            "residual_policy": "per_touch_compensated",
+            "measurement_sign_policy": "explicit_template_metadata",
+        },
+        "prefix_policy": "forward_flow_virtual_z_v1",
+    },
+    "szz_boundary_first_balanced_data_v1": {
+        "plan_id": "szz_boundary_first_balanced_data_v1",
+        "interaction_basis": "szz",
+        "synthesis_identity": {
+            "family": "szz",
+            "szz_phase_pattern": "boundary-first",
+            "interaction_order": "pecos-default",
+            "ancilla_schedule": "balanced-data-v1",
+        },
+        "schedule": {
+            "round_policy": "constant",
+            "site_policy": "global",
+            "edge_order": "current_surface_cnot_schedule_v1",
+            "ancilla_batch_policy": "balanced-data-v1",
         },
         "x_check": {
             "template": "current_szz_x_check_v1",
@@ -200,6 +289,18 @@ def resolve_surface_check_plan(
     )
 
 
+def ancilla_schedule_for_check_plan(resolved_plan: ResolvedSurfaceCheckPlan) -> str:
+    """Return the concrete ancilla-reuse schedule encoded by a check plan."""
+    return normalize_ancilla_schedule(
+        str(
+            resolved_plan.synthesis_identity.get(
+                "ancilla_schedule",
+                DEFAULT_ANCILLA_SCHEDULE,
+            ),
+        ),
+    )
+
+
 def require_current_surface_check_plan_renderer(
     resolved_plan: ResolvedSurfaceCheckPlan,
     *,
@@ -215,20 +316,21 @@ def require_current_surface_check_plan_renderer(
     semantic = resolved_plan.semantic_content
     synthesis = resolved_plan.synthesis_identity
     schedule = semantic.get("schedule", {})
+    ancilla_schedule = ancilla_schedule_for_check_plan(resolved_plan)
 
     if resolved_plan.interaction_basis == "cx":
         expected_synthesis = {
             "family": "cx",
             "szz_phase_pattern": "none",
             "interaction_order": "pecos-default",
-            "ancilla_schedule": "default",
+            "ancilla_schedule": ancilla_schedule,
         }
     else:
         expected_synthesis = {
             "family": "szz",
             "szz_phase_pattern": synthesis.get("szz_phase_pattern"),
             "interaction_order": "pecos-default",
-            "ancilla_schedule": "default",
+            "ancilla_schedule": ancilla_schedule,
         }
         if synthesis.get("szz_phase_pattern") not in {"standard", "boundary-first"}:
             msg = (
@@ -236,11 +338,19 @@ def require_current_surface_check_plan_renderer(
                 f"with {CURRENT_SURFACE_CHECK_PLAN_RENDERER}; synthesis_identity={synthesis!r}"
             )
             raise NotImplementedError(msg)
+    if ancilla_schedule not in {DEFAULT_ANCILLA_SCHEDULE, BALANCED_DATA_ANCILLA_SCHEDULE}:
+        msg = (
+            f"{context} cannot realize check_plan={resolved_plan.plan_id!r} "
+            f"with {CURRENT_SURFACE_CHECK_PLAN_RENDERER}; ancilla_schedule={ancilla_schedule!r}"
+        )
+        raise NotImplementedError(msg)
     expected_schedule = {
         "round_policy": "constant",
         "site_policy": "global",
         "edge_order": "current_surface_cnot_schedule_v1",
     }
+    if ancilla_schedule != DEFAULT_ANCILLA_SCHEDULE:
+        expected_schedule["ancilla_batch_policy"] = ancilla_schedule
     if synthesis != expected_synthesis or schedule != expected_schedule:
         msg = (
             f"{context} cannot realize check_plan={resolved_plan.plan_id!r} "

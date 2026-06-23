@@ -34,10 +34,40 @@ class _ModuleState:
     # Keyed by full patch identity + effective budget (dx, dz, orientation,
     # rotated, effective_budget) so distinct patch geometries -- e.g. rotated
     # vs non-rotated at the same dx/dz -- never collide on a cached module.
-    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str, str, str | None, bool], dict]] = {}
+    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str, str, str | None, str], dict]] = {}
 
 
 _state = _ModuleState()
+
+
+_SZZ_RUNTIME_BARRIER_POLICY_NONE = "none"
+_SZZ_RUNTIME_BARRIER_POLICY_ALL = "all"
+_SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX = "data-prefix"
+_SZZ_RUNTIME_BARRIER_POLICIES = frozenset(
+    {
+        _SZZ_RUNTIME_BARRIER_POLICY_NONE,
+        _SZZ_RUNTIME_BARRIER_POLICY_ALL,
+        _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX,
+    },
+)
+
+
+def _normalize_szz_runtime_barrier_policy(value: bool | str) -> str:
+    """Return the canonical SZZ runtime-barrier policy token."""
+    if isinstance(value, bool):
+        return _SZZ_RUNTIME_BARRIER_POLICY_ALL if value else _SZZ_RUNTIME_BARRIER_POLICY_NONE
+    normalized = str(value).strip().lower().replace("_", "-")
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return _SZZ_RUNTIME_BARRIER_POLICY_ALL
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return _SZZ_RUNTIME_BARRIER_POLICY_NONE
+    if normalized not in _SZZ_RUNTIME_BARRIER_POLICIES:
+        msg = (
+            "szz_runtime_barriers must be a boolean or one of "
+            f"{sorted(_SZZ_RUNTIME_BARRIER_POLICIES)}, got {value!r}"
+        )
+        raise ValueError(msg)
+    return normalized
 
 
 def _normalize_surface_interaction_basis(interaction_basis: str) -> str:
@@ -143,7 +173,7 @@ def generate_guppy_source(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool = False,
+    szz_runtime_barriers: bool | str = False,
 ) -> str:
     """Generate Guppy source code for a surface code patch.
 
@@ -200,11 +230,14 @@ def generate_guppy_source(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy. Currently supported for SZZ global axis-cycle and
             checkerboard XZZX/ZXXZ deformed-check frames.
-        szz_runtime_barriers: When true, emit qsystem RuntimeBarrier
-            operations immediately before SZZ/SZZdg host regions. This has no
-            ideal-unitary effect, but gives runtimes a principled scheduling
-            boundary before local data-frame pulses are discharged into their
-            entangling host.
+        szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy. ``False``
+            or ``"none"`` emits no barriers; ``True`` or ``"all"`` emits a
+            public Guppy ``barrier`` before every SZZ/SZZdg host region;
+            ``"data-prefix"`` emits one only when a non-virtual local
+            data-frame pulse is about to be discharged into that host. Barriers
+            have no ideal-unitary effect, but give runtimes a principled
+            scheduling boundary before selected local data-frame pulses and
+            their entangling host.
 
     Returns:
         Python/Guppy source code as a string.
@@ -237,6 +270,13 @@ def generate_guppy_source(
     )
     ancilla_schedule = ancilla_schedule_for_check_plan(resolved_plan)
     interaction_basis = resolved_plan.interaction_basis
+    szz_runtime_barrier_policy = _normalize_szz_runtime_barrier_policy(szz_runtime_barriers)
+    if (
+        interaction_basis != "szz"
+        and szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE
+    ):
+        msg = "szz_runtime_barriers is only supported for interaction_basis='szz'"
+        raise ValueError(msg)
     resolved_clifford_frame = _resolve_szz_clifford_frame_for_builder(
         patch,
         interaction_basis=interaction_basis,
@@ -632,8 +672,22 @@ def generate_guppy_source(
             compose_data(data_q, _szz_axis_rotation_to_z_gates(axis))
 
         for stab_type, stab_idx, data_q in layer_gates:
-            if szz_runtime_barriers:
-                target.append(f"{indent}barrier({ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)})")
+            pending = (
+                _SZZ_FLOW_IDENTITY
+                if pending_by_data is None
+                else pending_by_data.setdefault(data_q, _SZZ_FLOW_IDENTITY)
+            )
+            has_data_prefix = (
+                pending != _SZZ_FLOW_IDENTITY and not _szz_flow_is_virtual_z(pending)
+            )
+            if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_ALL or (
+                szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX
+                and has_data_prefix
+            ):
+                target.append(
+                    f"{indent}barrier({ancilla_expr(stab_type, stab_idx)}, "
+                    f"{data_expr(data_q)})",
+                )
             discharge_data_for_szz(data_q)
             sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
             half_turns = "0.5" if sign > 0 else "-0.5"
@@ -1833,7 +1887,7 @@ def _guppy_module_cache_key(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool = False,
+    szz_runtime_barriers: bool | str = False,
 ) -> str:
     """Filesystem-safe cache key spanning full patch identity + budget + twirl.
 
@@ -1845,7 +1899,7 @@ def _guppy_module_cache_key(
     Twirled source is Python-time unrolled, so the cache key includes
     ``num_rounds`` in addition to the structural twirl fields, runtime
     frame-output mode, RNG seed, activation-probability threshold, and
-    whether qsystem runtime barriers are emitted around SZZ host regions.
+    the SZZ runtime-barrier policy.
     """
     geom = patch.geometry
     rotated = "rot" if geom.rotated else "unrot"
@@ -1854,10 +1908,21 @@ def _guppy_module_cache_key(
         check_plan=check_plan,
     )
     interaction_basis = resolved_plan.interaction_basis
+    szz_runtime_barrier_policy = _normalize_szz_runtime_barrier_policy(szz_runtime_barriers)
+    if (
+        interaction_basis != "szz"
+        and szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE
+    ):
+        msg = "szz_runtime_barriers is only supported for interaction_basis='szz'"
+        raise ValueError(msg)
     interaction_part = "" if interaction_basis == "cx" else f"_ib{interaction_basis}"
     check_plan_part = "" if check_plan is None else f"_cp{resolved_plan.plan_id}"
     frame_part = "" if clifford_frame_policy is None else f"_cf{str(clifford_frame_policy).lower().replace('-', '_')}"
-    runtime_barrier_part = "_szzrb" if szz_runtime_barriers else ""
+    runtime_barrier_part = (
+        ""
+        if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_NONE
+        else f"_szzrb-{szz_runtime_barrier_policy}"
+    )
     base = (
         f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}"
         f"_b{effective_budget}{interaction_part}{check_plan_part}{frame_part}{runtime_barrier_part}"
@@ -1886,7 +1951,7 @@ def _load_guppy_module(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool = False,
+    szz_runtime_barriers: bool | str = False,
 ) -> dict:
     """Load a Guppy module for a patch, using caching.
 
@@ -1896,7 +1961,7 @@ def _load_guppy_module(
     ``ancilla_budget >= total_ancilla`` resolve to the same cache entry
     while distinct patch geometries never collide. Twirled source also
     keys on twirl fields, frame-output mode, activation-probability threshold,
-    RNG seed, round count, and qsystem runtime barrier usage.
+    RNG seed, round count, and SZZ runtime-barrier policy.
 
     Args:
         patch: SurfacePatch with geometry
@@ -1909,8 +1974,7 @@ def _load_guppy_module(
         check_plan: Named surface check-plan preset.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
-        szz_runtime_barriers: Whether generated SZZ source includes qsystem
-            RuntimeBarrier operations before host regions.
+        szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
 
     Returns:
         Module dictionary with generated functions
@@ -1983,7 +2047,7 @@ def generate_memory_experiment(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool = False,
+    szz_runtime_barriers: bool | str = False,
 ) -> object:
     """Generate a memory experiment for a patch.
 
@@ -1999,8 +2063,7 @@ def generate_memory_experiment(
         check_plan: Named surface check-plan preset.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
-        szz_runtime_barriers: Emit qsystem RuntimeBarrier operations before
-            SZZ/SZZdg host regions.
+        szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
 
     Returns:
         Guppy function for the experiment
@@ -2108,7 +2171,7 @@ def generate_surface_code_module(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool = False,
+    szz_runtime_barriers: bool | str = False,
 ) -> str:
     """Generate source code for a distance-d surface code module.
 
@@ -2121,8 +2184,7 @@ def generate_surface_code_module(
         check_plan: Named surface check-plan preset.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
-        szz_runtime_barriers: Emit qsystem RuntimeBarrier operations before
-            SZZ/SZZdg host regions.
+        szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
 
     Returns:
         Python/Guppy source code as a string
@@ -2149,7 +2211,7 @@ def _surface_code_module_for_patch(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool = False,
+    szz_runtime_barriers: bool | str = False,
 ) -> dict:
     """Load + cache a surface-code module for an arbitrary patch.
 
@@ -2166,6 +2228,7 @@ def _surface_code_module_for_patch(
         check_plan=check_plan,
     )
     interaction_basis = resolved_plan.interaction_basis
+    szz_runtime_barrier_policy = _normalize_szz_runtime_barrier_policy(szz_runtime_barriers)
     geom = patch.geometry
     total_ancilla = len(geom.x_stabilizers) + len(geom.z_stabilizers)
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
@@ -2178,7 +2241,7 @@ def _surface_code_module_for_patch(
         interaction_basis,
         resolved_plan.plan_id,
         None if clifford_frame_policy is None else str(clifford_frame_policy).lower().replace("-", "_"),
-        bool(szz_runtime_barriers),
+        szz_runtime_barrier_policy,
     )
 
     if cache_key in _state.distance_module_cache:
@@ -2190,7 +2253,7 @@ def _surface_code_module_for_patch(
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
-        szz_runtime_barriers=szz_runtime_barriers,
+        szz_runtime_barriers=szz_runtime_barrier_policy,
     )
 
     # Metadata derived from the actual patch geometry.
@@ -2201,7 +2264,8 @@ def _surface_code_module_for_patch(
     module["interaction_basis"] = interaction_basis
     module["check_plan"] = resolved_plan.plan_id
     module["clifford_frame_policy"] = clifford_frame_policy
-    module["szz_runtime_barriers"] = bool(szz_runtime_barriers)
+    module["szz_runtime_barriers"] = szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE
+    module["szz_runtime_barrier_policy"] = szz_runtime_barrier_policy
     module["resolved_check_plan"] = resolved_plan.resolved_metadata
     module["resolved_check_plan_hash"] = resolved_plan.resolved_hash
 
@@ -2216,7 +2280,7 @@ def get_surface_code_module(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool = False,
+    szz_runtime_barriers: bool | str = False,
 ) -> dict:
     """Get a loaded surface code module for distance d.
 
@@ -2228,8 +2292,7 @@ def get_surface_code_module(
         check_plan: Named surface check-plan preset.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
-        szz_runtime_barriers: Emit qsystem RuntimeBarrier operations before
-            SZZ/SZZdg host regions.
+        szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
 
     Returns:
         Dictionary with module contents and metadata
@@ -2257,7 +2320,7 @@ def make_surface_code(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool = False,
+    szz_runtime_barriers: bool | str = False,
 ) -> object:
     """Create a surface code memory experiment.
 
@@ -2275,8 +2338,7 @@ def make_surface_code(
         check_plan: Named surface check-plan preset.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
-        szz_runtime_barriers: Emit qsystem RuntimeBarrier operations before
-            SZZ/SZZdg host regions.
+        szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
 
     Returns:
         Compiled Guppy program

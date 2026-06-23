@@ -87,14 +87,22 @@ def test_szz_basis_forks_guppy_module_cache_key(patch: SurfacePatch) -> None:
         interaction_basis="szz",
         szz_runtime_barriers=True,
     )
+    prefix_barrier_key = _guppy_module_cache_key(
+        patch,
+        effective_budget=8,
+        interaction_basis="szz",
+        szz_runtime_barriers="data-prefix",
+    )
 
     assert cx_key != szz_key
     assert framed_key != szz_key
     assert barrier_key != szz_key
+    assert prefix_barrier_key != barrier_key
     assert "_ibcx" not in cx_key
     assert "_ibszz" in szz_key
     assert "_cfglobal_axis_cycle_f" in framed_key
-    assert "_szzrb" in barrier_key
+    assert "_szzrb-all" in barrier_key
+    assert "_szzrb-data-prefix" in prefix_barrier_key
 
 
 def test_szz_source_keeps_reusable_memory_body_and_flushes_helper_frame(patch: SurfacePatch) -> None:
@@ -134,6 +142,40 @@ def test_szz_runtime_barriers_precede_data_prefix_and_host(patch: SurfacePatch) 
     else:
         msg = "expected an SZZ touch with a Vdg data-prefix pulse"
         raise AssertionError(msg)
+
+
+def test_szz_data_prefix_runtime_barriers_only_guard_real_prefixes(patch: SurfacePatch) -> None:
+    all_src = generate_guppy_source(
+        patch,
+        interaction_basis="szz",
+        szz_runtime_barriers="all",
+    )
+    prefix_src = generate_guppy_source(
+        patch,
+        interaction_basis="szz",
+        szz_runtime_barriers="data-prefix",
+    )
+
+    assert "barrier(" in prefix_src
+    assert prefix_src.count("barrier(") < all_src.count("barrier(")
+
+    lines = prefix_src.splitlines()
+    for index, line in enumerate(lines):
+        if "vdg(d1)" in line:
+            nearby = lines[index - 2 : index + 2]
+            assert "barrier(" in nearby[0]
+            assert "h(d1)" in nearby[1]
+            assert "vdg(d1)" in nearby[2]
+            assert "zz_phase(" in nearby[3]
+            break
+    else:
+        msg = "expected an SZZ touch with a Vdg data-prefix pulse"
+        raise AssertionError(msg)
+
+
+def test_szz_runtime_barriers_reject_cx_source(patch: SurfacePatch) -> None:
+    with pytest.raises(ValueError, match="interaction_basis='szz'"):
+        generate_guppy_source(patch, szz_runtime_barriers="data-prefix")
 
 
 def test_szz_axis_cycle_frame_source_uses_y_check_scaffold(patch: SurfacePatch) -> None:

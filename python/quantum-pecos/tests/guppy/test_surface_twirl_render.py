@@ -81,12 +81,20 @@ def test_szz_basis_forks_guppy_module_cache_key(patch: SurfacePatch) -> None:
         interaction_basis="szz",
         clifford_frame_policy="global_axis_cycle_f",
     )
+    barrier_key = _guppy_module_cache_key(
+        patch,
+        effective_budget=8,
+        interaction_basis="szz",
+        szz_runtime_barriers=True,
+    )
 
     assert cx_key != szz_key
     assert framed_key != szz_key
+    assert barrier_key != szz_key
     assert "_ibcx" not in cx_key
     assert "_ibszz" in szz_key
     assert "_cfglobal_axis_cycle_f" in framed_key
+    assert "_szzrb" in barrier_key
 
 
 def test_szz_source_keeps_reusable_memory_body_and_flushes_helper_frame(patch: SurfacePatch) -> None:
@@ -98,6 +106,34 @@ def test_szz_source_keeps_reusable_memory_body_and_flushes_helper_frame(patch: S
     assert "# Flush SZZ data frame before init_z_basis return" in src
     assert "# Flush SZZ data frame before init_x_basis return" in src
     assert 'result("final", final)' in src
+
+
+def test_szz_runtime_barriers_precede_data_prefix_and_host(patch: SurfacePatch) -> None:
+    src = generate_guppy_source(
+        patch,
+        interaction_basis="szz",
+        szz_runtime_barriers=True,
+    )
+
+    assert "from guppylang.std.builtins import array, barrier, owned, result" in src
+    assert "barrier(" in src
+    assert "barrier(" not in generate_guppy_source(
+        patch,
+        interaction_basis="szz",
+    )
+
+    lines = src.splitlines()
+    for index, line in enumerate(lines):
+        if "vdg(d1)" in line:
+            nearby = lines[index - 2 : index + 2]
+            assert "barrier(" in nearby[0]
+            assert "h(d1)" in nearby[1]
+            assert "vdg(d1)" in nearby[2]
+            assert "zz_phase(" in nearby[3]
+            break
+    else:
+        msg = "expected an SZZ touch with a Vdg data-prefix pulse"
+        raise AssertionError(msg)
 
 
 def test_szz_axis_cycle_frame_source_uses_y_check_scaffold(patch: SurfacePatch) -> None:
@@ -134,6 +170,17 @@ def test_szz_axis_cycle_memory_experiment_compiles_to_guppy_function(patch: Surf
         basis="Z",
         interaction_basis="szz",
         clifford_frame_policy="global_axis_cycle_f",
+    )
+    assert fn is not None
+
+
+def test_szz_runtime_barrier_memory_experiment_compiles_to_guppy_function(patch: SurfacePatch) -> None:
+    fn = generate_memory_experiment(
+        patch,
+        num_rounds=1,
+        basis="Z",
+        interaction_basis="szz",
+        szz_runtime_barriers=True,
     )
     assert fn is not None
 

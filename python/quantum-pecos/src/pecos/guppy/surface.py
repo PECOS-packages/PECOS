@@ -148,7 +148,9 @@ def generate_guppy_source(
 
     Uses a 4-round parallel schedule for syndrome extraction. The default
     ``interaction_basis="cx"`` emits the CNOT template; ``"szz"`` emits the
-    signed SZZ/SZZdg template with immediate data compensation.
+    signed SZZ/SZZdg template. SZZ helpers forward-flow single-qubit data
+    frames within each helper and then explicitly flush the frame before
+    returning, preserving the reusable Guppy result-tag structure.
 
     ``ancilla_budget=None`` (default) emits the unconstrained shape:
     one ancilla per stabilizer, all measured in parallel at the end of
@@ -210,7 +212,11 @@ def generate_guppy_source(
         require_current_surface_check_plan_renderer,
     )
     from pecos.qec.surface.circuit_builder import (
+        _SZZ_FLOW_IDENTITY,
+        OpType,
         _resolve_szz_clifford_frame_for_builder,
+        _szz_flow_compose_pending_gate,
+        _szz_flow_is_virtual_z,
         _szz_memory_physical_axis_for_data,
         _szz_residual_plan_for_check_plan,
     )
@@ -419,6 +425,111 @@ def generate_guppy_source(
             msg = f"unsupported Pauli axis {axis!r}"
             raise ValueError(msg)
 
+    def _szz_axis_rotation_to_z_gates(axis: str) -> tuple[OpType, ...]:
+        if axis == "X":
+            return (OpType.H,)
+        if axis == "Y":
+            return (OpType.SXDG,)
+        if axis == "Z":
+            return ()
+        msg = f"unsupported Pauli axis {axis!r}"
+        raise ValueError(msg)
+
+    def _szz_axis_rotation_from_z_gates(axis: str) -> tuple[OpType, ...]:
+        if axis == "X":
+            return (OpType.H,)
+        if axis == "Y":
+            return (OpType.SX,)
+        if axis == "Z":
+            return ()
+        msg = f"unsupported Pauli axis {axis!r}"
+        raise ValueError(msg)
+
+    def _szz_touch_compensation_gates(axis: str, sign: int) -> tuple[OpType, ...]:
+        if axis == "X":
+            return (OpType.SXDG if sign > 0 else OpType.SX,)
+        if axis == "Y":
+            return (
+                OpType.SZDG,
+                OpType.SXDG if sign > 0 else OpType.SX,
+                OpType.SZ,
+            )
+        if axis == "Z":
+            return (OpType.SZDG if sign > 0 else OpType.SZ,)
+        msg = f"unsupported Pauli axis {axis!r}"
+        raise ValueError(msg)
+
+    def _append_szz_flow_gate(target: list[str], indent: str, op_type: OpType, qubit_expr: str) -> None:
+        op_name = {
+            OpType.H: "h",
+            OpType.SX: "v",
+            OpType.SXDG: "vdg",
+            OpType.SZ: "s",
+            OpType.SZDG: "sdg",
+            OpType.X: "x",
+            OpType.Z: "z",
+        }.get(op_type)
+        if op_name is None:
+            msg = f"unsupported Guppy SZZ forward-flow gate {op_type.name}"
+            raise ValueError(msg)
+        target.append(f"{indent}{op_name}({qubit_expr})")
+
+    _szz_guppy_prefix_cache: dict[tuple[int, int], tuple[OpType, ...]] = {_SZZ_FLOW_IDENTITY: ()}
+    _szz_guppy_prefix_generators = (
+        OpType.H,
+        OpType.SX,
+        OpType.SXDG,
+        OpType.SZ,
+        OpType.SZDG,
+        OpType.X,
+        OpType.Z,
+    )
+
+    def _szz_guppy_prefix_gates_for_pending(pending: tuple[int, int]) -> tuple[OpType, ...]:
+        """Return an exact Guppy-supported 1q Clifford sequence for ``pending``."""
+        cached = _szz_guppy_prefix_cache.get(pending)
+        if cached is not None:
+            return cached
+
+        queue: list[tuple[tuple[int, int], tuple[OpType, ...]]] = [(_SZZ_FLOW_IDENTITY, ())]
+        seen = {_SZZ_FLOW_IDENTITY}
+        while queue:
+            current, gates = queue.pop(0)
+            for gate in _szz_guppy_prefix_generators:
+                next_pending = _szz_flow_compose_pending_gate(current, gate)
+                if next_pending in seen:
+                    continue
+                next_gates = (*gates, gate)
+                _szz_guppy_prefix_cache[next_pending] = next_gates
+                if next_pending == pending:
+                    return next_gates
+                seen.add(next_pending)
+                queue.append((next_pending, next_gates))
+
+        msg = f"cannot synthesize Guppy SZZ forward-flow Clifford prefix for {pending!r}"
+        raise ValueError(msg)
+
+    def _append_szz_flush_data_frame(
+        target: list[str],
+        indent: str,
+        pending_by_data: dict[int, tuple[int, int]],
+        *,
+        reason: str,
+    ) -> None:
+        """Materialize pending data Cliffords before returning a frame-free helper."""
+        emitted_comment = False
+        for data_q, pending in sorted(pending_by_data.items()):
+            if pending == _SZZ_FLOW_IDENTITY:
+                continue
+            prefix = _szz_guppy_prefix_gates_for_pending(pending)
+            if prefix and not emitted_comment:
+                target.append("")
+                target.append(f"{indent}# Flush SZZ data frame before {reason}")
+                emitted_comment = True
+            for gate in prefix:
+                _append_szz_flow_gate(target, indent, gate, f"d{data_q}")
+            pending_by_data[data_q] = _SZZ_FLOW_IDENTITY
+
     def _append_szz_logical_pauli(target: list[str], indent: str, axis: str, qubit_expr: str) -> None:
         if axis == "X":
             target.append(f"{indent}x({qubit_expr})")
@@ -485,14 +596,37 @@ def generate_guppy_source(
         layer_gates: list[tuple[str, int, int]],
         ancilla_expr: Callable[[str, int], str],
         data_expr: Callable[[int], str],
+        pending_by_data: dict[int, tuple[int, int]] | None = None,
     ) -> None:
+        def compose_data(data_q: int, gates: tuple[OpType, ...]) -> None:
+            if pending_by_data is None:
+                for gate in gates:
+                    _append_szz_flow_gate(target, indent, gate, data_expr(data_q))
+                return
+            pending = pending_by_data.setdefault(data_q, _SZZ_FLOW_IDENTITY)
+            for gate in gates:
+                pending = _szz_flow_compose_pending_gate(pending, gate)
+            pending_by_data[data_q] = pending
+
+        def discharge_data_for_szz(data_q: int) -> None:
+            if pending_by_data is None:
+                return
+            pending = pending_by_data.setdefault(data_q, _SZZ_FLOW_IDENTITY)
+            if pending == _SZZ_FLOW_IDENTITY or _szz_flow_is_virtual_z(pending):
+                return
+            prefix = _szz_guppy_prefix_gates_for_pending(pending)
+            for gate in prefix:
+                _append_szz_flow_gate(target, indent, gate, data_expr(data_q))
+            pending_by_data[data_q] = _SZZ_FLOW_IDENTITY
+
         target.append("")
         target.append(f"{indent}# SZZ round {rnd_idx + 1}")
         for stab_type, stab_idx, data_q in layer_gates:
             axis = _szz_physical_axis_for_touch(stab_type, stab_idx, data_q)
-            _append_szz_axis_rotation_to_z(target, indent, axis, data_expr(data_q))
+            compose_data(data_q, _szz_axis_rotation_to_z_gates(axis))
 
         for stab_type, stab_idx, data_q in layer_gates:
+            discharge_data_for_szz(data_q)
             sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
             half_turns = "0.5" if sign > 0 else "-0.5"
             target.append(
@@ -502,12 +636,12 @@ def generate_guppy_source(
 
         for stab_type, stab_idx, data_q in layer_gates:
             axis = _szz_physical_axis_for_touch(stab_type, stab_idx, data_q)
-            _append_szz_axis_rotation_from_z(target, indent, axis, data_expr(data_q))
+            compose_data(data_q, _szz_axis_rotation_from_z_gates(axis))
 
         for stab_type, stab_idx, data_q in layer_gates:
             sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
             axis = _szz_physical_axis_for_touch(stab_type, stab_idx, data_q)
-            _append_szz_touch_compensation(target, indent, axis, sign, data_expr(data_q))
+            compose_data(data_q, _szz_touch_compensation_gates(axis, sign))
 
     lines.extend(
         [
@@ -552,6 +686,10 @@ def generate_guppy_source(
             lines.append("    # Unpack data qubits")
             _append_szz_data_unpack(lines, "    ")
 
+        szz_syndrome_pending_by_data = (
+            dict.fromkeys(range(num_data), _SZZ_FLOW_IDENTITY) if interaction_basis == "szz" else None
+        )
+
         lines.append("    # Allocate ancilla qubits (one per stabilizer)")
         lines.extend(f"    ax{stab.index} = qubit()" for stab in geom.x_stabilizers)
         lines.extend(f"    az{stab.index} = qubit()" for stab in geom.z_stabilizers)
@@ -580,7 +718,15 @@ def generate_guppy_source(
             lines.extend(f"    h(az{stab.index})" for stab in geom.z_stabilizers)
 
             for rnd_idx, rnd_gates in enumerate(rounds):
-                _append_szz_layer(lines, "    ", rnd_idx, list(rnd_gates), _szz_ancilla_expr, _szz_data_expr)
+                _append_szz_layer(
+                    lines,
+                    "    ",
+                    rnd_idx,
+                    list(rnd_gates),
+                    _szz_ancilla_expr,
+                    _szz_data_expr,
+                    pending_by_data=szz_syndrome_pending_by_data,
+                )
 
             lines.append("")
             lines.append("    # Hadamard on SZZ ancillas")
@@ -631,6 +777,9 @@ def generate_guppy_source(
         if interaction_basis == "szz":
             lines.append("    # Unpack data qubits")
             _append_szz_data_unpack(lines, "    ")
+        szz_syndrome_pending_by_data = (
+            dict.fromkeys(range(num_data), _SZZ_FLOW_IDENTITY) if interaction_basis == "szz" else None
+        )
         idx = 0
         for batch_idx, batch in enumerate(batches):
             lines.append("")
@@ -687,6 +836,7 @@ def generate_guppy_source(
                             (stab_type, stab_idx)
                         ],
                         _szz_data_expr,
+                        pending_by_data=szz_syndrome_pending_by_data,
                     )
 
             if interaction_basis == "cx":
@@ -717,6 +867,10 @@ def generate_guppy_source(
 
     lines.extend(["", f"    synx = array({x_calls})", f"    synz = array({z_calls})", ""])
     if interaction_basis == "szz":
+        if szz_syndrome_pending_by_data is None:
+            msg = "internal error: SZZ syndrome extraction did not initialize data-frame state"
+            raise ValueError(msg)
+        _append_szz_flush_data_frame(lines, "    ", szz_syndrome_pending_by_data, reason="syndrome return")
         lines.append(f"    surf = SurfaceCode_{dx}x{dz}({szz_data_args})")
         lines.append(f"    return surf, Syndrome_{dx}x{dz}(synx, synz)")
     else:
@@ -752,6 +906,9 @@ def generate_guppy_source(
         )
         if interaction_basis == "szz":
             _append_szz_data_unpack(lines, "    ")
+        szz_init_pending_by_data = (
+            dict.fromkeys(range(num_data), _SZZ_FLOW_IDENTITY) if interaction_basis == "szz" else None
+        )
 
         if not constrained:
             if stab_type == "X":
@@ -793,7 +950,15 @@ def generate_guppy_source(
                     filtered = [(t, i, q) for t, i, q in rnd_gates if t == stab_type]
                     if not filtered:
                         continue
-                    _append_szz_layer(lines, "    ", rnd_idx, filtered, _szz_ancilla_expr, _szz_data_expr)
+                    _append_szz_layer(
+                        lines,
+                        "    ",
+                        rnd_idx,
+                        filtered,
+                        _szz_ancilla_expr,
+                        _szz_data_expr,
+                        pending_by_data=szz_init_pending_by_data,
+                    )
 
                 lines.append("")
                 lines.append("    # Hadamard on SZZ ancillas")
@@ -865,11 +1030,12 @@ def generate_guppy_source(
                             "    ",
                             rnd_idx,
                             rnd_in_batch,
-                            lambda selected_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
-                                (selected_type, stab_idx)
-                            ],
-                            _szz_data_expr,
-                        )
+                        lambda selected_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
+                            (selected_type, stab_idx)
+                        ],
+                        _szz_data_expr,
+                        pending_by_data=szz_init_pending_by_data,
+                    )
 
                 if interaction_basis == "cx":
                     if stab_type == "X":
@@ -894,6 +1060,10 @@ def generate_guppy_source(
 
         lines.append("")
         if interaction_basis == "szz":
+            if szz_init_pending_by_data is None:
+                msg = "internal error: SZZ init helper did not initialize data-frame state"
+                raise ValueError(msg)
+            _append_szz_flush_data_frame(lines, "    ", szz_init_pending_by_data, reason=f"{function_name} return")
             lines.append(f"    surf = SurfaceCode_{dx}x{dz}({szz_data_args})")
             lines.append(f"    return surf, array({return_calls})")
         else:

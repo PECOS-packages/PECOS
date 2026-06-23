@@ -89,6 +89,17 @@ def test_szz_basis_forks_guppy_module_cache_key(patch: SurfacePatch) -> None:
     assert "_cfglobal_axis_cycle_f" in framed_key
 
 
+def test_szz_source_keeps_reusable_memory_body_and_flushes_helper_frame(patch: SurfacePatch) -> None:
+    src = generate_guppy_source(patch, interaction_basis="szz", num_rounds=2)
+
+    assert "for _t in range(comptime(num_rounds)):" in src
+    assert "surf, syn = syndrome_extraction(surf)" in src
+    assert "# Flush SZZ data frame before syndrome return" in src
+    assert "# Flush SZZ data frame before init_z_basis return" in src
+    assert "# Flush SZZ data frame before init_x_basis return" in src
+    assert 'result("final", final)' in src
+
+
 def test_szz_axis_cycle_frame_source_uses_y_check_scaffold(patch: SurfacePatch) -> None:
     src = generate_guppy_source(
         patch,
@@ -98,7 +109,8 @@ def test_szz_axis_cycle_frame_source_uses_y_check_scaffold(patch: SurfacePatch) 
 
     assert "from guppylang.std.quantum import" in src
     assert ", x, y, z" in src
-    assert "sdg(d0)\n    vdg(d0)\n    s(d0)" in src
+    assert "# Flush SZZ data frame before syndrome return" in src
+    assert "sdg(d0)\n    vdg(d0)\n    s(d0)" not in src
     assert "def apply_logical_x" in src
     assert "y(surf.d" in src
     assert "def apply_logical_z" in src

@@ -26,12 +26,26 @@ on:
       - master
     tags:
       - 'jl-*'  # Trigger on Julia-specific tags
+    paths:
+      - 'julia/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/julia-release.yml'
   pull_request:
     branches:
       - main
       - dev
       - development
       - master
+    paths:
+      - 'julia/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/julia-release.yml'
   workflow_dispatch:
     inputs:
       sha:

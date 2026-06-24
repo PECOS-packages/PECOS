@@ -4,20 +4,37 @@ permissions:
   contents: read
 
 env:
-  TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+  TRIGGER_ON_PR_PUSH: true
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
   LLVM_VERSION: "14.0.6"
-  # Force the MWPF decoder feature on in CI so we exercise the cmake-dependent
-  # build path and catch regressions. GitHub-hosted runners ship cmake.
-  PECOS_BUILD_MWPF: "1"
 
 on:
   push:
     branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'python/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'uv.lock'
+      - 'Justfile'
+      - 'scripts/ci/**'
+      - 'scripts/check_python_workspace.py'
+      - '.github/workflows/python-test.yml'
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'python/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'uv.lock'
+      - 'Justfile'
+      - 'scripts/ci/**'
+      - 'scripts/check_python_workspace.py'
+      - '.github/workflows/python-test.yml'
   workflow_dispatch:
 
 concurrency:
@@ -29,17 +46,147 @@ defaults:
     shell: bash
 
 jobs:
-  python-test:
+  python-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - name: Harden the runner (egress audit)
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: "3.12"
+
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        version: "0.11.14"
+        enable-cache: true
+        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+    - name: Set up Rust
+      run: |
+        bash scripts/ci/ensure-rust.sh stable minimal
+        export PATH="$HOME/.cargo/bin:$PATH"
+        rustup show
+
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      with:
+        cache-bin: false
+        prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+    - name: Sync Python dependencies
+      run: just python-ci-sync
+
+    - name: Run linting
+      run: just lint check
+
+  python-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PECOS_BUILD_MWPF: "1"
+    steps:
+    - name: Harden the runner (egress audit)
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      with:
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false
+        docker-images: true
+        tool-cache: false
+        swap-storage: true
+
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: "3.12"
+
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        version: "0.11.14"
+        enable-cache: true
+        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+    - name: Set up Rust
+      run: |
+        bash scripts/ci/ensure-rust.sh stable minimal
+        export PATH="$HOME/.cargo/bin:$PATH"
+        rustup show
+
+    - name: Verify cmake is available (MWPF decoder build)
+      run: cmake --version
+
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      with:
+        cache-bin: false
+        prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        workspaces: |
+          python/pecos-rslib
+          python/pecos-rslib-llvm
+
+    - name: Cache LLVM ${{ env.LLVM_VERSION }}
+      id: cache-llvm
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-14
+        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+
+    - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+      run: just ci-env
+
+    - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-14
+        key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
+
+    - name: Build core Python packages
+      run: just python-ci-build
+
+    - name: Run core Python tests
+      run: just pytest-ci-core
+
+  python-compat-smoke:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # Full Python version matrix on Ubuntu (fast)
-        os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
-          # Windows/macOS: only test oldest and newest stable Python (slow platforms)
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.14"
           - os: windows-2022
             python-version: "3.10"
           - os: windows-2022
@@ -86,19 +233,12 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    # No Windows-special MSVC setup here: the first cargo invocation is
-    # `just ci-env`, whose `_msvc-bootstrap` prerequisite runs
-    # scripts/win-msvc-bootstrap.ps1 and writes the linker + LIB/INCLUDE into
-    # .cargo/config.toml (read by cargo after it spawns, so it survives
-    # git-bash). CI is therefore structurally identical to Linux/macOS, and a
-    # local Windows dev gets the exact same path via the same just prereq.
-
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
         version: "0.11.14"
         enable-cache: true
-        save-cache: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
     - name: Set up Rust (Windows)
       if: runner.os == 'Windows'
@@ -118,6 +258,84 @@ jobs:
         export PATH="$HOME/.cargo/bin:$PATH"
         rustup show
 
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      with:
+        cache-bin: false
+        prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        workspaces: |
+          python/pecos-rslib
+          python/pecos-rslib-llvm
+
+    - name: Cache LLVM ${{ env.LLVM_VERSION }}
+      id: cache-llvm
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-14
+        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+
+    - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+      run: just ci-env
+
+    - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-14
+        key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
+
+    - name: Run Python compatibility smoke test
+      run: just python-ci-smoke
+
+  python-slow-postmerge:
+    if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PECOS_BUILD_MWPF: "1"
+    steps:
+    - name: Harden the runner (egress audit)
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      with:
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false
+        docker-images: true
+        tool-cache: false
+        swap-storage: true
+
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: "3.14"
+
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        version: "0.11.14"
+        enable-cache: true
+        save-cache: true
+
+    - name: Set up Rust
+      run: |
+        bash scripts/ci/ensure-rust.sh stable minimal
+        export PATH="$HOME/.cargo/bin:$PATH"
+        rustup show
+
     - name: Verify cmake is available (MWPF decoder build)
       run: cmake --version
 
@@ -129,12 +347,11 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+        save-if: true
         workspaces: |
           python/pecos-rslib
           python/pecos-rslib-llvm
 
-    # Cache LLVM installation (fixed version, only varies by OS)
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -142,108 +359,22 @@ jobs:
         path: ~/.pecos/deps/llvm-14
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
-    # `just ci-env` is the first cargo invocation. Its `_msvc-bootstrap`
-    # prerequisite writes the MSVC linker + LIB/INCLUDE into
-    # .cargo/config.toml on Windows (no-op elsewhere); LLVM is configured into
-    # the same file by `pecos setup` during the build. Nothing Windows-special
-    # is needed at the workflow level.
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
 
     - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+      if: steps.cache-llvm.outputs.cache-hit != 'true'
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-14
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
-    - name: Install PECOS CLI
-      run: cargo install --locked --path crates/pecos-cli --force
-
-    # macOS: prevent Homebrew library path issues
-    - name: Configure macOS environment
-      if: runner.os == 'macOS'
-      run: |
-        # Prevent Homebrew library paths from causing @rpath/libunwind errors
-        # Reference: https://github.com/rust-lang/rust/issues/135372
-        echo "MPLBACKEND=Agg" >> $GITHUB_ENV
-        echo "OPENBLAS_NUM_THREADS=1" >> $GITHUB_ENV
-        echo "MKL_NUM_THREADS=1" >> $GITHUB_ENV
-        echo "NUMEXPR_NUM_THREADS=1" >> $GITHUB_ENV
-        echo "OMP_NUM_THREADS=1" >> $GITHUB_ENV
-        echo "LIBRARY_PATH=/usr/lib" >> $GITHUB_ENV
-
-    - name: Build PECOS (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        # Prevent Homebrew library paths from causing @rpath/libunwind errors
-        unset LIBRARY_PATH LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH PKG_CONFIG_PATH
-        export LIBRARY_PATH=/usr/lib
-        just build-debug
-
-    - name: Build PECOS
-      if: runner.os != 'macOS'
-      run: just build-debug
-
-    - name: Verify macOS extension module
-      if: runner.os == 'macOS'
-      run: |
-        EXT_MODULE=$(find .venv/lib -name "pecos_rslib*.so" 2>/dev/null | head -1)
-        if [ -n "$EXT_MODULE" ]; then
-          if otool -L "$EXT_MODULE" | grep -q "@rpath/libunwind"; then
-            echo "ERROR: Extension has @rpath/libunwind reference"
-            otool -L "$EXT_MODULE"
-            exit 1
-          fi
-          echo "macOS extension module OK"
-        fi
-
-    - name: Run Python tests
-      run: just pytest
+    - name: Build core Python packages
+      run: just python-ci-build
 
     - name: Run slow Python tests
-      # Only run on the primary Linux/newest-Python cell to keep the full
-      # matrix fast. Dropping this entirely would let the `slow` lane
-      # silently atrophy, which is exactly what the `slow` marker is
-      # supposed to prevent.
-      #
-      # The `3.14` literal below must track the newest entry of the
-      # `python-version` matrix at the top of this file (line ~34). Bump
-      # both together.
-      if: runner.os == 'Linux' && matrix.python-version == '3.14'
       run: just pytest-slow
 
-    - name: Install integrity check tools
-      run: |
-        if command -v rg >/dev/null 2>&1; then
-          exit 0
-        fi
-
-        case "$RUNNER_OS" in
-          Linux)
-            sudo apt-get update
-            sudo apt-get install -y ripgrep
-            ;;
-          macOS)
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install ripgrep
-            ;;
-          Windows)
-            cargo install --locked --version 14.1.1 ripgrep
-            ;;
-          *)
-            echo "Unsupported runner OS for ripgrep install: $RUNNER_OS" >&2
-            exit 1
-            ;;
-        esac
-
-    - name: Run linting
-      run: just lint check
-
-  # Audience-B contract: a crates.io consumer builds the publishable crates
-  # with plain `cargo` on Windows -- no `just`, no git-bash, no generated
-  # .cargo/config.toml, none of the MSVC bootstrap. This proves the git-bash
-  # remediation is confined to the dev/CI tooling and never leaks into the
-  # crates themselves. Fails closed if a repo config.toml is present.
   windows-vanilla-cargo:
     name: Windows vanilla cargo (crates.io consumer contract)
     runs-on: windows-2022
@@ -276,11 +407,6 @@ jobs:
             exit 1
           }
 
-      # pecos-build (where the toml_edit work lives) and pecos-core are
-      # publishable and need no LLVM/FFI/external toolchain -- the right
-      # minimal canary. LLVM-needing crates additionally require the upstream
-      # llvm-sys LLVM_SYS_140_PREFIX (a universal llvm-sys requirement, not a
-      # PECOS workaround) and are out of scope for this contract lane.
       - name: Vanilla cargo check (publishable crates, no just/bootstrap)
         shell: pwsh
         run: cargo check --locked -p pecos-build -p pecos-core

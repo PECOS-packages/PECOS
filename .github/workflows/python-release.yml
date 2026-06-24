@@ -19,12 +19,32 @@ on:
       - master
     tags:
       - 'py-*'
+    paths:
+      - 'python/pecos-rslib/**'
+      - 'python/pecos-rslib-llvm/**'
+      - 'python/quantum-pecos/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'uv.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/python-release.yml'
   pull_request:
     branches:
       - main
       - dev
       - development
       - master
+    paths:
+      - 'python/pecos-rslib/**'
+      - 'python/pecos-rslib-llvm/**'
+      - 'python/quantum-pecos/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'uv.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/python-release.yml'
   workflow_dispatch:
     inputs:
       sha:
@@ -44,45 +64,175 @@ defaults:
     shell: bash
 
 jobs:
-  check_pr_push:
+  resolve_release_mode:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'pull_request' && github.event.action != 'closed' ||
       github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-')
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-') ||
+      github.event_name == 'workflow_dispatch'
     outputs:
-      run: ${{ steps.check.outputs.run }}
+      pr_smoke: ${{ steps.mode.outputs.pr_smoke }}
+      full_release: ${{ steps.mode.outputs.full_release }}
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
-      - name: Check if should run on PR push
-        id: check
+      - name: Resolve release mode
+        id: mode
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
-          # Always run on tag pushes (py-* tags trigger releases)
-          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
-            echo "run=true" >> $GITHUB_OUTPUT
-          # Always run on pushes to main branches
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+            echo "full_release=true" >> $GITHUB_OUTPUT
+          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
+            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+            echo "full_release=true" >> $GITHUB_OUTPUT
           elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
-            echo "run=true" >> $GITHUB_OUTPUT
-          # For PRs, check the TRIGGER_ON_PR_PUSH setting
+            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+            echo "full_release=true" >> $GITHUB_OUTPUT
           elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
-            echo "run=true" >> $GITHUB_OUTPUT
+            echo "pr_smoke=true" >> $GITHUB_OUTPUT
+            echo "full_release=false" >> $GITHUB_OUTPUT
           else
-            echo "run=false" >> $GITHUB_OUTPUT
+            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+            echo "full_release=false" >> $GITHUB_OUTPUT
           fi
 
+  pr_smoke_build:
+    needs: resolve_release_mode
+    if: needs.resolve_release_mode.outputs.pr_smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.sha || github.sha }}
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.14"
+          enable-cache: true
+
+      - name: Set up Rust
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup show
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
+          workspaces: |
+            python/pecos-rslib
+            python/pecos-rslib-llvm
+
+      - name: Cache LLVM
+        id: cache-llvm
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: llvm-14.0.6-${{ runner.os }}-${{ runner.arch }}-v2
+
+      - name: Ensure LLVM
+        run: just ci-env
+
+      - name: Sync Python dependencies
+        run: just python-ci-sync
+
+      - name: Build pecos-rslib wheel
+        run: |
+          mkdir -p dist/pecos-rslib
+          uv run --frozen maturin build --locked --manifest-path python/pecos-rslib/Cargo.toml --out dist/pecos-rslib
+
+      - name: Build pecos-rslib-llvm wheel
+        run: |
+          mkdir -p dist/pecos-rslib-llvm
+          uv run --frozen maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
+
+      - name: Build quantum-pecos wheel
+        run: |
+          mkdir -p dist/quantum-pecos
+          cd python/quantum-pecos
+          uv run --frozen python -m build --wheel --outdir ../../dist/quantum-pecos
+
+      - name: Upload PR smoke artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pr-smoke-python-artifacts
+          path: |
+            dist/pecos-rslib/*.whl
+            dist/pecos-rslib-llvm/*.whl
+            dist/quantum-pecos/*.whl
+
+  pr_smoke_test:
+    needs: [resolve_release_mode, pr_smoke_build]
+    if: needs.resolve_release_mode.outputs.pr_smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.14']
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.14"
+
+      - name: Download PR smoke artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: pr-smoke-python-artifacts
+          path: ./pr-smoke-artifacts
+
+      - name: Install PR smoke artifacts
+        run: |
+          uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos_rslib-*.whl
+          uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos_rslib_llvm-*.whl
+          uv pip install --system --force-reinstall ./pr-smoke-artifacts/quantum_pecos-*.whl
+
+      - name: Import PR smoke artifacts
+        run: |
+          python -c 'import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": pecos_rslib_llvm.__version__})'
 
   build_wheelspecos_rslib:
-    needs: check_pr_push
-    if: needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true'
+    needs: resolve_release_mode
+    if: needs.resolve_release_mode.outputs.full_release == 'true'
     runs-on: ${{ matrix.runner || matrix.os }}
     strategy:
       fail-fast: false

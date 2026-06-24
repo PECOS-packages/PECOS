@@ -207,6 +207,14 @@ build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
 
+# Build only the Python workspace members needed by the fast CI lanes.
+[group('build')]
+python-ci-build profile="debug": _msvc-bootstrap (validate-profile "python-ci-build" profile) python-ci-sync
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE" --no-cuda
+
 # =============================================================================
 # Testing
 # =============================================================================
@@ -223,6 +231,18 @@ pytest *args:
         uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
         uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
         uv run --frozen pytest python/selene-plugins
+
+# Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
+[group('test')]
+pytest-ci-core:
+    uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
+    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
+    uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
+
+# Build and import the core Python packages on a target platform/interpreter.
+[group('test')]
+python-ci-smoke profile="debug": (python-ci-build profile)
+    uv run --frozen python -c "import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': pecos_rslib_llvm.__version__})"
     fi
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
@@ -805,6 +825,17 @@ sync-deps:
         SYNC_ARGS+=(--group cuda)
     fi
     uv sync "${SYNC_ARGS[@]}"
+
+[group('setup')]
+python-ci-sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --package pecos-rslib \
+      --package pecos-rslib-llvm \
+      --package quantum-pecos
 
 # Windows MSVC bootstrap: write the correct linker + LIB/INCLUDE into
 # .cargo/config.toml (read by cargo *after* it spawns, so it bypasses

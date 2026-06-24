@@ -64,7 +64,7 @@ static PROGRAM_LIB_CACHE: OnceLock<
 /// engines are cloned for parallel execution), this cache ensures they all use
 /// the same compiled shared library file.
 static COMPILED_PROGRAM_CACHE: OnceLock<
-    std::sync::Mutex<std::collections::BTreeMap<u64, PathBuf>>,
+    std::sync::Mutex<std::collections::BTreeMap<String, PathBuf>>,
 > = OnceLock::new();
 
 /// Tracks whether cache cleanup has been performed (once per process).
@@ -128,6 +128,26 @@ fn build_fingerprint() -> u64 {
         }
         hasher.finish()
     })
+}
+
+/// An auditable record written next to each compiled program object in the
+/// shared cache directory. It is not consulted to validate a load -- the cache
+/// filename is the full SHA-256 of `(program, format, build fingerprint)`, so a
+/// filename match already pins those exactly -- but it lets the shared cache
+/// directory be inspected and each `.so` traced back to the program, format,
+/// build, and toolchain that produced it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct CacheManifest {
+    /// Full SHA-256 (hex) of program bytes + format + build fingerprint.
+    digest: String,
+    /// Program format (stable `Debug` variant name).
+    format: String,
+    /// Build fingerprint of the process that compiled the object.
+    build_fingerprint: u64,
+    /// `pecos-qis` version that compiled the object.
+    pecos_qis_version: String,
+    /// Target arch/os the object was compiled for.
+    target: String,
 }
 
 /// Remove cache files older than the specified age in seconds
@@ -1288,19 +1308,27 @@ impl QisHeliosInterface {
     /// Link the program with Helios interface to create a shared library
     #[allow(clippy::too_many_lines)]
     fn create_shared_library(&mut self) -> Result<PathBuf, InterfaceError> {
-        use std::hash::{Hash, Hasher};
+        use sha2::{Digest, Sha256};
+        use std::fmt::Write as _;
 
-        // Compute content hash for caching.
-        // - the format is a discriminator in case the same bytes could be
-        //   interpreted differently (e.g., bitcode vs text IR)
-        // - the build fingerprint scopes the on-disk cache to this build, so a
-        //   shared object compiled against a different QIS/runtime ABI in the
-        //   fixed, cross-worktree cache directory is never reused
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.program.hash(&mut hasher);
-        std::mem::discriminant(&self.format).hash(&mut hasher);
-        build_fingerprint().hash(&mut hasher);
-        let content_hash = hasher.finish();
+        // Compute a stable content digest for caching.
+        // - SHA-256 (not the std `DefaultHasher`, whose output is not stable
+        //   across toolchains) so the on-disk key is reproducible for a cache
+        //   that persists across processes
+        // - the format discriminates bytes that could be interpreted differently
+        //   (e.g., bitcode vs text IR)
+        // - the build fingerprint scopes the digest to this build, so a shared
+        //   object compiled against a different QIS/runtime ABI in the fixed,
+        //   cross-worktree cache directory is never reused
+        let mut hasher = Sha256::new();
+        hasher.update(&self.program);
+        hasher.update(format!("{:?}", self.format).as_bytes());
+        hasher.update(build_fingerprint().to_le_bytes());
+        let digest = hasher.finalize();
+        let mut content_hash = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            let _ = write!(content_hash, "{byte:02x}");
+        }
 
         // Check if we already have a compiled library for this content
         let compiled_cache = COMPILED_PROGRAM_CACHE
@@ -1314,7 +1342,7 @@ impl QisHeliosInterface {
 
             if let Some(cached_path) = cache_guard.get(&content_hash) {
                 debug!(
-                    "Using cached compiled library for content hash {content_hash:016x}: {}",
+                    "Using cached compiled library for content hash {content_hash}: {}",
                     cached_path.display()
                 );
                 // Verify the file still exists (might have been cleaned up)
@@ -1344,8 +1372,7 @@ impl QisHeliosInterface {
         } else {
             ".so"
         };
-        let persistent_cache_path =
-            cache_dir.join(format!("program_{content_hash:016x}{lib_suffix}"));
+        let persistent_cache_path = cache_dir.join(format!("program_{content_hash}{lib_suffix}"));
 
         if persistent_cache_path.exists() {
             debug!(
@@ -1361,7 +1388,7 @@ impl QisHeliosInterface {
                             std::sync::Mutex::new(std::collections::BTreeMap::new())
                         });
                         if let Ok(mut cache_guard) = compiled_cache.lock() {
-                            cache_guard.insert(content_hash, persistent_cache_path.clone());
+                            cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
                         }
                     }
                     self.executable_path = Some(persistent_cache_path.clone());
@@ -1393,7 +1420,7 @@ impl QisHeliosInterface {
                     let compiled_cache = COMPILED_PROGRAM_CACHE
                         .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
                     if let Ok(mut cache_guard) = compiled_cache.lock() {
-                        cache_guard.insert(content_hash, persistent_cache_path.clone());
+                        cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
                     }
                     self.executable_path = Some(persistent_cache_path.clone());
                     info!(
@@ -1421,7 +1448,7 @@ impl QisHeliosInterface {
                     let compiled_cache = COMPILED_PROGRAM_CACHE
                         .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
                     if let Ok(mut cache_guard) = compiled_cache.lock() {
-                        cache_guard.insert(content_hash, persistent_cache_path.clone());
+                        cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
                     }
                     self.executable_path = Some(persistent_cache_path.clone());
                     info!(
@@ -1813,11 +1840,38 @@ entry:
             let compiled_cache = COMPILED_PROGRAM_CACHE
                 .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
             if let Ok(mut cache_guard) = compiled_cache.lock() {
-                cache_guard.insert(content_hash, so_path.clone());
+                cache_guard.insert(content_hash.clone(), so_path.clone());
                 debug!(
-                    "Cached compiled library for content hash {content_hash:016x}: {}",
+                    "Cached compiled library for content hash {content_hash}: {}",
                     so_path.display()
                 );
+            }
+        }
+
+        // Write an auditable manifest next to the compiled object so the shared
+        // cache directory can be inspected and each library traced back to the
+        // exact program/format/build/toolchain that produced it. Best-effort:
+        // a missing or stale manifest never affects correctness (the filename is
+        // the content+build digest), so a write failure is only logged.
+        {
+            let manifest = CacheManifest {
+                digest: content_hash.clone(),
+                format: format!("{:?}", self.format),
+                build_fingerprint: build_fingerprint(),
+                pecos_qis_version: env!("CARGO_PKG_VERSION").to_string(),
+                target: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
+            };
+            let manifest_path = so_path.with_extension("manifest");
+            match serde_json::to_string_pretty(&manifest) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&manifest_path, json) {
+                        debug!(
+                            "Failed to write cache manifest {}: {e}",
+                            manifest_path.display()
+                        );
+                    }
+                }
+                Err(e) => debug!("Failed to serialize cache manifest: {e}"),
             }
         }
 

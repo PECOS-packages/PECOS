@@ -4679,6 +4679,7 @@ dependencies = [
  "selene-soft-rz-runtime",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
 ]
 

@@ -8,7 +8,8 @@ env:
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
-  LLVM_VERSION: "14.0.6"
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
   # Force the MWPF decoder feature on in CI so we exercise the cmake-dependent
   # build path and catch regressions. GitHub-hosted runners ship cmake.
   PECOS_BUILD_MWPF: "1"
@@ -75,7 +76,6 @@ jobs:
         Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item -Path "C:\hostedtoolcache\CodeQL" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "C:\ProgramData\chocolatey" -Recurse -Force -ErrorAction SilentlyContinue
 
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       with:
@@ -139,8 +139,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     # `just ci-env` is the first cargo invocation. Its `_msvc-bootstrap`
     # prerequisite writes the MSVC linker + LIB/INCLUDE into
@@ -154,7 +154,7 @@ jobs:
       if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Install PECOS CLI
@@ -279,7 +279,7 @@ jobs:
       # pecos-build (where the toml_edit work lives) and pecos-core are
       # publishable and need no LLVM/FFI/external toolchain -- the right
       # minimal canary. LLVM-needing crates additionally require the upstream
-      # llvm-sys LLVM_SYS_140_PREFIX (a universal llvm-sys requirement, not a
+      # llvm-sys LLVM_SYS_211_PREFIX (a universal llvm-sys requirement, not a
       # PECOS workaround) and are out of scope for this contract lane.
       - name: Vanilla cargo check (publishable crates, no just/bootstrap)
         shell: pwsh

@@ -76,7 +76,7 @@ Pass the noise model to `sim_neo` or `CircuitRunner`:
 
 ```rust
 // Via sim_neo (handles shots, parallelism, seeding)
-sim_neo(circuit).noise(noise).shots(1000).seed(42).run();
+sim_neo(circuit).auto().noise(noise).sampling(monte_carlo(1000)).seed(42).run();
 
 // Via CircuitRunner (direct control)
 let mut runner = CircuitRunner::<SparseStab>::new()
@@ -89,7 +89,7 @@ let outcomes = runner.apply_circuit(&mut state, &circuit)?;
 independent copy with their own state:
 
 ```rust
-sim_neo(circuit).noise(noise).workers(4).shots(10000).run();
+sim_neo(circuit).auto().noise(noise).sampling(monte_carlo(10000).workers(4)).run();
 ```
 
 ## Going Deeper

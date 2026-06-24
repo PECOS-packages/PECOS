@@ -1,4 +1,4 @@
-// Copyright 2025 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -16,7 +16,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::shot_results::{Data, Shot, ShotVec};
+    use crate::{Data, Shot, ShotVec};
 
     #[test]
     fn test_shot_results_display_64bit() {

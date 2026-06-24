@@ -22,7 +22,8 @@ env:
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
-  LLVM_VERSION: "14.0.6"
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
 
 jobs:
   docs-ci:
@@ -73,8 +74,8 @@ jobs:
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env
@@ -83,7 +84,7 @@ jobs:
         if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
+          path: ~/.pecos/deps/llvm-21.1
           key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
       - name: Install dependencies and build

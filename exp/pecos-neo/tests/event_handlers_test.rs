@@ -14,7 +14,7 @@
 
 use pecos_core::impl_signal;
 use pecos_neo::prelude::*;
-use pecos_neo::tool::sim_neo;
+use pecos_neo::tool::{monte_carlo, sim_neo};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -36,8 +36,9 @@ fn event_handlers_on_before_gate_fires_through_sim_neo() {
     let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let results = sim_neo(circuit)
+        .auto()
         .event_handlers(handlers)
-        .shots(10)
+        .sampling(monte_carlo(10))
         .seed(42)
         .run();
 
@@ -59,9 +60,9 @@ fn event_handlers_parallel_workers_fire_per_worker() {
     let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let results = sim_neo(circuit)
+        .auto()
         .event_handlers(handlers)
-        .workers(2)
-        .shots(20)
+        .sampling(monte_carlo(20).workers(2))
         .seed(42)
         .run();
 
@@ -79,12 +80,17 @@ fn event_handlers_empty_is_noop() {
     let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let results_with = sim_neo(circuit.clone())
+        .auto()
         .event_handlers(handlers)
-        .shots(10)
+        .sampling(monte_carlo(10))
         .seed(42)
         .run();
 
-    let results_without = sim_neo(circuit).shots(10).seed(42).run();
+    let results_without = sim_neo(circuit)
+        .auto()
+        .sampling(monte_carlo(10))
+        .seed(42)
+        .run();
 
     assert_eq!(results_with.len(), results_without.len());
     for (a, b) in results_with
@@ -128,8 +134,9 @@ fn event_handlers_multiple_handler_types() {
     let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
     let results = sim_neo(circuit)
+        .auto()
         .event_handlers(handlers)
-        .shots(5)
+        .sampling(monte_carlo(5))
         .seed(42)
         .run();
 
@@ -178,8 +185,9 @@ fn signal_handler_fires_through_sim_neo() {
         .build();
 
     let results = sim_neo(circuit)
+        .auto()
         .event_handlers(handlers)
-        .shots(5)
+        .sampling(monte_carlo(5))
         .seed(42)
         .run();
 
@@ -205,9 +213,9 @@ fn signal_handler_fires_through_sim_neo_parallel() {
         .build();
 
     let results = sim_neo(circuit)
+        .auto()
         .event_handlers(handlers)
-        .workers(2)
-        .shots(10)
+        .sampling(monte_carlo(10).workers(2))
         .seed(42)
         .run();
 

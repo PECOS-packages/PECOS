@@ -133,11 +133,11 @@ mod tests {
     fn creates_forced_env_in_empty_project() {
         let tmp = tempfile::tempdir().unwrap();
         let mut cfg = CargoConfig::open(tmp.path()).unwrap();
-        cfg.set_env("LLVM_SYS_140_PREFIX", "C:/llvm", true).unwrap();
+        cfg.set_env("LLVM_SYS_211_PREFIX", "C:/llvm", true).unwrap();
         assert!(cfg.save().unwrap());
 
         let parsed: toml::Value = toml::from_str(&read(tmp.path())).unwrap();
-        let env = &parsed["env"]["LLVM_SYS_140_PREFIX"];
+        let env = &parsed["env"]["LLVM_SYS_211_PREFIX"];
         assert_eq!(env["value"].as_str().unwrap(), "C:/llvm");
         assert!(env["force"].as_bool().unwrap());
     }
@@ -162,7 +162,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // First writer: LLVM.
         let mut a = CargoConfig::open(tmp.path()).unwrap();
-        a.set_env("LLVM_SYS_140_PREFIX", "/llvm", true).unwrap();
+        a.set_env("LLVM_SYS_211_PREFIX", "/llvm", true).unwrap();
         a.save().unwrap();
         // Second writer: cuQuantum -- must merge into the same [env].
         let mut b = CargoConfig::open(tmp.path()).unwrap();
@@ -174,7 +174,7 @@ mod tests {
         // Both keys survive and parse.
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert_eq!(
-            parsed["env"]["LLVM_SYS_140_PREFIX"]["value"],
+            parsed["env"]["LLVM_SYS_211_PREFIX"]["value"],
             "/llvm".into()
         );
         assert_eq!(parsed["env"]["CUQUANTUM_ROOT"]["value"], "/cq".into());
@@ -192,14 +192,14 @@ mod tests {
         .unwrap();
 
         let mut cfg = CargoConfig::open(tmp.path()).unwrap();
-        cfg.set_env("LLVM_SYS_140_PREFIX", "/llvm", true).unwrap();
+        cfg.set_env("LLVM_SYS_211_PREFIX", "/llvm", true).unwrap();
         cfg.save().unwrap();
 
         let parsed: toml::Value = toml::from_str(&read(tmp.path())).unwrap();
         assert_eq!(parsed["build"]["jobs"].as_integer().unwrap(), 4);
         assert_eq!(parsed["env"]["FOO"].as_str().unwrap(), "bar");
         assert_eq!(
-            parsed["env"]["LLVM_SYS_140_PREFIX"]["value"],
+            parsed["env"]["LLVM_SYS_211_PREFIX"]["value"],
             "/llvm".into()
         );
     }
@@ -231,11 +231,11 @@ mod tests {
     fn save_is_idempotent_no_rewrite_when_unchanged() {
         let tmp = tempfile::tempdir().unwrap();
         let mut cfg = CargoConfig::open(tmp.path()).unwrap();
-        cfg.set_env("LLVM_SYS_140_PREFIX", "/llvm", true).unwrap();
+        cfg.set_env("LLVM_SYS_211_PREFIX", "/llvm", true).unwrap();
         assert!(cfg.save().unwrap(), "first write should change the file");
 
         let mut again = CargoConfig::open(tmp.path()).unwrap();
-        again.set_env("LLVM_SYS_140_PREFIX", "/llvm", true).unwrap();
+        again.set_env("LLVM_SYS_211_PREFIX", "/llvm", true).unwrap();
         assert!(
             !again.save().unwrap(),
             "re-applying the same value must not rewrite the file"

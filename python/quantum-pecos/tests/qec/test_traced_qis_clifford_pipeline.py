@@ -17,6 +17,7 @@ from pecos_rslib_exp import (
     depolarizing,
     fault_catalog,
     meas_sampling,
+    monte_carlo,
     sim_neo,
     stabilizer,
     statevec,
@@ -182,7 +183,7 @@ def test_meas_sampling_runs_on_lowered_traced_qis_surface_code():
     tc = build_lowered_traced_qis_surface_code()
     shots = 8
 
-    result = sim_neo(tc).quantum(meas_sampling()).noise(traced_qis_noise()).shots(shots).seed(123).run()
+    result = sim_neo(tc).quantum(meas_sampling()).noise(traced_qis_noise()).sampling(monte_carlo(shots)).seed(123).run()
 
     assert result.num_shots == shots
     assert result.num_measurements == int(tc.get_meta("num_measurements"))
@@ -205,7 +206,7 @@ def test_lowered_traced_qis_pipeline_sampling_and_catalog_smoke():
     tc = build_lowered_traced_qis_surface_code(rounds=2)
     noise = traced_qis_noise()
 
-    result = sim_neo(tc).quantum(meas_sampling()).noise(noise).shots(3).seed(321).run()
+    result = sim_neo(tc).quantum(meas_sampling()).noise(noise).sampling(monte_carlo(3)).seed(321).run()
     catalog = fault_catalog(tc, noise)
     first_fault = next(catalog.fault_configurations(1))
 
@@ -324,7 +325,7 @@ def test_explicit_python_gate_names_map_to_rust_clifford_gates():
     tc = build_explicit_clifford_gate_circuit()
     noise = depolarizing().p1(0.03).p2(0.15).p_meas(0).p_prep(0)
 
-    result = sim_neo(tc).quantum(meas_sampling()).noise(noise).shots(3).seed(123).run()
+    result = sim_neo(tc).quantum(meas_sampling()).noise(noise).sampling(monte_carlo(3)).seed(123).run()
     assert result.num_shots == 3
     assert result.num_measurements == 2
 
@@ -346,7 +347,7 @@ def test_sim_neo_native_backends_accept_face_gates():
     tc.set_meta("observables", "[]")
 
     for backend in (stabilizer(), statevec()):
-        result = sim_neo(tc).quantum(backend).noise(zero_noise()).shots(2).seed(123).run()
+        result = sim_neo(tc).quantum(backend).noise(zero_noise()).sampling(monte_carlo(2)).seed(123).run()
         assert result.num_measurements == 1
         assert all(result[shot][0] == 0 for shot in range(result.num_shots))
 
@@ -387,7 +388,7 @@ def test_random_mirrored_standard_clifford_circuits_match_across_backends():
 
         backend_results = {}
         for name, backend in (("stabilizer", stabilizer()), ("statevec", statevec())):
-            result = sim_neo(tc).quantum(backend).noise(zero_noise()).shots(4).seed(seed).run()
+            result = sim_neo(tc).quantum(backend).noise(zero_noise()).sampling(monte_carlo(4)).seed(seed).run()
             backend_results[name] = [list(row) for row in result.to_list()]
 
         backend_results["StabMps"] = [run_direct_wrapper_mirrored_circuit(StabMps(3, seed=seed), sequence)]

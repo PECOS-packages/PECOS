@@ -1,4 +1,4 @@
-// Copyright 2025 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -11,7 +11,6 @@
 // the License.
 
 use super::{data::Data, shot::Shot};
-use crate::byte_message::ByteMessage;
 use pecos_core::errors::PecosError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -87,7 +86,7 @@ impl ShotVec {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::shot_results::{ShotVec, Shot};
+    /// # use pecos_results::{ShotVec, Shot};
     /// let mut shot_vec = ShotVec::new();
     ///
     /// // Add shots with consistent structure
@@ -280,44 +279,6 @@ impl ShotVec {
         Self {
             shots: results.to_vec(),
         }
-    }
-
-    /// Create a `ShotVec` instance directly from a `ByteMessage` containing measurement results.
-    ///
-    /// This method extracts measurement results from a `ByteMessage` and creates a `ShotVec`
-    /// instance with properly formatted results. It's more efficient than going through
-    /// `Shot` instances and provides better context about the measurements.
-    ///
-    /// # Parameters
-    ///
-    /// * `message` - A `ByteMessage` containing measurement results
-    ///
-    /// # Errors
-    ///
-    /// Returns a `PecosError` if the measurements cannot be extracted from the `ByteMessage`
-    /// or if there are issues with creating the `ShotVec` instance.
-    pub fn from_byte_message(message: &ByteMessage) -> Result<Self, PecosError> {
-        // Extract the measurement results from the ByteMessage
-        // Extract raw measurement outcomes
-        let outcomes = message.outcomes()?;
-
-        // Convert to indexed measurements
-        let measurements: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
-
-        let mut shot_result = Shot::default();
-
-        // Process each measurement
-        for (result_id, value) in measurements {
-            // Get the name for this result_id, or use a default if not found
-            let name = format!("result_{result_id}");
-
-            // Add the measurement to the results
-            shot_result.data.insert(name, Data::U32(value));
-        }
-
-        Ok(Self {
-            shots: vec![shot_result],
-        })
     }
 
     /// Prints the `ShotVec` to stdout.

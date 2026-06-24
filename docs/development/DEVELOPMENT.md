@@ -67,9 +67,9 @@ For developers who want to contribute or modify PECOS:
    Combine groups with multiple `--group` flags
    (e.g. `uv sync --group examples --group cuda`).
 
-6. **LLVM 14 Setup (Required for LLVM IR/QIS Support)**
+6. **LLVM 21.1 Setup (Required for LLVM IR/QIS Support)**
 
-   PECOS requires LLVM version 14 for LLVM IR execution features.
+   PECOS requires LLVM version 21.1 for LLVM IR execution features.
 
    **Quick setup:**
    ```sh
@@ -77,7 +77,9 @@ For developers who want to contribute or modify PECOS:
    cargo build
    ```
 
-   For detailed installation instructions for all platforms (macOS, Linux, Windows), see the [**LLVM Setup Guide**](../user-guide/llvm-setup.md).
+   `pecos install llvm` is the managed shared-LLVM path on supported
+   Debian/Ubuntu-compatible Linux systems. For macOS, Windows, and other Linux
+   distributions, see the [**LLVM Setup Guide**](../user-guide/llvm-setup.md).
 
 7. You may wish to explicitly activate the environment for development. To do so:
 
@@ -176,7 +178,7 @@ PECOS uses `~/.pecos/` to store external dependencies and build artifacts that c
 
 ```
 ~/.pecos/
-├── llvm/       # LLVM-14 installation (for QIR/LLVM IR execution)
+├── deps/llvm-21.1/  # LLVM 21.1 installation (for QIR/LLVM IR execution)
 ├── deps/       # Downloaded C++ dependencies (Stim, etc.)
 └── cache/      # Build artifacts and intermediate files
 ```

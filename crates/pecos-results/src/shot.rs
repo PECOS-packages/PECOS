@@ -1,4 +1,4 @@
-// Copyright 2025 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -11,9 +11,7 @@
 // the License.
 
 use super::data::Data;
-use crate::byte_message::ByteMessage;
 use bitvec::prelude::*;
-use pecos_core::errors::PecosError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -93,50 +91,6 @@ impl Shot {
             }
             _ => None,
         }
-    }
-
-    /// Create a `Shot` directly from a `ByteMessage` containing measurement results.
-    ///
-    /// This method extracts measurement results from a `ByteMessage` and creates a `Shot`
-    /// with properly mapped result IDs to names.
-    ///
-    /// # Parameters
-    ///
-    /// * `message` - A `ByteMessage` containing measurement results
-    /// * `result_id_to_name` - A mapping from `result_id` to a human-readable name
-    ///
-    /// # Returns
-    ///
-    /// A new `Shot` instance containing the processed measurement results
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the `ByteMessage` cannot be parsed or doesn't contain valid measurement results
-    pub fn from_byte_message(
-        message: &ByteMessage,
-        result_id_to_name: &BTreeMap<usize, String>,
-    ) -> Result<Self, PecosError> {
-        // Extract the raw measurement results from the ByteMessage
-        let outcomes = message.outcomes()?;
-
-        // Convert raw outcomes to indexed results
-        let measurements: Vec<(usize, u32)> = outcomes.into_iter().enumerate().collect();
-
-        let mut result = Self::default();
-
-        // Process each measurement
-        for (result_id, value) in measurements {
-            // Get the name for this result_id, or use a default if not found
-            let name = result_id_to_name
-                .get(&result_id)
-                .cloned()
-                .unwrap_or_else(|| format!("result_{result_id}"));
-
-            // Store as U32 data
-            result.data.insert(name, Data::U32(value));
-        }
-
-        Ok(result)
     }
 
     /// Creates a binary string representation of results.

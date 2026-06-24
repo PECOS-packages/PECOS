@@ -51,6 +51,8 @@ pecos-num.workspace = true
 pecos-random.workspace = true
 pecos-simulators.workspace = true
 pecos-engines.workspace = true
+# Unified sim() facade with neo-stack routing (strangler-fig: Python .stack("neo"))
+pecos = { workspace = true, default-features = false, features = ["neo", "hugr"] }
 pecos-programs.workspace = true
 
 # Program formats

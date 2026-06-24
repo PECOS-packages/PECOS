@@ -135,11 +135,11 @@ def test_whole_register_permutation_qir() -> None:
     # Permute(a, b); b[2].set(1); a[3].set(0). After the swap, b[2]
     # resolves to a[2] and a[3] resolves to b[3].
     assert re.search(
-        r"%(\.\d+) = getelementptr \[5 x i1\], \[5 x i1\]\* %a, i64 0, i64 2\n\s*store i1 1, i1\* %\1",
+        r"%(\.\d+) = getelementptr \[5 x i1\], (?:ptr|\[5 x i1\]\*) %a, i64 0, i64 2\n\s*store i1 1, (?:ptr|i1\*) %\1",
         qir,
     ), f"b[2].set(1) should target a[2] after swap:\n{qir}"
     assert re.search(
-        r"%(\.\d+) = getelementptr \[5 x i1\], \[5 x i1\]\* %b, i64 0, i64 3\n\s*store i1 0, i1\* %\1",
+        r"%(\.\d+) = getelementptr \[5 x i1\], (?:ptr|\[5 x i1\]\*) %b, i64 0, i64 3\n\s*store i1 0, (?:ptr|i1\*) %\1",
         qir,
     ), f"a[3].set(0) should target b[3] after swap:\n{qir}"
 

@@ -11,7 +11,7 @@ import json
 import pytest
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
-from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer
+from pecos_rslib_exp import depolarizing, meas_sampling, monte_carlo, sim_neo, stabilizer
 
 
 @pytest.fixture
@@ -32,18 +32,18 @@ def coherent():
 
 class TestD3SurfaceCode57vs48:
     def test_raw_output_is_57_measurements(self, d3_tc, depol):
-        r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(10).seed(42).run()
+        r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(10)).seed(42).run()
         assert len(r[0]) == int(d3_tc.get_meta("num_measurements"))
 
     def test_nondet_measurement_mean_half(self, d3_tc, depol):
         shots = 5000
-        r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(42).run()
+        r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
         mean_0 = sum(s[0] for s in r) / shots
         assert abs(mean_0 - 0.5) < 0.05, f"meas[0]={mean_0:.3f}"
 
     def test_det_measurement_mean_low(self, d3_tc, depol):
         shots = 5000
-        r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(42).run()
+        r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
         # Index 8 is the first round-1 Z-stabilizer measurement; on the |0_L>
         # memory experiment it is deterministic (+1). Indices 0-7 are the four
         # init-round X-stabilizer measurements plus round-1 X-stabilizers, which
@@ -71,8 +71,8 @@ class TestD3SurfaceCode57vs48:
                         r[i] += 1.0 / len(results)
             return r
 
-        meas_r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(42).run()
-        stab_r = sim_neo(d3_tc).quantum(stabilizer()).noise(depol).shots(shots).seed(42).run()
+        meas_r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
+        stab_r = sim_neo(d3_tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
 
         meas_rates = rates(meas_r)
         stab_rates = rates(stab_r)
@@ -108,8 +108,8 @@ class TestD3SurfaceCode57vs48:
                         r[i] += 1.0 / len(results)
             return r
 
-        meas_r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(42).run()
-        stab_r = sim_neo(d3_tc).quantum(stabilizer()).noise(depol).shots(shots).seed(42).run()
+        meas_r = sim_neo(d3_tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
+        stab_r = sim_neo(d3_tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
 
         meas_rates = rates(meas_r)
         stab_rates = rates(stab_r)
@@ -138,8 +138,8 @@ class TestD3SurfaceCode57vs48:
                         r[i] += 1.0 / len(results)
             return r
 
-        meas_r = sim_neo(d3_tc).quantum(meas_sampling()).noise(noise).shots(shots).seed(42).run()
-        stab_r = sim_neo(d3_tc).quantum(stabilizer()).noise(noise).shots(shots).seed(43).run()
+        meas_r = sim_neo(d3_tc).quantum(meas_sampling()).noise(noise).sampling(monte_carlo(shots)).seed(42).run()
+        stab_r = sim_neo(d3_tc).quantum(stabilizer()).noise(noise).sampling(monte_carlo(shots)).seed(43).run()
 
         meas_rates = rates(meas_r)
         stab_rates = rates(stab_r)
@@ -153,29 +153,29 @@ class TestD3SurfaceCode57vs48:
 
 class TestMethodDispatch:
     def test_auto_no_idle_rz(self, d3_tc, depol):
-        r = sim_neo(d3_tc).quantum(meas_sampling("auto")).noise(depol).shots(10).seed(42).run()
+        r = sim_neo(d3_tc).quantum(meas_sampling("auto")).noise(depol).sampling(monte_carlo(10)).seed(42).run()
         assert len(r[0]) == int(d3_tc.get_meta("num_measurements"))
 
     def test_auto_with_idle_rz(self, d3_tc, coherent):
-        r = sim_neo(d3_tc).quantum(meas_sampling("auto")).noise(coherent).shots(10).seed(42).run()
+        r = sim_neo(d3_tc).quantum(meas_sampling("auto")).noise(coherent).sampling(monte_carlo(10)).seed(42).run()
         assert len(r[0]) == int(d3_tc.get_meta("num_measurements"))
 
     def test_stochastic_rejects_idle_rz(self, d3_tc, coherent):
         with pytest.raises(Exception, match="idle_rz"):
-            sim_neo(d3_tc).quantum(meas_sampling("stochastic")).noise(coherent).shots(10).seed(42).run()
+            sim_neo(d3_tc).quantum(meas_sampling("stochastic")).noise(coherent).sampling(monte_carlo(10)).seed(42).run()
 
     def test_coherent_no_idle_rz(self, d3_tc, depol):
-        r = sim_neo(d3_tc).quantum(meas_sampling("coherent")).noise(depol).shots(10).seed(42).run()
+        r = sim_neo(d3_tc).quantum(meas_sampling("coherent")).noise(depol).sampling(monte_carlo(10)).seed(42).run()
         assert len(r[0]) == int(d3_tc.get_meta("num_measurements"))
 
     def test_coherent_with_idle_rz(self, d3_tc, coherent):
-        r = sim_neo(d3_tc).quantum(meas_sampling("coherent")).noise(coherent).shots(10).seed(42).run()
+        r = sim_neo(d3_tc).quantum(meas_sampling("coherent")).noise(coherent).sampling(monte_carlo(10)).seed(42).run()
         assert len(r[0]) == int(d3_tc.get_meta("num_measurements"))
 
     def test_invalid_method(self, d3_tc, depol):
         with pytest.raises(Exception, match="Unknown"):
-            sim_neo(d3_tc).quantum(meas_sampling("bogus")).noise(depol).shots(10).seed(42).run()
+            sim_neo(d3_tc).quantum(meas_sampling("bogus")).noise(depol).sampling(monte_carlo(10)).seed(42).run()
 
     def test_no_noise_errors(self, d3_tc):
         with pytest.raises(Exception, match="noise"):
-            sim_neo(d3_tc).quantum(meas_sampling()).shots(10).seed(42).run()
+            sim_neo(d3_tc).quantum(meas_sampling()).sampling(monte_carlo(10)).seed(42).run()

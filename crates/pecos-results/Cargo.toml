@@ -1,0 +1,22 @@
+[package]
+name = "pecos-results"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Result types (Shot, ShotVec, ShotMap, Data) for PECOS quantum program execution"
+
+[dependencies]
+pecos-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+num-bigint.workspace = true
+bitvec.workspace = true
+
+[lints]
+workspace = true

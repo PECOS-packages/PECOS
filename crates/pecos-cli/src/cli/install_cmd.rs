@@ -8,7 +8,13 @@ use pecos_build::prompt::{PromptMode, confirm};
 const KNOWN_TARGETS: &[&str] = &["cuda", "llvm", "cuquantum", "cmake"];
 
 /// Run the install command
-pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Result<()> {
+pub fn run(
+    targets: &[String],
+    force: bool,
+    all: bool,
+    no_configure: bool,
+    yes: bool,
+) -> Result<()> {
     let targets: Vec<&str> = if all {
         KNOWN_TARGETS.to_vec()
     } else {
@@ -58,10 +64,14 @@ pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Re
                 if confirm(
                     "  Install a PECOS-managed copy to ~/.pecos/deps/ instead?",
                     false,
-                    PromptMode::Interactive,
+                    if yes {
+                        PromptMode::AcceptAll
+                    } else {
+                        PromptMode::Interactive
+                    },
                 ) {
                     println!();
-                    install_target(target, true, no_configure)?;
+                    install_target(target, true, no_configure, yes)?;
                 }
             }
             if *target == "llvm" {
@@ -70,7 +80,7 @@ pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Re
         } else {
             println!("[{}/{}] Installing {target}...", i + 1, total);
             println!();
-            install_target(target, force, no_configure)?;
+            install_target(target, force, no_configure, yes)?;
         }
         println!();
     }
@@ -83,7 +93,7 @@ pub fn run(targets: &[String], force: bool, all: bool, no_configure: bool) -> Re
 fn find_existing(target: &str) -> Option<std::path::PathBuf> {
     match target {
         "cuda" => pecos_build::cuda::find_cuda(),
-        "llvm" => pecos_build::llvm::find_llvm_14(None),
+        "llvm" => pecos_build::llvm::find_llvm(None),
         "cuquantum" => pecos_build::cuquantum::find_cuquantum(),
         "cmake" => pecos_build::cmake::find_cmake(),
         _ => None,
@@ -91,12 +101,13 @@ fn find_existing(target: &str) -> Option<std::path::PathBuf> {
 }
 
 /// Install a single target
-fn install_target(target: &str, force: bool, no_configure: bool) -> Result<()> {
+fn install_target(target: &str, force: bool, no_configure: bool, yes: bool) -> Result<()> {
     match target {
         "cuda" => {
             pecos_build::cuda::installer::install_cuda(force)?;
         }
         "llvm" => {
+            confirm_managed_llvm_install(yes)?;
             pecos_build::llvm::installer::install_llvm(force, no_configure)?;
         }
         "cuquantum" => {
@@ -108,6 +119,44 @@ fn install_target(target: &str, force: bool, no_configure: bool) -> Result<()> {
         _ => unreachable!("target was validated above"),
     }
     Ok(())
+}
+
+fn confirm_managed_llvm_install(yes: bool) -> Result<()> {
+    let version = pecos_build::llvm::installer::release_version();
+    let install_dir =
+        pecos_build::home::get_versioned_dep_path("llvm", pecos_build::home::LLVM_VERSION)?;
+
+    if let Some(reason) = pecos_build::llvm::installer::managed_install_unavailable_reason() {
+        return Err(Error::Config(reason.into()));
+    }
+
+    println!("PECOS-managed LLVM is the recommended development setup.");
+    println!(
+        "This will install LLVM {version} to {}.",
+        install_dir.display()
+    );
+    println!("Expect a large download and several GB of extracted files.");
+    println!("The managed install is shared-first; static LLVM is not accepted for");
+    println!("the full workspace HUGR test lane because LLVM 21.1 static links can");
+    println!("use substantial memory.");
+    println!();
+    println!("To use your own LLVM instead, run:");
+    println!("  pecos llvm configure /path/to/llvm");
+    println!();
+
+    let mode = if yes {
+        PromptMode::AcceptAll
+    } else {
+        PromptMode::Interactive
+    };
+
+    if confirm("Continue with PECOS-managed LLVM install?", true, mode) {
+        Ok(())
+    } else {
+        Err(Error::Config(
+            "LLVM installation cancelled. Configure an existing LLVM with `pecos llvm configure /path/to/llvm`.".into(),
+        ))
+    }
 }
 
 /// Ensure LLVM is configured in .cargo/config.toml when already installed.

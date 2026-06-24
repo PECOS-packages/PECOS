@@ -80,10 +80,13 @@ impl PyQasmEngineBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
                 seed: None,
                 workers: None,
+                shots: None,
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
                 foreign_object: None,
+                stack: None,
+                classical_override: false,
             }),
         })
     }
@@ -225,6 +228,7 @@ impl PyQisEngineBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
                 seed: None,
                 workers: None,
+                shots: None,
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
@@ -273,6 +277,7 @@ impl PyPhirJsonEngineBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
                 seed: None,
                 workers: None,
+                shots: None,
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
@@ -289,10 +294,16 @@ pub struct PyQasmSimBuilder {
     pub(crate) engine_builder: Arc<Mutex<Option<RustQasmEngineBuilder>>>,
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,
+    pub(crate) shots: Option<usize>,
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) foreign_object: Option<Py<PyAny>>,
+    pub(crate) stack: Option<crate::sim::PySimStack>,
+    /// True once `.classical()` has supplied an explicit engine builder.
+    /// The neo route rejects it (the facade contract has no classical
+    /// override on neo), matching the Rust `sim().stack(Neo)` behavior.
+    pub(crate) classical_override: bool,
 }
 
 /// Python wrapper for built QASM simulation
@@ -382,6 +393,7 @@ pub struct PyQisControlSimBuilder {
     pub(crate) engine_builder: Arc<Mutex<Option<RustQisEngineBuilder>>>,
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,
+    pub(crate) shots: Option<usize>,
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
@@ -451,6 +463,7 @@ pub struct PyPhirJsonSimBuilder {
     pub(crate) engine_builder: Arc<Mutex<Option<RustPhirJsonEngineBuilder>>>,
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,
+    pub(crate) shots: Option<usize>,
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
@@ -489,6 +502,7 @@ impl PyPhirEngineBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
                 seed: None,
                 workers: None,
+                shots: None,
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
@@ -502,6 +516,7 @@ pub struct PyPhirSimBuilder {
     pub(crate) engine_builder: Arc<Mutex<Option<RustPhirEngineBuilder>>>,
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,
+    pub(crate) shots: Option<usize>,
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
@@ -602,12 +617,14 @@ impl PyHugrEngineBuilder {
                 engine_builder: Arc::new(Mutex::new(Some(self.inner.clone()))),
                 seed: None,
                 workers: None,
+                shots: None,
                 quantum_engine_builder: None,
                 noise_builder: None,
                 explicit_num_qubits: None,
                 foreign_object: None,
                 keep_intermediate_files: false,
                 hugr_bytes: None,
+                stack: None,
             }),
         })
     }
@@ -618,12 +635,14 @@ pub struct PyHugrSimBuilder {
     pub(crate) engine_builder: Arc<Mutex<Option<RustHugrEngineBuilder>>>,
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,
+    pub(crate) shots: Option<usize>,
     pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) foreign_object: Option<Py<PyAny>>,
     pub(crate) keep_intermediate_files: bool,
     pub(crate) hugr_bytes: Option<Vec<u8>>,
+    pub(crate) stack: Option<crate::sim::PySimStack>,
 }
 
 /// Python wrapper for built HUGR simulation

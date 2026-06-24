@@ -38,7 +38,7 @@
 use super::crosstalk::CrosstalkChannel;
 use super::idle::IdleChannel;
 use super::leakage::LeakageChannel;
-use super::measurement::MeasurementChannel;
+use super::measurement::{MeasurementChannel, MeasurementStateFlipChannel};
 use super::plugins::CorePlugin;
 use super::preparation::PreparationChannel;
 use super::single_qubit::SingleQubitChannel;
@@ -101,6 +101,7 @@ pub struct GeneralNoiseModelBuilder {
     // Measurement
     p_meas_0: f64,
     p_meas_1: f64,
+    p_meas_state_flip: f64,
     p_meas_crosstalk_global: f64,
     p_meas_crosstalk_local: f64,
     p_meas_crosstalk_transitions: Option<CrosstalkTransitions>,
@@ -160,6 +161,7 @@ impl GeneralNoiseModelBuilder {
             // Measurement
             p_meas_0: 0.0,
             p_meas_1: 0.0,
+            p_meas_state_flip: 0.0,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_transitions: None,
@@ -350,6 +352,17 @@ impl GeneralNoiseModelBuilder {
     pub fn with_p_meas_symmetric(mut self, p: f64) -> Self {
         self.p_meas_0 = p;
         self.p_meas_1 = p;
+        self
+    }
+
+    /// Set a measurement error realized as a physical X flip of the
+    /// qubit state just before readout (engines depolarizing / DEM
+    /// convention). Unlike `with_p_meas_symmetric`, the error persists
+    /// in the post-measurement state: measuring the same qubit twice
+    /// without a reset sees the second outcome flipped at `2p(1-p)`.
+    #[must_use]
+    pub fn with_p_meas_state_flip(mut self, p: f64) -> Self {
+        self.p_meas_state_flip = p;
         self
     }
 
@@ -557,6 +570,9 @@ impl GeneralNoiseModelBuilder {
         }
 
         // Measurement channel
+        if self.p_meas_state_flip > 0.0 {
+            model = model.add_channel(MeasurementStateFlipChannel::new(self.p_meas_state_flip));
+        }
         if self.p_meas_0 > 0.0 || self.p_meas_1 > 0.0 {
             model = model.add_channel(MeasurementChannel::asymmetric(self.p_meas_0, self.p_meas_1));
         }

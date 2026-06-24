@@ -188,12 +188,12 @@ pub enum SeleneCommands {
 
 #[derive(Subcommand, Clone)]
 pub enum LlvmCommands {
-    /// Check if LLVM 14 is available
+    /// Check if LLVM 21.1 is available
     Check {
         #[arg(short, long)]
         quiet: bool,
     },
-    /// Ensure LLVM 14 is installed and runtime-valid
+    /// Ensure LLVM 21.1 is installed and runtime-valid
     Ensure {
         /// Require the PECOS-managed installation under ~/.pecos/deps
         #[arg(long)]
@@ -203,8 +203,11 @@ pub enum LlvmCommands {
         #[arg(long)]
         no_configure: bool,
     },
-    /// Configure .cargo/config.toml with LLVM path
-    Configure,
+    /// Configure .cargo/config.toml with detected LLVM or an explicit LLVM path
+    Configure {
+        /// LLVM installation prefix to configure, e.g. /usr/lib/llvm-21
+        path: Option<String>,
+    },
     /// Find LLVM installation path
     Find {
         #[arg(long)]

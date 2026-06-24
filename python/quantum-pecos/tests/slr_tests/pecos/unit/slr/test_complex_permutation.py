@@ -179,7 +179,7 @@ def test_permutation_with_conditional_qir() -> None:
     assert "; Permutation: a[0] -> a[1], a[1] -> a[0], b[0] -> b[1], b[1] -> b[0]" in qir, qir
     # b[0].set(1) is BEFORE the permute -> b[0] slot (index 0).
     assert re.search(
-        r"%(\.\d+) = getelementptr \[2 x i1\], \[2 x i1\]\* %b, i64 0, i64 0\n\s*store i1 1, i1\* %\1",
+        r"%(\.\d+) = getelementptr \[2 x i1\], (?:ptr|\[2 x i1\]\*) %b, i64 0, i64 0\n\s*store i1 1, (?:ptr|i1\*) %\1",
         qir,
     ), qir
     # X(a[0]) after the permute -> a[1] = q1.

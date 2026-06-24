@@ -140,12 +140,12 @@ The default simulator, optimized for QEC workloads with sparse stabilizer tablea
 
     ```rust
     // SparseStab is used by default
-    let results = sim(program.clone()).run(1000)?;
+    let results = sim(program.clone()).shots(1000).run()?;
 
     // Or explicitly select it
     let results = sim(program)
         .quantum(sparse_stab())
-        .run(1000)?;
+        .shots(1000).run()?;
     ```
 
 **Strengths:**
@@ -209,7 +209,7 @@ Pure Rust state vector implementation.
     ```rust
     let results = sim(program)
         .quantum(state_vector())
-        .run(100)?;
+        .shots(100).run()?;
     ```
 
 **Strengths:**
@@ -430,16 +430,16 @@ The `sim()` API lets you switch simulators easily:
     "#);
 
     // Default (sparse stabilizer for Clifford circuits)
-    let results = sim(circuit.clone()).run(1000)?;
+    let results = sim(circuit.clone()).shots(1000).run()?;
 
     // Explicit simulator selection
     let results = sim(circuit.clone())
         .quantum(state_vector())
-        .run(1000)?;
+        .shots(1000).run()?;
 
     let results = sim(circuit)
         .quantum(sparse_stab())
-        .run(1000)?;
+        .shots(1000).run()?;
     ```
 
 ## Direct Simulator Access

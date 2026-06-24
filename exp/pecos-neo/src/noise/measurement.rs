@@ -209,10 +209,146 @@ impl NoiseChannel for MeasurementChannel {
     }
 }
 
+/// Measurement error realized as a physical X flip of the qubit state
+/// just before readout.
+///
+/// Unlike [`MeasurementChannel`], which flips only the classical record
+/// (the post-measurement state is untouched), this channel injects an X
+/// gate before the measurement executes, so the error persists in the
+/// state and propagates to later operations on the same qubit. This is
+/// the convention of the engines stack's depolarizing noise family and
+/// of the DEM builder's measurement mechanisms: measuring the same qubit
+/// twice without a reset sees the second outcome flipped at rate
+/// `2p(1-p)`, not `p`.
+///
+/// State flips are inherently symmetric (X swaps |0> and |1>), so there
+/// is no asymmetric variant; use [`MeasurementChannel`] for asymmetric
+/// readout-record errors.
+#[derive(Debug, Clone)]
+pub struct MeasurementStateFlipChannel {
+    /// Probability of an X flip before each measurement.
+    pub p: f64,
+    /// Precomputed probability threshold for fast sampling.
+    threshold: u64,
+}
+
+impl MeasurementStateFlipChannel {
+    /// Create a state-flip measurement error channel.
+    #[must_use]
+    pub fn new(p: f64) -> Self {
+        Self {
+            p,
+            threshold: PecosRng::probability_threshold(p),
+        }
+    }
+}
+
+impl NoiseChannel for MeasurementStateFlipChannel {
+    fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+        if self.p <= 0.0 {
+            return false;
+        }
+        matches!(event, NoiseEvent::BeforeMeasurement { .. })
+    }
+
+    fn apply(
+        &self,
+        event: &NoiseEvent<'_>,
+        ctx: &mut NoiseContext,
+        rng: &mut PecosRng,
+    ) -> NoiseResponse {
+        let NoiseEvent::BeforeMeasurement { qubits } = event else {
+            return NoiseResponse::None;
+        };
+
+        let mut gates: SmallVec<[crate::command::GateCommand; 4]> = SmallVec::new();
+        let has_any_leakage = ctx.leaked_count() > 0;
+
+        for &qubit in *qubits {
+            if has_any_leakage && ctx.is_leaked(qubit) {
+                continue;
+            }
+            if rng.check_probability(self.threshold) {
+                gates.push(crate::command::GateCommand::new(
+                    crate::command::GateType::X,
+                    smallvec::smallvec![qubit],
+                ));
+            }
+        }
+
+        if gates.is_empty() {
+            NoiseResponse::None
+        } else {
+            NoiseResponse::inject_gates(gates)
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "MeasurementStateFlipChannel"
+    }
+
+    fn clone_box(&self) -> Box<dyn NoiseChannel> {
+        Box::new(self.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pecos_core::QubitId;
+
+    /// The state-flip vs record-flip distinction: measuring the same
+    /// qubit twice without a reset. A record flip leaves the state
+    /// untouched (second outcome flips at p); a state flip persists
+    /// (second outcome flips at 2p(1-p)).
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn state_flip_propagates_to_second_measurement_record_flip_does_not() {
+        use crate::prelude::*;
+        use pecos_simulators::SparseStab;
+
+        const SHOTS: usize = 20_000;
+        let p = 0.25;
+
+        let commands = CommandBuilder::new().pz(&[0]).mz(&[0]).mz(&[0]).build();
+
+        let second_meas_rate = |model: ComposableNoiseModel| -> f64 {
+            let mut state = SparseStab::new(1);
+            let mut runner = CircuitRunner::<SparseStab>::new()
+                .with_noise(model)
+                .with_seed(42);
+            let mut ones = 0usize;
+            for _ in 0..SHOTS {
+                state.reset();
+                let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
+                let bits: Vec<bool> = outcomes.iter().map(|o| o.outcome).collect();
+                assert_eq!(bits.len(), 2);
+                if bits[1] {
+                    ones += 1;
+                }
+            }
+            ones as f64 / SHOTS as f64
+        };
+
+        let five_sigma = |q: f64| 5.0 * (q * (1.0 - q) / SHOTS as f64).sqrt();
+
+        let state_flip = second_meas_rate(
+            ComposableNoiseModel::new().add_channel(MeasurementStateFlipChannel::new(p)),
+        );
+        let expected_state = 2.0 * p * (1.0 - p);
+        assert!(
+            (state_flip - expected_state).abs() < five_sigma(expected_state),
+            "state flip second-measure rate: got {state_flip}, expected {expected_state}"
+        );
+
+        let record_flip = second_meas_rate(
+            ComposableNoiseModel::new().add_channel(MeasurementChannel::symmetric(p)),
+        );
+        assert!(
+            (record_flip - p).abs() < five_sigma(p),
+            "record flip second-measure rate: got {record_flip}, expected {p}"
+        );
+    }
 
     #[test]
     fn test_symmetric_measurement_error() {

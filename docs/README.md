@@ -84,7 +84,7 @@ Simulate a distance-3 repetition code with syndrome extraction using [Guppy](htt
         "#);
 
         // Run 10 shots
-        let results = sim(circuit).seed(42).run(10)?;
+        let results = sim(circuit).seed(42).shots(10).run()?;
         println!("{:?}", results);
         // 0 = both |0⟩, 3 = both |1⟩ (always correlated!)
         Ok(())
@@ -101,7 +101,7 @@ For OpenQASM, PHIR, or other formats, see the [User Guide](user-guide/getting-st
 - **Fast Simulation**: Leverages a fast stabilizer simulation algorithm.
 - **Multi-language extensions**: Core functionalities implemented via Rust for performance and safety. Additional
   add-ons and extension support in C/C++ via Cython.
-- **QIR Support**: Execute Quantum Intermediate Representation programs (requires LLVM version 14).
+- **QIR Support**: Execute Quantum Intermediate Representation programs (requires LLVM version 21.1).
 
 ## Available Implementations
 

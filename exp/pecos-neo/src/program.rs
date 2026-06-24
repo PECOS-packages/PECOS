@@ -110,6 +110,18 @@ pub trait CommandSource {
 
     /// Get the number of qubits required.
     fn num_qubits(&self) -> usize;
+
+    /// Rich results for the just-completed shot, if this source produces
+    /// them.
+    ///
+    /// Classical engines accumulate named register values (e.g. QASM cregs)
+    /// during a shot and return them here as a [`pecos_results::Shot`].
+    /// Sources without register data (static circuits, plain command
+    /// queues) return `None`; their per-qubit bits live in
+    /// `MeasurementOutcomes` instead.
+    fn shot_results(&self) -> Option<pecos_results::Shot> {
+        None
+    }
 }
 
 /// Result of a single program execution (shot).

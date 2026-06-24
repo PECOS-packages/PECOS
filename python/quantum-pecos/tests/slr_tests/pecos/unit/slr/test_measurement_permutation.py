@@ -80,7 +80,7 @@ def _mz_then_store(qir: str) -> list[tuple[str, str, str]]:
         r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
         r"%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)\n"
         r"\s*%(?:\.\d+) = call i1 @__quantum__rt__read_result\(%Result\* inttoptr \(i64 \2 to %Result\*\)\)\n"
-        r"\s*%(\.\d+) = getelementptr \[\d+ x i1\], \[\d+ x i1\]\* %(\w+), i64 0, i64 (\d+)"
+        r"\s*%(\.\d+) = getelementptr \[\d+ x i1\], (?:ptr|\[\d+ x i1\]\*) %(\w+), i64 0, i64 (\d+)"
     )
     # groups: 1=qubit, 2=result idx, 3=gep var, 4=creg name, 5=creg idx
     return [(m[0], m[3], m[4]) for m in re.findall(pat, qir)]

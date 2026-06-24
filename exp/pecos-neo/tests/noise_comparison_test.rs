@@ -26,8 +26,12 @@ use pecos_neo::prelude::*;
 use pecos_simulators::SparseStab;
 use std::collections::BTreeMap;
 
-const NUM_SHOTS: usize = 5000;
-const TOLERANCE_PERCENT: f64 = 5.0; // Allow 5% difference in error rates
+const NUM_SHOTS: usize = 20_000;
+/// Comparison band in standard deviations. Flat percentage tolerances
+/// previously masked a real physics difference (`GeneralNoiseModel`'s default
+/// emission ratio shifting flip rates from 0.20 to 0.16 — inside a 5pp
+/// band); sigma-based bands scale with the statistics instead.
+const K_SIGMA: f64 = 5.0;
 
 /// Run a circuit with `GeneralNoiseModel` and count results.
 fn run_general_noise_model(
@@ -119,9 +123,27 @@ fn outcome_percentage(counts: &BTreeMap<String, usize>, outcome: &str, total: us
     (count as f64 / total as f64) * 100.0
 }
 
-/// Compare two error rates and check if they're within tolerance.
-fn rates_match(rate1: f64, rate2: f64, tolerance: f64) -> bool {
-    (rate1 - rate2).abs() <= tolerance
+/// `K_SIGMA` band in percentage points for comparing two empirical rates
+/// from independent `NUM_SHOTS`-shot binomial samples. A 0.1pp floor guards
+/// degenerate zero-variance cases (rates at exactly 0% or 100%).
+fn sigma_band_pct(rate1_pct: f64, rate2_pct: f64) -> f64 {
+    let p1 = rate1_pct / 100.0;
+    let p2 = rate2_pct / 100.0;
+    let var = (p1 * (1.0 - p1) + p2 * (1.0 - p2)) / NUM_SHOTS as f64;
+    (K_SIGMA * var.sqrt() * 100.0).max(0.1)
+}
+
+/// Compare two empirical error rates within `K_SIGMA` of binomial noise.
+fn rates_match(rate1: f64, rate2: f64) -> bool {
+    (rate1 - rate2).abs() <= sigma_band_pct(rate1, rate2)
+}
+
+/// Compare an empirical rate against an analytic expectation within
+/// `K_SIGMA` of binomial noise.
+fn rate_matches_expected(rate_pct: f64, expected_pct: f64) -> bool {
+    let p = expected_pct / 100.0;
+    let band = (K_SIGMA * (p * (1.0 - p) / NUM_SHOTS as f64).sqrt() * 100.0).max(0.1);
+    (rate_pct - expected_pct).abs() <= band
 }
 
 #[test]
@@ -185,8 +207,8 @@ fn test_single_qubit_depolarizing_comparison() {
     // So ~2/3 of errors result in |0⟩, ~1/3 result in |1⟩
 
     assert!(
-        rates_match(general_zero, composable_zero, TOLERANCE_PERCENT),
-        "Error rates should match within {TOLERANCE_PERCENT}%: general={general_zero:.1}%, composable={composable_zero:.1}%"
+        rates_match(general_zero, composable_zero),
+        "Error rates should match within {K_SIGMA} sigma: general={general_zero:.1}%, composable={composable_zero:.1}%"
     );
 }
 
@@ -258,8 +280,8 @@ fn test_two_qubit_depolarizing_comparison() {
     println!("  ComposableNoiseModel: {composable_error:.1}% errors");
 
     assert!(
-        rates_match(general_error, composable_error, TOLERANCE_PERCENT),
-        "Error rates should match within {TOLERANCE_PERCENT}%: general={general_error:.1}%, composable={composable_error:.1}%"
+        rates_match(general_error, composable_error),
+        "Error rates should match within {K_SIGMA} sigma: general={general_error:.1}%, composable={composable_error:.1}%"
     );
 }
 
@@ -311,18 +333,18 @@ fn test_measurement_error_comparison() {
 
     // Both should be close to 10%
     assert!(
-        rates_match(general_one, composable_one, TOLERANCE_PERCENT),
-        "Measurement error rates should match within {TOLERANCE_PERCENT}%: general={general_one:.1}%, composable={composable_one:.1}%"
+        rates_match(general_one, composable_one),
+        "Measurement error rates should match within {K_SIGMA} sigma: general={general_one:.1}%, composable={composable_one:.1}%"
     );
 
     // Also verify they're close to expected value
     assert!(
-        (general_one - p_meas_0 * 100.0).abs() < TOLERANCE_PERCENT,
+        rate_matches_expected(general_one, p_meas_0 * 100.0),
         "GeneralNoiseModel measurement error rate should be close to {}: got {general_one:.1}%",
         p_meas_0 * 100.0
     );
     assert!(
-        (composable_one - p_meas_0 * 100.0).abs() < TOLERANCE_PERCENT,
+        rate_matches_expected(composable_one, p_meas_0 * 100.0),
         "ComposableNoiseModel measurement error rate should be close to {}: got {composable_one:.1}%",
         p_meas_0 * 100.0
     );
@@ -377,8 +399,8 @@ fn test_preparation_error_comparison() {
     println!("  ComposableNoiseModel: {composable_one:.1}% |1⟩ (errors)");
 
     assert!(
-        rates_match(general_one, composable_one, TOLERANCE_PERCENT),
-        "Preparation error rates should match within {TOLERANCE_PERCENT}%: general={general_one:.1}%, composable={composable_one:.1}%"
+        rates_match(general_one, composable_one),
+        "Preparation error rates should match within {K_SIGMA} sigma: general={general_one:.1}%, composable={composable_one:.1}%"
     );
 }
 
@@ -461,13 +483,8 @@ fn test_combined_noise_comparison() {
 
     // The correlated outcome rate should be similar
     assert!(
-        rates_match(
-            general_correlated,
-            composable_correlated,
-            TOLERANCE_PERCENT * 2.0
-        ),
-        "Correlated rates should match within {}%: general={general_correlated:.1}%, composable={composable_correlated:.1}%",
-        TOLERANCE_PERCENT * 2.0
+        rates_match(general_correlated, composable_correlated),
+        "Correlated rates should match within {K_SIGMA} sigma: general={general_correlated:.1}%, composable={composable_correlated:.1}%"
     );
 }
 
@@ -539,7 +556,7 @@ fn test_general_noise_model_builder_comparison() {
     println!("  pecos-neo GeneralNoiseModelBuilder: {composable_11:.1}% |11⟩");
 
     assert!(
-        rates_match(general_11, composable_11, TOLERANCE_PERCENT * 2.0),
+        rates_match(general_11, composable_11),
         "Builder should produce equivalent results: general={general_11:.1}%, builder={composable_11:.1}%"
     );
 }
@@ -602,11 +619,11 @@ fn test_idle_noise_with_time_scale() {
     println!("  T1=10us, T2=5us, idle=1us");
     println!("  Error rate: {error_rate:.1}% (expected ~10% from linear/T1 dephasing)");
 
-    // With T1=10us and idle=1us, linear rate gives ~10% error probability
-    // (quadratic rate is negligible at this scale)
-    // Allow for statistical variation
+    // Analytic expectation: linear_rate = 1/T1 = 1e-4/ns, so 1000 ns idle
+    // gives p = 0.1 exactly (Z-only weights, detected via H basis). The
+    // quadratic T2 term contributes sin^2(4e-5) ~ 1.6e-9, negligible.
     assert!(
-        error_rate > 5.0 && error_rate < 20.0,
-        "Error rate {error_rate:.1}% should be in reasonable range for T1/T2 dephasing"
+        rate_matches_expected(error_rate, 10.0),
+        "Error rate {error_rate:.1}% should be within {K_SIGMA} sigma of the analytic 10% T1 dephasing rate"
     );
 }

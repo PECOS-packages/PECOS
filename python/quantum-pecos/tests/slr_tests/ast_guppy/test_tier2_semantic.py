@@ -44,10 +44,8 @@ deeper *semantic* proof for the load-bearing CReg shapes):
      bitcode via the bundled `selene_helios_qis_plugin` (+ Helios
      QIR runtime) -- `selene_sim.build(BitcodeString(...)) ->
      run_shots(Stim)`. So the direct `qir_to_qis -> Selene`
-     differential long claimed "blocked" (an
-     alleged LLVM 14<->21 / opaque-vs-typed bridge) is in fact
-     available with zero PECOS LLVM work: PECOS-Rust stays LLVM-14;
-     the LLVM-21 capability lives entirely in the qir-qis +
+     differential long claimed "blocked" by LLVM version or pointer
+     representation differences is available through the qir-qis +
      selene_sim *Python* deps. Layer D
      (`test_tier2_executable_differential`) lands the
      **representative** executable differential (deterministic
@@ -126,6 +124,15 @@ def _case(label: str) -> Main:
     raise KeyError(msg)
 
 
+def _creg_storage_operand(size: int, name: str) -> str:
+    """Match LLVM 21 opaque `ptr %c` and legacy typed `[N x i1]* %c` IR."""
+    return rf"(?:ptr|\[{size} x i1\]\*) %{re.escape(name)}"
+
+
+def _creg_gep_pattern(size: int, name: str, index: int) -> str:
+    return rf"getelementptr \[{size} x i1\], {_creg_storage_operand(size, name)}, i64 0, i64 {index}"
+
+
 # --- extra programs not in the corpus (plan amendment 8 coverage) ---
 
 
@@ -190,8 +197,9 @@ def _layer_b_structural(prog: Main, label: str, *, creg_sizes: dict[str, int]) -
 
     for name, size in creg_sizes.items():
         assert f"%{name} = alloca [{size} x i1]" in ir, f"{label}: missing entry-block alloca for CReg {name!r}"
-        assert (
-            f"store [{size} x i1] zeroinitializer, [{size} x i1]* %{name}" in ir
+        assert re.search(
+            rf"store \[{size} x i1\] zeroinitializer, {_creg_storage_operand(size, name)}",
+            ir,
         ), f"{label}: missing zeroinitializer for CReg {name!r} (unset bits must read 0, not undef)"
 
     _assert_mz_rr_pairing(label, ir)
@@ -212,10 +220,7 @@ def _assert_set_int_unpack(label: str, ir: str, *, name: str, size: int, value: 
     """
     for i in range(size):
         bit = (value >> i) & 1
-        pat = (
-            rf"getelementptr \[{size} x i1\], \[{size} x i1\]\* %{name}, "
-            rf"i64 0, i64 {i}\n\s*store i1 {bit}, i1\* %[.\w]+"
-        )
+        pat = rf"{_creg_gep_pattern(size, name, i)}\n\s*store i1 {bit}, (?:ptr|i1\*) %[.\w]+"
         assert re.search(
             pat,
             ir,
@@ -232,11 +237,12 @@ def _assert_zero_init_predicate(label: str, ir: str, *, name: str) -> None:
     """`If(c[i])` before any write must branch on a `load` of the
     zero-initialised buffer (so the predicate is deterministically 0,
     never `undef`)."""
-    assert (
-        f"store [1 x i1] zeroinitializer, [1 x i1]* %{name}" in ir
+    assert re.search(
+        rf"store \[1 x i1\] zeroinitializer, {_creg_storage_operand(1, name)}",
+        ir,
     ), f"{label}: missing zeroinitializer for the pre-read CReg {name!r}"
     assert re.search(
-        rf"getelementptr \[1 x i1\], \[1 x i1\]\* %{name}, i64 0, i64 0\n\s*%[.\w]+ = load i1",
+        rf"{_creg_gep_pattern(1, name, 0)}\n\s*%[.\w]+ = load i1",
         ir,
     ), f"{label}: If(c[0]) predicate is not a load of the zero-inited buffer"
 

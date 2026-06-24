@@ -12,7 +12,7 @@ from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 from pecos_rslib.qec import DemSampler
-from pecos_rslib_exp import depolarizing, fault_catalog, meas_sampling, sim_neo
+from pecos_rslib_exp import depolarizing, fault_catalog, meas_sampling, monte_carlo, sim_neo
 
 pymatching = pytest.importorskip("pymatching")
 stim = pytest.importorskip("stim")
@@ -137,7 +137,7 @@ def test_traced_qis_meas_sampling_ler_tracks_native_dem_pymatching(distance, rou
     matching = _pymatching_decoder(circuit, noise_args)
 
     raw_result = (
-        sim_neo(circuit).quantum(meas_sampling()).noise(_depolarizing_noise(noise_args)).shots(shots).seed(1234).run()
+        sim_neo(circuit).quantum(meas_sampling()).noise(_depolarizing_noise(noise_args)).sampling(monte_carlo(shots)).seed(1234).run()
     )
     meas_errors = _decode_raw_measurements(raw_result, circuit, matching, shots)
     native_errors = _decode_native_dem_samples(circuit, noise_args, matching, shots, seed=5678)
@@ -154,7 +154,7 @@ def test_d3_traced_qis_zero_noise_pymatching_pipeline_has_no_logical_errors():
     shots = 64
 
     raw_result = (
-        sim_neo(circuit).quantum(meas_sampling()).noise(_depolarizing_noise(noise_args)).shots(shots).seed(2468).run()
+        sim_neo(circuit).quantum(meas_sampling()).noise(_depolarizing_noise(noise_args)).sampling(monte_carlo(shots)).seed(2468).run()
     )
     meas_errors = _decode_raw_measurements(raw_result, circuit, matching, shots)
     native_errors = _decode_native_dem_samples(circuit, noise_args, matching, shots, seed=1357)

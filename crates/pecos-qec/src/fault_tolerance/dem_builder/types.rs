@@ -3645,6 +3645,109 @@ impl PerGateTypeNoise {
     }
 }
 
+/// Permutation from [`PAULI_2Q_ORDER`] indices to pecos-neo's
+/// `TWO_QUBIT_PAULIS` ordering, derived from the two canonical constants
+/// so it cannot silently drift.
+#[cfg(feature = "neo")]
+fn qec_to_neo_2q_rates(qec_rates: &[f64; 15]) -> [f64; 15] {
+    fn pauli_label(gate: pecos_neo::command::GateType) -> &'static str {
+        match gate {
+            pecos_neo::command::GateType::I => "I",
+            pecos_neo::command::GateType::X => "X",
+            pecos_neo::command::GateType::Y => "Y",
+            pecos_neo::command::GateType::Z => "Z",
+            other => unreachable!("TWO_QUBIT_PAULIS contains only Paulis, got {other:?}"),
+        }
+    }
+
+    let mut neo_rates = [0.0; 15];
+    for (neo_idx, &(first, second)) in pecos_neo::noise::TWO_QUBIT_PAULIS.iter().enumerate() {
+        let label = format!("{}{}", pauli_label(first), pauli_label(second));
+        let qec_idx = PAULI_2Q_ORDER
+            .iter()
+            .position(|&entry| entry == label)
+            .expect("every non-identity Pauli pair appears in PAULI_2Q_ORDER");
+        neo_rates[neo_idx] = qec_rates[qec_idx];
+    }
+    neo_rates
+}
+
+#[cfg(feature = "neo")]
+impl PerGateTypeNoise {
+    /// Convert to a pecos-neo [`PerGatePauliChannel`] so circuit-level
+    /// Monte Carlo can run the same noise that drives DEM generation.
+    ///
+    /// Gate types translate via the canonical `From` impl between the two
+    /// `GateType` enums; two-qubit rate arrays are permuted from
+    /// [`PAULI_2Q_ORDER`] into neo's `TWO_QUBIT_PAULIS` ordering.
+    ///
+    /// The neo stack models idle noise through its `IdleChannel`/time
+    /// events, not gate events, so idle noise cannot be carried by this
+    /// conversion. Rather than silently dropping noise that the DEM built
+    /// from the same configuration WOULD include, any idle configuration
+    /// is rejected: compose a neo `IdleChannel` explicitly and zero the
+    /// idle settings here.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration carries idle noise in any form:
+    /// `Idle` entries in the per-gate or per-qubit rate maps, or a base
+    /// `NoiseConfig` with nonzero `p_idle`/`idle_rz` or `t1`/`t2` set.
+    ///
+    /// [`PerGatePauliChannel`]: pecos_neo::noise::PerGatePauliChannel
+    #[must_use]
+    pub fn to_neo_channel(&self) -> pecos_neo::noise::PerGatePauliChannel {
+        use pecos_neo::command::GateType as NeoGateType;
+
+        let has_idle_entries = self.rates_1q.contains_key(&GateType::Idle)
+            || self
+                .rates_1q_per_qubit
+                .keys()
+                .any(|&(gate, _)| gate == GateType::Idle);
+        assert!(
+            !has_idle_entries
+                && self.base.p_idle == 0.0
+                && self.base.idle_rz == 0.0
+                && self.base.t1.is_none()
+                && self.base.t2.is_none(),
+            "PerGateTypeNoise::to_neo_channel cannot carry idle noise (the neo stack models \
+             idle through IdleChannel/time events, not gate events); the DEM built from this \
+             configuration would include idle contributions, so converting would silently \
+             change the physics. Zero p_idle/idle_rz/t1/t2 and remove Idle rate entries, then \
+             compose a neo IdleChannel explicitly if idle noise is needed."
+        );
+
+        let mut channel = pecos_neo::noise::PerGatePauliChannel::new()
+            .with_base(self.base.p1, self.base.p2)
+            .with_meas_init(self.p_meas, self.p_init);
+
+        for (&gate, &rates) in &self.rates_1q {
+            channel = channel.with_1q_rates(NeoGateType::from(gate), rates);
+        }
+        for (&gate, &rates) in &self.rates_2q {
+            channel = channel.with_2q_rates(NeoGateType::from(gate), qec_to_neo_2q_rates(&rates));
+        }
+        for (&(gate, qubit), &rates) in &self.rates_1q_per_qubit {
+            channel = channel.with_1q_rates_for_qubit(NeoGateType::from(gate), qubit, rates);
+        }
+        for (&(gate, q_control, q_target), &rates) in &self.rates_2q_per_qubits {
+            channel = channel.with_2q_rates_for_qubits(
+                NeoGateType::from(gate),
+                q_control,
+                q_target,
+                qec_to_neo_2q_rates(&rates),
+            );
+        }
+        for (&qubit, &p) in &self.measurement_rates {
+            channel = channel.with_meas_rate_for_qubit(qubit, p);
+        }
+        for (&qubit, &p) in &self.init_rates {
+            channel = channel.with_init_rate_for_qubit(qubit, p);
+        }
+        channel
+    }
+}
+
 // ============================================================================
 // Measurement Noise Model (MNM)
 // ============================================================================

@@ -1,4 +1,4 @@
-// Copyright 2025 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -29,8 +29,8 @@ use std::fmt;
 ///
 /// # Example
 /// ```
-/// # use pecos_engines::shot_results::{ShotVec, Shot, Data};
-/// # use pecos_engines::{ShotMapDisplayExt, BitVecDisplayFormat};
+/// # use pecos_results::{ShotVec, Shot, Data};
+/// # use pecos_results::{BitVecDisplayFormat, ShotMapDisplayExt};
 /// # use pecos_core::errors::PecosError;
 /// # fn main() -> Result<(), PecosError> {
 /// let mut shot_vec = ShotVec::new();
@@ -165,7 +165,7 @@ impl ShotMap {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::{ShotVec, Shot, Data, ShotMap};
+    /// # use pecos_results::{Data, Shot, ShotMap, ShotVec};
     /// # use pecos_core::errors::PecosError;
     /// # fn main() -> Result<(), PecosError> {
     /// let mut shot_vec = ShotVec::new();
@@ -248,7 +248,7 @@ impl ShotMap {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::shot_results::{ShotVec, Shot};
+    /// # use pecos_results::{ShotVec, Shot};
     /// # use pecos_core::errors::PecosError;
     /// # use bitvec::prelude::*;
     /// # fn main() -> Result<(), PecosError> {
@@ -309,7 +309,7 @@ impl ShotMap {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::shot_results::{ShotVec, Shot};
+    /// # use pecos_results::{ShotVec, Shot};
     /// # use pecos_core::errors::PecosError;
     /// # use bitvec::prelude::*;
     /// # fn main() -> Result<(), PecosError> {
@@ -366,7 +366,7 @@ impl ShotMap {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::shot_results::{ShotVec, Shot};
+    /// # use pecos_results::{ShotVec, Shot};
     /// # use pecos_core::errors::PecosError;
     /// # use num_bigint::BigUint;
     /// # fn main() -> Result<(), PecosError> {
@@ -428,7 +428,7 @@ impl ShotMap {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::shot_results::{ShotVec, Shot};
+    /// # use pecos_results::{ShotVec, Shot};
     /// # use pecos_core::errors::PecosError;
     /// # use bitvec::prelude::*;
     /// # fn main() -> Result<(), PecosError> {
@@ -729,7 +729,7 @@ impl ShotMap {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::shot_results::{ShotVec, Shot};
+    /// # use pecos_results::{ShotVec, Shot};
     /// # use pecos_core::errors::PecosError;
     /// # use bitvec::prelude::*;
     /// # fn main() -> Result<(), PecosError> {
@@ -798,7 +798,7 @@ impl ShotMap {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::shot_results::{ShotVec, Shot, Data};
+    /// # use pecos_results::{ShotVec, Shot, Data};
     /// # use pecos_core::errors::PecosError;
     /// # fn main() -> Result<(), PecosError> {
     /// let mut shot_vec = ShotVec::new();
@@ -832,7 +832,7 @@ impl ShotMap {
     ///
     /// # Example
     /// ```
-    /// # use pecos_engines::shot_results::{ShotVec, Shot};
+    /// # use pecos_results::{ShotVec, Shot};
     /// # use pecos_core::errors::PecosError;
     /// # fn main() -> Result<(), PecosError> {
     /// let mut shot_vec = ShotVec::new();
@@ -886,7 +886,7 @@ impl ShotMap {
 impl fmt::Display for ShotMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Import the extension trait to get the display() method
-        use crate::shot_results::shot_map_formatter::ShotMapDisplayExt;
+        use crate::shot_map_formatter::ShotMapDisplayExt;
         // Delegate to the display formatter
         write!(f, "{}", self.display())
     }
@@ -915,7 +915,7 @@ impl<'a> IntoIterator for &'a ShotMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shot_results::{Shot, ShotVec};
+    use crate::{Shot, ShotVec};
 
     #[test]
     fn test_shot_map_creation() {
@@ -938,7 +938,7 @@ mod tests {
 
     #[test]
     fn test_display_impl() {
-        use crate::shot_results::shot_map_formatter::ShotMapDisplayExt;
+        use crate::shot_map_formatter::ShotMapDisplayExt;
 
         let mut shot_vec = ShotVec::new();
 

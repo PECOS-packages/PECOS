@@ -643,7 +643,7 @@ fn find_helios_lib() -> Result<PathBuf, InterfaceError> {
 
 /// Find an LLVM tool with the following priority:
 /// 1. Embedded path from build time (`PECOS_LLVM_BIN_PATH`)
-/// 2. Runtime `LLVM_SYS_140_PREFIX` environment variable
+/// 2. Runtime `LLVM_SYS_211_PREFIX` environment variable
 /// 3. Fall back to PATH
 fn find_llvm_tool(tool_name: &str) -> PathBuf {
     let tool_exe = if cfg!(windows) {
@@ -667,13 +667,13 @@ fn find_llvm_tool(tool_name: &str) -> PathBuf {
             }
         })
         .or_else(|| {
-            std::env::var("LLVM_SYS_140_PREFIX")
+            std::env::var("LLVM_SYS_211_PREFIX")
                 .ok()
                 .and_then(|prefix| {
                     let path = PathBuf::from(prefix).join("bin").join(&tool_exe);
                     if path.exists() {
                         debug!(
-                            "Using {} from LLVM_SYS_140_PREFIX: {}",
+                            "Using {} from LLVM_SYS_211_PREFIX: {}",
                             tool_name,
                             path.display()
                         );
@@ -1606,26 +1606,9 @@ entry:
             so_path_for_clang.display()
         );
 
-        // Build clang command with platform-specific flags
-        // Try to find clang: first check LLVM_SYS_140_PREFIX, then fall back to PATH
-        let clang_cmd_path = std::env::var("LLVM_SYS_140_PREFIX")
-            .ok()
-            .and_then(|prefix| {
-                let mut path = PathBuf::from(prefix);
-                path.push("bin");
-                path.push(if cfg!(windows) { "clang.exe" } else { "clang" });
-                if path.exists() {
-                    debug!("Using clang from LLVM_SYS_140_PREFIX: {}", path.display());
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| {
-                debug!("Using clang from PATH");
-                PathBuf::from("clang")
-            });
-
+        // Use the same LLVM tool resolver as llvm-as/llvm-link so runtime linking
+        // honors the build-time LLVM prefix embedded in Python wheels.
+        let clang_cmd_path = find_llvm_tool("clang");
         let mut clang_cmd = Command::new(&clang_cmd_path);
 
         // On Windows, we need to be more careful with paths and flags

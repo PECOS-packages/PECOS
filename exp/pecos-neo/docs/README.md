@@ -3,7 +3,7 @@
 Build a circuit, add noise, run it:
 
 ```rust
-use pecos_neo::tool::sim_neo;
+use pecos_neo::tool::{monte_carlo, sim_neo};
 use pecos_neo::command::CommandBuilder;
 
 let circuit = CommandBuilder::new()
@@ -12,9 +12,9 @@ let circuit = CommandBuilder::new()
     .mz(0).mz(1)
     .build();
 
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .depolarizing(0.01)
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .seed(42)
     .run();
 ```
@@ -30,18 +30,18 @@ Everything chains off `sim_neo()`. The sections below show what you can plug in.
 The simplest option -- uniform depolarizing noise:
 
 ```rust
-sim_neo(circuit).depolarizing(0.01).shots(1000).run();
+sim_neo(circuit).auto().depolarizing(0.01).sampling(monte_carlo(1000)).run();
 ```
 
 Need per-channel control (single-qubit, two-qubit, measurement)?
 
 ```rust
-sim_neo(circuit)
+sim_neo(circuit).auto()
     .noise(GeneralNoiseModelBuilder::new()
         .with_p1(0.001)
         .with_p2(0.01)
         .with_p_meas_symmetric(0.005))
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .run();
 ```
 
@@ -57,15 +57,15 @@ Full guide: [Adding Noise](user-guides/noise.md) |
 Switch to the state vector backend for T gates, arbitrary rotations, etc.:
 
 ```rust
-sim_neo(circuit).quantum(state_vector()).shots(1000).run();
+sim_neo(circuit).quantum(state_vector()).sampling(monte_carlo(1000)).run();
 ```
 
 ### Run in parallel
 
-Add `.workers(n)` -- works with or without noise:
+Add `.workers(n)` on the sampler -- works with or without noise:
 
 ```rust
-sim_neo(circuit).depolarizing(0.01).workers(4).shots(10000).seed(42).run();
+sim_neo(circuit).auto().depolarizing(0.01).sampling(monte_carlo(10000).workers(4)).seed(42).run();
 ```
 
 ### Estimate rare event probabilities

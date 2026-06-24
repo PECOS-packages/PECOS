@@ -19,7 +19,7 @@ def test_sim_neo_stack_runs_from_exp() -> None:
         pecos_rslib_exp.sim_neo(tc)
         .quantum(pecos_rslib_exp.stabilizer())
         .noise(pecos_rslib_exp.depolarizing())
-        .shots(2)
+        .sampling(pecos_rslib_exp.monte_carlo(2))
         .seed(123)
         .run()
     )

@@ -55,7 +55,6 @@ libloading.workspace = true
 # Inkwell for LLVM support (optional)
 [dependencies.inkwell]
 workspace = true
-features = ["llvm14-0"]
 optional = true
 
 [dependencies.selene-simple-runtime]

@@ -245,7 +245,7 @@ impl ShotMapDisplayExt for ShotMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shot_results::{Data, Shot, ShotVec};
+    use crate::{Data, Shot, ShotVec};
 
     #[test]
     fn test_display_formatting() {

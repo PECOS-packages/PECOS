@@ -32,7 +32,8 @@
 //! let results = sim(program)
 //!     .quantum(sparse_stab())
 //!     .seed(42)
-//!     .run(1000)?;
+//!     .shots(1000)
+//!     .run()?;
 //! # Ok::<(), pecos_core::errors::PecosError>(())
 //! ```
 //!

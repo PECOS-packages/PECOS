@@ -9,6 +9,7 @@ env:
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
   CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
   LLVM_VERSION: "14.0.6"
   # Force the MWPF decoder feature on in CI so we exercise the cmake-dependent

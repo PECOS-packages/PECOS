@@ -5,6 +5,9 @@ permissions:
 
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
   # Must match pecos_build::cmake::CMAKE_VERSION. The MWPF decoder feature
   # uses highs-sys, which needs cmake; the wheel build installs this version
   # via `pecos install cmake` and points highs-sys's cmake-rs at it via $CMAKE.

@@ -4843,7 +4843,7 @@ dependencies = [
  "clap 4.6.1",
  "pecos-core",
  "pecos-simulators",
- "selene-core 0.2.1",
+ "selene-core",
 ]
 
 [[package]]
@@ -4854,7 +4854,7 @@ dependencies = [
  "pecos-core",
  "pecos-simulators",
  "pecos-stab-tn",
- "selene-core 0.2.1",
+ "selene-core",
 ]
 
 [[package]]
@@ -4865,7 +4865,7 @@ dependencies = [
  "pecos-core",
  "pecos-simulators",
  "pecos-stab-tn",
- "selene-core 0.2.1",
+ "selene-core",
 ]
 
 [[package]]
@@ -4875,7 +4875,7 @@ dependencies = [
  "anyhow",
  "pecos-core",
  "pecos-simulators",
- "selene-core 0.2.1",
+ "selene-core",
 ]
 
 [[package]]
@@ -4886,7 +4886,7 @@ dependencies = [
  "clap 4.6.1",
  "pecos-core",
  "pecos-simulators",
- "selene-core 0.2.1",
+ "selene-core",
 ]
 
 [[package]]
@@ -4896,7 +4896,7 @@ dependencies = [
  "anyhow",
  "pecos-core",
  "pecos-simulators",
- "selene-core 0.2.1",
+ "selene-core",
 ]
 
 [[package]]
@@ -6482,19 +6482,6 @@ dependencies = [
 
 [[package]]
 name = "selene-core"
-version = "0.2.1"
-source = "git+https://github.com/Quantinuum/selene.git?rev=1794e8d1dba26120a18e904940c014f4e034bed6#1794e8d1dba26120a18e904940c014f4e034bed6"
-dependencies = [
- "anyhow",
- "delegate",
- "derive_more 2.1.1",
- "libloading 0.8.9",
- "ouroboros",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "selene-core"
 version = "0.2.2"
 source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
 dependencies = [
@@ -6512,7 +6499,7 @@ version = "0.2.6"
 source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
 dependencies = [
  "anyhow",
- "selene-core 0.2.2",
+ "selene-core",
 ]
 
 [[package]]
@@ -6521,7 +6508,7 @@ version = "0.2.6"
 source = "git+https://github.com/Quantinuum/selene.git?rev=01300ee5d4825e2dfc6500941d0540c3ff06988a#01300ee5d4825e2dfc6500941d0540c3ff06988a"
 dependencies = [
  "anyhow",
- "selene-core 0.2.2",
+ "selene-core",
 ]
 
 [[package]]

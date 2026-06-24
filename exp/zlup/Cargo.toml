@@ -74,6 +74,13 @@ proptest = "1.4"  # Property-based testing
 name = "compiler"
 harness = false
 
+# CLI integration tests drive the `zlup` binary, which only exists with the
+# `cli` feature. Gate the test target so it is skipped (not failed) when `cli`
+# is off, e.g. the default-feature workspace test run.
+[[test]]
+name = "cli"
+required-features = ["cli"]
+
 [features]
 default = []
 # Enable CLI binary

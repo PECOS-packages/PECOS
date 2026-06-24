@@ -3,6 +3,7 @@
 import sys
 
 import pecos as pc
+import pytest
 from pecos.engines.cvm.rng_model import RNGModel
 
 
@@ -97,9 +98,10 @@ def test_reseed_then_advance_changes_draw_and_resets_count() -> None:
 
     rng.set_seed(42)
     immediate_val = rng.rng_random()
+    expected_first_draw = draw_at_index(42, 0)
 
     assert advanced_val != immediate_val
-    assert immediate_val == 1085446021
+    assert immediate_val == expected_first_draw
     assert rng.count == 1
 
 
@@ -117,6 +119,35 @@ def test_relative_advance_keeps_count_consistent_after_draws() -> None:
     rng.set_relative_index(-2)
     assert rng.count == 4
     assert rng.rng_random() == draw_at_index(42, 4)
+
+
+def test_negative_values_are_rejected_for_non_advance_rng_funcs() -> None:
+    """Verifies only RNGadvance accepts negative numeric arguments."""
+    rng = RNGModel(shot_id=0)
+
+    with pytest.raises(ValueError, match=r"RNG seed must be non-negative: got -1"):
+        rng.eval_func({"func": "RNGseed", "args": ["-1"]}, {})
+
+    with pytest.raises(ValueError, match=r"RNG bound must be non-negative: got -1"):
+        rng.eval_func({"func": "RNGbound", "args": ["-1"]}, {})
+
+    with pytest.raises(ValueError, match=r"RNG index must be non-negative: got -1"):
+        rng.eval_func({"func": "RNGindex", "args": ["-1"]}, {})
+
+
+def test_relative_advance_backward_replays_historical_bounds() -> None:
+    """Verifies rewind reconstructs the stream using the original bounds history."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+    rng.set_bound(16)
+    rng.rng_random()
+    rng.set_bound(0)
+    expected_second_draw = rng.rng_random()
+
+    rng.set_relative_index(-1)
+
+    assert rng.count == 1
+    assert rng.rng_random() == expected_second_draw
 
 
 def test_multiple_bounded_rand() -> None:

@@ -26,6 +26,7 @@ class RNGModel:
         self.shot_id = shot_id
         self.current_bound = current_bound
         self.count = 0
+        self._draw_bounds: list[int | None] = []
         self.pcg = RngPcg()
         self.set_seed(seed)
 
@@ -35,17 +36,28 @@ class RNGModel:
 
     def set_seed(self, seed: int) -> None:
         """Setting the seed for generating random numbers."""
+        self._require_non_negative("seed", seed)
         self.seed = seed
         self.pcg.srandom(seed)
         self.count = 0
+        self._draw_bounds = []
 
     def set_bound(self, bound: int) -> None:
         """Setting the current bound for generating random numbers."""
+        self._require_non_negative("bound", bound)
         self.current_bound = bound
+
+    @staticmethod
+    def _require_non_negative(name: str, value: int) -> None:
+        """Raise a clear error when an RNG parameter is negative."""
+        if value < 0:
+            error_msg = f"RNG {name} must be non-negative: got {value}"
+            raise ValueError(error_msg)
 
     def rng_random(self) -> int:
         """Generating a random number and keeping track of how many we have generated."""
         rng_num = self.pcg.random() if self.current_bound == 0 else self.pcg.boundedrand(self.current_bound)
+        self._draw_bounds.append(self.current_bound)
         self.count += 1
         return rng_num
 
@@ -54,6 +66,7 @@ class RNGModel:
 
         The number after from the stream will be the idx of interest.
         """
+        self._require_non_negative("index", index)
         if self.count > index:
             error_msg = f"RNGindex({index}) cannot move backward: current stream index is {self.count}"
             raise ValueError(error_msg)
@@ -71,12 +84,21 @@ class RNGModel:
             raise ValueError(error_msg)
 
         if delta < 0:
+            prefix_bounds = self._draw_bounds[:target_index]
+            active_bound = self.current_bound
             self.pcg = RngPcg()
             self.pcg.srandom(self.seed)
             self.count = 0
+            self._draw_bounds = []
 
-        while self.count < target_index:
-            self.rng_random()
+            for historical_bound in prefix_bounds:
+                self.current_bound = historical_bound
+                self.rng_random()
+
+            self.current_bound = active_bound
+        else:
+            while self.count < target_index:
+                self.rng_random()
 
     def extract_val(self, param: str | int, output: dict) -> int:
         """Responsible for extracting the value of interest depending on the type of the parameter being passed in."""

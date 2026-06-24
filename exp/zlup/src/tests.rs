@@ -1769,7 +1769,7 @@ fn test_parse_composite_gate_multi_qubit() {
         r#"
         gate bell()(q0, q1) {
             h q0;
-            cx q0, q1;
+            cx (q0, q1);
         }
         "#
     );
@@ -1780,9 +1780,9 @@ fn test_parse_pub_composite_gate() {
     assert_parses!(
         r#"
         pub gate swap()(a, b) {
-            cx a, b;
-            cx b, a;
-            cx a, b;
+            cx (a, b);
+            cx (b, a);
+            cx (a, b);
         }
         "#
     );

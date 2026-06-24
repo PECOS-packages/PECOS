@@ -1837,6 +1837,40 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// Register a user-declared gate (target declaration or composite definition).
+    ///
+    /// Rejects a collision with an existing user-declared gate (the same name
+    /// declared/defined twice). Built-in gates may be shadowed -- e.g. a backend
+    /// providing its own definition for `rz` -- so only non-builtin collisions error.
+    fn register_user_gate(
+        &mut self,
+        name: &str,
+        num_params: usize,
+        num_qubits: usize,
+        location: Option<SourceLocation>,
+    ) -> SemanticResult<()> {
+        if self
+            .gate_registry
+            .get(name)
+            .is_some_and(|existing| !existing.is_builtin)
+        {
+            return Err(SemanticError::DuplicateSymbol {
+                name: name.to_string(),
+                location: location.unwrap_or_default(),
+            });
+        }
+        self.gate_registry.insert(
+            name.to_string(),
+            GateSignature {
+                name: name.to_string(),
+                num_params,
+                num_qubits,
+                is_builtin: false,
+            },
+        );
+        Ok(())
+    }
+
     /// Collect top-level declarations (forward declaration pass).
     fn collect_top_level(&mut self, decl: &TopLevelDecl) -> SemanticResult<()> {
         match decl {
@@ -1973,28 +2007,22 @@ impl SemanticAnalyzer {
                 // Tests don't declare symbols
             }
             TopLevelDecl::DeclareGate(gate) => {
-                // Register target gate in the gate registry
-                self.gate_registry.insert(
-                    gate.name.clone(),
-                    GateSignature {
-                        name: gate.name.clone(),
-                        num_params: gate.params.len(),
-                        num_qubits: gate.qubits.len(),
-                        is_builtin: false,
-                    },
-                );
+                // Register target gate in the gate registry (reject duplicates)
+                self.register_user_gate(
+                    &gate.name,
+                    gate.params.len(),
+                    gate.qubits.len(),
+                    gate.location.clone(),
+                )?;
             }
             TopLevelDecl::Gate(gate) => {
-                // Register composite gate in the gate registry
-                self.gate_registry.insert(
-                    gate.name.clone(),
-                    GateSignature {
-                        name: gate.name.clone(),
-                        num_params: gate.params.len(),
-                        num_qubits: gate.qubits.len(),
-                        is_builtin: false,
-                    },
-                );
+                // Register composite gate in the gate registry (reject duplicates)
+                self.register_user_gate(
+                    &gate.name,
+                    gate.params.len(),
+                    gate.qubits.len(),
+                    gate.location.clone(),
+                )?;
             }
             TopLevelDecl::ErrorSet(error_set) => {
                 // Error sets define a type containing the error values with optional associated data
@@ -8781,7 +8809,7 @@ mod tests {
         assert!(analyze(r#"
             gate bell()(q0, q1) {
                 h q0;
-                cx q0, q1;
+                cx (q0, q1);
             }
         "#).is_ok());
     }

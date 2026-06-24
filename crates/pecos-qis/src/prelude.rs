@@ -16,6 +16,10 @@ pub use crate::runtime::{QisRuntime, RuntimeError};
 pub use crate::ccengine::QisEngine;
 pub use crate::engine_builder::{QisEngineBuilder, qis_engine};
 
+// QSystem platform selector for HUGR lowering (re-exported for `.platform(...)`)
+#[cfg(feature = "hugr")]
+pub use pecos_hugr_qis::QSystemPlatform;
+
 // Program types
 pub use crate::program::{
     InterfaceChoice, IntoQisInterface, ProgramType, QisEngineProgram, QisInterfaceBuilder,

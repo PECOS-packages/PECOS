@@ -27,7 +27,7 @@ class RNGModel:
         self.current_bound = current_bound
         self.count = 0
         self.pcg = RngPcg()
-        self.seed = self.set_seed(seed)
+        self.set_seed(seed)
 
     def __str__(self) -> str:
         """Returns the str representation of the model."""
@@ -37,6 +37,7 @@ class RNGModel:
         """Setting the seed for generating random numbers."""
         self.seed = seed
         self.pcg.srandom(seed)
+        self.count = 0
 
     def set_bound(self, bound: int) -> None:
         """Setting the current bound for generating random numbers."""
@@ -59,10 +60,35 @@ class RNGModel:
         while self.count < index:
             self.rng_random()
 
+    def set_relative_index(self, delta: int) -> None:
+        """Move relative to the current random-number stream index."""
+        target_index = self.count + delta
+        if target_index < 0:
+            error_msg = (
+                f"RNGadvance({delta}) cannot move before the start of the stream: "
+                f"current stream index is {self.count}"
+            )
+            raise ValueError(error_msg)
+
+        if delta < 0:
+            self.pcg = RngPcg()
+            self.pcg.srandom(self.seed)
+            self.count = 0
+
+        while self.count < target_index:
+            self.rng_random()
+
     def extract_val(self, param: str, output: dict) -> int:
         """Responsible for extracting the value of interest depending on the type of the parameter being passed in."""
-        if param.isdigit():
-            val = int(param)
+        if isinstance(param, int):
+            val = param
+        else:
+            try:
+                val = int(param)
+            except ValueError:
+                val = None
+        if val is not None:
+            pass
         elif "[" in param:
             idx_creg = param.split("[")
             creg = output[idx_creg[0]]
@@ -90,6 +116,10 @@ class RNGModel:
             index_var = params.get("args")[0]
             index = self.extract_val(index_var, output)
             self.set_index(index)
+        elif func_name == "RNGadvance":
+            delta_var = params.get("args")[0]
+            delta = self.extract_val(delta_var, output)
+            self.set_relative_index(delta)
         elif func_name == "RNGnum":
             creg_name = params.get("assign_vars")[0]
             creg = output[creg_name]

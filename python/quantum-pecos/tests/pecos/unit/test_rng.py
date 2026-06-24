@@ -6,12 +6,21 @@ import pecos as pc
 from pecos.engines.cvm.rng_model import RNGModel
 
 
+def draw_at_index(seed: int, index: int) -> int:
+    """Return the next random value after consuming ``index`` values from a seeded stream."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(seed)
+    rng.set_index(index)
+    return rng.rng_random()
+
+
 def test_set_seed() -> None:
     """Verifies that a seed is set properly for our RNG model."""
     rng = RNGModel(shot_id=0)
     seed = 42
     rng.set_seed(seed)
     assert rng.seed == seed
+    assert rng.count == 0
 
 
 def test_random_number() -> None:
@@ -54,6 +63,60 @@ def test_set_idx() -> None:
     idx = 4
     rng.set_index(idx)
     assert rng.count == idx
+
+
+def test_relative_advance_forward() -> None:
+    """Verifies that a forward relative advance lands on the expected stream position."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+
+    rng.set_relative_index(5)
+
+    assert rng.count == 5
+    assert rng.rng_random() == draw_at_index(42, 5)
+
+
+def test_relative_advance_backward() -> None:
+    """Verifies that a backward relative advance reconstructs the stream from the seed."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+    rng.set_relative_index(6)
+
+    rng.eval_func({"func": "RNGadvance", "args": ["-3"]}, {})
+
+    assert rng.count == 3
+    assert rng.rng_random() == draw_at_index(42, 3)
+
+
+def test_reseed_then_advance_changes_draw_and_resets_count() -> None:
+    """Verifies reseeding resets the logical position used by later relative advances."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+    rng.set_relative_index(5)
+    advanced_val = rng.rng_random()
+
+    rng.set_seed(42)
+    immediate_val = rng.rng_random()
+
+    assert advanced_val != immediate_val
+    assert immediate_val == 1085446021
+    assert rng.count == 1
+
+
+def test_relative_advance_keeps_count_consistent_after_draws() -> None:
+    """Verifies count tracks the current stream position after advances and draws."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+
+    rng.set_relative_index(5)
+    assert rng.count == 5
+
+    rng.rng_random()
+    assert rng.count == 6
+
+    rng.set_relative_index(-2)
+    assert rng.count == 4
+    assert rng.rng_random() == draw_at_index(42, 4)
 
 
 def test_multiple_bounded_rand() -> None:

@@ -25,6 +25,7 @@
 
 use crate::ObservableDecoder;
 use crate::errors::DecoderError;
+use crate::obs_mask::ObsMask;
 
 /// One segment of a logical algorithm.
 pub struct SegmentDescriptor {
@@ -239,6 +240,10 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_shot(syndrome)
     }
+
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.full_decoder.decode_obs(syndrome)
+    }
 }
 
 // ============================================================================
@@ -347,6 +352,18 @@ impl StreamingLogicalDecoder {
         let obs = self.inner.decode_shot(&self.syndrome)?;
         self.accumulated_obs = obs;
         Ok(obs)
+    }
+
+    /// Wide variant of [`Self::flush`]: returns an [`ObsMask`] supporting more
+    /// than 64 observables (no truncation).
+    pub fn flush_obs(&mut self) -> Result<ObsMask, DecoderError> {
+        self.inner.decode_obs(&self.syndrome)
+    }
+
+    /// Wide variant of [`Self::decode_shot`]: feed + flush as an [`ObsMask`].
+    pub fn decode_shot_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.feed_dense(syndrome);
+        self.flush_obs()
     }
 
     /// Decode a full syndrome at once (convenience for batch mode).
@@ -579,6 +596,13 @@ impl ObservableDecoder for LogicalCircuitDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_shot(syndrome)
     }
+
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.reset();
+        let len = syndrome.len().min(self.total_detectors);
+        self.syndrome[..len].copy_from_slice(&syndrome[..len]);
+        self.strategy.decode_obs(&self.syndrome)
+    }
 }
 
 // ============================================================================
@@ -605,6 +629,10 @@ impl FullCircuitStrategy {
 impl DecodeStrategy for FullCircuitStrategy {
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.inner.decode_to_observables(syndrome)
+    }
+
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.inner.decode_obs(syndrome)
     }
 
     fn commit(&mut self, _region: &DetectorRegion) -> Result<u64, DecoderError> {
@@ -681,13 +709,6 @@ impl WindowedLogicalSubgraphStrategy {
                 observable_indices.len(),
             )));
         }
-        if let Some(&bad) = observable_indices.iter().find(|&&o| o >= 64) {
-            return Err(DecoderError::InvalidConfiguration(format!(
-                "WindowedLogicalSubgraphStrategy: observable index {bad} >= 64 \
-                 exceeds the u64 observable-mask capacity"
-            )));
-        }
-
         let mut decoders = Vec::with_capacity(num);
         let mut sub_syndromes = Vec::with_capacity(num);
         for (i, dem_str) in subgraph_dems.iter().enumerate() {
@@ -707,8 +728,17 @@ impl WindowedLogicalSubgraphStrategy {
 }
 
 impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
+    /// Narrowing wrapper over [`Self::decode_obs`]; errors above 64 observables.
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        let mut obs_mask = 0u64;
+        self.decode_obs(syndrome)?.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
+            )
+        })
+    }
+
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        let mut obs_mask = ObsMask::new();
 
         for (i, (dec, dmap)) in self
             .subgraph_decoders
@@ -736,7 +766,7 @@ impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
             // position `i`, which differs once empty observables are filtered).
             let sub_obs = dec.decode_to_observables(&buf[..n])?;
             if sub_obs & 1 != 0 {
-                obs_mask |= 1u64 << self.observable_indices[i];
+                obs_mask.set(self.observable_indices[i]);
             }
         }
 
@@ -812,14 +842,22 @@ mod tests {
     }
 
     #[test]
-    fn windowed_strategy_rejects_observable_index_over_63() {
-        let r = WindowedLogicalSubgraphStrategy::new(
+    fn windowed_strategy_supports_observable_index_over_63() {
+        use crate::decode_budget::DecodeStrategy;
+        // Observable index 64 was previously rejected; it now constructs and the
+        // wide `decode_obs` represents bit 64 with no truncation.
+        let mut s = WindowedLogicalSubgraphStrategy::new(
             vec!["error(0.1) D0 L0".to_string()],
             vec![vec![0usize]],
             vec![64usize],
             |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
-        );
-        assert!(r.is_err());
+        )
+        .unwrap();
+        let wide = s.decode_obs(&[1]).unwrap();
+        assert!(wide.get(64));
+        assert_eq!(wide.to_u64(), None);
+        // The narrowing u64 path errors rather than truncating.
+        assert!(s.decode(&[1]).is_err());
     }
 
     #[test]

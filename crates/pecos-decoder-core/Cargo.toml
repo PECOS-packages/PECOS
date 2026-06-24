@@ -17,6 +17,7 @@ thiserror.workspace = true
 anyhow.workspace = true
 pecos-random.workspace = true
 rayon.workspace = true
+smallvec.workspace = true
 
 [lints]
 workspace = true

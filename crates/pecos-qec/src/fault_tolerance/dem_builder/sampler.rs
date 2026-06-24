@@ -39,6 +39,7 @@ use super::dem_sampler::SamplingEngine;
 use super::types::{DemOutput, NoiseConfig, PerGateTypeNoise};
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, DemOutputKind};
 use pecos_core::prelude::GateType;
+use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_num::z2_linalg::z2_rank_from_records;
 use pecos_random::RngProbabilityExt;
 use rand_core::Rng;
@@ -697,28 +698,38 @@ impl DemSampler {
 
     /// Bit mask selecting observable outputs.
     ///
-    /// Existing decoder APIs use `u64` observable masks, so outputs with index
-    /// \>= 64 are not representable here and are ignored consistently with the
-    /// existing mask-based paths.
+    /// Wide bitmask of which DEM outputs are decoder-facing observables.
+    ///
+    /// Returns an [`ObsMask`], so more than 64 observables are represented with
+    /// no truncation. Compute this once, up front, and pass it to
+    /// [`Self::observable_mask_from_dem_output_flips`] per shot.
     #[must_use]
-    pub fn observable_dem_output_mask(&self) -> u64 {
-        self.observable_ids()
-            .into_iter()
-            .filter(|&idx| idx < u64::BITS as usize)
-            .fold(0u64, |acc, idx| acc | (1u64 << idx))
+    pub fn observable_dem_output_mask(&self) -> ObsMask {
+        let mut mask = ObsMask::new();
+        for idx in self.observable_ids() {
+            mask.set(idx);
+        }
+        mask
     }
 
-    /// Converts a sampled DEM-output flip vector into an observable-only mask.
+    /// Converts a sampled DEM-output flip vector into an observable-only wide mask.
+    ///
+    /// `observable_mask` is the value returned by
+    /// [`Self::observable_dem_output_mask`]; pass it in so the per-shot path does
+    /// not recompute it.
     #[must_use]
-    pub fn observable_mask_from_dem_output_flips(&self, flips: &[bool]) -> u64 {
-        let observable_mask = self.observable_dem_output_mask();
-        flips
-            .iter()
-            .enumerate()
-            .filter(|(idx, flipped)| {
-                **flipped && *idx < u64::BITS as usize && (observable_mask & (1u64 << *idx)) != 0
-            })
-            .fold(0u64, |acc, (idx, _)| acc | (1u64 << idx))
+    pub fn observable_mask_from_dem_output_flips(
+        &self,
+        flips: &[bool],
+        observable_mask: &ObsMask,
+    ) -> ObsMask {
+        let mut mask = ObsMask::new();
+        for (idx, flipped) in flips.iter().enumerate() {
+            if *flipped && observable_mask.get(idx) {
+                mask.set(idx);
+            }
+        }
+        mask
     }
 
     /// Number of mechanisms in the sampler.
@@ -1868,6 +1879,44 @@ mod tests {
     }
 
     #[test]
+    fn observable_dem_output_mask_supports_above_64_observables() {
+        // >64 observables are now represented in a wide ObsMask with no
+        // truncation (the old u64 cap is lifted; observable 64 is present).
+        use super::super::builder::DemBuilder;
+        use pecos_quantum::Attribute;
+
+        let n: usize = 65;
+        let mut circuit = DagCircuit::new();
+        for i in 0..n {
+            circuit.pz(&[i]);
+        }
+        for i in 0..n {
+            circuit.mz(&[i]);
+        }
+        circuit.set_attr("num_measurements", Attribute::String(n.to_string()));
+        let n_i64 = i64::try_from(n).unwrap();
+        let obs: Vec<String> = (0..n)
+            .map(|i| {
+                let rec = i64::try_from(i).unwrap() - n_i64;
+                format!(r#"{{"id":{i},"records":[{rec}]}}"#)
+            })
+            .collect();
+        circuit.set_attr(
+            "observables",
+            Attribute::String(format!("[{}]", obs.join(","))),
+        );
+
+        let dem = DemBuilder::from_circuit(&circuit, 0.03, 0.0, 0.02, 0.0);
+        let sampler = DemSampler::from_detector_error_model(&dem);
+        assert_eq!(sampler.num_dem_outputs(), n);
+
+        let mask = sampler.observable_dem_output_mask();
+        assert_eq!(mask.count_ones(), u32::try_from(n).unwrap());
+        assert!(mask.get(64), "observable 64 must be representable");
+        assert_eq!(mask.to_u64(), None, "65 observables do not fit a u64");
+    }
+
+    #[test]
     fn raw_mode_without_dem_outputs_reports_zero_dem_outputs() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
@@ -1914,9 +1963,17 @@ mod tests {
                 .num_tracked_paulis(),
             1
         );
-        assert_eq!(sampler.observable_dem_output_mask(), 1);
-        assert_eq!(sampler.observable_mask_from_dem_output_flips(&[false]), 0);
-        assert_eq!(sampler.observable_mask_from_dem_output_flips(&[true]), 1);
+        let obs_mask = sampler.observable_dem_output_mask();
+        assert_eq!(obs_mask, ObsMask::from_u64(1));
+        assert!(
+            sampler
+                .observable_mask_from_dem_output_flips(&[false], &obs_mask)
+                .is_zero()
+        );
+        assert_eq!(
+            sampler.observable_mask_from_dem_output_flips(&[true], &obs_mask),
+            ObsMask::from_u64(1)
+        );
     }
 
     #[test]

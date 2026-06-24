@@ -4284,6 +4284,7 @@ dependencies = [
  "ndarray 0.17.2",
  "pecos-random",
  "rayon",
+ "smallvec",
  "thiserror 2.0.18",
 ]
 

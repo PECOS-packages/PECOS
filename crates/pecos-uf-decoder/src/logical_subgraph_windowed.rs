@@ -39,6 +39,7 @@ use pecos_decoder_core::logical_subgraph::window_plan::LogicalSubgraphWindowPlan
 use pecos_decoder_core::logical_subgraph::{
     MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
 };
+use pecos_decoder_core::obs_mask::ObsMask;
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
 use crate::windowed::{OverlappingWindowedDecoder, WindowedConfig};
@@ -129,8 +130,20 @@ impl WindowedLogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
+    /// Narrowing wrapper over [`Self::decode_obs`]; errors (rather than
+    /// truncating) above 64 observables.
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        let mut obs_mask = 0u64;
+        self.decode_obs(syndrome)?.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
+            )
+        })
+    }
+
+    /// Decode every windowed per-observable subgraph and pack the flips into a
+    /// wide [`ObsMask`] at each subgraph's GLOBAL observable index (no >64 cap).
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        let mut obs_mask = ObsMask::new();
         for sg in &mut self.subgraphs {
             let n = sg.num_local;
             for (local, &global) in sg.detector_map.iter().enumerate() {
@@ -141,17 +154,10 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
                 };
             }
             // The subgraph decodes a single observable as its local bit 0; map
-            // that back to this observable's global bit. `observable_idx < 64` is
-            // guaranteed upstream (`subgraphs_from_membership` rejects >64
-            // observables); assert it locally where the u64 shift consumes it.
-            debug_assert!(
-                sg.observable_idx < 64,
-                "observable index {} exceeds u64 observable-mask capacity",
-                sg.observable_idx
-            );
+            // that back to this observable's global bit.
             let sub_obs = sg.decoder.decode_to_observables(&self.local_syn[..n])?;
             if sub_obs & 1 != 0 {
-                obs_mask |= 1u64 << sg.observable_idx;
+                obs_mask.set(sg.observable_idx);
             }
         }
         Ok(obs_mask)

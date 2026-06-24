@@ -78,28 +78,26 @@ class RNGModel:
         while self.count < target_index:
             self.rng_random()
 
-    def extract_val(self, param: str, output: dict) -> int:
+    def extract_val(self, param: str | int, output: dict) -> int:
         """Responsible for extracting the value of interest depending on the type of the parameter being passed in."""
         if isinstance(param, int):
-            val = param
-        else:
-            try:
-                val = int(param)
-            except ValueError:
-                val = None
-        if val is not None:
+            return param
+
+        try:
+            return int(param)
+        except (TypeError, ValueError):
             pass
-        elif "[" in param:
+
+        if "[" in param:
             idx_creg = param.split("[")
             creg = output[idx_creg[0]]
             idx = int(idx_creg[-1][:-1])
-            val = int(creg[idx])
+            return int(creg[idx])
         elif param == "JOB_shotnum":
-            val = self.shot_id
-        else:
-            reg = output[param]
-            val = int(reg)
-        return val
+            return self.shot_id
+
+        reg = output[param]
+        return int(reg)
 
     def eval_func(self, params: dict, output: dict) -> None:
         """Calling the appropriate functions dependent on RNG Function call passed in."""

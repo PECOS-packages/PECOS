@@ -1489,13 +1489,26 @@ pub struct SemanticAnalyzer {
     gate_registry: BTreeMap<String, GateSignature>,
 }
 
+/// Where a registered gate came from. Determines which redeclarations are
+/// allowed: built-ins may be redeclared only with their exact signature, while a
+/// user gate (declared or defined) may not be redeclared at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateOrigin {
+    /// A built-in gate provided by the language/backend.
+    Builtin,
+    /// `declare gate name(...)(...);` -- an opaque target/backend gate.
+    TargetDeclared,
+    /// `gate name(...)(...) { ... }` -- a composite gate defined inline.
+    CompositeDefined,
+}
+
 /// Signature of a registered gate (built-in or custom).
 #[derive(Debug, Clone)]
 pub struct GateSignature {
     pub name: String,
     pub num_params: usize,
     pub num_qubits: usize,
-    pub is_builtin: bool,
+    pub origin: GateOrigin,
 }
 
 /// Information about an alias for overlap detection.
@@ -1634,7 +1647,7 @@ impl SemanticAnalyzer {
                     name: name.to_string(),
                     num_params,
                     num_qubits,
-                    is_builtin: true,
+                    origin: GateOrigin::Builtin,
                 },
             );
         }
@@ -1854,26 +1867,38 @@ impl SemanticAnalyzer {
         name: &str,
         num_params: usize,
         num_qubits: usize,
-        location: Option<SourceLocation>,
+        origin: GateOrigin,
     ) -> SemanticResult<()> {
         if let Some(existing) = self.gate_registry.get(name) {
-            if existing.is_builtin {
-                if existing.num_params != num_params || existing.num_qubits != num_qubits {
+            match existing.origin {
+                GateOrigin::Builtin => {
+                    if existing.num_params != num_params || existing.num_qubits != num_qubits {
+                        return Err(SemanticError::Other {
+                            message: format!(
+                                "cannot redeclare built-in gate '{name}' with a different \
+                                 signature: built-in '{name}' takes {} parameter(s) and {} \
+                                 qubit(s)",
+                                existing.num_params, existing.num_qubits
+                            ),
+                        });
+                    }
+                    // Exact-signature redeclaration of a built-in: no-op.
+                    return Ok(());
+                }
+                GateOrigin::TargetDeclared => {
                     return Err(SemanticError::Other {
                         message: format!(
-                            "cannot redeclare built-in gate '{name}' with a different signature: \
-                             built-in '{name}' takes {} parameter(s) and {} qubit(s)",
-                            existing.num_params, existing.num_qubits
+                            "gate '{name}' is already declared as a target gate; \
+                             `declare gate` is an opaque backend gate, not a forward declaration"
                         ),
                     });
                 }
-                // Exact-signature redeclaration of a built-in: no-op.
-                return Ok(());
+                GateOrigin::CompositeDefined => {
+                    return Err(SemanticError::Other {
+                        message: format!("gate '{name}' is already defined"),
+                    });
+                }
             }
-            return Err(SemanticError::DuplicateSymbol {
-                name: name.to_string(),
-                location: location.unwrap_or_default(),
-            });
         }
         self.gate_registry.insert(
             name.to_string(),
@@ -1881,7 +1906,7 @@ impl SemanticAnalyzer {
                 name: name.to_string(),
                 num_params,
                 num_qubits,
-                is_builtin: false,
+                origin,
             },
         );
         Ok(())
@@ -2023,21 +2048,21 @@ impl SemanticAnalyzer {
                 // Tests don't declare symbols
             }
             TopLevelDecl::DeclareGate(gate) => {
-                // Register target gate in the gate registry (reject duplicates)
+                // Register an opaque target gate (reject duplicates)
                 self.register_user_gate(
                     &gate.name,
                     gate.params.len(),
                     gate.qubits.len(),
-                    gate.location.clone(),
+                    GateOrigin::TargetDeclared,
                 )?;
             }
             TopLevelDecl::Gate(gate) => {
-                // Register composite gate in the gate registry (reject duplicates)
+                // Register a composite gate definition (reject duplicates)
                 self.register_user_gate(
                     &gate.name,
                     gate.params.len(),
                     gate.qubits.len(),
-                    gate.location.clone(),
+                    GateOrigin::CompositeDefined,
                 )?;
             }
             TopLevelDecl::ErrorSet(error_set) => {
@@ -8844,11 +8869,33 @@ mod tests {
     fn test_declare_then_define_same_gate_rejected() {
         // `declare gate` is an opaque target gate, not a forward declaration:
         // declaring then defining the same name is a duplicate, not a definition.
-        let result = analyze(r#"
+        let err = analyze(
+            r#"
             declare gate foo()(q);
             gate foo()(q) { h q; }
-        "#);
-        assert!(result.is_err(), "declare-then-define of the same gate should fail");
+        "#,
+        )
+        .expect_err("declare-then-define of the same gate should fail");
+        assert!(
+            err.to_string().contains("target gate"),
+            "error should explain the gate is already a target declaration: {err}"
+        );
+    }
+
+    #[test]
+    fn test_define_then_define_same_gate_rejected() {
+        // Two composite definitions of the same name collide.
+        let err = analyze(
+            r#"
+            gate foo()(q) { h q; }
+            gate foo()(q) { x q; }
+        "#,
+        )
+        .expect_err("defining the same gate twice should fail");
+        assert!(
+            err.to_string().contains("already defined"),
+            "error should report the gate is already defined: {err}"
+        );
     }
 
     #[test]

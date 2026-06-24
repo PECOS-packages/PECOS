@@ -284,7 +284,15 @@ impl SimBuilder {
                 )
             })?;
 
-        classical_engine.set_num_qubits_hint(num_qubits);
+        // A dynamic classical engine (e.g. the QIS/Selene runtime) reports 0
+        // qubits until program execution has discovered its allocations. That 0
+        // means "unknown", not "zero qubits": freezing it as a hint would
+        // override the runtime's own capacity discovery and initialize the
+        // plugin with no qubits, so every qalloc fails. Only pass a hint when
+        // the count is actually known (explicit, or a positive static count).
+        if num_qubits > 0 {
+            classical_engine.set_num_qubits_hint(num_qubits);
+        }
 
         // Build quantum engine (require explicit qubit specification)
         let quantum_engine = if let Some(mut builder) = self.quantum_builder {

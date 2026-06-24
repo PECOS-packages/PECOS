@@ -444,6 +444,10 @@ impl SeleneRuntime {
     }
 
     fn plugin_num_qubits(&self) -> usize {
+        // An explicit hint is authoritative and caps the plugin capacity (a
+        // program that exceeds it fails loudly at qalloc by design). The bogus
+        // "0 inferred before execution" case is handled upstream in SimBuilder,
+        // which no longer freezes that 0 as a hint.
         self.num_qubits_hint.unwrap_or(self.num_qubits)
     }
 

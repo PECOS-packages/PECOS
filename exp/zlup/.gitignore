@@ -1,0 +1,22 @@
+# Build artifacts
+/target/
+
+# Fuzzing - corpus and artifacts are machine-generated
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+
+# Proptest regressions (auto-generated failure cases)
+*.proptest-regressions
+
+# IDE
+.idea/
+*.iml
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+
+# MkDocs
+/site/

@@ -1,0 +1,210 @@
+/// Standard library: Error tracking utilities for QEC
+///
+/// Utilities for tracking errors, counting faults, and managing error budgets.
+/// All operations are explicit and bounded (no hidden allocations).
+
+// =============================================================================
+// Error Counters
+// =============================================================================
+
+/// Count errors in a syndrome history (packed u64 array style)
+/// Each bit position tracks one stabilizer over time
+/// Returns count of how many times syndrome bit was set
+pub fn count_flips_at_position(history: u64, pos: u64) -> u64 {
+    if pos >= 64 {
+        return 0;
+    }
+    return (history >> pos) & 1;
+}
+
+/// Count total number of error events (defects) across all positions
+pub fn total_defects(syndrome: u64) -> u64 {
+    mut count: u64 = 0;
+    mut s := syndrome;
+    for _ in 0..64 {
+        if s == 0 {
+            break;
+        }
+        count = count + (s & 1);
+        s = s >> 1;
+    }
+    return count;
+}
+
+/// Check if error count exceeds threshold
+pub fn exceeds_threshold(error_count: u64, threshold: u64) -> bool {
+    return error_count > threshold;
+}
+
+// =============================================================================
+// Error Rate Estimation
+// =============================================================================
+
+/// Estimate error rate from counts (returns permil - per 1000)
+/// Avoids floating point: returns (errors * 1000) / total
+pub fn error_rate_permil(errors: u64, total: u64) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+    return (errors * 1000) / total;
+}
+
+/// Estimate error rate (returns percent * 100 for precision)
+/// Example: 3.5% returns 350
+pub fn error_rate_percent_x100(errors: u64, total: u64) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+    return (errors * 10000) / total;
+}
+
+// =============================================================================
+// Error Budget Tracking
+// =============================================================================
+
+/// Check if within error budget
+/// budget_permil is the acceptable error rate in permil (e.g., 1 = 0.1%)
+pub fn within_budget(errors: u64, total: u64, budget_permil: u64) -> bool {
+    if total == 0 {
+        return true;
+    }
+    actual := (errors * 1000) / total;
+    return actual <= budget_permil;
+}
+
+/// Calculate remaining error budget before threshold
+/// Returns how many more errors can occur before exceeding budget_permil
+pub fn remaining_budget(errors: u64, total: u64, budget_permil: u64) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+    // max_errors = (budget_permil * total) / 1000
+    max_errors := (budget_permil * total) / 1000;
+    if errors >= max_errors {
+        return 0;
+    }
+    return max_errors - errors;
+}
+
+// =============================================================================
+// Syndrome Difference Tracking
+// =============================================================================
+
+/// Compute syndrome change between two rounds
+pub fn syndrome_delta(prev: u64, curr: u64) -> u64 {
+    return prev ^ curr;
+}
+
+/// Count number of stabilizers that flipped between rounds
+pub fn count_flipped(prev: u64, curr: u64) -> u64 {
+    delta := prev ^ curr;
+    mut count: u64 = 0;
+    mut d := delta;
+    for _ in 0..64 {
+        if d == 0 {
+            break;
+        }
+        count = count + (d & 1);
+        d = d >> 1;
+    }
+    return count;
+}
+
+/// Check if syndrome is stable (no change)
+pub fn is_stable(prev: u64, curr: u64) -> bool {
+    return prev == curr;
+}
+
+// =============================================================================
+// Sliding Window Statistics
+// =============================================================================
+
+/// Update sliding window error count (simple, uses XOR history)
+/// Returns new window with oldest bit removed and newest added
+/// window: current window state (each bit = error in that round)
+/// newest: 1 if error in current round, 0 otherwise
+/// window_size: size of window (bits to track)
+pub fn slide_window(window: u64, newest: u64, window_size: u64) -> u64 {
+    if window_size == 0 or window_size > 64 {
+        return window;
+    }
+    // Shift left to make room for new bit, mask to window size
+    one: u64 = 1;
+    mask := (one << window_size) - 1;
+    return ((window << 1) | (newest & 1)) & mask;
+}
+
+/// Count errors in sliding window
+pub fn window_error_count(window: u64) -> u64 {
+    mut count: u64 = 0;
+    mut w := window;
+    for _ in 0..64 {
+        if w == 0 {
+            break;
+        }
+        count = count + (w & 1);
+        w = w >> 1;
+    }
+    return count;
+}
+
+// =============================================================================
+// Error Classification
+// =============================================================================
+
+/// Classify error weight (for debugging/analysis)
+/// Returns: 0=none, 1=single, 2=double, 3=triple+
+pub fn classify_weight(syndrome: u64) -> u64 {
+    count := total_defects(syndrome);
+    if count == 0 {
+        return 0;
+    }
+    if count == 1 {
+        return 1;
+    }
+    if count == 2 {
+        return 2;
+    }
+    return 3;
+}
+
+/// Check if error is likely correctable (weight <= t for distance 2t+1 code)
+pub fn is_likely_correctable(syndrome: u64, t: u64) -> bool {
+    weight := total_defects(syndrome);
+    return weight <= t;
+}
+
+// =============================================================================
+// Fault Flags
+// =============================================================================
+
+/// Pack multiple fault flags into a single u64
+/// Each bit represents one type of fault condition
+pub FLAG_NONE: u64 = 0;
+pub FLAG_X_ERROR: u64 = 1;
+pub FLAG_Z_ERROR: u64 = 2;
+pub FLAG_Y_ERROR: u64 = 3;  // X | Z
+pub FLAG_MEASUREMENT_ERROR: u64 = 4;
+pub FLAG_LEAKAGE: u64 = 8;
+pub FLAG_TIMING_ERROR: u64 = 16;
+pub FLAG_THRESHOLD_EXCEEDED: u64 = 32;
+
+/// Set a fault flag
+pub fn set_flag(flags: u64, flag: u64) -> u64 {
+    return flags | flag;
+}
+
+/// Clear a fault flag
+pub fn clear_flag(flags: u64, flag: u64) -> u64 {
+    return flags & (~flag);
+}
+
+/// Check if flag is set
+pub fn has_flag(flags: u64, flag: u64) -> bool {
+    return (flags & flag) != 0;
+}
+
+/// Check if any error flag is set (X, Z, or Y)
+pub fn has_pauli_error(flags: u64) -> bool {
+    return (flags & FLAG_Y_ERROR) != 0;
+}

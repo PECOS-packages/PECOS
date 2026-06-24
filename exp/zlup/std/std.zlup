@@ -1,0 +1,51 @@
+/// Zluppy Standard Library
+///
+/// The standard library provides common data structures and utilities
+/// for quantum programming with NASA Power of 10 compliance.
+///
+/// All containers have bounded capacity specified at compile time.
+///
+/// Modules:
+/// - math: Mathematical constants (pi, tau, e, sqrt2, angle fractions)
+/// - bits: Bitwise utilities (popcount, parity, bit extraction)
+/// - containers: Stack, Queue, Deque, PriorityQueue
+/// - qec: UnionFind, SyndromeBuffer, LookupDecoder, PauliFrame, SparseGraph
+
+pub math := @import("math.zlup");
+pub bits := @import("bits.zlup");
+pub containers := @import("containers.zlup");
+pub qec := @import("qec.zlup");
+
+// Re-export mathematical constants for convenience
+pub pi := math.pi;
+pub tau := math.tau;
+pub e := math.e;
+pub sqrt2 := math.sqrt2;
+pub inv_sqrt2 := math.inv_sqrt2;
+pub pi_2 := math.pi_2;
+pub pi_4 := math.pi_4;
+pub pi_8 := math.pi_8;
+pub deg_to_rad := math.deg_to_rad;
+pub rad_to_deg := math.rad_to_deg;
+
+// Re-export bitwise utilities for convenience
+pub popcount_u8 := bits.popcount_u8;
+pub popcount_u16 := bits.popcount_u16;
+pub popcount_u32 := bits.popcount_u32;
+pub popcount_u64 := bits.popcount_u64;
+pub parity_u8 := bits.parity_u8;
+pub parity_u16 := bits.parity_u16;
+pub parity_u32 := bits.parity_u32;
+pub parity_u64 := bits.parity_u64;
+
+// Re-export commonly used types for convenience
+pub Stack := containers.Stack;
+pub Queue := containers.Queue;
+pub Deque := containers.Deque;
+pub PriorityQueue := containers.PriorityQueue;
+
+pub UnionFind := qec.UnionFind;
+pub SyndromeBuffer := qec.SyndromeBuffer;
+pub LookupDecoder := qec.LookupDecoder;
+pub PauliFrame := qec.PauliFrame;
+pub SparseGraph := qec.SparseGraph;

@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run tests
+        run: cargo test --all-features
+        working-directory: exp/guppy-zlup
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --check
+        working-directory: exp/guppy-zlup
+
+      - name: Clippy
+        run: cargo clippy --all-features -- -D warnings
+        working-directory: exp/guppy-zlup
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Build
+        run: cargo build --release --features cli
+        working-directory: exp/guppy-zlup
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: guppy-zlup
+          path: target/release/guppy-zlup
+
+  validate:
+    name: Validate with guppylang
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install guppylang
+        run: uv pip install guppylang --system
+
+      - name: Build CLI
+        run: cargo build --features cli
+        working-directory: exp/guppy-zlup
+
+      - name: Test validation script
+        run: |
+          # Create a test file
+          cat > /tmp/test_guppy.py << 'EOF'
+          from guppylang import guppy
+          from guppylang.std.quantum import qubit, h, measure
+
+          @guppy
+          def test() -> bool:
+              q = qubit()
+              h(q)
+              return measure(q)
+          EOF
+
+          # Run validation
+          cargo run --features cli -- validate /tmp/test_guppy.py
+        working-directory: exp/guppy-zlup

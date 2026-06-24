@@ -1,0 +1,50 @@
+# Justfile for guppy-zlup documentation
+#
+# Uses the PECOS root's uv environment (which has mkdocs in dev deps)
+
+set shell := ["bash", "-cu"]
+
+# PECOS root directory (where pyproject.toml with mkdocs lives)
+root := "../../.."
+
+# Default: serve docs
+default: serve
+
+# Alias for consistency
+docs port="8000": (serve port)
+
+# Serve docs locally (with hot reload, opens browser)
+serve port="8000":
+    cd {{root}} && uv run mkdocs serve --open -a 127.0.0.1:{{port}} -f exp/guppy-zlup/mkdocs.yml
+
+# Serve docs without opening browser
+serve-quiet port="8000":
+    cd {{root}} && uv run mkdocs serve -a 127.0.0.1:{{port}} -f exp/guppy-zlup/mkdocs.yml
+
+# Build static site
+build:
+    cd {{root}} && uv run mkdocs build --clean -f exp/guppy-zlup/mkdocs.yml
+
+# Deploy to GitHub Pages
+deploy:
+    cd {{root}} && uv run mkdocs gh-deploy --force -f exp/guppy-zlup/mkdocs.yml
+
+# Clean build artifacts
+clean:
+    rm -rf site/
+
+# Run tests
+test:
+    cargo test
+
+# Build the CLI
+build-cli:
+    cargo build --features cli --release
+
+# Check a Guppy file
+check file:
+    cargo run --features cli -- check {{file}}
+
+# Compile a Guppy file to Zlup
+compile file:
+    cargo run --features cli -- compile {{file}} --stdout

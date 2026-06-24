@@ -1,0 +1,138 @@
+/// Standard library: Syndrome utilities for QEC
+///
+/// Provides functions for syndrome processing and analysis.
+
+// =============================================================================
+// Syndrome Weight and Parity
+// =============================================================================
+
+/// Count the number of defects (set bits) in a syndrome
+pub fn syndrome_weight(syndrome: u64) -> u64 {
+    mut count: u64 = 0;
+    mut s := syndrome;
+    for _ in 0..64 {
+        if s == 0 {
+            break;
+        }
+        if (s & 1) == 1 {
+            count = count + 1;
+        }
+        s = s >> 1;
+    }
+    return count;
+}
+
+/// Compute the XOR of two syndromes (difference)
+pub fn syndrome_diff(a: u64, b: u64) -> u64 {
+    return a ^ b;
+}
+
+/// Check if syndrome is trivial (no errors)
+pub fn is_trivial(syndrome: u64) -> bool {
+    return syndrome == 0;
+}
+
+/// Compute parity of syndrome
+pub fn syndrome_parity(syndrome: u64) -> u64 {
+    mut p := syndrome;
+    p = p ^ (p >> 32);
+    p = p ^ (p >> 16);
+    p = p ^ (p >> 8);
+    p = p ^ (p >> 4);
+    p = p ^ (p >> 2);
+    p = p ^ (p >> 1);
+    return p & 1;
+}
+
+// =============================================================================
+// Defect Position Queries
+// =============================================================================
+
+/// Find position of first defect (lowest set bit)
+/// Returns 64 if no defects
+pub fn first_defect(syndrome: u64) -> u64 {
+    if syndrome == 0 {
+        return 64;
+    }
+    mut pos: u64 = 0;
+    mut s := syndrome;
+    for _ in 0..64 {
+        if (s & 1) == 1 {
+            return pos;
+        }
+        s = s >> 1;
+        pos = pos + 1;
+    }
+    return 64;
+}
+
+/// Find position of last defect (highest set bit)
+/// Returns 64 if no defects
+pub fn last_defect(syndrome: u64) -> u64 {
+    if syndrome == 0 {
+        return 64;
+    }
+    mut last: u64 = 64;
+    mut pos: u64 = 0;
+    mut s := syndrome;
+    for _ in 0..64 {
+        if s == 0 {
+            break;
+        }
+        if (s & 1) == 1 {
+            last = pos;
+        }
+        s = s >> 1;
+        pos = pos + 1;
+    }
+    return last;
+}
+
+// =============================================================================
+// Syndrome Bit Manipulation
+// =============================================================================
+
+/// Clear the first defect (lowest set bit)
+pub fn clear_first(syndrome: u64) -> u64 {
+    return syndrome & (syndrome - 1);
+}
+
+/// Isolate the first defect (return only lowest set bit)
+pub fn isolate_first(syndrome: u64) -> u64 {
+    return syndrome & (~syndrome + 1);
+}
+
+/// Get bit at position
+pub fn get_bit(syndrome: u64, pos: u64) -> u64 {
+    if pos >= 64 {
+        return 0;
+    }
+    return (syndrome >> pos) & 1;
+}
+
+/// Set bit at position
+pub fn set_bit(syndrome: u64, pos: u64) -> u64 {
+    if pos >= 64 {
+        return syndrome;
+    }
+    mask: u64 = 1 << pos;
+    return syndrome | mask;
+}
+
+/// Clear bit at position
+pub fn clear_bit(syndrome: u64, pos: u64) -> u64 {
+    if pos >= 64 {
+        return syndrome;
+    }
+    mask: u64 = 1 << pos;
+    return syndrome & (~mask);
+}
+
+/// Toggle bit at position
+pub fn toggle_bit(syndrome: u64, pos: u64) -> u64 {
+    if pos >= 64 {
+        return syndrome;
+    }
+    mask: u64 = 1 << pos;
+    return syndrome ^ mask;
+}

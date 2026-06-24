@@ -1,0 +1,79 @@
+/// Mathematical constants and utilities for Zluppy.
+/// Provides commonly used constants for quantum gate rotations.
+
+// =============================================================================
+// Fundamental Constants
+// =============================================================================
+
+/// Pi - the ratio of a circle's circumference to its diameter.
+/// Commonly used in rotation gates: rz(pi/4), rx(pi/2), etc.
+pub pi: a64 = 3.14159265358979323846;
+
+/// Tau - the ratio of a circle's circumference to its radius (2*pi).
+/// Some prefer tau for full rotations: rz(tau/8) = rz(pi/4).
+pub tau: a64 = 6.28318530717958647692;
+
+/// Euler's number - the base of natural logarithms.
+/// Used in some advanced quantum algorithms.
+pub e: a64 = 2.71828182845904523536;
+
+/// Square root of 2.
+/// Used in normalization: 1/sqrt2 for Hadamard gate.
+pub sqrt2: f64 = 1.41421356237309504880;
+
+/// Reciprocal of square root of 2.
+/// Hadamard matrix elements: 1/sqrt(2).
+pub inv_sqrt2: f64 = 0.70710678118654752440;
+
+// =============================================================================
+// Common Angle Fractions (in radians)
+// =============================================================================
+
+/// Pi divided by 2 (90 degrees).
+/// T-gate squared, S-gate: rz(pi/2).
+pub pi_2: a64 = 1.57079632679489661923;
+
+/// Pi divided by 4 (45 degrees).
+/// T-gate angle: rz(pi/4).
+pub pi_4: a64 = 0.78539816339744830962;
+
+/// Pi divided by 8 (22.5 degrees).
+/// T-gate squared: rz(pi/8).
+pub pi_8: a64 = 0.39269908169872415481;
+
+/// Pi divided by 3 (60 degrees).
+pub pi_3: a64 = 1.04719755119659774615;
+
+/// Pi divided by 6 (30 degrees).
+pub pi_6: a64 = 0.52359877559829887308;
+
+/// Pi divided by 16 (11.25 degrees).
+pub pi_16: a64 = 0.19634954084936207740;
+
+/// 2*Pi divided by 3 (120 degrees).
+pub two_pi_3: a64 = 2.09439510239319549230;
+
+// =============================================================================
+// Negative Angles (for convenience)
+// =============================================================================
+
+/// Negative pi/2 (-90 degrees).
+pub neg_pi_2: a64 = -1.57079632679489661923;
+
+/// Negative pi/4 (-45 degrees).
+pub neg_pi_4: a64 = -0.78539816339744830962;
+
+/// Negative pi/8 (-22.5 degrees).
+pub neg_pi_8: a64 = -0.39269908169872415481;
+
+// =============================================================================
+// Degree Conversions
+// =============================================================================
+
+/// Degrees to radians conversion factor.
+/// Usage: angle_rad := degrees * deg_to_rad
+pub deg_to_rad: f64 = 0.01745329251994329577;
+
+/// Radians to degrees conversion factor.
+/// Usage: angle_deg := radians * rad_to_deg
+pub rad_to_deg: f64 = 57.29577951308232087680;

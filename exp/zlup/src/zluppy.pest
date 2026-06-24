@@ -1,0 +1,990 @@
+// Zluppy Grammar
+// A Zig-inspired quantum programming language for SLR
+//
+// Design principles (NASA Power of 10 influenced):
+// 1. Simple, predictable control flow
+// 2. Fixed bounds on loops where possible
+// 3. Allocator-based resource management (no dynamic alloc after init)
+// 4. Explicit over implicit
+// 5. Comptime for metaprogramming
+
+// =============================================================================
+// Whitespace and Comments
+// =============================================================================
+
+// Whitespace includes newlines for simpler grammar
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+line_comment = _{ "//" ~ (!"\n" ~ ANY)* }
+block_comment = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+COMMENT = _{ line_comment | block_comment }
+
+// Explicit whitespace rule for places needing explicit control
+ws = _{ (WHITESPACE | COMMENT)* }
+
+// Keyword operators with word boundary checks for binary expressions
+and_kw = @{ "and" ~ !(ASCII_ALPHANUMERIC | "_") }
+or_kw = @{ "or" ~ !(ASCII_ALPHANUMERIC | "_") }
+orelse_kw = @{ "orelse" ~ !(ASCII_ALPHANUMERIC | "_") }
+catch_kw = @{ "catch" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// Keywords that need to be captured
+pub_keyword = { "pub" }
+inline_keyword = { "inline" }
+packed_keyword = { "packed" }
+
+// =============================================================================
+// Attributes (Metadata)
+// =============================================================================
+
+// Attributes provide metadata for ticks, gates, and other constructs
+// @attr(key, value)              - single attribute
+// @attrs({key: value, ...})      - multiple attributes
+//
+// Examples:
+//   @attr(round, 0)
+//   @attr(kind, "syndrome")
+//   @attrs({round: 0, kind: "syndrome", error_rate: 0.001})
+
+// Single attribute: @attr(key, value)
+attribute = { "@attr" ~ ws ~ "(" ~ ws ~ identifier ~ ws ~ "," ~ ws ~ attr_value ~ ws ~ ")" }
+
+// Multiple attributes: @attrs({key: value, ...})
+attrs_block = { "@attrs" ~ ws ~ "(" ~ ws ~ "{" ~ ws ~ attrs_entries? ~ ws ~ "}" ~ ws ~ ")" }
+attrs_entries = { attrs_entry ~ (ws ~ "," ~ ws ~ attrs_entry)* ~ ","? }
+attrs_entry = { identifier ~ ws ~ ":" ~ ws ~ attr_value }
+
+attr_value = { string_literal | number_literal | bool_literal | identifier }
+attribute_list = { (attribute | attrs_block) ~ (ws ~ (attribute | attrs_block))* }
+
+// =============================================================================
+// Program Structure
+// =============================================================================
+
+program = { SOI ~ ws ~ top_level_decl* ~ ws ~ EOI }
+
+top_level_decl = {
+    // error_set_decl and fault_set_decl must come before binding_decl
+    // because "Name := error { ... }" and "Name := fault { ... }" would
+    // otherwise match binding_decl (with struct init expression)
+    error_set_decl |
+    fault_set_decl |
+    declare_gate_decl |
+    gate_decl |
+    binding_decl |
+    extern_fn_decl |
+    fn_decl |
+    struct_decl |
+    enum_decl |
+    union_decl |
+    test_decl
+}
+
+// =============================================================================
+// Declarations
+// =============================================================================
+
+// Binding declaration (Pascal/Go style with Rust mutability)
+// Binding declaration syntax:
+//   x := value;           -- immutable, type inferred
+//   x: T = value;         -- immutable, type explicit
+//   mut x := value;       -- mutable, type inferred
+//   mut x: T = value;     -- mutable, type explicit
+binding_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    (mut_keyword ~ ws)? ~ identifier ~ ws ~ ":" ~ ws ~ (type_expr ~ ws)? ~ "=" ~ ws ~
+    (expr | undefined_literal) ~ ws ~
+    ";"
+}
+
+mut_keyword = { "mut" }
+
+// Function declaration
+// try/try! modifiers indicate error handling mode for the function body
+fn_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    inline_keyword? ~ ws ~
+    "fn" ~ ws ~ member_name ~ ws ~
+    "(" ~ ws ~ param_list? ~ ws ~ ")" ~ ws ~
+    fn_error_mode? ~ ws ~
+    return_type? ~ ws ~
+    block
+}
+
+// Function error mode: try (collect all) or try! (stop on first)
+// fn foo() try -> []QuantumError!void { }
+// fn foo() try! -> QuantumError!void { }
+fn_error_mode = { try_bang_keyword | try_keyword }
+try_keyword = { "try" ~ !("!") }
+try_bang_keyword = { "try!" }
+
+// Comptime function (returns a type)
+// pub fn make_code(comptime distance: u32) -> type { ... }
+param_list = { param ~ (ws ~ "," ~ ws ~ param)* }
+// Regular param or Rust-style self receiver
+param = { self_param | regular_param }
+// Rust-style self receivers: &self, &mut self, self
+self_param = { "&" ~ ws ~ "mut"? ~ ws ~ "self" ~ !(ASCII_ALPHANUMERIC | "_") }
+regular_param = { comptime_modifier? ~ ws ~ identifier ~ ws ~ ":" ~ ws ~ type_expr }
+// Comptime modifier for parameters
+comptime_modifier = { "comptime" }
+
+return_type = { "->" ~ ws ~ (type_expr | "!" ~ type_expr | "?" ~ type_expr) }
+
+// External function declaration (FFI)
+// @link("libdecoder") extern "C" fn decode(data: [*]u8, len: usize) -> i32;
+extern_fn_decl = {
+    doc_comment* ~
+    link_attr? ~ ws ~
+    pub_keyword? ~ ws ~
+    "extern" ~ ws ~ string_literal ~ ws ~
+    "fn" ~ ws ~ identifier ~ ws ~
+    "(" ~ ws ~ param_list? ~ ws ~ ")" ~ ws ~
+    return_type? ~ ws ~
+    ";"
+}
+
+// Library linkage attribute for extern functions
+link_attr = { "@link" ~ ws ~ "(" ~ ws ~ string_literal ~ ws ~ ")" }
+
+// Struct declaration
+struct_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    identifier ~ ws ~ ":=" ~ ws ~
+    (packed_keyword ~ ws)? ~ "struct" ~ ws ~ "{" ~ ws ~
+    struct_body ~ ws ~
+    "}" ~ ws ~ ";"
+}
+
+struct_body = { (ws ~ (binding_decl | fn_decl | struct_field))* ~ ws }
+struct_field = {
+    doc_comment* ~
+    member_name ~ ws ~ ":" ~ ws ~ type_expr ~ ws ~
+    ("=" ~ ws ~ expr ~ ws)? ~ ","?
+}
+
+// Enum declaration
+enum_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    identifier ~ ws ~ ":=" ~ ws ~
+    "enum" ~ ws ~ ("(" ~ ws ~ type_expr ~ ws ~ ")")? ~ ws ~ "{" ~ ws ~
+    enum_body ~ ws ~
+    "}" ~ ws ~ ";"
+}
+
+enum_body = { enum_variant ~ (ws ~ "," ~ ws ~ enum_variant)* ~ ws ~ ","? }
+enum_variant = { identifier ~ (ws ~ "=" ~ ws ~ expr)? }
+
+// Union declaration (tagged union / sum type)
+// Value := union(enum) { Int: i32, Float: f64, None }  -- auto-tagged
+// Value := union(MyEnum) { Int: i32, Float: f64 }      -- externally tagged
+// Value := union { Int: i32, Float: f64 }              -- untagged
+union_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    identifier ~ ws ~ ":=" ~ ws ~
+    "union" ~ ws ~ union_tag? ~ ws ~ "{" ~ ws ~
+    union_body ~ ws ~
+    "}" ~ ws ~ ";"
+}
+
+union_tag = { "(" ~ ws ~ ("enum" | type_expr) ~ ws ~ ")" }
+union_body = { union_field ~ (ws ~ "," ~ ws ~ union_field)* ~ ws ~ ","? }
+union_field = { identifier ~ (ws ~ ":" ~ ws ~ type_expr)? }
+
+// Error set declaration - classical/logical errors that crash if unhandled
+// DecodeError := error { SyndromeAmbiguous, WeightTooHigh };
+error_set_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    identifier ~ ws ~ ":=" ~ ws ~
+    "error" ~ ws ~ "{" ~ ws ~
+    error_set_body ~ ws ~
+    "}" ~ ws ~ ";"
+}
+
+// Fault set declaration - quantum/physical faults, collected in try blocks
+// QuantumFault := fault { Leakage, QubitLoss, GateFailure };
+fault_set_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    identifier ~ ws ~ ":=" ~ ws ~
+    "fault" ~ ws ~ "{" ~ ws ~
+    error_set_body ~ ws ~
+    "}" ~ ws ~ ";"
+}
+
+error_set_body = { error_variant ~ (ws ~ "," ~ ws ~ error_variant)* ~ ws ~ ","? }
+
+// Error/fault variant can optionally have associated data
+// Leakage: struct { gate: []const u8, qubit: usize }
+error_variant = { identifier ~ (ws ~ ":" ~ ws ~ type_expr)? }
+
+// Test declaration (NASA Power of 10: assertions)
+test_decl = {
+    "test" ~ ws ~ string_literal ~ ws ~ block
+}
+
+// Custom gate declarations
+// declare gate name(params)(qubits);  -- target gate (provided by backend)
+// gate name(params)(qubits) { body }  -- composite gate (defined inline)
+declare_gate_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    "declare" ~ ws ~ "gate" ~ ws ~ identifier ~ ws ~
+    "(" ~ ws ~ gate_param_list? ~ ws ~ ")" ~ ws ~
+    "(" ~ ws ~ qubit_param_list? ~ ws ~ ")" ~ ws ~
+    ";"
+}
+
+gate_decl = {
+    doc_comment* ~
+    pub_keyword? ~ ws ~
+    "gate" ~ ws ~ identifier ~ ws ~
+    "(" ~ ws ~ gate_param_list? ~ ws ~ ")" ~ ws ~
+    "(" ~ ws ~ qubit_param_list? ~ ws ~ ")" ~ ws ~
+    block
+}
+
+gate_param_list = { gate_param ~ (ws ~ "," ~ ws ~ gate_param)* }
+gate_param = { identifier ~ (ws ~ ":" ~ ws ~ type_expr)? }
+
+qubit_param_list = { qubit_param ~ (ws ~ "," ~ ws ~ qubit_param)* }
+qubit_param = { identifier }
+
+// =============================================================================
+// Statements
+// =============================================================================
+
+statement = {
+    binding_decl |
+    alias_stmt |
+    assign_stmt |
+    if_stmt |
+    for_stmt |
+    switch_stmt |
+    tick_stmt |
+    try_block_stmt |
+    return_stmt |
+    break_stmt |
+    continue_stmt |
+    defer_stmt |
+    errdefer_stmt |
+    block |
+    expr_stmt
+}
+
+// Alias statement - creates a named view into existing data
+// alias name := slice_expr;
+// Aliases are immutable views with overlap checking
+alias_stmt = {
+    "alias" ~ ws ~ identifier ~ ws ~ ":" ~ ws ~ "=" ~ ws ~ expr ~ ws ~ ";"
+}
+
+// Try blocks for error handling
+// try { ... } - collect all errors (QEC pattern), returns []E!T
+// try! { ... } - stop on first error (traditional), returns E!T
+// Both can have optional catch clause
+try_block_stmt = { try_collect_block | try_bang_block }
+
+// try { } - collect all errors, continue executing
+try_collect_block = {
+    "try" ~ ws ~ block ~ ws ~ catch_clause?
+}
+
+// try! { } - stop on first error, propagate immediately
+try_bang_block = {
+    "try!" ~ ws ~ block ~ ws ~ catch_clause?
+}
+
+// catch |err| { } or catch |err| expr
+catch_clause = {
+    "catch" ~ ws ~ "|" ~ ws ~ identifier ~ ws ~ "|" ~ ws ~ (block | expr)
+}
+
+// Tick block - a time slice of parallel quantum gates
+// tick { ... }                                    - anonymous tick
+// tick name { ... }                               - named tick
+// tick "name" { ... }                             - named tick with string literal
+// @attr(round, 0) tick { ... }                    - tick with prefix attribute
+// @attrs({round: 0, kind: "syndrome"}) tick { ... } - tick with multiple attributes
+tick_stmt = {
+    attribute_list? ~ ws ~
+    "tick" ~ ws ~ attribute_list? ~ ws ~ tick_label? ~ ws ~ tick_body
+}
+tick_label = { string_literal | identifier }
+tick_body = { "{" ~ ws ~ (statement ~ ws)* ~ "}" }
+
+// Assignment: x = value; or x.field = value; or x[i] = value;
+assign_stmt = { lvalue ~ ws ~ assign_op ~ ws ~ expr ~ ws ~ ";" }
+assign_op = { "=" | "+=" | "-=" | "*=" | "/=" | "&=" | "|=" | "^=" }
+lvalue = { primary_expr ~ (field_access | index_access)* }
+
+// If statement (Rust/Python-style, with Go-style unwrapping)
+// Regular: if condition { ... } else { ... }
+// Optional unwrapping: if value := opt { ... } else { ... }
+if_stmt = {
+    "if" ~ ws ~ (if_unwrap_clause | if_condition) ~ ws ~
+    (block | statement) ~
+    (ws ~ "else" ~ ws ~ (if_stmt | block | statement))?
+}
+
+// if value := optional { ... } (Go-style unwrapping)
+if_unwrap_clause = {
+    identifier ~ ws ~ ":=" ~ ws ~ expr
+}
+
+// Regular condition (no parentheses required)
+if_condition = { expr }
+
+// For loop (bounded iteration - NASA Power of 10 compliant)
+// Rust/Python-style syntax:
+// for i in 0..n { ... }
+// for item in items { ... }
+// for i, item in items { ... }
+for_stmt = {
+    label? ~
+    (inline_keyword ~ ws)? ~
+    "for" ~ ws ~ capture_list ~ ws ~ "in" ~ ws ~ for_range ~ ws ~
+    block
+}
+
+for_range = { range_lit | expr }
+range_lit = { range_bound ~ ".." ~ range_bound }
+// Range bound allows expressions including field access and arithmetic
+range_bound = { range_bound_term ~ (ws ~ range_bound_op ~ ws ~ range_bound_term)* }
+range_bound_term = {
+    number_literal |
+    range_bound_field_access |
+    identifier |
+    "(" ~ ws ~ range_bound ~ ws ~ ")"
+}
+range_bound_field_access = { identifier ~ ("." ~ member_name)+ }
+range_bound_op = { "+" | "-" | "*" | "/" }
+capture_list = { identifier ~ (ws ~ "," ~ ws ~ identifier)* }
+
+// Switch statement
+switch_stmt = {
+    "switch" ~ ws ~ "(" ~ ws ~ expr ~ ws ~ ")" ~ ws ~ "{" ~ ws ~
+    (switch_prong ~ ws)* ~
+    "}"
+}
+
+switch_prong = {
+    (switch_case ~ (ws ~ "," ~ ws ~ switch_case)* | "else") ~ ws ~
+    "=>" ~ ws ~ (block | expr) ~ ws ~ ","?
+}
+switch_case = { expr ~ (ws ~ ".." ~ ws ~ expr)? }
+
+// Control flow
+return_stmt = { "return" ~ (ws ~ expr)? ~ ws ~ ";" }
+break_stmt = { "break" ~ (ws ~ ":" ~ identifier)? ~ (ws ~ expr)? ~ ws ~ ";" }
+continue_stmt = { "continue" ~ (ws ~ ":" ~ identifier)? ~ ws ~ ";" }
+defer_stmt = { "defer" ~ ws ~ (block | statement) }
+errdefer_stmt = { "errdefer" ~ ws ~ ("|" ~ ws ~ identifier ~ ws ~ "|" ~ ws)? ~ (block | statement) }
+
+// Block (can be labeled for break)
+// Supports optional trailing expression for return value (like Rust)
+// Block with optional attributes and label
+// @attr(kind, "syndrome") { ... }
+// @attrs({round: 1}) my_block: { ... }
+block = { attribute_list? ~ ws ~ label? ~ "{" ~ ws ~ (statement ~ ws)* ~ (trailing_expr ~ ws)? ~ "}" }
+trailing_expr = { expr }
+label = { identifier ~ ws ~ ":" ~ ws }
+
+// Expression statement (can have prefix attributes for gates)
+// @attr(syndrome, "X") cx({(q[0], q[1])});
+expr_stmt = { attribute_list? ~ ws ~ expr ~ ws ~ ";" }
+
+// =============================================================================
+// Quantum Statements (integrated into expression/statement system)
+// =============================================================================
+
+// Quantum operations use DSL-like syntax:
+//   h q[0];                          - single-qubit gate
+//   cx (q[0], q[1]);                 - two-qubit gate with tuple
+//   rx(0.123) q[0];                  - parameterized gate
+//   h {q[0], q[1], q[2]};           - batch apply (set semantics)
+//   cx {(q[0], q[1]), (q[2], q[3])}; - batch two-qubit gates
+//   r := mz(u1) q[0];                - measurement with type
+//   pz q;                            - prepare all qubits
+//   pz {q[0], q[1]};                 - prepare specific qubits
+
+// =============================================================================
+// Expressions
+// =============================================================================
+
+expr = { comptime_expr | runtime_expr }
+
+comptime_expr = { "comptime" ~ ws ~ (block | runtime_expr) }
+
+runtime_expr = { or_expr }
+
+// Binary operators with precedence (lowest to highest)
+// orelse/catch have lowest precedence (for optional/error unwrapping)
+//
+// NOTE: Keyword operators (and_kw, or_kw, orelse_kw, catch_kw) are defined above
+// with word boundary checks to prevent matching parts of identifiers.
+or_expr = { catch_expr ~ (or_kw ~ catch_expr)* }
+catch_expr = { orelse_expr ~ (catch_kw ~ ("|" ~ ws ~ identifier ~ ws ~ "|" ~ ws)? ~ orelse_expr)* }
+orelse_expr = { and_expr ~ (orelse_kw ~ and_expr)* }
+and_expr = { cmp_expr ~ (and_kw ~ cmp_expr)* }
+cmp_expr = { bitwise_or_expr ~ (ws ~ cmp_op ~ ws ~ bitwise_or_expr)? }
+cmp_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | not_in_op | in_op }
+in_op = { "in" }
+not_in_op = { "not" ~ ws ~ "in" }
+
+bitwise_or_expr = { bitwise_xor_expr ~ (ws ~ bitor_op ~ ws ~ bitwise_xor_expr)* }
+bitor_op = { "|" }
+bitwise_xor_expr = { bitwise_and_expr ~ (ws ~ bitxor_op ~ ws ~ bitwise_and_expr)* }
+bitxor_op = { "^" }
+bitwise_and_expr = { shift_expr ~ (ws ~ bitand_op ~ ws ~ shift_expr)* }
+bitand_op = { "&" }
+shift_expr = { add_expr ~ (ws ~ shift_op ~ ws ~ add_expr)* }
+shift_op = { "<<" | ">>" }
+add_expr = { suffixed_expr ~ (ws ~ add_op ~ ws ~ suffixed_expr)* }
+add_op = { "+" | "-" }
+mul_expr = { unary_expr ~ (ws ~ mul_op ~ ws ~ unary_expr)* }
+mul_op = { "*" | "/" | "%" }
+
+// Suffixed expression: expression with optional type/unit suffix
+// Allows space between expression and suffix for readability:
+//   0.25 turns, 1/4 turns    - angle units
+//   42 u32, 1/4 f64          - type suffixes
+//   (a + b) i64              - typed expression result
+suffixed_expr = { mul_expr ~ (ws ~ expr_suffix)? }
+
+// Expression suffix: angle units or type names
+// Angle units: turns (native), rad (radians)
+// Type ascription: numeric types for explicit typing
+expr_suffix = { angle_unit | type_ascription_suffix }
+angle_unit = { ("turns" | "rad") ~ !(ASCII_ALPHANUMERIC | "_") }
+type_ascription_suffix = { (float_type_kw | int_type_kw) ~ !(ASCII_ALPHANUMERIC | "_") }
+float_type_kw = @{ "f128" | "f64" | "f32" | "f16" | "a64" }
+int_type_kw = @{
+    "u128" | "u64" | "u32" | "u16" | "u8" | "usize" |
+    "i128" | "i64" | "i32" | "i16" | "i8" | "isize"
+}
+
+// Unary operators
+// "try" is for error propagation: try foo() returns payload or propagates error
+// Note: "try" unary must not be followed by "{" (try block) or "!" (try!)
+unary_expr = { (unary_op ~ ws)* ~ postfix_expr }
+unary_op = { try_unary | "-" | "!" | "~" | "&" | "*" }
+try_unary = { "try" ~ !("{" | "!") }
+
+// Postfix expressions
+postfix_expr = { primary_expr ~ postfix_op* }
+postfix_op = { call | batch_apply | field_access | index_access | optional_unwrap | error_unwrap }
+
+call = { "(" ~ ws ~ arg_list? ~ ws ~ ")" }
+arg_list = { expr ~ (ws ~ "," ~ ws ~ expr)* }
+
+// Batch apply: h { q[0], q[1] } or cx { (q[0], q[1]), (q[2], q[3]) }
+// For gates where order doesn't matter (set semantics)
+batch_apply = { ws ~ "{" ~ ws ~ batch_elements? ~ ws ~ "}" }
+batch_elements = { expr ~ (ws ~ "," ~ ws ~ expr)* ~ ","? }
+
+field_access = { "." ~ ws ~ member_name }
+index_access = { "[" ~ ws ~ (range_expr | expr) ~ ws ~ "]" }
+optional_unwrap = { ".?" }
+error_unwrap = { "." ~ "!" }
+
+range_expr = { expr? ~ ".." ~ expr? }
+
+// Primary expressions
+// Split into recursive expressions (that contain `expr`) and atomic expressions.
+// Atomic expressions use compound-atomic ($) to fix parsing issues with keyword
+// operators (and, or, etc.) when boolean literals appear on the left side.
+primary_expr = {
+    paren_or_tuple |  // (a) or (a, b) - combined to avoid backtracking
+    if_expr |
+    try_block_expr |  // try { } or try! { } as expression
+    block_expr |
+    struct_literal |
+    enum_literal |
+    struct_init |
+    array_init |
+    array_type_expr |  // [N]T as expression (type value)
+    bracket_array |    // [a, b, c] - array literal
+    set_literal |      // set { a, b, c } - set literal
+    measure_expr |     // mz(T) [targets] - measurement with ordered results
+    channel_expr |     // >channel.command(...) - side-channel communication
+    result_expr |      // result("tag", value) - emit results to caller (special, never elided)
+    builtin_call |
+    fn_literal |
+    f_string |         // f"Hello {name}" - must come before string_literal
+    gate_expr |        // h q[0], rx(0.123) q[0] - quantum gates (late to avoid x orelse confusion)
+    atom              // Compound-atomic leaf expressions
+}
+
+// Atomic (leaf) expressions that don't recursively contain `expr`.
+// Using compound-atomic ($) to prevent implicit WHITESPACE from interfering
+// with keyword operator matching (e.g., `true and y`).
+atom = ${
+    number_literal |
+    raw_string |       // r"path\to\file" - raw string, no escapes
+    multiline_string | // """...""" - must come before string_literal
+    string_literal |
+    char_literal |
+    bool_literal |
+    none_literal |
+    undefined_literal |
+    unit_literal |
+    self_expr |
+    error_value |     // error.Name - error value literal
+    fault_value |     // fault.Name - fault value literal
+    identifier
+}
+
+// Try block as expression (for assignments)
+// errors := try { ... };
+// result := try! { ... } catch |err| { default };
+try_block_expr = { try_collect_expr | try_bang_expr }
+
+try_collect_expr = {
+    "try" ~ ws ~ block ~ ws ~ catch_clause?
+}
+
+try_bang_expr = {
+    "try!" ~ ws ~ block ~ ws ~ catch_clause?
+}
+
+// Measurement expression: mz(T) targets or mz(pack T) targets
+//
+// Per-qubit mode (no pack): N qubits → [N]T, count must match exactly
+//   mz(u1) q[0]                    - single qubit → u1
+//   mz([4]u1) [q[0], q[1], q[2], q[3]] - 4 qubits → [4]u1
+//
+// Pack mode: bits fill T sequentially, must have enough capacity
+//   mz(pack u8) [q[0], ..., q[7]] - 8 qubits → u8
+//   mz(pack Syndrome) ancillas    - N qubits → Syndrome struct
+//
+measure_expr = { "mz" ~ ws ~ "(" ~ ws ~ pack_modifier? ~ type_expr ~ ws ~ ")" ~ ws ~ measure_target }
+pack_modifier = { "pack" ~ ws }
+measure_target = { bracket_array | postfix_expr }
+
+// =============================================================================
+// Channel Expressions: >channel.command(args)
+// =============================================================================
+//
+// Unified syntax for all side-channel communication (sticky/barrier semantics).
+// All channel expressions use the form: >channel.command(args)
+//
+// Built-in channels:
+//   @emit.log.trace(f"message")         - logging at trace level
+//   @emit.log.debug("ns", f"message")   - logging with sub-namespace
+//   @emit.log.info(f"msg", data: obj)   - logging with structured data
+//   @emit.log.at(50, f"custom level")   - logging with custom numeric level
+//   @emit.sim.send("key", value)        - simulator message
+//   @emit.sim.noise_enable()            - enable noise (default)
+//   @emit.sim.noise_disable()           - disable noise
+//   @emit.hw.send("key", value)         - hardware message
+//
+// Custom channels:
+//   @emit.timing.send("checkpoint", t)  - timing instrumentation
+//   @emit.debug.send("state", snapshot) - debug snapshots
+//
+// Channel behavior is controlled by --target and configuration:
+//   - log: elided in release mode
+//   - sim: barrier for hardware, active for simulator
+//   - hw: active for hardware, elided for simulator
+//   - custom: configurable
+//
+channel_expr = {
+    emit_prefix ~ ws ~ channel_name ~ ws ~ "." ~ ws ~ channel_command
+}
+
+// @emit prefix for side-channel communication
+emit_prefix = { "@emit" ~ ws ~ "." }
+
+// Channel name (log, sim, hw, timing, etc.)
+channel_name = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+channel_command = {
+    channel_command_name ~ ws ~ "(" ~ ws ~ channel_args? ~ ws ~ ")"
+}
+
+// Use member_name to allow keywords like 'error' as channel commands
+channel_command_name = @{ member_name }
+
+channel_args = {
+    channel_arg ~ (ws ~ "," ~ ws ~ channel_arg)*
+}
+
+// Named or positional argument
+channel_arg = {
+    (identifier ~ ws ~ ":" ~ ws ~ expr) |
+    expr
+}
+
+// =============================================================================
+// Result Expression (Program Output Channel)
+// =============================================================================
+//
+// result(tag, value) emits a tagged value as program output.
+// This is the primary way to return data from quantum programs to the caller.
+// Unlike logs, results are NEVER elided - they're essential program outputs.
+//
+// Syntax:
+//   result("measurement", m)              - simple result
+//   result("qec/syndrome", syndrome)      - namespaced with / convention
+//   result("round_1/parity", parity)      - hierarchical naming
+//
+// The tag must be a compile-time string literal (like Guppy).
+// Value can be any serializable type: int, bool, float, arrays.
+//
+result_expr = {
+    "result" ~ ws ~ "(" ~ ws ~ string_literal ~ ws ~ "," ~ ws ~ expr ~ ws ~ ")"
+}
+
+
+// Gate expression: gate target or gate(params) target
+// Consistent with measurement syntax - params in parens, target follows
+//
+// Non-parameterized single:  h q[0]
+// Non-parameterized batch:   h {q[0], q[1]}
+// Parameterized single:      rx(0.123) q[0]
+// Parameterized batch:       rx(0.123) {q[0], q[1]}
+// Two-qubit single:          cx (q[0], q[1])
+// Two-qubit batch:           cx {(q[0], q[1]), (q[2], q[3])}
+//
+// Note: Old syntax like h(q[0]) or rz(1.57, q[0]) is NOT supported
+// Parameterized gates MUST have params, non-parameterized gates MUST NOT
+gate_expr = { param_gate_expr | simple_gate_expr }
+param_gate_expr = { param_gate_keyword ~ ws ~ gate_params ~ ws ~ gate_target }
+simple_gate_expr = { simple_gate_keyword ~ ws ~ gate_target }
+gate_params = { "(" ~ ws ~ arg_list ~ ws ~ ")" }
+// Gate target must be a qubit expression, not a bare keyword or paren expr
+// This prevents "x orelse" from parsing as gate(x, target=orelse)
+// and prevents "h(q[0])" from parsing as gate h with target (q[0])
+gate_target = { gate_set_target | paren_or_tuple | bracket_array | gate_qubit_target }
+// gate_qubit_target must NOT start with "(" - that would be call syntax or tuple
+// Use negative lookahead to reject "(expr)" patterns
+gate_qubit_target = { !operator_keyword ~ !paren_or_tuple ~ postfix_expr }
+operator_keyword = { "and" | "or" | "orelse" | "catch" }
+gate_set_target = { "{" ~ ws ~ batch_elements? ~ ws ~ "}" }
+
+// Gate keywords - all quantum gates and prepare operations (lowercase only)
+// Order matters: longer matches first to avoid prefix issues
+// Must not be followed by alphanumeric or underscore (to avoid matching 'true' as 't' + 'rue')
+
+// Parameterized gates - REQUIRE angle parameters: rx(angle), ry(angle), etc.
+param_gate_keyword = @{
+    (
+        // Two-qubit parameterized gates
+        "rzz" | "crz" |
+        // Single-qubit rotation gates
+        "rx" | "ry" | "rz"
+    ) ~ !(ASCII_ALPHANUMERIC | "_")
+}
+
+// Non-parameterized gates - take only qubit targets, NO angle parameters
+simple_gate_keyword = @{
+    (
+        // Daggers and compound gates (longer names first)
+        "sxxdg" | "syydg" | "szzdg" |
+        "sxdg" | "sydg" | "szdg" |
+        "f4dg" | "fdg" |
+        "iswap" | "swap" |
+        "tdg" |
+        // Two-qubit gates (non-parameterized)
+        "sxx" | "syy" | "szz" |
+        "ccx" |
+        "cx" | "cy" | "cz" | "ch" |
+        // Single-qubit compound gates
+        "sx" | "sy" | "sz" |
+        "f4" |
+        // Simple single-qubit gates (shortest last)
+        "x" | "y" | "z" |
+        "h" | "t" | "f" |
+        // Prepare operation (reset to |0⟩ state)
+        "pz"
+    ) ~ !(ASCII_ALPHANUMERIC | "_")
+}
+
+// Combined for convenience (used in semantic analysis)
+gate_keyword = @{ param_gate_keyword | simple_gate_keyword }
+
+// Error value literal: error.OutOfMemory, error.InvalidArgument, etc.
+error_value = { "error" ~ "." ~ identifier }
+
+// Fault value literal: fault.Leakage, fault.QubitLoss, etc.
+fault_value = { "fault" ~ "." ~ identifier }
+
+// Array type as expression (types are first-class values like in Zig)
+array_type_expr = { "[" ~ ws ~ (array_size | "_")? ~ ws ~ (":" ~ ws ~ expr ~ ws)? ~ "]" ~ ws ~ type_identifier }
+
+// Combined parenthesized/tuple expression
+// Parses (expr) as paren_expr, (expr,) or (expr, expr, ...) as tuple
+// This avoids exponential backtracking on deeply nested parens by committing after "("
+paren_or_tuple = { "(" ~ ws ~ expr ~ (ws ~ "," ~ ws ~ expr)* ~ (ws ~ ",")? ~ ws ~ ")" }
+
+// Bracket array literal: [a, b, c] - for quantum batch operations
+bracket_array = { "[" ~ ws ~ bracket_array_elements? ~ ws ~ "]" }
+bracket_array_elements = { expr ~ (ws ~ "," ~ ws ~ expr)* ~ ","? }
+
+// Set literal: set { a, b, c } - unique unordered elements
+// Consistent with struct { }, enum { } pattern
+set_literal = { "set" ~ ws ~ "{" ~ ws ~ set_elements? ~ ws ~ "}" }
+set_elements = { expr ~ (ws ~ "," ~ ws ~ expr)* ~ ","? }
+
+// Set type: Set(T)
+set_type = { "Set" ~ ws ~ "(" ~ ws ~ type_expr ~ ws ~ ")" }
+
+// Struct as expression (anonymous struct type)
+struct_literal = {
+    (packed_keyword ~ ws)? ~ "struct" ~ ws ~ "{" ~ ws ~ struct_body ~ ws ~ "}"
+}
+
+// Enum as expression (anonymous enum type)
+enum_literal = {
+    "enum" ~ ws ~ ("(" ~ ws ~ type_expr ~ ws ~ ")")? ~ ws ~ "{" ~ ws ~ enum_body ~ ws ~ "}"
+}
+
+// If as expression (returns value)
+// Parentheses required for condition to disambiguate from then-block
+// if (condition) { then } else { else }
+if_expr = {
+    "if" ~ ws ~ "(" ~ ws ~ expr ~ ws ~ ")" ~ ws ~ block ~ ws ~ "else" ~ ws ~ (if_expr | block)
+}
+
+// Labeled block expression
+// Supports optional trailing expression for return value (like Rust)
+// Labeled block expression with optional attributes
+// @attr(kind, "init") blk: { ... }
+block_expr = { attribute_list? ~ ws ~ label ~ "{" ~ ws ~ (statement ~ ws)* ~ (trailing_expr ~ ws)? ~ "}" }
+
+// Struct initialization: .{ field: value, ... } or Type { field: value }
+// Uses Rust-style syntax: `field: value` instead of Zig's `.field = value`
+struct_init = { typed_struct_init | anon_struct_init }
+typed_struct_init = { type_identifier ~ ws ~ "{" ~ ws ~ field_init_list? ~ ws ~ "}" }
+anon_struct_init = { ".{" ~ ws ~ field_init_list? ~ ws ~ "}" }
+field_init_list = { field_init ~ (ws ~ "," ~ ws ~ field_init)* ~ ","? }
+// Rust-style field init: `name: value` or shorthand `name` (when var name matches field)
+field_init = { identifier ~ ws ~ (":" ~ ws ~ expr)? }
+
+// Array/slice initialization
+array_init = { typed_array_init | anon_array_init }
+typed_array_init = { array_type ~ ws ~ "{" ~ ws ~ array_init_list? ~ ws ~ "}" }
+anon_array_init = { ".{" ~ ws ~ array_init_list? ~ ws ~ "}" }
+array_init_list = { expr ~ (ws ~ "," ~ ws ~ expr)* ~ ","? }
+
+// Builtin calls: @import, @This, @intCast, etc.
+builtin_call = { "@" ~ identifier ~ "(" ~ ws ~ arg_list? ~ ws ~ ")" }
+
+// Anonymous function
+fn_literal = {
+    "fn" ~ ws ~ "(" ~ ws ~ param_list? ~ ws ~ ")" ~ ws ~
+    return_type? ~ ws ~ block
+}
+
+// Self reference (Rust-style, replaces Zig's @This())
+self_expr = { "Self" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// =============================================================================
+// Types
+// =============================================================================
+
+// Type expression - avoid left recursion by using suffixes
+type_expr = { type_prefix ~ type_suffix? }
+
+// Type prefixes (things that come before the base type)
+type_prefix = {
+    optional_type |
+    pointer_type |
+    array_type |
+    tuple_type |
+    fn_type |
+    set_type |
+    struct_literal |
+    enum_literal |
+    builtin_type |
+    type_identifier
+}
+
+// Tuple type: (T1, T2) or (T1, T2, T3, ...)
+tuple_type = { "(" ~ ws ~ type_prefix ~ ws ~ "," ~ ws ~ type_prefix ~ (ws ~ "," ~ ws ~ type_prefix)* ~ ws ~ ","? ~ ws ~ ")" }
+
+// Type suffix for error unions: T!E (payload!error)
+exclamation = _{ "!" }
+type_suffix = { exclamation ~ type_prefix }
+
+// Optional type: ?T
+optional_type = { "?" ~ ws ~ type_prefix }
+
+// Pointer types: *T, [*]T (many-pointer), [*:sentinel]T (sentinel-terminated many-pointer)
+pointer_type = { pointer_prefix ~ ws ~ ("const" ~ ws)? ~ type_prefix }
+pointer_prefix = { "[*:" ~ ws ~ expr ~ ws ~ "]" | "[*]" | "*" }
+
+// Array types: [N]T, []T (slice), [N:sentinel]T
+array_type = {
+    "[" ~ ws ~ (array_size | "_")? ~ ws ~ (":" ~ ws ~ expr ~ ws)? ~ "]" ~ ws ~ type_prefix
+}
+
+// Array size - allows comptime expressions like N + 1, N * 2, etc.
+array_size = { array_size_term ~ (ws ~ array_size_op ~ ws ~ array_size_term)* }
+array_size_term = { number_literal | identifier | "(" ~ ws ~ array_size ~ ws ~ ")" }
+array_size_op = { "+" | "-" | "*" | "/" }
+
+// Function type: fn(args) -> return_type
+fn_type = { "fn" ~ "(" ~ ws ~ type_list? ~ ws ~ ")" ~ ws ~ ("->" ~ ws ~ type_prefix)? }
+type_list = { type_prefix ~ (ws ~ "," ~ ws ~ type_prefix)* }
+
+// Built-in types
+builtin_type = {
+    self_type | int_type | float_type | angle_type | "bool" | "unit" | "type" | "anytype" |
+    "qubit" | "bit"
+}
+
+// Self type - refers to the enclosing struct type (Rust-style)
+self_type = { "Self" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+angle_type = @{ "a64" }
+
+// Integer types: arbitrary bit width like Zig (u1, u4, u7, u128, usize, etc.)
+int_type = @{
+    ("u" | "i") ~ ("size" | ASCII_DIGIT+)
+}
+
+float_type = @{ "f" ~ ("16" | "32" | "64" | "128") }
+
+// Named type (struct, enum, etc.)
+// Also accepts Self keyword as a type
+type_identifier = { (identifier | self_type_keyword) ~ ("." ~ identifier)* }
+self_type_keyword = { "Self" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// =============================================================================
+// Literals
+// =============================================================================
+
+// Number literals with optional type suffix
+// Examples: 42, 42u32, 42_u8, 0xFF_u16, 1.5, 1.5f32
+number_literal = @{
+    hex_literal | binary_literal | octal_literal | float_literal | int_literal
+}
+
+hex_literal = @{ "0x" ~ (ASCII_HEX_DIGIT | "_")+ ~ int_suffix? }
+binary_literal = @{ "0b" ~ ("0" | "1" | "_")+ ~ int_suffix? }
+octal_literal = @{ "0o" ~ (ASCII_OCT_DIGIT | "_")+ ~ int_suffix? }
+// Float: 1.5, 1.5e10, 1e10 (scientific notation without decimal)
+float_literal = @{ int_literal_base ~ ("." ~ ASCII_DIGIT+ ~ exp_part? | exp_part) ~ float_suffix? }
+exp_part = @{ ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+ }
+int_literal = @{ int_literal_base ~ int_suffix? }
+int_literal_base = @{ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+
+// Type suffixes for literals
+int_suffix = @{ "_"? ~ (
+    "u128" | "u64" | "u32" | "u16" | "u8" | "u1" | "usize" |
+    "i128" | "i64" | "i32" | "i16" | "i8" | "i1" | "isize"
+) }
+float_suffix = @{ "_"? ~ ("f128" | "f64" | "f32" | "f16" | "a64") }
+
+string_literal = @{ "\"" ~ (escape_seq | (!("\"" | "\\") ~ ANY))* ~ "\"" }
+char_literal = @{ "'" ~ (escape_seq | (!("'" | "\\") ~ ANY)) ~ "'" }
+escape_seq = @{ "\\" ~ ("n" | "r" | "t" | "\\" | "\"" | "'" | "0" | "{" | "}" | "x" ~ ASCII_HEX_DIGIT{2}) }
+
+// F-string (Python-style string interpolation): f"Hello {name}, you have {count} items"
+// Expressions inside {} are evaluated and converted to strings
+// Use \{ and \} to escape literal braces
+// Format specifiers: f"{x:.2f}", f"{name:>10}", f"{n:08d}"
+f_string = { "f\"" ~ f_string_part* ~ "\"" }
+f_string_part = { f_string_interp | f_string_text }
+f_string_interp = { "{" ~ ws ~ expr ~ ws ~ f_string_format? ~ "}" }
+f_string_format = { ":" ~ f_string_format_spec }
+f_string_format_spec = @{ (!("}") ~ ANY)* }
+f_string_text = @{ (escape_seq | (!("\"" | "\\" | "{" | "}") ~ ANY))+ }
+
+// Raw string (Python-style): r"path\to\file" - backslashes are literal, not escapes
+// Useful for file paths, regex patterns, etc.
+raw_string = @{ "r\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+// Multi-line string (Python-style): """...""" - preserves newlines and whitespace
+// Content is taken literally except for escape sequences
+// Use for multi-line text, documentation, or embedded DSLs
+multiline_string = @{ "\"\"\"" ~ multiline_string_content ~ "\"\"\"" }
+multiline_string_content = @{ (escape_seq | (!"\"\"\"" ~ ANY))* }
+
+// Word boundary check to prevent matching prefix of identifier (e.g., "true_flag")
+bool_literal = { ("true" | "false") ~ !(ASCII_ALPHANUMERIC | "_") }
+// none instead of null (consistent with other lowercase keywords)
+none_literal = { "none" ~ !(ASCII_ALPHANUMERIC | "_") }
+undefined_literal = { "undefined" ~ !(ASCII_ALPHANUMERIC | "_") }
+unit_literal = { "unit" ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// =============================================================================
+// Identifiers and Keywords
+// =============================================================================
+
+identifier = @{
+    !keyword ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*
+}
+
+// Member name - allows keywords as field/method names (like Rust's raw identifiers)
+// Used in struct field declarations, method definitions, and field access
+member_name = @{
+    (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")*
+}
+
+// Reserved keywords (qalloc, Reg are not keywords - they're callable builtins)
+// Keywords must be followed by non-alphanumeric to ensure word boundary
+// Note: "try!" is handled specially in fn_error_mode, not as a keyword
+keyword = @{
+    ("fn" | "pub" | "inline" | "comptime" | "mut" |
+    "struct" | "enum" | "union" | "packed" | "set" |
+    "if" | "else" | "for" | "switch" | "tick" |
+    "return" | "break" | "continue" | "defer" | "errdefer" |
+    "and" | "or" | "orelse" | "try" | "catch" |
+    "true" | "false" | "none" | "undefined" | "Self" |
+    "test" | "error" | "type" | "anytype" | "unit" |
+    "qubit" | "bit" | "alias" |
+    "turns" | "rad") ~ !(ASCII_ALPHANUMERIC | "_")
+}
+
+// =============================================================================
+// Documentation Comments
+// =============================================================================
+
+doc_comment = @{ "///" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
+
+// =============================================================================
+// Quantum-Specific Builtins (recognized at semantic level)
+// =============================================================================
+
+// These are parsed as regular function calls but have special semantics:
+//
+// Allocator operations:
+//   qalloc(capacity)          - Create base allocator
+//   alloc.child(size)         - Create child allocator
+//   alloc.release()           - Explicit release (usually automatic)
+//
+// Prepare operations (use pz gate instead of method calls):
+//   pz alloc                  - Prepare all qubits in allocator
+//   pz {q[0], q[1]}           - Prepare specific qubits
+//
+// Gates (single qubit):
+//   h(q[i]), x(q[i]), y(q[i]), z(q[i])
+//   s(q[i]), sdg(q[i]), t(q[i]), tdg(q[i])
+//   sx(q[i]), sy(q[i]), sz(q[i])
+//   rx(q[i], angle), ry(q[i], angle), rz(q[i], angle)
+//
+// Gates (two qubit):
+//   cx(ctrl, target), cy(ctrl, target), cz(ctrl, target)
+//   ch(ctrl, target)
+//   sxx(q1, q2), syy(q1, q2), szz(q1, q2)
+//   rzz(q1, q2, angle)
+//
+// Measurement:
+//   measure(q[i])    -> bit
+//   measure(alloc)   -> [N]bit
+//
+// Builtins:
+//   @import(path)
+//   @This()
+//   @compileError(msg)
+//   @compileLog(...)
+//   @typeInfo(T)
+//   @typeName(T)

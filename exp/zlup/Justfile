@@ -1,0 +1,235 @@
+# Zlup Development Justfile
+# Cross-platform command runner (Windows, macOS, Linux)
+# Install: cargo install just
+# Usage: just <recipe> or just --list
+
+# Default recipe: show help
+default:
+    @just --list
+
+# =============================================================================
+# Settings
+# =============================================================================
+
+set shell := ["bash", "-cu"]
+set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+
+# =============================================================================
+# Documentation
+# =============================================================================
+
+# Build and serve documentation (opens in browser)
+docs port="8000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if lsof -i :{{port}} >/dev/null 2>&1; then
+        echo "Port {{port}} is already in use."
+        echo ""
+        echo "Options:"
+        echo "  - Use a different port: just docs 8001"
+        echo "  - Stop existing server: just docs-stop {{port}}"
+        echo "  - Find process: lsof -i :{{port}}"
+        exit 1
+    fi
+    echo "Starting documentation server at http://127.0.0.1:{{port}}"
+    uv run mkdocs serve --open -a 127.0.0.1:{{port}}
+
+# Build documentation to site/
+docs-build:
+    uv run mkdocs build --clean
+
+# Serve documentation without opening browser
+docs-serve port="8000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if lsof -i :{{port}} >/dev/null 2>&1; then
+        echo "Port {{port}} is already in use. Try: just docs-stop {{port}}"
+        exit 1
+    fi
+    uv run mkdocs serve -a 127.0.0.1:{{port}}
+
+# Stop documentation server on a port
+docs-stop port="8000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pid=$(lsof -t -i :{{port}} 2>/dev/null || true)
+    if [ -n "$pid" ]; then
+        echo "Stopping process $pid on port {{port}}..."
+        kill $pid
+        echo "Done."
+    else
+        echo "No process found on port {{port}}."
+    fi
+
+# =============================================================================
+# Building
+# =============================================================================
+
+# Build Zlup compiler (debug)
+build:
+    cargo build --features cli
+
+# Build Zlup compiler (release)
+build-release:
+    cargo build --release --features cli
+
+# Build Zlup compiler (release with native CPU optimizations)
+build-native:
+    RUSTFLAGS="-C target-cpu=native" cargo build --release --features cli
+
+# =============================================================================
+# Testing
+# =============================================================================
+
+# Run all tests
+test:
+    cargo test --features cli
+
+# Run all tests with output
+test-verbose:
+    cargo test --features cli -- --nocapture
+
+# Run specific test by name
+test-one name:
+    cargo test --features cli {{name}} -- --nocapture
+
+# Run property-based tests only
+test-proptest:
+    cargo test --features cli proptest
+
+# Run CLI integration tests only
+test-cli:
+    cargo test --features cli cli_tests
+
+# =============================================================================
+# Linting / Formatting
+# =============================================================================
+
+# Check code with clippy
+clippy:
+    cargo clippy --features cli --all-targets -- -D warnings
+
+# Check Rust formatting
+fmt:
+    cargo fmt --check
+
+# Fix Rust formatting
+fmt-fix:
+    cargo fmt
+
+# Run all linting checks
+lint: fmt clippy
+
+# Fix all auto-fixable issues
+lint-fix: fmt-fix
+    cargo clippy --features cli --fix --allow-dirty
+
+# =============================================================================
+# Running
+# =============================================================================
+
+# Run Zlup compiler on a file
+run file:
+    cargo run --features cli -- {{file}}
+
+# Run Zlup compiler on a file (release build)
+run-release file:
+    cargo run --release --features cli -- {{file}}
+
+# Evaluate an expression
+eval expr:
+    cargo run --features cli -- eval "{{expr}}"
+
+# Check a file without running
+check file:
+    cargo run --features cli -- check {{file}}
+
+# Compile to SLR-AST JSON
+compile-slr file:
+    cargo run --features cli -- compile --target slr {{file}}
+
+# Compile to OpenQASM
+compile-qasm file:
+    cargo run --features cli -- compile --target qasm {{file}}
+
+# =============================================================================
+# Development
+# =============================================================================
+
+# Watch for changes and run tests
+watch:
+    cargo watch -x "test --features cli"
+
+# Watch for changes and check
+watch-check:
+    cargo watch -x "check --features cli"
+
+# Generate and open rustdoc
+rustdoc:
+    cargo doc --features cli --open
+
+# =============================================================================
+# Examples
+# =============================================================================
+
+# Run all example programs
+examples:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running Zlup examples..."
+    for f in examples/*.zlp; do
+        echo "==> $f"
+        cargo run --features cli -- "$f" || true
+        echo ""
+    done
+
+# Compile all examples to SLR-AST
+examples-slr:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Compiling examples to SLR-AST..."
+    for f in examples/*.zlp; do
+        echo "==> $f"
+        cargo run --features cli -- compile --target slr "$f" || true
+        echo ""
+    done
+
+# =============================================================================
+# Documentation Checks
+# =============================================================================
+
+# Check Zlup code snippets in documentation for syntax/semantic errors
+check-docs: build
+    python3 scripts/check_docs.py
+
+# Check docs with verbose output (shows each snippet result)
+check-docs-verbose: build
+    python3 scripts/check_docs.py --verbose
+
+# =============================================================================
+# Cleaning
+# =============================================================================
+
+# Clean build artifacts
+clean:
+    cargo clean
+    rm -rf site/
+
+# Clean everything including Python venv
+clean-all: clean
+    rm -rf .venv/
+    rm -f uv.lock
+
+# =============================================================================
+# Setup
+# =============================================================================
+
+# Install Python dependencies for docs
+setup-docs:
+    uv sync
+
+# Install all development dependencies
+setup: setup-docs
+    @echo "Development environment ready!"
+    @echo "  - Run 'just test' to run tests"
+    @echo "  - Run 'just docs' to view documentation"

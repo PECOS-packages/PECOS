@@ -26,7 +26,7 @@ class RNGModel:
         self.shot_id = shot_id
         self.current_bound = self._normalize_bound(current_bound)
         self.count = 0
-        self._draw_bounds: list[int] = []
+        self._draw_bound_runs: list[tuple[int, int]] = []
         self.pcg = RngPcg()
         self.set_seed(seed)
 
@@ -40,7 +40,7 @@ class RNGModel:
         self.seed = seed
         self.pcg.srandom(seed)
         self.count = 0
-        self._draw_bounds = []
+        self._draw_bound_runs = []
 
     def set_bound(self, bound: int | None) -> None:
         """Setting the current bound for generating random numbers."""
@@ -64,7 +64,11 @@ class RNGModel:
     def rng_random(self) -> int:
         """Generating a random number and keeping track of how many we have generated."""
         rng_num = self.pcg.random() if self.current_bound == 0 else self.pcg.boundedrand(self.current_bound)
-        self._draw_bounds.append(self.current_bound)
+        if self._draw_bound_runs and self._draw_bound_runs[-1][0] == self.current_bound:
+            bound, run_length = self._draw_bound_runs[-1]
+            self._draw_bound_runs[-1] = (bound, run_length + 1)
+        else:
+            self._draw_bound_runs.append((self.current_bound, 1))
         self.count += 1
         return rng_num
 
@@ -91,16 +95,18 @@ class RNGModel:
             raise ValueError(error_msg)
 
         if delta < 0:
-            prefix_bounds = self._draw_bounds[:target_index]
+            bound_runs = list(self._draw_bound_runs)
             active_bound = self.current_bound
-            self.pcg = RngPcg()
-            self.pcg.srandom(self.seed)
-            self.count = 0
-            self._draw_bounds = []
+            self.set_seed(self.seed)
 
-            for historical_bound in prefix_bounds:
+            remaining = target_index
+            for historical_bound, run_length in bound_runs:
+                if remaining == 0:
+                    break
                 self.current_bound = historical_bound
-                self.rng_random()
+                for _ in range(min(run_length, remaining)):
+                    self.rng_random()
+                remaining -= run_length
 
             self.current_bound = active_bound
         else:

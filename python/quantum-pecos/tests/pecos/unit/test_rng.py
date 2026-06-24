@@ -95,6 +95,19 @@ def test_relative_advance_backward() -> None:
     assert rng.rng_random() == draw_at_index(42, 3)
 
 
+def test_relative_advance_backward_past_start_raises() -> None:
+    """Verifies rewinds cannot move before the start of the stream."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+    rng.set_relative_index(2)
+
+    with pytest.raises(
+        ValueError,
+        match=r"RNGadvance\(-3\) cannot move before the start of the stream: current stream index is 2",
+    ):
+        rng.set_relative_index(-3)
+
+
 def test_reseed_then_advance_changes_draw_and_resets_count() -> None:
     """Verifies reseeding resets the logical position used by later relative advances."""
     rng = RNGModel(shot_id=0)

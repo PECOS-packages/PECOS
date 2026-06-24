@@ -24,9 +24,9 @@ class RNGModel:
     ) -> None:
         """Constructs an RNGModel object."""
         self.shot_id = shot_id
-        self.current_bound = current_bound
+        self.current_bound = self._normalize_bound(current_bound)
         self.count = 0
-        self._draw_bounds: list[int | None] = []
+        self._draw_bounds: list[int] = []
         self.pcg = RngPcg()
         self.set_seed(seed)
 
@@ -42,10 +42,9 @@ class RNGModel:
         self.count = 0
         self._draw_bounds = []
 
-    def set_bound(self, bound: int) -> None:
+    def set_bound(self, bound: int | None) -> None:
         """Setting the current bound for generating random numbers."""
-        self._require_non_negative("bound", bound)
-        self.current_bound = bound
+        self.current_bound = self._normalize_bound(bound)
 
     @staticmethod
     def _require_non_negative(name: str, value: int) -> None:
@@ -53,6 +52,14 @@ class RNGModel:
         if value < 0:
             error_msg = f"RNG {name} must be non-negative: got {value}"
             raise ValueError(error_msg)
+
+    @classmethod
+    def _normalize_bound(cls, bound: int | None) -> int:
+        """Normalize optional bounds to the unbounded sentinel used by the RNG model."""
+        if bound is None:
+            return 0
+        cls._require_non_negative("bound", bound)
+        return bound
 
     def rng_random(self) -> int:
         """Generating a random number and keeping track of how many we have generated."""

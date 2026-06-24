@@ -24,6 +24,12 @@ def test_set_seed() -> None:
     assert rng.count == 0
 
 
+def test_init_normalizes_none_bound_to_unbounded() -> None:
+    """Verifies ``None`` uses the unbounded sentinel instead of leaking into bounded draws."""
+    rng = RNGModel(shot_id=0, current_bound=None)
+    assert rng.current_bound == 0
+
+
 def test_random_number() -> None:
     """Verifies that the random number generated is an int type."""
     rng = RNGModel(shot_id=0)

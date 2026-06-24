@@ -566,6 +566,19 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         ));
     }
 
+    // Test zlup's CLI integration tests separately with --features=cli. The
+    // `zlup` binary has `required-features = ["cli"]`, so the default-feature
+    // workspace run above does not build it and skips tests/cli.rs entirely;
+    // this run exercises those CLI integration tests.
+    println!("Testing zlup with cli feature...");
+    let mut zlup_args: Vec<&str> = vec!["test", "-p", "zlup", "--features=cli"];
+    zlup_args.extend(profile_args);
+    if !run(&zlup_args) {
+        return Err(Error::Config(
+            "cargo test (zlup with cli) failed".to_string(),
+        ));
+    }
+
     // Test cuQuantum if SDK is available (requires both CUDA and cuQuantum)
     if probe_cuquantum_availability() {
         println!("cuQuantum runtime available - testing pecos-cuquantum");

@@ -97,6 +97,39 @@ fn get_persistent_cache_dir() -> Result<PathBuf, InterfaceError> {
     Ok(cache_dir)
 }
 
+/// A fingerprint of the running build, mixed into the persistent compiled-program
+/// cache key so a shared object produced by one build is never reused by a
+/// different build whose QIS/runtime/ABI may differ (the cache directory is a
+/// fixed path shared across worktrees and rebuilds).
+///
+/// Derived from the running executable's identity (path + last-modified time):
+/// stable across processes of the same build, but different whenever the binary
+/// is rebuilt. If the executable cannot be identified, the process id is mixed in
+/// instead so a stale object is never shared across processes with a possibly
+/// different ABI (at the cost of in-build reuse for that process).
+fn build_fingerprint() -> u64 {
+    use std::hash::{Hash, Hasher};
+    static BUILD_FINGERPRINT: OnceLock<u64> = OnceLock::new();
+    *BUILD_FINGERPRINT.get_or_init(|| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        match std::env::current_exe() {
+            Ok(exe) => {
+                exe.hash(&mut hasher);
+                let mtime_nanos = std::fs::metadata(&exe)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|since_epoch| since_epoch.as_nanos());
+                mtime_nanos.hash(&mut hasher);
+            }
+            Err(_) => {
+                std::process::id().hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    })
+}
+
 /// Remove cache files older than the specified age in seconds
 fn cleanup_old_cache_files(cache_dir: &Path, max_age_secs: u64) {
     let now = std::time::SystemTime::now();
@@ -1257,12 +1290,16 @@ impl QisHeliosInterface {
     fn create_shared_library(&mut self) -> Result<PathBuf, InterfaceError> {
         use std::hash::{Hash, Hasher};
 
-        // Compute content hash for caching
-        // We include the format as a discriminator in case the same bytes could be
-        // interpreted differently (e.g., bitcode vs text IR)
+        // Compute content hash for caching.
+        // - the format is a discriminator in case the same bytes could be
+        //   interpreted differently (e.g., bitcode vs text IR)
+        // - the build fingerprint scopes the on-disk cache to this build, so a
+        //   shared object compiled against a different QIS/runtime ABI in the
+        //   fixed, cross-worktree cache directory is never reused
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         self.program.hash(&mut hasher);
         std::mem::discriminant(&self.format).hash(&mut hasher);
+        build_fingerprint().hash(&mut hasher);
         let content_hash = hasher.finish();
 
         // Check if we already have a compiled library for this content

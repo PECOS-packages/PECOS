@@ -122,7 +122,7 @@ class RNGModel:
             creg = output[idx_creg[0]]
             idx = int(idx_creg[-1][:-1])
             return int(creg[idx])
-        elif param == "JOB_shotnum":
+        if param == "JOB_shotnum":
             return self.shot_id
 
         reg = output[param]

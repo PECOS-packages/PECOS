@@ -1839,9 +1839,16 @@ impl SemanticAnalyzer {
 
     /// Register a user-declared gate (target declaration or composite definition).
     ///
-    /// Rejects a collision with an existing user-declared gate (the same name
-    /// declared/defined twice). Built-in gates may be shadowed -- e.g. a backend
-    /// providing its own definition for `rz` -- so only non-builtin collisions error.
+    /// Rejects a duplicate user gate (the same name declared/defined twice).
+    /// `declare gate` introduces an opaque target/backend gate and `gate ... {}`
+    /// a composite definition; PECOS treats either as a complete declaration, so
+    /// a second one of the same name -- including declare-then-define -- is a
+    /// duplicate, not a forward declaration.
+    ///
+    /// A built-in gate may only be redeclared with its exact signature (a
+    /// harmless no-op); shadowing a built-in with a different arity/parameter
+    /// count is rejected, because built-in names are parsed with a fixed
+    /// parameterization and a mismatched redeclaration would be uncallable.
     fn register_user_gate(
         &mut self,
         name: &str,
@@ -1849,11 +1856,20 @@ impl SemanticAnalyzer {
         num_qubits: usize,
         location: Option<SourceLocation>,
     ) -> SemanticResult<()> {
-        if self
-            .gate_registry
-            .get(name)
-            .is_some_and(|existing| !existing.is_builtin)
-        {
+        if let Some(existing) = self.gate_registry.get(name) {
+            if existing.is_builtin {
+                if existing.num_params != num_params || existing.num_qubits != num_qubits {
+                    return Err(SemanticError::Other {
+                        message: format!(
+                            "cannot redeclare built-in gate '{name}' with a different signature: \
+                             built-in '{name}' takes {} parameter(s) and {} qubit(s)",
+                            existing.num_params, existing.num_qubits
+                        ),
+                    });
+                }
+                // Exact-signature redeclaration of a built-in: no-op.
+                return Ok(());
+            }
             return Err(SemanticError::DuplicateSymbol {
                 name: name.to_string(),
                 location: location.unwrap_or_default(),
@@ -8822,6 +8838,35 @@ mod tests {
             declare gate my_gate()(q);
         "#);
         assert!(result.is_err(), "Duplicate gate declaration should fail");
+    }
+
+    #[test]
+    fn test_declare_then_define_same_gate_rejected() {
+        // `declare gate` is an opaque target gate, not a forward declaration:
+        // declaring then defining the same name is a duplicate, not a definition.
+        let result = analyze(r#"
+            declare gate foo()(q);
+            gate foo()(q) { h q; }
+        "#);
+        assert!(result.is_err(), "declare-then-define of the same gate should fail");
+    }
+
+    #[test]
+    fn test_declare_gate_builtin_exact_signature_allowed() {
+        // Redeclaring a built-in with its exact signature is a harmless no-op.
+        // `rz` is a 1-parameter, 1-qubit built-in.
+        assert!(analyze(r#"
+            declare gate rz(angle)(q);
+        "#).is_ok());
+    }
+
+    #[test]
+    fn test_declare_gate_builtin_mismatched_signature_rejected() {
+        // `rz` is a 1-parameter built-in; redeclaring it with no parameters
+        // would be uncallable under the fixed built-in parameterization.
+        assert!(analyze(r#"
+            declare gate rz()(q);
+        "#).is_err());
     }
 
     #[test]

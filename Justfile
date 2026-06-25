@@ -909,7 +909,9 @@ python-ci-sync-docs:
     uv sync --locked \
       --group dev \
       --group test \
-      --no-install-workspace
+      --package pecos-rslib \
+      --package pecos-rslib-llvm \
+      --package quantum-pecos
 
 [group('setup')]
 python-ci-sync-lint:

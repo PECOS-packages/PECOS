@@ -176,18 +176,11 @@ jobs:
 
   rust-test:
     needs: [pre-commit, rust-lint]
-    if: github.event_name != 'pull_request' || matrix.run-on-pr
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            run-on-pr: true
-          - os: macos-latest
-            run-on-pr: false
-          - os: windows-2022
-            run-on-pr: false
+        os: [ubuntu-latest, macos-latest, windows-2022]
 
     steps:
       - name: Harden the runner (egress audit)
@@ -207,7 +200,7 @@ jobs:
           sudo apt-get clean
 
       - name: Set up Rust (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
         run: |
           rustup set default-host x86_64-pc-windows-msvc
           rustup toolchain install stable --profile minimal
@@ -217,16 +210,18 @@ jobs:
           rustup show
 
       - name: Set up Rust (Unix)
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')
         run: |
           bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup show
 
       - name: Install just
+        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Cache Rust
+        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
@@ -234,6 +229,7 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -241,7 +237,7 @@ jobs:
           key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
       - name: Bootstrap MSVC for the Cargo build path (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
         shell: pwsh
         # Single mechanism: writes the linker + LIB/INCLUDE into
         # .cargo/config.toml (read by cargo after it spawns). Sets no env pin,
@@ -250,10 +246,11 @@ jobs:
         run: ./scripts/win-msvc-bootstrap.ps1
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         run: just ci-env
 
       - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+        if: (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest') && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-14
@@ -270,7 +267,7 @@ jobs:
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Compile tests (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && github.event_name != 'pull_request'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Linux)
@@ -281,7 +278,7 @@ jobs:
           cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Run tests (macOS)

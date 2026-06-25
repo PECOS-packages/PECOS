@@ -399,8 +399,9 @@ fi
 
 section "GitHub Actions cache write posture"
 cache_policy_failures=()
+trusted_cache_ref_re="github\\.ref_name == '(main|master|development|dev)'|contains\\(fromJSON\\('\\[\\\"main\\\", \\\"master\\\", \\\"development\\\", \\\"dev\\\"\\]'\\), github\\.ref_name\\)"
 while IFS=: read -r file line _; do
-    if ! sed -n "${line},$((line + 16))p" "$file" | rg -q "save-if:.*github\.event_name == 'push'.*github\.ref_name == 'main'"; then
+    if ! sed -n "${line},$((line + 16))p" "$file" | rg -q "save-if:.*github\.event_name == 'push'.*($trusted_cache_ref_re)"; then
         cache_policy_failures+=("$file:$line rust-cache save-if must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+Swatinem/rust-cache@' .github/workflows || true)
@@ -408,7 +409,7 @@ done < <(rg -n 'uses:\s+Swatinem/rust-cache@' .github/workflows || true)
 while IFS=: read -r file line _; do
     setup_uv_block="$(sed -n "${line},$((line + 16))p" "$file")"
     if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true' &&
-        ! printf '%s\n' "$setup_uv_block" | rg -q "save-cache:.*github\.event_name == 'push'.*github\.ref_name == 'main'"; then
+        ! printf '%s\n' "$setup_uv_block" | rg -q "save-cache:.*github\.event_name == 'push'.*($trusted_cache_ref_re)"; then
         cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+astral-sh/setup-uv@' .github/workflows || true)
@@ -418,7 +419,7 @@ while IFS=: read -r file line _; do
 done < <(rg -n 'uses:\s+actions/cache@' .github/workflows || true)
 
 while IFS=: read -r file line _; do
-    if ! sed -n "$((line - 2)),$((line + 2))p" "$file" | rg -q "if:.*github\.event_name == 'push'.*github\.ref_name == 'main'"; then
+    if ! sed -n "$((line - 2)),$((line + 2))p" "$file" | rg -q "if:.*github\.event_name == 'push'.*($trusted_cache_ref_re)"; then
         cache_policy_failures+=("$file:$line actions/cache/save must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+actions/cache/save@' .github/workflows || true)

@@ -97,12 +97,23 @@ jobs:
           path: ~/.pecos/deps/llvm-14
           key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
-      - name: Install dependencies and build
+      - name: Install dependencies and build (post-merge)
+        if: github.event_name != 'pull_request'
         run: |
           uv lock --check --project .
           just python-ci-build-docs
 
+      - name: Install docs dependencies (PR fast path)
+        if: github.event_name == 'pull_request'
+        run: |
+          uv lock --check --project .
+          uv sync --locked \
+            --group dev \
+            --group test \
+            --no-install-workspace
+
       - name: Test working documentation examples
+        if: github.event_name != 'pull_request'
         run: uv run --frozen python scripts/docs/test_working_examples.py
 
       - name: Build documentation

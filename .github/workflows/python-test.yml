@@ -191,8 +191,13 @@ jobs:
         path: ~/.pecos/deps/llvm-14
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
-    - name: Run core Python tests
+    - name: Run core Python tests (post-merge)
+      if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       run: just python-ci-core
+
+    - name: Run core Python smoke tests (PR fast path)
+      if: github.event_name == 'pull_request'
+      run: just python-ci-smoke
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}

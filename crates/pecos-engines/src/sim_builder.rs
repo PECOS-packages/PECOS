@@ -284,14 +284,17 @@ impl SimBuilder {
                 )
             })?;
 
-        // A dynamic classical engine (e.g. the QIS/Selene runtime) reports 0
-        // qubits until program execution has discovered its allocations. That 0
-        // means "unknown", not "zero qubits": freezing it as a hint would
+        // Forward a qubit-count hint only when it is meaningful. An explicit
+        // count is the caller's choice and is always forwarded (even 0). But an
+        // inferred 0 from a dynamic classical engine (e.g. the QIS/Selene
+        // runtime, which reports 0 qubits until program execution discovers its
+        // allocations) means "unknown", not "zero qubits": freezing it would
         // override the runtime's own capacity discovery and initialize the
-        // plugin with no qubits, so every qalloc fails. Only pass a hint when
-        // the count is actually known (explicit, or a positive static count).
-        if num_qubits > 0 {
-            classical_engine.set_num_qubits_hint(num_qubits);
+        // plugin with no qubits, so every qalloc fails. Keep that distinction.
+        match self.explicit_num_qubits {
+            Some(explicit) => classical_engine.set_num_qubits_hint(explicit),
+            None if num_qubits > 0 => classical_engine.set_num_qubits_hint(num_qubits),
+            None => {}
         }
 
         // Build quantum engine (require explicit qubit specification)

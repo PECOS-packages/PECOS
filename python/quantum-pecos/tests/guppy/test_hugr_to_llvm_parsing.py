@@ -61,3 +61,24 @@ def test_simple_hadamard_circuit() -> None:
     assert "@___qalloc()" in llvm_ir, "Should have Selene qubit allocation"
     assert "@___rxy" in llvm_ir or "@___rz" in llvm_ir, "Should have Selene rotation gates for H"
     assert "@___lazy_measure" in llvm_ir, "Should have Selene measurement"
+
+
+def test_trace_metadata_helper_uses_public_symbol() -> None:
+    """Test that declared trace metadata helpers compile to the public FFI symbol."""
+    try:
+        from guppylang import guppy
+        from pecos_rslib import compile_hugr_to_qis
+    except ImportError as e:
+        pytest.skip(f"Required imports not available: {e}")
+
+    @guppy.declare
+    def pecos_qis_trace_metadata_hugr(key: str, value: str) -> None: ...
+
+    @guppy
+    def metadata_probe() -> None:
+        pecos_qis_trace_metadata_hugr("source_kind", "szz_host")
+
+    llvm_ir = compile_hugr_to_qis(metadata_probe.compile().to_bytes())
+
+    assert "@pecos_qis_trace_metadata_hugr" in llvm_ir
+    assert "@__hugr__.pecos_qis_trace_metadata_hugr" not in llvm_ir

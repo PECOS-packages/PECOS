@@ -367,6 +367,16 @@ def generate_guppy_source(
     if twirl is not None:
         lines.extend(_render_inline_pcg32())
 
+    if interaction_basis == "szz":
+        lines.extend(
+            [
+                "@guppy.declare",
+                "def pecos_qis_trace_metadata_hugr(key: str, value: str) -> None: ...",
+                "",
+                "",
+            ],
+        )
+
     # Generate struct definitions.
     lines.extend(
         [
@@ -505,7 +515,34 @@ def generate_guppy_source(
         msg = f"unsupported Pauli axis {axis!r}"
         raise ValueError(msg)
 
-    def _append_szz_flow_gate(target: list[str], indent: str, op_type: OpType, qubit_expr: str) -> None:
+    def _append_szz_trace_metadata(target: list[str], indent: str, key: str, value: str) -> None:
+        target.append(f'{indent}pecos_qis_trace_metadata_hugr("{key}", "{value}")')
+
+    def _append_szz_gate_trace_metadata(
+        target: list[str],
+        indent: str,
+        *,
+        source_kind: str,
+        source_label: str,
+        host_label: str | None = None,
+        gate: OpType | None = None,
+    ) -> None:
+        _append_szz_trace_metadata(target, indent, "source_kind", source_kind)
+        _append_szz_trace_metadata(target, indent, "source_label", source_label)
+        if host_label is not None:
+            _append_szz_trace_metadata(target, indent, "szz_host_label", host_label)
+        if gate is not None:
+            _append_szz_trace_metadata(target, indent, "source_gate", gate.name)
+
+    def _append_szz_flow_gate(
+        target: list[str],
+        indent: str,
+        op_type: OpType,
+        qubit_expr: str,
+        *,
+        source_label: str | None = None,
+        host_label: str | None = None,
+    ) -> None:
         op_name = {
             OpType.H: "h",
             OpType.SX: "v",
@@ -518,6 +555,15 @@ def generate_guppy_source(
         if op_name is None:
             msg = f"unsupported Guppy SZZ forward-flow gate {op_type.name}"
             raise ValueError(msg)
+        if source_label is not None:
+            _append_szz_gate_trace_metadata(
+                target,
+                indent,
+                source_kind="szz_data_prefix",
+                source_label=source_label,
+                host_label=host_label,
+                gate=op_type,
+            )
         target.append(f"{indent}{op_name}({qubit_expr})")
 
     _szz_guppy_prefix_cache: dict[tuple[int, int], tuple[OpType, ...]] = {_SZZ_FLOW_IDENTITY: ()}
@@ -654,15 +700,26 @@ def generate_guppy_source(
                 pending = _szz_flow_compose_pending_gate(pending, gate)
             pending_by_data[data_q] = pending
 
-        def discharge_data_for_szz(data_q: int) -> None:
+        def discharge_data_for_szz(
+            data_q: int,
+            *,
+            host_label: str,
+        ) -> None:
             if pending_by_data is None:
                 return
             pending = pending_by_data.setdefault(data_q, _SZZ_FLOW_IDENTITY)
             if pending == _SZZ_FLOW_IDENTITY or _szz_flow_is_virtual_z(pending):
                 return
             prefix = _szz_guppy_prefix_gates_for_pending(pending)
-            for gate in prefix:
-                _append_szz_flow_gate(target, indent, gate, data_expr(data_q))
+            for prefix_idx, gate in enumerate(prefix):
+                _append_szz_flow_gate(
+                    target,
+                    indent,
+                    gate,
+                    data_expr(data_q),
+                    source_label=f"{host_label}:prefix:{prefix_idx}:{gate.name}",
+                    host_label=host_label,
+                )
             pending_by_data[data_q] = _SZZ_FLOW_IDENTITY
 
         target.append("")
@@ -688,9 +745,18 @@ def generate_guppy_source(
                     f"{indent}barrier({ancilla_expr(stab_type, stab_idx)}, "
                     f"{data_expr(data_q)})",
                 )
-            discharge_data_for_szz(data_q)
             sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
+            host_gate = OpType.SZZ if sign > 0 else OpType.SZZDG
+            host_label = f"szz:r{rnd_idx + 1}:{stab_type}{stab_idx}:d{data_q}:{host_gate.name}"
+            discharge_data_for_szz(data_q, host_label=host_label)
             half_turns = "0.5" if sign > 0 else "-0.5"
+            _append_szz_gate_trace_metadata(
+                target,
+                indent,
+                source_kind="szz_host",
+                source_label=host_label,
+                gate=host_gate,
+            )
             target.append(
                 f"{indent}{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)} = "
                 f"zz_phase({ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)}, angle({half_turns}))",

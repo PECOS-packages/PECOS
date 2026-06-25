@@ -66,6 +66,8 @@ use crate::utils::read_hugr_envelope;
 
 const LLVM_MAIN: &str = "qmain";
 const METADATA: &[(&str, &[&str])] = &[("name", &["mainlib"])];
+const HUGR_SYMBOL_PREFIX: &str = "__hugr__.";
+const TRACE_METADATA_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_hugr";
 
 // Extension registry is defined in the parent module
 
@@ -389,6 +391,56 @@ fn compile<'c, 'hugr: 'c>(
     Ok(module)
 }
 
+fn is_llvm_symbol_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '$' | '-')
+}
+
+/// Normalize PECOS-owned helper declarations that Guppy/HUGR lowers under a
+/// private `__hugr__.*` symbol name.
+///
+/// These helpers are part of PECOS's runtime ABI, not ordinary user functions,
+/// so they need stable external symbols for dynamic linking. Keep this rewrite
+/// deliberately narrow: only the metadata helper declaration receives this
+/// treatment.
+fn normalize_pecos_helper_symbols_in_llvm(mut llvm_ir: String) -> String {
+    let private_prefix = format!("@{HUGR_SYMBOL_PREFIX}{TRACE_METADATA_HUGR_SYMBOL}.");
+    let public_symbol = format!("@{TRACE_METADATA_HUGR_SYMBOL}");
+
+    while let Some(start) = llvm_ir.find(&private_prefix) {
+        let suffix_start = start + private_prefix.len();
+        let suffix_len = llvm_ir[suffix_start..]
+            .chars()
+            .take_while(|ch| is_llvm_symbol_char(*ch))
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if suffix_len == 0 {
+            break;
+        }
+        llvm_ir.replace_range(start..suffix_start + suffix_len, &public_symbol);
+    }
+
+    llvm_ir
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_trace_metadata_helper_symbol() {
+        let llvm = concat!(
+            "declare void @__hugr__.pecos_qis_trace_metadata_hugr.16(i8*, i8*)\n",
+            "call void @__hugr__.pecos_qis_trace_metadata_hugr.16(i8* %0, i8* %1)\n",
+            "call void @__hugr__.other_helper.16()\n",
+        )
+        .to_string();
+        let normalized = normalize_pecos_helper_symbols_in_llvm(llvm);
+        assert!(normalized.contains("declare void @pecos_qis_trace_metadata_hugr(i8*, i8*)"));
+        assert!(normalized.contains("call void @pecos_qis_trace_metadata_hugr(i8* %0, i8* %1)"));
+        assert!(normalized.contains("@__hugr__.other_helper.16"));
+    }
+}
+
 /// Compile HUGR bytes to LLVM IR string
 ///
 /// This is the main entry point for the compiler.
@@ -422,6 +474,7 @@ pub fn compile_hugr_bytes_to_string_with_options(
 
     // Get the module string
     let mut llvm_str = module.to_string();
+    llvm_str = normalize_pecos_helper_symbols_in_llvm(llvm_str);
 
     // Workaround: Manually add the EntryPoint attribute if it's missing
     // This is needed because inkwell sometimes doesn't properly serialize string attributes

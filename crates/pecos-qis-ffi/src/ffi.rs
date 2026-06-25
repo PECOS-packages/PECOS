@@ -447,6 +447,46 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata(
 
 /// Attach source/runtime metadata to the next lowerable quantum operation.
 ///
+/// This variant matches the HUGR lowering ABI for Guppy string arguments: each
+/// argument is passed as a pointer to a tket2 string payload whose first byte is
+/// the string length.
+///
+/// # Safety
+/// The key and value pointers must be valid tket2 string structs. Invalid
+/// pointers cause undefined behavior.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_qis_trace_metadata_hugr(key_ptr: *const u8, value_ptr: *const u8) {
+    if key_ptr.is_null() {
+        log::error!("pecos_qis_trace_metadata_hugr: null key pointer");
+        return;
+    }
+    if value_ptr.is_null() {
+        log::error!("pecos_qis_trace_metadata_hugr: null value pointer");
+        return;
+    }
+
+    let key_len = i64::from(unsafe { *key_ptr });
+    let value_len = i64::from(unsafe { *value_ptr });
+    let Some(key) =
+        (unsafe { read_tket_string_arg("pecos_qis_trace_metadata_hugr", "key", key_ptr, key_len) })
+    else {
+        return;
+    };
+    let Some(value) = (unsafe {
+        read_tket_string_arg(
+            "pecos_qis_trace_metadata_hugr",
+            "value",
+            value_ptr,
+            value_len,
+        )
+    }) else {
+        return;
+    };
+    queue_trace_metadata(key, value);
+}
+
+/// Attach source/runtime metadata to the next lowerable quantum operation.
+///
 /// This variant uses direct string data pointers instead of the tket2 string
 /// struct layout. It is useful for runtime shims that already carry plain
 /// pointer/length pairs.
@@ -1472,6 +1512,31 @@ mod tests {
         ];
         unsafe {
             pecos_qis_trace_metadata(key.as_ptr(), 11, value.as_ptr(), 10);
+        }
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 1);
+            let Operation::TraceMetadata { metadata } = &iface.operations[0] else {
+                panic!("expected trace metadata operation");
+            };
+            assert_eq!(
+                metadata.get("source_kind").map(String::as_str),
+                Some("szz_prefix")
+            );
+        });
+    }
+
+    #[test]
+    fn test_trace_metadata_hugr_string_layout() {
+        setup_test();
+        let key = [
+            11_u8, b's', b'o', b'u', b'r', b'c', b'e', b'_', b'k', b'i', b'n', b'd',
+        ];
+        let value = [
+            10_u8, b's', b'z', b'z', b'_', b'p', b'r', b'e', b'f', b'i', b'x',
+        ];
+        unsafe {
+            pecos_qis_trace_metadata_hugr(key.as_ptr(), value.as_ptr());
         }
 
         with_interface(|iface| {

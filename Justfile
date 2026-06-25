@@ -909,7 +909,6 @@ python-ci-sync-docs:
     uv sync --locked \
       --group dev \
       --group test \
-      --package quantum-pecos \
       --no-install-workspace
 
 [group('setup')]

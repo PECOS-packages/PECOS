@@ -290,7 +290,6 @@ jobs:
           python/pecos-rslib-llvm
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
-      if: matrix.build-llvm
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
@@ -298,11 +297,10 @@ jobs:
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
-      if: matrix.build-llvm
       run: just ci-env
 
     - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: matrix.build-llvm && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-14

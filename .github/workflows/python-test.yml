@@ -196,25 +196,25 @@ jobs:
     - name: Run core Python tests
       run: just python-ci-core
 
-  python-compat-smoke:
+  python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             python-version: "3.10"
-          - os: ubuntu-latest
-            python-version: "3.14"
+            artifact-name: python-compat-smoke-ubuntu
+            build-llvm: true
           - os: windows-2022
             python-version: "3.10"
-          - os: windows-2022
-            python-version: "3.14"
+            artifact-name: python-compat-smoke-windows
+            build-llvm: false
           - os: macOS-latest
             python-version: "3.10"
-          - os: macOS-latest
-            python-version: "3.14"
+            artifact-name: python-compat-smoke-macos
+            build-llvm: false
 
     steps:
     - name: Harden the runner (egress audit)
@@ -308,8 +308,108 @@ jobs:
         path: ~/.pecos/deps/llvm-14
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
+    - name: Install Python build tooling
+      run: uv pip install --system build maturin
+
+    - name: Build pecos-rslib wheel
+      run: |
+        mkdir -p dist/pecos-rslib
+        maturin build --locked --manifest-path python/pecos-rslib/Cargo.toml --out dist/pecos-rslib
+
+    - name: Build pecos-rslib-llvm wheel
+      if: matrix.build-llvm
+      run: |
+        mkdir -p dist/pecos-rslib-llvm
+        maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
+
+    - name: Build quantum-pecos wheel
+      run: |
+        mkdir -p dist/quantum-pecos
+        cd python/quantum-pecos
+        python -m build --wheel --outdir ../../dist/quantum-pecos
+
+    - name: Upload Python compatibility smoke artifacts
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: ${{ matrix.artifact-name }}
+        path: |
+          dist/pecos-rslib/*.whl
+          dist/pecos-rslib-llvm/*.whl
+          dist/quantum-pecos/*.whl
+
+  python-compat-smoke:
+    needs: python-compat-smoke-build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact-name: python-compat-smoke-ubuntu
+            python-version: "3.10"
+            include-llvm: true
+          - os: ubuntu-latest
+            artifact-name: python-compat-smoke-ubuntu
+            python-version: "3.14"
+            include-llvm: true
+          - os: windows-2022
+            artifact-name: python-compat-smoke-windows
+            python-version: "3.10"
+            include-llvm: false
+          - os: windows-2022
+            artifact-name: python-compat-smoke-windows
+            python-version: "3.14"
+            include-llvm: false
+          - os: macOS-latest
+            artifact-name: python-compat-smoke-macos
+            python-version: "3.10"
+            include-llvm: false
+          - os: macOS-latest
+            artifact-name: python-compat-smoke-macos
+            python-version: "3.14"
+            include-llvm: false
+
+    steps:
+    - name: Harden the runner (egress audit)
+      if: runner.os == 'Linux'
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      with:
+        version: "0.11.14"
+
+    - name: Download Python compatibility smoke artifacts
+      uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      with:
+        name: ${{ matrix.artifact-name }}
+        path: ./python-compat-smoke-artifacts
+
+    - name: Install Python compatibility smoke artifacts
+      run: |
+        uv pip install --system --force-reinstall ./python-compat-smoke-artifacts/pecos_rslib-*.whl
+        if [ "${{ matrix.include-llvm }}" = "true" ]; then
+          uv pip install --system --force-reinstall ./python-compat-smoke-artifacts/pecos_rslib_llvm-*.whl
+          uv pip install --system --force-reinstall ./python-compat-smoke-artifacts/quantum_pecos-*.whl
+        else
+          uv pip install --system --force-reinstall --no-deps ./python-compat-smoke-artifacts/quantum_pecos-*.whl
+        fi
+
     - name: Run Python compatibility smoke test
-      run: just python-ci-smoke
+      run: |
+        if [ "${{ matrix.include-llvm }}" = "true" ]; then
+          python -c 'import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": pecos_rslib_llvm.__version__})'
+        else
+          python -c 'import pecos; import pecos_rslib; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__})'
+        fi
 
   python-slow-postmerge:
     if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)

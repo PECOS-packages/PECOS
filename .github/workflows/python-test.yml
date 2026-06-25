@@ -442,7 +442,7 @@ jobs:
       run: |
         uv pip install --system --force-reinstall ./python-compat-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl
         if [ "${{ matrix.include-llvm }}" = "true" ]; then
-          llvm_whl=$(ls ./python-compat-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl 2>/dev/null | head -1)
+          llvm_whl=$(ls ./python-compat-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl 2>/dev/null | head -1 || true)
           if [ -n "$llvm_whl" ]; then
             uv pip install --system --force-reinstall "$llvm_whl"
           fi

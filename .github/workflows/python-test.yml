@@ -69,7 +69,7 @@ jobs:
       with:
         version: "0.11.14"
         enable-cache: true
-        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        save-cache: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
 
     - name: Set up Rust
       run: |
@@ -85,7 +85,7 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        save-if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
 
     - name: Sync Python dependencies
       run: just python-ci-sync
@@ -129,7 +129,7 @@ jobs:
       with:
         version: "0.11.14"
         enable-cache: true
-        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        save-cache: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
 
     - name: Set up Rust
       run: |
@@ -148,7 +148,7 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        save-if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
         workspaces: |
           python/pecos-rslib
           python/pecos-rslib-llvm
@@ -164,7 +164,7 @@ jobs:
       run: just ci-env
 
     - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref_name == 'main'
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-14
@@ -238,7 +238,7 @@ jobs:
       with:
         version: "0.11.14"
         enable-cache: true
-        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        save-cache: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
 
     - name: Set up Rust (Windows)
       if: runner.os == 'Windows'
@@ -266,7 +266,7 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        save-if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
         workspaces: |
           python/pecos-rslib
           python/pecos-rslib-llvm
@@ -282,7 +282,7 @@ jobs:
       run: just ci-env
 
     - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref_name == 'main'
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-14
@@ -328,7 +328,7 @@ jobs:
       with:
         version: "0.11.14"
         enable-cache: true
-        save-cache: true
+        save-cache: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
 
     - name: Set up Rust
       run: |
@@ -347,7 +347,7 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: true
+        save-if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
         workspaces: |
           python/pecos-rslib
           python/pecos-rslib-llvm
@@ -363,7 +363,7 @@ jobs:
       run: just ci-env
 
     - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: steps.cache-llvm.outputs.cache-hit != 'true'
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref_name == 'main'
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-14

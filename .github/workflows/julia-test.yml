@@ -22,8 +22,22 @@ env:
 on:
   push:
     branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'julia/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/julia-test.yml'
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
+    paths:
+      - 'julia/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/julia-test.yml'
   workflow_dispatch:
 
 concurrency:

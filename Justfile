@@ -251,7 +251,7 @@ pytest-ci-core:
 # Build and import the core Python packages on a target platform/interpreter.
 [group('test')]
 python-ci-smoke profile="debug": (python-ci-build profile)
-    uv run --frozen python -c "import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': pecos_rslib_llvm.__version__})"
+    uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
     fi
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)

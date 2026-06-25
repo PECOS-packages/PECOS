@@ -130,6 +130,13 @@ fn build_fingerprint() -> u64 {
     })
 }
 
+/// A coarse target identifier (arch + OS) mixed into the cache key and recorded
+/// in the manifest, so a shared object compiled for one target is never reused
+/// on another even if the build fingerprint somehow matched.
+fn cache_target() -> String {
+    format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
+}
+
 /// An auditable record written next to each compiled program object in the
 /// shared cache directory. It is not consulted to validate a load -- the cache
 /// filename is the full SHA-256 of `(program, format, build fingerprint)`, so a
@@ -1322,7 +1329,12 @@ impl QisHeliosInterface {
         //   cross-worktree cache directory is never reused
         let mut hasher = Sha256::new();
         hasher.update(&self.program);
-        hasher.update(format!("{:?}", self.format).as_bytes());
+        // Explicit ABI inputs (stable format tag, crate version, target triple)
+        // in addition to the build fingerprint, so the key does not rely on the
+        // running-executable mtime proxy alone to scope reuse.
+        hasher.update(self.format.cache_tag().as_bytes());
+        hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+        hasher.update(cache_target().as_bytes());
         hasher.update(build_fingerprint().to_le_bytes());
         let digest = hasher.finalize();
         let mut content_hash = String::with_capacity(digest.len() * 2);
@@ -1856,10 +1868,10 @@ entry:
         {
             let manifest = CacheManifest {
                 digest: content_hash.clone(),
-                format: format!("{:?}", self.format),
+                format: self.format.cache_tag().to_string(),
                 build_fingerprint: build_fingerprint(),
                 pecos_qis_version: env!("CARGO_PKG_VERSION").to_string(),
-                target: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
+                target: cache_target(),
             };
             let manifest_path = so_path.with_extension("manifest");
             match serde_json::to_string_pretty(&manifest) {

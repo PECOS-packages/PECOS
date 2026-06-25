@@ -28,6 +28,7 @@ class RNGModel:
         self.count = 0
         self._draw_bound_runs: list[tuple[int, int]] = []
         self.pcg = RngPcg()
+        self._replay_base_pcg = self.pcg.clone()
         self.set_seed(seed)
 
     def __str__(self) -> str:
@@ -41,6 +42,14 @@ class RNGModel:
         self.pcg.srandom(seed)
         self.count = 0
         self._draw_bound_runs = []
+        self._replay_base_pcg = self.pcg.clone()
+
+    def start_shot(self, shot_id: int) -> None:
+        """Reset shot-local replay state while preserving the current stream position."""
+        self.shot_id = shot_id
+        self.count = 0
+        self._draw_bound_runs = []
+        self._replay_base_pcg = self.pcg.clone()
 
     def set_bound(self, bound: int | None) -> None:
         """Setting the current bound for generating random numbers."""
@@ -97,16 +106,19 @@ class RNGModel:
         if delta < 0:
             bound_runs = list(self._draw_bound_runs)
             active_bound = self.current_bound
-            self.set_seed(self.seed)
+            self.pcg = self._replay_base_pcg.clone()
+            self.count = 0
+            self._draw_bound_runs = []
 
             remaining = target_index
             for historical_bound, run_length in bound_runs:
-                if remaining == 0:
+                if remaining <= 0:
                     break
                 self.current_bound = historical_bound
-                for _ in range(min(run_length, remaining)):
+                replay_count = min(run_length, remaining)
+                for _ in range(replay_count):
                     self.rng_random()
-                remaining -= run_length
+                remaining -= replay_count
 
             self.current_bound = active_bound
         else:

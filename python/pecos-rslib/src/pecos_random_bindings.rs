@@ -40,6 +40,11 @@ impl RngPcg {
     pub fn srandom(&mut self, seq: u64) {
         PCGRandom::pcg32_srandom_r(&mut self.global_state, 42_u64, seq);
     }
+
+    #[must_use]
+    pub fn clone(&self) -> RngPcg {
+        *self
+    }
 }
 
 #[cfg(test)]

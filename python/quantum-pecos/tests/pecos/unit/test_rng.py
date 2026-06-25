@@ -169,6 +169,23 @@ def test_relative_advance_backward_replays_historical_bounds() -> None:
     assert rng.rng_random() == expected_second_draw
 
 
+def test_start_shot_resets_replay_base_to_current_stream_position() -> None:
+    """Verifies rewinds in later shots replay from the shot start, not the original seed."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+
+    for _ in range(4):
+        rng.rng_random()
+
+    rng.start_shot(shot_id=1)
+    shot_draws = [rng.rng_random() for _ in range(3)]
+
+    rng.set_relative_index(-1)
+
+    assert rng.count == 2
+    assert rng.rng_random() == shot_draws[-1]
+
+
 def test_multiple_bounded_rand() -> None:
     """For several randomly generated number, with a random bound, verifies that its appropriate."""
     rng = RNGModel(shot_id=0)

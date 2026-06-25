@@ -333,6 +333,29 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-chec
         fi
     fi
 
+# Fast lint lane for Python PR CI. Keep this scoped to Rust + Python checks so
+# the Python critical path does not opportunistically pick up Julia/Go tools.
+[group('lint')]
+python-ci-lint: _msvc-bootstrap python-workspace-check
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
+        CLIPPY_FEATURES="--all-features"
+        echo "(CUDA detected -- linting with all features)"
+    else
+        CLIPPY_FEATURES=""
+        echo "(No CUDA -- linting with default features only)"
+    fi
+
+    echo "==> Checking Rust formatting..."
+    cargo fmt --all -- --check
+    echo "==> Running clippy..."
+    cargo clippy --locked --workspace --all-targets $CLIPPY_FEATURES -- -D warnings
+    echo "==> Running pre-commit..."
+    uv run --frozen pre-commit run --all-files
+    echo "==> Running cargo check..."
+    cargo check --locked --workspace --all-targets
+
 # Run cargo check
 [group('lint')]
 check: _msvc-bootstrap

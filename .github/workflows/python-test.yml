@@ -114,7 +114,7 @@ jobs:
       run: just python-ci-sync-lint
 
     - name: Run linting
-      run: just lint check
+      run: just python-ci-lint
 
   python-core:
     runs-on: ubuntu-latest

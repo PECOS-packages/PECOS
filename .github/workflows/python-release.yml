@@ -226,6 +226,13 @@ jobs:
         run: |
           uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl
           uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl
+          uv pip install --system \
+            "phir>=0.3.3" \
+            "networkx>=2.1.0" \
+            "guppylang>=0.21.6" \
+            "tket<0.12.16" \
+            "hugr>=0.13.0" \
+            "selene-sim~=0.2.0"
           uv pip install --system --force-reinstall --no-deps ./pr-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
 
       - name: Import PR smoke artifacts

@@ -193,11 +193,8 @@ jobs:
         path: ~/.pecos/deps/llvm-14
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
-    - name: Build core Python packages
-      run: just python-ci-build
-
     - name: Run core Python tests
-      run: just pytest-ci-core
+      run: just python-ci-core
 
   python-compat-smoke:
     runs-on: ${{ matrix.os }}

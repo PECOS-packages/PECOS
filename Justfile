@@ -216,13 +216,22 @@ build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
 
-# Build only the Python workspace members needed by the fast CI lanes.
+# Build only the Python workspace members needed by the fast CI smoke lanes.
 [group('build')]
 python-ci-build profile="debug": _msvc-bootstrap (validate-profile "python-ci-build" profile) python-ci-sync
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --no-cuda
+
+# Build the extra experimental bindings exercised by the fast Python core test lane.
+[group('build')]
+python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-test" profile) python-ci-sync-test
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE" --no-cuda
+    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # =============================================================================
 # Testing
@@ -241,6 +250,11 @@ pytest *args:
         uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
         uv run --frozen pytest python/selene-plugins
 
+# Run the substantive PR Python lane after building the test-only native bindings it needs.
+[group('test')]
+python-ci-core profile="debug": (python-ci-build-test profile)
+    just pytest-ci-core
+
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:
@@ -252,7 +266,6 @@ pytest-ci-core:
 [group('test')]
 python-ci-smoke profile="debug": (python-ci-build profile)
     uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
-    fi
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
 [group('test')]
@@ -866,6 +879,18 @@ python-ci-sync:
       --group dev \
       --group test \
       --package pecos-rslib \
+      --package pecos-rslib-llvm \
+      --package quantum-pecos
+
+[group('setup')]
+python-ci-sync-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --package pecos-rslib \
+      --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
       --package quantum-pecos
 

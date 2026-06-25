@@ -86,6 +86,26 @@ jobs:
         cache-bin: false
         prefix-key: v1-rust-no-bin
         save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        workspaces: |
+          python/pecos-rslib
+          python/pecos-rslib-llvm
+
+    - name: Cache LLVM ${{ env.LLVM_VERSION }}
+      id: cache-llvm
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-14
+        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+
+    - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+      run: just ci-env
+
+    - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-14
+        key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Sync Python dependencies
       run: just python-ci-sync-lint

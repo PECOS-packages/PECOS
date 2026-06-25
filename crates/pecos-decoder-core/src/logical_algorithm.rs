@@ -175,15 +175,18 @@ impl LogicalAlgorithmDecoder {
 
     /// Apply boundary gate to a Pauli frame.
     /// Used when consuming the frame at logical operations.
-    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) {
-        // All bits index the u64 observable frame, so each must be < 64. The
-        // Python descriptor binding enforces this fail-loud at construction; this
-        // documents and guards the invariant for direct Rust callers (a shift by
-        // >= 64 is otherwise an overflow panic in debug / unspecified in release).
-        debug_assert!(
-            gate.obs_bits().iter().all(|&b| b < 64),
-            "boundary gate observable bit >= 64"
-        );
+    ///
+    /// # Errors
+    /// Returns [`DecoderError::ObservableBitOutOfRange`] if any of the gate's
+    /// observable bits is `>= 64`. All bits index the `u64` observable frame, so
+    /// each must be `< 64`; the Python descriptor binding rejects this at
+    /// construction, and this runtime check guards the same invariant for direct
+    /// Rust callers (a shift by `>= 64` is otherwise an overflow panic in debug /
+    /// unspecified in release).
+    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) -> Result<(), DecoderError> {
+        if let Some(&bit) = gate.obs_bits().iter().find(|&&b| b >= 64) {
+            return Err(DecoderError::ObservableBitOutOfRange { bit });
+        }
         match gate {
             BoundaryGate::Hadamard {
                 x_obs_bit,
@@ -233,6 +236,7 @@ impl LogicalAlgorithmDecoder {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -397,8 +401,11 @@ impl StreamingLogicalDecoder {
     }
 
     /// Apply boundary gate to a Pauli frame (delegates to inner).
-    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) {
-        LogicalAlgorithmDecoder::apply_boundary_gate(frame, gate);
+    ///
+    /// # Errors
+    /// Propagates [`DecoderError::ObservableBitOutOfRange`] from the inner apply.
+    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) -> Result<(), DecoderError> {
+        LogicalAlgorithmDecoder::apply_boundary_gate(frame, gate)
     }
 
     /// Reset for the next shot.
@@ -880,8 +887,31 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b10); // X became Z
+    }
+
+    #[test]
+    fn test_apply_boundary_gate_rejects_obs_bit_ge_64() {
+        // A boundary bit >= 64 cannot index the u64 frame; apply must fail loud
+        // (not panic in debug / shift-overflow in release) for direct Rust callers.
+        let mut frame = 0u64;
+        let result = LogicalAlgorithmDecoder::apply_boundary_gate(
+            &mut frame,
+            &BoundaryGate::Hadamard {
+                x_obs_bit: 64,
+                z_obs_bit: 1,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(DecoderError::ObservableBitOutOfRange { bit: 64 })
+        ));
+        assert_eq!(
+            frame, 0,
+            "frame must be untouched when the gate is rejected"
+        );
     }
 
     #[test]
@@ -935,7 +965,8 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b0101); // X propagated to target
     }
 
@@ -979,7 +1010,8 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b1010); // Z propagated back to control Z (bit 1)
     }
 
@@ -995,7 +1027,8 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         // X ctrl -> X tgt (bit 2), Z tgt -> Z ctrl (bit 1)
         assert_eq!(frame, 0b1111);
     }
@@ -1010,7 +1043,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b11); // X stays, Z also set
     }
 
@@ -1024,7 +1058,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b10); // Z stays, no X induced
     }
 
@@ -1037,7 +1072,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0); // No correction, no change
     }
 
@@ -1051,7 +1087,8 @@ mod tests {
                 z_obs_bit: 1,     // data Z
                 ancilla_z_bit: 3, // ancilla Z
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b1010); // data Z (bit 1) flipped
     }
 
@@ -1065,7 +1102,8 @@ mod tests {
                 z_obs_bit: 1,
                 ancilla_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b1000); // data Z cancelled, ancilla unchanged
     }
 
@@ -1079,7 +1117,8 @@ mod tests {
                 z_obs_bit: 1,
                 ancilla_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b0010); // unchanged
     }
 
@@ -1093,7 +1132,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b11); // Swap of (1,1) is still (1,1)
     }
 
@@ -1106,7 +1146,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b01); // Z became X
     }
 

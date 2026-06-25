@@ -398,7 +398,7 @@ jobs:
         uv pip install --system --force-reinstall ./python-compat-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl
         if [ "${{ matrix.include-llvm }}" = "true" ]; then
           uv pip install --system --force-reinstall ./python-compat-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl
-          uv pip install --system --force-reinstall ./python-compat-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+          uv pip install --system --force-reinstall --no-deps ./python-compat-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
         else
           uv pip install --system --force-reinstall --no-deps ./python-compat-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
         fi

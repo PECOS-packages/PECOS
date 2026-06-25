@@ -226,7 +226,7 @@ jobs:
         run: |
           uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl
           uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl
-          uv pip install --system --force-reinstall ./pr-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+          uv pip install --system --force-reinstall --no-deps ./pr-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
 
       - name: Import PR smoke artifacts
         run: |

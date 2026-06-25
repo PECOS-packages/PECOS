@@ -8,7 +8,7 @@ from typing import ClassVar
 
 import pytest
 from guppylang import guppy
-from guppylang.std.builtins import result
+from guppylang.std.builtins import owned, result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
@@ -55,11 +55,25 @@ def _measurement_feedback() -> None:
     result("b1", b1)
 
 
+@guppy.declare
+def pecos_qis_trace_metadata_qubit_hugr(q: qubit @ owned, key: str, value: str) -> qubit: ...
+
+
+@guppy
+def _metadata_before_h_gate() -> None:
+    q = qubit()
+    q = pecos_qis_trace_metadata_qubit_hugr(q, "source_kind", "szz_data_prefix")
+    q = pecos_qis_trace_metadata_qubit_hugr(q, "source_label", "probe:prefix")
+    h(q)
+    _ = measure(q)
+
+
 def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     import pecos
 
     def forbidden_stabilizer():
-        raise AssertionError("trace capture should not validate operations with stabilizer evolution")
+        msg = "trace capture should not validate operations with stabilizer evolution"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(pecos, "stabilizer", forbidden_stabilizer)
 
@@ -67,6 +81,23 @@ def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch
     result_names = [trace.get("name") for trace in named_result_traces_from_operation_trace(chunks)]
 
     assert "m" in result_names
+
+
+def test_qubit_trace_metadata_stays_ordered_before_gate() -> None:
+    chunks = capture_guppy_operation_trace(_metadata_before_h_gate, num_qubits=1, seed=0)
+    lowered_ops = [
+        op
+        for chunk in chunks
+        for op in chunk.get("lowered_quantum_ops", [])
+    ]
+
+    assert lowered_ops[1]["gate_type"] == "R1XY"
+    assert lowered_ops[1]["metadata"] == {
+        "source_kind": "szz_data_prefix",
+        "source_label": "probe:prefix",
+    }
+    assert lowered_ops[-1]["gate_type"] == "MZ"
+    assert lowered_ops[-1]["metadata"] == {}
 
 
 def _dem_text(*, detectors_json: str = "[]", observables_json: str = "[]") -> str:

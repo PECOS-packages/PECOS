@@ -406,11 +406,11 @@ pub unsafe extern "C" fn __quantum__rt__record(data: *const std::ffi::c_char) {
     }
 }
 
-fn queue_trace_metadata(key: String, value: String) {
+fn queue_trace_metadata(key: String, value: String, qubit: Option<usize>) {
     let mut metadata = TraceMetadata::new();
     metadata.insert(key, value);
     with_interface(|interface| {
-        interface.queue_operation(Operation::TraceMetadata { metadata });
+        interface.queue_operation(Operation::TraceMetadata { metadata, qubit });
     });
 }
 
@@ -442,7 +442,7 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata(
     }) else {
         return;
     };
-    queue_trace_metadata(key, value);
+    queue_trace_metadata(key, value, None);
 }
 
 /// Attach source/runtime metadata to the next lowerable quantum operation.
@@ -482,7 +482,56 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_hugr(key_ptr: *const u8, value
     }) else {
         return;
     };
-    queue_trace_metadata(key, value);
+    queue_trace_metadata(key, value, None);
+}
+
+/// Attach source/runtime metadata to the next operation on a specific qubit.
+///
+/// Returning the qubit handle gives Guppy/HUGR a data dependency that preserves
+/// the metadata call immediately before the gate it annotates.
+///
+/// # Safety
+/// The key and value pointers must be valid tket2 string structs. Invalid
+/// pointers cause undefined behavior.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_qis_trace_metadata_qubit_hugr(
+    qubit: i64,
+    key_ptr: *const u8,
+    value_ptr: *const u8,
+) -> i64 {
+    if key_ptr.is_null() {
+        log::error!("pecos_qis_trace_metadata_qubit_hugr: null key pointer");
+        return qubit;
+    }
+    if value_ptr.is_null() {
+        log::error!("pecos_qis_trace_metadata_qubit_hugr: null value pointer");
+        return qubit;
+    }
+
+    let key_len = i64::from(unsafe { *key_ptr });
+    let value_len = i64::from(unsafe { *value_ptr });
+    let Some(key) = (unsafe {
+        read_tket_string_arg(
+            "pecos_qis_trace_metadata_qubit_hugr",
+            "key",
+            key_ptr,
+            key_len,
+        )
+    }) else {
+        return qubit;
+    };
+    let Some(value) = (unsafe {
+        read_tket_string_arg(
+            "pecos_qis_trace_metadata_qubit_hugr",
+            "value",
+            value_ptr,
+            value_len,
+        )
+    }) else {
+        return qubit;
+    };
+    queue_trace_metadata(key, value, Some(i64_to_usize(qubit)));
+    qubit
 }
 
 /// Attach source/runtime metadata to the next lowerable quantum operation.
@@ -516,7 +565,7 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_direct(
     }) else {
         return;
     };
-    queue_trace_metadata(key, value);
+    queue_trace_metadata(key, value, None);
 }
 
 // --- Selene-style FFI Functions ---
@@ -1491,9 +1540,10 @@ mod tests {
 
         with_interface(|iface| {
             assert_eq!(iface.operations.len(), 1);
-            let Operation::TraceMetadata { metadata } = &iface.operations[0] else {
+            let Operation::TraceMetadata { metadata, qubit } = &iface.operations[0] else {
                 panic!("expected trace metadata operation");
             };
+            assert_eq!(*qubit, None);
             assert_eq!(
                 metadata.get("source_label").map(String::as_str),
                 Some("szz_prefix:H:data_0")
@@ -1516,9 +1566,10 @@ mod tests {
 
         with_interface(|iface| {
             assert_eq!(iface.operations.len(), 1);
-            let Operation::TraceMetadata { metadata } = &iface.operations[0] else {
+            let Operation::TraceMetadata { metadata, qubit } = &iface.operations[0] else {
                 panic!("expected trace metadata operation");
             };
+            assert_eq!(*qubit, None);
             assert_eq!(
                 metadata.get("source_kind").map(String::as_str),
                 Some("szz_prefix")
@@ -1541,9 +1592,36 @@ mod tests {
 
         with_interface(|iface| {
             assert_eq!(iface.operations.len(), 1);
-            let Operation::TraceMetadata { metadata } = &iface.operations[0] else {
+            let Operation::TraceMetadata { metadata, qubit } = &iface.operations[0] else {
                 panic!("expected trace metadata operation");
             };
+            assert_eq!(*qubit, None);
+            assert_eq!(
+                metadata.get("source_kind").map(String::as_str),
+                Some("szz_prefix")
+            );
+        });
+    }
+
+    #[test]
+    fn test_trace_metadata_qubit_hugr_returns_qubit_and_queues_metadata() {
+        setup_test();
+        let key = [
+            11_u8, b's', b'o', b'u', b'r', b'c', b'e', b'_', b'k', b'i', b'n', b'd',
+        ];
+        let value = [
+            10_u8, b's', b'z', b'z', b'_', b'p', b'r', b'e', b'f', b'i', b'x',
+        ];
+        let returned =
+            unsafe { pecos_qis_trace_metadata_qubit_hugr(17, key.as_ptr(), value.as_ptr()) };
+        assert_eq!(returned, 17);
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 1);
+            let Operation::TraceMetadata { metadata, qubit } = &iface.operations[0] else {
+                panic!("expected trace metadata operation");
+            };
+            assert_eq!(*qubit, Some(17));
             assert_eq!(
                 metadata.get("source_kind").map(String::as_str),
                 Some("szz_prefix")

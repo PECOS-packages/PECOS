@@ -304,10 +304,12 @@ def test_direct_surface_renderers_accept_check_plan_as_source_of_truth() -> None
 
     guppy_source = generate_guppy_from_patch(patch, check_plan="szz_current_v1")
     assert "Check plan: szz_current_v1" in guppy_source
-    assert "def pecos_qis_trace_metadata_hugr(key: str, value: str) -> None: ..." in guppy_source
-    assert 'pecos_qis_trace_metadata_hugr("source_kind", "szz_host")' in guppy_source
-    assert 'pecos_qis_trace_metadata_hugr("source_kind", "szz_data_prefix")' in guppy_source
-    assert 'pecos_qis_trace_metadata_hugr("szz_host_label", "szz:' in guppy_source
+    assert "def pecos_qis_trace_metadata_qubit_hugr(" in guppy_source
+    assert " = pecos_qis_trace_metadata_qubit_hugr(" in guppy_source
+    assert '"source_kind", "szz_host"' in guppy_source
+    assert '"source_kind", "szz_data_prefix"' in guppy_source
+    assert '"szz_host_label", "szz:' in guppy_source
+    assert '"source_lowering_required", "true"' in guppy_source
 
 
 def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> None:

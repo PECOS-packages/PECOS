@@ -30,7 +30,16 @@ pub enum Operation {
     /// Runtimes may preserve this metadata when lowering, scheduling, or expanding
     /// operations. PECOS's direct lowering path attaches it to the next emitted
     /// simulator gate and then clears it.
-    TraceMetadata { metadata: TraceMetadata },
+    TraceMetadata {
+        metadata: TraceMetadata,
+        /// Optional source qubit that owns this metadata.
+        ///
+        /// Runtime lowering uses this to wait for the next compatible source
+        /// operation touching the same qubit, which is stricter than attaching
+        /// metadata to the next operation in global program order.
+        #[serde(default)]
+        qubit: Option<usize>,
+    },
 
     /// Allocate a qubit
     AllocateQubit { id: usize },

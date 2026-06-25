@@ -67,18 +67,23 @@ def test_trace_metadata_helper_uses_public_symbol() -> None:
     """Test that declared trace metadata helpers compile to the public FFI symbol."""
     try:
         from guppylang import guppy
+        from guppylang.std.builtins import owned
+        from guppylang.std.quantum import h, measure, qubit
         from pecos_rslib import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
     @guppy.declare
-    def pecos_qis_trace_metadata_hugr(key: str, value: str) -> None: ...
+    def pecos_qis_trace_metadata_qubit_hugr(q: qubit @ owned, key: str, value: str) -> qubit: ...
 
     @guppy
     def metadata_probe() -> None:
-        pecos_qis_trace_metadata_hugr("source_kind", "szz_host")
+        q = qubit()
+        q = pecos_qis_trace_metadata_qubit_hugr(q, "source_kind", "szz_host")
+        h(q)
+        _ = measure(q)
 
     llvm_ir = compile_hugr_to_qis(metadata_probe.compile().to_bytes())
 
-    assert "@pecos_qis_trace_metadata_hugr" in llvm_ir
-    assert "@__hugr__.pecos_qis_trace_metadata_hugr" not in llvm_ir
+    assert "@pecos_qis_trace_metadata_qubit_hugr" in llvm_ir
+    assert "@__hugr__.pecos_qis_trace_metadata_qubit_hugr" not in llvm_ir

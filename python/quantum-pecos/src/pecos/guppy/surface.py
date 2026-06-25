@@ -371,7 +371,11 @@ def generate_guppy_source(
         lines.extend(
             [
                 "@guppy.declare",
-                "def pecos_qis_trace_metadata_hugr(key: str, value: str) -> None: ...",
+                (
+                    "def pecos_qis_trace_metadata_qubit_hugr("
+                    "q: qubit @ owned, key: str, value: str"
+                    ") -> qubit: ..."
+                ),
                 "",
                 "",
             ],
@@ -515,8 +519,16 @@ def generate_guppy_source(
         msg = f"unsupported Pauli axis {axis!r}"
         raise ValueError(msg)
 
-    def _append_szz_trace_metadata(target: list[str], indent: str, key: str, value: str) -> None:
-        target.append(f'{indent}pecos_qis_trace_metadata_hugr("{key}", "{value}")')
+    def _append_szz_trace_metadata(
+        target: list[str],
+        indent: str,
+        key: str,
+        value: str,
+        qubit_expr: str,
+    ) -> None:
+        target.append(
+            f'{indent}{qubit_expr} = pecos_qis_trace_metadata_qubit_hugr({qubit_expr}, "{key}", "{value}")',
+        )
 
     def _append_szz_gate_trace_metadata(
         target: list[str],
@@ -524,15 +536,25 @@ def generate_guppy_source(
         *,
         source_kind: str,
         source_label: str,
+        qubit_expr: str,
         host_label: str | None = None,
         gate: OpType | None = None,
+        lowering_required: bool = False,
     ) -> None:
-        _append_szz_trace_metadata(target, indent, "source_kind", source_kind)
-        _append_szz_trace_metadata(target, indent, "source_label", source_label)
+        _append_szz_trace_metadata(target, indent, "source_kind", source_kind, qubit_expr)
+        _append_szz_trace_metadata(target, indent, "source_label", source_label, qubit_expr)
         if host_label is not None:
-            _append_szz_trace_metadata(target, indent, "szz_host_label", host_label)
+            _append_szz_trace_metadata(target, indent, "szz_host_label", host_label, qubit_expr)
         if gate is not None:
-            _append_szz_trace_metadata(target, indent, "source_gate", gate.name)
+            _append_szz_trace_metadata(target, indent, "source_gate", gate.name, qubit_expr)
+        if lowering_required:
+            _append_szz_trace_metadata(
+                target,
+                indent,
+                "source_lowering_required",
+                "true",
+                qubit_expr,
+            )
 
     def _append_szz_flow_gate(
         target: list[str],
@@ -561,6 +583,7 @@ def generate_guppy_source(
                 indent,
                 source_kind="szz_data_prefix",
                 source_label=source_label,
+                qubit_expr=qubit_expr,
                 host_label=host_label,
                 gate=op_type,
             )
@@ -755,7 +778,9 @@ def generate_guppy_source(
                 indent,
                 source_kind="szz_host",
                 source_label=host_label,
+                qubit_expr=data_expr(data_q),
                 gate=host_gate,
+                lowering_required=True,
             )
             target.append(
                 f"{indent}{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)} = "

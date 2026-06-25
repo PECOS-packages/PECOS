@@ -574,7 +574,7 @@ impl QisEngine {
         let result = (|| -> Result<(), PecosError> {
             for op in ops {
                 match op {
-                    Operation::TraceMetadata { metadata } => {
+                    Operation::TraceMetadata { metadata, .. } => {
                         pending_metadata.extend(metadata.clone());
                     }
                     Operation::AllocateQubit { id } => {
@@ -1892,7 +1892,10 @@ mod tests {
         );
         metadata.insert("source_kind".to_string(), "szz_prefix".to_string());
         let ops = vec![
-            Operation::TraceMetadata { metadata },
+            Operation::TraceMetadata {
+                metadata,
+                qubit: None,
+            },
             QuantumOp::H(0).into(),
             QuantumOp::Measure(0, 7).into(),
         ];

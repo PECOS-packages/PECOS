@@ -11,6 +11,7 @@ and ``decode_count`` comparing wide masks end-to-end.
 
 from __future__ import annotations
 
+import pytest
 from pecos_rslib.qec import LogicalSubgraphDecoder, ParsedDem, SampleBatch
 
 
@@ -86,3 +87,23 @@ def test_decode_count_above_64_observables() -> None:
     batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(2000, seed=1)
     count = dec.decode_count(batch)
     assert 0 <= count <= 2000
+
+
+def test_narrow_sample_batch_apis_reject_wide_observables() -> None:
+    # The legacy u64-based SampleBatch APIs cannot represent >64 observables and
+    # must reject a wide batch up front rather than panicking or truncating.
+    n = 65
+    dem, _ = _wide_dem(n)
+    syn = [0] * n
+    syn[64] = 1
+    wide = SampleBatch([syn, syn], [1 << 64, 1 << 64])
+
+    with pytest.raises(ValueError, match="64-observable"):
+        wide.get_observable_mask(0)
+    with pytest.raises(ValueError, match="64-observable"):
+        wide.decode_count(dem, "pecos_uf:fast")
+    with pytest.raises(ValueError, match="64-observable"):
+        wide.decode_stats(dem, "pecos_uf:fast")
+
+    # The wide getter returns the full mask as a Python int with no truncation.
+    assert wide.get_observable_mask_wide(0) == 1 << 64

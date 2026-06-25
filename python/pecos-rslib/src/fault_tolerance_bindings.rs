@@ -3336,8 +3336,33 @@ impl PySampleBatch {
         }
     }
 
+    /// Reject a batch that cannot be represented by the legacy `u64` observable
+    /// APIs (more than 64 observable columns). Callers with >64 observables must
+    /// use the wide `LogicalSubgraphDecoder` decode/decode_count paths, which
+    /// return arbitrary-precision Python ints. Call this up front in every
+    /// `u64`-returning public method before [`Self::extract_obs_mask`].
+    fn ensure_narrow_observables(&self) -> PyResult<()> {
+        if self.obs_columns.len() > 64 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "SampleBatch has {} observable columns, exceeding the 64-observable limit of \
+                 this u64-based API; use the wide LogicalSubgraphDecoder decode/decode_count \
+                 paths (arbitrary-precision int) for more than 64 observables",
+                self.obs_columns.len()
+            )));
+        }
+        Ok(())
+    }
+
     /// Extract observable mask for one shot (`u64`; observables 0..=63 only).
+    ///
+    /// The caller must have rejected wide batches via
+    /// [`Self::ensure_narrow_observables`] first; with >64 observable columns the
+    /// `1u64 << obs_idx` below would overflow.
     fn extract_obs_mask(&self, shot: usize) -> u64 {
+        debug_assert!(
+            self.obs_columns.len() <= 64,
+            "extract_obs_mask requires <=64 observable columns; call ensure_narrow_observables first"
+        );
         let word_idx = shot / 64;
         let bit_mask = 1u64 << (shot % 64);
         let mut mask = 0u64;
@@ -3483,8 +3508,9 @@ impl PySampleBatch {
         Ok(buf)
     }
 
-    /// Get the expected observable mask for shot `i`.
+    /// Get the expected observable mask for shot `i` (`u64`; <=64 observables).
     fn get_observable_mask(&self, i: usize) -> PyResult<u64> {
+        self.ensure_narrow_observables()?;
         if i >= self.num_shots {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "Shot index {i} out of range (num_shots={})",
@@ -3492,6 +3518,18 @@ impl PySampleBatch {
             )));
         }
         Ok(self.extract_obs_mask(i))
+    }
+
+    /// Observable mask for shot `i` as a Python ``int`` (arbitrary precision, so
+    /// more than 64 observables are not truncated).
+    fn get_observable_mask_wide(&self, py: Python<'_>, i: usize) -> PyResult<Py<pyo3::PyAny>> {
+        if i >= self.num_shots {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Shot index {i} out of range (num_shots={})",
+                self.num_shots
+            )));
+        }
+        obsmask_to_py(py, &self.extract_obs_mask_wide(i))
     }
 
     /// Decode all samples with the given decoder type and return the error count.
@@ -3508,6 +3546,7 @@ impl PySampleBatch {
     ///     Number of logical errors.
     #[pyo3(signature = (dem, decoder_type="pymatching"))]
     fn decode_count(&self, dem: &str, decoder_type: &str) -> PyResult<usize> {
+        self.ensure_narrow_observables()?;
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut errors = 0usize;
         let mut syndrome = vec![0u8; self.num_detectors];
@@ -3570,6 +3609,7 @@ impl PySampleBatch {
     ) -> PyResult<usize> {
         use rayon::prelude::*;
 
+        self.ensure_narrow_observables()?;
         let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
@@ -3620,6 +3660,8 @@ impl PySampleBatch {
     #[pyo3(signature = (dem))]
     fn decode_count_batch(&self, dem: &str) -> PyResult<usize> {
         use pecos_decoders::{BatchConfig, PyMatchingDecoder};
+
+        self.ensure_narrow_observables()?;
 
         let mut decoder = PyMatchingDecoder::from_dem(dem)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -3681,6 +3723,8 @@ impl PySampleBatch {
     fn decode_stats(&self, dem: &str, decoder_type: &str) -> PyResult<PyDecodeStats> {
         use std::time::Instant;
 
+        self.ensure_narrow_observables()?;
+
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut num_errors = 0usize;
         let mut per_shot_seconds: Vec<f64> = Vec::with_capacity(self.num_shots);
@@ -3726,6 +3770,7 @@ impl PySampleBatch {
     ) -> PyResult<PyDecodeStats> {
         use rayon::prelude::*;
 
+        self.ensure_narrow_observables()?;
         let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
 
         // Validate decoder type early.

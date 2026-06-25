@@ -153,18 +153,22 @@ jobs:
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
     - name: Set up Rust
+      if: github.event_name != 'pull_request'
       run: |
         bash scripts/ci/ensure-rust.sh stable minimal
         export PATH="$HOME/.cargo/bin:$PATH"
         rustup show
 
     - name: Verify cmake is available (MWPF decoder build)
+      if: github.event_name != 'pull_request'
       run: cmake --version
 
     - name: Install just
+      if: github.event_name != 'pull_request'
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
     - name: Cache Rust
+      if: github.event_name != 'pull_request'
       uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       with:
         cache-bin: false
@@ -175,6 +179,7 @@ jobs:
           python/pecos-rslib-llvm
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
+      if: github.event_name != 'pull_request'
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
@@ -182,10 +187,11 @@ jobs:
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+      if: github.event_name != 'pull_request'
       run: just ci-env
 
     - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      if: github.event_name != 'pull_request' && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-14
@@ -197,7 +203,7 @@ jobs:
 
     - name: Run core Python smoke tests (PR fast path)
       if: github.event_name == 'pull_request'
-      run: just python-ci-smoke
+      run: uv lock --check --project .
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}

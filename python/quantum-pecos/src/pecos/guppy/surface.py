@@ -538,6 +538,7 @@ def generate_guppy_source(
         source_label: str,
         qubit_expr: str,
         host_label: str | None = None,
+        local_role: str | None = None,
         gate: OpType | None = None,
         lowering_required: bool = False,
     ) -> None:
@@ -545,6 +546,9 @@ def generate_guppy_source(
         _append_szz_trace_metadata(target, indent, "source_label", source_label, qubit_expr)
         if host_label is not None:
             _append_szz_trace_metadata(target, indent, "szz_host_label", host_label, qubit_expr)
+            _append_szz_trace_metadata(target, indent, "host_id", host_label, qubit_expr)
+        if local_role is not None:
+            _append_szz_trace_metadata(target, indent, "local_role", local_role, qubit_expr)
         if gate is not None:
             _append_szz_trace_metadata(target, indent, "source_gate", gate.name, qubit_expr)
         if lowering_required:
@@ -585,6 +589,7 @@ def generate_guppy_source(
                 source_label=source_label,
                 qubit_expr=qubit_expr,
                 host_label=host_label,
+                local_role="basis_prefix",
                 gate=op_type,
             )
         target.append(f"{indent}{op_name}({qubit_expr})")
@@ -779,6 +784,7 @@ def generate_guppy_source(
                 source_kind="szz_host",
                 source_label=host_label,
                 qubit_expr=data_expr(data_q),
+                host_label=host_label,
                 gate=host_gate,
                 lowering_required=True,
             )

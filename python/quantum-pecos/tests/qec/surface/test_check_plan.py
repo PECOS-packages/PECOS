@@ -309,6 +309,8 @@ def test_direct_surface_renderers_accept_check_plan_as_source_of_truth() -> None
     assert '"source_kind", "szz_host"' in guppy_source
     assert '"source_kind", "szz_data_prefix"' in guppy_source
     assert '"szz_host_label", "szz:' in guppy_source
+    assert '"host_id", "szz:' in guppy_source
+    assert '"local_role", "basis_prefix"' in guppy_source
     assert '"source_lowering_required", "true"' in guppy_source
 
 
@@ -329,6 +331,24 @@ def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:
     zz_phase_index = source.index("zz_phase(", barrier_index)
 
     assert prefix_index < barrier_index < host_index < zz_phase_index
+
+
+def test_szz_data_prefixes_emit_generic_hosted_metadata() -> None:
+    from pecos.guppy.surface import generate_guppy_source
+    from pecos.qec.surface import SurfacePatch
+
+    source = generate_guppy_source(
+        SurfacePatch.create(distance=3),
+        check_plan="szz_current_v1",
+    )
+
+    prefix_index = source.index('"source_kind", "szz_data_prefix"')
+    role_index = source.index('"local_role", "basis_prefix"', prefix_index)
+    prefix_host_index = source.index('"host_id", "szz:', prefix_index)
+    host_index = source.index('"source_kind", "szz_host"', prefix_index)
+    host_id_index = source.index('"host_id", "szz:', host_index)
+
+    assert prefix_index < prefix_host_index < role_index < host_index < host_id_index
 
 
 def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> None:

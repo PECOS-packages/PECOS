@@ -64,6 +64,8 @@ def _metadata_before_h_gate() -> None:
     q = qubit()
     q = pecos_qis_trace_metadata_qubit_hugr(q, "source_kind", "szz_data_prefix")
     q = pecos_qis_trace_metadata_qubit_hugr(q, "source_label", "probe:prefix")
+    q = pecos_qis_trace_metadata_qubit_hugr(q, "host_id", "probe:host")
+    q = pecos_qis_trace_metadata_qubit_hugr(q, "local_role", "basis_prefix")
     h(q)
     _ = measure(q)
 
@@ -127,6 +129,8 @@ def test_qubit_trace_metadata_stays_ordered_before_gate() -> None:
 
     assert lowered_ops[1]["gate_type"] == "R1XY"
     assert lowered_ops[1]["metadata"] == {
+        "host_id": "probe:host",
+        "local_role": "basis_prefix",
         "source_kind": "szz_data_prefix",
         "source_label": "probe:prefix",
     }

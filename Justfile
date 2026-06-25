@@ -58,8 +58,17 @@ setup-ci: _msvc-bootstrap
 ci-env: _msvc-bootstrap
     #!/usr/bin/env bash
     set -euo pipefail
-    {{pecos}} llvm ensure --managed --no-configure
-    {{pecos}} env --github-actions
+    export CARGO_NET_RETRY=10
+    for attempt in 1 2 3; do
+        if {{pecos}} llvm ensure --managed --no-configure && {{pecos}} env --github-actions; then
+            exit 0
+        fi
+        if [ "$attempt" -eq 3 ]; then
+            exit 1
+        fi
+        echo "ci-env failed on attempt $attempt; retrying..."
+        sleep 5
+    done
 
 # Check development environment for common problems
 [group('setup')]

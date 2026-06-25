@@ -89,9 +89,7 @@ jobs:
       - name: Install dependencies and build
         run: |
           uv lock --check --project .
-          uv sync --locked --project . --all-packages
-          cargo install --locked --path crates/pecos-cli --force
-          pecos python build --profile debug
+          just python-ci-build
 
       - name: Test working documentation examples
         run: uv run --frozen python scripts/docs/test_working_examples.py

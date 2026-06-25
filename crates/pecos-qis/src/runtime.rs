@@ -11,7 +11,7 @@
 //! doesn't perform quantum simulation but manages program execution flow.
 
 use log::trace;
-use pecos_qis_ffi_types::{Operation, OperationCollector, QuantumOp};
+use pecos_qis_ffi_types::{LoweredQuantumOp, Operation, OperationCollector, QuantumOp};
 use std::collections::BTreeMap;
 
 /// Result type for runtime operations
@@ -240,6 +240,22 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         Err(RuntimeError::ExecutionError(
             "runtime does not support operation lowering".to_string(),
         ))
+    }
+
+    /// Lower freshly collected program operations through the runtime with provenance.
+    ///
+    /// Runtimes that can preserve source/scheduler metadata should override this
+    /// method. The default preserves the existing `lower_operations` behavior and
+    /// attaches empty metadata to every lowered operation.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot accept or lower the operations.
+    fn lower_operations_with_metadata(
+        &mut self,
+        operations: &[Operation],
+    ) -> Result<Vec<LoweredQuantumOp>> {
+        self.lower_operations(operations)
+            .map(|ops| ops.into_iter().map(LoweredQuantumOp::from).collect())
     }
 
     /// Check if the runtime needs to re-execute with known measurements

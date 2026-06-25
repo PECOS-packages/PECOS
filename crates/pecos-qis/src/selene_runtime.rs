@@ -599,6 +599,10 @@ impl SeleneRuntime {
                     // The actual result mapping is handled by the runtime's results collection
                     self.current_op_index += 1;
                 }
+                Operation::TraceMetadata { .. } => {
+                    trace!("Trace metadata encountered");
+                    self.current_op_index += 1;
+                }
                 Operation::Barrier => {
                     trace!("Barrier encountered");
                     // Barriers don't produce quantum ops but can break batches
@@ -875,7 +879,9 @@ impl SeleneRuntime {
                     self.runtime_qfree(runtime_qubit)?;
                 }
             }
-            Operation::RecordOutput { .. } | Operation::Barrier => {}
+            Operation::RecordOutput { .. }
+            | Operation::TraceMetadata { .. }
+            | Operation::Barrier => {}
             Operation::Quantum(qop) => self.submit_quantum_op_to_runtime(qop, lowered_ops)?,
         }
 
@@ -1218,6 +1224,7 @@ fn operation_capacity_with_mode(
             Operation::RecordOutput { result_id, .. } => {
                 include_result(&mut num_results, *result_id);
             }
+            Operation::TraceMetadata { .. } => {}
             Operation::Barrier => {}
         }
     }

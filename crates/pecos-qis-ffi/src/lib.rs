@@ -268,7 +268,7 @@ fn get_execution_context() -> Option<*mut ExecutionContext> {
 
 // Re-export all types from pecos-qis-ffi-types
 pub use pecos_qis_ffi_types::{
-    NamedResultTrace, Operation, OperationCollector, OperationList, QuantumOp,
+    NamedResultTrace, Operation, OperationCollector, OperationList, QuantumOp, TraceMetadata,
 };
 
 /// Type alias for the quantum executor callback

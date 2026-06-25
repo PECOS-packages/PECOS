@@ -4,7 +4,7 @@
 //! with Rust. These functions simply collect operations into the thread-local interface
 //! without performing any simulation or complex state management.
 
-use crate::{Operation, QuantumOp, with_interface};
+use crate::{Operation, QuantumOp, TraceMetadata, with_interface};
 use log::debug;
 use std::cell::Cell;
 
@@ -24,6 +24,59 @@ const MAX_COLLECTION_READS: u32 = 100;
 #[inline]
 fn i64_to_usize(value: i64) -> usize {
     usize::try_from(value).expect("Invalid ID: value must be non-negative and fit in usize")
+}
+
+unsafe fn read_tket_string_arg(
+    func_name: &str,
+    arg_name: &str,
+    ptr: *const u8,
+    len: i64,
+) -> Option<String> {
+    let Ok(len) = usize::try_from(len) else {
+        log::error!("{func_name}: invalid {arg_name} length {len}");
+        return None;
+    };
+    if ptr.is_null() {
+        log::error!("{func_name}: null {arg_name} pointer");
+        return None;
+    }
+
+    // The tket2 string format is: {len: u8, data: [u8; len]}.
+    // The pointer references the length byte, so skip it to read the payload.
+    let data_ptr = unsafe { ptr.add(1) };
+    let bytes = unsafe { std::slice::from_raw_parts(data_ptr, len) };
+    match std::str::from_utf8(bytes) {
+        Ok(value) => Some(value.to_string()),
+        Err(_) => {
+            log::error!("{func_name}: invalid UTF-8 in {arg_name}");
+            None
+        }
+    }
+}
+
+unsafe fn read_direct_string_arg(
+    func_name: &str,
+    arg_name: &str,
+    ptr: *const u8,
+    len: i64,
+) -> Option<String> {
+    let Ok(len) = usize::try_from(len) else {
+        log::error!("{func_name}: invalid {arg_name} length {len}");
+        return None;
+    };
+    if ptr.is_null() {
+        log::error!("{func_name}: null {arg_name} pointer");
+        return None;
+    }
+
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    match std::str::from_utf8(bytes) {
+        Ok(value) => Some(value.to_string()),
+        Err(_) => {
+            log::error!("{func_name}: invalid UTF-8 in {arg_name}");
+            None
+        }
+    }
 }
 
 // --- Gate FFI Macros ---
@@ -351,6 +404,79 @@ pub unsafe extern "C" fn __quantum__rt__record(data: *const std::ffi::c_char) {
             log::trace!("QIS Record: {rust_str}");
         }
     }
+}
+
+fn queue_trace_metadata(key: String, value: String) {
+    let mut metadata = TraceMetadata::new();
+    metadata.insert(key, value);
+    with_interface(|interface| {
+        interface.queue_operation(Operation::TraceMetadata { metadata });
+    });
+}
+
+/// Attach source/runtime metadata to the next lowerable quantum operation.
+///
+/// This function uses the tket2 string ABI: each string pointer references a
+/// `{len: u8, data: [u8; len]}` payload and the length argument gives the data
+/// length. Metadata is intentionally represented as ordinary key/value strings
+/// so callers can add generic provenance without PECOS knowing about a specific
+/// runtime or hardware target.
+///
+/// # Safety
+/// The key and value pointers must be valid tket2 string structs with at least
+/// `len + 1` bytes. Invalid pointers cause undefined behavior.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_qis_trace_metadata(
+    key_ptr: *const u8,
+    key_len: i64,
+    value_ptr: *const u8,
+    value_len: i64,
+) {
+    let Some(key) =
+        (unsafe { read_tket_string_arg("pecos_qis_trace_metadata", "key", key_ptr, key_len) })
+    else {
+        return;
+    };
+    let Some(value) = (unsafe {
+        read_tket_string_arg("pecos_qis_trace_metadata", "value", value_ptr, value_len)
+    }) else {
+        return;
+    };
+    queue_trace_metadata(key, value);
+}
+
+/// Attach source/runtime metadata to the next lowerable quantum operation.
+///
+/// This variant uses direct string data pointers instead of the tket2 string
+/// struct layout. It is useful for runtime shims that already carry plain
+/// pointer/length pairs.
+///
+/// # Safety
+/// The key and value pointers must reference valid UTF-8 data of the provided
+/// lengths. Invalid pointers cause undefined behavior.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_qis_trace_metadata_direct(
+    key_ptr: *const u8,
+    key_len: i64,
+    value_ptr: *const u8,
+    value_len: i64,
+) {
+    let Some(key) = (unsafe {
+        read_direct_string_arg("pecos_qis_trace_metadata_direct", "key", key_ptr, key_len)
+    }) else {
+        return;
+    };
+    let Some(value) = (unsafe {
+        read_direct_string_arg(
+            "pecos_qis_trace_metadata_direct",
+            "value",
+            value_ptr,
+            value_len,
+        )
+    }) else {
+        return;
+    };
+    queue_trace_metadata(key, value);
 }
 
 // --- Selene-style FFI Functions ---
@@ -1306,6 +1432,57 @@ mod tests {
 
         with_interface(|iface| {
             assert_eq!(iface.operations[0], Operation::Quantum(QuantumOp::ZZ(0, 1)));
+        });
+    }
+
+    #[test]
+    fn test_trace_metadata_direct() {
+        setup_test();
+        let key = b"source_label";
+        let value = b"szz_prefix:H:data_0";
+        unsafe {
+            pecos_qis_trace_metadata_direct(
+                key.as_ptr(),
+                key.len() as i64,
+                value.as_ptr(),
+                value.len() as i64,
+            );
+        }
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 1);
+            let Operation::TraceMetadata { metadata } = &iface.operations[0] else {
+                panic!("expected trace metadata operation");
+            };
+            assert_eq!(
+                metadata.get("source_label").map(String::as_str),
+                Some("szz_prefix:H:data_0")
+            );
+        });
+    }
+
+    #[test]
+    fn test_trace_metadata_tket_string_layout() {
+        setup_test();
+        let key = [
+            11_u8, b's', b'o', b'u', b'r', b'c', b'e', b'_', b'k', b'i', b'n', b'd',
+        ];
+        let value = [
+            10_u8, b's', b'z', b'z', b'_', b'p', b'r', b'e', b'f', b'i', b'x',
+        ];
+        unsafe {
+            pecos_qis_trace_metadata(key.as_ptr(), 11, value.as_ptr(), 10);
+        }
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 1);
+            let Operation::TraceMetadata { metadata } = &iface.operations[0] else {
+                panic!("expected trace metadata operation");
+            };
+            assert_eq!(
+                metadata.get("source_kind").map(String::as_str),
+                Some("szz_prefix")
+            );
         });
     }
 

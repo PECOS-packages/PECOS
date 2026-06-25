@@ -7,7 +7,7 @@
 
 mod operations;
 
-pub use operations::{NamedResultTrace, Operation, QuantumOp};
+pub use operations::{LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, TraceMetadata};
 
 const DEFAULT_OPERATION_CAPACITY: usize = 1024;
 const DEFAULT_MEASUREMENT_CAPACITY: usize = 256;

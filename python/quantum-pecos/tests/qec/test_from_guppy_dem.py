@@ -230,6 +230,31 @@ def test_lowered_replay_preserves_runtime_idles() -> None:
     assert _flat_idle_gates(tc) == [([0], 20.0)]
 
 
+def test_lowered_replay_preserves_gate_metadata() -> None:
+    chunks = [
+        {
+            "operations": [{"Quantum": {"H": 0}}],
+            "lowered_quantum_ops": [
+                {
+                    "gate_type": "H",
+                    "qubits": [0],
+                    "angles": [],
+                    "params": [],
+                    "metadata": {
+                        "source_label": "szz_physical_prefix:H:X0:q0",
+                        "source_kind": "szz_prefix",
+                    },
+                },
+            ],
+        },
+    ]
+
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+    assert tc.get_gate_meta(0, 0, "source_label") == "szz_physical_prefix:H:X0:q0"
+    assert tc.get_gate_meta(0, 0, "source_kind") == "szz_prefix"
+
+
 def test_lowered_replay_preserves_measurement_crosstalk_payloads() -> None:
     chunks = [
         {

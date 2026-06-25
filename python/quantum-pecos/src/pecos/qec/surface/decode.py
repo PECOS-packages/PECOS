@@ -1124,6 +1124,24 @@ def _gate_triples(qubits: list[int], gate_type: str) -> list[tuple[int, int, int
     return [(qubits[i], qubits[i + 1], qubits[i + 2]) for i in range(0, len(qubits), 3)]
 
 
+def _lowered_gate_metadata(gate: Mapping[str, Any]) -> dict[str, Any]:
+    """Return validated runtime/source metadata for a lowered trace gate."""
+    metadata = gate.get("metadata")
+    if metadata is None:
+        return {}
+    if not isinstance(metadata, Mapping):
+        msg = f"Lowered gate metadata must be an object, got {metadata!r}"
+        raise ValueError(msg)
+    return {str(key): value for key, value in metadata.items()}
+
+
+def _set_lowered_gate_metadata(tick: Any, metadata: Mapping[str, Any]) -> None:
+    """Attach lowered trace metadata to the gate most recently added to ``tick``."""
+    if not metadata:
+        return
+    tick.metas(metadata)
+
+
 def _replay_lowered_qis_trace_into_tick_circuit(
     chunks: list[dict[str, Any]],
     *,
@@ -1153,6 +1171,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
             qubits = [int(q) for q in gate.get("qubits", [])]
             angles = [float(theta) for theta in gate.get("angles", [])]
             params = [float(param) for param in gate.get("params", [])]
+            metadata = _lowered_gate_metadata(gate)
             tick = tick_circuit.tick()
 
             if gate_type == "H":
@@ -1235,6 +1254,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
             else:
                 msg = f"Unsupported lowered traced gate {gate_type!r}"
                 raise ValueError(msg)
+            _set_lowered_gate_metadata(tick, metadata)
 
     # Compact: ASAP-schedule gates into minimal ticks
     tick_circuit.compact_ticks()

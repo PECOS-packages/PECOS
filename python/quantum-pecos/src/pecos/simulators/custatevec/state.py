@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING
 
 import cupy as cp
 from cuquantum import ComputeType, cudaDataType
-from cuquantum.bindings import custatevec as cusv
 
+from pecos.simulators.custatevec._cuquantum_compat import cusv
 from pecos.simulators.custatevec import bindings
 from pecos.simulators.sim_class_types import StateVector
 

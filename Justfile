@@ -837,6 +837,15 @@ python-ci-sync:
       --package pecos-rslib-llvm \
       --package quantum-pecos
 
+[group('setup')]
+python-ci-sync-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --no-install-workspace
+
 # Windows MSVC bootstrap: write the correct linker + LIB/INCLUDE into
 # .cargo/config.toml (read by cargo *after* it spawns, so it bypasses
 # git-bash's link.exe shadowing and LIB mangling). Scoped TOML merge -- it

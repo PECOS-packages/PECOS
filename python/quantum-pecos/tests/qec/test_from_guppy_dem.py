@@ -8,7 +8,7 @@ from typing import ClassVar
 
 import pytest
 from guppylang import guppy
-from guppylang.std.builtins import owned, result
+from guppylang.std.builtins import barrier, owned, result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
@@ -68,6 +68,17 @@ def _metadata_before_h_gate() -> None:
     _ = measure(q)
 
 
+@guppy
+def _barrier_between_single_qubit_gates() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    h(q0)
+    barrier(q0, q1)
+    h(q1)
+    _ = measure(q0)
+    _ = measure(q1)
+
+
 def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     import pecos
 
@@ -81,6 +92,29 @@ def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch
     result_names = [trace.get("name") for trace in named_result_traces_from_operation_trace(chunks)]
 
     assert "m" in result_names
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Guppy public barrier(...) is currently optimized away before PECOS "
+        "QIS operation collection; hosted SZZ prefix scheduling needs a "
+        "barrier-preserving or hosted-operation lowering path."
+    ),
+    strict=True,
+)
+def test_guppy_barrier_survives_into_qis_operation_trace() -> None:
+    chunks = capture_guppy_operation_trace(
+        _barrier_between_single_qubit_gates,
+        num_qubits=2,
+        seed=0,
+    )
+    operations = [
+        operation
+        for chunk in chunks
+        for operation in chunk.get("operations", [])
+    ]
+
+    assert any(operation == "Barrier" or "Barrier" in operation for operation in operations)
 
 
 def test_qubit_trace_metadata_stays_ordered_before_gate() -> None:

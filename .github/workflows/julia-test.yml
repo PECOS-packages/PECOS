@@ -28,7 +28,6 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/ci/**'
-      - '.github/workflows/julia-test.yml'
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
     paths:
@@ -37,7 +36,6 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/ci/**'
-      - '.github/workflows/julia-test.yml'
   workflow_dispatch:
 
 concurrency:

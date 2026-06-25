@@ -237,7 +237,7 @@ jobs:
 
       - name: Import PR smoke artifacts
         run: |
-          python -c 'import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": pecos_rslib_llvm.__version__})'
+          python -c 'from importlib.metadata import version; import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": version("pecos-rslib-llvm")})'
 
   build_wheelspecos_rslib:
     needs: resolve_release_mode

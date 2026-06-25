@@ -413,7 +413,7 @@ jobs:
     - name: Run Python compatibility smoke test
       run: |
         if [ "${{ matrix.include-llvm }}" = "true" ]; then
-          python -c 'import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": pecos_rslib_llvm.__version__})'
+          python -c 'from importlib.metadata import version; import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": version("pecos-rslib-llvm")})'
         else
           python -c 'import pecos; import pecos_rslib; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__})'
         fi

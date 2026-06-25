@@ -312,6 +312,25 @@ def test_direct_surface_renderers_accept_check_plan_as_source_of_truth() -> None
     assert '"source_lowering_required", "true"' in guppy_source
 
 
+def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:
+    from pecos.guppy.surface import generate_guppy_source
+    from pecos.qec.surface import SurfacePatch
+
+    patch = SurfacePatch.create(distance=3)
+    source = generate_guppy_source(
+        patch,
+        check_plan="szz_current_v1",
+        szz_runtime_barriers="data-prefix",
+    )
+
+    prefix_index = source.index('"source_kind", "szz_data_prefix"')
+    barrier_index = source.index("barrier(")
+    host_index = source.index('"source_kind", "szz_host"', prefix_index)
+    zz_phase_index = source.index("zz_phase(", barrier_index)
+
+    assert prefix_index < barrier_index < host_index < zz_phase_index
+
+
 def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> None:
     from pecos.qec.surface import SurfacePatch
     from pecos.qec.surface.circuit_builder import (

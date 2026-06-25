@@ -233,11 +233,11 @@ def generate_guppy_source(
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy. ``False``
             or ``"none"`` emits no barriers; ``True`` or ``"all"`` emits a
             public Guppy ``barrier`` before every SZZ/SZZdg host region;
-            ``"data-prefix"`` emits one only when a non-virtual local
-            data-frame pulse is about to be discharged into that host. Barriers
-            have no ideal-unitary effect, but give runtimes a principled
-            scheduling boundary before selected local data-frame pulses and
-            their entangling host.
+            ``"data-prefix"`` emits one only after a non-virtual local
+            data-frame pulse is discharged and before its host. Barriers have
+            no ideal-unitary effect, but give runtimes a principled scheduling
+            boundary between selected local data-frame pulses and their
+            entangling host.
 
     Returns:
         Python/Guppy source code as a string.
@@ -760,6 +760,10 @@ def generate_guppy_source(
             has_data_prefix = (
                 pending != _SZZ_FLOW_IDENTITY and not _szz_flow_is_virtual_z(pending)
             )
+            sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
+            host_gate = OpType.SZZ if sign > 0 else OpType.SZZDG
+            host_label = f"szz:r{rnd_idx + 1}:{stab_type}{stab_idx}:d{data_q}:{host_gate.name}"
+            discharge_data_for_szz(data_q, host_label=host_label)
             if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_ALL or (
                 szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX
                 and has_data_prefix
@@ -768,10 +772,6 @@ def generate_guppy_source(
                     f"{indent}barrier({ancilla_expr(stab_type, stab_idx)}, "
                     f"{data_expr(data_q)})",
                 )
-            sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
-            host_gate = OpType.SZZ if sign > 0 else OpType.SZZDG
-            host_label = f"szz:r{rnd_idx + 1}:{stab_type}{stab_idx}:d{data_q}:{host_gate.name}"
-            discharge_data_for_szz(data_q, host_label=host_label)
             half_turns = "0.5" if sign > 0 else "-0.5"
             _append_szz_gate_trace_metadata(
                 target,

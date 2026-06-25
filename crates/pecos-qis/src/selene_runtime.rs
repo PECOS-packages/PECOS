@@ -1709,6 +1709,9 @@ impl QisRuntime for SeleneRuntime {
         let mut lowered_ops = Vec::new();
 
         for op in operations {
+            if matches!(op, Operation::Barrier) {
+                lowered_ops.extend(self.drain_runtime_operations()?);
+            }
             self.submit_operation_to_runtime(op, &mut lowered_ops)?;
         }
 
@@ -1760,6 +1763,14 @@ impl QisRuntime for SeleneRuntime {
                     }
                     let mut emitted_ops = Vec::new();
                     self.submit_operation_to_runtime(op, &mut emitted_ops)?;
+                    Self::push_lowered_ops_with_source_metadata(
+                        &mut lowered_ops,
+                        emitted_ops,
+                        &mut source_metadata,
+                    );
+                }
+                Operation::Barrier => {
+                    let emitted_ops = self.drain_runtime_operations()?;
                     Self::push_lowered_ops_with_source_metadata(
                         &mut lowered_ops,
                         emitted_ops,

@@ -224,6 +224,14 @@ python-ci-build profile="debug": _msvc-bootstrap (validate-profile "python-ci-bu
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --no-cuda
 
+# Build only the Python packages needed for docs validation.
+[group('build')]
+python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-docs" profile) python-ci-sync-docs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
+
 # Build the extra experimental bindings exercised by the fast Python core test lane.
 [group('build')]
 python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-test" profile) python-ci-sync-test
@@ -892,6 +900,16 @@ python-ci-sync-test:
       --package pecos-rslib \
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
+      --package quantum-pecos
+
+[group('setup')]
+python-ci-sync-docs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --package pecos-rslib \
       --package quantum-pecos
 
 [group('setup')]

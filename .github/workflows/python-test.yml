@@ -93,23 +93,6 @@ jobs:
           python/pecos-rslib
           python/pecos-rslib-llvm
 
-    - name: Cache LLVM ${{ env.LLVM_VERSION }}
-      id: cache-llvm
-      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-      with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
-
-    - name: Ensure LLVM ${{ env.LLVM_VERSION }}
-      run: just ci-env
-
-    - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
-      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-      with:
-        path: ~/.pecos/deps/llvm-14
-        key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
-
     - name: Sync Python dependencies
       run: just python-ci-sync-lint
 
@@ -119,8 +102,6 @@ jobs:
   python-core:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      PECOS_BUILD_MWPF: "1"
     steps:
     - name: Harden the runner (egress audit)
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -292,6 +273,7 @@ jobs:
           python/pecos-rslib-llvm
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
+      if: matrix.build-llvm
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
@@ -299,10 +281,11 @@ jobs:
         key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+      if: matrix.build-llvm
       run: just ci-env
 
     - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-      if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      if: matrix.build-llvm && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: ~/.pecos/deps/llvm-14

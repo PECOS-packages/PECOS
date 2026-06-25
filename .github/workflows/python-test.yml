@@ -362,12 +362,12 @@ jobs:
           - os: macOS-latest
             artifact-name: python-compat-smoke-macos
             python-version: "3.10"
-            include-llvm: false
+            include-llvm: true
             include-pecos: false
           - os: macOS-latest
             artifact-name: python-compat-smoke-macos
             python-version: "3.14"
-            include-llvm: false
+            include-llvm: true
             include-pecos: false
 
     steps:

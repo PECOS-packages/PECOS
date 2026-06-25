@@ -236,15 +236,6 @@ jobs:
         tool-cache: false
         swap-storage: true
 
-    - name: Free Disk Space (Windows)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "C:\hostedtoolcache\CodeQL" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "C:\ProgramData\chocolatey" -Recurse -Force -ErrorAction SilentlyContinue
-
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
       with:

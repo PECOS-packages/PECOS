@@ -404,7 +404,7 @@ while IFS=: read -r file line _; do
     save_if_line="$(sed -n "${line},$((line + 16))p" "$file" | rg -o "save-if:.*" | head -1 || true)"
     if [[ -z "$save_if_line" ]] ||
         printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'pull_request'" ||
-        ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'" ||
+        ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
         ! printf '%s\n' "$save_if_line" | rg -q "($trusted_cache_ref_re)"; then
         cache_policy_failures+=("$file:$line rust-cache save-if must be restricted to trusted branch pushes")
     fi
@@ -416,7 +416,7 @@ while IFS=: read -r file line _; do
     if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true' &&
         ([[ -z "$save_cache_line" ]] ||
             printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'pull_request'" ||
-            ! printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'push'" ||
+            ! printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
             ! printf '%s\n' "$save_cache_line" | rg -q "($trusted_cache_ref_re)"); then
         cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
     fi
@@ -430,7 +430,7 @@ while IFS=: read -r file line _; do
     save_if_line="$(sed -n "$((line - 2)),$((line + 2))p" "$file" | rg -o "if:[[:space:]]*.*" | head -1 || true)"
     if [[ -z "$save_if_line" ]] ||
         printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'pull_request'" ||
-        ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'" ||
+        ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
         ! printf '%s\n' "$save_if_line" | rg -q "($trusted_cache_ref_re)"; then
         cache_policy_failures+=("$file:$line actions/cache/save must be restricted to trusted branch pushes")
     fi

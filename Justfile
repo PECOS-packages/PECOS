@@ -907,12 +907,7 @@ python-ci-sync-test:
 python-ci-sync-docs:
     #!/usr/bin/env bash
     set -euo pipefail
-    uv sync --locked \
-      --group dev \
-      --group test \
-      --package pecos-rslib \
-      --package pecos-rslib-llvm \
-      --package quantum-pecos
+    just python-ci-sync
 
 [group('setup')]
 python-ci-sync-lint:

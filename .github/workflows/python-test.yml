@@ -210,7 +210,7 @@ jobs:
       if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       run: just python-ci-core
 
-    - name: Run core Python smoke tests (PR fast path)
+    - name: Validate Python lockfile (PR fast path)
       if: github.event_name == 'pull_request'
       run: uv lock --check --project .
 

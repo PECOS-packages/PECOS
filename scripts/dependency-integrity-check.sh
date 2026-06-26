@@ -46,80 +46,189 @@ collect_files() {
     rg --files "$@"
 }
 
-extract_yaml_scalar_near() {
-    local file="$1"
-    local start_line="$2"
-    local end_line="$3"
-    local key="$4"
-    awk -v start="$start_line" -v end="$end_line" -v key="$key" '
-        NR < start || NR > end { next }
-        !found && $0 ~ "^[[:space:]]*" key ":[[:space:]]*" {
-            found = 1
-            match($0, /^[[:space:]]*/)
-            base_indent = RLENGTH
-            line = $0
-            sub("^[[:space:]]*" key ":[[:space:]]*", "", line)
-            out = line
-            next
-        }
-        found {
-            if ($0 ~ /^[[:space:]]*$/) {
-                next
-            }
-            match($0, /^[[:space:]]*/)
-            indent = RLENGTH
-            if (indent <= base_indent) {
-                exit
-            }
-            line = $0
-            sub(/^[[:space:]]*/, "", line)
-            out = out " " line
-        }
-        END {
-            gsub(/[[:space:]]+/, " ", out)
-            print out
-        }
-    ' "$file"
-}
-
-trusted_cache_ref_ok() {
-    local expr="$1"
-    if [[ "$expr" == *"github.ref_name == 'main'"* ]] ||
-        [[ "$expr" == *"github.ref_name == 'master'"* ]] ||
-        [[ "$expr" == *"github.ref_name == 'development'"* ]] ||
-        [[ "$expr" == *"github.ref_name == 'dev'"* ]]; then
-        return 0
-    fi
-    if [[ "$expr" == *"contains(fromJSON("* ]] &&
-        [[ "$expr" == *"github.ref_name"* ]] &&
-        [[ "$expr" == *'"main"'* ]] &&
-        [[ "$expr" == *'"master"'* ]] &&
-        [[ "$expr" == *'"development"'* ]] &&
-        [[ "$expr" == *'"dev"'* ]]; then
-        return 0
-    fi
-    return 1
-}
-
-has_unsafe_cache_disjunction() {
-    local expr="$1"
-    python3 - "$expr" <<'PY'
+# Validate that a GitHub Actions cache-write guard can ONLY be true on a
+# trusted-branch push. Rather than blacklisting unsafe syntax (which is
+# repeatedly bypassable), this extracts the actual YAML scalar for the guard
+# key on the matched step and structurally ALLOWLISTS it: the expression must
+# be a top-level "&&" chain (no top-level "||", no negation) that includes an
+# exact canonical event predicate (github.event_name == 'push') AND a canonical
+# trusted-ref predicate (contains(fromJSON('[<trusted set>]'), github.ref_name),
+# or an explicit github.ref_name == '<branch>' disjunction over exactly the
+# trusted set). Extra conjuncts (e.g. cache-hit checks) are permitted because an
+# "&&" chain anchored to a trusted-push predicate can only further restrict it.
+cache_guard_ok() {
+    CACHE_GUARD_FILE="$1" CACHE_GUARD_LINE="$2" CACHE_GUARD_KEY="$3" python3 - <<'PY'
+import os
 import re
 import sys
 
-expr = sys.argv[1]
-marker = "github.event_name == 'push' &&"
-idx = expr.find(marker)
-if idx != -1:
-    expr = expr[idx:]
-allowed = re.compile(
-    r"github\.ref_name == 'main'\s*\|\|\s*"
-    r"github\.ref_name == 'master'\s*\|\|\s*"
-    r"github\.ref_name == 'development'\s*\|\|\s*"
-    r"github\.ref_name == 'dev'"
-)
-stripped = allowed.sub("TRUSTED_REF_SET", expr)
-sys.exit(0 if "||" in stripped else 1)
+path = os.environ["CACHE_GUARD_FILE"]
+target = int(os.environ["CACHE_GUARD_LINE"])
+key = os.environ["CACHE_GUARD_KEY"]
+
+with open(path) as fh:
+    lines = fh.read().split("\n")
+n = len(lines)
+idx = target - 1
+
+
+def indent(text):
+    return len(text) - len(text.lstrip(" "))
+
+
+# Find the start of the step (list item) that owns the matched line.
+step_start = None
+step_indent = 0
+for i in range(min(idx, n - 1), -1, -1):
+    stripped = lines[i].lstrip(" ")
+    if stripped.startswith("- "):
+        step_start = i
+        step_indent = indent(lines[i])
+        break
+if step_start is None:
+    sys.exit(1)
+
+# The step ends at the next sibling list item or any dedent below it.
+step_end = n
+for i in range(step_start + 1, n):
+    if lines[i].strip() == "":
+        continue
+    ind = indent(lines[i])
+    if ind < step_indent or (ind == step_indent and lines[i].lstrip(" ").startswith("- ")):
+        step_end = i
+        break
+
+key_re = re.compile(r"^(\s*)(-\s+)?" + re.escape(key) + r"\s*:(.*)$")
+found = None
+for i in range(step_start, step_end):
+    m = key_re.match(lines[i])
+    if m:
+        found = (i, m)
+        break
+if found is None:
+    sys.exit(1)
+
+ki, m = found
+key_indent = len(m.group(1)) + (len(m.group(2)) if m.group(2) else 0)
+value = m.group(3).strip()
+for i in range(ki + 1, step_end):
+    if lines[i].strip() == "":
+        continue
+    if indent(lines[i]) <= key_indent:
+        break
+    value += " " + lines[i].strip()
+
+value = re.sub(r"\s+", " ", value).strip()
+# `if:` conditions may omit the ${{ }} wrapper; action `with:` inputs include
+# it. Accept either, but a bare scalar (e.g. true) simply won't satisfy the
+# trusted-push predicate checks below.
+wrapped = re.match(r"^\$\{\{(.*)\}\}$", value)
+expr = wrapped.group(1).strip() if wrapped else value
+
+
+def has_unary_not(text):
+    in_q = False
+    for j, ch in enumerate(text):
+        if ch == "'":
+            in_q = not in_q
+            continue
+        if in_q:
+            continue
+        if ch == "!" and not (j + 1 < len(text) and text[j + 1] == "="):
+            return True
+    return False
+
+
+def split_top(text, op):
+    parts = []
+    buf = ""
+    depth = 0
+    in_q = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "'":
+            in_q = not in_q
+            buf += ch
+            i += 1
+            continue
+        if in_q:
+            buf += ch
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if depth == 0 and text[i:i + 2] == op:
+            parts.append(buf)
+            buf = ""
+            i += 2
+            continue
+        buf += ch
+        i += 1
+    parts.append(buf)
+    return parts
+
+
+def strip_parens(text):
+    text = text.strip()
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        ok = True
+        for j, ch in enumerate(text):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and j != len(text) - 1:
+                    ok = False
+                    break
+        if not ok:
+            break
+        text = text[1:-1].strip()
+    return text
+
+
+def norm(text):
+    return re.sub(r"\s+", " ", text.strip())
+
+
+TRUSTED = {"main", "master", "development", "dev"}
+
+if has_unary_not(expr):
+    sys.exit(1)
+if len(split_top(expr, "||")) > 1:
+    sys.exit(1)
+
+conjuncts = [norm(strip_parens(c)) for c in split_top(expr, "&&")]
+
+
+def is_event_push(c):
+    return c == "github.event_name == 'push'"
+
+
+def is_trusted_ref(c):
+    m1 = re.match(
+        r"^contains\(\s*fromJSON\(\s*'\[(.*)\]'\s*\)\s*,\s*github\.ref_name\s*\)$",
+        c,
+    )
+    if m1:
+        names = {it.strip().strip('"').strip("'").strip() for it in m1.group(1).split(",")}
+        return names == TRUSTED
+    ors = [norm(strip_parens(o)) for o in split_top(c, "||")]
+    names = set()
+    for o in ors:
+        mo = re.match(r"^github\.ref_name == '([^']*)'$", o)
+        if not mo:
+            return False
+        names.add(mo.group(1))
+    return names == TRUSTED
+
+
+has_push = any(is_event_push(c) for c in conjuncts)
+has_ref = any(is_trusted_ref(c) for c in conjuncts)
+sys.exit(0 if (has_push and has_ref) else 1)
 PY
 }
 
@@ -478,25 +587,15 @@ fi
 section "GitHub Actions cache write posture"
 cache_policy_failures=()
 while IFS=: read -r file line _; do
-    save_if_line="$(extract_yaml_scalar_near "$file" "$line" "$((line + 16))" "save-if")"
-    if [[ -z "$save_if_line" ]] ||
-        has_unsafe_cache_disjunction "$save_if_line" ||
-        printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'pull_request'" ||
-        ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
-        ! trusted_cache_ref_ok "$save_if_line"; then
+    if ! cache_guard_ok "$file" "$line" "save-if"; then
         cache_policy_failures+=("$file:$line rust-cache save-if must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+Swatinem/rust-cache@' .github/workflows || true)
 
 while IFS=: read -r file line _; do
     setup_uv_block="$(sed -n "${line},$((line + 16))p" "$file")"
-    save_cache_line="$(extract_yaml_scalar_near "$file" "$line" "$((line + 16))" "save-cache")"
     if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true' &&
-        ([[ -z "$save_cache_line" ]] ||
-            has_unsafe_cache_disjunction "$save_cache_line" ||
-            printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'pull_request'" ||
-            ! printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
-            ! trusted_cache_ref_ok "$save_cache_line"); then
+        ! cache_guard_ok "$file" "$line" "save-cache"; then
         cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+astral-sh/setup-uv@' .github/workflows || true)
@@ -506,12 +605,7 @@ while IFS=: read -r file line _; do
 done < <(rg -n 'uses:\s+actions/cache@' .github/workflows || true)
 
 while IFS=: read -r file line _; do
-    save_if_line="$(extract_yaml_scalar_near "$file" "$((line - 2))" "$((line + 2))" "if")"
-    if [[ -z "$save_if_line" ]] ||
-        has_unsafe_cache_disjunction "$save_if_line" ||
-        printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'pull_request'" ||
-        ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
-        ! trusted_cache_ref_ok "$save_if_line"; then
+    if ! cache_guard_ok "$file" "$line" "if"; then
         cache_policy_failures+=("$file:$line actions/cache/save must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+actions/cache/save@' .github/workflows || true)

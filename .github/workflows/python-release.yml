@@ -774,12 +774,20 @@ jobs:
               mv "${llvm_wheels[@]}" dist/pecos-rslib-llvm/
             fi
           done
-          rslib_dirs=(temp-artifacts/wheel-pecos-rslib-*/)
+          # Collect only base pecos-rslib dirs; exclude pecos-rslib-llvm-*,
+          # whose prefix overlaps the glob and whose wheels were moved above.
+          rslib_dirs=()
+          for artifact in temp-artifacts/wheel-pecos-rslib-*/; do
+            case "$artifact" in
+              temp-artifacts/wheel-pecos-rslib-llvm-*/) continue ;;
+            esac
+            rslib_dirs+=("$artifact")
+          done
           if [ "${#rslib_dirs[@]}" -eq 0 ]; then
             echo "Expected pecos-rslib artifact directories, but none were found."
             exit 1
           fi
-          for artifact in temp-artifacts/wheel-pecos-rslib-*/; do
+          for artifact in "${rslib_dirs[@]}"; do
             if [ -d "$artifact" ]; then
               echo "Processing $artifact"
               rslib_wheels=("$artifact"*.whl)

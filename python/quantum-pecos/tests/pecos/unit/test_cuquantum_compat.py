@@ -66,6 +66,31 @@ def test_falls_back_to_legacy_custatevec(monkeypatch) -> None:
     assert module.cusv is legacy
 
 
+def test_falls_back_to_legacy_custatevec_when_bindings_lacks_member(monkeypatch) -> None:
+    legacy = object()
+
+    cuquantum = types.ModuleType("cuquantum")
+    cuquantum.__path__ = []
+    cuquantum.custatevec = legacy
+    cuquantum_bindings = types.ModuleType("cuquantum.bindings")
+    cuquantum_bindings.__path__ = []
+
+    original_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "cuquantum.bindings" and "custatevec" in fromlist:
+            raise ImportError("cannot import name 'custatevec' from 'cuquantum.bindings'")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setitem(sys.modules, "cuquantum", cuquantum)
+    monkeypatch.setitem(sys.modules, "cuquantum.bindings", cuquantum_bindings)
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    module = _load_module("_test_cuquantum_compat_missing_member")
+
+    assert module.cusv is legacy
+
+
 def test_propagates_non_missing_module_errors(monkeypatch) -> None:
     cuquantum = types.ModuleType("cuquantum")
     cuquantum.__path__ = []  # mark as package for import machinery

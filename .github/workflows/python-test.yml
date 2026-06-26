@@ -601,4 +601,16 @@ jobs:
 
       - name: Vanilla cargo check (publishable crates, no just/bootstrap)
         shell: pwsh
-        run: cargo check --locked -p pecos-build -p pecos-core
+        run: |
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            cargo check --locked -p pecos-build -p pecos-core
+            if ($LASTEXITCODE -eq 0) {
+              break
+            }
+            if ($attempt -eq $maxAttempts) {
+              throw "Vanilla cargo check failed after $maxAttempts attempts"
+            }
+            Start-Sleep -Seconds (5 * $attempt)
+            Write-Host "Retrying vanilla cargo check (attempt $($attempt + 1)/$maxAttempts)..."
+          }

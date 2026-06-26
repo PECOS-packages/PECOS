@@ -399,7 +399,7 @@ fi
 
 section "GitHub Actions cache write posture"
 cache_policy_failures=()
-trusted_cache_ref_re="github\\.ref_name == '(main|master|development|dev)'|contains\\(fromJSON\\('\\[\\\"main\\\", \\\"master\\\", \\\"development\\\", \\\"dev\\\"\\]'\\), github\\.ref_name\\)|github\\.ref_name == 'main'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'master'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'development'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'dev'"
+trusted_cache_ref_re="github\\.ref_name == '(main|master|development|dev)'|contains\\(fromJSON\\('\\[[[:space:]]*\\\"main\\\"[[:space:]]*,[[:space:]]*\\\"master\\\"[[:space:]]*,[[:space:]]*\\\"development\\\"[[:space:]]*,[[:space:]]*\\\"dev\\\"[[:space:]]*\\]'\\)[[:space:]]*,[[:space:]]*github\\.ref_name\\)|github\\.ref_name == 'main'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'master'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'development'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'dev'"
 while IFS=: read -r file line _; do
     save_if_line="$(sed -n "${line},$((line + 16))p" "$file" | rg -o "save-if:.*" | head -1 || true)"
     if [[ -z "$save_if_line" ]] ||

@@ -119,6 +119,37 @@ def test_guppy_barrier_survives_into_qis_operation_trace() -> None:
     assert any(operation == "Barrier" or "Barrier" in operation for operation in operations)
 
 
+@pytest.mark.xfail(
+    reason=(
+        "Generated SZZ runtime barriers are emitted as public Guppy barrier(...) "
+        "calls today, which are optimized away before PECOS QIS operation "
+        "collection; hosted SZZ scheduling needs a barrier-preserving or "
+        "hosted-operation lowering path."
+    ),
+    strict=True,
+)
+def test_szz_runtime_barrier_survives_into_qis_operation_trace() -> None:
+    program = make_surface_code(
+        distance=3,
+        num_rounds=1,
+        basis="Z",
+        interaction_basis="szz",
+        szz_runtime_barriers="data-prefix",
+    )
+    chunks = capture_guppy_operation_trace(
+        program,
+        num_qubits=get_num_qubits(d=3, interaction_basis="szz"),
+        seed=0,
+    )
+    operations = [
+        operation
+        for chunk in chunks
+        for operation in chunk.get("operations", [])
+    ]
+
+    assert any(operation == "Barrier" or "Barrier" in str(operation) for operation in operations)
+
+
 def test_qubit_trace_metadata_stays_ordered_before_gate() -> None:
     chunks = capture_guppy_operation_trace(_metadata_before_h_gate, num_qubits=1, seed=0)
     lowered_ops = [

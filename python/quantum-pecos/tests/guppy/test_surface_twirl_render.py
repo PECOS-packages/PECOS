@@ -24,6 +24,32 @@ def patch() -> SurfacePatch:
     return SurfacePatch.create(distance=3)
 
 
+def _assert_szz_prefix_barrier_host_order(src: str) -> None:
+    """Assert a real SZZ data-prefix pulse is fenced before its host."""
+    lines = src.splitlines()
+    for index, line in enumerate(lines):
+        if "vdg(d1)" not in line:
+            continue
+        prefix_meta = next(
+            i
+            for i in range(index - 1, -1, -1)
+            if '"source_kind", "szz_data_prefix"' in lines[i]
+        )
+        barrier_index = next(i for i in range(index + 1, len(lines)) if "barrier(" in lines[i])
+        host_meta = next(
+            i
+            for i in range(barrier_index + 1, len(lines))
+            if '"source_kind", "szz_host"' in lines[i]
+        )
+        zz_phase_index = next(i for i in range(host_meta + 1, len(lines)) if "zz_phase(" in lines[i])
+
+        assert prefix_meta < index < barrier_index < host_meta < zz_phase_index
+        return
+
+    msg = "expected an SZZ touch with a Vdg data-prefix pulse"
+    raise AssertionError(msg)
+
+
 def test_no_twirl_source_has_no_rng_or_mask_tags(patch: SurfacePatch) -> None:
     src = generate_guppy_source(patch)
 
@@ -130,18 +156,7 @@ def test_szz_runtime_barriers_precede_data_prefix_and_host(patch: SurfacePatch) 
         interaction_basis="szz",
     )
 
-    lines = src.splitlines()
-    for index, line in enumerate(lines):
-        if "vdg(d1)" in line:
-            nearby = lines[index - 2 : index + 2]
-            assert "barrier(" in nearby[0]
-            assert "h(d1)" in nearby[1]
-            assert "vdg(d1)" in nearby[2]
-            assert "zz_phase(" in nearby[3]
-            break
-    else:
-        msg = "expected an SZZ touch with a Vdg data-prefix pulse"
-        raise AssertionError(msg)
+    _assert_szz_prefix_barrier_host_order(src)
 
 
 def test_szz_data_prefix_runtime_barriers_only_guard_real_prefixes(patch: SurfacePatch) -> None:
@@ -159,18 +174,7 @@ def test_szz_data_prefix_runtime_barriers_only_guard_real_prefixes(patch: Surfac
     assert "barrier(" in prefix_src
     assert prefix_src.count("barrier(") < all_src.count("barrier(")
 
-    lines = prefix_src.splitlines()
-    for index, line in enumerate(lines):
-        if "vdg(d1)" in line:
-            nearby = lines[index - 2 : index + 2]
-            assert "barrier(" in nearby[0]
-            assert "h(d1)" in nearby[1]
-            assert "vdg(d1)" in nearby[2]
-            assert "zz_phase(" in nearby[3]
-            break
-    else:
-        msg = "expected an SZZ touch with a Vdg data-prefix pulse"
-        raise AssertionError(msg)
+    _assert_szz_prefix_barrier_host_order(prefix_src)
 
 
 def test_szz_runtime_barriers_reject_cx_source(patch: SurfacePatch) -> None:

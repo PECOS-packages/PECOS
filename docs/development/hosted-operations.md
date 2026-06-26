@@ -104,6 +104,9 @@ Current state:
 - A minimal Guppy public `barrier(...)` probe is currently optimized away before
   PECOS QIS operation collection. The captured raw operation trace contains
   allocations, gates, measurements, and releases, but no `Barrier` operation.
+- The generated surface SZZ/SZZdg path can emit public Guppy barriers via
+  `szz_runtime_barriers`, but those barriers currently disappear for the same
+  reason before PECOS QIS operation collection.
 
 So barrier preservation requires a Guppy/HUGR/QIR/QIS bridge that lowers public
 barriers or qsystem `RuntimeBarrier` operations into `Operation::Barrier`
@@ -177,7 +180,9 @@ duration or tick separation, and the relevant policy.
 ## Recommended Next Slice
 
 1. Add a minimal barrier-survival diagnostic for public Guppy barriers in QIS
-   traces.
+   traces. Current strict-xfail regression targets:
+   `test_guppy_barrier_survives_into_qis_operation_trace` and
+   `test_szz_runtime_barrier_survives_into_qis_operation_trace`.
 2. If preserving public barriers is small and generic, implement it as a
    separate quality-of-lowering improvement.
 3. Prototype an explicit hosted SZZ prefix relationship in the QIS trace path.

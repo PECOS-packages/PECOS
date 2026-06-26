@@ -40,8 +40,10 @@ def test_prefers_bindings_custatevec(monkeypatch) -> None:
     bindings = object()
 
     cuquantum = types.ModuleType("cuquantum")
+    cuquantum.__path__ = []
     cuquantum.custatevec = legacy
     cuquantum_bindings = types.ModuleType("cuquantum.bindings")
+    cuquantum_bindings.__path__ = []
     cuquantum_bindings.custatevec = bindings
 
     monkeypatch.setitem(sys.modules, "cuquantum", cuquantum)
@@ -56,6 +58,7 @@ def test_falls_back_to_legacy_custatevec(monkeypatch) -> None:
     legacy = object()
 
     cuquantum = types.ModuleType("cuquantum")
+    cuquantum.__path__ = []
     cuquantum.custatevec = legacy
 
     monkeypatch.setitem(sys.modules, "cuquantum", cuquantum)

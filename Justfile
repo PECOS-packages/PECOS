@@ -257,6 +257,7 @@ pytest *args:
         uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
         uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
         uv run --frozen pytest python/selene-plugins
+    fi
 
 # Run the substantive PR Python lane after building the test-only native bindings it needs.
 [group('test')]

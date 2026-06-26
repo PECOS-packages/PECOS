@@ -399,17 +399,25 @@ fi
 
 section "GitHub Actions cache write posture"
 cache_policy_failures=()
-trusted_cache_ref_re="github\\.ref_name == '(main|master|development|dev)'|contains\\(fromJSON\\('\\[\\\"main\\\", \\\"master\\\", \\\"development\\\", \\\"dev\\\"\\]'\\), github\\.ref_name\\)"
+trusted_cache_ref_re="github\\.ref_name == '(main|master|development|dev)'|contains\\(fromJSON\\('\\[\\\"main\\\", \\\"master\\\", \\\"development\\\", \\\"dev\\\"\\]'\\), github\\.ref_name\\)|github\\.ref_name == 'main'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'master'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'development'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'dev'"
 while IFS=: read -r file line _; do
-    if ! sed -n "${line},$((line + 16))p" "$file" | rg -q "save-if:.*github\.event_name == 'push'.*($trusted_cache_ref_re)"; then
+    save_if_line="$(sed -n "${line},$((line + 16))p" "$file" | rg -o "save-if:.*" | head -1 || true)"
+    if [[ -z "$save_if_line" ]] ||
+        printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'pull_request'" ||
+        ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'" ||
+        ! printf '%s\n' "$save_if_line" | rg -q "($trusted_cache_ref_re)"; then
         cache_policy_failures+=("$file:$line rust-cache save-if must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+Swatinem/rust-cache@' .github/workflows || true)
 
 while IFS=: read -r file line _; do
     setup_uv_block="$(sed -n "${line},$((line + 16))p" "$file")"
+    save_cache_line="$(printf '%s\n' "$setup_uv_block" | rg -o "save-cache:.*" | head -1 || true)"
     if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true' &&
-        ! printf '%s\n' "$setup_uv_block" | rg -q "save-cache:.*github\.event_name == 'push'.*($trusted_cache_ref_re)"; then
+        ([[ -z "$save_cache_line" ]] ||
+            printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'pull_request'" ||
+            ! printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'push'" ||
+            ! printf '%s\n' "$save_cache_line" | rg -q "($trusted_cache_ref_re)"); then
         cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+astral-sh/setup-uv@' .github/workflows || true)
@@ -419,7 +427,11 @@ while IFS=: read -r file line _; do
 done < <(rg -n 'uses:\s+actions/cache@' .github/workflows || true)
 
 while IFS=: read -r file line _; do
-    if ! sed -n "$((line - 2)),$((line + 2))p" "$file" | rg -q "if:.*github\.event_name == 'push'.*($trusted_cache_ref_re)"; then
+    save_if_line="$(sed -n "$((line - 2)),$((line + 2))p" "$file" | rg -o "if:[[:space:]]*.*" | head -1 || true)"
+    if [[ -z "$save_if_line" ]] ||
+        printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'pull_request'" ||
+        ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'" ||
+        ! printf '%s\n' "$save_if_line" | rg -q "($trusted_cache_ref_re)"; then
         cache_policy_failures+=("$file:$line actions/cache/save must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+actions/cache/save@' .github/workflows || true)

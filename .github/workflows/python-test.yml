@@ -18,6 +18,9 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'pyproject.toml'
+      - 'ruff.toml'
+      - '.pre-commit-config.yaml'
       - 'uv.lock'
       - 'Justfile'
       - 'scripts/ci/**'
@@ -30,6 +33,9 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'pyproject.toml'
+      - 'ruff.toml'
+      - '.pre-commit-config.yaml'
       - 'uv.lock'
       - 'Justfile'
       - 'scripts/ci/**'
@@ -225,7 +231,7 @@ jobs:
           - os: macOS-latest
             python-version: "3.10"
             artifact-name: python-compat-smoke-macos
-            build-llvm: false
+            build-llvm: true
             build-quantum-pecos: false
 
     steps:
@@ -453,10 +459,13 @@ jobs:
       run: |
         uv pip install --system --force-reinstall ./python-compat-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl
         if [ "${{ matrix.include-llvm }}" = "true" ]; then
-          llvm_whl=$(ls ./python-compat-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl 2>/dev/null | head -1 || true)
-          if [ -n "$llvm_whl" ]; then
-            uv pip install --system --force-reinstall "$llvm_whl"
+          shopt -s nullglob
+          llvm_wheels=(./python-compat-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl)
+          if [ "${#llvm_wheels[@]}" -eq 0 ]; then
+            echo "Expected pecos-rslib-llvm wheel for include-llvm matrix entry, but none was found."
+            exit 1
           fi
+          uv pip install --system --force-reinstall "${llvm_wheels[0]}"
         fi
         if [ "${{ matrix.include-pecos }}" = "true" ]; then
           uv pip install --system \

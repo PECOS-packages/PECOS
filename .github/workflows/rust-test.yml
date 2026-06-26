@@ -14,12 +14,14 @@ on:
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/**'
+      - 'exp/**'
       - 'examples/**'
       - 'julia/pecos-julia-ffi/**'
       - 'python/pecos-rslib-cuda/**'
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-llvm/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'Justfile'
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
@@ -27,12 +29,14 @@ on:
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/**'
+      - 'exp/**'
       - 'examples/**'
       - 'julia/pecos-julia-ffi/**'
       - 'python/pecos-rslib-cuda/**'
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-llvm/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'Justfile'
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'

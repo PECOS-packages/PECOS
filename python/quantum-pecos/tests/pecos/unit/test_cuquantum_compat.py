@@ -28,8 +28,11 @@ def _load_module(module_name: str):
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+    try:
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_prefers_bindings_custatevec(monkeypatch) -> None:
@@ -61,3 +64,27 @@ def test_falls_back_to_legacy_custatevec(monkeypatch) -> None:
     module = _load_module("_test_cuquantum_compat_legacy")
 
     assert module.cusv is legacy
+
+
+def test_propagates_non_missing_module_errors(monkeypatch) -> None:
+    cuquantum = types.ModuleType("cuquantum")
+    cuquantum.__path__ = []  # mark as package for import machinery
+    cuquantum_bindings = types.ModuleType("cuquantum.bindings")
+
+    original_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "cuquantum.bindings" and "custatevec" in fromlist:
+            raise ModuleNotFoundError("libcustatevec.so: cannot open shared object file", name="libcustatevec.so")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setitem(sys.modules, "cuquantum", cuquantum)
+    monkeypatch.setitem(sys.modules, "cuquantum.bindings", cuquantum_bindings)
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    try:
+        _load_module("_test_cuquantum_compat_import_error")
+    except ModuleNotFoundError as exc:
+        assert exc.name == "libcustatevec.so"
+    else:
+        raise AssertionError("expected ModuleNotFoundError to propagate")

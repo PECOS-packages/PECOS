@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
+from pecos.quantum import validate_hosted_operations
 
 if TYPE_CHECKING:
     import stim
@@ -1131,7 +1132,7 @@ def _lowered_gate_metadata(gate: Mapping[str, Any]) -> dict[str, Any]:
         return {}
     if not isinstance(metadata, Mapping):
         msg = f"Lowered gate metadata must be an object, got {metadata!r}"
-        raise ValueError(msg)
+        raise TypeError(msg)
     return {str(key): value for key, value in metadata.items()}
 
 
@@ -1385,16 +1386,22 @@ def trace_guppy_into_tick_circuit_with_result_traces(
     seed: int = 0,
     runtime: object | None = None,
     measurement_crosstalk_topology: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a Guppy/QIS program into a ``TickCircuit`` plus result-tag provenance."""
     chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    return (
-        _replay_qis_trace_chunks_into_tick_circuit(
-            chunks,
-            measurement_crosstalk_topology=measurement_crosstalk_topology,
-        ),
-        named_result_traces_from_operation_trace(chunks),
+    tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
+        chunks,
+        measurement_crosstalk_topology=measurement_crosstalk_topology,
     )
+    _validate_trace_hosted_operations_if_requested(
+        tick_circuit,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
+        context="trace_guppy_into_tick_circuit_with_result_traces",
+    )
+    return tick_circuit, named_result_traces_from_operation_trace(chunks)
 
 
 def trace_guppy_into_tick_circuit(
@@ -1404,6 +1411,8 @@ def trace_guppy_into_tick_circuit(
     seed: int = 0,
     runtime: object | None = None,
     measurement_crosstalk_topology: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> Any:
     """Trace a Guppy/QIS program's lowered Selene op stream into a ``TickCircuit``.
 
@@ -1430,15 +1439,46 @@ def trace_guppy_into_tick_circuit(
             ``pecos.selene_engine(runtime)``.
         measurement_crosstalk_topology: Optional measurement-crosstalk replay
             mode for stamping global measurement-crosstalk payload markers.
+        require_hosted_operation_order: If true, validate generic hosted-operation
+            metadata after trace replay. A gate with ``local_role`` metadata
+            must bind to a later same-``host_id`` host gate sharing a qubit.
+            This catches runtime/compiler lowering that reorders hosted local
+            pulses after the operation they semantically prepare.
+        max_hosted_tick_separation: Optional maximum absolute signed tick
+            separation accepted by the hosted-operation validator.
 
     Returns:
         A ``TickCircuit`` with no detector/observable metadata attached; the
         caller supplies that.
     """
     chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    return _replay_qis_trace_chunks_into_tick_circuit(
+    tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
+    )
+    _validate_trace_hosted_operations_if_requested(
+        tick_circuit,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
+        context="trace_guppy_into_tick_circuit",
+    )
+    return tick_circuit
+
+
+def _validate_trace_hosted_operations_if_requested(
+    tick_circuit: Any,
+    *,
+    require_hosted_operation_order: bool,
+    max_hosted_tick_separation: int | None,
+    context: str,
+) -> None:
+    if not require_hosted_operation_order and max_hosted_tick_separation is None:
+        return
+    validate_hosted_operations(
+        tick_circuit,
+        max_tick_separation=max_hosted_tick_separation,
+        require_host_after_local=require_hosted_operation_order,
+        context=context,
     )
 
 
@@ -1452,6 +1492,8 @@ def _generate_traced_surface_tick_circuit(
     check_plan: str | None = None,
     runtime: object | None = None,
     clifford_frame_policy: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> Any:
     """Trace the lowered ideal Selene/QIS op stream and replay it into a TickCircuit.
 
@@ -1476,6 +1518,8 @@ def _generate_traced_surface_tick_circuit(
         check_plan=check_plan,
         runtime=runtime,
         clifford_frame_policy=clifford_frame_policy,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
     return tc
 
@@ -1490,6 +1534,8 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
     check_plan: str | None = None,
     runtime: object | None = None,
     clifford_frame_policy: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a surface Guppy program into a ``TickCircuit`` plus result provenance."""
     from pecos.guppy.surface import generate_memory_experiment, get_num_qubits
@@ -1514,6 +1560,8 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
         ),
         seed=0,
         runtime=runtime,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
 
 
@@ -1530,6 +1578,8 @@ def _build_surface_tick_circuit_for_native_model(
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
     clifford_frame_policy: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> Any:
     """Build the TickCircuit used by the native DEM and sampler paths."""
     from pecos.qec.surface.circuit_builder import _normalize_interaction_basis, generate_tick_circuit_from_patch
@@ -1580,6 +1630,8 @@ def _build_surface_tick_circuit_for_native_model(
         check_plan=resolved_plan.plan_id,
         runtime=runtime,
         clifford_frame_policy=clifford_frame_policy,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
 
     measurement_index_remap = _surface_runtime_measurement_remap_from_result_traces(abstract_tc, result_traces)
@@ -1624,6 +1676,8 @@ def build_memory_circuit(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> Any:
     """Build the standard surface-code memory ``TickCircuit``.
 
@@ -1650,6 +1704,11 @@ def build_memory_circuit(
         check_plan: Named surface check-plan preset.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for native abstract SZZ generation.
+        require_hosted_operation_order: For ``circuit_source="traced_qis"``,
+            validate generic hosted-operation metadata after trace replay. A
+            hosted local gate must appear before its same-``host_id`` host.
+        max_hosted_tick_separation: Optional maximum absolute signed tick
+            separation accepted by the hosted-operation validator.
 
     Returns:
         A Rust-backed ``TickCircuit`` with detector and observable metadata.
@@ -1685,6 +1744,8 @@ def build_memory_circuit(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
 
 
@@ -1905,6 +1966,8 @@ def _surface_native_topology(
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
     clifford_frame_policy: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> _CachedNativeSurfaceTopology:
     """Build topology-only native analysis shared across noise parameters."""
     import json
@@ -1936,6 +1999,8 @@ def _surface_native_topology(
         check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
         clifford_frame_policy=clifford_frame_policy,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
     if circuit_source == "traced_qis":
         # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
@@ -2010,6 +2075,8 @@ def _cached_surface_native_topology(
     szz_physical_prefixes: bool = False,
     resolved_check_plan_hash: str = "",
     clifford_frame_policy: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> _CachedNativeSurfaceTopology:
     """Cache topology-only native analysis shared across noise parameters."""
     _ = resolved_check_plan_hash
@@ -2025,6 +2092,8 @@ def _cached_surface_native_topology(
         check_plan=check_plan,
         szz_physical_prefixes=szz_physical_prefixes,
         clifford_frame_policy=clifford_frame_policy,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
 
 
@@ -2111,6 +2180,9 @@ def _cached_surface_native_dem_string(
     check_plan: str | None = None,
     resolved_check_plan_hash: str = "",
     clifford_frame_policy: str | None = None,
+    *,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> str:
     """Cache native DEM strings across callers for one topology + noise tuple."""
     _ = resolved_check_plan_hash
@@ -2149,6 +2221,8 @@ def _cached_surface_native_dem_string(
         szz_physical_prefixes=szz_physical_prefixes,
         resolved_check_plan_hash=resolved_check_plan_hash,
         clifford_frame_policy=clifford_frame_policy,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
     return _dem_string_from_cached_surface_topology(
         topology,
@@ -2263,6 +2337,8 @@ def generate_circuit_level_dem_from_builder(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> str:
     """Generate circuit-level DEM using PECOS native fault propagation.
 
@@ -2318,6 +2394,12 @@ def generate_circuit_level_dem_from_builder(
             policy for native SZZ generation. For ``circuit_source="traced_qis"``,
             the Guppy program is generated from the same concrete deformed
             checks before runtime result tags are bound to surface metadata.
+        require_hosted_operation_order: For ``circuit_source="traced_qis"``,
+            validate generic hosted-operation metadata after runtime trace
+            replay. This is intended for source-local pulses that semantically
+            prepare a later host operation, such as SZZ/SZZdg data prefixes.
+        max_hosted_tick_separation: Optional maximum absolute signed tick
+            separation accepted by the hosted-operation validator.
 
     Returns:
         DEM string in standard format
@@ -2352,6 +2434,8 @@ def generate_circuit_level_dem_from_builder(
             check_plan=resolved_plan.plan_id,
             szz_physical_prefixes=szz_physical_prefixes,
             clifford_frame_policy=clifford_frame_policy,
+            require_hosted_operation_order=require_hosted_operation_order,
+            max_hosted_tick_separation=max_hosted_tick_separation,
         )
         return _dem_string_from_cached_surface_topology(
             topology,
@@ -2383,6 +2467,8 @@ def generate_circuit_level_dem_from_builder(
         "check_plan": resolved_plan.plan_id,
         "resolved_check_plan_hash": resolved_plan.resolved_hash,
         "clifford_frame_policy": clifford_frame_policy,
+        "require_hosted_operation_order": require_hosted_operation_order,
+        "max_hosted_tick_separation": max_hosted_tick_separation,
     }
     if dem_decomposition != "source_graphlike":
         cache_kwargs["dem_decomposition"] = dem_decomposition
@@ -3811,6 +3897,8 @@ def surface_code_memory(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> SimulationResult:
     """Run the recommended native surface-code memory workflow.
 
@@ -3841,6 +3929,11 @@ def surface_code_memory(
             supplied.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for native SZZ generation.
+        require_hosted_operation_order: For ``circuit_source="traced_qis"``,
+            validate generic hosted-operation metadata after runtime trace
+            replay.
+        max_hosted_tick_separation: Optional maximum absolute signed tick
+            separation accepted by the hosted-operation validator.
 
     Returns:
         ``SimulationResult`` with logical and raw error counts/rates.
@@ -3881,6 +3974,8 @@ def surface_code_memory(
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
     batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(shots, seed)
     num_raw_errors = sum(1 for shot in range(shots) if batch.get_observable_mask(shot) != 0)
@@ -4182,6 +4277,9 @@ def build_native_sampler(
     ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    *,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
 ) -> NativeSampler:
     """Build a PECOS native sampler for threshold estimation.
 
@@ -4222,6 +4320,11 @@ def build_native_sampler(
             supplied.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for native abstract SZZ generation.
+        require_hosted_operation_order: For ``circuit_source="traced_qis"``,
+            validate generic hosted-operation metadata after runtime trace
+            replay.
+        max_hosted_tick_separation: Optional maximum absolute signed tick
+            separation accepted by the hosted-operation validator.
 
     Returns:
         NativeSampler that can generate samples for threshold estimation
@@ -4255,6 +4358,8 @@ def build_native_sampler(
         szz_physical_prefixes=szz_physical_prefixes,
         resolved_check_plan_hash=resolved_plan.resolved_hash,
         clifford_frame_policy=clifford_frame_policy,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
     )
     if sampling_model == "dem":
         dem_str = _cached_surface_native_dem_string(
@@ -4293,6 +4398,8 @@ def build_native_sampler(
             check_plan=resolved_plan.plan_id,
             resolved_check_plan_hash=resolved_plan.resolved_hash,
             clifford_frame_policy=clifford_frame_policy,
+            require_hosted_operation_order=require_hosted_operation_order,
+            max_hosted_tick_separation=max_hosted_tick_separation,
         )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(

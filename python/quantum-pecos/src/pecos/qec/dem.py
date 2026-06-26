@@ -136,6 +136,8 @@ class _DetectorErrorModelMixin:
         p_idle_z_quadratic_sine_rate: float | None = None,
         runtime: object | None = None,
         seed: int = 0,
+        require_hosted_operation_order: bool = False,
+        max_hosted_tick_separation: int | None = None,
     ) -> _RustDetectorErrorModel:
         """Build a circuit-level DEM from a Guppy program by tracing it.
 
@@ -244,6 +246,12 @@ class _DetectorErrorModelMixin:
                 the default Selene runtime. Runtime plugin objects are passed
                 through to ``pecos.selene_engine(runtime)``.
             seed: Seed for the ideal trace run.
+            require_hosted_operation_order: If true, validate generic
+                hosted-operation metadata after trace replay. A gate with
+                ``local_role`` metadata must bind to a later same-``host_id``
+                host gate sharing a qubit.
+            max_hosted_tick_separation: Optional maximum absolute signed tick
+                separation accepted by the hosted-operation validator.
 
         Returns:
             A ``DetectorErrorModel`` built from the traced circuit.
@@ -305,7 +313,14 @@ class _DetectorErrorModelMixin:
                 )
                 raise ValueError(msg) from exc
 
-        tc = trace_guppy_into_tick_circuit(guppy, num_qubits, seed=seed, runtime=runtime)
+        tc = trace_guppy_into_tick_circuit(
+            guppy,
+            num_qubits,
+            seed=seed,
+            runtime=runtime,
+            require_hosted_operation_order=require_hosted_operation_order,
+            max_hosted_tick_separation=max_hosted_tick_separation,
+        )
 
         # Compilation passes required for traced QIS circuits before fault
         # analysis: normalize parameterized Clifford rotations to named gates,

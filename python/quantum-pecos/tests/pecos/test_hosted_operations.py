@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pecos.qec.surface.decode import _validate_trace_hosted_operations_if_requested
 from pecos.quantum.hosted import validate_hosted_operations
 
 
@@ -195,3 +196,62 @@ def test_validate_hosted_operations_rejects_large_tick_separation() -> None:
 
     with pytest.raises(ValueError, match="exceeding max_tick_separation=2"):
         validate_hosted_operations(circuit, max_tick_separation=2)
+
+
+def test_trace_hosted_validation_is_noop_unless_requested() -> None:
+    circuit = FakeTickCircuit(
+        [[FakeGate("H", [0], meta={"local_role": "basis_prefix"})]],
+    )
+
+    _validate_trace_hosted_operations_if_requested(
+        circuit,
+        require_hosted_operation_order=False,
+        max_hosted_tick_separation=None,
+        context="test trace validation",
+    )
+
+
+def test_trace_hosted_validation_rejects_ordering_drift_when_requested() -> None:
+    circuit = FakeTickCircuit(
+        [
+            [FakeGate("SZZ", [0, 1], meta={"host_id": "host:a"})],
+            [
+                FakeGate(
+                    "H",
+                    [0],
+                    meta={"host_id": "host:a", "local_role": "basis_prefix"},
+                ),
+            ],
+        ],
+    )
+
+    with pytest.raises(ValueError, match="ordering drift"):
+        _validate_trace_hosted_operations_if_requested(
+            circuit,
+            require_hosted_operation_order=True,
+            max_hosted_tick_separation=None,
+            context="test trace validation",
+        )
+
+
+def test_trace_hosted_validation_can_check_separation_without_order_guard() -> None:
+    circuit = FakeTickCircuit(
+        [
+            [FakeGate("SZZ", [0, 1], meta={"host_id": "host:a"})],
+            [
+                FakeGate(
+                    "H",
+                    [0],
+                    meta={"host_id": "host:a", "local_role": "basis_prefix"},
+                ),
+            ],
+        ],
+    )
+
+    with pytest.raises(ValueError, match="exceeding max_tick_separation=0"):
+        _validate_trace_hosted_operations_if_requested(
+            circuit,
+            require_hosted_operation_order=False,
+            max_hosted_tick_separation=0,
+            context="test trace validation",
+        )

@@ -2221,28 +2221,6 @@ fn subgraph_to_dem_string(graph: &pecos_decoder_core::DemMatchingGraph) -> Strin
 ///
 /// This is the shared factory used by `SampleBatch.decode_count`,
 /// `DemSampler.sample_decode_count`, and the parallel variants.
-/// Reject a DEM whose observable count exceeds 64, the limit of the legacy
-/// `u64` decode/decode_count APIs that build or compare `u64` observable masks
-/// (`1u64 << obs_idx`). This guards on the *decoder/DEM* observable width, which
-/// is independent of the batch's stored truth-mask width: a narrow batch paired
-/// with a wide DEM would otherwise overflow `1 << j` in the prediction path.
-/// Callers with more than 64 observables must use the wide
-/// `LogicalSubgraphDecoder` decode/decode_count paths (arbitrary-precision int).
-fn ensure_narrow_dem(dem: &str) -> PyResult<()> {
-    let parsed = dem
-        .parse::<RustParsedDem>()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    let n = parsed.num_observables();
-    if n > 64 {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "DEM has {n} observables, exceeding the 64-observable limit of this u64-based \
-             decode API; use the wide LogicalSubgraphDecoder decode/decode_count paths \
-             (arbitrary-precision int) for more than 64 observables"
-        )));
-    }
-    Ok(())
-}
-
 fn create_observable_decoder(
     dem: &str,
     decoder_type: &str,
@@ -3568,15 +3546,18 @@ impl PySampleBatch {
     ///     Number of logical errors.
     #[pyo3(signature = (dem, decoder_type="pymatching"))]
     fn decode_count(&self, dem: &str, decoder_type: &str) -> PyResult<usize> {
-        self.ensure_narrow_observables()?;
-        ensure_narrow_dem(dem)?;
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut errors = 0usize;
         let mut syndrome = vec![0u8; self.num_detectors];
         for i in 0..self.num_shots {
             self.extract_syndrome(i, &mut syndrome);
-            let predicted = decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX);
-            if predicted != self.extract_obs_mask(i) {
+            // Wide ObsMask comparison: inline (one stack word) for the typical
+            // <=64 observables, correct without truncation beyond. A decode
+            // failure counts as a logical error (matching the prior sentinel).
+            let is_error = decoder
+                .decode_obs(&syndrome)
+                .map_or(true, |p| p != self.extract_obs_mask_wide(i));
+            if is_error {
                 errors += 1;
             }
         }
@@ -3594,10 +3575,15 @@ impl PySampleBatch {
     ///     `decoder_type`: Decoder type string.
     ///
     /// Returns:
-    ///     List of predicted observable masks, one per shot.
+    ///     List of predicted observable masks (Python ints; arbitrary precision,
+    ///     so more than 64 observables are not truncated), one per shot.
     #[pyo3(signature = (dem, decoder_type="pymatching"))]
-    fn decode_each(&self, dem: &str, decoder_type: &str) -> PyResult<Vec<u64>> {
-        ensure_narrow_dem(dem)?;
+    fn decode_each(
+        &self,
+        py: Python<'_>,
+        dem: &str,
+        decoder_type: &str,
+    ) -> PyResult<Vec<Py<pyo3::PyAny>>> {
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut predictions = Vec::with_capacity(self.num_shots);
         let mut syndrome = vec![0u8; self.num_detectors];
@@ -3606,9 +3592,9 @@ impl PySampleBatch {
             // Propagate a decode failure rather than masking it as a sentinel
             // observable value (which would read as a spurious disagreement).
             let predicted = decoder
-                .decode_to_observables(&syndrome)
+                .decode_obs(&syndrome)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            predictions.push(predicted);
+            predictions.push(obsmask_to_py(py, &predicted)?);
         }
         Ok(predictions)
     }
@@ -3633,8 +3619,6 @@ impl PySampleBatch {
     ) -> PyResult<usize> {
         use rayon::prelude::*;
 
-        self.ensure_narrow_observables()?;
-        ensure_narrow_dem(dem)?;
         let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
@@ -3654,7 +3638,8 @@ impl PySampleBatch {
                 s
             })
             .collect();
-        let observable_masks: Vec<u64> = (0..n).map(|i| self.extract_obs_mask(i)).collect();
+        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
+            (0..n).map(|i| self.extract_obs_mask_wide(i)).collect();
 
         let total_errors: usize = pool.install(|| {
             (0..n)
@@ -3662,10 +3647,11 @@ impl PySampleBatch {
                 .map_init(
                     || create_observable_decoder(&dem_str, &dt).unwrap(),
                     |decoder, i| {
-                        let predicted = decoder
-                            .decode_to_observables(&detection_events[i])
-                            .unwrap_or(u64::MAX);
-                        usize::from(predicted != observable_masks[i])
+                        usize::from(
+                            decoder
+                                .decode_obs(&detection_events[i])
+                                .map_or(true, |p| p != observable_masks[i]),
+                        )
                     },
                 )
                 .sum()
@@ -3685,9 +3671,6 @@ impl PySampleBatch {
     #[pyo3(signature = (dem))]
     fn decode_count_batch(&self, dem: &str) -> PyResult<usize> {
         use pecos_decoders::{BatchConfig, PyMatchingDecoder};
-
-        self.ensure_narrow_observables()?;
-        ensure_narrow_dem(dem)?;
 
         let mut decoder = PyMatchingDecoder::from_dem(dem)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -3715,17 +3698,19 @@ impl PySampleBatch {
             .decode_batch_with_config(&flat, self.num_shots, num_detectors, config)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        // Count errors by comparing predictions to true observable masks
+        // Count errors by comparing predictions to true observable masks. The
+        // predicted mask is a wide ObsMask (inline for <=64 observables, correct
+        // beyond), so a DEM with more than 64 observables is not truncated.
         let num_observables = decoder.num_observables();
         let mut num_errors = 0usize;
         for (i, prediction) in result.predictions.iter().enumerate() {
-            let mut predicted_mask = 0u64;
+            let mut predicted = pecos_decoder_core::obs_mask::ObsMask::new();
             for (j, &v) in prediction.iter().enumerate() {
                 if v != 0 && j < num_observables {
-                    predicted_mask |= 1 << j;
+                    predicted.set(j);
                 }
             }
-            if predicted_mask != self.extract_obs_mask(i) {
+            if predicted != self.extract_obs_mask_wide(i) {
                 num_errors += 1;
             }
         }
@@ -3749,9 +3734,6 @@ impl PySampleBatch {
     fn decode_stats(&self, dem: &str, decoder_type: &str) -> PyResult<PyDecodeStats> {
         use std::time::Instant;
 
-        self.ensure_narrow_observables()?;
-        ensure_narrow_dem(dem)?;
-
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut num_errors = 0usize;
         let mut per_shot_seconds: Vec<f64> = Vec::with_capacity(self.num_shots);
@@ -3760,10 +3742,10 @@ impl PySampleBatch {
         for i in 0..self.num_shots {
             self.extract_syndrome(i, &mut syndrome);
             let t0 = Instant::now();
-            let predicted = decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX);
+            let predicted = decoder.decode_obs(&syndrome);
             let elapsed = t0.elapsed().as_secs_f64();
             per_shot_seconds.push(elapsed);
-            if predicted != self.extract_obs_mask(i) {
+            if predicted.map_or(true, |p| p != self.extract_obs_mask_wide(i)) {
                 num_errors += 1;
             }
         }
@@ -3797,8 +3779,6 @@ impl PySampleBatch {
     ) -> PyResult<PyDecodeStats> {
         use rayon::prelude::*;
 
-        self.ensure_narrow_observables()?;
-        ensure_narrow_dem(dem)?;
         let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
 
         // Validate decoder type early.
@@ -3821,8 +3801,8 @@ impl PySampleBatch {
                 s
             })
             .collect();
-        let observable_masks: Vec<u64> = (0..self.num_shots)
-            .map(|i| self.extract_obs_mask(i))
+        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> = (0..self.num_shots)
+            .map(|i| self.extract_obs_mask_wide(i))
             .collect();
 
         // Each worker decodes a slice of shots and returns (errors, per_shot_times).
@@ -3843,11 +3823,9 @@ impl PySampleBatch {
 
                     for i in start..end {
                         let t0 = std::time::Instant::now();
-                        let predicted = decoder
-                            .decode_to_observables(&detection_events[i])
-                            .unwrap_or(u64::MAX);
+                        let predicted = decoder.decode_obs(&detection_events[i]);
                         times.push(t0.elapsed().as_secs_f64());
-                        if predicted != observable_masks[i] {
+                        if predicted.map_or(true, |p| p != observable_masks[i]) {
                             errors += 1;
                         }
                     }

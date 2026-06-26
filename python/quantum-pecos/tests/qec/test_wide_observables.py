@@ -89,45 +89,39 @@ def test_decode_count_above_64_observables() -> None:
     assert 0 <= count <= 2000
 
 
-def test_narrow_sample_batch_apis_reject_wide_observables() -> None:
-    # The legacy u64-based SampleBatch APIs cannot represent >64 observables and
-    # must reject a wide batch up front rather than panicking or truncating.
+def test_u64_observable_getter_rejects_wide_batch() -> None:
+    # get_observable_mask returns a u64 and cannot represent observable >= 64, so
+    # it rejects a wide batch; get_observable_mask_wide returns the full Python
+    # int. (The decode methods, by contrast, compare wide ObsMasks and do not
+    # reject -- see below.)
     n = 65
     dem, _ = _wide_dem(n)
     syn = [0] * n
-    syn[64] = 1
     wide = SampleBatch([syn, syn], [1 << 64, 1 << 64])
 
     with pytest.raises(ValueError, match="64-observable"):
         wide.get_observable_mask(0)
-    with pytest.raises(ValueError, match="64-observable"):
-        wide.decode_count(dem, "pecos_uf:fast")
-    with pytest.raises(ValueError, match="64-observable"):
-        wide.decode_stats(dem, "pecos_uf:fast")
-
-    # The wide getter returns the full mask as a Python int with no truncation.
     assert wide.get_observable_mask_wide(0) == 1 << 64
 
 
-def test_narrow_decode_apis_reject_wide_dem() -> None:
-    # A DEM with >64 observables cannot be represented by the legacy u64 decode
-    # APIs (they build predictions with `1 << j`). The decoder/DEM width is
-    # independent of the batch's truth-mask width: a narrow batch (all-zero truth
-    # masks => 0 observable columns, which passes the batch-width guard) paired
-    # with a wide DEM must still be rejected up front, not overflow `1 << j`.
+def test_sample_batch_decode_count_batch_handles_wide_dem() -> None:
+    # decode_count_batch builds wide ObsMask predictions from PyMatching's batch
+    # output, so a >64-observable DEM is decoded and compared with no truncation
+    # or panic (no `1 << j` overflow).
     n = 70
     dem, _ = _wide_dem(n)
     syn = [0] * n
-    batch = SampleBatch([syn, syn], [0, 0])  # 0 observable columns (narrow batch)
+    syn[69] = 1  # detector 69 fires => boundary error flips observable 69
+    batch = SampleBatch([syn, syn], [1 << 69, 1 << 69])  # truth: observable 69 set
+    assert batch.decode_count_batch(dem) == 0
 
-    narrow_calls = [
-        lambda: batch.decode_count(dem, "pecos_uf:fast"),
-        lambda: batch.decode_each(dem, "pecos_uf:fast"),
-        lambda: batch.decode_count_parallel(dem, "pecos_uf:fast"),
-        lambda: batch.decode_count_batch(dem),
-        lambda: batch.decode_stats(dem, "pecos_uf:fast"),
-        lambda: batch.decode_stats_parallel(dem, "pecos_uf:fast"),
-    ]
-    for call in narrow_calls:
-        with pytest.raises(ValueError, match="64-observable"):
-            call()
+
+def test_decode_each_returns_python_ints() -> None:
+    # decode_each returns Python ints (arbitrary precision) rather than u64, so
+    # the value is not truncated; for the <=64 case it equals the historical u64.
+    n = 5
+    dem, _ = _wide_dem(n)
+    batch = ParsedDem.from_string(dem).to_dem_sampler().generate_samples(8, seed=1)
+    preds = batch.decode_each(dem, "pymatching")
+    assert len(preds) == 8
+    assert all(isinstance(p, int) for p in preds)

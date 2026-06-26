@@ -233,7 +233,7 @@ source ~/.bashrc
 ```bash
 # Verify installations
 python -c "import cupy; print(cupy.__version__)"
-python -c "from cuquantum import custatevec; print('OK')"
+python -c "from cuquantum.bindings import custatevec; print('OK')"
 
 # Reinstall if needed
 uv pip uninstall cupy-cuda13x cuquantum-python-cu13

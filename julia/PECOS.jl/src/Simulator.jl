@@ -55,9 +55,13 @@ export sz!, h!, cx!, mz, reset!, rx!, rz!, rzz!
 Result of a Z-basis measurement.
 """
 struct MeasurementResult
-    """Measurement outcome: false = |0>, true = |1>."""
+    """
+    Measurement outcome: false = |0>, true = |1>.
+    """
     outcome::Bool
-    """Whether the outcome was deterministic."""
+    """
+    Whether the outcome was deterministic.
+    """
     is_deterministic::Bool
 end
 

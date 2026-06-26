@@ -740,6 +740,7 @@ jobs:
       - name: Create distribution directories
         run: |
           mkdir -p dist/pecos-rslib
+          mkdir -p dist/pecos-rslib-llvm
           mkdir -p dist/quantum-pecos
 
       # Download artifacts into temp directory first
@@ -750,33 +751,69 @@ jobs:
 
       - name: Organize distribution files
         run: |
+          shopt -s nullglob
+
           # Debug: Show what we downloaded
           echo "=== Downloaded artifacts structure ==="
           ls -la temp-artifacts/
 
           # Move pecos-rslib and pecos-rslib-llvm wheels to distribution directory
-          mkdir -p dist/pecos-rslib-llvm
+          llvm_dirs=(temp-artifacts/wheel-pecos-rslib-llvm-*/)
+          if [ "${#llvm_dirs[@]}" -eq 0 ]; then
+            echo "Expected pecos-rslib-llvm artifact directories, but none were found."
+            exit 1
+          fi
           for artifact in temp-artifacts/wheel-pecos-rslib-llvm-*/; do
             if [ -d "$artifact" ]; then
               echo "Processing $artifact"
-              mv "$artifact"*.whl dist/pecos-rslib-llvm/ 2>/dev/null || true
+              llvm_wheels=("$artifact"*.whl)
+              if [ "${#llvm_wheels[@]}" -eq 0 ]; then
+                echo "Expected pecos-rslib-llvm wheels in $artifact, but none were found."
+                exit 1
+              fi
+              mv "${llvm_wheels[@]}" dist/pecos-rslib-llvm/
             fi
           done
+          rslib_dirs=(temp-artifacts/wheel-pecos-rslib-*/)
+          if [ "${#rslib_dirs[@]}" -eq 0 ]; then
+            echo "Expected pecos-rslib artifact directories, but none were found."
+            exit 1
+          fi
           for artifact in temp-artifacts/wheel-pecos-rslib-*/; do
             if [ -d "$artifact" ]; then
               echo "Processing $artifact"
-              mv "$artifact"*.whl dist/pecos-rslib/ 2>/dev/null || true
+              rslib_wheels=("$artifact"*.whl)
+              if [ "${#rslib_wheels[@]}" -eq 0 ]; then
+                echo "Expected pecos-rslib wheels in $artifact, but none were found."
+                exit 1
+              fi
+              mv "${rslib_wheels[@]}" dist/pecos-rslib/
             fi
           done
 
           # Move quantum-pecos files to distribution directory
+          quantum_dirs=(temp-artifacts/*-quantum-pecos*/)
+          if [ "${#quantum_dirs[@]}" -eq 0 ]; then
+            echo "Expected quantum-pecos artifact directories, but none were found."
+            exit 1
+          fi
           for artifact in temp-artifacts/*-quantum-pecos*/; do
             if [ -d "$artifact" ]; then
               echo "Processing $artifact"
-              mv "$artifact"*.whl dist/quantum-pecos/ 2>/dev/null || true
-              mv "$artifact"*.tar.gz dist/quantum-pecos/ 2>/dev/null || true
+              quantum_dists=("$artifact"*.whl "$artifact"*.tar.gz)
+              if [ "${#quantum_dists[@]}" -eq 0 ]; then
+                echo "Expected quantum-pecos distributions in $artifact, but none were found."
+                exit 1
+              fi
+              mv "${quantum_dists[@]}" dist/quantum-pecos/
             fi
           done
+
+          llvm_wheels=(dist/pecos-rslib-llvm/*.whl)
+          if [ "${#llvm_wheels[@]}" -eq 0 ]; then
+            echo "Expected collected pecos-rslib-llvm wheels, but none were found."
+            exit 1
+          fi
 
           # Clean up
           rm -rf temp-artifacts
@@ -786,11 +823,15 @@ jobs:
           echo "=== pecos-rslib artifacts ==="
           ls -la dist/pecos-rslib/
           echo ""
+          echo "=== pecos-rslib-llvm artifacts ==="
+          ls -la dist/pecos-rslib-llvm/
+          echo ""
           echo "=== quantum-pecos artifacts ==="
           ls -la dist/quantum-pecos/
           echo ""
           echo "=== Summary ==="
           echo "pecos-rslib wheels: $(ls -1 dist/pecos-rslib/*.whl 2>/dev/null | wc -l)"
+          echo "pecos-rslib-llvm wheels: $(ls -1 dist/pecos-rslib-llvm/*.whl 2>/dev/null | wc -l)"
           echo "quantum-pecos distributions: $(ls -1 dist/quantum-pecos/* 2>/dev/null | wc -l)"
 
 

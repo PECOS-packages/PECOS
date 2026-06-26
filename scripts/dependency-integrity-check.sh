@@ -46,6 +46,83 @@ collect_files() {
     rg --files "$@"
 }
 
+extract_yaml_scalar_near() {
+    local file="$1"
+    local start_line="$2"
+    local end_line="$3"
+    local key="$4"
+    awk -v start="$start_line" -v end="$end_line" -v key="$key" '
+        NR < start || NR > end { next }
+        !found && $0 ~ "^[[:space:]]*" key ":[[:space:]]*" {
+            found = 1
+            match($0, /^[[:space:]]*/)
+            base_indent = RLENGTH
+            line = $0
+            sub("^[[:space:]]*" key ":[[:space:]]*", "", line)
+            out = line
+            next
+        }
+        found {
+            if ($0 ~ /^[[:space:]]*$/) {
+                next
+            }
+            match($0, /^[[:space:]]*/)
+            indent = RLENGTH
+            if (indent <= base_indent) {
+                exit
+            }
+            line = $0
+            sub(/^[[:space:]]*/, "", line)
+            out = out " " line
+        }
+        END {
+            gsub(/[[:space:]]+/, " ", out)
+            print out
+        }
+    ' "$file"
+}
+
+trusted_cache_ref_ok() {
+    local expr="$1"
+    if [[ "$expr" == *"github.ref_name == 'main'"* ]] ||
+        [[ "$expr" == *"github.ref_name == 'master'"* ]] ||
+        [[ "$expr" == *"github.ref_name == 'development'"* ]] ||
+        [[ "$expr" == *"github.ref_name == 'dev'"* ]]; then
+        return 0
+    fi
+    if [[ "$expr" == *"contains(fromJSON("* ]] &&
+        [[ "$expr" == *"github.ref_name"* ]] &&
+        [[ "$expr" == *'"main"'* ]] &&
+        [[ "$expr" == *'"master"'* ]] &&
+        [[ "$expr" == *'"development"'* ]] &&
+        [[ "$expr" == *'"dev"'* ]]; then
+        return 0
+    fi
+    return 1
+}
+
+has_unsafe_cache_disjunction() {
+    local expr="$1"
+    python3 - "$expr" <<'PY'
+import re
+import sys
+
+expr = sys.argv[1]
+marker = "github.event_name == 'push' &&"
+idx = expr.find(marker)
+if idx != -1:
+    expr = expr[idx:]
+allowed = re.compile(
+    r"github\.ref_name == 'main'\s*\|\|\s*"
+    r"github\.ref_name == 'master'\s*\|\|\s*"
+    r"github\.ref_name == 'development'\s*\|\|\s*"
+    r"github\.ref_name == 'dev'"
+)
+stripped = allowed.sub("TRUSTED_REF_SET", expr)
+sys.exit(0 if "||" in stripped else 1)
+PY
+}
+
 # Static indicator lists for known supply-chain worm campaigns (the
 # Shai-Hulud npm worm and related typosquats). These catch KNOWN-bad
 # package names and payload/persistence indicators only -- novel campaigns
@@ -76,6 +153,7 @@ tooling_failures_before=$failures
 require_tool rg || true
 require_tool cargo || true
 require_tool uv || true
+require_tool python3 || true
 if ((failures > tooling_failures_before)); then
     printf '\nDependency integrity check failed: required tooling is missing.\n' >&2
     exit 1
@@ -399,25 +477,26 @@ fi
 
 section "GitHub Actions cache write posture"
 cache_policy_failures=()
-trusted_cache_ref_re="github\\.ref_name == '(main|master|development|dev)'|contains\\(fromJSON\\('\\[[[:space:]]*\\\"main\\\"[[:space:]]*,[[:space:]]*\\\"master\\\"[[:space:]]*,[[:space:]]*\\\"development\\\"[[:space:]]*,[[:space:]]*\\\"dev\\\"[[:space:]]*\\]'\\)[[:space:]]*,[[:space:]]*github\\.ref_name\\)|github\\.ref_name == 'main'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'master'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'development'[[:space:]]*\\|\\|[[:space:]]*github\\.ref_name == 'dev'"
 while IFS=: read -r file line _; do
-    save_if_line="$(sed -n "${line},$((line + 16))p" "$file" | rg -o "save-if:.*" | head -1 || true)"
+    save_if_line="$(extract_yaml_scalar_near "$file" "$line" "$((line + 16))" "save-if")"
     if [[ -z "$save_if_line" ]] ||
+        has_unsafe_cache_disjunction "$save_if_line" ||
         printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'pull_request'" ||
         ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
-        ! printf '%s\n' "$save_if_line" | rg -q "($trusted_cache_ref_re)"; then
+        ! trusted_cache_ref_ok "$save_if_line"; then
         cache_policy_failures+=("$file:$line rust-cache save-if must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+Swatinem/rust-cache@' .github/workflows || true)
 
 while IFS=: read -r file line _; do
     setup_uv_block="$(sed -n "${line},$((line + 16))p" "$file")"
-    save_cache_line="$(printf '%s\n' "$setup_uv_block" | rg -o "save-cache:.*" | head -1 || true)"
+    save_cache_line="$(extract_yaml_scalar_near "$file" "$line" "$((line + 16))" "save-cache")"
     if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true' &&
         ([[ -z "$save_cache_line" ]] ||
+            has_unsafe_cache_disjunction "$save_cache_line" ||
             printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'pull_request'" ||
             ! printf '%s\n' "$save_cache_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
-            ! printf '%s\n' "$save_cache_line" | rg -q "($trusted_cache_ref_re)"); then
+            ! trusted_cache_ref_ok "$save_cache_line"); then
         cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+astral-sh/setup-uv@' .github/workflows || true)
@@ -427,11 +506,12 @@ while IFS=: read -r file line _; do
 done < <(rg -n 'uses:\s+actions/cache@' .github/workflows || true)
 
 while IFS=: read -r file line _; do
-    save_if_line="$(sed -n "$((line - 2)),$((line + 2))p" "$file" | rg -o "if:[[:space:]]*.*" | head -1 || true)"
+    save_if_line="$(extract_yaml_scalar_near "$file" "$((line - 2))" "$((line + 2))" "if")"
     if [[ -z "$save_if_line" ]] ||
+        has_unsafe_cache_disjunction "$save_if_line" ||
         printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'pull_request'" ||
         ! printf '%s\n' "$save_if_line" | rg -q "github\\.event_name == 'push'[[:space:]]*&&" ||
-        ! printf '%s\n' "$save_if_line" | rg -q "($trusted_cache_ref_re)"; then
+        ! trusted_cache_ref_ok "$save_if_line"; then
         cache_policy_failures+=("$file:$line actions/cache/save must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+actions/cache/save@' .github/workflows || true)

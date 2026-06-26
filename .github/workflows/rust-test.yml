@@ -23,6 +23,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Justfile'
+      - 'scripts/ci/**'
+      - 'scripts/win-msvc-bootstrap.ps1'
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
   pull_request:
@@ -38,6 +40,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Justfile'
+      - 'scripts/ci/**'
+      - 'scripts/win-msvc-bootstrap.ps1'
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
 

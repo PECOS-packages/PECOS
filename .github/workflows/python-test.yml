@@ -18,6 +18,7 @@ on:
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'python/**'
+      - 'examples/**'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -27,12 +28,14 @@ on:
       - 'uv.lock'
       - 'Justfile'
       - 'scripts/ci/**'
+      - 'scripts/win-msvc-bootstrap.ps1'
       - 'scripts/check_python_workspace.py'
       - '.github/workflows/python-test.yml'
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'python/**'
+      - 'examples/**'
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -42,6 +45,7 @@ on:
       - 'uv.lock'
       - 'Justfile'
       - 'scripts/ci/**'
+      - 'scripts/win-msvc-bootstrap.ps1'
       - 'scripts/check_python_workspace.py'
       - '.github/workflows/python-test.yml'
   workflow_dispatch:

@@ -19,13 +19,13 @@ import sys
 import types
 from pathlib import Path
 
-
 _MODULE_PATH = Path(__file__).resolve().parents[3] / "src/pecos/simulators/custatevec/_cuquantum_compat.py"
 
 
 def _load_module(module_name: str):
     spec = importlib.util.spec_from_file_location(module_name, _MODULE_PATH)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     try:
@@ -80,10 +80,11 @@ def test_falls_back_to_legacy_custatevec_when_bindings_lacks_member(monkeypatch)
 
     original_import = __import__
 
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+    def fake_import(name, globals_=None, locals_=None, fromlist=(), level=0):
         if name == "cuquantum.bindings" and "custatevec" in fromlist:
-            raise ImportError("cannot import name 'custatevec' from 'cuquantum.bindings'")
-        return original_import(name, globals, locals, fromlist, level)
+            msg = "cannot import name 'custatevec' from 'cuquantum.bindings'"
+            raise ImportError(msg)
+        return original_import(name, globals_, locals_, fromlist, level)
 
     monkeypatch.setitem(sys.modules, "cuquantum", cuquantum)
     monkeypatch.setitem(sys.modules, "cuquantum.bindings", cuquantum_bindings)
@@ -101,10 +102,11 @@ def test_propagates_non_missing_module_errors(monkeypatch) -> None:
 
     original_import = __import__
 
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+    def fake_import(name, globals_=None, locals_=None, fromlist=(), level=0):
         if name == "cuquantum.bindings" and "custatevec" in fromlist:
-            raise ModuleNotFoundError("libcustatevec.so: cannot open shared object file", name="libcustatevec.so")
-        return original_import(name, globals, locals, fromlist, level)
+            msg = "libcustatevec.so: cannot open shared object file"
+            raise ModuleNotFoundError(msg, name="libcustatevec.so")
+        return original_import(name, globals_, locals_, fromlist, level)
 
     monkeypatch.setitem(sys.modules, "cuquantum", cuquantum)
     monkeypatch.setitem(sys.modules, "cuquantum.bindings", cuquantum_bindings)
@@ -115,4 +117,5 @@ def test_propagates_non_missing_module_errors(monkeypatch) -> None:
     except ModuleNotFoundError as exc:
         assert exc.name == "libcustatevec.so"
     else:
-        raise AssertionError("expected ModuleNotFoundError to propagate")
+        msg = "expected ModuleNotFoundError to propagate"
+        raise AssertionError(msg)

@@ -1,5 +1,7 @@
 """Compatibility helpers for cuQuantum import surface changes."""
 
+__all__ = ["cusv"]
+
 _BINDINGS_MISSING_NAMES = {"cuquantum.bindings", "cuquantum.bindings.custatevec"}
 _BINDINGS_MISSING_MEMBER = "cannot import name 'custatevec' from 'cuquantum.bindings'"
 

@@ -2221,6 +2221,28 @@ fn subgraph_to_dem_string(graph: &pecos_decoder_core::DemMatchingGraph) -> Strin
 ///
 /// This is the shared factory used by `SampleBatch.decode_count`,
 /// `DemSampler.sample_decode_count`, and the parallel variants.
+/// Reject a DEM whose observable count exceeds 64, the limit of the legacy
+/// `u64` decode/decode_count APIs that build or compare `u64` observable masks
+/// (`1u64 << obs_idx`). This guards on the *decoder/DEM* observable width, which
+/// is independent of the batch's stored truth-mask width: a narrow batch paired
+/// with a wide DEM would otherwise overflow `1 << j` in the prediction path.
+/// Callers with more than 64 observables must use the wide
+/// `LogicalSubgraphDecoder` decode/decode_count paths (arbitrary-precision int).
+fn ensure_narrow_dem(dem: &str) -> PyResult<()> {
+    let parsed = dem
+        .parse::<RustParsedDem>()
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    let n = parsed.num_observables();
+    if n > 64 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "DEM has {n} observables, exceeding the 64-observable limit of this u64-based \
+             decode API; use the wide LogicalSubgraphDecoder decode/decode_count paths \
+             (arbitrary-precision int) for more than 64 observables"
+        )));
+    }
+    Ok(())
+}
+
 fn create_observable_decoder(
     dem: &str,
     decoder_type: &str,
@@ -3547,6 +3569,7 @@ impl PySampleBatch {
     #[pyo3(signature = (dem, decoder_type="pymatching"))]
     fn decode_count(&self, dem: &str, decoder_type: &str) -> PyResult<usize> {
         self.ensure_narrow_observables()?;
+        ensure_narrow_dem(dem)?;
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut errors = 0usize;
         let mut syndrome = vec![0u8; self.num_detectors];
@@ -3574,6 +3597,7 @@ impl PySampleBatch {
     ///     List of predicted observable masks, one per shot.
     #[pyo3(signature = (dem, decoder_type="pymatching"))]
     fn decode_each(&self, dem: &str, decoder_type: &str) -> PyResult<Vec<u64>> {
+        ensure_narrow_dem(dem)?;
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut predictions = Vec::with_capacity(self.num_shots);
         let mut syndrome = vec![0u8; self.num_detectors];
@@ -3610,6 +3634,7 @@ impl PySampleBatch {
         use rayon::prelude::*;
 
         self.ensure_narrow_observables()?;
+        ensure_narrow_dem(dem)?;
         let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
@@ -3662,6 +3687,7 @@ impl PySampleBatch {
         use pecos_decoders::{BatchConfig, PyMatchingDecoder};
 
         self.ensure_narrow_observables()?;
+        ensure_narrow_dem(dem)?;
 
         let mut decoder = PyMatchingDecoder::from_dem(dem)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -3724,6 +3750,7 @@ impl PySampleBatch {
         use std::time::Instant;
 
         self.ensure_narrow_observables()?;
+        ensure_narrow_dem(dem)?;
 
         let mut decoder = create_observable_decoder(dem, decoder_type)?;
         let mut num_errors = 0usize;
@@ -3771,6 +3798,7 @@ impl PySampleBatch {
         use rayon::prelude::*;
 
         self.ensure_narrow_observables()?;
+        ensure_narrow_dem(dem)?;
         let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
 
         // Validate decoder type early.

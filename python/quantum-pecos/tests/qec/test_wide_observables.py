@@ -107,3 +107,27 @@ def test_narrow_sample_batch_apis_reject_wide_observables() -> None:
 
     # The wide getter returns the full mask as a Python int with no truncation.
     assert wide.get_observable_mask_wide(0) == 1 << 64
+
+
+def test_narrow_decode_apis_reject_wide_dem() -> None:
+    # A DEM with >64 observables cannot be represented by the legacy u64 decode
+    # APIs (they build predictions with `1 << j`). The decoder/DEM width is
+    # independent of the batch's truth-mask width: a narrow batch (all-zero truth
+    # masks => 0 observable columns, which passes the batch-width guard) paired
+    # with a wide DEM must still be rejected up front, not overflow `1 << j`.
+    n = 70
+    dem, _ = _wide_dem(n)
+    syn = [0] * n
+    batch = SampleBatch([syn, syn], [0, 0])  # 0 observable columns (narrow batch)
+
+    narrow_calls = [
+        lambda: batch.decode_count(dem, "pecos_uf:fast"),
+        lambda: batch.decode_each(dem, "pecos_uf:fast"),
+        lambda: batch.decode_count_parallel(dem, "pecos_uf:fast"),
+        lambda: batch.decode_count_batch(dem),
+        lambda: batch.decode_stats(dem, "pecos_uf:fast"),
+        lambda: batch.decode_stats_parallel(dem, "pecos_uf:fast"),
+    ]
+    for call in narrow_calls:
+        with pytest.raises(ValueError, match="64-observable"):
+            call()

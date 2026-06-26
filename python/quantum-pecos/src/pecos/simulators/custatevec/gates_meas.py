@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 from pecos.simulators.custatevec._cuquantum_compat import cusv
 
+
 def meas_z(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> int:
     """Measure in the Z-basis, collapse and normalise.
 

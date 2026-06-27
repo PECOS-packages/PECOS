@@ -689,6 +689,20 @@ impl FusionBlossomDecoder {
     /// Returns [`FusionBlossomError::InvalidGraph`] if:
     /// - Either node index is out of bounds
     /// - The weight is negative
+    /// Fail loud if any observable index is `>= 64`: this decoder packs
+    /// observable flips into a `u64` (`1 << index`) in `build_obs_masks`, so a
+    /// wider index would overflow-panic. Reject it where observables enter the
+    /// decoder (every edge-construction path) rather than at the later shift.
+    fn check_observable_indices(observables: &[usize]) -> Result<()> {
+        if let Some(&o) = observables.iter().find(|&&o| o >= 64) {
+            return Err(FusionBlossomError::InvalidGraph(format!(
+                "observable index {o} exceeds the 64 this decoder packs into a u64; use the \
+                 'pymatching' decoder or LogicalSubgraphDecoder for wider observable sets"
+            )));
+        }
+        Ok(())
+    }
+
     pub fn add_edge(
         &mut self,
         node1: usize,
@@ -704,6 +718,7 @@ impl FusionBlossomDecoder {
                 self.num_nodes - 1
             )));
         }
+        Self::check_observable_indices(observables)?;
 
         let weight_int = if let Some(w) = weight {
             if w < 0.0 {
@@ -754,6 +769,7 @@ impl FusionBlossomDecoder {
                 self.num_nodes - 1
             )));
         }
+        Self::check_observable_indices(observables)?;
 
         // Create a virtual boundary node if not already created
         if self.boundary_node.is_none() {

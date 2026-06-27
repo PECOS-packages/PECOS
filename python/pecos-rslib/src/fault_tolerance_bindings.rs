@@ -2761,18 +2761,16 @@ fn create_observable_decoder(
                     |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
                 )?;
 
-            // Reject negative-weight edges (error priors p > 0.5) and >64-observable
-            // DEMs as Python errors rather than panicking in `from_matching_graph`
-            // (negative-weight assert / `1 << o` overflow).
-            graph
-                .ensure_observables_fit_u64()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Reject negative-weight edges (error priors p > 0.5) as a Python error
+            // rather than panicking on the negative-weight assert; the
+            // >64-observable guard now lives in `from_matching_graph`.
             pecos_decoders::UfDecoder::check_non_negative_weights(&graph)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let uf = pecos_decoders::UfDecoder::from_matching_graph(
                 &graph,
                 pecos_decoders::UfDecoderConfig::balanced(),
-            );
+            )
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let two_pass = TwoPassDecoder::new(uf, base_weights, corr_table);
             Ok(Box::new(two_pass))
         }

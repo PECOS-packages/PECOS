@@ -153,7 +153,7 @@ impl BpUfDecoder {
         let graph = DemMatchingGraph::from_dem_str(dem)?;
         graph.ensure_observables_fit_u64()?;
         UfDecoder::check_non_negative_weights(&graph)?;
-        let uf = UfDecoder::from_matching_graph(&graph, config.uf_config);
+        let uf = UfDecoder::from_matching_graph(&graph, config.uf_config)?;
 
         // Build mechanism → edge mapping.
         // Each mechanism in the check matrix corresponds to a column.
@@ -256,7 +256,7 @@ impl BpUfDecoder {
         let match_graph = DemMatchingGraph::from_dem_str(matching_dem)?;
         match_graph.ensure_observables_fit_u64()?;
         UfDecoder::check_non_negative_weights(&match_graph)?;
-        let uf = UfDecoder::from_matching_graph(&match_graph, config.uf_config);
+        let uf = UfDecoder::from_matching_graph(&match_graph, config.uf_config)?;
 
         // Map BP mechanisms (non-decomposed) → matching graph edges (decomposed).
         let mut mechanism_to_edge = vec![None; bp_dcm.num_mechanisms];

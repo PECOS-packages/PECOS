@@ -238,7 +238,14 @@ impl UfDecoder {
     /// holding untrusted DEM input should pre-validate with
     /// [`Self::check_non_negative_weights`] to get an error instead.
     #[must_use]
-    pub fn from_matching_graph(graph: &DemMatchingGraph, config: UfDecoderConfig) -> Self {
+    pub fn from_matching_graph(
+        graph: &DemMatchingGraph,
+        config: UfDecoderConfig,
+    ) -> Result<Self, DecoderError> {
+        // Fail loud rather than overflow-panic at the `1 << o` packing below: this
+        // decoder packs observable flips into a u64 and supports at most 64.
+        graph.ensure_observables_fit_u64()?;
+
         let num_detectors = graph.num_detectors;
         let num_nodes = num_detectors + 1;
         let boundary_node = num_detectors as u32;
@@ -298,7 +305,7 @@ impl UfDecoder {
         }
         adj_offset.push(adj_data.len() as u32);
 
-        Self {
+        Ok(Self {
             edges,
             adj_data,
             adj_offset,
@@ -320,7 +327,7 @@ impl UfDecoder {
             subtree_parity: vec![false; num_nodes],
             correction_edges: Vec::new(),
             weight_swap: Vec::new(),
-        }
+        })
     }
 
     /// Build from a DEM string.
@@ -332,9 +339,9 @@ impl UfDecoder {
     /// proofs do not admit).
     pub fn from_dem(dem: &str, config: UfDecoderConfig) -> Result<Self, DecoderError> {
         let graph = DemMatchingGraph::from_dem_str(dem)?;
-        graph.ensure_observables_fit_u64()?;
         Self::check_non_negative_weights(&graph)?;
-        Ok(Self::from_matching_graph(&graph, config))
+        // `from_matching_graph` performs the >64-observable guard.
+        Self::from_matching_graph(&graph, config)
     }
 
     /// Reset per-shot state. Uses bulk fill operations for cache efficiency.

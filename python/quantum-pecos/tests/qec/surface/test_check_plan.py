@@ -351,6 +351,69 @@ def test_szz_data_prefixes_emit_generic_hosted_metadata() -> None:
     assert prefix_index < prefix_host_index < role_index < host_index < host_id_index
 
 
+def test_szz_hosted_metadata_labels_include_helper_scope() -> None:
+    from pecos.guppy.surface import generate_guppy_source
+    from pecos.qec.surface import SurfacePatch
+
+    source = generate_guppy_source(
+        SurfacePatch.create(distance=3),
+        check_plan="szz_current_v1",
+    )
+
+    assert '"host_id", "szz:init_z_basis:' in source
+    assert '"host_id", "szz:init_x_basis:' in source
+    assert '"host_id", "szz:syndrome_extraction:' in source
+
+
+def test_plain_szz_memory_source_unrolls_hosted_metadata_by_counted_round() -> None:
+    from pecos.guppy.surface import generate_guppy_source
+    from pecos.qec.surface import SurfacePatch
+
+    source = generate_guppy_source(
+        SurfacePatch.create(distance=3),
+        check_plan="szz_current_v1",
+        num_rounds=2,
+    )
+
+    assert "for _t in range(comptime(num_rounds))" not in source
+    assert "if num_rounds != 2:" in source
+    assert "def syndrome_extraction_memory_r0" in source
+    assert "def syndrome_extraction_memory_r1" in source
+    assert '"host_id", "szz:memory_r0:' in source
+    assert '"host_id", "szz:memory_r1:' in source
+    assert '"host_id", "szz:memory_r2:' not in source
+
+
+def test_plain_szz_memory_cache_key_includes_counted_rounds() -> None:
+    from pecos.guppy.surface import _guppy_module_cache_key
+    from pecos.qec.surface import SurfacePatch
+
+    patch = SurfacePatch.create(distance=3)
+
+    key_one = _guppy_module_cache_key(
+        patch,
+        8,
+        check_plan="szz_current_v1",
+        num_rounds=1,
+    )
+    key_two = _guppy_module_cache_key(
+        patch,
+        8,
+        check_plan="szz_current_v1",
+        num_rounds=2,
+    )
+    key_generic = _guppy_module_cache_key(
+        patch,
+        8,
+        check_plan="szz_current_v1",
+    )
+
+    assert key_one.endswith("_r1")
+    assert key_two.endswith("_r2")
+    assert key_one != key_two
+    assert key_generic not in {key_one, key_two}
+
+
 def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> None:
     from pecos.qec.surface import SurfacePatch
     from pecos.qec.surface.circuit_builder import (

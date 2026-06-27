@@ -720,6 +720,7 @@ def generate_guppy_source(
         ancilla_expr: Callable[[str, int], str],
         data_expr: Callable[[int], str],
         pending_by_data: dict[int, tuple[int, int]] | None = None,
+        host_label_scope: str | None = None,
     ) -> None:
         def compose_data(data_q: int, gates: tuple[OpType, ...]) -> None:
             if pending_by_data is None:
@@ -770,7 +771,12 @@ def generate_guppy_source(
             )
             sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
             host_gate = OpType.SZZ if sign > 0 else OpType.SZZDG
-            host_label = f"szz:r{rnd_idx + 1}:{stab_type}{stab_idx}:d{data_q}:{host_gate.name}"
+            host_label_core = f"r{rnd_idx + 1}:{stab_type}{stab_idx}:d{data_q}:{host_gate.name}"
+            host_label = (
+                f"szz:{host_label_core}"
+                if host_label_scope is None
+                else f"szz:{host_label_scope}:{host_label_core}"
+            )
             discharge_data_for_szz(data_q, host_label=host_label)
             if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_ALL or (
                 szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX
@@ -888,6 +894,7 @@ def generate_guppy_source(
                     _szz_ancilla_expr,
                     _szz_data_expr,
                     pending_by_data=szz_syndrome_pending_by_data,
+                    host_label_scope="syndrome_extraction",
                 )
 
             lines.append("")
@@ -999,6 +1006,7 @@ def generate_guppy_source(
                         ],
                         _szz_data_expr,
                         pending_by_data=szz_syndrome_pending_by_data,
+                        host_label_scope="syndrome_extraction",
                     )
 
             if interaction_basis == "cx":
@@ -1120,6 +1128,7 @@ def generate_guppy_source(
                         _szz_ancilla_expr,
                         _szz_data_expr,
                         pending_by_data=szz_init_pending_by_data,
+                        host_label_scope=function_name,
                     )
 
                 lines.append("")
@@ -1197,6 +1206,7 @@ def generate_guppy_source(
                         ],
                         _szz_data_expr,
                         pending_by_data=szz_init_pending_by_data,
+                        host_label_scope=function_name,
                     )
 
                 if interaction_basis == "cx":
@@ -1326,8 +1336,218 @@ def generate_guppy_source(
         ],
     )
 
-    # Generate memory experiment factories
-    lines.extend(_render_memory_experiments(patch, dx, dz, num_data, twirl, rng, num_rounds, interaction_basis))
+    def _append_inline_szz_syndrome_extraction(
+        target: list[str],
+        indent: str,
+        *,
+        host_label_scope: str,
+    ) -> None:
+        """Append one SZZ syndrome-extraction body with unique hosted ids."""
+        if interaction_basis != "szz":
+            msg = "inline SZZ syndrome extraction requires interaction_basis='szz'"
+            raise ValueError(msg)
+        target.append(f"{indent}# Inline SZZ syndrome extraction ({host_label_scope})")
+        target.append(f"{indent}# Unpack data qubits")
+        _append_szz_data_unpack(target, indent)
+        pending_by_data = dict.fromkeys(range(num_data), _SZZ_FLOW_IDENTITY)
+
+        if not constrained:
+            target.append(f"{indent}# Allocate ancilla qubits (one per stabilizer)")
+            target.extend(f"{indent}ax{stab.index} = qubit()" for stab in geom.x_stabilizers)
+            target.extend(f"{indent}az{stab.index} = qubit()" for stab in geom.z_stabilizers)
+
+            target.append("")
+            target.append(f"{indent}# Hadamard on SZZ ancillas")
+            target.extend(f"{indent}h(ax{stab.index})" for stab in geom.x_stabilizers)
+            target.extend(f"{indent}h(az{stab.index})" for stab in geom.z_stabilizers)
+
+            for rnd_idx, rnd_gates in enumerate(rounds):
+                _append_szz_layer(
+                    target,
+                    indent,
+                    rnd_idx,
+                    list(rnd_gates),
+                    _szz_ancilla_expr,
+                    _szz_data_expr,
+                    pending_by_data=pending_by_data,
+                    host_label_scope=host_label_scope,
+                )
+
+            target.append("")
+            target.append(f"{indent}# Hadamard on SZZ ancillas")
+            target.extend(f"{indent}h(ax{stab.index})" for stab in geom.x_stabilizers)
+            target.extend(f"{indent}h(az{stab.index})" for stab in geom.z_stabilizers)
+
+            target.append("")
+            target.append(f"{indent}# Measure ancillas")
+            idx = 0
+            for stab in geom.x_stabilizers:
+                target.append(f"{indent}sx{stab.index} = measure(ax{stab.index})")
+                target.append(f'{indent}result("sx{stab.index}:meas:{idx}", sx{stab.index})')
+                idx += 1
+            for stab in geom.z_stabilizers:
+                target.append(f"{indent}sz{stab.index} = measure(az{stab.index})")
+                target.append(f'{indent}result("sz{stab.index}:meas:{idx}", sz{stab.index})')
+                idx += 1
+        else:
+            batches = batched_stabilizers(
+                patch,
+                effective_budget,
+                ancilla_schedule=ancilla_schedule,
+            )
+            idx = 0
+            for batch_idx, batch in enumerate(batches):
+                target.append("")
+                target.append(f"{indent}# Batch {batch_idx + 1}/{len(batches)} of stabilizers")
+                batch_anc_var: dict[tuple[str, int], str] = {}
+                for pos, (stab_type, stab_idx) in enumerate(batch):
+                    var = f"_a_b{batch_idx}_p{pos}"
+                    batch_anc_var[(stab_type, stab_idx)] = var
+                    target.append(f"{indent}{var} = qubit()")
+
+                target.append(f"{indent}# Hadamard on SZZ ancillas in this batch")
+                for stab_type, stab_idx in batch:
+                    target.append(f"{indent}h({batch_anc_var[(stab_type, stab_idx)]})")
+
+                batch_keys = set(batch_anc_var.keys())
+                for rnd_idx, rnd_gates in enumerate(rounds):
+                    rnd_in_batch = [
+                        (stab_type, stab_idx, data_q)
+                        for stab_type, stab_idx, data_q in rnd_gates
+                        if (stab_type, stab_idx) in batch_keys
+                    ]
+                    if not rnd_in_batch:
+                        continue
+                    target.append("")
+                    target.append(f"{indent}# Batch {batch_idx + 1} round {rnd_idx + 1}")
+                    _append_szz_layer(
+                        target,
+                        indent,
+                        rnd_idx,
+                        rnd_in_batch,
+                        lambda stab_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
+                            (stab_type, stab_idx)
+                        ],
+                        _szz_data_expr,
+                        pending_by_data=pending_by_data,
+                        host_label_scope=host_label_scope,
+                    )
+
+                target.append("")
+                target.append(f"{indent}# Hadamard on SZZ ancillas in this batch")
+                for stab_type, stab_idx in batch:
+                    target.append(f"{indent}h({batch_anc_var[(stab_type, stab_idx)]})")
+
+                target.append("")
+                target.append(f"{indent}# Measure batch {batch_idx + 1} ancillas")
+                for stab_type, stab_idx in batch:
+                    anc = batch_anc_var[(stab_type, stab_idx)]
+                    syn_var = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
+                    target.append(f"{indent}{syn_var} = measure({anc})")
+                    target.append(f'{indent}result("{syn_var}:meas:{idx}", {syn_var})')
+                    idx += 1
+
+        x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
+        z_calls = ", ".join(f"sz{s.index}" for s in geom.z_stabilizers)
+        target.extend(["", f"{indent}synx = array({x_calls})", f"{indent}synz = array({z_calls})", ""])
+        _append_szz_flush_data_frame(
+            target,
+            indent,
+            pending_by_data,
+            reason=f"{host_label_scope} inline syndrome",
+        )
+        target.append(f"{indent}surf = SurfaceCode_{dx}x{dz}({szz_data_args})")
+
+    def _render_plain_szz_round_helper(round_idx: int) -> list[str]:
+        helper_name = f"syndrome_extraction_memory_r{round_idx}"
+        body = [
+            "",
+            "",
+            "@guppy",
+            (
+                f"def {helper_name}(surf: SurfaceCode_{dx}x{dz} @ owned) "
+                f"-> tuple[SurfaceCode_{dx}x{dz}, Syndrome_{dx}x{dz}]:"
+            ),
+            (
+                f'    """Extract counted SZZ syndrome round {round_idx} '
+                'with round-scoped hosted metadata."""'
+            ),
+        ]
+        _append_inline_szz_syndrome_extraction(
+            body,
+            "    ",
+            host_label_scope=f"memory_r{round_idx}",
+        )
+        body.append(f"    return surf, Syndrome_{dx}x{dz}(synx, synz)")
+        return body
+
+    def _render_plain_szz_memory_block(
+        basis: str,
+        basis_upper: str,
+        rendered_num_rounds: int,
+    ) -> list[str]:
+        init_func = "init_z_basis" if basis == "z" else "init_x_basis"
+        init_tag = "init_synx" if basis == "z" else "init_synz"
+        body: list[str] = [
+            (
+                f'        """{basis_upper}-basis SZZ memory experiment for '
+                f"dx={dx}, dz={dz}, num_rounds={rendered_num_rounds}."
+                '"""'
+            ),
+            f"        surf = prep_{basis}_basis()",
+            f"        surf, init_syn = {init_func}(surf)",
+            f'        result("{init_tag}", init_syn)',
+            "",
+        ]
+        for round_idx in range(rendered_num_rounds):
+            body.append(f"        # === Counted syndrome round {round_idx} ===")
+            body.append(f"        surf, syn = syndrome_extraction_memory_r{round_idx}(surf)")
+            body.append('        result("synx", syn.synx)')
+            body.append('        result("synz", syn.synz)')
+            body.append("")
+
+        body.extend(
+            [
+                f"        final = measure_{basis}_basis(surf)",
+                '        result("final", final)',
+            ],
+        )
+        return [
+            f"def make_memory_{basis}(num_rounds: int):",
+            f'    """Create {basis_upper}-basis SZZ memory experiment.',
+            "",
+            f"    num_rounds must equal {rendered_num_rounds} -- the body was unrolled at",
+            "    source-generation time so hosted-operation metadata is unique per",
+            "    counted syndrome round. Mismatched values raise ValueError.",
+            '    """',
+            f"    if num_rounds != {rendered_num_rounds}:",
+            (
+                f'        msg = f"this generated module was unrolled for '
+                f'num_rounds={rendered_num_rounds}, got {{num_rounds!r}}"'
+            ),
+            "        raise ValueError(msg)",
+            "",
+            "    @guppy",
+            f"    def memory_{basis}() -> None:",
+            *body,
+            "",
+            f"    return memory_{basis}",
+            "",
+            "",
+        ]
+
+    # Generate memory experiment factories.  Plain SZZ memory programs are
+    # unrolled when the round count is available so hosted metadata identifies
+    # the concrete counted syndrome round instead of the reusable helper body.
+    if twirl is None and interaction_basis == "szz" and num_rounds is not None:
+        lines.extend(["# === Counted SZZ Syndrome Helpers ==="])
+        for round_idx in range(num_rounds):
+            lines.extend(_render_plain_szz_round_helper(round_idx))
+        lines.extend(["# === Memory Experiments ===", ""])
+        for basis, basis_upper in (("z", "Z"), ("x", "X")):
+            lines.extend(_render_plain_szz_memory_block(basis, basis_upper, num_rounds))
+    else:
+        lines.extend(_render_memory_experiments(patch, dx, dz, num_data, twirl, rng, num_rounds, interaction_basis))
 
     return "\n".join(lines)
 
@@ -1999,7 +2219,9 @@ def _guppy_module_cache_key(
     Twirled source is Python-time unrolled, so the cache key includes
     ``num_rounds`` in addition to the structural twirl fields, runtime
     frame-output mode, RNG seed, activation-probability threshold, and
-    the SZZ runtime-barrier policy.
+    the SZZ runtime-barrier policy. Plain SZZ source is also unrolled when
+    ``num_rounds`` is supplied so hosted-operation metadata can identify the
+    concrete counted syndrome round.
     """
     geom = patch.geometry
     rotated = "rot" if geom.rotated else "unrot"
@@ -2028,6 +2250,8 @@ def _guppy_module_cache_key(
         f"_b{effective_budget}{interaction_part}{check_plan_part}{frame_part}{runtime_barrier_part}"
     )
     if twirl is None:
+        if interaction_basis == "szz" and num_rounds is not None:
+            return f"{base}_r{int(num_rounds)}"
         return base
     if rng is None or num_rounds is None:
         msg = "twirled Guppy module cache keys require both rng and num_rounds"
@@ -2168,14 +2392,18 @@ def generate_memory_experiment(
     Returns:
         Guppy function for the experiment
     """
+    resolved_plan = _resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
     module = _load_guppy_module(
         patch,
         ancilla_budget=ancilla_budget,
         twirl=twirl,
         rng=rng,
-        num_rounds=num_rounds if twirl is not None else None,
-        interaction_basis=interaction_basis,
-        check_plan=check_plan,
+        num_rounds=num_rounds if twirl is not None or resolved_plan.interaction_basis == "szz" else None,
+        interaction_basis=resolved_plan.interaction_basis,
+        check_plan=resolved_plan.plan_id if check_plan is not None else None,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
     )
@@ -2447,15 +2675,17 @@ def make_surface_code(
         msg = f"basis must be 'Z' or 'X', got {basis!r}"
         raise ValueError(msg)
 
-    module = get_surface_code_module(
-        distance,
+    from pecos.qec.surface import SurfacePatch
+
+    _validate_surface_memory_distance(distance)
+    patch = SurfacePatch.create(distance=distance)
+    return generate_memory_experiment(
+        patch,
+        num_rounds,
+        basis,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
     )
-
-    factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
-
-    return factory(num_rounds)

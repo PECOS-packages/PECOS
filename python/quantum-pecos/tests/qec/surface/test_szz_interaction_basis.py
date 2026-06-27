@@ -474,6 +474,32 @@ def test_szz_detector_paths_accept_abstract_and_traced_qis_basis() -> None:
     assert int(traced_memory_circuit.get_meta("num_detectors")) == int(tick_circuit.get_meta("num_detectors"))
 
 
+def test_szz_runtime_barriers_allow_strict_traced_hosted_order() -> None:
+    patch = SurfacePatch.create(distance=3)
+
+    tick_circuit = build_memory_circuit(
+        patch=patch,
+        rounds=1,
+        circuit_source="traced_qis",
+        interaction_basis="szz",
+        szz_runtime_barriers="data-prefix",
+        require_hosted_operation_order=True,
+    )
+    assert tick_circuit.get_meta("circuit_source") == "traced_qis"
+    assert int(tick_circuit.get_meta("num_detectors")) > 0
+
+    dem = generate_circuit_level_dem_from_builder(
+        patch,
+        num_rounds=1,
+        noise=NoiseModel(p1=0.0, p2=0.001, p_meas=0.0, p_prep=0.0),
+        circuit_source="traced_qis",
+        interaction_basis="szz",
+        szz_runtime_barriers="data-prefix",
+        require_hosted_operation_order=True,
+    )
+    assert stim.DetectorErrorModel(dem).num_detectors == int(tick_circuit.get_meta("num_detectors"))
+
+
 @pytest.mark.parametrize("distance", [3, 5])
 @pytest.mark.parametrize("basis", ["Z", "X"])
 def test_szz_noiseless_detector_record_equivalence(distance: int, basis: str) -> None:

@@ -326,7 +326,7 @@ def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:
     )
 
     prefix_index = source.index('"source_kind", "szz_data_prefix"')
-    barrier_index = source.index("barrier(")
+    barrier_index = source.index("= pecos_qis_runtime_barrier_qubit_hugr(")
     host_index = source.index('"source_kind", "szz_host"', prefix_index)
     zz_phase_index = source.index("zz_phase(", barrier_index)
 

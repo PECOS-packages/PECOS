@@ -534,6 +534,24 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_qubit_hugr(
     qubit
 }
 
+/// Insert a runtime scheduling barrier after prior operations touching this qubit.
+///
+/// Returning the qubit handle gives Guppy/HUGR a data dependency that keeps the
+/// barrier between the preceding operation on this qubit and the following
+/// operation that consumes the returned handle. The barrier itself is a
+/// runtime-level batch/drain marker; it does not emit a quantum gate.
+///
+/// # Safety
+/// Called from C/LLVM code. Qubit must be a valid non-negative ID.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64 {
+    let _ = i64_to_usize(qubit);
+    with_interface(|interface| {
+        interface.queue_operation(Operation::Barrier);
+    });
+    qubit
+}
+
 /// Attach source/runtime metadata to the next lowerable quantum operation.
 ///
 /// This variant uses direct string data pointers instead of the tket2 string
@@ -1626,6 +1644,17 @@ mod tests {
                 metadata.get("source_kind").map(String::as_str),
                 Some("szz_prefix")
             );
+        });
+    }
+
+    #[test]
+    fn test_runtime_barrier_qubit_hugr_returns_qubit_and_queues_barrier() {
+        setup_test();
+        let returned = unsafe { pecos_qis_runtime_barrier_qubit_hugr(17) };
+        assert_eq!(returned, 17);
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations, vec![Operation::Barrier]);
         });
     }
 

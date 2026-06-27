@@ -69,6 +69,7 @@ const METADATA: &[(&str, &[&str])] = &[("name", &["mainlib"])];
 const HUGR_SYMBOL_PREFIX: &str = "__hugr__.";
 const TRACE_METADATA_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_hugr";
 const TRACE_METADATA_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_qubit_hugr";
+const RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubit_hugr";
 
 // Extension registry is defined in the parent module
 
@@ -401,10 +402,14 @@ fn is_llvm_symbol_char(ch: char) -> bool {
 ///
 /// These helpers are part of PECOS's runtime ABI, not ordinary user functions,
 /// so they need stable external symbols for dynamic linking. Keep this rewrite
-/// deliberately narrow: only the metadata helper declaration receives this
+/// deliberately narrow: only PECOS-owned QIS helper declarations receive this
 /// treatment.
 fn normalize_pecos_helper_symbols_in_llvm(llvm_ir: String) -> String {
-    let helper_symbols = [TRACE_METADATA_HUGR_SYMBOL, TRACE_METADATA_QUBIT_HUGR_SYMBOL];
+    let helper_symbols = [
+        TRACE_METADATA_HUGR_SYMBOL,
+        TRACE_METADATA_QUBIT_HUGR_SYMBOL,
+        RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL,
+    ];
     let mut normalized = String::with_capacity(llvm_ir.len());
     let mut cursor = 0;
 
@@ -462,6 +467,8 @@ mod tests {
             "declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.19(i64, i8*, i8*)\n",
             "%q = call i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.19(i64 %0, i8* %1, i8* %2)\n",
             "%q2 = call i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.21(i64 %0, i8* %1, i8* %2)\n",
+            "%q3 = call i64 @__hugr__.pecos_qis_runtime_barrier_qubit_hugr.22(i64 %0)\n",
+            "%q4 = call i64 @__hugr__.__main__.pecos_qis_runtime_barrier_qubit_hugr.23(i64 %0)\n",
             "call void @__hugr__.other_helper.16()\n",
         )
         .to_string();
@@ -477,6 +484,12 @@ mod tests {
         assert!(normalized.contains(
             "%q2 = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %0, i8* %1, i8* %2)"
         ));
+        assert!(
+            normalized.contains("%q3 = call i64 @pecos_qis_runtime_barrier_qubit_hugr(i64 %0)")
+        );
+        assert!(
+            normalized.contains("%q4 = call i64 @pecos_qis_runtime_barrier_qubit_hugr(i64 %0)")
+        );
         assert!(normalized.contains("@__hugr__.other_helper.16"));
     }
 }

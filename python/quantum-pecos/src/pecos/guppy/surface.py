@@ -333,7 +333,7 @@ def generate_guppy_source(
             "",
             "from guppylang import guppy",
             "from guppylang.std.angles import angle",
-            "from guppylang.std.builtins import array, barrier, owned, result",
+            "from guppylang.std.builtins import array, owned, result",
             "from guppylang.std.qsystem.functional import zz_phase",
             "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, y, z",
         ]
@@ -376,6 +376,9 @@ def generate_guppy_source(
                     "q: qubit @ owned, key: str, value: str"
                     ") -> qubit: ..."
                 ),
+                "",
+                "@guppy.declare",
+                "def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...",
                 "",
                 "",
             ],
@@ -774,8 +777,8 @@ def generate_guppy_source(
                 and has_data_prefix
             ):
                 target.append(
-                    f"{indent}barrier({ancilla_expr(stab_type, stab_idx)}, "
-                    f"{data_expr(data_q)})",
+                    f"{indent}{data_expr(data_q)} = "
+                    f"pecos_qis_runtime_barrier_qubit_hugr({data_expr(data_q)})",
                 )
             half_turns = "0.5" if sign > 0 else "-0.5"
             _append_szz_gate_trace_metadata(

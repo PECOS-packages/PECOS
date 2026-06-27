@@ -1492,6 +1492,7 @@ def _generate_traced_surface_tick_circuit(
     check_plan: str | None = None,
     runtime: object | None = None,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> Any:
@@ -1518,6 +1519,7 @@ def _generate_traced_surface_tick_circuit(
         check_plan=check_plan,
         runtime=runtime,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
@@ -1534,6 +1536,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
     check_plan: str | None = None,
     runtime: object | None = None,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
@@ -1548,6 +1551,7 @@ def _generate_traced_surface_tick_circuit_with_result_traces(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
     )
     return trace_guppy_into_tick_circuit_with_result_traces(
         program,
@@ -1578,6 +1582,7 @@ def _build_surface_tick_circuit_for_native_model(
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> Any:
@@ -1630,6 +1635,7 @@ def _build_surface_tick_circuit_for_native_model(
         check_plan=resolved_plan.plan_id,
         runtime=runtime,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
@@ -1676,6 +1682,7 @@ def build_memory_circuit(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> Any:
@@ -1704,6 +1711,10 @@ def build_memory_circuit(
         check_plan: Named surface check-plan preset.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for native abstract SZZ generation.
+        szz_runtime_barriers: Optional SZZ/SZZdg runtime-barrier policy used
+            for traced-QIS Guppy generation. This emits PECOS runtime barrier
+            helpers between selected data-prefix pulses and their host
+            SZZ/SZZdg operations.
         require_hosted_operation_order: For ``circuit_source="traced_qis"``,
             validate generic hosted-operation metadata after trace replay. A
             hosted local gate must appear before its same-``host_id`` host.
@@ -1744,6 +1755,7 @@ def build_memory_circuit(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
@@ -1966,6 +1978,7 @@ def _surface_native_topology(
     check_plan: str | None = None,
     szz_physical_prefixes: bool = False,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> _CachedNativeSurfaceTopology:
@@ -1999,6 +2012,7 @@ def _surface_native_topology(
         check_plan=resolved_plan.plan_id,
         szz_physical_prefixes=szz_physical_prefixes,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
@@ -2075,6 +2089,7 @@ def _cached_surface_native_topology(
     szz_physical_prefixes: bool = False,
     resolved_check_plan_hash: str = "",
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> _CachedNativeSurfaceTopology:
@@ -2092,6 +2107,7 @@ def _cached_surface_native_topology(
         check_plan=check_plan,
         szz_physical_prefixes=szz_physical_prefixes,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
@@ -2180,6 +2196,7 @@ def _cached_surface_native_dem_string(
     check_plan: str | None = None,
     resolved_check_plan_hash: str = "",
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     *,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
@@ -2221,6 +2238,7 @@ def _cached_surface_native_dem_string(
         szz_physical_prefixes=szz_physical_prefixes,
         resolved_check_plan_hash=resolved_check_plan_hash,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
@@ -2337,6 +2355,7 @@ def generate_circuit_level_dem_from_builder(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> str:
@@ -2394,6 +2413,8 @@ def generate_circuit_level_dem_from_builder(
             policy for native SZZ generation. For ``circuit_source="traced_qis"``,
             the Guppy program is generated from the same concrete deformed
             checks before runtime result tags are bound to surface metadata.
+        szz_runtime_barriers: Optional SZZ/SZZdg runtime-barrier policy for
+            traced-QIS Guppy generation.
         require_hosted_operation_order: For ``circuit_source="traced_qis"``,
             validate generic hosted-operation metadata after runtime trace
             replay. This is intended for source-local pulses that semantically
@@ -2434,6 +2455,7 @@ def generate_circuit_level_dem_from_builder(
             check_plan=resolved_plan.plan_id,
             szz_physical_prefixes=szz_physical_prefixes,
             clifford_frame_policy=clifford_frame_policy,
+            szz_runtime_barriers=szz_runtime_barriers,
             require_hosted_operation_order=require_hosted_operation_order,
             max_hosted_tick_separation=max_hosted_tick_separation,
         )
@@ -2467,6 +2489,7 @@ def generate_circuit_level_dem_from_builder(
         "check_plan": resolved_plan.plan_id,
         "resolved_check_plan_hash": resolved_plan.resolved_hash,
         "clifford_frame_policy": clifford_frame_policy,
+        "szz_runtime_barriers": szz_runtime_barriers,
         "require_hosted_operation_order": require_hosted_operation_order,
         "max_hosted_tick_separation": max_hosted_tick_separation,
     }
@@ -3897,6 +3920,7 @@ def surface_code_memory(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> SimulationResult:
@@ -3929,6 +3953,8 @@ def surface_code_memory(
             supplied.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for native SZZ generation.
+        szz_runtime_barriers: Optional SZZ/SZZdg runtime-barrier policy for
+            traced-QIS Guppy generation.
         require_hosted_operation_order: For ``circuit_source="traced_qis"``,
             validate generic hosted-operation metadata after runtime trace
             replay.
@@ -3974,6 +4000,7 @@ def surface_code_memory(
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
@@ -4277,6 +4304,7 @@ def build_native_sampler(
     ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
     *,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
@@ -4320,6 +4348,8 @@ def build_native_sampler(
             supplied.
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for native abstract SZZ generation.
+        szz_runtime_barriers: Optional SZZ/SZZdg runtime-barrier policy for
+            traced-QIS Guppy generation.
         require_hosted_operation_order: For ``circuit_source="traced_qis"``,
             validate generic hosted-operation metadata after runtime trace
             replay.
@@ -4358,6 +4388,7 @@ def build_native_sampler(
         szz_physical_prefixes=szz_physical_prefixes,
         resolved_check_plan_hash=resolved_plan.resolved_hash,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
         require_hosted_operation_order=require_hosted_operation_order,
         max_hosted_tick_separation=max_hosted_tick_separation,
     )
@@ -4398,6 +4429,7 @@ def build_native_sampler(
             check_plan=resolved_plan.plan_id,
             resolved_check_plan_hash=resolved_plan.resolved_hash,
             clifford_frame_policy=clifford_frame_policy,
+            szz_runtime_barriers=szz_runtime_barriers,
             require_hosted_operation_order=require_hosted_operation_order,
             max_hosted_tick_separation=max_hosted_tick_separation,
         )
@@ -4436,6 +4468,7 @@ def build_native_sampler_from_dem(
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
+    szz_runtime_barriers: bool | str = False,
 ) -> NativeSampler:
     """Build a native sampler from a caller-supplied decomposed DEM string.
 
@@ -4463,6 +4496,7 @@ def build_native_sampler_from_dem(
         check_plan=resolved_plan.plan_id,
         resolved_check_plan_hash=resolved_plan.resolved_hash,
         clifford_frame_policy=clifford_frame_policy,
+        szz_runtime_barriers=szz_runtime_barriers,
     )
     sampler = _cached_parsed_dem(decomposed_dem).to_dem_sampler()
     return NativeSampler(

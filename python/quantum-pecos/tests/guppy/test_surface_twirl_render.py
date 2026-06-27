@@ -19,6 +19,10 @@ from pecos.qec.surface._twirl_sites import (
 from pecos.qec.surface.patch import SurfacePatch
 
 
+_SZZ_RUNTIME_BARRIER_HELPER = "pecos_qis_runtime_barrier_qubit_hugr("
+_SZZ_RUNTIME_BARRIER_CALL = "= pecos_qis_runtime_barrier_qubit_hugr("
+
+
 @pytest.fixture
 def patch() -> SurfacePatch:
     return SurfacePatch.create(distance=3)
@@ -35,7 +39,7 @@ def _assert_szz_prefix_barrier_host_order(src: str) -> None:
             for i in range(index - 1, -1, -1)
             if '"source_kind", "szz_data_prefix"' in lines[i]
         )
-        barrier_index = next(i for i in range(index + 1, len(lines)) if "barrier(" in lines[i])
+        barrier_index = next(i for i in range(index + 1, len(lines)) if _SZZ_RUNTIME_BARRIER_CALL in lines[i])
         host_meta = next(
             i
             for i in range(barrier_index + 1, len(lines))
@@ -149,9 +153,9 @@ def test_szz_runtime_barriers_precede_data_prefix_and_host(patch: SurfacePatch) 
         szz_runtime_barriers=True,
     )
 
-    assert "from guppylang.std.builtins import array, barrier, owned, result" in src
-    assert "barrier(" in src
-    assert "barrier(" not in generate_guppy_source(
+    assert "from guppylang.std.builtins import array, owned, result" in src
+    assert _SZZ_RUNTIME_BARRIER_HELPER in src
+    assert _SZZ_RUNTIME_BARRIER_CALL not in generate_guppy_source(
         patch,
         interaction_basis="szz",
     )
@@ -171,8 +175,8 @@ def test_szz_data_prefix_runtime_barriers_only_guard_real_prefixes(patch: Surfac
         szz_runtime_barriers="data-prefix",
     )
 
-    assert "barrier(" in prefix_src
-    assert prefix_src.count("barrier(") < all_src.count("barrier(")
+    assert _SZZ_RUNTIME_BARRIER_CALL in prefix_src
+    assert prefix_src.count(_SZZ_RUNTIME_BARRIER_CALL) < all_src.count(_SZZ_RUNTIME_BARRIER_CALL)
 
     _assert_szz_prefix_barrier_host_order(prefix_src)
 

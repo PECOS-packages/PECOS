@@ -7,9 +7,11 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-# Keep this in sync with the cuda dependency group below. The extra supports
-# `uv sync --extra cuda`; the group supports `uv run --group cuda ...`.
-cuda = ["quantum-pecos[cuda]==0.8.0.dev8"]
+# Keep these in sync with the cuda dependency groups below. The extras support
+# `uv sync --extra cuda13`; the groups support `uv run --group cuda13 ...`.
+# Pick the extra matching your CUDA major -- do not install both.
+cuda13 = ["quantum-pecos[cuda13]==0.8.0.dev8"]
+cuda12 = ["quantum-pecos[cuda12]==0.8.0.dev8"]
 
 [tool.uv.workspace]
 members = [
@@ -67,12 +69,22 @@ numpy-compat = [ # NumPy/SciPy compatibility tests - verify compatibility with s
   "numpy>=1.15.0",
   "scipy>=1.1.0",
 ]
-cuda = [ # CUDA Python packages for GPU-accelerated simulations (requires CUDA toolkit)
-  "quantum-pecos[cuda]==0.8.0.dev8",
+cuda13 = [ # CUDA 13 Python packages for GPU-accelerated simulations (requires CUDA toolkit)
+  "quantum-pecos[cuda13]==0.8.0.dev8",
+]
+cuda12 = [ # CUDA 12 Python packages for GPU-accelerated simulations
+  "quantum-pecos[cuda12]==0.8.0.dev8",
 ]
 
 [tool.uv]
 default-groups = ["dev", "test"]
+# CUDA 12 and CUDA 13 stacks are mutually exclusive (separate cupy/cuquantum
+# wheels per CUDA major). Declare them conflicting so the lock never co-resolves
+# both -- co-resolution downgrades cu12 to satisfy cu13.
+conflicts = [
+  [{ extra = "cuda12" }, { extra = "cuda13" }],
+  [{ group = "cuda12" }, { group = "cuda13" }],
+]
 # Prevent uv from caching native workspace wheels - always use freshly built versions.
 # This fixes stale code issues when uv sync/run reinstalls cached old wheels.
 # See: https://github.com/astral-sh/uv/issues/11390

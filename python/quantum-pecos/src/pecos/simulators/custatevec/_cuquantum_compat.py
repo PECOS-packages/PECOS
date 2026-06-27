@@ -23,29 +23,32 @@ __all__ = [
 
 # Recommended install targets (kept in the messages so users get an actionable fix).
 _CU13 = "cuquantum-python-cu13>=25.9.0"  # CUDA 13 (Turing/CC 7.5+)
-_CU12 = "cuquantum-python-cu12>=25.3.0"  # CUDA 12 (V100/Volta: pin >=25.3,<25.9)
+_CU12 = "cuquantum-python-cu12>=25.3.0 (V100/Volta: >=25.3,<25.9)"  # CUDA 12
 
+# These optional imports must NEVER break ``import pecos`` -- a broken/partial CUDA
+# install can raise OSError/RuntimeError (not just ImportError) at import time, so we
+# catch broadly and defer to a loud, actionable error at construction.
 try:
     import cupy as cp
-except ImportError:
+except Exception:  # noqa: BLE001 -- optional dependency; failures defer to construction
     cp = None
 
 cusv = None
 ComputeType = None
 cudaDataType = None  # noqa: N816 -- mirrors cuQuantum's API name
-_cuquantum_error: ImportError | None = None
+_cuquantum_error: Exception | None = None
 _cuquantum_version: str | None = None
 try:
     from cuquantum import ComputeType, cudaDataType
     from cuquantum.bindings import custatevec as cusv
-except ImportError as exc:
+except Exception as exc:  # noqa: BLE001 -- optional dependency; failures defer to construction
     _cuquantum_error = exc
     try:
         import cuquantum
 
         _cuquantum_version = getattr(cuquantum, "__version__", "unknown")
-    except ImportError:
-        _cuquantum_version = None  # cuQuantum is not installed at all
+    except Exception:  # noqa: BLE001 -- optional dependency; failures defer to construction
+        _cuquantum_version = None  # cuQuantum is not installed (or its import is broken)
 
 
 def _cuquantum_reason() -> str | None:

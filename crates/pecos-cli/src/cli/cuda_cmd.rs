@@ -218,7 +218,8 @@ fn run_validate(path: Option<String>) -> Result<()> {
 }
 
 /// CLI entry point for `pecos cuda setup-python`. Validates the toolkit is
-/// present, then runs `uv sync --locked --group cuda` and prints next-step hints.
+/// present, then runs `uv sync --locked --group <cuda12|cuda13>` (matching the
+/// detected CUDA major) and prints next-step hints.
 fn run_setup_python() -> Result<()> {
     if find_cuda().is_none() {
         eprintln!("Error: CUDA toolkit not found.");
@@ -239,17 +240,27 @@ fn run_setup_python() -> Result<()> {
     Ok(())
 }
 
-/// Run `uv sync --locked --group cuda` to install Python CUDA packages.
+/// Pick the CUDA-major dependency group (`cuda12` / `cuda13`) for the detected
+/// toolkit, defaulting to `cuda13` (the recommended, latest path).
+pub(super) fn cuda_python_group() -> &'static str {
+    let is_cuda12 = find_cuda()
+        .and_then(|path| get_cuda_version(&path).ok())
+        .is_some_and(|version| version.split('.').next() == Some("12"));
+    if is_cuda12 { "cuda12" } else { "cuda13" }
+}
+
+/// Run `uv sync --locked --group <cuda12|cuda13>` to install Python CUDA packages.
 ///
 /// Reusable from other CLI commands (e.g. `pecos setup`) once they've already
 /// confirmed the user wants this. Does NOT validate toolkit presence -- caller
 /// is responsible for that check.
 pub(super) fn install_cuda_python_packages() -> Result<()> {
-    println!("Installing CUDA Python packages (cupy, cuquantum, pytket-cutensornet)...");
+    let group = cuda_python_group();
+    println!("Installing CUDA Python packages (cupy, cuquantum, pytket-cutensornet) [{group}]...");
     println!();
 
     let status = Command::new("uv")
-        .args(["sync", "--locked", "--group", "cuda"])
+        .args(["sync", "--locked", "--group", group])
         .status();
 
     match status {
@@ -263,7 +274,7 @@ pub(super) fn install_cuda_python_packages() -> Result<()> {
             eprintln!("Failed to install CUDA Python packages.");
             eprintln!();
             eprintln!("You may need to install manually:");
-            eprintln!("  uv sync --locked --group cuda");
+            eprintln!("  uv sync --locked --group {group}");
             Err(Error::Cuda(
                 "Failed to install CUDA Python packages".to_string(),
             ))

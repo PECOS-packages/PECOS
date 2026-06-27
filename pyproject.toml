@@ -78,6 +78,13 @@ cuda12 = [ # CUDA 12 Python packages for GPU-accelerated simulations
 
 [tool.uv]
 default-groups = ["dev", "test"]
+# CUDA 12 and CUDA 13 stacks are mutually exclusive (separate cupy/cuquantum
+# wheels per CUDA major). Declare them conflicting so the lock never co-resolves
+# both -- co-resolution downgrades cu12 to satisfy cu13.
+conflicts = [
+  [{ extra = "cuda12" }, { extra = "cuda13" }],
+  [{ group = "cuda12" }, { group = "cuda13" }],
+]
 # Prevent uv from caching native workspace wheels - always use freshly built versions.
 # This fixes stale code issues when uv sync/run reinstalls cached old wheels.
 # See: https://github.com/astral-sh/uv/issues/11390

@@ -363,7 +363,7 @@ QUANTUM_PECOS_DIR="$PECOS_ROOT/python/quantum-pecos"
 if [ -d "$QUANTUM_PECOS_DIR" ]; then
     print_info "Installing PECOS with CUDA extras..."
     cd "$QUANTUM_PECOS_DIR"
-    run_cmd uv pip install -e ".[cuda]"
+    run_cmd uv pip install -e ".[cuda${CUDA_VERSION}]"
     print_status "PECOS installed with CUDA support"
 else
     print_warning "quantum-pecos directory not found at $QUANTUM_PECOS_DIR"
@@ -440,7 +440,7 @@ print_info "Test 3: Testing cuQuantum..."
 CUQUANTUM_TEST=$(python3 -c "
 import sys
 try:
-    from cuquantum import custatevec
+    from cuquantum.bindings import custatevec
     print('cuStateVec imported successfully')
     sys.exit(0)
 except Exception as e:

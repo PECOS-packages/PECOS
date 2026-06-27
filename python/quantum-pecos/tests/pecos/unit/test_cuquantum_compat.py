@@ -131,3 +131,27 @@ def test_loud_when_cupy_missing(monkeypatch) -> None:
     assert "CuPy" in compat.custatevec_unavailable_reason()
     with pytest.raises(RuntimeError, match="CuPy"):
         compat.require_custatevec()
+
+
+def test_import_nonfatal_on_broken_dependency(monkeypatch) -> None:
+    """A broken optional package (raising at import, not just absent) must not break
+    `import pecos`; it defers to a loud error at construction."""
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.split(".")[0] == "cupy":
+            msg = "synthetic broken cupy install"
+            raise RuntimeError(msg)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    for mod in list(sys.modules):
+        if mod.split(".")[0] == "cupy":
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+    _fake_cuquantum(monkeypatch, "26.3.2", with_custatevec=True)
+
+    compat = _load_module()  # must not raise despite the RuntimeError
+
+    assert not compat.custatevec_available()
+    with pytest.raises(RuntimeError):
+        compat.require_custatevec()

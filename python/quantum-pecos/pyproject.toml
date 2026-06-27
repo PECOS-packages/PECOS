@@ -94,6 +94,10 @@ cuda12 = [
 # Dependency groups are defined at workspace root (pyproject.toml)
 # Package-specific groups can be added here if needed
 
+[tool.uv]
+# CUDA 12 and CUDA 13 use different, mutually exclusive cupy/cuquantum wheels.
+conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }]]
+
 [tool.uv.sources]
 pecos-rslib = { workspace = true }
 pecos-rslib-llvm = { workspace = true }

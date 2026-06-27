@@ -47,11 +47,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Safe-biased: run the core suites unless EVERY changed file is clearly
-      # unable to affect them. The markdown/text ignore is anchored to root-level
-      # files only ([^/]+) -- nested package READMEs are pyproject `readme=`
-      # build inputs (python/**/README.md, crate README.md) and MUST run. Any
-      # path not in the ignore set defaults to running.
+      # Run the core suites unless EVERY changed file is on a short allowlist of
+      # paths that PROVABLY cannot affect python-ci-core or `pecos rust test`:
+      #   - other-language CI workflows (julia/go/codeql) and issue templates
+      #   - root-level prose files only ([^/]+\.md|rst|txt, LICENSE, CITATION);
+      #     root README/CHANGELOG are NOT pyproject `readme=` inputs (verified).
+      # Notably docs/ is NOT ignored: docs/assets/** holds test fixtures (e.g.
+      # docs/assets/test-data/math.wat) and docs/*.md sources generated tests
+      # under python/quantum-pecos/tests/docs/generated/, both collected by the
+      # non-slow core selection. Nested package READMEs (python/**/README.md) are
+      # also build inputs and run. Anything not on the allowlist runs.
       - name: Detect core-relevant changes
         id: detect
         run: |
@@ -64,7 +69,7 @@ jobs:
           changed="$(git diff --name-only "$base"...HEAD)"
           echo "Changed files:"
           printf '  %s\n' $changed
-          ignore='^(docs/|\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|go-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE|CITATION)'
+          ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|go-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE|CITATION)'
           if printf '%s\n' "$changed" | grep -qvE "$ignore"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "Core-relevant changes detected; running core suites."

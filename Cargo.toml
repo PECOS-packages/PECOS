@@ -54,7 +54,7 @@ cargo_metadata = "0.23"
 # at build time, which is what we want when maturin builds the cdylib but is
 # fatal for plain `cargo test`. Each pecos-rslib* crate gates them behind its
 # own `extension-module` feature; maturin opts in via pyproject.toml.
-pyo3 = "0.28"
+pyo3 = "0.29"
 
 # --- C/C++ FFI & build ---
 bindgen = "0.72"

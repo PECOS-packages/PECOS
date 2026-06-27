@@ -1155,11 +1155,13 @@ impl QisHeliosInterface {
         // We use AddDllDirectory to temporarily add the directories containing
         // our FFI DLLs to the search path.
 
-        // Find the directories containing our dependency DLLs
-        let qis_ffi_path = Self::find_pecos_qis_lib().ok();
+        // Find the directories containing our dependency DLLs (use the pinned
+        // paths so dependency search dirs match the libraries hashed in the cache
+        // key and loaded by the singletons).
+        let qis_ffi_path = Self::pinned_qis_ffi_lib_path().ok();
         let qis_ffi_dir = qis_ffi_path.as_ref().and_then(|p| p.parent());
 
-        let shim_path = crate::shim::get_shim_library_path();
+        let shim_path = Self::pinned_shim_lib_path();
         let shim_dir = shim_path.as_ref().and_then(|p| p.parent());
 
         // Combine both directories (they may be different)
@@ -1762,8 +1764,10 @@ entry:
                     )
                 })?;
 
-            // Find the pecos_qis_ffi.dll.lib import library
-            let pecos_qis_lib_path = Self::find_pecos_qis_lib()?;
+            // Find the pecos_qis_ffi.dll.lib import library (pinned, so the link
+            // import library matches the FFI library hashed in the cache key).
+            let pecos_qis_lib_path =
+                Self::pinned_qis_ffi_lib_path().map_err(InterfaceError::LoadError)?;
             let qis_ffi_import_lib = pecos_qis_lib_path.with_extension("dll.lib");
 
             if !qis_ffi_import_lib.exists() {
@@ -2366,7 +2370,7 @@ impl QisInterface for QisHeliosInterface {
     }
 
     fn get_qis_ffi_lib_path(&self) -> Option<std::path::PathBuf> {
-        Self::find_pecos_qis_lib().ok()
+        Self::pinned_qis_ffi_lib_path().ok()
     }
 
     fn get_execution_context_ptr(&self) -> Option<*mut std::ffi::c_void> {

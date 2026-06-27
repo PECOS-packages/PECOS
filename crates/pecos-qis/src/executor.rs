@@ -130,11 +130,13 @@ fn build_fingerprint() -> u64 {
     })
 }
 
-/// A coarse target identifier (arch + OS) mixed into the cache key and recorded
-/// in the manifest, so a shared object compiled for one target is never reused
-/// on another even if the build fingerprint somehow matched.
+/// The build target triple (e.g. `x86_64-unknown-linux-gnu`), embedded by the
+/// build script, mixed into the cache key and recorded in the manifest so a
+/// shared object compiled for one target ABI is never reused on another. Using
+/// the full triple distinguishes ABIs a coarse `arch-os` would collapse (e.g.
+/// gnu vs musl).
 fn cache_target() -> String {
-    format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
+    env!("PECOS_QIS_TARGET").to_string()
 }
 
 /// An auditable record written next to each compiled program object in the
@@ -1336,6 +1338,30 @@ impl QisHeliosInterface {
         hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
         hasher.update(cache_target().as_bytes());
         hasher.update(build_fingerprint().to_le_bytes());
+        // The compiled object resolves `__quantum__rt__*` / `selene_*` symbols at
+        // runtime from the QIS FFI shim and the Selene shim, which are SELECTED at
+        // runtime (library search order + the `PECOS_SELENE_SHIM_PATH` override)
+        // and may differ from the build-embedded libraries that the executable
+        // fingerprint captures. Fold each selected library's identity (path +
+        // last-modified time) into the key so swapping a shim invalidates a cached
+        // object that was compiled against the old one.
+        for lib in [
+            Self::find_pecos_qis_lib().ok(),
+            crate::shim::get_shim_library_path(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            hasher.update(lib.to_string_lossy().as_bytes());
+            let mtime_nanos = std::fs::metadata(&lib)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos());
+            if let Some(nanos) = mtime_nanos {
+                hasher.update(nanos.to_le_bytes());
+            }
+        }
         let digest = hasher.finalize();
         let mut content_hash = String::with_capacity(digest.len() * 2);
         for byte in digest {

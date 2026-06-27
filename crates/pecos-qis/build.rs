@@ -25,6 +25,13 @@ fn main() {
         println!("cargo:rustc-env=PECOS_LLVM_BIN_PATH={}", llvm_bin.display());
     }
 
+    // Embed the build target triple so the QIS program-cache key can scope cached
+    // shared objects to the exact target ABI (e.g. distinguish
+    // x86_64-unknown-linux-gnu from -musl), not just arch/os.
+    if let Ok(target) = env::var("TARGET") {
+        println!("cargo:rustc-env=PECOS_QIS_TARGET={target}");
+    }
+
     // Build Selene-specific components only when the selene feature is enabled
     #[cfg(feature = "selene")]
     build_selene::build_selene_components();

@@ -101,7 +101,6 @@ conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }]]
 [tool.uv.sources]
 pecos-rslib = { workspace = true }
 pecos-rslib-llvm = { workspace = true }
-pecos-rslib-cuda = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pecos"]

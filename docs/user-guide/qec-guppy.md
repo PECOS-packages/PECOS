@@ -389,7 +389,7 @@ results = (
     .quantum(state_vector())
     .noise(depolarizing_noise().with_uniform_probability(0.001))
     .seed(42)
-    .run(1000)
+    .run(100)
 )
 ```
 

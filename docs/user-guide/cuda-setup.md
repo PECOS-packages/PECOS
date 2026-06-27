@@ -31,7 +31,10 @@ Both approaches require:
 
 ### Hardware Requirements
 
-- **NVIDIA GPU** with Compute Capability 7.0 or higher
+- **NVIDIA GPU** with Compute Capability **7.5 or higher** (Turing and newer) for the
+  default CUDA 13 path. Current cuStateVec (cuQuantum >= 25.09) and CUDA 13 dropped
+  Volta, so **V100 / CC 7.0** is supported only via the CUDA 12 path with an older,
+  Volta-capable cuQuantum pinned `cuquantum-python-cu12>=25.3,<25.9` (see below).
   - To check your GPU: `nvidia-smi`
   - To check compute capability: Visit [NVIDIA's GPU Compute Capability List](https://developer.nvidia.com/cuda-gpus)
 
@@ -119,22 +122,27 @@ If `nvcc` is not found, ensure CUDA's bin directory is in your PATH.
 PECOS uses `uv` as the package manager. Install the CUDA-related Python packages:
 
 ```bash
-# Install CUDA 13 packages
-uv pip install cupy-cuda13x>=13.0.0
-uv pip install cuquantum-python-cu13>=25.3.0
-uv pip install pytket-cutensornet>=0.12.0
+# CUDA 13 (Turing / CC 7.5+ GPUs):
+uv pip install "cupy-cuda13x>=13.0.0" "cuquantum-python-cu13>=25.9.0" "pytket-cutensornet>=0.12.0"
+
+# CUDA 12:
+uv pip install "cupy-cuda12x>=13.0.0" "cuquantum-python-cu12>=25.3.0" "pytket-cutensornet>=0.12.0"
 ```
 
-**Important**: Use packages matching your CUDA version:
-- For CUDA 13: `cupy-cuda13x`, `cuquantum-python-cu13`
-- For CUDA 12: `cupy-cuda12x`, `cuquantum-python-cu12`
+**Important**:
+- Install packages matching your CUDA major (CUDA 13 -> `*-cu13` / `*-cuda13x`; CUDA 12 -> `*-cu12` / `*-cuda12x`). Do **not** install both.
+- PECOS requires the **`cuquantum.bindings` API (cuQuantum >= 25.03)**; older cuQuantum is rejected with a clear error when you use `CuStateVec`. The lowest CUDA 13 wheel is `25.9.0`.
+- **V100 / Volta (CC 7.0)**: pin `cuquantum-python-cu12>=25.3,<25.9` (cuStateVec dropped Volta at 25.09).
 
 ### Step 5: Install PECOS with CUDA Support
 
 #### Option A: Install from PyPI with CUDA extras
 
 ```bash
-uv pip install quantum-pecos[cuda]
+# CUDA 13 (recommended); use [cuda12] for CUDA 12. These pull the Python cuStateVec
+# / MPS stack (CuPy + cuquantum-python). The Rust GPU backend is a separate install
+# (see "Rust cuQuantum Bindings Setup" below): pip install pecos-rslib-cuda
+uv pip install "quantum-pecos[cuda13]"
 ```
 
 #### Option B: Install from source (for development)
@@ -148,8 +156,8 @@ just build-cuda  # Build with CUDA support
 just devc        # Full dev cycle: clean + build-cuda + test
 just devcl       # Dev cycle + linting
 
-# Option 2: Manual installation
-uv pip install -e "./python/quantum-pecos[all,cuda]"
+# Option 2: Manual installation (use [all,cuda12] for CUDA 12)
+uv pip install -e "./python/quantum-pecos[all,cuda13]"
 ```
 
 ## Verification
@@ -203,14 +211,15 @@ uv run pytest python/quantum-pecos/tests/pecos/integration/state_sim_tests/test_
 
 ## Package Versions
 
-Current recommended versions (as of 2025):
+Minimum versions (CUDA 13 path shown; for CUDA 12 use the `-cu12` / `-cuda12x` equivalents):
 
-| Package | Version | Release Date | Purpose |
-|---------|---------|--------------|---------|
-| cupy-cuda13x | 13.6.0+ | Aug 2025 | NumPy/SciPy for GPU |
-| cuquantum-python-cu13 | 25.9.0+ | Sept 2025 | cuQuantum Python API |
-| custatevec-cu13 | 1.10.0+ | Sept 2025 | State vector operations (included in cuquantum) |
-| pytket-cutensornet | 0.12.0+ | 2025 | MPS simulator |
+| Package | Minimum | Purpose |
+|---------|---------|---------|
+| cupy-cuda13x | 13.0.0 | NumPy/SciPy for GPU |
+| cuquantum-python-cu13 | 25.9.0 | cuQuantum Python API (the `cuquantum.bindings >= 25.03` surface; lowest cu13 wheel is 25.9.0) |
+| pytket-cutensornet | 0.12.0 | MPS simulator |
+
+For CUDA 12 the floor is `cuquantum-python-cu12>=25.3.0`; **V100/Volta** needs `>=25.3,<25.9`.
 
 ## Troubleshooting
 
@@ -226,19 +235,26 @@ export LD_LIBRARY_PATH=/usr/local/cuda-13/lib64:$LD_LIBRARY_PATH
 source ~/.bashrc
 ```
 
-#### 2. `CuStateVec is None` or tests are skipped
+#### 2. `CuStateVec` unavailable / constructing it raises
 
-**Solution**: Python packages not properly installed or CUDA Toolkit version mismatch.
+`import pecos` always works, but constructing `CuStateVec` (or
+`QuantumSimulator("CuStateVec")`) without CuPy and a bindings-era cuQuantum raises
+an actionable error naming what to install/upgrade. PECOS requires the
+`cuquantum.bindings` API (cuQuantum >= 25.03); the legacy top-level
+`cuquantum.custatevec` is not used.
 
 ```bash
-# Verify installations
-python -c "import cupy; print(cupy.__version__)"
-python -c "from cuquantum import custatevec; print('OK')"
+# Ask PECOS directly (no GPU needed):
+python -c "from pecos.simulators.custatevec._cuquantum_compat import custatevec_available, custatevec_unavailable_reason; print(custatevec_available(), '|', custatevec_unavailable_reason())"
 
-# Reinstall if needed
-uv pip uninstall cupy-cuda13x cuquantum-python-cu13
-uv pip install cupy-cuda13x cuquantum-python-cu13
+# Or check the underlying packages:
+python -c "import cupy; print(cupy.__version__)"
+python -c "from cuquantum.bindings import custatevec; print('OK')"
 ```
+
+If the reason says cuQuantum "predates the cuquantum.bindings API", upgrade to
+`cuquantum-python-cu13>=25.9.0` (CUDA 13) or `cuquantum-python-cu12>=25.3.0`
+(CUDA 12; V100/Volta `>=25.3,<25.9`).
 
 #### 3. CUDA version mismatch errors
 
@@ -281,7 +297,7 @@ If you encounter issues:
 1. Check [NVIDIA cuQuantum Documentation](https://docs.nvidia.com/cuda/cuquantum/latest/)
 2. Check [pytket-cutensornet GitHub Issues](https://github.com/Quantinuum/pytket-cutensornet/issues)
 3. Check [PECOS GitHub Issues](https://github.com/PECOS-packages/PECOS/issues)
-4. Verify your GPU compute capability is 7.0 or higher
+4. Verify your GPU compute capability is 7.5+ (CUDA 13) or 7.0 (V100 via the capped CUDA 12 path)
 
 ## Alternative: Using Conda
 
@@ -451,12 +467,12 @@ To use GPU simulators in PECOS:
 
 ### Option A: Python cuQuantum Bindings (Easier Setup)
 
-1. **Verify NVIDIA GPU** (Compute Capability 7.0+)
-2. **Install CUDA Toolkit 13** (system-level)
-3. **Install Python packages**: `cupy-cuda13x`, `cuquantum-python-cu13`, `pytket-cutensornet`
-4. **Install PECOS with `[cuda]` extras**:
+1. **Verify NVIDIA GPU** (Compute Capability 7.5+ for CUDA 13; V100/CC 7.0 only via the capped CUDA 12 path)
+2. **Install CUDA Toolkit 13** (system-level; or CUDA 12)
+3. **Install Python packages**: `cupy-cuda13x`, `cuquantum-python-cu13`, `pytket-cutensornet` (or the `-cu12`/`-cuda12x` equivalents)
+4. **Install PECOS with the matching CUDA extra**:
    ```bash
-   uv pip install quantum-pecos[cuda]
+   uv pip install "quantum-pecos[cuda13]"   # or [cuda12] for CUDA 12
    # or for development:
    just build-cuda
    ```

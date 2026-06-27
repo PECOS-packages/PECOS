@@ -33,6 +33,7 @@ from pecos.simulators import (
     CuStateVec,
     StateVec,
 )
+from pecos.simulators.custatevec._cuquantum_compat import custatevec_available
 from pecos.testing import assert_allclose
 
 str_to_sim = {
@@ -56,6 +57,10 @@ def check_dependencies(
         A function that creates a simulator instance with the given parameters.
     """
     if simulator not in str_to_sim or str_to_sim[simulator] is None:
+        pytest.skip(f"Requirements to test {simulator} are not met.")
+    # CuStateVec is always importable now; CUDA/CuPy availability is checked here
+    # (it raises a loud error at construction otherwise).
+    if simulator == "CuStateVec" and not custatevec_available():
         pytest.skip(f"Requirements to test {simulator} are not met.")
     sim_class = str_to_sim[simulator]
 

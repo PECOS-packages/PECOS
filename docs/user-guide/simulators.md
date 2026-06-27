@@ -254,7 +254,8 @@ results = sim(Qasm(circuit)).quantum(CuStateVec).run(100)
 - cuQuantum and cupy packages
 
 ```bash
-pip install quantum-pecos[cuda]
+# CUDA 13 (recommended); use [cuda12] for CUDA 12 / V100. Do not install both.
+pip install "quantum-pecos[cuda13]"
 ```
 
 See [CUDA Setup Guide](cuda-setup.md) for detailed installation instructions.

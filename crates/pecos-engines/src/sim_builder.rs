@@ -303,10 +303,28 @@ impl SimBuilder {
             builder.set_qubits_if_needed(num_qubits);
             builder.build_boxed()?
         } else {
-            // Default: sparse stabilizer. A 0-qubit default (an inferred-zero
-            // count from a dynamic classical engine that has not yet executed) is
-            // benign here -- the simulator grows as the program allocates qubits,
-            // as exercised by the QASM and QIS sim paths -- so it is built as-is.
+            // Default: fixed-size sparse stabilizer. It does NOT grow, so a
+            // 0-qubit default is only correct for a program that genuinely uses
+            // zero qubits (e.g. a classical-only QASM program, which reports a
+            // STATIC 0). A dynamic engine (e.g. QIS) instead reports 0 *before
+            // execution* and then allocates qubits at runtime; building a 0-qubit
+            // fixed engine for it would panic on the first allocation. Reject only
+            // that specific case -- no explicit count, no quantum engine, and a
+            // dynamic-unknown-zero classical engine -- and ask for an explicit
+            // `.qubits(n)` or a `.quantum(...)` engine. Genuinely-0-qubit and
+            // explicit-count programs are unaffected.
+            if self.explicit_num_qubits.is_none()
+                && num_qubits == 0
+                && classical_engine.has_dynamic_qubit_count()
+            {
+                return Err(PecosError::Input(
+                    "A dynamic classical engine reports 0 qubits before execution, but the \
+                     default quantum engine is fixed-size and cannot grow to fit qubits \
+                     allocated at runtime. Specify .qubits(n) or provide a quantum engine \
+                     via .quantum()."
+                        .to_string(),
+                ));
+            }
             Box::new(SparseStabEngine::new(num_qubits))
         };
 

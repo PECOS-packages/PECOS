@@ -18,6 +18,18 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
         // Default implementation does nothing.
     }
 
+    /// Whether this engine's qubit count is only known after execution because it
+    /// allocates qubits dynamically.
+    ///
+    /// For such engines a [`Self::num_qubits`] of 0 before execution means "not
+    /// yet known", not "genuinely zero qubits". Static engines that parse their
+    /// whole program up front (e.g. QASM) know their exact count and return
+    /// `false` (the default); dynamic runtimes (e.g. the QIS/Selene runtime,
+    /// which discovers allocations during execution) return `true`.
+    fn has_dynamic_qubit_count(&self) -> bool {
+        false
+    }
+
     /// Generate a `ByteMessage` containing the next batch of quantum commands to execute.
     /// An empty message indicates no more commands are available.
     ///

@@ -53,6 +53,7 @@ def validate_hosted_operations(
     max_tick_separation: int | None = None,
     require_shared_qubit: bool = True,
     require_host_after_local: bool = True,
+    require_unique_host_id: bool = False,
     context: str = "hosted operation validation",
 ) -> tuple[HostedOperationBinding, ...]:
     """Validate and bind hosted-operation metadata in a traced ``TickCircuit``.
@@ -75,6 +76,10 @@ def validate_hosted_operations(
         require_host_after_local: Require host tick/gate order to follow local
             tick/gate order. Disable only for metadata-shape audits that need
             to report ordering drift instead of rejecting it immediately.
+        require_unique_host_id: Require each host id to appear on at most one
+            host gate. Enable this for strict validation because repeated host
+            records make first-later-host binding ambiguous across repeated
+            helper invocations.
         context: Human-readable context included in failures.
 
     Returns:
@@ -95,6 +100,12 @@ def validate_hosted_operations(
         local_role_key=local_role_key,
         context=context,
     )
+    if require_unique_host_id:
+        _raise_if_repeated_host_records(
+            records,
+            host_id_key=host_id_key,
+            context=context,
+        )
     bindings: list[HostedOperationBinding] = []
     for local in records:
         if not local.local_role:
@@ -174,6 +185,42 @@ def _matching_host_records(
             continue
         candidates.append(candidate)
     return tuple(candidates)
+
+
+def _raise_if_repeated_host_records(
+    records: Sequence[HostedGateRecord],
+    *,
+    host_id_key: str,
+    context: str,
+) -> None:
+    host_records_by_id: dict[str, list[HostedGateRecord]] = {}
+    for record in records:
+        if record.local_role or not record.host_id:
+            continue
+        host_records_by_id.setdefault(record.host_id, []).append(record)
+    repeated = {
+        host_id: host_records
+        for host_id, host_records in host_records_by_id.items()
+        if len(host_records) > 1
+    }
+    if not repeated:
+        return
+    host_id, host_records = next(iter(repeated.items()))
+    first_locations = ", ".join(
+        f"{record.gate_name}@t{record.tick_index}/g{record.gate_index}"
+        for record in host_records[:4]
+    )
+    extra_count = len(host_records) - 4
+    if extra_count > 0:
+        first_locations = f"{first_locations}, ... (+{extra_count} more)"
+    msg = (
+        f"{context}: hosted metadata key {host_id_key!r} is ambiguous because "
+        f"host_id {host_id!r} appears on {len(host_records)} host gates "
+        f"({first_locations}). Strict hosted-operation validation requires "
+        "host ids to identify one source host gate; include invocation-scoped "
+        "metadata before validating ordering or tick separation."
+    )
+    raise ValueError(msg)
 
 
 def _gate_order(record: HostedGateRecord) -> tuple[int, int]:

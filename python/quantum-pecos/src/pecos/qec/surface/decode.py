@@ -1478,6 +1478,7 @@ def _validate_trace_hosted_operations_if_requested(
         tick_circuit,
         max_tick_separation=max_hosted_tick_separation,
         require_host_after_local=require_hosted_operation_order,
+        require_unique_host_id=True,
         context=context,
     )
 

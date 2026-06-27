@@ -92,6 +92,58 @@ def test_validate_hosted_operations_selects_later_shared_host_record() -> None:
     assert bindings[0].host.qubits == (2, 5)
 
 
+def test_validate_hosted_operations_can_require_unique_host_ids() -> None:
+    circuit = FakeTickCircuit(
+        [
+            [
+                FakeGate(
+                    "H",
+                    [0],
+                    meta={"host_id": "host:a", "local_role": "basis_prefix"},
+                ),
+            ],
+            [FakeGate("SZZ", [0, 1], meta={"host_id": "host:a"})],
+            [
+                FakeGate(
+                    "H",
+                    [0],
+                    meta={"host_id": "host:a", "local_role": "basis_prefix"},
+                ),
+            ],
+            [FakeGate("SZZ", [0, 1], meta={"host_id": "host:a"})],
+        ],
+    )
+
+    with pytest.raises(ValueError, match="host_id 'host:a' appears on 2 host gates"):
+        validate_hosted_operations(circuit, require_unique_host_id=True)
+
+
+def test_validate_hosted_operations_unique_host_ids_allow_many_locals() -> None:
+    circuit = FakeTickCircuit(
+        [
+            [
+                FakeGate(
+                    "H",
+                    [0],
+                    meta={"host_id": "host:a", "local_role": "basis_prefix"},
+                ),
+                FakeGate(
+                    "S",
+                    [0],
+                    meta={"host_id": "host:a", "local_role": "basis_prefix"},
+                ),
+            ],
+            [FakeGate("SZZ", [0, 1], meta={"host_id": "host:a"})],
+        ],
+    )
+
+    bindings = validate_hosted_operations(circuit, require_unique_host_id=True)
+
+    assert len(bindings) == 2
+    assert {binding.local.gate_name for binding in bindings} == {"H", "S"}
+    assert all(binding.host.gate_name == "SZZ" for binding in bindings)
+
+
 def test_validate_hosted_operations_can_bind_without_shared_qubit_requirement() -> None:
     circuit = FakeTickCircuit(
         [
@@ -226,6 +278,37 @@ def test_trace_hosted_validation_rejects_ordering_drift_when_requested() -> None
     )
 
     with pytest.raises(ValueError, match="ordering drift"):
+        _validate_trace_hosted_operations_if_requested(
+            circuit,
+            require_hosted_operation_order=True,
+            max_hosted_tick_separation=None,
+            context="test trace validation",
+        )
+
+
+def test_trace_hosted_validation_rejects_repeated_host_ids_when_requested() -> None:
+    circuit = FakeTickCircuit(
+        [
+            [
+                FakeGate(
+                    "H",
+                    [0],
+                    meta={"host_id": "host:a", "local_role": "basis_prefix"},
+                ),
+            ],
+            [FakeGate("SZZ", [0, 1], meta={"host_id": "host:a"})],
+            [
+                FakeGate(
+                    "H",
+                    [0],
+                    meta={"host_id": "host:a", "local_role": "basis_prefix"},
+                ),
+            ],
+            [FakeGate("SZZ", [0, 1], meta={"host_id": "host:a"})],
+        ],
+    )
+
+    with pytest.raises(ValueError, match="host_id 'host:a' appears on 2 host gates"):
         _validate_trace_hosted_operations_if_requested(
             circuit,
             require_hosted_operation_order=True,

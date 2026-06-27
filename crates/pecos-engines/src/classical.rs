@@ -122,6 +122,10 @@ impl ClassicalEngine for Box<dyn ClassicalControlEngine> {
         (**self).set_num_qubits_hint(num_qubits);
     }
 
+    fn has_dynamic_qubit_count(&self) -> bool {
+        (**self).has_dynamic_qubit_count()
+    }
+
     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
         (**self).generate_commands()
     }

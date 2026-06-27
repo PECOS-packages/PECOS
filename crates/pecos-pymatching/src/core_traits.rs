@@ -188,14 +188,17 @@ impl DetailedDecoder for PyMatchingDecoder {
 ///
 /// Converts the observable vector to a bitmask for the sample+decode loop.
 impl ObservableDecoder for PyMatchingDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let result = self
             .decode(syndrome)
             .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
-        let mut mask = 0u64;
+        let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
         for (i, &v) in result.observable.iter().enumerate() {
             if v != 0 {
-                mask |= 1 << i;
+                mask.set(i);
             }
         }
         Ok(mask)

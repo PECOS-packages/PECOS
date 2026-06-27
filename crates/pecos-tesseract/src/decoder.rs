@@ -350,10 +350,10 @@ impl TesseractDecoder {
 }
 
 impl pecos_decoder_core::ObservableDecoder for TesseractDecoder {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         let detections: Vec<u64> = syndrome
             .iter()
             .enumerate()
@@ -363,7 +363,9 @@ impl pecos_decoder_core::ObservableDecoder for TesseractDecoder {
         let result = self
             .decode_detections(&det_arr.view())
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
-        Ok(result.observables_mask)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
+            result.observables_mask,
+        ))
     }
 }
 

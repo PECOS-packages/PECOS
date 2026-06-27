@@ -19,13 +19,16 @@ use crate::decoder::MwpfDecoder;
 /// This is the primary trait used by the fast decode path
 /// (`SampleBatch.decode_count`, `sample_decode_count`, etc.).
 impl pecos_decoder_core::ObservableDecoder for MwpfDecoder {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> std::result::Result<u64, pecos_decoder_core::DecoderError> {
+    ) -> std::result::Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError>
+    {
         let result = self
             .decode_syndrome(syndrome)
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
-        Ok(result.observable_mask)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
+            result.observable_mask,
+        ))
     }
 }

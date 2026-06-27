@@ -95,7 +95,7 @@ def test_u64_observable_getter_rejects_wide_batch() -> None:
     # int. (The decode methods, by contrast, compare wide ObsMasks and do not
     # reject -- see below.)
     n = 65
-    dem, _ = _wide_dem(n)
+    _dem, _ = _wide_dem(n)
     syn = [0] * n
     wide = SampleBatch([syn, syn], [1 << 64, 1 << 64])
 
@@ -114,6 +114,22 @@ def test_sample_batch_decode_count_batch_handles_wide_dem() -> None:
     syn[69] = 1  # detector 69 fires => boundary error flips observable 69
     batch = SampleBatch([syn, syn], [1 << 69, 1 << 69])  # truth: observable 69 set
     assert batch.decode_count_batch(dem) == 0
+
+
+def test_generic_decode_handles_wide_dem() -> None:
+    # With wide inner decoders (PyMatching now packs an ObsMask directly), the
+    # generic decode_each / decode_count handle a >64-observable DEM end-to-end:
+    # predictions are wide Python ints with no truncation or panic.
+    n = 70
+    dem, _ = _wide_dem(n)
+    syn = [0] * n
+    syn[69] = 1  # detector 69 => boundary error flips observable 69
+    batch = SampleBatch([syn, syn], [1 << 69, 1 << 69])  # truth: observable 69 set
+
+    preds = batch.decode_each(dem, "pymatching")
+    assert preds == [1 << 69, 1 << 69]  # observable 69 predicted, not truncated
+    assert batch.decode_count(dem, "pymatching") == 0  # predictions match truth
+    assert batch.decode_count_parallel(dem, "pymatching") == 0
 
 
 def test_decode_each_returns_python_ints() -> None:

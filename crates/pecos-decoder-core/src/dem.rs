@@ -615,6 +615,26 @@ impl DemCheckMatrix {
         }
         mask
     }
+
+    /// Pack observable predictions into an [`ObsMask`](crate::obs_mask::ObsMask).
+    ///
+    /// Bit `i` is set if observable `i` is predicted to flip. Unlike
+    /// [`Self::observables_mask_from_correction`], this supports more than 64
+    /// observables without truncation or overflow.
+    #[must_use]
+    pub fn observables_obsmask_from_correction(
+        &self,
+        correction: &[u8],
+    ) -> crate::obs_mask::ObsMask {
+        let obs = self.observables_from_correction(correction);
+        let mut mask = crate::obs_mask::ObsMask::new();
+        for (i, &v) in obs.iter().enumerate() {
+            if v != 0 {
+                mask.set(i);
+            }
+        }
+        mask
+    }
 }
 
 /// An edge in a matching graph extracted from a DEM.
@@ -977,7 +997,7 @@ impl<D> super::ObservableDecoder for CheckMatrixObservableDecoder<D>
 where
     D: super::Decoder,
 {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         use super::DecodingResultTrait;
 
         // Copy syndrome into reusable buffer (no allocation after first call)
@@ -995,7 +1015,7 @@ where
             .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
 
         let correction = result.correction();
-        Ok(self.dem.observables_mask_from_correction(correction))
+        Ok(self.dem.observables_obsmask_from_correction(correction))
     }
 }
 

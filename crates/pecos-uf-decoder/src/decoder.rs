@@ -1115,8 +1115,13 @@ impl UfDecoder {
 // === Trait implementations ===
 
 impl pecos_decoder_core::ObservableDecoder for UfDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        Ok(self.decode_syndrome(syndrome))
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
+            self.decode_syndrome(syndrome),
+        ))
     }
 }
 

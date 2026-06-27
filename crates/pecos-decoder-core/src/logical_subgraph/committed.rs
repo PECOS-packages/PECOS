@@ -124,10 +124,12 @@ impl CommittedLogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for CommittedLogicalSubgraphDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         // Full decode: committed XOR active
         let active = self.decode_active(syndrome)?;
-        Ok(self.committed_obs ^ active)
+        Ok(crate::obs_mask::ObsMask::from_u64(
+            self.committed_obs ^ active,
+        ))
     }
 }
 

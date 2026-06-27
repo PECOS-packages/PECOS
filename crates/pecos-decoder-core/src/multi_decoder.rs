@@ -174,8 +174,8 @@ mod tests {
 
     struct FixedDecoder(u64);
     impl ObservableDecoder for FixedDecoder {
-        fn decode_to_observables(&mut self, _: &[u8]) -> Result<u64, DecoderError> {
-            Ok(self.0)
+        fn decode_obs(&mut self, _: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+            Ok(crate::obs_mask::ObsMask::from_u64(self.0))
         }
     }
 

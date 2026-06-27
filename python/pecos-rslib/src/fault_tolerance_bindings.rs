@@ -428,11 +428,11 @@ struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
 unsafe impl Send for SendWrapper {}
 unsafe impl Sync for SendWrapper {}
 impl pecos_decoders::ObservableDecoder for SendWrapper {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoders::DecoderError> {
-        self.0.decode_to_observables(syndrome)
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoders::DecoderError> {
+        self.0.decode_obs(syndrome)
     }
 }
 
@@ -2141,10 +2141,10 @@ struct WeightedUfObservableDecoder {
 }
 
 impl pecos_decoders::ObservableDecoder for WeightedUfObservableDecoder {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         let arr = ndarray::Array1::from_vec(syndrome.to_vec());
         // bits_per_step=1: grow one bit at a time, sorted by LLR weight.
         // bits_per_step=0 with non-empty LLRs causes the C++ UF decoder to
@@ -2155,7 +2155,7 @@ impl pecos_decoders::ObservableDecoder for WeightedUfObservableDecoder {
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
         Ok(self
             .dcm
-            .observables_mask_from_correction(result.decoding.as_slice().unwrap_or(&[])))
+            .observables_obsmask_from_correction(result.decoding.as_slice().unwrap_or(&[])))
     }
 }
 
@@ -2169,10 +2169,10 @@ struct RelabeledObservableDecoder {
 }
 
 impl pecos_decoders::ObservableDecoder for RelabeledObservableDecoder {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         // Relabel syndrome into the expanded vertex space (detectors + virtual + gap)
         let expected = self.decoder.num_nodes();
         let mut relabeled = vec![0u8; expected];
@@ -2189,10 +2189,10 @@ impl pecos_decoders::ObservableDecoder for RelabeledObservableDecoder {
             .decoder
             .decode(&arr.view())
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
-        let mut mask = 0u64;
+        let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
         for (i, &v) in result.observable.iter().enumerate() {
             if v != 0 {
-                mask |= 1 << i;
+                mask.set(i);
             }
         }
         Ok(mask)

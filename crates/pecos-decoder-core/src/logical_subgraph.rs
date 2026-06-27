@@ -786,18 +786,21 @@ mod tests {
 
     struct NullDecoder;
     impl ObservableDecoder for NullDecoder {
-        fn decode_to_observables(&mut self, _: &[u8]) -> Result<u64, DecoderError> {
-            Ok(0)
+        fn decode_obs(&mut self, _: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+            Ok(crate::obs_mask::ObsMask::new())
         }
     }
 
     struct FixedDecoder(u64);
     impl ObservableDecoder for FixedDecoder {
-        fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+        fn decode_obs(
+            &mut self,
+            syndrome: &[u8],
+        ) -> Result<crate::obs_mask::ObsMask, DecoderError> {
             if syndrome.iter().any(|&v| v != 0) {
-                Ok(self.0)
+                Ok(crate::obs_mask::ObsMask::from_u64(self.0))
             } else {
-                Ok(0)
+                Ok(crate::obs_mask::ObsMask::new())
             }
         }
     }

@@ -306,7 +306,10 @@ impl AStarDecoder {
 }
 
 impl ObservableDecoder for AStarDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let n = self.num_detectors;
         let m = self.num_mechanisms;
 
@@ -319,7 +322,7 @@ impl ObservableDecoder for AStarDecoder {
         }
         let num_defects = init_residual.count_ones();
         if num_defects == 0 {
-            return Ok(0);
+            return Ok(pecos_decoder_core::obs_mask::ObsMask::new());
         }
 
         // A* priority queue and visited set.
@@ -462,7 +465,7 @@ impl ObservableDecoder for AStarDecoder {
             }
         }
 
-        Ok(best_obs)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(best_obs))
     }
 }
 

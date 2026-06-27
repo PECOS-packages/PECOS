@@ -803,7 +803,7 @@ sync-deps:
     if {{pecos}} cuda check -q 2>/dev/null && nvidia-smi -L 2>/dev/null | grep -q "^GPU "; then
         # Pick the cuda group matching the CUDA major (default cuda13).
         CUDA_GROUP=cuda13
-        if nvcc --version 2>/dev/null | grep -qE "release 12"; then CUDA_GROUP=cuda12; fi
+        if nvcc --version 2>/dev/null | grep -qE "release 12[.,]"; then CUDA_GROUP=cuda12; fi
         echo "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages ($CUDA_GROUP)"
         SYNC_ARGS+=(--group "$CUDA_GROUP")
     fi

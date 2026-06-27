@@ -47,8 +47,12 @@ except Exception as exc:  # noqa: BLE001 -- optional dependency; failures defer 
         import cuquantum
 
         _cuquantum_version = getattr(cuquantum, "__version__", "unknown")
-    except Exception:  # noqa: BLE001 -- optional dependency; failures defer to construction
-        _cuquantum_version = None  # cuQuantum is not installed (or its import is broken)
+    except ModuleNotFoundError:
+        _cuquantum_version = None  # cuQuantum genuinely not installed
+    except Exception:  # noqa: BLE001 -- installed but its import is broken
+        # Present but broken: keep a non-None version so the reason surfaces the
+        # original error (from _cuquantum_error) instead of claiming "not installed".
+        _cuquantum_version = "unknown"
 
 
 def _cuquantum_reason() -> str | None:

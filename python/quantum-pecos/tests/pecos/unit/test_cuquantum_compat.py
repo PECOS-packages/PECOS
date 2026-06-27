@@ -155,3 +155,27 @@ def test_import_nonfatal_on_broken_dependency(monkeypatch) -> None:
     assert not compat.custatevec_available()
     with pytest.raises(RuntimeError):
         compat.require_custatevec()
+
+
+def test_present_but_broken_cuquantum_surfaces_real_error(monkeypatch) -> None:
+    """A present-but-broken cuQuantum (import raises non-ImportError) reports the
+    original error, not a misleading 'not installed'."""
+    monkeypatch.setitem(sys.modules, "cupy", types.ModuleType("cupy"))
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.split(".")[0] == "cuquantum":
+            msg = "synthetic broken cuquantum: libcustatevec.so"
+            raise RuntimeError(msg)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    for mod in list(sys.modules):
+        if mod.split(".")[0] == "cuquantum":
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+
+    compat = _load_module()
+
+    reason = compat.custatevec_unavailable_reason()
+    assert "not installed" not in reason
+    assert "synthetic broken cuquantum" in reason

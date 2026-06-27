@@ -2304,6 +2304,11 @@ fn create_observable_decoder(
             use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
             let graph = DemMatchingGraph::from_dem_str(dem)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             // Use absolute weight scaling. Fusion Blossom uses integer weights;
             // we multiply by 1000 for precision (matching the internal 1000x
@@ -2346,6 +2351,11 @@ fn create_observable_decoder(
             use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
 
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             let config = FusionBlossomConfig {
@@ -2450,6 +2460,11 @@ fn create_observable_decoder(
             use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder, PartitionConfig};
 
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             // Group detectors by time coordinate for round-contiguous relabeling.
@@ -2746,8 +2761,12 @@ fn create_observable_decoder(
                     |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
                 )?;
 
-            // Reject negative-weight edges (error priors p > 0.5) as a Python
-            // error rather than panicking in `from_matching_graph`.
+            // Reject negative-weight edges (error priors p > 0.5) and >64-observable
+            // DEMs as Python errors rather than panicking in `from_matching_graph`
+            // (negative-weight assert / `1 << o` overflow).
+            graph
+                .ensure_observables_fit_u64()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             pecos_decoders::UfDecoder::check_non_negative_weights(&graph)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let uf = pecos_decoders::UfDecoder::from_matching_graph(
@@ -2782,6 +2801,11 @@ fn create_observable_decoder(
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let config = FusionBlossomConfig {
                 num_nodes: Some(graph.num_detectors),
@@ -2846,6 +2870,11 @@ fn create_observable_decoder(
             // Build Fusion Blossom as the matching backend.
             let graph = DemMatchingGraph::from_dem_str(dem)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let config = FusionBlossomConfig {
                 num_nodes: Some(graph.num_detectors),
                 num_observables: graph.num_observables,
@@ -2889,6 +2918,11 @@ fn create_observable_decoder(
                     })?;
 
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             // Build Fusion Blossom.
@@ -2955,6 +2989,11 @@ fn create_observable_decoder(
 
             // Build Fusion Blossom from decomposed DEM.
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let config = FusionBlossomConfig {
                 num_nodes: Some(graph.num_detectors),

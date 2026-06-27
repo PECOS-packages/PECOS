@@ -151,6 +151,7 @@ impl BpUfDecoder {
         let dcm = DemCheckMatrix::from_dem_str(dem)
             .map_err(|e| DecoderError::InvalidConfiguration(e.to_string()))?;
         let graph = DemMatchingGraph::from_dem_str(dem)?;
+        graph.ensure_observables_fit_u64()?;
         UfDecoder::check_non_negative_weights(&graph)?;
         let uf = UfDecoder::from_matching_graph(&graph, config.uf_config);
 
@@ -253,6 +254,7 @@ impl BpUfDecoder {
 
         // Matching graph and UF from the decomposed DEM.
         let match_graph = DemMatchingGraph::from_dem_str(matching_dem)?;
+        match_graph.ensure_observables_fit_u64()?;
         UfDecoder::check_non_negative_weights(&match_graph)?;
         let uf = UfDecoder::from_matching_graph(&match_graph, config.uf_config);
 

@@ -113,6 +113,8 @@ impl CssUfDecoder {
     ) -> Result<Self, DecoderError> {
         let x_graph = DemMatchingGraph::from_dem_str(x_dem)?;
         let z_graph = DemMatchingGraph::from_dem_str(z_dem)?;
+        x_graph.ensure_observables_fit_u64()?;
+        z_graph.ensure_observables_fit_u64()?;
         UfDecoder::check_non_negative_weights(&x_graph)?;
         UfDecoder::check_non_negative_weights(&z_graph)?;
 

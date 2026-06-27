@@ -135,6 +135,7 @@ impl AStarDecoder {
     /// Returns `DecoderError` if the DEM is malformed.
     pub fn from_dem(dem: &str, config: AStarConfig) -> Result<Self, DecoderError> {
         let graph = DemMatchingGraph::from_dem_str(dem)?;
+        graph.ensure_observables_fit_u64()?;
         let num_detectors = graph.num_detectors;
 
         let mut mechanisms = Vec::new();
@@ -189,6 +190,7 @@ impl AStarDecoder {
 
         let dcm = DemCheckMatrix::from_dem_str(dem)
             .map_err(|e| DecoderError::InvalidGraph(e.to_string()))?;
+        dcm.ensure_observables_fit_u64()?;
         let num_detectors = dcm.num_detectors;
 
         let mut mechanisms = Vec::new();

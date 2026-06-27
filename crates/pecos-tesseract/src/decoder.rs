@@ -185,6 +185,18 @@ impl TesseractDecoder {
         let num_errors = ffi::get_num_errors(&inner);
         let num_observables = ffi::get_num_observables(&inner);
 
+        // Tesseract reports its predicted observables as a u64 mask
+        // (`DecodingResult::observables_mask`), so it supports at most 64
+        // observables. Reject wider DEMs as an error rather than silently
+        // truncating observables 64.. into the u64.
+        if num_observables > 64 {
+            return Err(TesseractError::InvalidConfig(format!(
+                "this matching decoder packs observables into a u64 and supports at most 64 \
+                 observables, but the DEM has {num_observables}; use the 'pymatching' decoder \
+                 or LogicalSubgraphDecoder for wider observable sets"
+            )));
+        }
+
         Ok(Self {
             inner,
             config,

@@ -332,6 +332,7 @@ impl UfDecoder {
     /// proofs do not admit).
     pub fn from_dem(dem: &str, config: UfDecoderConfig) -> Result<Self, DecoderError> {
         let graph = DemMatchingGraph::from_dem_str(dem)?;
+        graph.ensure_observables_fit_u64()?;
         Self::check_non_negative_weights(&graph)?;
         Ok(Self::from_matching_graph(&graph, config))
     }

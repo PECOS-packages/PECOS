@@ -581,6 +581,27 @@ impl DemCheckMatrix {
         })
     }
 
+    /// Hyperedge matching decoders (MWPF, A* on the full DEM) pack observable
+    /// flips into a `u64` (`1 << observable`), so they support at most 64
+    /// observables. Returns an error (rather than letting construction
+    /// overflow-panic on `1 << o` for `o >= 64`) if this DEM exceeds that,
+    /// directing callers to a wide decoder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] if `num_observables > 64`.
+    pub fn ensure_observables_fit_u64(&self) -> Result<(), DecoderError> {
+        if self.num_observables > 64 {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "this matching decoder packs observables into a u64 and supports at most 64 \
+                 observables, but the DEM has {}; use the 'pymatching' decoder or \
+                 LogicalSubgraphDecoder for wider observable sets",
+                self.num_observables
+            )));
+        }
+        Ok(())
+    }
+
     /// Compute the observable prediction from a correction vector.
     ///
     /// Given a binary correction vector (one entry per mechanism, from a
@@ -839,6 +860,29 @@ impl DemMatchingGraph {
             skipped_hyperedges: skipped,
             detector_coords,
         })
+    }
+
+    /// Matching decoders pack observable flips into a `u64` (`1 << observable`),
+    /// so they support at most 64 observables. Returns an error (rather than
+    /// letting construction overflow-panic on `1 << o` for `o >= 64`) if this
+    /// graph exceeds that, directing callers to a wide decoder.
+    ///
+    /// Call this at the start of any matching-decoder construction that enters
+    /// the `1 << o` packing loop, on untrusted DEM input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] if `num_observables > 64`.
+    pub fn ensure_observables_fit_u64(&self) -> Result<(), DecoderError> {
+        if self.num_observables > 64 {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "this matching decoder packs observables into a u64 and supports at most 64 \
+                 observables, but the DEM has {}; use the 'pymatching' decoder or \
+                 LogicalSubgraphDecoder for wider observable sets",
+                self.num_observables
+            )));
+        }
+        Ok(())
     }
 
     /// Merge edges with independent fault-ID-aware probability combination.

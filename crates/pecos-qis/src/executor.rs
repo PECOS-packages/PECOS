@@ -43,6 +43,19 @@ static QIS_FFI_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock
 /// By making it a singleton, we load it once and keep it for the process lifetime.
 static SHIM_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::new();
 
+/// Pinned selected library paths, resolved once at first use.
+///
+/// The QIS FFI and selene shim libraries are discovered at runtime (library
+/// search order, and for the shim the `PECOS_SELENE_SHIM_PATH` override). Both
+/// the program-cache key (which hashes the selected library identity) and the
+/// `dlopen` singletons must agree on WHICH library is selected; if discovery
+/// re-ran independently and the environment changed in between, the key could be
+/// computed for one library while another was loaded. Pinning the discovery
+/// result the first time either path is needed keeps them consistent for the
+/// process lifetime.
+static QIS_FFI_LIB_PATH: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+static SHIM_LIB_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+
 /// Process-wide cache for program libraries (keyed by file path).
 ///
 /// When engines are cloned for parallel shot execution, each clone creates its own
@@ -823,6 +836,24 @@ impl QisHeliosInterface {
         }
     }
 
+    /// The selected QIS FFI library path, resolved once and pinned for the
+    /// process lifetime (see [`QIS_FFI_LIB_PATH`]). Both the cache key and the
+    /// `dlopen` singleton use this so they always agree on the selected library.
+    fn pinned_qis_ffi_lib_path() -> Result<PathBuf, String> {
+        QIS_FFI_LIB_PATH
+            .get_or_init(|| Self::find_pecos_qis_lib().map_err(|e| e.to_string()))
+            .clone()
+    }
+
+    /// The selected selene shim library path, resolved once and pinned for the
+    /// process lifetime (see [`SHIM_LIB_PATH`]). Honors `PECOS_SELENE_SHIM_PATH`
+    /// at first resolution only, so the cache key and the loaded shim agree.
+    fn pinned_shim_lib_path() -> Option<PathBuf> {
+        SHIM_LIB_PATH
+            .get_or_init(crate::shim::get_shim_library_path)
+            .clone()
+    }
+
     /// Find the `libpecos_qis_ffi` library by searching common locations
     fn find_pecos_qis_lib() -> Result<PathBuf, InterfaceError> {
         // On Windows, Rust cdylibs don't use the "lib" prefix
@@ -930,7 +961,7 @@ impl QisHeliosInterface {
     ///
     /// Returns a reference to the `SharedLibrary` wrapper for symbol lookups.
     fn get_qis_ffi_lib_singleton() -> Result<&'static SharedLibrary, InterfaceError> {
-        let result = QIS_FFI_LIB_SINGLETON.get_or_init(|| match Self::find_pecos_qis_lib() {
+        let result = QIS_FFI_LIB_SINGLETON.get_or_init(|| match Self::pinned_qis_ffi_lib_path() {
             Ok(lib_path) => {
                 debug!(
                     "Initializing QIS FFI library singleton from: {}",
@@ -1025,7 +1056,7 @@ impl QisHeliosInterface {
     /// By making it a singleton, we load once and keep it for the process lifetime.
     fn get_shim_lib_singleton() -> Result<&'static SharedLibrary, InterfaceError> {
         let result = SHIM_LIB_SINGLETON.get_or_init(|| {
-            let shim_path = crate::shim::get_shim_library_path().ok_or_else(|| {
+            let shim_path = Self::pinned_shim_lib_path().ok_or_else(|| {
                 "PECOS selene shim library not found - build script may have failed".to_string()
             })?;
 
@@ -1346,8 +1377,8 @@ impl QisHeliosInterface {
         // last-modified time) into the key so swapping a shim invalidates a cached
         // object that was compiled against the old one.
         for lib in [
-            Self::find_pecos_qis_lib().ok(),
-            crate::shim::get_shim_library_path(),
+            Self::pinned_qis_ffi_lib_path().ok(),
+            Self::pinned_shim_lib_path(),
         ]
         .into_iter()
         .flatten()

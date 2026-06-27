@@ -81,9 +81,7 @@ pub fn init() {
 /// }
 /// ```
 pub fn init_with_default(default_level: &str) {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or(default_level)
-    )
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
         .format(|buf, record| {
             let level_style = buf.default_level_style(record.level());
             writeln!(

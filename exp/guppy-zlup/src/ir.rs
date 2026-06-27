@@ -308,38 +308,77 @@ impl Default for GuppyIR {
 #[derive(Debug, Clone)]
 pub enum ValidationError {
     /// Missing required field for statement kind.
-    MissingField { kind: StmtKind, field: &'static str, location: Option<SourceLocation> },
+    MissingField {
+        kind: StmtKind,
+        field: &'static str,
+        location: Option<SourceLocation>,
+    },
     /// Missing required field for expression kind.
     MissingExprField { kind: ExprKind, field: &'static str },
     /// Undefined variable reference.
-    UndefinedVariable { name: String, location: Option<SourceLocation> },
+    UndefinedVariable {
+        name: String,
+        location: Option<SourceLocation>,
+    },
     /// Undefined allocator (qubit register) reference.
-    UndefinedAllocator { name: String, location: Option<SourceLocation> },
+    UndefinedAllocator {
+        name: String,
+        location: Option<SourceLocation>,
+    },
     /// Gate used before qalloc.
-    GateBeforeAlloc { allocator: String, location: Option<SourceLocation> },
+    GateBeforeAlloc {
+        allocator: String,
+        location: Option<SourceLocation>,
+    },
     /// Invalid gate arity.
-    InvalidGateArity { gate: GateKind, expected: usize, actual: usize, location: Option<SourceLocation> },
+    InvalidGateArity {
+        gate: GateKind,
+        expected: usize,
+        actual: usize,
+        location: Option<SourceLocation>,
+    },
     /// Unknown operator.
-    UnknownOperator { op: String, location: Option<SourceLocation> },
+    UnknownOperator {
+        op: String,
+        location: Option<SourceLocation>,
+    },
 }
 
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ValidationError::MissingField { kind, field, .. } =>
-                write!(f, "missing required field '{}' for {:?} statement", field, kind),
-            ValidationError::MissingExprField { kind, field } =>
-                write!(f, "missing required field '{}' for {:?} expression", field, kind),
-            ValidationError::UndefinedVariable { name, .. } =>
-                write!(f, "undefined variable: {}", name),
-            ValidationError::UndefinedAllocator { name, .. } =>
-                write!(f, "undefined qubit allocator: {}", name),
-            ValidationError::GateBeforeAlloc { allocator, .. } =>
-                write!(f, "gate uses allocator '{}' before it was allocated", allocator),
-            ValidationError::InvalidGateArity { gate, expected, actual, .. } =>
-                write!(f, "gate {:?} expects {} targets, got {}", gate, expected, actual),
-            ValidationError::UnknownOperator { op, .. } =>
-                write!(f, "unknown operator: {}", op),
+            ValidationError::MissingField { kind, field, .. } => write!(
+                f,
+                "missing required field '{}' for {:?} statement",
+                field, kind
+            ),
+            ValidationError::MissingExprField { kind, field } => write!(
+                f,
+                "missing required field '{}' for {:?} expression",
+                field, kind
+            ),
+            ValidationError::UndefinedVariable { name, .. } => {
+                write!(f, "undefined variable: {}", name)
+            }
+            ValidationError::UndefinedAllocator { name, .. } => {
+                write!(f, "undefined qubit allocator: {}", name)
+            }
+            ValidationError::GateBeforeAlloc { allocator, .. } => write!(
+                f,
+                "gate uses allocator '{}' before it was allocated",
+                allocator
+            ),
+            ValidationError::InvalidGateArity {
+                gate,
+                expected,
+                actual,
+                ..
+            } => write!(
+                f,
+                "gate {:?} expects {} targets, got {}",
+                gate, expected, actual
+            ),
+            ValidationError::UnknownOperator { op, .. } => write!(f, "unknown operator: {}", op),
         }
     }
 }
@@ -628,7 +667,8 @@ impl IrValidator {
             }
             ExprKind::Index => {
                 if let Some(array) = &expr.array
-                    && !self.variables.contains(array) && !self.allocators.contains(array)
+                    && !self.variables.contains(array)
+                    && !self.allocators.contains(array)
                 {
                     self.result.add_error(ValidationError::UndefinedVariable {
                         name: array.clone(),
@@ -643,9 +683,8 @@ impl IrValidator {
                 // Validate operator
                 if let Some(op) = &expr.op {
                     let valid_ops = [
-                        "add", "sub", "mul", "div", "floordiv", "mod",
-                        "eq", "ne", "lt", "le", "gt", "ge",
-                        "and", "or", "bitand", "bitor", "bitxor", "shl", "shr",
+                        "add", "sub", "mul", "div", "floordiv", "mod", "eq", "ne", "lt", "le",
+                        "gt", "ge", "and", "or", "bitand", "bitor", "bitxor", "shl", "shr",
                     ];
                     if !valid_ops.contains(&op.as_str()) {
                         self.result.add_error(ValidationError::UnknownOperator {
@@ -914,7 +953,7 @@ fn convert_type_annotation(ann: &PyExpr) -> TypeExpr {
                             size: None,
                             elements,
                         }
-                    },
+                    }
                     _ => TypeExpr {
                         kind: "named".to_string(),
                         name: Some(name_str.to_string()),
@@ -954,9 +993,7 @@ fn convert_stmt(stmt: &PyStmt) -> Result<Stmt, EmitError> {
     match stmt {
         PyStmt::Assign(assign) => {
             if assign.targets.len() != 1 {
-                return Err(EmitError::Unsupported(
-                    "multiple assignment targets".into(),
-                ));
+                return Err(EmitError::Unsupported("multiple assignment targets".into()));
             }
 
             // Check for qalloc: q = qubit[4]
@@ -1221,9 +1258,10 @@ fn convert_stmt(stmt: &PyStmt) -> Result<Stmt, EmitError> {
 
             // Skip docstrings (string constant expressions)
             if let PyExpr::Constant(c) = expr_stmt.value.as_ref()
-                && matches!(c.value, Constant::Str(_)) {
-                    return Err(EmitError::Skip);
-                }
+                && matches!(c.value, Constant::Str(_))
+            {
+                return Err(EmitError::Skip);
+            }
 
             let expr = convert_expr(&expr_stmt.value)?;
             Ok(Stmt {
@@ -1497,31 +1535,32 @@ fn convert_stmt(stmt: &PyStmt) -> Result<Stmt, EmitError> {
             // Check for qalloc: q: qubit[4] or q: qubit[4] = ...
             if let PyExpr::Subscript(sub) = ann.annotation.as_ref()
                 && let PyExpr::Name(type_name) = sub.value.as_ref()
-                    && (type_name.id.as_str() == "qubit" || type_name.id.as_str() == "qalloc") {
-                        return Ok(Stmt {
-                            kind: StmtKind::Qalloc,
-                            name: Some(name),
-                            size: convert_expr(&sub.slice).ok(),
-                            gate: None,
-                            targets: Vec::new(),
-                            params: Vec::new(),
-                            results: Vec::new(),
-                            var: None,
-                            range: None,
-                            condition: None,
-                            then_body: Vec::new(),
-                            else_body: Vec::new(),
-                            target: None,
-                            value: None,
-                            return_value: None,
-                            expr: None,
-                            ty: None,
-                            is_mutable: None,
-                            body: Vec::new(),
-                            tag: None,
-                            location: None,
-                        });
-                    }
+                && (type_name.id.as_str() == "qubit" || type_name.id.as_str() == "qalloc")
+            {
+                return Ok(Stmt {
+                    kind: StmtKind::Qalloc,
+                    name: Some(name),
+                    size: convert_expr(&sub.slice).ok(),
+                    gate: None,
+                    targets: Vec::new(),
+                    params: Vec::new(),
+                    results: Vec::new(),
+                    var: None,
+                    range: None,
+                    condition: None,
+                    then_body: Vec::new(),
+                    else_body: Vec::new(),
+                    target: None,
+                    value: None,
+                    return_value: None,
+                    expr: None,
+                    ty: None,
+                    is_mutable: None,
+                    body: Vec::new(),
+                    tag: None,
+                    location: None,
+                });
+            }
 
             // Regular annotated assignment -> Binding
             let ty = convert_type_annotation(&ann.annotation);
@@ -1570,7 +1609,12 @@ fn convert_stmt(stmt: &PyStmt) -> Result<Stmt, EmitError> {
                 ast::Operator::BitXor => "bitxor",
                 ast::Operator::LShift => "shl",
                 ast::Operator::RShift => "shr",
-                _ => return Err(EmitError::Unsupported(format!("augmented operator: {:?}", aug.op))),
+                _ => {
+                    return Err(EmitError::Unsupported(format!(
+                        "augmented operator: {:?}",
+                        aug.op
+                    )));
+                }
             };
 
             Ok(Stmt {
@@ -1705,7 +1749,12 @@ fn convert_expr(expr: &PyExpr) -> Result<Expr, EmitError> {
                 ast::Operator::BitXor => "bitxor",
                 ast::Operator::LShift => "shl",
                 ast::Operator::RShift => "shr",
-                other => return Err(EmitError::Unsupported(format!("binary operator: {:?}", other))),
+                other => {
+                    return Err(EmitError::Unsupported(format!(
+                        "binary operator: {:?}",
+                        other
+                    )));
+                }
             };
 
             Ok(Expr {
@@ -1764,7 +1813,12 @@ fn convert_expr(expr: &PyExpr) -> Result<Expr, EmitError> {
                     ast::CmpOp::LtE => "le",
                     ast::CmpOp::Gt => "gt",
                     ast::CmpOp::GtE => "ge",
-                    other => return Err(EmitError::Unsupported(format!("comparison operator: {:?}", other))),
+                    other => {
+                        return Err(EmitError::Unsupported(format!(
+                            "comparison operator: {:?}",
+                            other
+                        )));
+                    }
                 };
 
                 Ok(Expr {
@@ -1960,14 +2014,37 @@ mod validation_tests {
                 size: Some(Expr {
                     kind: ExprKind::Literal,
                     value: Some(serde_json::json!(4)),
-                    name: None, array: None, index: None, op: None,
-                    left: None, right: None, operand: None,
-                    callee: None, args: vec![], object: None, field: None, location: None,
+                    name: None,
+                    array: None,
+                    index: None,
+                    op: None,
+                    left: None,
+                    right: None,
+                    operand: None,
+                    callee: None,
+                    args: vec![],
+                    object: None,
+                    field: None,
+                    location: None,
                 }),
-                gate: None, targets: vec![], params: vec![], results: vec![],
-                var: None, range: None, condition: None, then_body: vec![],
-                else_body: vec![], target: None, value: None, return_value: None,
-                expr: None, ty: None, is_mutable: None, body: vec![], tag: None, location: None,
+                gate: None,
+                targets: vec![],
+                params: vec![],
+                results: vec![],
+                var: None,
+                range: None,
+                condition: None,
+                then_body: vec![],
+                else_body: vec![],
+                target: None,
+                value: None,
+                return_value: None,
+                expr: None,
+                ty: None,
+                is_mutable: None,
+                body: vec![],
+                tag: None,
+                location: None,
             },
             Stmt {
                 kind: StmtKind::Gate,
@@ -1982,22 +2059,54 @@ mod validation_tests {
                     index: Some(Box::new(Expr {
                         kind: ExprKind::Literal,
                         value: Some(serde_json::json!(0)),
-                        name: None, array: None, index: None, op: None,
-                        left: None, right: None, operand: None,
-                        callee: None, args: vec![], object: None, field: None, location: None,
+                        name: None,
+                        array: None,
+                        index: None,
+                        op: None,
+                        left: None,
+                        right: None,
+                        operand: None,
+                        callee: None,
+                        args: vec![],
+                        object: None,
+                        field: None,
+                        location: None,
                     })),
-                    op: None, left: None, right: None, operand: None,
-                    callee: None, args: vec![], object: None, field: None, location: None,
+                    op: None,
+                    left: None,
+                    right: None,
+                    operand: None,
+                    callee: None,
+                    args: vec![],
+                    object: None,
+                    field: None,
+                    location: None,
                 }],
-                params: vec![], results: vec![], var: None, range: None, condition: None,
-                then_body: vec![], else_body: vec![], target: None, value: None,
-                return_value: None, expr: None, ty: None, is_mutable: None, body: vec![],
-                tag: None, location: None,
+                params: vec![],
+                results: vec![],
+                var: None,
+                range: None,
+                condition: None,
+                then_body: vec![],
+                else_body: vec![],
+                target: None,
+                value: None,
+                return_value: None,
+                expr: None,
+                ty: None,
+                is_mutable: None,
+                body: vec![],
+                tag: None,
+                location: None,
             },
         ]);
 
         let result = validate_ir(&ir);
-        assert!(result.is_valid(), "Expected valid IR, got errors: {:?}", result.errors);
+        assert!(
+            result.is_valid(),
+            "Expected valid IR, got errors: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -2017,43 +2126,98 @@ mod validation_tests {
                     index: Some(Box::new(Expr {
                         kind: ExprKind::Literal,
                         value: Some(serde_json::json!(0)),
-                        name: None, array: None, index: None, op: None,
-                        left: None, right: None, operand: None,
-                        callee: None, args: vec![], object: None, field: None, location: None,
+                        name: None,
+                        array: None,
+                        index: None,
+                        op: None,
+                        left: None,
+                        right: None,
+                        operand: None,
+                        callee: None,
+                        args: vec![],
+                        object: None,
+                        field: None,
+                        location: None,
                     })),
-                    op: None, left: None, right: None, operand: None,
-                    callee: None, args: vec![], object: None, field: None, location: None,
+                    op: None,
+                    left: None,
+                    right: None,
+                    operand: None,
+                    callee: None,
+                    args: vec![],
+                    object: None,
+                    field: None,
+                    location: None,
                 }],
-                params: vec![], results: vec![], var: None, range: None, condition: None,
-                then_body: vec![], else_body: vec![], target: None, value: None,
-                return_value: None, expr: None, ty: None, is_mutable: None, body: vec![],
-                tag: None, location: None,
+                params: vec![],
+                results: vec![],
+                var: None,
+                range: None,
+                condition: None,
+                then_body: vec![],
+                else_body: vec![],
+                target: None,
+                value: None,
+                return_value: None,
+                expr: None,
+                ty: None,
+                is_mutable: None,
+                body: vec![],
+                tag: None,
+                location: None,
             },
         ]);
 
         let result = validate_ir(&ir);
-        assert!(!result.is_valid(), "Expected validation error for undefined allocator");
-        assert!(result.errors.iter().any(|e| matches!(e, ValidationError::UndefinedAllocator { .. })));
+        assert!(
+            !result.is_valid(),
+            "Expected validation error for undefined allocator"
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::UndefinedAllocator { .. }))
+        );
     }
 
     #[test]
     fn test_missing_gate_field() {
-        let ir = make_ir(vec![
-            Stmt {
-                kind: StmtKind::Gate,
-                name: None,
-                size: None,
-                gate: None, // Missing required gate field
-                targets: vec![], params: vec![], results: vec![], var: None, range: None,
-                condition: None, then_body: vec![], else_body: vec![], target: None, value: None,
-                return_value: None, expr: None, ty: None, is_mutable: None, body: vec![],
-                tag: None, location: None,
-            },
-        ]);
+        let ir = make_ir(vec![Stmt {
+            kind: StmtKind::Gate,
+            name: None,
+            size: None,
+            gate: None, // Missing required gate field
+            targets: vec![],
+            params: vec![],
+            results: vec![],
+            var: None,
+            range: None,
+            condition: None,
+            then_body: vec![],
+            else_body: vec![],
+            target: None,
+            value: None,
+            return_value: None,
+            expr: None,
+            ty: None,
+            is_mutable: None,
+            body: vec![],
+            tag: None,
+            location: None,
+        }]);
 
         let result = validate_ir(&ir);
-        assert!(!result.is_valid(), "Expected validation error for missing gate field");
-        assert!(result.errors.iter().any(|e| matches!(e, ValidationError::MissingField { field: "gate", .. })));
+        assert!(
+            !result.is_valid(),
+            "Expected validation error for missing gate field"
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingField { field: "gate", .. }))
+        );
     }
 
     #[test]
@@ -2065,14 +2229,37 @@ mod validation_tests {
                 size: Some(Expr {
                     kind: ExprKind::Literal,
                     value: Some(serde_json::json!(2)),
-                    name: None, array: None, index: None, op: None,
-                    left: None, right: None, operand: None,
-                    callee: None, args: vec![], object: None, field: None, location: None,
+                    name: None,
+                    array: None,
+                    index: None,
+                    op: None,
+                    left: None,
+                    right: None,
+                    operand: None,
+                    callee: None,
+                    args: vec![],
+                    object: None,
+                    field: None,
+                    location: None,
                 }),
-                gate: None, targets: vec![], params: vec![], results: vec![],
-                var: None, range: None, condition: None, then_body: vec![],
-                else_body: vec![], target: None, value: None, return_value: None,
-                expr: None, ty: None, is_mutable: None, body: vec![], tag: None, location: None,
+                gate: None,
+                targets: vec![],
+                params: vec![],
+                results: vec![],
+                var: None,
+                range: None,
+                condition: None,
+                then_body: vec![],
+                else_body: vec![],
+                target: None,
+                value: None,
+                return_value: None,
+                expr: None,
+                ty: None,
+                is_mutable: None,
+                body: vec![],
+                tag: None,
+                location: None,
             },
             Stmt {
                 kind: StmtKind::Gate,
@@ -2081,89 +2268,237 @@ mod validation_tests {
                 gate: Some(GateKind::H), // H is 1-qubit gate
                 targets: vec![
                     // But we provide 2 targets
-                    Expr { kind: ExprKind::Index, value: None, name: None, array: Some("q".to_string()),
-                        index: Some(Box::new(Expr { kind: ExprKind::Literal, value: Some(serde_json::json!(0)),
-                            name: None, array: None, index: None, op: None, left: None, right: None,
-                            operand: None, callee: None, args: vec![], object: None, field: None, location: None })),
-                        op: None, left: None, right: None, operand: None, callee: None, args: vec![],
-                        object: None, field: None, location: None },
-                    Expr { kind: ExprKind::Index, value: None, name: None, array: Some("q".to_string()),
-                        index: Some(Box::new(Expr { kind: ExprKind::Literal, value: Some(serde_json::json!(1)),
-                            name: None, array: None, index: None, op: None, left: None, right: None,
-                            operand: None, callee: None, args: vec![], object: None, field: None, location: None })),
-                        op: None, left: None, right: None, operand: None, callee: None, args: vec![],
-                        object: None, field: None, location: None },
+                    Expr {
+                        kind: ExprKind::Index,
+                        value: None,
+                        name: None,
+                        array: Some("q".to_string()),
+                        index: Some(Box::new(Expr {
+                            kind: ExprKind::Literal,
+                            value: Some(serde_json::json!(0)),
+                            name: None,
+                            array: None,
+                            index: None,
+                            op: None,
+                            left: None,
+                            right: None,
+                            operand: None,
+                            callee: None,
+                            args: vec![],
+                            object: None,
+                            field: None,
+                            location: None,
+                        })),
+                        op: None,
+                        left: None,
+                        right: None,
+                        operand: None,
+                        callee: None,
+                        args: vec![],
+                        object: None,
+                        field: None,
+                        location: None,
+                    },
+                    Expr {
+                        kind: ExprKind::Index,
+                        value: None,
+                        name: None,
+                        array: Some("q".to_string()),
+                        index: Some(Box::new(Expr {
+                            kind: ExprKind::Literal,
+                            value: Some(serde_json::json!(1)),
+                            name: None,
+                            array: None,
+                            index: None,
+                            op: None,
+                            left: None,
+                            right: None,
+                            operand: None,
+                            callee: None,
+                            args: vec![],
+                            object: None,
+                            field: None,
+                            location: None,
+                        })),
+                        op: None,
+                        left: None,
+                        right: None,
+                        operand: None,
+                        callee: None,
+                        args: vec![],
+                        object: None,
+                        field: None,
+                        location: None,
+                    },
                 ],
-                params: vec![], results: vec![], var: None, range: None, condition: None,
-                then_body: vec![], else_body: vec![], target: None, value: None,
-                return_value: None, expr: None, ty: None, is_mutable: None, body: vec![],
-                tag: None, location: None,
+                params: vec![],
+                results: vec![],
+                var: None,
+                range: None,
+                condition: None,
+                then_body: vec![],
+                else_body: vec![],
+                target: None,
+                value: None,
+                return_value: None,
+                expr: None,
+                ty: None,
+                is_mutable: None,
+                body: vec![],
+                tag: None,
+                location: None,
             },
         ]);
 
         let result = validate_ir(&ir);
-        assert!(!result.is_valid(), "Expected validation error for invalid gate arity");
-        assert!(result.errors.iter().any(|e| matches!(e, ValidationError::InvalidGateArity { .. })));
+        assert!(
+            !result.is_valid(),
+            "Expected validation error for invalid gate arity"
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::InvalidGateArity { .. }))
+        );
     }
 
     #[test]
     fn test_unknown_operator() {
-        let ir = make_ir(vec![
-            Stmt {
-                kind: StmtKind::Return,
-                name: None, size: None, gate: None, targets: vec![], params: vec![],
-                results: vec![], var: None, range: None, condition: None, then_body: vec![],
-                else_body: vec![], target: None, value: None,
-                return_value: Some(Expr {
-                    kind: ExprKind::Binary,
-                    value: None,
+        let ir = make_ir(vec![Stmt {
+            kind: StmtKind::Return,
+            name: None,
+            size: None,
+            gate: None,
+            targets: vec![],
+            params: vec![],
+            results: vec![],
+            var: None,
+            range: None,
+            condition: None,
+            then_body: vec![],
+            else_body: vec![],
+            target: None,
+            value: None,
+            return_value: Some(Expr {
+                kind: ExprKind::Binary,
+                value: None,
+                name: None,
+                array: None,
+                index: None,
+                op: Some("invalid_op".to_string()), // Unknown operator
+                left: Some(Box::new(Expr {
+                    kind: ExprKind::Literal,
+                    value: Some(serde_json::json!(1)),
                     name: None,
                     array: None,
                     index: None,
-                    op: Some("invalid_op".to_string()), // Unknown operator
-                    left: Some(Box::new(Expr {
-                        kind: ExprKind::Literal, value: Some(serde_json::json!(1)),
-                        name: None, array: None, index: None, op: None, left: None, right: None,
-                        operand: None, callee: None, args: vec![], object: None, field: None, location: None,
-                    })),
-                    right: Some(Box::new(Expr {
-                        kind: ExprKind::Literal, value: Some(serde_json::json!(2)),
-                        name: None, array: None, index: None, op: None, left: None, right: None,
-                        operand: None, callee: None, args: vec![], object: None, field: None, location: None,
-                    })),
-                    operand: None, callee: None, args: vec![], object: None, field: None, location: None,
-                }),
-                expr: None, ty: None, is_mutable: None, body: vec![], tag: None, location: None,
-            },
-        ]);
+                    op: None,
+                    left: None,
+                    right: None,
+                    operand: None,
+                    callee: None,
+                    args: vec![],
+                    object: None,
+                    field: None,
+                    location: None,
+                })),
+                right: Some(Box::new(Expr {
+                    kind: ExprKind::Literal,
+                    value: Some(serde_json::json!(2)),
+                    name: None,
+                    array: None,
+                    index: None,
+                    op: None,
+                    left: None,
+                    right: None,
+                    operand: None,
+                    callee: None,
+                    args: vec![],
+                    object: None,
+                    field: None,
+                    location: None,
+                })),
+                operand: None,
+                callee: None,
+                args: vec![],
+                object: None,
+                field: None,
+                location: None,
+            }),
+            expr: None,
+            ty: None,
+            is_mutable: None,
+            body: vec![],
+            tag: None,
+            location: None,
+        }]);
 
         let result = validate_ir(&ir);
-        assert!(!result.is_valid(), "Expected validation error for unknown operator");
-        assert!(result.errors.iter().any(|e| matches!(e, ValidationError::UnknownOperator { .. })));
+        assert!(
+            !result.is_valid(),
+            "Expected validation error for unknown operator"
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::UnknownOperator { .. }))
+        );
     }
 
     #[test]
     fn test_undefined_variable() {
-        let ir = make_ir(vec![
-            Stmt {
-                kind: StmtKind::Return,
-                name: None, size: None, gate: None, targets: vec![], params: vec![],
-                results: vec![], var: None, range: None, condition: None, then_body: vec![],
-                else_body: vec![], target: None, value: None,
-                return_value: Some(Expr {
-                    kind: ExprKind::Ident,
-                    value: None,
-                    name: Some("undefined_var".to_string()),
-                    array: None, index: None, op: None, left: None, right: None,
-                    operand: None, callee: None, args: vec![], object: None, field: None, location: None,
-                }),
-                expr: None, ty: None, is_mutable: None, body: vec![], tag: None, location: None,
-            },
-        ]);
+        let ir = make_ir(vec![Stmt {
+            kind: StmtKind::Return,
+            name: None,
+            size: None,
+            gate: None,
+            targets: vec![],
+            params: vec![],
+            results: vec![],
+            var: None,
+            range: None,
+            condition: None,
+            then_body: vec![],
+            else_body: vec![],
+            target: None,
+            value: None,
+            return_value: Some(Expr {
+                kind: ExprKind::Ident,
+                value: None,
+                name: Some("undefined_var".to_string()),
+                array: None,
+                index: None,
+                op: None,
+                left: None,
+                right: None,
+                operand: None,
+                callee: None,
+                args: vec![],
+                object: None,
+                field: None,
+                location: None,
+            }),
+            expr: None,
+            ty: None,
+            is_mutable: None,
+            body: vec![],
+            tag: None,
+            location: None,
+        }]);
 
         let result = validate_ir(&ir);
-        assert!(!result.is_valid(), "Expected validation error for undefined variable");
-        assert!(result.errors.iter().any(|e| matches!(e, ValidationError::UndefinedVariable { .. })));
+        assert!(
+            !result.is_valid(),
+            "Expected validation error for undefined variable"
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::UndefinedVariable { .. }))
+        );
     }
 
     #[test]
@@ -2172,34 +2507,86 @@ mod validation_tests {
             Stmt {
                 kind: StmtKind::Binding,
                 name: Some("x".to_string()),
-                size: None, gate: None, targets: vec![], params: vec![], results: vec![],
-                var: None, range: None, condition: None, then_body: vec![], else_body: vec![],
+                size: None,
+                gate: None,
+                targets: vec![],
+                params: vec![],
+                results: vec![],
+                var: None,
+                range: None,
+                condition: None,
+                then_body: vec![],
+                else_body: vec![],
                 target: None,
                 value: Some(Expr {
-                    kind: ExprKind::Literal, value: Some(serde_json::json!(42)),
-                    name: None, array: None, index: None, op: None, left: None, right: None,
-                    operand: None, callee: None, args: vec![], object: None, field: None, location: None,
+                    kind: ExprKind::Literal,
+                    value: Some(serde_json::json!(42)),
+                    name: None,
+                    array: None,
+                    index: None,
+                    op: None,
+                    left: None,
+                    right: None,
+                    operand: None,
+                    callee: None,
+                    args: vec![],
+                    object: None,
+                    field: None,
+                    location: None,
                 }),
-                return_value: None, expr: None, ty: None, is_mutable: None, body: vec![],
-                tag: None, location: None,
+                return_value: None,
+                expr: None,
+                ty: None,
+                is_mutable: None,
+                body: vec![],
+                tag: None,
+                location: None,
             },
             Stmt {
                 kind: StmtKind::Return,
-                name: None, size: None, gate: None, targets: vec![], params: vec![],
-                results: vec![], var: None, range: None, condition: None, then_body: vec![],
-                else_body: vec![], target: None, value: None,
+                name: None,
+                size: None,
+                gate: None,
+                targets: vec![],
+                params: vec![],
+                results: vec![],
+                var: None,
+                range: None,
+                condition: None,
+                then_body: vec![],
+                else_body: vec![],
+                target: None,
+                value: None,
                 return_value: Some(Expr {
                     kind: ExprKind::Ident,
                     value: None,
                     name: Some("x".to_string()),
-                    array: None, index: None, op: None, left: None, right: None,
-                    operand: None, callee: None, args: vec![], object: None, field: None, location: None,
+                    array: None,
+                    index: None,
+                    op: None,
+                    left: None,
+                    right: None,
+                    operand: None,
+                    callee: None,
+                    args: vec![],
+                    object: None,
+                    field: None,
+                    location: None,
                 }),
-                expr: None, ty: None, is_mutable: None, body: vec![], tag: None, location: None,
+                expr: None,
+                ty: None,
+                is_mutable: None,
+                body: vec![],
+                tag: None,
+                location: None,
             },
         ]);
 
         let result = validate_ir(&ir);
-        assert!(result.is_valid(), "Expected valid IR with defined variable, got errors: {:?}", result.errors);
+        assert!(
+            result.is_valid(),
+            "Expected valid IR with defined variable, got errors: {:?}",
+            result.errors
+        );
     }
 }

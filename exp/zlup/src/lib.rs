@@ -112,8 +112,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Re-export commonly used analysis types for convenience
 pub use analysis::{
-    analyze_parallelism, AllocatorAnalysis, AllocatorInfo, DependencyGraph, DepEdge, DepKind,
-    OperationTagger, ParallelismSummary, Resource, TaggedOp,
+    AllocatorAnalysis, AllocatorInfo, DepEdge, DepKind, DependencyGraph, OperationTagger,
+    ParallelismSummary, Resource, TaggedOp, analyze_parallelism,
 };
 
 /// Parse a Zluppy source file into an AST.
@@ -130,7 +130,10 @@ pub fn parse(source: &str) -> Result<ast::Program, parser::ParseError> {
 /// # Errors
 ///
 /// Returns an error if the source contains syntax errors.
-pub fn parse_file(source: &str, filename: impl Into<String>) -> Result<ast::Program, parser::ParseError> {
+pub fn parse_file(
+    source: &str,
+    filename: impl Into<String>,
+) -> Result<ast::Program, parser::ParseError> {
     parser::parse_file(source, filename)
 }
 

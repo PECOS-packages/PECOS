@@ -2,8 +2,8 @@
 
 use rustpython_parser::ast::{self, Constant, Expr, Mod, Stmt};
 
-use super::{make_location, LintRule};
 use super::super::diagnostic::{Diagnostic, Severity};
+use super::{LintRule, make_location};
 
 /// Functions that may raise exceptions and should be wrapped in try/except.
 const FUNCTIONS_THAT_MAY_RAISE: &[(&str, &str)] = &[
@@ -168,7 +168,8 @@ fn check_expr(
                     match &c.value {
                         Constant::Int(i) => {
                             // Check if not zero
-                            i.to_u32_digits().1.first() != Some(&0) || !i.to_u32_digits().1.is_empty()
+                            i.to_u32_digits().1.first() != Some(&0)
+                                || !i.to_u32_digits().1.is_empty()
                         }
                         Constant::Float(f) => *f != 0.0,
                         _ => false,
@@ -204,8 +205,9 @@ fn check_expr(
             // Check for calls to functions that may raise
             if let Expr::Name(name) = call.func.as_ref() {
                 let func_name = name.id.as_str();
-                if let Some((_, reason)) =
-                    FUNCTIONS_THAT_MAY_RAISE.iter().find(|(n, _)| *n == func_name)
+                if let Some((_, reason)) = FUNCTIONS_THAT_MAY_RAISE
+                    .iter()
+                    .find(|(n, _)| *n == func_name)
                 {
                     diagnostics.push(
                         Diagnostic::warning(
@@ -252,7 +254,7 @@ fn check_expr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source(source: &str) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

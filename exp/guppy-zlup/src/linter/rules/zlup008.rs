@@ -3,7 +3,7 @@
 use rustpython_parser::ast::{Expr, Mod, Stmt};
 
 use super::super::diagnostic::{Diagnostic, Severity};
-use super::{make_location, LintRule};
+use super::{LintRule, make_location};
 
 /// Maximum allowed call depth (function calls nested within other calls).
 const DEFAULT_MAX_CALL_DEPTH: u32 = 4;
@@ -91,7 +91,14 @@ fn check_stmt(
             }
         }
         Stmt::While(while_stmt) => {
-            check_expr(&while_stmt.test, filename, source, max_depth, 0, diagnostics);
+            check_expr(
+                &while_stmt.test,
+                filename,
+                source,
+                max_depth,
+                0,
+                diagnostics,
+            );
             for s in &while_stmt.body {
                 check_stmt(s, filename, source, max_depth, diagnostics);
             }
@@ -125,7 +132,14 @@ fn check_stmt(
             }
         }
         Stmt::Expr(expr_stmt) => {
-            check_expr(&expr_stmt.value, filename, source, max_depth, 0, diagnostics);
+            check_expr(
+                &expr_stmt.value,
+                filename,
+                source,
+                max_depth,
+                0,
+                diagnostics,
+            );
         }
         Stmt::Assign(assign) => {
             check_expr(&assign.value, filename, source, max_depth, 0, diagnostics);
@@ -175,7 +189,14 @@ fn check_expr(
             }
 
             // Check the function being called
-            check_expr(&call.func, filename, source, max_depth, new_depth, diagnostics);
+            check_expr(
+                &call.func,
+                filename,
+                source,
+                max_depth,
+                new_depth,
+                diagnostics,
+            );
 
             // Check arguments
             for arg in &call.args {
@@ -185,27 +206,90 @@ fn check_expr(
 
         // Recurse into sub-expressions
         Expr::BinOp(binop) => {
-            check_expr(&binop.left, filename, source, max_depth, current_depth, diagnostics);
-            check_expr(&binop.right, filename, source, max_depth, current_depth, diagnostics);
+            check_expr(
+                &binop.left,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
+            check_expr(
+                &binop.right,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
         }
         Expr::UnaryOp(unary) => {
-            check_expr(&unary.operand, filename, source, max_depth, current_depth, diagnostics);
+            check_expr(
+                &unary.operand,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
         }
         Expr::Compare(cmp) => {
-            check_expr(&cmp.left, filename, source, max_depth, current_depth, diagnostics);
+            check_expr(
+                &cmp.left,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
             for comparator in &cmp.comparators {
-                check_expr(comparator, filename, source, max_depth, current_depth, diagnostics);
+                check_expr(
+                    comparator,
+                    filename,
+                    source,
+                    max_depth,
+                    current_depth,
+                    diagnostics,
+                );
             }
         }
         Expr::BoolOp(boolop) => {
             for value in &boolop.values {
-                check_expr(value, filename, source, max_depth, current_depth, diagnostics);
+                check_expr(
+                    value,
+                    filename,
+                    source,
+                    max_depth,
+                    current_depth,
+                    diagnostics,
+                );
             }
         }
         Expr::IfExp(ifexp) => {
-            check_expr(&ifexp.test, filename, source, max_depth, current_depth, diagnostics);
-            check_expr(&ifexp.body, filename, source, max_depth, current_depth, diagnostics);
-            check_expr(&ifexp.orelse, filename, source, max_depth, current_depth, diagnostics);
+            check_expr(
+                &ifexp.test,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
+            check_expr(
+                &ifexp.body,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
+            check_expr(
+                &ifexp.orelse,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
         }
         Expr::List(list) => {
             for elt in &list.elts {
@@ -218,11 +302,32 @@ fn check_expr(
             }
         }
         Expr::Subscript(sub) => {
-            check_expr(&sub.value, filename, source, max_depth, current_depth, diagnostics);
-            check_expr(&sub.slice, filename, source, max_depth, current_depth, diagnostics);
+            check_expr(
+                &sub.value,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
+            check_expr(
+                &sub.slice,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
         }
         Expr::Attribute(attr) => {
-            check_expr(&attr.value, filename, source, max_depth, current_depth, diagnostics);
+            check_expr(
+                &attr.value,
+                filename,
+                source,
+                max_depth,
+                current_depth,
+                diagnostics,
+            );
         }
         _ => {}
     }
@@ -231,7 +336,7 @@ fn check_expr(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source_with_max(source: &str, max: u32) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

@@ -1,6 +1,6 @@
 //! Integration tests for Guppy IR to Zlup transformation.
 
-use guppy_zlup::{compile, CompileError};
+use guppy_zlup::{CompileError, compile};
 
 #[test]
 fn test_compile_empty_program() {

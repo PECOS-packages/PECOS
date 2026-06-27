@@ -76,7 +76,7 @@ pub use linter::{Config, Diagnostic, LintResult, Linter, LowerError, OutputForma
 pub use ir::{GuppyIR, IrValidator, ValidationError, ValidationResult, validate_ir};
 
 // Re-export compiler types
-pub use compiler::{parse_ir, ParseError, TransformError};
+pub use compiler::{ParseError, TransformError, parse_ir};
 
 /// Crate version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -154,7 +154,10 @@ pub fn validate_zlup(source: &str) -> Result<(), CompileError> {
 /// Validate with round-trip: generated AST → source → parsed AST comparison.
 ///
 /// This ensures the pretty printer produces code that parses back to an equivalent AST.
-pub fn validate_zlup_roundtrip(original_ast: &zlup::ast::Program, source: &str) -> Result<(), CompileError> {
+pub fn validate_zlup_roundtrip(
+    original_ast: &zlup::ast::Program,
+    source: &str,
+) -> Result<(), CompileError> {
     // First do basic validation
     validate_zlup(source)?;
 
@@ -167,14 +170,18 @@ pub fn validate_zlup_roundtrip(original_ast: &zlup::ast::Program, source: &str) 
     })?;
 
     // Compare key structural properties
-    let original_fns: Vec<_> = original_ast.declarations.iter()
+    let original_fns: Vec<_> = original_ast
+        .declarations
+        .iter()
         .filter_map(|d| match d {
             zlup_ast::TopLevelDecl::Fn(f) => Some(f),
             _ => None,
         })
         .collect();
 
-    let reparsed_fns: Vec<_> = reparsed.declarations.iter()
+    let reparsed_fns: Vec<_> = reparsed
+        .declarations
+        .iter()
         .filter_map(|d| match d {
             zlup_ast::TopLevelDecl::Fn(f) => Some(f),
             _ => None,
@@ -182,25 +189,33 @@ pub fn validate_zlup_roundtrip(original_ast: &zlup::ast::Program, source: &str) 
         .collect();
 
     if original_fns.len() != reparsed_fns.len() {
-        return Err(CompileError::Transform(compiler::TransformError::ValidationFailed(format!(
-            "Round-trip: function count mismatch (original: {}, reparsed: {})",
-            original_fns.len(),
-            reparsed_fns.len()
-        ))));
+        return Err(CompileError::Transform(
+            compiler::TransformError::ValidationFailed(format!(
+                "Round-trip: function count mismatch (original: {}, reparsed: {})",
+                original_fns.len(),
+                reparsed_fns.len()
+            )),
+        ));
     }
 
     for (orig, repr) in original_fns.iter().zip(reparsed_fns.iter()) {
         if orig.name != repr.name {
-            return Err(CompileError::Transform(compiler::TransformError::ValidationFailed(format!(
-                "Round-trip: function name mismatch (original: {}, reparsed: {})",
-                orig.name, repr.name
-            ))));
+            return Err(CompileError::Transform(
+                compiler::TransformError::ValidationFailed(format!(
+                    "Round-trip: function name mismatch (original: {}, reparsed: {})",
+                    orig.name, repr.name
+                )),
+            ));
         }
         if orig.params.len() != repr.params.len() {
-            return Err(CompileError::Transform(compiler::TransformError::ValidationFailed(format!(
-                "Round-trip: parameter count mismatch for '{}' (original: {}, reparsed: {})",
-                orig.name, orig.params.len(), repr.params.len()
-            ))));
+            return Err(CompileError::Transform(
+                compiler::TransformError::ValidationFailed(format!(
+                    "Round-trip: parameter count mismatch for '{}' (original: {}, reparsed: {})",
+                    orig.name,
+                    orig.params.len(),
+                    repr.params.len()
+                )),
+            ));
         }
     }
 
@@ -281,7 +296,8 @@ pub fn lint_and_compile(source: &str, filename: Option<&str>) -> Result<String, 
     }
 
     // Compile to Zlup
-    let ir_json = serde_json::to_string(&ir).map_err(|e| PipelineError::Serialize(e.to_string()))?;
+    let ir_json =
+        serde_json::to_string(&ir).map_err(|e| PipelineError::Serialize(e.to_string()))?;
     let zlup_source = compile(&ir_json)?;
 
     Ok(zlup_source)
@@ -385,7 +401,11 @@ def main():
         }"#;
 
         let result = compile_with_roundtrip(ir);
-        assert!(result.is_ok(), "Round-trip compile failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Round-trip compile failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -409,6 +429,10 @@ def main():
         }"#;
 
         let result = compile_with_roundtrip(ir);
-        assert!(result.is_ok(), "Round-trip compile failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Round-trip compile failed: {:?}",
+            result.err()
+        );
     }
 }

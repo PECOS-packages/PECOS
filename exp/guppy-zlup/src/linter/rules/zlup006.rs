@@ -2,8 +2,8 @@
 
 use rustpython_parser::ast::{Mod, Stmt};
 
-use super::{make_location, LintRule};
 use super::super::diagnostic::{Diagnostic, Severity};
+use super::{LintRule, make_location};
 
 /// Detects missing type annotations on function signatures.
 pub struct ZLUP006MissingTypes;
@@ -136,7 +136,10 @@ fn check_function(
                 format!("Function '{}' is missing return type annotation", func_name),
                 make_location(func.range, filename, source),
             )
-            .with_suggestion(format!("Add return type: def {}(...) -> <type>:", func_name))
+            .with_suggestion(format!(
+                "Add return type: def {}(...) -> <type>:",
+                func_name
+            ))
             .with_source_context(source),
         );
     }
@@ -222,7 +225,7 @@ fn is_trivial_body(body: &[Stmt]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source(source: &str) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();
@@ -238,7 +241,11 @@ def foo(x):
 "#,
         );
         assert!(!diagnostics.is_empty());
-        assert!(diagnostics.iter().any(|d| d.message.contains("Parameter 'x'")));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("Parameter 'x'"))
+        );
     }
 
     #[test]
@@ -250,7 +257,11 @@ def foo(x: int):
 "#,
         );
         assert!(!diagnostics.is_empty());
-        assert!(diagnostics.iter().any(|d| d.message.contains("return type")));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("return type"))
+        );
     }
 
     #[test]
@@ -274,7 +285,11 @@ def foo(x):
         );
         // Still warns about parameter but not return (trivial body)
         assert!(diagnostics.iter().any(|d| d.message.contains("Parameter")));
-        assert!(!diagnostics.iter().any(|d| d.message.contains("return type")));
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.message.contains("return type"))
+        );
     }
 
     #[test]

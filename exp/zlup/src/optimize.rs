@@ -26,9 +26,9 @@
 use std::collections::BTreeSet;
 
 use crate::ast::{
-    Attribute, BinaryExpr, BinaryOp, Binding, Block, BoolLit, ElseBranch, Expr, FloatLit,
-    ForRange, ForStmt, GateKind, GateOp, IfStmt, IntLit, Program, SlotRef, Stmt, TopLevelDecl,
-    UnaryExpr, UnaryOp,
+    Attribute, BinaryExpr, BinaryOp, Binding, Block, BoolLit, ElseBranch, Expr, FloatLit, ForRange,
+    ForStmt, GateKind, GateOp, IfStmt, IntLit, Program, SlotRef, Stmt, TopLevelDecl, UnaryExpr,
+    UnaryOp,
 };
 use crate::comptime::{ComptimeEvaluator, ComptimeValue};
 
@@ -207,9 +207,7 @@ impl Optimizer {
                 fn_decl.body = self.optimize_block(fn_decl.body);
                 TopLevelDecl::Fn(fn_decl)
             }
-            TopLevelDecl::Binding(binding) => {
-                TopLevelDecl::Binding(self.optimize_binding(binding))
-            }
+            TopLevelDecl::Binding(binding) => TopLevelDecl::Binding(self.optimize_binding(binding)),
             other => other,
         }
     }
@@ -253,11 +251,12 @@ impl Optimizer {
                 // Check for identity gates (e.g., rz(0)) before optimization
                 if self.config.identity_removal
                     && let Expr::Gate(ref gate) = expr_stmt.expr
-                        && let Some(angle) = gate.params.first()
-                            && self.is_zero_angle(angle) {
-                                self.stats.identities_removed += 1;
-                                return None; // Remove the identity gate
-                            }
+                    && let Some(angle) = gate.params.first()
+                    && self.is_zero_angle(angle)
+                {
+                    self.stats.identities_removed += 1;
+                    return None; // Remove the identity gate
+                }
                 let optimized = self.optimize_expr(expr_stmt.expr);
                 Some(Stmt::Expr(crate::ast::ExprStmt {
                     expr: optimized,
@@ -340,10 +339,11 @@ impl Optimizer {
     fn optimize_expr(&mut self, expr: Expr) -> Expr {
         // Try constant folding first
         if self.config.constant_folding
-            && let Some(folded) = self.try_fold_constant(&expr) {
-                self.stats.constants_folded += 1;
-                return folded;
-            }
+            && let Some(folded) = self.try_fold_constant(&expr)
+        {
+            self.stats.constants_folded += 1;
+            return folded;
+        }
 
         // Recursively optimize subexpressions
         match expr {
@@ -360,10 +360,11 @@ impl Optimizer {
                 };
 
                 if self.config.constant_folding
-                    && let Some(folded) = self.try_fold_binary(&new_bin) {
-                        self.stats.constants_folded += 1;
-                        return folded;
-                    }
+                    && let Some(folded) = self.try_fold_binary(&new_bin)
+                {
+                    self.stats.constants_folded += 1;
+                    return folded;
+                }
 
                 Expr::Binary(Box::new(new_bin))
             }
@@ -378,16 +379,21 @@ impl Optimizer {
                 };
 
                 if self.config.constant_folding
-                    && let Some(folded) = self.try_fold_unary(&new_un) {
-                        self.stats.constants_folded += 1;
-                        return folded;
-                    }
+                    && let Some(folded) = self.try_fold_unary(&new_un)
+                {
+                    self.stats.constants_folded += 1;
+                    return folded;
+                }
 
                 Expr::Unary(Box::new(new_un))
             }
 
             Expr::Call(mut call) => {
-                call.args = call.args.into_iter().map(|a| self.optimize_expr(a)).collect();
+                call.args = call
+                    .args
+                    .into_iter()
+                    .map(|a| self.optimize_expr(a))
+                    .collect();
                 Expr::Call(call)
             }
 
@@ -403,12 +409,20 @@ impl Optimizer {
             }
 
             Expr::Tuple(mut tuple) => {
-                tuple.elements = tuple.elements.into_iter().map(|e| self.optimize_expr(e)).collect();
+                tuple.elements = tuple
+                    .elements
+                    .into_iter()
+                    .map(|e| self.optimize_expr(e))
+                    .collect();
                 Expr::Tuple(tuple)
             }
 
             Expr::BracketArray(mut arr) => {
-                arr.elements = arr.elements.into_iter().map(|e| self.optimize_expr(e)).collect();
+                arr.elements = arr
+                    .elements
+                    .into_iter()
+                    .map(|e| self.optimize_expr(e))
+                    .collect();
                 Expr::BracketArray(arr)
             }
 
@@ -499,9 +513,11 @@ impl Optimizer {
     fn try_fold_unary(&mut self, un: &UnaryExpr) -> Option<Expr> {
         // Double negation: --x = x, !!x = x
         if let Expr::Unary(inner) = &un.operand
-            && un.op == inner.op && matches!(un.op, UnaryOp::Neg | UnaryOp::Not) {
-                return Some(inner.operand.clone());
-            }
+            && un.op == inner.op
+            && matches!(un.op, UnaryOp::Neg | UnaryOp::Not)
+        {
+            return Some(inner.operand.clone());
+        }
 
         // Try full constant evaluation
         self.try_fold_constant(&Expr::Unary(Box::new(un.clone())))
@@ -548,22 +564,21 @@ impl Optimizer {
 
         // Check for constant condition
         if self.config.dead_code_elimination
-            && let Expr::BoolLit(BoolLit { value, .. }) = &condition {
-                self.stats.dead_code_removed += 1;
-                if *value {
-                    // Condition is always true - keep then branch
-                    return Some(Stmt::Block(self.optimize_block(if_stmt.then_body)));
-                } else {
-                    // Condition is always false - keep else branch or remove
-                    return match if_stmt.else_body {
-                        Some(ElseBranch::Else(block)) => {
-                            Some(Stmt::Block(self.optimize_block(block)))
-                        }
-                        Some(ElseBranch::ElseIf(nested)) => self.optimize_if(*nested),
-                        None => None,
-                    };
-                }
+            && let Expr::BoolLit(BoolLit { value, .. }) = &condition
+        {
+            self.stats.dead_code_removed += 1;
+            if *value {
+                // Condition is always true - keep then branch
+                return Some(Stmt::Block(self.optimize_block(if_stmt.then_body)));
+            } else {
+                // Condition is always false - keep else branch or remove
+                return match if_stmt.else_body {
+                    Some(ElseBranch::Else(block)) => Some(Stmt::Block(self.optimize_block(block))),
+                    Some(ElseBranch::ElseIf(nested)) => self.optimize_if(*nested),
+                    None => None,
+                };
             }
+        }
 
         let then_body = self.optimize_block(if_stmt.then_body);
         let else_body = match if_stmt.else_body {
@@ -681,7 +696,10 @@ impl Optimizer {
             Stmt::Binding(binding) => Stmt::Binding(Binding {
                 name: binding.name.clone(),
                 ty: binding.ty.clone(),
-                value: binding.value.as_ref().map(|e| self.substitute_in_expr(e, var_name, value)),
+                value: binding
+                    .value
+                    .as_ref()
+                    .map(|e| self.substitute_in_expr(e, var_name, value)),
                 is_mutable: binding.is_mutable,
                 is_pub: binding.is_pub,
                 doc_comment: binding.doc_comment.clone(),
@@ -719,7 +737,9 @@ impl Optimizer {
                         ElseBranch::Else(self.substitute_in_block(block, var_name, value))
                     }
                     ElseBranch::ElseIf(nested) => {
-                        if let Stmt::If(nested_if) = self.substitute_in_stmt(&Stmt::If(*nested.clone()), var_name, value) {
+                        if let Stmt::If(nested_if) =
+                            self.substitute_in_stmt(&Stmt::If(*nested.clone()), var_name, value)
+                        {
                             ElseBranch::ElseIf(Box::new(nested_if))
                         } else {
                             eb.clone()
@@ -749,7 +769,10 @@ impl Optimizer {
             Stmt::Block(block) => Stmt::Block(self.substitute_in_block(block, var_name, value)),
 
             Stmt::Return(ret) => Stmt::Return(crate::ast::ReturnStmt {
-                value: ret.value.as_ref().map(|e| self.substitute_in_expr(e, var_name, value)),
+                value: ret
+                    .value
+                    .as_ref()
+                    .map(|e| self.substitute_in_expr(e, var_name, value)),
                 location: ret.location.clone(),
             }),
 
@@ -763,7 +786,11 @@ impl Optimizer {
             Stmt::Tick(tick) => Stmt::Tick(crate::ast::TickStmt {
                 label: tick.label.clone(),
                 attrs: tick.attrs.clone(),
-                body: tick.body.iter().map(|s| self.substitute_in_stmt(s, var_name, value)).collect(),
+                body: tick
+                    .body
+                    .iter()
+                    .map(|s| self.substitute_in_stmt(s, var_name, value))
+                    .collect(),
                 location: tick.location.clone(),
             }),
 
@@ -829,28 +856,46 @@ impl Optimizer {
 
             Expr::Call(call) => Expr::Call(Box::new(crate::ast::CallExpr {
                 callee: self.substitute_in_expr(&call.callee, var_name, value),
-                args: call.args.iter().map(|a| self.substitute_in_expr(a, var_name, value)).collect(),
+                args: call
+                    .args
+                    .iter()
+                    .map(|a| self.substitute_in_expr(a, var_name, value))
+                    .collect(),
                 location: call.location.clone(),
             })),
 
             Expr::Tuple(tuple) => Expr::Tuple(Box::new(crate::ast::TupleExpr {
-                elements: tuple.elements.iter().map(|e| self.substitute_in_expr(e, var_name, value)).collect(),
+                elements: tuple
+                    .elements
+                    .iter()
+                    .map(|e| self.substitute_in_expr(e, var_name, value))
+                    .collect(),
                 location: tuple.location.clone(),
             })),
 
             Expr::BracketArray(arr) => Expr::BracketArray(Box::new(crate::ast::BracketArrayExpr {
-                elements: arr.elements.iter().map(|e| self.substitute_in_expr(e, var_name, value)).collect(),
+                elements: arr
+                    .elements
+                    .iter()
+                    .map(|e| self.substitute_in_expr(e, var_name, value))
+                    .collect(),
                 location: arr.location.clone(),
             })),
 
             Expr::Gate(gate) => Expr::Gate(Box::new(crate::ast::GateExpr {
                 kind: gate.kind,
-                params: gate.params.iter().map(|p| self.substitute_in_expr(p, var_name, value)).collect(),
+                params: gate
+                    .params
+                    .iter()
+                    .map(|p| self.substitute_in_expr(p, var_name, value))
+                    .collect(),
                 target: self.substitute_in_expr(&gate.target, var_name, value),
                 location: gate.location.clone(),
             })),
 
-            Expr::SlotRef(slot) => Expr::SlotRef(Box::new(self.substitute_in_slot_ref(slot, var_name, value))),
+            Expr::SlotRef(slot) => {
+                Expr::SlotRef(Box::new(self.substitute_in_slot_ref(slot, var_name, value)))
+            }
 
             Expr::If(if_expr) => Expr::If(Box::new(crate::ast::IfExpr {
                 condition: self.substitute_in_expr(&if_expr.condition, var_name, value),
@@ -878,10 +923,11 @@ impl Optimizer {
         // Remove identity rotations (rotation by 0)
         if self.config.identity_removal
             && let Some(angle) = gate_op.params.first()
-                && self.is_zero_angle(angle) {
-                    self.stats.identities_removed += 1;
-                    return None;
-                }
+            && self.is_zero_angle(angle)
+        {
+            self.stats.identities_removed += 1;
+            return None;
+        }
 
         Some(Stmt::Gate(gate_op))
     }
@@ -934,22 +980,24 @@ impl Optimizer {
             // Check if this and the next statement are inverse gates that can cancel
             // Gates can be either Stmt::Gate(GateOp) or Stmt::Expr(ExprStmt { expr: Expr::Gate(...) })
             if i + 1 < statements.len()
-                && let (Some((g1, attrs1, no_opt1)), Some((g2, attrs2, no_opt2))) =
-                    (self.extract_gate_info(stmt), self.extract_gate_info(&statements[i + 1]))
+                && let (Some((g1, attrs1, no_opt1)), Some((g2, attrs2, no_opt2))) = (
+                    self.extract_gate_info(stmt),
+                    self.extract_gate_info(&statements[i + 1]),
+                )
+            {
+                // Don't cancel if either gate is wrapped in @no_optimize or has preserve attr
+                if !no_opt1
+                    && !no_opt2
+                    && !self.has_preserve_attr(&attrs1)
+                    && !self.has_preserve_attr(&attrs2)
+                    && !self.is_optimization_barrier(&statements[i + 1])
+                    && self.are_inverse_gate_exprs(&g1, &g2)
                 {
-                    // Don't cancel if either gate is wrapped in @no_optimize or has preserve attr
-                    if !no_opt1
-                        && !no_opt2
-                        && !self.has_preserve_attr(&attrs1)
-                        && !self.has_preserve_attr(&attrs2)
-                        && !self.is_optimization_barrier(&statements[i + 1])
-                        && self.are_inverse_gate_exprs(&g1, &g2)
-                    {
-                        self.stats.gates_cancelled += 2;
-                        i += 2; // Skip both gates
-                        continue;
-                    }
+                    self.stats.gates_cancelled += 2;
+                    i += 2; // Skip both gates
+                    continue;
                 }
+            }
 
             result.push(statements[i].clone());
             i += 1;
@@ -960,7 +1008,10 @@ impl Optimizer {
 
     /// Extract gate info from a statement (handles both Stmt::Gate and Stmt::Expr with Expr::Gate).
     /// Also handles @no_optimize(gate_expr) wrapped gates.
-    fn extract_gate_info(&self, stmt: &Stmt) -> Option<(crate::ast::GateExpr, Vec<Attribute>, bool)> {
+    fn extract_gate_info(
+        &self,
+        stmt: &Stmt,
+    ) -> Option<(crate::ast::GateExpr, Vec<Attribute>, bool)> {
         match stmt {
             Stmt::Gate(gate_op) => {
                 // Convert GateOp to GateExpr-like structure
@@ -992,14 +1043,16 @@ impl Optimizer {
             Stmt::Expr(expr_stmt) => {
                 // Check for @no_optimize(gate_expr) builtin
                 if let Expr::Builtin(builtin) = &expr_stmt.expr
-                    && builtin.name == "no_optimize" && builtin.args.len() == 1
-                        && let Expr::Gate(gate_expr) = &builtin.args[0] {
-                            return Some((
-                                *gate_expr.clone(),
-                                expr_stmt.attrs.clone(),
-                                true, // wrapped in @no_optimize - should not be cancelled
-                            ));
-                        }
+                    && builtin.name == "no_optimize"
+                    && builtin.args.len() == 1
+                    && let Expr::Gate(gate_expr) = &builtin.args[0]
+                {
+                    return Some((
+                        *gate_expr.clone(),
+                        expr_stmt.attrs.clone(),
+                        true, // wrapped in @no_optimize - should not be cancelled
+                    ));
+                }
                 // Regular gate expression
                 if let Expr::Gate(gate_expr) = &expr_stmt.expr {
                     Some((*gate_expr.clone(), expr_stmt.attrs.clone(), false))
@@ -1012,11 +1065,7 @@ impl Optimizer {
     }
 
     /// Check if two gate expressions are inverses (cancel each other).
-    fn are_inverse_gate_exprs(
-        &self,
-        g1: &crate::ast::GateExpr,
-        g2: &crate::ast::GateExpr,
-    ) -> bool {
+    fn are_inverse_gate_exprs(&self, g1: &crate::ast::GateExpr, g2: &crate::ast::GateExpr) -> bool {
         // Must have same target
         if !self.same_gate_target(&g1.target, &g2.target) {
             return false;
@@ -1052,9 +1101,7 @@ impl Optimizer {
             // Rotation cancellation: RX(a) RX(-a) = I
             (GateKind::RX, GateKind::RX)
             | (GateKind::RY, GateKind::RY)
-            | (GateKind::RZ, GateKind::RZ) => {
-                self.are_inverse_rotations(&g1.params, &g2.params)
-            }
+            | (GateKind::RZ, GateKind::RZ) => self.are_inverse_rotations(&g1.params, &g2.params),
 
             _ => false,
         }
@@ -1064,21 +1111,18 @@ impl Optimizer {
     fn same_gate_target(&self, t1: &Expr, t2: &Expr) -> bool {
         match (t1, t2) {
             // Single qubit: compare SlotRef
-            (Expr::SlotRef(s1), Expr::SlotRef(s2)) => {
-                self.same_slot_ref(s1, s2)
-            }
+            (Expr::SlotRef(s1), Expr::SlotRef(s2)) => self.same_slot_ref(s1, s2),
             // Index expressions (q[0], q[1], etc.)
-            (Expr::Index(idx1), Expr::Index(idx2)) => {
-                self.same_index_expr(idx1, idx2)
-            }
+            (Expr::Index(idx1), Expr::Index(idx2)) => self.same_index_expr(idx1, idx2),
             // Tuple targets (for multi-qubit gates like cx (q[0], q[1]))
             (Expr::Tuple(tup1), Expr::Tuple(tup2)) => {
                 if tup1.elements.len() != tup2.elements.len() {
                     return false;
                 }
-                tup1.elements.iter().zip(tup2.elements.iter()).all(|(a, b)| {
-                    self.same_gate_target(a, b)
-                })
+                tup1.elements
+                    .iter()
+                    .zip(tup2.elements.iter())
+                    .all(|(a, b)| self.same_gate_target(a, b))
             }
             _ => false,
         }
@@ -1108,10 +1152,9 @@ impl Optimizer {
         }
         // Compare indices
         match (&*s1.index, &*s2.index) {
-            (
-                Expr::IntLit(IntLit { value: v1, .. }),
-                Expr::IntLit(IntLit { value: v2, .. }),
-            ) => v1 == v2,
+            (Expr::IntLit(IntLit { value: v1, .. }), Expr::IntLit(IntLit { value: v2, .. })) => {
+                v1 == v2
+            }
             _ => false,
         }
     }
@@ -1159,9 +1202,10 @@ impl Optimizer {
 
         for attr in attrs {
             if attr.name == "round"
-                && let Some(crate::ast::AttributeValue::Int(n)) = &attr.value {
-                    return Some(*n);
-                }
+                && let Some(crate::ast::AttributeValue::Int(n)) = &attr.value
+            {
+                return Some(*n);
+            }
         }
         None
     }
@@ -1203,9 +1247,7 @@ impl Optimizer {
             // Rotation cancellation: RX(a) RX(-a) = I
             (GateKind::RX, GateKind::RX)
             | (GateKind::RY, GateKind::RY)
-            | (GateKind::RZ, GateKind::RZ) => {
-                self.are_inverse_rotations(&g1.params, &g2.params)
-            }
+            | (GateKind::RZ, GateKind::RZ) => self.are_inverse_rotations(&g1.params, &g2.params),
 
             _ => false,
         }
@@ -1221,16 +1263,18 @@ impl Optimizer {
         match (&params1[0], &params2[0]) {
             (Expr::IntLit(IntLit { value: a, .. }), Expr::Unary(un)) => {
                 if un.op == UnaryOp::Neg
-                    && let Expr::IntLit(IntLit { value: b, .. }) = &un.operand {
-                        return *a == *b;
-                    }
+                    && let Expr::IntLit(IntLit { value: b, .. }) = &un.operand
+                {
+                    return *a == *b;
+                }
                 false
             }
             (Expr::Unary(un), Expr::IntLit(IntLit { value: b, .. })) => {
                 if un.op == UnaryOp::Neg
-                    && let Expr::IntLit(IntLit { value: a, .. }) = &un.operand {
-                        return *a == *b;
-                    }
+                    && let Expr::IntLit(IntLit { value: a, .. }) = &un.operand
+                {
+                    return *a == *b;
+                }
                 false
             }
             (
@@ -1252,7 +1296,10 @@ impl Optimizer {
             }
             // Compare indices
             match (&*a.index, &*b.index) {
-                (Expr::IntLit(IntLit { value: v1, .. }), Expr::IntLit(IntLit { value: v2, .. })) => {
+                (
+                    Expr::IntLit(IntLit { value: v1, .. }),
+                    Expr::IntLit(IntLit { value: v2, .. }),
+                ) => {
                     if v1 != v2 {
                         return false;
                     }
@@ -1845,7 +1892,11 @@ pub fn main() -> unit {
 
         // Verify the function body no longer contains an if statement
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
-            let has_if = fn_decl.body.statements.iter().any(|s| matches!(s, Stmt::If(_)));
+            let has_if = fn_decl
+                .body
+                .statements
+                .iter()
+                .any(|s| matches!(s, Stmt::If(_)));
             assert!(!has_if, "if statement should have been eliminated");
         }
     }
@@ -1870,7 +1921,11 @@ pub fn main() -> unit {
 
         // The if should be replaced by just the then body block
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
-            let has_if = fn_decl.body.statements.iter().any(|s| matches!(s, Stmt::If(_)));
+            let has_if = fn_decl
+                .body
+                .statements
+                .iter()
+                .any(|s| matches!(s, Stmt::If(_)));
             assert!(!has_if, "if true should be replaced by then block");
         }
     }
@@ -1895,7 +1950,11 @@ pub fn main() -> unit {
 
         // The if should be replaced by just the else body block
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
-            let has_if = fn_decl.body.statements.iter().any(|s| matches!(s, Stmt::If(_)));
+            let has_if = fn_decl
+                .body
+                .statements
+                .iter()
+                .any(|s| matches!(s, Stmt::If(_)));
             assert!(!has_if, "if false should be replaced by else block");
         }
     }
@@ -1959,9 +2018,12 @@ pub fn main() -> unit {
 
         // Verify no H gates remain
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
-            let h_count = fn_decl.body.statements.iter().filter(|s| {
-                matches!(s, Stmt::Gate(g) if g.kind == GateKind::H)
-            }).count();
+            let h_count = fn_decl
+                .body
+                .statements
+                .iter()
+                .filter(|s| matches!(s, Stmt::Gate(g) if g.kind == GateKind::H))
+                .count();
             assert_eq!(h_count, 0, "Both H gates should be cancelled");
         }
     }
@@ -2107,7 +2169,10 @@ pub fn main() -> unit {
         let mut optimizer = Optimizer::new();
         let _optimized = optimizer.optimize(ast);
 
-        assert_eq!(optimizer.stats.gates_cancelled, 2, "SWAP SWAP should cancel");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 2,
+            "SWAP SWAP should cancel"
+        );
     }
 
     #[test]
@@ -2126,19 +2191,27 @@ pub fn main() -> unit {
         let optimized = optimizer.optimize(ast);
 
         // Should NOT cancel - different qubits
-        assert_eq!(optimizer.stats.gates_cancelled, 0, "H on different qubits should not cancel");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 0,
+            "H on different qubits should not cancel"
+        );
 
         // Verify both H gates remain
         // Note: Gates are represented as Stmt::Expr containing Expr::Gate
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
-            let h_count = fn_decl.body.statements.iter().filter(|s| {
-                if let Stmt::Expr(expr_stmt) = s {
-                    if let Expr::Gate(gate) = &expr_stmt.expr {
-                        return gate.kind == GateKind::H;
+            let h_count = fn_decl
+                .body
+                .statements
+                .iter()
+                .filter(|s| {
+                    if let Stmt::Expr(expr_stmt) = s {
+                        if let Expr::Gate(gate) = &expr_stmt.expr {
+                            return gate.kind == GateKind::H;
+                        }
                     }
-                }
-                false
-            }).count();
+                    false
+                })
+                .count();
             assert_eq!(h_count, 2, "Both H gates on different qubits should remain");
         }
     }
@@ -2214,7 +2287,10 @@ pub fn main() -> unit {
         let _optimized = optimizer.optimize(ast);
 
         // The first H is wrapped in @no_optimize, so cancellation shouldn't happen
-        assert_eq!(optimizer.stats.gates_cancelled, 0, "@no_optimize should prevent cancellation");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 0,
+            "@no_optimize should prevent cancellation"
+        );
     }
 
     #[test]
@@ -2233,7 +2309,10 @@ pub fn main() -> unit {
         let mut optimizer = Optimizer::new();
         let _optimized = optimizer.optimize(ast);
 
-        assert_eq!(optimizer.stats.gates_cancelled, 0, "@no_optimize on second gate should prevent cancellation");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 0,
+            "@no_optimize on second gate should prevent cancellation"
+        );
     }
 
     #[test]
@@ -2252,7 +2331,10 @@ pub fn main() -> unit {
         let mut optimizer = Optimizer::new();
         let _optimized = optimizer.optimize(ast);
 
-        assert_eq!(optimizer.stats.gates_cancelled, 0, "Both @no_optimize should prevent cancellation");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 0,
+            "Both @no_optimize should prevent cancellation"
+        );
     }
 
     #[test]
@@ -2274,7 +2356,10 @@ pub fn main() -> unit {
         let _optimized = optimizer.optimize(ast);
 
         // tick {} is a barrier, so the two H gates shouldn't cancel
-        assert_eq!(optimizer.stats.gates_cancelled, 0, "tick should act as barrier");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 0,
+            "tick should act as barrier"
+        );
     }
 
     #[test]
@@ -2295,7 +2380,10 @@ pub fn main() -> unit {
         let _optimized = optimizer.optimize(ast);
 
         // Within the same tick, gates CAN cancel
-        assert_eq!(optimizer.stats.gates_cancelled, 2, "H H within same tick should cancel");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 2,
+            "H H within same tick should cancel"
+        );
     }
 
     // =========================================================================
@@ -2361,13 +2449,18 @@ pub fn main() -> unit {
         let mut optimizer = Optimizer::new();
         let optimized = optimizer.optimize(ast);
 
-        assert!(optimizer.stats.unused_bindings_removed > 0, "unused binding should be removed");
+        assert!(
+            optimizer.stats.unused_bindings_removed > 0,
+            "unused binding should be removed"
+        );
 
         // Verify the binding was removed
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
-            let has_binding = fn_decl.body.statements.iter().any(|s| {
-                matches!(s, Stmt::Binding(b) if b.name == "unused")
-            });
+            let has_binding = fn_decl
+                .body
+                .statements
+                .iter()
+                .any(|s| matches!(s, Stmt::Binding(b) if b.name == "unused"));
             assert!(!has_binding, "unused binding should be eliminated");
         }
     }
@@ -2386,9 +2479,11 @@ pub fn main() -> i32 {
 
         // Verify the binding was NOT removed
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
-            let has_binding = fn_decl.body.statements.iter().any(|s| {
-                matches!(s, Stmt::Binding(b) if b.name == "used")
-            });
+            let has_binding = fn_decl
+                .body
+                .statements
+                .iter()
+                .any(|s| matches!(s, Stmt::Binding(b) if b.name == "used"));
             assert!(has_binding, "used binding should be kept");
         }
     }
@@ -2411,7 +2506,10 @@ pub fn main() -> unit {
         let mut optimizer = Optimizer::new();
         let optimized = optimizer.optimize(ast);
 
-        assert!(optimizer.stats.identities_removed > 0, "rz(0) should be removed as identity");
+        assert!(
+            optimizer.stats.identities_removed > 0,
+            "rz(0) should be removed as identity"
+        );
 
         // Verify the gate was removed
         // Note: Gates are represented as Stmt::Expr containing Expr::Gate
@@ -2443,8 +2541,10 @@ pub fn main() -> unit {
 
         // Constant folding disabled - should still have binary expression
         if let TopLevelDecl::Binding(binding) = &optimized.declarations[0] {
-            assert!(matches!(&binding.value, Some(Expr::Binary(_))),
-                "with constant_folding disabled, should keep binary expr");
+            assert!(
+                matches!(&binding.value, Some(Expr::Binary(_))),
+                "with constant_folding disabled, should keep binary expr"
+            );
         }
         assert_eq!(optimizer.stats.constants_folded, 0);
     }
@@ -2466,20 +2566,31 @@ pub fn main() -> unit {
         let mut optimizer = Optimizer::with_config(config);
         let optimized = optimizer.optimize(ast);
 
-        assert_eq!(optimizer.stats.gates_cancelled, 0, "gate_cancellation disabled");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 0,
+            "gate_cancellation disabled"
+        );
 
         // Both H gates should remain
         // Note: Gates are represented as Stmt::Expr containing Expr::Gate
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
-            let h_count = fn_decl.body.statements.iter().filter(|s| {
-                if let Stmt::Expr(expr_stmt) = s {
-                    if let Expr::Gate(gate) = &expr_stmt.expr {
-                        return gate.kind == GateKind::H;
+            let h_count = fn_decl
+                .body
+                .statements
+                .iter()
+                .filter(|s| {
+                    if let Stmt::Expr(expr_stmt) = s {
+                        if let Expr::Gate(gate) = &expr_stmt.expr {
+                            return gate.kind == GateKind::H;
+                        }
                     }
-                }
-                false
-            }).count();
-            assert_eq!(h_count, 2, "Both H gates should remain when cancellation disabled");
+                    false
+                })
+                .count();
+            assert_eq!(
+                h_count, 2,
+                "Both H gates should remain when cancellation disabled"
+            );
         }
     }
 
@@ -2533,7 +2644,10 @@ pub fn main() -> unit {
         let mut optimizer = Optimizer::new();
         let _optimized = optimizer.optimize(ast);
 
-        assert_eq!(optimizer.stats.gates_cancelled, 6, "All 3 pairs should cancel");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 6,
+            "All 3 pairs should cancel"
+        );
     }
 
     #[test]
@@ -2553,7 +2667,10 @@ pub fn main() -> unit {
         let _optimized = optimizer.optimize(ast);
 
         // H and H are not adjacent, so should not cancel
-        assert_eq!(optimizer.stats.gates_cancelled, 0, "Non-adjacent gates should not cancel");
+        assert_eq!(
+            optimizer.stats.gates_cancelled, 0,
+            "Non-adjacent gates should not cancel"
+        );
     }
 
     #[test]
@@ -2632,7 +2749,11 @@ pub fn main() -> unit {
             let gate_count = count_gates_recursive(&fn_decl.body.statements);
             // Should have pz + 4 h gates
             // At minimum, we should have 4 h gates from unrolling (pz may or may not count)
-            assert!(gate_count >= 4, "Expected at least 4 gates, got {}", gate_count);
+            assert!(
+                gate_count >= 4,
+                "Expected at least 4 gates, got {}",
+                gate_count
+            );
         }
     }
 

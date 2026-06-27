@@ -38,7 +38,9 @@ pub enum QasmError {
     #[error("undefined allocator '{name}'")]
     UndefinedAllocator { name: String },
 
-    #[error("qubit index {index} out of bounds for allocator '{allocator}' with capacity {capacity}")]
+    #[error(
+        "qubit index {index} out of bounds for allocator '{allocator}' with capacity {capacity}"
+    )]
     QubitIndexOutOfBounds {
         allocator: String,
         index: usize,
@@ -288,11 +290,12 @@ impl QasmCodegen {
         let mut measurement_count = 0;
         for decl in &program.declarations {
             if let TopLevelDecl::Fn(fn_decl) = decl
-                && fn_decl.name == "main" {
-                    let (body, mcount) = self.convert_block(&fn_decl.body)?;
-                    body_output = body;
-                    measurement_count = mcount;
-                }
+                && fn_decl.name == "main"
+            {
+                let (body, mcount) = self.convert_block(&fn_decl.body)?;
+                body_output = body;
+                measurement_count = mcount;
+            }
         }
 
         // Write classical register if measurements exist
@@ -461,8 +464,15 @@ impl QasmCodegen {
 
                 // Add barrier to mark tick boundary (optional but useful)
                 if !tick_stmt.body.is_empty() {
-                    writeln!(output, "// tick{}",
-                        tick_stmt.label.as_ref().map(|l| format!(" {}", l)).unwrap_or_default())?;
+                    writeln!(
+                        output,
+                        "// tick{}",
+                        tick_stmt
+                            .label
+                            .as_ref()
+                            .map(|l| format!(" {}", l))
+                            .unwrap_or_default()
+                    )?;
                 }
 
                 for inner_stmt in &tick_stmt.body {
@@ -506,7 +516,10 @@ impl QasmCodegen {
         }
     }
 
-    fn convert_expr_stmt(&mut self, expr_stmt: &crate::ast::ExprStmt) -> QasmResult<(String, usize)> {
+    fn convert_expr_stmt(
+        &mut self,
+        expr_stmt: &crate::ast::ExprStmt,
+    ) -> QasmResult<(String, usize)> {
         match &expr_stmt.expr {
             Expr::Call(call) => self.convert_call(call),
             Expr::Gate(gate) => self.convert_gate_expr(gate),
@@ -529,7 +542,7 @@ impl QasmCodegen {
             GateKind::Tdg => "tdg",
             GateKind::SX => "sx",
             GateKind::SY => "sy",
-            GateKind::SZ => "s",    // QASM uses "s" for S gate
+            GateKind::SZ => "s", // QASM uses "s" for S gate
             GateKind::SXdg => "sxdg",
             GateKind::SYdg => "sydg",
             GateKind::SZdg => "sdg", // QASM uses "sdg" for S-dagger
@@ -595,7 +608,10 @@ impl QasmCodegen {
         Ok((output, 0))
     }
 
-    fn convert_measure_expr(&mut self, measure: &crate::ast::MeasureExpr) -> QasmResult<(String, usize)> {
+    fn convert_measure_expr(
+        &mut self,
+        measure: &crate::ast::MeasureExpr,
+    ) -> QasmResult<(String, usize)> {
         use std::fmt::Write;
 
         let mut output = String::new();
@@ -681,9 +697,10 @@ impl QasmCodegen {
             // Address-of array: h(&[q[0], q[1]])
             if let Expr::Unary(unary) = &qubit_args[0]
                 && let crate::ast::UnaryOp::AddrOf = unary.op
-                    && let Expr::BracketArray(arr) = &unary.operand {
-                        return self.convert_batch_gate(&gate_info, &arr.elements, &params);
-                    }
+                && let Expr::BracketArray(arr) = &unary.operand
+            {
+                return self.convert_batch_gate(&gate_info, &arr.elements, &params);
+            }
         }
 
         // Standard gate call
@@ -792,16 +809,17 @@ impl QasmCodegen {
                 // Address-of array: &[q[0], q[1], ...]
                 Expr::Unary(unary) => {
                     if let crate::ast::UnaryOp::AddrOf = unary.op
-                        && let Expr::BracketArray(arr) = &unary.operand {
-                            for elem in &arr.elements {
-                                let (alloc, idx) = self.extract_qubit_ref(elem)?;
-                                let global_idx = self.get_global_qubit_index(&alloc, idx)?;
-                                let creg_idx = self.creg_counter;
-                                self.creg_counter += 1;
-                                writeln!(output, "measure q[{}] -> c[{}];", global_idx, creg_idx)?;
-                                measurement_count += 1;
-                            }
+                        && let Expr::BracketArray(arr) = &unary.operand
+                    {
+                        for elem in &arr.elements {
+                            let (alloc, idx) = self.extract_qubit_ref(elem)?;
+                            let global_idx = self.get_global_qubit_index(&alloc, idx)?;
+                            let creg_idx = self.creg_counter;
+                            self.creg_counter += 1;
+                            writeln!(output, "measure q[{}] -> c[{}];", global_idx, creg_idx)?;
+                            measurement_count += 1;
                         }
+                    }
                 }
                 _ => return Err(QasmError::UnsupportedExpression),
             }
@@ -832,15 +850,16 @@ impl QasmCodegen {
             let mut first = true;
             for arg in &call.args {
                 if let Expr::Ident(ident) = arg
-                    && let Some(alloc) = self.allocators.get(&ident.name) {
-                        for i in 0..alloc.capacity {
-                            if !first {
-                                write!(output, ", ")?;
-                            }
-                            first = false;
-                            write!(output, "q[{}]", alloc.offset + i)?;
+                    && let Some(alloc) = self.allocators.get(&ident.name)
+                {
+                    for i in 0..alloc.capacity {
+                        if !first {
+                            write!(output, ", ")?;
                         }
+                        first = false;
+                        write!(output, "q[{}]", alloc.offset + i)?;
                     }
+                }
             }
             writeln!(output, ";")?;
         }
@@ -900,11 +919,13 @@ impl QasmCodegen {
     fn try_extract_child_allocator(&self, expr: &Expr) -> Option<(String, usize)> {
         if let Expr::Call(call) = expr
             && let Expr::Field(field) = &call.callee
-                && field.field == "child" && call.args.len() == 1 {
-                    let parent = self.extract_identifier(&field.object).ok()?;
-                    let size = self.extract_integer(&call.args[0]).ok()?;
-                    return Some((parent, size));
-                }
+            && field.field == "child"
+            && call.args.len() == 1
+        {
+            let parent = self.extract_identifier(&field.object).ok()?;
+            let size = self.extract_integer(&call.args[0]).ok()?;
+            return Some((parent, size));
+        }
         None
     }
 
@@ -935,12 +956,12 @@ impl QasmCodegen {
     }
 
     fn get_global_qubit_index(&self, allocator: &str, index: usize) -> QasmResult<usize> {
-        let alloc = self
-            .allocators
-            .get(allocator)
-            .ok_or_else(|| QasmError::UndefinedAllocator {
-                name: allocator.to_string(),
-            })?;
+        let alloc =
+            self.allocators
+                .get(allocator)
+                .ok_or_else(|| QasmError::UndefinedAllocator {
+                    name: allocator.to_string(),
+                })?;
 
         if index >= alloc.capacity {
             return Err(QasmError::QubitIndexOutOfBounds {

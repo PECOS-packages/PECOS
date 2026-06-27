@@ -36,13 +36,12 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use thiserror::Error;
 
-use crate::module::{ModuleLoader, ExportedSymbol};
 use crate::ast::{
-    self, BinaryOp, Binding, Block, ElseBranch, Expr, FnDecl, ForRange, FStringPart,
-    PrimitiveType, Program, SourceLocation, Stmt, StructDecl, TopLevelDecl, TypeExpr,
-    UnaryOp,
+    self, BinaryOp, Binding, Block, ElseBranch, Expr, FStringPart, FnDecl, ForRange, PrimitiveType,
+    Program, SourceLocation, Stmt, StructDecl, TopLevelDecl, TypeExpr, UnaryOp,
 };
 use crate::comptime::{ComptimeEvaluator, ComptimeValue};
+use crate::module::{ExportedSymbol, ModuleLoader};
 
 // =============================================================================
 // Semantic Errors
@@ -76,10 +75,14 @@ pub enum SemanticError {
         location: SourceLocation,
     },
 
-    #[error("empty array literal requires explicit type annotation: use `[]: [0]T` or provide elements")]
+    #[error(
+        "empty array literal requires explicit type annotation: use `[]: [0]T` or provide elements"
+    )]
     EmptyArrayNeedsType { location: SourceLocation },
 
-    #[error("empty set literal requires explicit type annotation: use `set{{}} as Set(T)` or provide elements")]
+    #[error(
+        "empty set literal requires explicit type annotation: use `set{{}} as Set(T)` or provide elements"
+    )]
     EmptySetNeedsType { location: SourceLocation },
 
     #[error("invalid integer bit width {bits}: must be between 1 and 128")]
@@ -93,8 +96,13 @@ pub enum SemanticError {
         location: SourceLocation,
     },
 
-    #[error("ambiguous target for multi-qubit gate '{gate}': use explicit qubit pairs like '{gate} (q[0], q[1])' or batch '{gate} {{(q[0], q[1]), ...}}'")]
-    AmbiguousGateTarget { gate: String, location: SourceLocation },
+    #[error(
+        "ambiguous target for multi-qubit gate '{gate}': use explicit qubit pairs like '{gate} (q[0], q[1])' or batch '{gate} {{(q[0], q[1]), ...}}'"
+    )]
+    AmbiguousGateTarget {
+        gate: String,
+        location: SourceLocation,
+    },
 
     #[error("invalid gate syntax: use '{gate} {hint}' instead of '{gate}(...)'")]
     InvalidGateSyntax {
@@ -175,13 +183,17 @@ pub enum SemanticError {
         location: SourceLocation,
     },
 
-    #[error("cannot call .child() on immutable allocator '{name}' - declare with 'mut' to partition: mut {name} := qalloc(...)")]
+    #[error(
+        "cannot call .child() on immutable allocator '{name}' - declare with 'mut' to partition: mut {name} := qalloc(...)"
+    )]
     ChildRequiresMutableParent {
         name: String,
         location: SourceLocation,
     },
 
-    #[error("cannot assign to immutable variable '{name}' - declare with 'mut' to allow modification: mut {name} := ...")]
+    #[error(
+        "cannot assign to immutable variable '{name}' - declare with 'mut' to allow modification: mut {name} := ..."
+    )]
     ImmutableAssignment {
         name: String,
         location: SourceLocation,
@@ -225,7 +237,9 @@ pub enum SemanticError {
         location: SourceLocation,
     },
 
-    #[error("measurement type mismatch: declared [{declared}]{element} but measuring {actual} qubit(s)")]
+    #[error(
+        "measurement type mismatch: declared [{declared}]{element} but measuring {actual} qubit(s)"
+    )]
     MeasurementSizeMismatch {
         declared: String,
         element: String,
@@ -247,13 +261,17 @@ pub enum SemanticError {
         location: SourceLocation,
     },
 
-    #[error("pack mode requires compile-time verifiable type size, but '{ty}' has unknown bit capacity")]
+    #[error(
+        "pack mode requires compile-time verifiable type size, but '{ty}' has unknown bit capacity"
+    )]
     MeasurementPackUnknownSize {
         ty: String,
         location: SourceLocation,
     },
 
-    #[error("qubit '{allocator}[{index}]' used multiple times within tick block - parallel operations cannot target the same qubit")]
+    #[error(
+        "qubit '{allocator}[{index}]' used multiple times within tick block - parallel operations cannot target the same qubit"
+    )]
     DuplicateQubitInTick {
         allocator: String,
         index: usize,
@@ -276,7 +294,9 @@ pub enum SemanticError {
         location: SourceLocation,
     },
 
-    #[error("inline for range must be comptime-evaluable, but '{expr}' cannot be evaluated at compile time")]
+    #[error(
+        "inline for range must be comptime-evaluable, but '{expr}' cannot be evaluated at compile time"
+    )]
     InlineForRangeNotComptime {
         expr: String,
         location: SourceLocation,
@@ -285,10 +305,14 @@ pub enum SemanticError {
     #[error("'break' is not allowed in inline for loops - inline for is unrolled at compile time")]
     BreakInInlineFor { location: SourceLocation },
 
-    #[error("'continue' is not allowed in inline for loops - inline for is unrolled at compile time")]
+    #[error(
+        "'continue' is not allowed in inline for loops - inline for is unrolled at compile time"
+    )]
     ContinueInInlineFor { location: SourceLocation },
 
-    #[error("alias '{new_alias}' overlaps with existing alias '{existing_alias}' on source '{source_var}'")]
+    #[error(
+        "alias '{new_alias}' overlaps with existing alias '{existing_alias}' on source '{source_var}'"
+    )]
     OverlappingAlias {
         new_alias: String,
         existing_alias: String,
@@ -303,19 +327,25 @@ pub enum SemanticError {
         location: SourceLocation,
     },
 
-    #[error("alias range must be comptime-evaluable for overlap checking, but '{expr}' cannot be evaluated at compile time")]
+    #[error(
+        "alias range must be comptime-evaluable for overlap checking, but '{expr}' cannot be evaluated at compile time"
+    )]
     AliasRangeNotComptime {
         expr: String,
         location: SourceLocation,
     },
 
-    #[error("missing return statement in function '{name}' - all code paths must have explicit returns (use 'return unit;' for unit functions)")]
+    #[error(
+        "missing return statement in function '{name}' - all code paths must have explicit returns (use 'return unit;' for unit functions)"
+    )]
     MissingReturn {
         name: String,
         location: SourceLocation,
     },
 
-    #[error("'return;' without a value is only allowed in functions that return unit, but this function returns '{expected}'")]
+    #[error(
+        "'return;' without a value is only allowed in functions that return unit, but this function returns '{expected}'"
+    )]
     ReturnWithoutValue {
         expected: String,
         location: SourceLocation,
@@ -355,19 +385,25 @@ pub enum SemanticError {
     // =========================================================================
     // Reference Safety Errors (safe-by-constraint memory model)
     // =========================================================================
-    #[error("cannot return reference to local variable '{name}' - local variables are deallocated when the function returns")]
+    #[error(
+        "cannot return reference to local variable '{name}' - local variables are deallocated when the function returns"
+    )]
     ReturnReferenceToLocal {
         name: String,
         location: SourceLocation,
     },
 
-    #[error("cannot return slice of local array '{name}' - local arrays are deallocated when the function returns")]
+    #[error(
+        "cannot return slice of local array '{name}' - local arrays are deallocated when the function returns"
+    )]
     ReturnSliceOfLocal {
         name: String,
         location: SourceLocation,
     },
 
-    #[error("cannot store reference to local '{name}' in outer scope - would create dangling reference")]
+    #[error(
+        "cannot store reference to local '{name}' in outer scope - would create dangling reference"
+    )]
     ReferenceEscapesScope {
         name: String,
         location: SourceLocation,
@@ -605,10 +641,14 @@ pub enum Type {
     // Primitives
     Bool,
     // Arbitrary-width integers (like Zig: u1, u4, u7, u128, etc.)
-    UInt { bits: BitWidth },  // Unsigned integer with N bits
-    IInt { bits: BitWidth },  // Signed integer with N bits
-    Usize,              // Platform-dependent unsigned size
-    Isize,              // Platform-dependent signed size
+    UInt {
+        bits: BitWidth,
+    }, // Unsigned integer with N bits
+    IInt {
+        bits: BitWidth,
+    }, // Signed integer with N bits
+    Usize, // Platform-dependent unsigned size
+    Isize, // Platform-dependent signed size
     // Floating point
     F16,
     F32,
@@ -620,7 +660,9 @@ pub enum Type {
     Qubit,
     Bit,
     /// Allocator with known capacity
-    Allocator { capacity: Option<u64> },
+    Allocator {
+        capacity: Option<u64>,
+    },
 
     // Compound types
     Array {
@@ -696,10 +738,10 @@ pub enum Type {
     AnyFault,
 
     // Special types
-    Unit, // Unit type - has exactly one value
-    Type, // The metatype (type of types)
+    Unit,                // Unit type - has exactly one value
+    Type,                // The metatype (type of types)
     Comptime(Box<Type>), // Comptime-known value of this type
-    Never, // Bottom type (for functions that don't return)
+    Never,               // Bottom type (for functions that don't return)
 
     /// Imported module type
     Module {
@@ -755,10 +797,7 @@ impl Type {
 
     /// Check if this type is a quantum type.
     pub fn is_quantum(&self) -> bool {
-        matches!(
-            self,
-            Type::Qubit | Type::Bit | Type::Allocator { .. }
-        )
+        matches!(self, Type::Qubit | Type::Bit | Type::Allocator { .. })
     }
 
     /// Get the display name for error messages.
@@ -814,7 +853,11 @@ impl Type {
                 return_type,
             } => {
                 let params_str: Vec<_> = params.iter().map(|p| p.display_name()).collect();
-                format!("fn({}) {}", params_str.join(", "), return_type.display_name())
+                format!(
+                    "fn({}) {}",
+                    params_str.join(", "),
+                    return_type.display_name()
+                )
             }
             Type::Struct { name, .. } => name.clone(),
             Type::Enum { name, .. } => name.clone(),
@@ -881,9 +924,10 @@ impl Type {
 
             // Collections of types
             Type::Tuple { elements } => elements.iter().any(|e| e.contains_unknown()),
-            Type::Function { params, return_type } => {
-                params.iter().any(|p| p.contains_unknown()) || return_type.contains_unknown()
-            }
+            Type::Function {
+                params,
+                return_type,
+            } => params.iter().any(|p| p.contains_unknown()) || return_type.contains_unknown(),
 
             // Named types with fields
             Type::Struct { fields, .. } => fields.iter().any(|(_, ty)| ty.contains_unknown()),
@@ -895,9 +939,7 @@ impl Type {
             Type::Enum { .. } | Type::ErrorSet { .. } | Type::FaultSet { .. } => false,
 
             // Module exports
-            Type::Module { exports, .. } => {
-                exports.values().any(|(_, ty)| ty.contains_unknown())
-            }
+            Type::Module { exports, .. } => exports.values().any(|(_, ty)| ty.contains_unknown()),
         }
     }
 
@@ -1172,12 +1214,13 @@ impl SymbolTable {
             for symbol in scope.symbols.values() {
                 if let SymbolKind::TypeDef { ty } = &symbol.kind
                     && let Type::ErrorSet { name, errors } = ty
-                        && errors.iter().any(|(n, _)| n == variant_name) {
-                            return Some(Type::ErrorSet {
-                                name: name.clone(),
-                                errors: errors.clone(),
-                            });
-                        }
+                    && errors.iter().any(|(n, _)| n == variant_name)
+                {
+                    return Some(Type::ErrorSet {
+                        name: name.clone(),
+                        errors: errors.clone(),
+                    });
+                }
             }
             scope_idx = scope.parent;
         }
@@ -1193,12 +1236,13 @@ impl SymbolTable {
             for symbol in scope.symbols.values() {
                 if let SymbolKind::TypeDef { ty } = &symbol.kind
                     && let Type::FaultSet { name, faults } = ty
-                        && faults.iter().any(|(n, _)| n == variant_name) {
-                            return Some(Type::FaultSet {
-                                name: name.clone(),
-                                faults: faults.clone(),
-                            });
-                        }
+                    && faults.iter().any(|(n, _)| n == variant_name)
+                {
+                    return Some(Type::FaultSet {
+                        name: name.clone(),
+                        faults: faults.clone(),
+                    });
+                }
             }
             scope_idx = scope.parent;
         }
@@ -1363,12 +1407,13 @@ impl QubitStateTracker {
         index: usize,
         location: &SourceLocation,
     ) -> SemanticResult<()> {
-        let alloc = self.allocators.get(allocator).ok_or_else(|| {
-            SemanticError::AllocatorNotFound {
-                name: allocator.to_string(),
-                location: location.clone(),
-            }
-        })?;
+        let alloc =
+            self.allocators
+                .get(allocator)
+                .ok_or_else(|| SemanticError::AllocatorNotFound {
+                    name: allocator.to_string(),
+                    location: location.clone(),
+                })?;
 
         // Check bounds
         if !alloc.is_in_bounds(index) {
@@ -1383,13 +1428,14 @@ impl QubitStateTracker {
         // Check state (only if capacity is known)
         if alloc.capacity.is_some()
             && let Some(state) = alloc.get_state(index)
-                && !state.can_apply_gate() {
-                    return Err(SemanticError::QubitNotPrepared {
-                        allocator: allocator.to_string(),
-                        index,
-                        location: location.clone(),
-                    });
-                }
+            && !state.can_apply_gate()
+        {
+            return Err(SemanticError::QubitNotPrepared {
+                allocator: allocator.to_string(),
+                index,
+                location: location.clone(),
+            });
+        }
 
         Ok(())
     }
@@ -1597,7 +1643,12 @@ impl SemanticAnalyzer {
         let _ = self.symbols.define(Symbol {
             name: "qalloc".to_string(),
             kind: SymbolKind::Function {
-                params: vec![("capacity".to_string(), Type::UInt { bits: BitWidth::BITS_32 })],
+                params: vec![(
+                    "capacity".to_string(),
+                    Type::UInt {
+                        bits: BitWidth::BITS_32,
+                    },
+                )],
                 return_type: Type::Allocator { capacity: None },
                 is_pub: true,
                 comptime_param_indices: vec![],
@@ -1624,19 +1675,39 @@ impl SemanticAnalyzer {
     fn populate_builtin_gates(&mut self) {
         let builtin_gates: &[(&str, usize, usize)] = &[
             // (name, num_params, num_qubits)
-            ("x", 0, 1), ("y", 0, 1), ("z", 0, 1),
+            ("x", 0, 1),
+            ("y", 0, 1),
+            ("z", 0, 1),
             ("h", 0, 1),
-            ("t", 0, 1), ("tdg", 0, 1),
-            ("sx", 0, 1), ("sy", 0, 1), ("sz", 0, 1),
-            ("sxdg", 0, 1), ("sydg", 0, 1), ("szdg", 0, 1),
-            ("rx", 1, 1), ("ry", 1, 1), ("rz", 1, 1),
-            ("cx", 0, 2), ("cy", 0, 2), ("cz", 0, 2), ("ch", 0, 2),
-            ("sxx", 0, 2), ("syy", 0, 2), ("szz", 0, 2),
-            ("sxxdg", 0, 2), ("syydg", 0, 2), ("szzdg", 0, 2),
+            ("t", 0, 1),
+            ("tdg", 0, 1),
+            ("sx", 0, 1),
+            ("sy", 0, 1),
+            ("sz", 0, 1),
+            ("sxdg", 0, 1),
+            ("sydg", 0, 1),
+            ("szdg", 0, 1),
+            ("rx", 1, 1),
+            ("ry", 1, 1),
+            ("rz", 1, 1),
+            ("cx", 0, 2),
+            ("cy", 0, 2),
+            ("cz", 0, 2),
+            ("ch", 0, 2),
+            ("sxx", 0, 2),
+            ("syy", 0, 2),
+            ("szz", 0, 2),
+            ("sxxdg", 0, 2),
+            ("syydg", 0, 2),
+            ("szzdg", 0, 2),
             ("rzz", 1, 2),
-            ("swap", 0, 2), ("iswap", 0, 2),
+            ("swap", 0, 2),
+            ("iswap", 0, 2),
             ("ccx", 0, 3),
-            ("f", 0, 1), ("fdg", 0, 1), ("f4", 0, 1), ("f4dg", 0, 1),
+            ("f", 0, 1),
+            ("fdg", 0, 1),
+            ("f4", 0, 1),
+            ("f4dg", 0, 1),
             ("pz", 0, 1),
         ];
 
@@ -1765,7 +1836,8 @@ impl SemanticAnalyzer {
 
         for func in &self.user_functions {
             if !visited.contains(func) {
-                if let Some(cycle_func) = self.dfs_detect_cycle(func, &mut visited, &mut rec_stack) {
+                if let Some(cycle_func) = self.dfs_detect_cycle(func, &mut visited, &mut rec_stack)
+                {
                     return Err(SemanticError::RecursionDetected {
                         name: cycle_func,
                         location: SourceLocation::default(),
@@ -1814,7 +1886,9 @@ impl SemanticAnalyzer {
             for symbol in scope.symbols.values() {
                 let (ty, context) = match &symbol.kind {
                     SymbolKind::Variable { ty, .. } => (ty, "variable"),
-                    SymbolKind::Function { return_type, .. } => (return_type, "function return type"),
+                    SymbolKind::Function { return_type, .. } => {
+                        (return_type, "function return type")
+                    }
                     SymbolKind::TypeDef { ty } => (ty, "type definition"),
                     SymbolKind::Parameter { ty, .. } => (ty, "parameter"),
                     SymbolKind::Allocator { .. } => continue,
@@ -1840,7 +1914,10 @@ impl SemanticAnalyzer {
                         if param_ty.contains_unknown() {
                             self.errors.push(SemanticError::UnresolvedType {
                                 ty: param_ty.display_name(),
-                                context: format!("parameter '{}' of function '{}'", param_name, symbol.name),
+                                context: format!(
+                                    "parameter '{}' of function '{}'",
+                                    param_name, symbol.name
+                                ),
                                 location: symbol.location.clone().unwrap_or_default(),
                             });
                         }
@@ -2071,7 +2148,10 @@ impl SemanticAnalyzer {
                     .variants
                     .iter()
                     .map(|v| {
-                        let data_type = v.data_type.as_ref().map(|ty| Box::new(self.resolve_type(ty)));
+                        let data_type = v
+                            .data_type
+                            .as_ref()
+                            .map(|ty| Box::new(self.resolve_type(ty)));
                         (v.name.clone(), data_type)
                     })
                     .collect();
@@ -2093,7 +2173,10 @@ impl SemanticAnalyzer {
                     .variants
                     .iter()
                     .map(|v| {
-                        let data_type = v.data_type.as_ref().map(|ty| Box::new(self.resolve_type(ty)));
+                        let data_type = v
+                            .data_type
+                            .as_ref()
+                            .map(|ty| Box::new(self.resolve_type(ty)));
                         (v.name.clone(), data_type)
                     })
                     .collect();
@@ -2114,12 +2197,7 @@ impl SemanticAnalyzer {
                 let fields: Vec<(String, Option<Type>)> = union_decl
                     .fields
                     .iter()
-                    .map(|f| {
-                        (
-                            f.name.clone(),
-                            f.ty.as_ref().map(|t| self.resolve_type(t)),
-                        )
-                    })
+                    .map(|f| (f.name.clone(), f.ty.as_ref().map(|t| self.resolve_type(t))))
                     .collect();
 
                 // tag: None = untagged, Some(None) = auto-tagged, Some(Some(_)) = external tag
@@ -2220,10 +2298,8 @@ impl SemanticAnalyzer {
         self.current_function = Some(fn_decl.name.clone());
 
         // Track function in call stack for recursion detection (always enforced)
-        self.recursion_tracker.enter_function(
-            &fn_decl.name,
-            &fn_decl.location.clone().unwrap_or_default(),
-        )?;
+        self.recursion_tracker
+            .enter_function(&fn_decl.name, &fn_decl.location.clone().unwrap_or_default())?;
 
         // Define parameters
         for param in &fn_decl.params {
@@ -2239,10 +2315,7 @@ impl SemanticAnalyzer {
         }
 
         // Set return type for return statement checking
-        let return_type = fn_decl
-            .return_type
-            .as_ref()
-            .map(|t| self.resolve_type(t));
+        let return_type = fn_decl.return_type.as_ref().map(|t| self.resolve_type(t));
         self.current_return_type = return_type.clone();
 
         // Analyze body
@@ -2334,7 +2407,10 @@ impl SemanticAnalyzer {
                 if !has_else {
                     return false;
                 }
-                switch_stmt.prongs.iter().all(|p| self.expr_always_returns(&p.body))
+                switch_stmt
+                    .prongs
+                    .iter()
+                    .all(|p| self.expr_always_returns(&p.body))
             }
 
             Stmt::For(for_stmt) => {
@@ -2449,17 +2525,17 @@ impl SemanticAnalyzer {
                             .register_allocator(AllocatorInfo::new(&binding.name, capacity));
                     }
                     // Register child allocator if this is base.child(n)
-                    else if let Some((parent, capacity)) =
-                        self.try_extract_child_allocator(value)
+                    else if let Some((parent, capacity)) = self.try_extract_child_allocator(value)
                     {
                         // Check that the parent allocator is mutable
                         if let Some(symbol) = self.symbols.lookup(&parent)
-                            && let SymbolKind::Variable { is_const: true, .. } = &symbol.kind {
-                                return Err(SemanticError::ChildRequiresMutableParent {
-                                    name: parent,
-                                    location: binding.location.clone().unwrap_or_default(),
-                                });
-                            }
+                            && let SymbolKind::Variable { is_const: true, .. } = &symbol.kind
+                        {
+                            return Err(SemanticError::ChildRequiresMutableParent {
+                                name: parent,
+                                location: binding.location.clone().unwrap_or_default(),
+                            });
+                        }
                         self.qubit_states.register_allocator(AllocatorInfo::child(
                             &binding.name,
                             parent,
@@ -2475,7 +2551,8 @@ impl SemanticAnalyzer {
                             evaluator.context.define(name, comptime_val.clone());
                         }
                         if let Ok(comptime_val) = evaluator.eval_expr(value) {
-                            self.comptime_values.insert(binding.name.clone(), comptime_val);
+                            self.comptime_values
+                                .insert(binding.name.clone(), comptime_val);
                         }
                     }
 
@@ -2658,7 +2735,8 @@ impl SemanticAnalyzer {
                 let _value_ty = self.analyze_expr(&switch_stmt.value)?;
 
                 // Track seen case values for duplicate detection
-                let mut seen_cases: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                let mut seen_cases: std::collections::BTreeSet<String> =
+                    std::collections::BTreeSet::new();
 
                 for prong in &switch_stmt.prongs {
                     for case in &prong.cases {
@@ -2816,10 +2894,7 @@ impl SemanticAnalyzer {
                 }
 
                 // Track state transitions
-                if let Some(alloc) = self
-                    .qubit_states
-                    .get_allocator_mut(&prepare_op.allocator)
-                {
+                if let Some(alloc) = self.qubit_states.get_allocator_mut(&prepare_op.allocator) {
                     if let Some(slots) = &prepare_op.slots {
                         // Prepare specific slots
                         for &slot in slots {
@@ -2832,7 +2907,10 @@ impl SemanticAnalyzer {
                                             allocator: prepare_op.allocator.clone(),
                                             index: idx,
                                             capacity: alloc.capacity.unwrap_or(0),
-                                            location: prepare_op.location.clone().unwrap_or_default(),
+                                            location: prepare_op
+                                                .location
+                                                .clone()
+                                                .unwrap_or_default(),
                                         });
                                     }
                                 }
@@ -2863,7 +2941,8 @@ impl SemanticAnalyzer {
                         }
 
                         // Transition to unprepared after measurement
-                        if let Some(alloc) = self.qubit_states.get_allocator_mut(&target.allocator) {
+                        if let Some(alloc) = self.qubit_states.get_allocator_mut(&target.allocator)
+                        {
                             alloc.measure_slot(index);
                         }
                     }
@@ -2921,7 +3000,9 @@ impl SemanticAnalyzer {
                 if let Some(suffix) = &lit.suffix {
                     Ok(int_suffix_to_type(suffix))
                 } else {
-                    Ok(Type::IInt { bits: BitWidth::BITS_64 })
+                    Ok(Type::IInt {
+                        bits: BitWidth::BITS_64,
+                    })
                 }
             }
             Expr::FloatLit(lit) => {
@@ -2985,7 +3066,9 @@ impl SemanticAnalyzer {
             }
             Expr::BoolLit(_) => Ok(Type::Bool),
             Expr::StringLit(_) => Ok(Type::Slice {
-                element: Box::new(Type::UInt { bits: BitWidth::BITS_8 }),
+                element: Box::new(Type::UInt {
+                    bits: BitWidth::BITS_8,
+                }),
             }),
             Expr::FString(fstr) => {
                 // Analyze all interpolated expressions for errors
@@ -2996,10 +3079,14 @@ impl SemanticAnalyzer {
                 }
                 // F-strings produce string slices
                 Ok(Type::Slice {
-                    element: Box::new(Type::UInt { bits: BitWidth::BITS_8 }),
+                    element: Box::new(Type::UInt {
+                        bits: BitWidth::BITS_8,
+                    }),
                 })
             }
-            Expr::CharLit(_) => Ok(Type::UInt { bits: BitWidth::BITS_8 }),
+            Expr::CharLit(_) => Ok(Type::UInt {
+                bits: BitWidth::BITS_8,
+            }),
             Expr::Null(_) => Ok(Type::Optional {
                 inner: Box::new(Type::Unknown),
             }),
@@ -3020,9 +3107,9 @@ impl SemanticAnalyzer {
                             return_type: Box::new(return_type.clone()),
                         }),
                         SymbolKind::TypeDef { ty } => Ok(ty.clone()),
-                        SymbolKind::Allocator { capacity } => {
-                            Ok(Type::Allocator { capacity: *capacity })
-                        }
+                        SymbolKind::Allocator { capacity } => Ok(Type::Allocator {
+                            capacity: *capacity,
+                        }),
                     }
                 } else {
                     // Check if it's a built-in constant
@@ -3136,7 +3223,9 @@ impl SemanticAnalyzer {
                     });
 
                     // Now we can use the extracted data with a mutable borrow
-                    if let Some((comptime_param_indices, original_decl, fn_return_type)) = generic_info {
+                    if let Some((comptime_param_indices, original_decl, fn_return_type)) =
+                        generic_info
+                    {
                         // Evaluate comptime arguments
                         let mut comptime_args = Vec::new();
                         for &idx in &comptime_param_indices {
@@ -3174,7 +3263,10 @@ impl SemanticAnalyzer {
                 }
 
                 match callee_ty {
-                    Type::Function { params, return_type } => {
+                    Type::Function {
+                        params,
+                        return_type,
+                    } => {
                         // Validate argument count
                         if call.args.len() != params.len() {
                             return Err(SemanticError::ArgumentCountMismatch {
@@ -3185,17 +3277,15 @@ impl SemanticAnalyzer {
                         }
 
                         // Validate argument types
-                        for (arg, param_ty) in
-                            call.args.iter().zip(params.iter())
-                        {
+                        for (arg, param_ty) in call.args.iter().zip(params.iter()) {
                             let arg_ty = self.analyze_expr(arg)?;
                             if !self.types_compatible(&arg_ty, param_ty) {
                                 return Err(SemanticError::TypeMismatch {
                                     expected: param_ty.display_name(),
                                     found: arg_ty.display_name(),
-                                    location: arg
-                                        .get_location()
-                                        .unwrap_or_else(|| call.location.clone().unwrap_or_default()),
+                                    location: arg.get_location().unwrap_or_else(|| {
+                                        call.location.clone().unwrap_or_default()
+                                    }),
                                 });
                             }
                         }
@@ -3228,19 +3318,20 @@ impl SemanticAnalyzer {
 
                 // Validate target arity if we know the gate
                 if let Some(ref name) = gate_name
-                    && let Some(info) = get_gate_info(name) {
-                        for target in &batch.targets {
-                            let target_arity = self.count_target_elements(target);
-                            if target_arity != info.arity {
-                                return Err(SemanticError::GateArityMismatch {
-                                    gate: name.clone(),
-                                    expected: info.arity,
-                                    found: target_arity,
-                                    location: batch.location.clone().unwrap_or_default(),
-                                });
-                            }
+                    && let Some(info) = get_gate_info(name)
+                {
+                    for target in &batch.targets {
+                        let target_arity = self.count_target_elements(target);
+                        if target_arity != info.arity {
+                            return Err(SemanticError::GateArityMismatch {
+                                gate: name.clone(),
+                                expected: info.arity,
+                                found: target_arity,
+                                location: batch.location.clone().unwrap_or_default(),
+                            });
                         }
                     }
+                }
 
                 for target in &batch.targets {
                     self.analyze_expr(target)?;
@@ -3313,10 +3404,12 @@ impl SemanticAnalyzer {
                                 Some(s) => *s,
                                 None => {
                                     return Err(SemanticError::InvalidMeasurementType {
-                                        ty: format!("[_]{} - use explicit size like [{}]{}",
+                                        ty: format!(
+                                            "[_]{} - use explicit size like [{}]{}",
                                             element.display_name(),
                                             target_count,
-                                            element.display_name()),
+                                            element.display_name()
+                                        ),
                                         location,
                                     });
                                 }
@@ -3378,22 +3471,23 @@ impl SemanticAnalyzer {
                 // For multi-qubit gates (arity > 1), reject bare allocator targets
                 // e.g., `cx q` is ambiguous - use `cx (q[0], q[1])` or `cx {(q[0], q[1]), ...}`
                 if gate_kind.arity() > 1
-                    && let Expr::Ident(ident) = &gate.target {
-                        // Check if this is an allocator
-                        if let Some(symbol) = self.symbols.lookup(&ident.name) {
-                            let is_allocator = match &symbol.kind {
-                                SymbolKind::Variable { ty, .. } => matches!(ty, Type::Allocator { .. }),
-                                SymbolKind::Allocator { .. } => true,
-                                _ => false,
-                            };
-                            if is_allocator {
-                                return Err(SemanticError::AmbiguousGateTarget {
-                                    gate: format!("{:?}", gate_kind).to_lowercase(),
-                                    location: gate.location.clone().unwrap_or_default(),
-                                });
-                            }
+                    && let Expr::Ident(ident) = &gate.target
+                {
+                    // Check if this is an allocator
+                    if let Some(symbol) = self.symbols.lookup(&ident.name) {
+                        let is_allocator = match &symbol.kind {
+                            SymbolKind::Variable { ty, .. } => matches!(ty, Type::Allocator { .. }),
+                            SymbolKind::Allocator { .. } => true,
+                            _ => false,
+                        };
+                        if is_allocator {
+                            return Err(SemanticError::AmbiguousGateTarget {
+                                gate: format!("{:?}", gate_kind).to_lowercase(),
+                                location: gate.location.clone().unwrap_or_default(),
+                            });
                         }
                     }
+                }
 
                 // Check gate target arity
                 let expected_arity = gate_kind.arity();
@@ -3439,7 +3533,10 @@ impl SemanticAnalyzer {
                     self.prepare_gate_targets(&gate.target);
                 } else if self.strict_mode {
                     // In strict mode, verify qubits are prepared before non-prepare gates
-                    self.validate_gate_target_states(&gate.target, &gate.location.clone().unwrap_or_default())?;
+                    self.validate_gate_target_states(
+                        &gate.target,
+                        &gate.location.clone().unwrap_or_default(),
+                    )?;
                 }
 
                 // Gate operations are statements, return unit
@@ -3493,7 +3590,9 @@ impl SemanticAnalyzer {
                         // Allocator methods
                         match field.field.as_str() {
                             "child" => Ok(Type::Function {
-                                params: vec![Type::UInt { bits: BitWidth::BITS_32 }],
+                                params: vec![Type::UInt {
+                                    bits: BitWidth::BITS_32,
+                                }],
                                 return_type: Box::new(Type::Allocator { capacity: None }),
                             }),
                             "release" => Ok(Type::Function {
@@ -3501,19 +3600,23 @@ impl SemanticAnalyzer {
                                 return_type: Box::new(Type::Unit),
                             }),
                             // Deprecated: use `pz q` or `pz {q[0], q[1]}` instead
-                            "prepare_all" | "prepare" => {
-                                Err(SemanticError::DeprecatedSyntax {
-                                    old: format!("{}.{}()",
-                                        if let Expr::Ident(id) = &field.object { &id.name } else { "allocator" },
-                                        field.field),
-                                    new: if field.field == "prepare_all" {
-                                        "pz <allocator>".to_string()
+                            "prepare_all" | "prepare" => Err(SemanticError::DeprecatedSyntax {
+                                old: format!(
+                                    "{}.{}()",
+                                    if let Expr::Ident(id) = &field.object {
+                                        &id.name
                                     } else {
-                                        "pz {q[i], q[j], ...}".to_string()
+                                        "allocator"
                                     },
-                                    location: field.location.clone().unwrap_or_default(),
-                                })
-                            }
+                                    field.field
+                                ),
+                                new: if field.field == "prepare_all" {
+                                    "pz <allocator>".to_string()
+                                } else {
+                                    "pz {q[i], q[j], ...}".to_string()
+                                },
+                                location: field.location.clone().unwrap_or_default(),
+                            }),
                             _ => Ok(Type::Unknown),
                         }
                     }
@@ -3633,7 +3736,9 @@ impl SemanticAnalyzer {
                     "sizeOf" => Ok(Type::Usize),
                     "typeInfo" => Ok(Type::Type),
                     "typeName" => Ok(Type::Slice {
-                        element: Box::new(Type::UInt { bits: BitWidth::BITS_8 }),
+                        element: Box::new(Type::UInt {
+                            bits: BitWidth::BITS_8,
+                        }),
                     }),
                     "swap" => {
                         // @swap(&a, &b) - swap two values in place
@@ -3649,7 +3754,10 @@ impl SemanticAnalyzer {
                         let ty2 = self.analyze_expr(&builtin.args[1])?;
                         // Both must be pointers to the same type
                         match (&ty1, &ty2) {
-                            (Type::Pointer { pointee: e1, .. }, Type::Pointer { pointee: e2, .. }) => {
+                            (
+                                Type::Pointer { pointee: e1, .. },
+                                Type::Pointer { pointee: e2, .. },
+                            ) => {
                                 if e1 != e2 {
                                     return Err(SemanticError::TypeMismatch {
                                         expected: format!("*{:?}", e1),
@@ -3918,10 +4026,14 @@ impl SemanticAnalyzer {
             Expr::FnLit(func) => {
                 // Function literal - return function type
                 // At comptime, these can return types (type constructors)
-                let param_types: Vec<Type> = func.params.iter()
+                let param_types: Vec<Type> = func
+                    .params
+                    .iter()
                     .map(|p| self.resolve_type(&p.ty))
                     .collect();
-                let return_type = func.return_type.as_ref()
+                let return_type = func
+                    .return_type
+                    .as_ref()
                     .map(|ty| self.resolve_type(ty))
                     .unwrap_or(Type::Unit);
                 Ok(Type::Function {
@@ -3959,10 +4071,10 @@ impl SemanticAnalyzer {
             TypeExpr::Primitive(prim) => match prim {
                 PrimitiveType::Bool => Type::Bool,
                 PrimitiveType::UInt { bits } => Type::UInt {
-                    bits: BitWidth::new(*bits).unwrap_or(BitWidth::BITS_64)
+                    bits: BitWidth::new(*bits).unwrap_or(BitWidth::BITS_64),
                 },
                 PrimitiveType::IInt { bits } => Type::IInt {
-                    bits: BitWidth::new(*bits).unwrap_or(BitWidth::BITS_64)
+                    bits: BitWidth::new(*bits).unwrap_or(BitWidth::BITS_64),
                 },
                 PrimitiveType::Usize => Type::Usize,
                 PrimitiveType::Isize => Type::Isize,
@@ -4024,7 +4136,11 @@ impl SemanticAnalyzer {
                 Type::Tuple { elements: resolved }
             }
             TypeExpr::Fn(fn_type) => {
-                let params: Vec<Type> = fn_type.params.iter().map(|t| self.resolve_type(t)).collect();
+                let params: Vec<Type> = fn_type
+                    .params
+                    .iter()
+                    .map(|t| self.resolve_type(t))
+                    .collect();
                 let return_type = fn_type
                     .return_type
                     .as_ref()
@@ -4038,9 +4154,10 @@ impl SemanticAnalyzer {
             TypeExpr::Named(path) => {
                 let name = path.segments.join(".");
                 if let Some(symbol) = self.symbols.lookup(&name)
-                    && let SymbolKind::TypeDef { ty } = &symbol.kind {
-                        return ty.clone();
-                    }
+                    && let SymbolKind::TypeDef { ty } = &symbol.kind
+                {
+                    return ty.clone();
+                }
                 // Report error for undefined type name
                 self.errors.push(SemanticError::UndefinedType {
                     name: name.clone(),
@@ -4056,7 +4173,9 @@ impl SemanticAnalyzer {
             },
             TypeExpr::Struct(s) => {
                 // Anonymous struct type
-                let fields = s.fields.iter()
+                let fields = s
+                    .fields
+                    .iter()
                     .map(|f| (f.name.clone(), self.resolve_type(&f.ty)))
                     .collect();
                 Type::Struct {
@@ -4066,9 +4185,7 @@ impl SemanticAnalyzer {
             }
             TypeExpr::Enum(e) => {
                 // Anonymous enum type
-                let variants = e.variants.iter()
-                    .map(|v| v.name.clone())
-                    .collect();
+                let variants = e.variants.iter().map(|v| v.name.clone()).collect();
                 Type::Enum {
                     name: String::new(), // Anonymous
                     variants,
@@ -4160,10 +4277,11 @@ impl SemanticAnalyzer {
 
         // Allow null (?unknown) to be assigned to any optional type ?T
         if let (Type::Optional { .. }, Type::Optional { inner }) = (target, value)
-            && **inner == Type::Unknown {
-                // null (which is ?unknown) can be assigned to any ?T
-                return Ok(());
-            }
+            && **inner == Type::Unknown
+        {
+            // null (which is ?unknown) can be assigned to any ?T
+            return Ok(());
+        }
 
         // Allow numeric coercion between numeric types only
         // (but NOT from numeric to bool or vice versa)
@@ -4173,17 +4291,27 @@ impl SemanticAnalyzer {
 
         // Allow T to be assigned to T!E (returning success from error union function)
         if let Type::ErrorUnion { payload, .. } = target
-            && self.check_assignable(payload.as_ref(), value, location.clone()).is_ok() {
-                return Ok(());
-            }
+            && self
+                .check_assignable(payload.as_ref(), value, location.clone())
+                .is_ok()
+        {
+            return Ok(());
+        }
 
         // Allow error value to be assigned to T!E (returning error from error union function)
         if let Type::ErrorUnion { error, .. } = target {
             // Check if value is an error type that's compatible with the expected error type
             match value {
                 // Same error set - always compatible
-                Type::ErrorSet { name: value_name, errors: value_errors } => {
-                    if let Type::ErrorSet { name: expected_name, errors: expected_errors } = error.as_ref() {
+                Type::ErrorSet {
+                    name: value_name,
+                    errors: value_errors,
+                } => {
+                    if let Type::ErrorSet {
+                        name: expected_name,
+                        errors: expected_errors,
+                    } = error.as_ref()
+                    {
                         // Exact match
                         if value_name == expected_name {
                             return Ok(());
@@ -4206,8 +4334,16 @@ impl SemanticAnalyzer {
 
         // Allow fault value to be assigned to T!F (returning fault from fault union function)
         if let Type::ErrorUnion { error, .. } = target {
-            if let Type::FaultSet { name: value_name, faults: value_faults } = value {
-                if let Type::FaultSet { name: expected_name, faults: expected_faults } = error.as_ref() {
+            if let Type::FaultSet {
+                name: value_name,
+                faults: value_faults,
+            } = value
+            {
+                if let Type::FaultSet {
+                    name: expected_name,
+                    faults: expected_faults,
+                } = error.as_ref()
+                {
                     // Exact match
                     if value_name == expected_name {
                         return Ok(());
@@ -4251,9 +4387,10 @@ impl SemanticAnalyzer {
 
         // Allow T to be passed where ?T is expected
         if let Type::Optional { inner } = expected
-            && self.types_compatible(value, inner) {
-                return true;
-            }
+            && self.types_compatible(value, inner)
+        {
+            return true;
+        }
 
         false
     }
@@ -4476,8 +4613,14 @@ impl SemanticAnalyzer {
                         element: l_elem.clone(),
                     })
                 } else if let (
-                    Type::ErrorSet { name: l_name, errors: l_errors },
-                    Type::ErrorSet { name: r_name, errors: r_errors },
+                    Type::ErrorSet {
+                        name: l_name,
+                        errors: l_errors,
+                    },
+                    Type::ErrorSet {
+                        name: r_name,
+                        errors: r_errors,
+                    },
                 ) = (left, right)
                 {
                     // Error set union: ErrorA || ErrorB
@@ -4501,8 +4644,14 @@ impl SemanticAnalyzer {
                         errors: combined_errors,
                     })
                 } else if let (
-                    Type::FaultSet { name: l_name, faults: l_faults },
-                    Type::FaultSet { name: r_name, faults: r_faults },
+                    Type::FaultSet {
+                        name: l_name,
+                        faults: l_faults,
+                    },
+                    Type::FaultSet {
+                        name: r_name,
+                        faults: r_faults,
+                    },
                 ) = (left, right)
                 {
                     // Fault set union: FaultA || FaultB
@@ -4692,15 +4841,16 @@ impl SemanticAnalyzer {
         // Get capacity from qubit_states (where qalloc capacity is tracked)
         if let Some(alloc_info) = self.qubit_states.get_allocator(&slot_ref.allocator)
             && let Some(capacity) = alloc_info.capacity
-                && let Some(index) = self.try_extract_constant_usize(&slot_ref.index)
-                    && index >= capacity {
-                        return Err(SemanticError::QubitIndexOutOfBounds {
-                            allocator: slot_ref.allocator.clone(),
-                            index,
-                            capacity,
-                            location: slot_ref.location.clone().unwrap_or_default(),
-                        });
-                    }
+            && let Some(index) = self.try_extract_constant_usize(&slot_ref.index)
+            && index >= capacity
+        {
+            return Err(SemanticError::QubitIndexOutOfBounds {
+                allocator: slot_ref.allocator.clone(),
+                index,
+                capacity,
+                location: slot_ref.location.clone().unwrap_or_default(),
+            });
+        }
 
         Ok(())
     }
@@ -4716,9 +4866,12 @@ impl SemanticAnalyzer {
 
                     // Check if this is an allocator
                     let is_allocator = if let Some(symbol) = self.symbols.lookup(allocator_name) {
-                        matches!(&symbol.kind,
-                            SymbolKind::Variable { ty: Type::Allocator { .. }, .. } |
-                            SymbolKind::Allocator { .. }
+                        matches!(
+                            &symbol.kind,
+                            SymbolKind::Variable {
+                                ty: Type::Allocator { .. },
+                                ..
+                            } | SymbolKind::Allocator { .. }
                         )
                     } else {
                         false
@@ -4728,15 +4881,16 @@ impl SemanticAnalyzer {
                         // Get capacity from qubit_states
                         if let Some(alloc_info) = self.qubit_states.get_allocator(allocator_name)
                             && let Some(capacity) = alloc_info.capacity
-                                && let Some(index) = self.try_extract_constant_usize(&index_expr.index)
-                                    && index >= capacity {
-                                        return Err(SemanticError::QubitIndexOutOfBounds {
-                                            allocator: allocator_name.clone(),
-                                            index,
-                                            capacity,
-                                            location: index_expr.location.clone().unwrap_or_default(),
-                                        });
-                                    }
+                            && let Some(index) = self.try_extract_constant_usize(&index_expr.index)
+                            && index >= capacity
+                        {
+                            return Err(SemanticError::QubitIndexOutOfBounds {
+                                allocator: allocator_name.clone(),
+                                index,
+                                capacity,
+                                location: index_expr.location.clone().unwrap_or_default(),
+                            });
+                        }
                     }
                 }
                 Ok(())
@@ -4778,7 +4932,8 @@ impl SemanticAnalyzer {
 
         // Validate each qubit is prepared
         for (allocator, index) in qubit_ids {
-            self.qubit_states.validate_for_gate(&allocator, index, location)?;
+            self.qubit_states
+                .validate_for_gate(&allocator, index, location)?;
         }
 
         Ok(())
@@ -4887,14 +5042,15 @@ impl SemanticAnalyzer {
             Expr::Call(call) => {
                 // Check if this is a gate call
                 if let Expr::Ident(ident) = &call.callee
-                    && is_gate_name(&ident.name) {
-                        // Collect qubit IDs from arguments
-                        return call
-                            .args
-                            .iter()
-                            .flat_map(|arg| self.extract_qubit_ids_from_arg(arg))
-                            .collect();
-                    }
+                    && is_gate_name(&ident.name)
+                {
+                    // Collect qubit IDs from arguments
+                    return call
+                        .args
+                        .iter()
+                        .flat_map(|arg| self.extract_qubit_ids_from_arg(arg))
+                        .collect();
+                }
                 Vec::new()
             }
             // Batch apply: h { q[0], q[1] } or rz(pi/4) { q[0], q[1] }
@@ -4912,13 +5068,14 @@ impl SemanticAnalyzer {
                     _ => None,
                 };
                 if let Some(name) = gate_name
-                    && is_gate_name(name) {
-                        return batch
-                            .targets
-                            .iter()
-                            .flat_map(|target| self.extract_qubit_ids_from_arg(target))
-                            .collect();
-                    }
+                    && is_gate_name(name)
+                {
+                    return batch
+                        .targets
+                        .iter()
+                        .flat_map(|target| self.extract_qubit_ids_from_arg(target))
+                        .collect();
+                }
                 Vec::new()
             }
             _ => Vec::new(),
@@ -4931,9 +5088,10 @@ impl SemanticAnalyzer {
             // Index expression: q[0]
             Expr::Index(index_expr) => {
                 if let Expr::Ident(ident) = &index_expr.object
-                    && let Some(idx) = self.try_extract_constant_usize(&index_expr.index) {
-                        return vec![(ident.name.clone(), idx)];
-                    }
+                    && let Some(idx) = self.try_extract_constant_usize(&index_expr.index)
+                {
+                    return vec![(ident.name.clone(), idx)];
+                }
                 Vec::new()
             }
             // Tuple of qubits: (q[0], q[1]) for two-qubit gates
@@ -4970,9 +5128,11 @@ impl SemanticAnalyzer {
     fn try_extract_allocator_capacity(&self, expr: &Expr) -> Option<usize> {
         if let Expr::Call(call) = expr
             && let Expr::Ident(ident) = &call.callee
-                && ident.name == "qalloc" && call.args.len() == 1 {
-                    return self.try_extract_constant_usize(&call.args[0]);
-                }
+            && ident.name == "qalloc"
+            && call.args.len() == 1
+        {
+            return self.try_extract_constant_usize(&call.args[0]);
+        }
         None
     }
 
@@ -4980,11 +5140,13 @@ impl SemanticAnalyzer {
     fn try_extract_child_allocator(&self, expr: &Expr) -> Option<(String, usize)> {
         if let Expr::Call(call) = expr
             && let Expr::Field(field) = &call.callee
-                && field.field == "child" && call.args.len() == 1
-                    && let Expr::Ident(parent_ident) = &field.object {
-                        let capacity = self.try_extract_constant_usize(&call.args[0])?;
-                        return Some((parent_ident.name.clone(), capacity));
-                    }
+            && field.field == "child"
+            && call.args.len() == 1
+            && let Expr::Ident(parent_ident) = &field.object
+        {
+            let capacity = self.try_extract_constant_usize(&call.args[0])?;
+            return Some((parent_ident.name.clone(), capacity));
+        }
         None
     }
 
@@ -5000,12 +5162,12 @@ impl SemanticAnalyzer {
                         is_const: true,
                         ..
                     } = &symbol.kind
-                    {
-                        // Look up the value in the comptime evaluator context
-                        if let Some(val) = self.comptime.context.lookup(&ident.name) {
-                            return val.to_usize();
-                        }
+                {
+                    // Look up the value in the comptime evaluator context
+                    if let Some(val) = self.comptime.context.lookup(&ident.name) {
+                        return val.to_usize();
                     }
+                }
                 None
             }
             // For other expressions, try comptime evaluation
@@ -5079,7 +5241,8 @@ impl SemanticAnalyzer {
         // Validate qubit states if in strict mode
         for (allocator, index) in &targets {
             if self.strict_mode {
-                self.qubit_states.validate_for_gate(allocator, *index, &location)?;
+                self.qubit_states
+                    .validate_for_gate(allocator, *index, &location)?;
             }
             // Transition to unprepared after measurement
             if let Some(alloc) = self.qubit_states.get_allocator_mut(allocator) {
@@ -5111,9 +5274,10 @@ impl SemanticAnalyzer {
                 // Parse arbitrary unsigned integer type: u<bits>
                 if let Some(bits_str) = ident.name.strip_prefix('u')
                     && let Ok(bits) = bits_str.parse::<u16>()
-                    && let Some(bw) = BitWidth::new(bits) {
-                        return Ok(Type::UInt { bits: bw });
-                    }
+                    && let Some(bw) = BitWidth::new(bits)
+                {
+                    return Ok(Type::UInt { bits: bw });
+                }
                 Err(SemanticError::InvalidMeasurementType {
                     ty: ident.name.clone(),
                     location,
@@ -5127,7 +5291,9 @@ impl SemanticAnalyzer {
                 if arr.elements.is_empty() {
                     // Need to get element type from context
                     Ok(Type::Slice {
-                        element: Box::new(Type::UInt { bits: BitWidth::BITS_1 }), // Default to u1
+                        element: Box::new(Type::UInt {
+                            bits: BitWidth::BITS_1,
+                        }), // Default to u1
                     })
                 } else {
                     Err(SemanticError::InvalidMeasurementType {
@@ -5144,11 +5310,12 @@ impl SemanticAnalyzer {
                 // Parse arbitrary unsigned integer type from allocator name
                 if let Some(bits_str) = slot_ref.allocator.strip_prefix('u')
                     && let Ok(bits) = bits_str.parse::<u16>()
-                    && let Some(bw) = BitWidth::new(bits) {
-                        return Ok(Type::Slice {
-                            element: Box::new(Type::UInt { bits: bw }),
-                        });
-                    }
+                    && let Some(bw) = BitWidth::new(bits)
+                {
+                    return Ok(Type::Slice {
+                        element: Box::new(Type::UInt { bits: bw }),
+                    });
+                }
                 Err(SemanticError::InvalidMeasurementType {
                     ty: format!("[]{}", slot_ref.allocator),
                     location,
@@ -5251,23 +5418,21 @@ impl SemanticAnalyzer {
             }
 
             // Address-of array: &[q[0], q[1]]
-            Expr::Unary(unary) if matches!(unary.op, UnaryOp::AddrOf) => {
-                match &unary.operand {
-                    Expr::BracketArray(arr) => {
-                        let mut targets = Vec::new();
-                        for elem in &arr.elements {
-                            if let Expr::Index(index) = elem {
-                                let (allocator, idx) = self.extract_qubit_from_index(index)?;
-                                targets.push((allocator, idx));
-                            } else {
-                                return Err(SemanticError::InvalidQubitRef { location });
-                            }
+            Expr::Unary(unary) if matches!(unary.op, UnaryOp::AddrOf) => match &unary.operand {
+                Expr::BracketArray(arr) => {
+                    let mut targets = Vec::new();
+                    for elem in &arr.elements {
+                        if let Expr::Index(index) = elem {
+                            let (allocator, idx) = self.extract_qubit_from_index(index)?;
+                            targets.push((allocator, idx));
+                        } else {
+                            return Err(SemanticError::InvalidQubitRef { location });
                         }
-                        Ok(targets)
                     }
-                    _ => Err(SemanticError::InvalidQubitRef { location }),
+                    Ok(targets)
                 }
-            }
+                _ => Err(SemanticError::InvalidQubitRef { location }),
+            },
 
             _ => Err(SemanticError::InvalidQubitRef { location }),
         }
@@ -5284,7 +5449,8 @@ impl SemanticAnalyzer {
         };
 
         // Get index (must be comptime-known for uniqueness checking)
-        let idx = self.try_extract_constant_usize(&index.index)
+        let idx = self
+            .try_extract_constant_usize(&index.index)
             .ok_or(SemanticError::InvalidQubitRef { location })?;
 
         Ok((allocator, idx))
@@ -5347,48 +5513,51 @@ impl SemanticAnalyzer {
                 let mut exports = std::collections::BTreeMap::new();
                 for (name, export) in &module_exports {
                     let (kind, ty) = match export {
-                        ExportedSymbol::Function { params, return_type, .. } => {
+                        ExportedSymbol::Function {
+                            params,
+                            return_type,
+                            ..
+                        } => {
                             // Extract function signature from AST
-                            let param_types: Vec<Type> = params
-                                .iter()
-                                .map(|(_, ty)| self.resolve_type(ty))
-                                .collect();
+                            let param_types: Vec<Type> =
+                                params.iter().map(|(_, ty)| self.resolve_type(ty)).collect();
                             let ret_type = return_type
                                 .as_ref()
                                 .map(|t| self.resolve_type(t))
                                 .unwrap_or(Type::Unit);
-                            (ModuleExportKind::Function, Type::Function {
-                                params: param_types,
-                                return_type: Box::new(ret_type),
-                            })
+                            (
+                                ModuleExportKind::Function,
+                                Type::Function {
+                                    params: param_types,
+                                    return_type: Box::new(ret_type),
+                                },
+                            )
                         }
-                        ExportedSymbol::Const { .. } => {
-                            (ModuleExportKind::Const, Type::Unknown)
-                        }
-                        ExportedSymbol::Type { .. } => {
-                            (ModuleExportKind::Type, Type::Type)
-                        }
+                        ExportedSymbol::Const { .. } => (ModuleExportKind::Const, Type::Unknown),
+                        ExportedSymbol::Type { .. } => (ModuleExportKind::Type, Type::Type),
                         ExportedSymbol::ErrorSet { variants, .. } => {
                             // Imported error sets don't carry associated data types
-                            let errors: Vec<(String, Option<Box<Type>>)> = variants
-                                .iter()
-                                .map(|v| (v.clone(), None))
-                                .collect();
-                            (ModuleExportKind::ErrorSet, Type::ErrorSet {
-                                name: name.clone(),
-                                errors,
-                            })
+                            let errors: Vec<(String, Option<Box<Type>>)> =
+                                variants.iter().map(|v| (v.clone(), None)).collect();
+                            (
+                                ModuleExportKind::ErrorSet,
+                                Type::ErrorSet {
+                                    name: name.clone(),
+                                    errors,
+                                },
+                            )
                         }
                         ExportedSymbol::FaultSet { variants, .. } => {
                             // Imported fault sets don't carry associated data types
-                            let faults: Vec<(String, Option<Box<Type>>)> = variants
-                                .iter()
-                                .map(|v| (v.clone(), None))
-                                .collect();
-                            (ModuleExportKind::FaultSet, Type::FaultSet {
-                                name: name.clone(),
-                                faults,
-                            })
+                            let faults: Vec<(String, Option<Box<Type>>)> =
+                                variants.iter().map(|v| (v.clone(), None)).collect();
+                            (
+                                ModuleExportKind::FaultSet,
+                                Type::FaultSet {
+                                    name: name.clone(),
+                                    faults,
+                                },
+                            )
                         }
                     };
                     exports.insert(name.clone(), (kind, ty));
@@ -5432,8 +5601,7 @@ impl SemanticAnalyzer {
                             source_var: source_name.clone(),
                             overlap_range: format!(
                                 "{}..{} overlaps with {}..{}",
-                                new_range.0, new_range.1,
-                                existing_range.0, existing_range.1
+                                new_range.0, new_range.1, existing_range.0, existing_range.1
                             ),
                             location,
                         });
@@ -5639,7 +5807,7 @@ impl SemanticAnalyzer {
             kind: SymbolKind::Function {
                 params,
                 return_type,
-                is_pub: false, // Specialized functions are internal
+                is_pub: false,                  // Specialized functions are internal
                 comptime_param_indices: vec![], // No longer generic
                 original_decl: None,
             },
@@ -5681,27 +5849,60 @@ struct GateInfo {
 fn get_gate_info(name: &str) -> Option<GateInfo> {
     match name {
         // Single-qubit Pauli gates (non-parameterized, arity 1)
-        "h" | "x" | "y" | "z" => Some(GateInfo { arity: 1, parameterized: false }),
+        "h" | "x" | "y" | "z" => Some(GateInfo {
+            arity: 1,
+            parameterized: false,
+        }),
         // Square root gates (sx, sy, sz and their daggers)
         // Note: S gate is "sz" not "s", Sdg is "szdg" not "sdg"
-        "sx" | "sy" | "sz" | "sxdg" | "sydg" | "szdg" => Some(GateInfo { arity: 1, parameterized: false }),
+        "sx" | "sy" | "sz" | "sxdg" | "sydg" | "szdg" => Some(GateInfo {
+            arity: 1,
+            parameterized: false,
+        }),
         // T gates (fourth root of Z)
-        "t" | "tdg" => Some(GateInfo { arity: 1, parameterized: false }),
+        "t" | "tdg" => Some(GateInfo {
+            arity: 1,
+            parameterized: false,
+        }),
         // F gates
-        "f" | "fdg" | "f4" | "f4dg" => Some(GateInfo { arity: 1, parameterized: false }),
+        "f" | "fdg" | "f4" | "f4dg" => Some(GateInfo {
+            arity: 1,
+            parameterized: false,
+        }),
         // Rotation gates (parameterized, arity 1)
-        "rx" | "ry" | "rz" => Some(GateInfo { arity: 1, parameterized: true }),
+        "rx" | "ry" | "rz" => Some(GateInfo {
+            arity: 1,
+            parameterized: true,
+        }),
         // Two-qubit gates (non-parameterized, arity 2)
-        "cx" | "cy" | "cz" | "ch" => Some(GateInfo { arity: 2, parameterized: false }),
-        "swap" | "iswap" => Some(GateInfo { arity: 2, parameterized: false }),
+        "cx" | "cy" | "cz" | "ch" => Some(GateInfo {
+            arity: 2,
+            parameterized: false,
+        }),
+        "swap" | "iswap" => Some(GateInfo {
+            arity: 2,
+            parameterized: false,
+        }),
         // Square-root two-qubit gates
-        "sxx" | "syy" | "szz" | "sxxdg" | "syydg" | "szzdg" => Some(GateInfo { arity: 2, parameterized: false }),
+        "sxx" | "syy" | "szz" | "sxxdg" | "syydg" | "szzdg" => Some(GateInfo {
+            arity: 2,
+            parameterized: false,
+        }),
         // Controlled rotation (parameterized, arity 2)
-        "crz" | "rzz" => Some(GateInfo { arity: 2, parameterized: true }),
+        "crz" | "rzz" => Some(GateInfo {
+            arity: 2,
+            parameterized: true,
+        }),
         // Three-qubit gates
-        "ccx" => Some(GateInfo { arity: 3, parameterized: false }),
+        "ccx" => Some(GateInfo {
+            arity: 3,
+            parameterized: false,
+        }),
         // Special operations (handled separately but recognized as gates)
-        "mz" | "pz" => Some(GateInfo { arity: 1, parameterized: false }),
+        "mz" | "pz" => Some(GateInfo {
+            arity: 1,
+            parameterized: false,
+        }),
         _ => None,
     }
 }
@@ -5764,13 +5965,14 @@ fn resolve_builtin_type_name(name: &str) -> Option<Type> {
             return None;
         }
     } else if let Some(bits_str) = name.strip_prefix('i')
-        && let Ok(bits) = bits_str.parse::<u16>() {
-            if let Some(bw) = BitWidth::new(bits) {
-                return Some(Type::IInt { bits: bw });
-            }
-            // Invalid bit width - return None to trigger error
-            return None;
+        && let Ok(bits) = bits_str.parse::<u16>()
+    {
+        if let Some(bw) = BitWidth::new(bits) {
+            return Some(Type::IInt { bits: bw });
         }
+        // Invalid bit width - return None to trigger error
+        return None;
+    }
 
     None
 }
@@ -5791,18 +5993,22 @@ fn int_suffix_to_type(suffix: &str) -> Type {
     // Arbitrary-width integers: u<bits> or i<bits>
     if let Some(bits_str) = s.strip_prefix('u') {
         if let Ok(bits) = bits_str.parse::<u16>()
-            && let Some(bw) = BitWidth::new(bits) {
-                return Type::UInt { bits: bw };
-            }
-            // Invalid bit width - fall through to default
+            && let Some(bw) = BitWidth::new(bits)
+        {
+            return Type::UInt { bits: bw };
+        }
+        // Invalid bit width - fall through to default
     } else if let Some(bits_str) = s.strip_prefix('i')
         && let Ok(bits) = bits_str.parse::<u16>()
-            && let Some(bw) = BitWidth::new(bits) {
-                return Type::IInt { bits: bw };
-            }
-            // Invalid bit width - fall through to default
+        && let Some(bw) = BitWidth::new(bits)
+    {
+        return Type::IInt { bits: bw };
+    }
+    // Invalid bit width - fall through to default
 
-    Type::IInt { bits: BitWidth::BITS_64 } // Default fallback
+    Type::IInt {
+        bits: BitWidth::BITS_64,
+    } // Default fallback
 }
 
 /// Convert a float type suffix to a Type.
@@ -5848,10 +6054,17 @@ mod tests {
     fn test_type_mismatch() {
         // First check that parsing works
         let program1 = parse("x: u32 = 42;").unwrap();
-        assert!(!program1.declarations.is_empty(), "u32 version should have declarations");
+        assert!(
+            !program1.declarations.is_empty(),
+            "u32 version should have declarations"
+        );
 
         let program2 = parse("x: bool = 42;").unwrap();
-        assert!(!program2.declarations.is_empty(), "bool version should have declarations: got {:?}", program2);
+        assert!(
+            !program2.declarations.is_empty(),
+            "bool version should have declarations: got {:?}",
+            program2
+        );
 
         // bool is not numeric, so int can't be assigned
         let result = analyze("x: bool = 42;");
@@ -5870,15 +6083,17 @@ mod tests {
 
     #[test]
     fn test_quantum_alloc() {
-        assert!(analyze(
-            r#"
+        assert!(
+            analyze(
+                r#"
             fn main() -> unit {
                 mut q := qalloc(2);
 
                 return unit;            }
             "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     // =========================================================================
@@ -5904,7 +6119,12 @@ mod tests {
         assert_eq!(alloc.name, "q");
         assert_eq!(alloc.capacity, Some(4));
         assert_eq!(alloc.slot_states.len(), 4);
-        assert!(alloc.slot_states.iter().all(|s| *s == QubitState::Unprepared));
+        assert!(
+            alloc
+                .slot_states
+                .iter()
+                .all(|s| *s == QubitState::Unprepared)
+        );
     }
 
     #[test]
@@ -5976,7 +6196,10 @@ mod tests {
 
         // Recursive call should fail
         let result = tracker.enter_function("foo", &loc);
-        assert!(matches!(result, Err(SemanticError::RecursionDetected { .. })));
+        assert!(matches!(
+            result,
+            Err(SemanticError::RecursionDetected { .. })
+        ));
 
         // Exit and re-enter should work
         tracker.exit_function("foo");
@@ -5995,7 +6218,10 @@ mod tests {
 
         // Large bound should fail
         let result = analyzer.check_loop_bound(MAX_LOOP_BOUND + 1, &loc);
-        assert!(matches!(result, Err(SemanticError::LoopBoundTooLarge { .. })));
+        assert!(matches!(
+            result,
+            Err(SemanticError::LoopBoundTooLarge { .. })
+        ));
     }
 
     // =========================================================================
@@ -6059,7 +6285,9 @@ mod tests {
 
         let program = parse(source).expect("parse failed");
         let mut analyzer = SemanticAnalyzer::new();
-        analyzer.analyze(&program).expect("analysis should succeed for immutable allocator with gates");
+        analyzer
+            .analyze(&program)
+            .expect("analysis should succeed for immutable allocator with gates");
 
         // Check allocator was registered
         assert!(analyzer.qubit_states.get_allocator("q").is_some());
@@ -6115,7 +6343,7 @@ mod tests {
                 h q[0];  // No pz q; first - qubit is unprepared
                 return unit;
             }
-            "#
+            "#,
         );
         assert!(result.is_err(), "Expected QubitNotPrepared error");
         assert!(
@@ -6135,9 +6363,13 @@ mod tests {
                 h q[0]; // Now this should succeed
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "PZ should prepare qubits for subsequent gates: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "PZ should prepare qubits for subsequent gates: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6151,9 +6383,13 @@ mod tests {
                 h q[0];   // This should succeed
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "PZ should prepare specific qubit: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "PZ should prepare specific qubit: {:?}",
+            result
+        );
     }
 
     // =========================================================================
@@ -6171,9 +6407,13 @@ mod tests {
                 r := mz(u1) q[0];
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected typed measurement to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected typed measurement to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6187,9 +6427,13 @@ mod tests {
                 results := mz([2]u1) [q[0], q[1]];
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected typed array measurement to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected typed array measurement to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6203,10 +6447,13 @@ mod tests {
                 results := mz([3]u1) [q[0], q[1]];
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(matches!(result, Err(SemanticError::MeasurementSizeMismatch { .. })),
-                "Expected MeasurementSizeMismatch error, got: {:?}", result);
+        assert!(
+            matches!(result, Err(SemanticError::MeasurementSizeMismatch { .. })),
+            "Expected MeasurementSizeMismatch error, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6220,10 +6467,13 @@ mod tests {
                 results := mz(u1) [q[0], q[1]];
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(matches!(result, Err(SemanticError::MeasurementArrayExpected { .. })),
-                "Expected MeasurementArrayExpected error, got: {:?}", result);
+        assert!(
+            matches!(result, Err(SemanticError::MeasurementArrayExpected { .. })),
+            "Expected MeasurementArrayExpected error, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6236,10 +6486,15 @@ mod tests {
                 r := mz();
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(matches!(result, Err(SemanticError::DeprecatedMeasurementSyntax { .. })),
-                "Expected DeprecatedMeasurementSyntax error for old mz() call syntax");
+        assert!(
+            matches!(
+                result,
+                Err(SemanticError::DeprecatedMeasurementSyntax { .. })
+            ),
+            "Expected DeprecatedMeasurementSyntax error for old mz() call syntax"
+        );
     }
 
     #[test]
@@ -6253,10 +6508,13 @@ mod tests {
                 r := mz(f64) q[0];
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(matches!(result, Err(SemanticError::InvalidMeasurementType { .. })),
-                "Expected InvalidMeasurementType error, got: {:?}", result);
+        assert!(
+            matches!(result, Err(SemanticError::InvalidMeasurementType { .. })),
+            "Expected InvalidMeasurementType error, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6270,9 +6528,13 @@ mod tests {
                 bits := mz(pack u8) [q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7]];
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected pack measurement to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected pack measurement to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6286,9 +6548,13 @@ mod tests {
                 bits := mz(pack u8) [q[0], q[1], q[2], q[3]];
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected pack with extra capacity to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected pack with extra capacity to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6302,10 +6568,13 @@ mod tests {
                 bits := mz(pack u8) [q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9]];
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(matches!(result, Err(SemanticError::MeasurementPackCapacity { .. })),
-                "Expected MeasurementPackCapacity error, got: {:?}", result);
+        assert!(
+            matches!(result, Err(SemanticError::MeasurementPackCapacity { .. })),
+            "Expected MeasurementPackCapacity error, got: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6319,9 +6588,13 @@ mod tests {
                 bits := mz(pack [2]u8) q;
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected pack into array to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected pack into array to pass: {:?}",
+            result
+        );
     }
 
     // =========================================================================
@@ -6337,9 +6610,13 @@ mod tests {
                 mut x: ?u32 = none;
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected optional type to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected optional type to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6352,7 +6629,7 @@ mod tests {
                 y: u32 = x orelse 42;
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(result.is_ok(), "Expected orelse to pass: {:?}", result);
     }
@@ -6367,10 +6644,12 @@ mod tests {
                 y := x orelse true;
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(matches!(result, Err(SemanticError::TypeMismatch { .. })),
-                "Expected TypeMismatch error for orelse");
+        assert!(
+            matches!(result, Err(SemanticError::TypeMismatch { .. })),
+            "Expected TypeMismatch error for orelse"
+        );
     }
 
     #[test]
@@ -6383,10 +6662,12 @@ mod tests {
                 y := x orelse 42;
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(matches!(result, Err(SemanticError::TypeMismatch { .. })),
-                "Expected TypeMismatch error for non-optional");
+        assert!(
+            matches!(result, Err(SemanticError::TypeMismatch { .. })),
+            "Expected TypeMismatch error for non-optional"
+        );
     }
 
     #[test]
@@ -6399,7 +6680,7 @@ mod tests {
                 y := x.?;
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(result.is_ok(), "Expected .? unwrap to pass: {:?}", result);
     }
@@ -6419,7 +6700,7 @@ mod tests {
                 }
                 return unit;
             }
-            "#
+            "#,
         );
         assert!(result.is_ok(), "Expected if-unwrap to pass: {:?}", result);
     }
@@ -6435,10 +6716,12 @@ mod tests {
                     y := value;
                 }
             }
-            "#
+            "#,
         );
-        assert!(matches!(result, Err(SemanticError::TypeMismatch { .. })),
-                "Expected TypeMismatch error for if-unwrap on non-optional");
+        assert!(
+            matches!(result, Err(SemanticError::TypeMismatch { .. })),
+            "Expected TypeMismatch error for if-unwrap on non-optional"
+        );
     }
 
     // =========================================================================
@@ -6454,9 +6737,13 @@ mod tests {
                 x := comptime 2 + 3;
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected comptime expression to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected comptime expression to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6469,9 +6756,13 @@ mod tests {
                 y := comptime (10 + 20);
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected comptime expression to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected comptime expression to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6498,9 +6789,13 @@ mod tests {
                 mut x: u32 = size;
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected comptime param to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected comptime param to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6511,9 +6806,13 @@ mod tests {
             fn compute(comptime n: u32) -> u32 {
                 return n * 2;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected comptime param in expr: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected comptime param in expr: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6525,9 +6824,13 @@ mod tests {
                 OutOfMemory,
                 InvalidInput,
             };
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected error set definition to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected error set definition to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6541,9 +6844,13 @@ mod tests {
                 x: u32 = 42;
                 return x;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected error union type to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected error union type to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6559,9 +6866,13 @@ mod tests {
                 }
                 return 42;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected error value return to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected error value return to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6575,7 +6886,7 @@ mod tests {
             fn risky() -> MyError!u32 {
                 return error.NotFound;
             }
-            "#
+            "#,
         );
         // This should fail because NotFound is from OtherError, not MyError
         assert!(result.is_err(), "Expected mismatched error set to fail");
@@ -6593,9 +6904,13 @@ mod tests {
                 combined := IoError | NetworkError;
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected error set union to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected error set union to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6608,9 +6923,13 @@ mod tests {
                 PermissionDenied: struct { path: []u8, mode: u32 },
                 IoError,
             };
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected error set with associated data to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected error set with associated data to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6623,16 +6942,24 @@ mod tests {
                 BitFlip,
                 PhaseError: struct { angle: f64 },
             };
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected fault set with associated data to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected fault set with associated data to pass: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_fault_set_definition_basic() {
         // Basic fault set definition should work
         let result = analyze("GateFaults := fault { Leakage, Depolarization };");
-        assert!(result.is_ok(), "Expected fault set definition to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected fault set definition to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6646,9 +6973,13 @@ mod tests {
                 x := GateFaults;
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected fault set as value to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected fault set as value to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6663,9 +6994,13 @@ mod tests {
                 combined := GateFaults | MeasurementFaults;
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected fault set union to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected fault set union to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6679,9 +7014,13 @@ mod tests {
                 };
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected try collect block to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected try collect block to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6695,9 +7034,13 @@ mod tests {
                 };
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected try! propagate block to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected try! propagate block to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6714,9 +7057,13 @@ mod tests {
                 };
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected try! with catch to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected try! with catch to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6730,9 +7077,13 @@ mod tests {
             }
 
             fn cleanup() -> unit { return unit; }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected basic errdefer to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected basic errdefer to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6746,9 +7097,13 @@ mod tests {
                 }
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected errdefer with capture to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected errdefer with capture to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6761,9 +7116,13 @@ mod tests {
                 Float: f64,
                 None,
             };
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected tagged union to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected tagged union to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6775,9 +7134,13 @@ mod tests {
                 Int: i32,
                 Float: f64,
             };
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected untagged union to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected untagged union to pass: {:?}",
+            result
+        );
     }
 
     // =========================================================================
@@ -6834,7 +7197,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let utils_path = temp_dir.path().join("utils.zlp");
         let mut file = std::fs::File::create(&utils_path).unwrap();
-        writeln!(file, "pub fn add(a: u32, b: u32) -> u32 {{ return a + b; }}").unwrap();
+        writeln!(
+            file,
+            "pub fn add(a: u32, b: u32) -> u32 {{ return a + b; }}"
+        )
+        .unwrap();
 
         // Create main file that imports and calls the function
         let main_path = temp_dir.path().join("main.zlp");
@@ -6851,7 +7218,11 @@ mod tests {
         let mut analyzer = SemanticAnalyzer::new();
         analyzer.set_current_file(&main_path);
         let result = analyzer.analyze(&program);
-        assert!(result.is_ok(), "Expected module function call to succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected module function call to succeed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6863,7 +7234,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let utils_path = temp_dir.path().join("utils.zlp");
         let mut file = std::fs::File::create(&utils_path).unwrap();
-        writeln!(file, "pub fn add(a: u32, b: u32) -> u32 {{ return a + b; }}").unwrap();
+        writeln!(
+            file,
+            "pub fn add(a: u32, b: u32) -> u32 {{ return a + b; }}"
+        )
+        .unwrap();
 
         // Create main file that calls with wrong number of arguments
         let main_path = temp_dir.path().join("main.zlp");
@@ -6897,9 +7272,13 @@ mod tests {
                 pair := (1, 2);
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected tuple literal to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected tuple literal to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6911,7 +7290,7 @@ mod tests {
                 mixed := (42, true);
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(result.is_ok(), "Expected mixed tuple to pass: {:?}", result);
     }
@@ -6928,9 +7307,13 @@ mod tests {
 
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected tuple with qubits to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected tuple with qubits to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6942,9 +7325,13 @@ mod tests {
                 mut pair: (i64, bool) = (42, true);
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected tuple type annotation to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected tuple type annotation to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6956,9 +7343,13 @@ mod tests {
                 triple: (i64, i64, i64) = (1, 2, 3);
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected triple tuple type to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected triple tuple type to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -6970,7 +7361,7 @@ mod tests {
                 mut pair: (u32, bool) = (42, true);
 
                 return unit;            }
-            "#
+            "#,
         );
         // Should fail because 42 is i64, not u32
         assert!(result.is_err(), "Expected tuple type mismatch error");
@@ -6989,7 +7380,7 @@ mod tests {
                 x: u32 = 42u32;
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(result.is_ok(), "Expected u32 suffix to pass: {:?}", result);
     }
@@ -7003,7 +7394,7 @@ mod tests {
                 x: u64 = 1000_u64;
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(result.is_ok(), "Expected _u64 suffix to pass: {:?}", result);
     }
@@ -7017,7 +7408,7 @@ mod tests {
                 x: f32 = 3.14f32;
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(result.is_ok(), "Expected f32 suffix to pass: {:?}", result);
     }
@@ -7031,9 +7422,13 @@ mod tests {
                 pair: (u32, bool) = (42u32, true);
 
                 return unit;            }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected suffixed tuple to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected suffixed tuple to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7046,7 +7441,7 @@ mod tests {
                 x: u32 = true;
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(result.is_err(), "Expected type mismatch with bool and u32");
     }
@@ -7061,7 +7456,7 @@ mod tests {
                 pair: (u32, bool) = (42, true);
 
                 return unit;            }
-            "#
+            "#,
         );
         let result_with_suffix = analyze(
             r#"
@@ -7069,13 +7464,20 @@ mod tests {
                 pair: (u32, bool) = (42u32, true);
 
                 return unit;            }
-            "#
+            "#,
         );
         // Tuple elements require exact type match (no numeric coercion)
         // Unsuffixed 42 is i64, so (i64, bool) doesn't match (u32, bool)
-        assert!(result_no_suffix.is_err(), "Expected unsuffixed tuple to fail type check");
+        assert!(
+            result_no_suffix.is_err(),
+            "Expected unsuffixed tuple to fail type check"
+        );
         // With suffix, types match exactly
-        assert!(result_with_suffix.is_ok(), "Expected suffixed tuple to pass: {:?}", result_with_suffix);
+        assert!(
+            result_with_suffix.is_ok(),
+            "Expected suffixed tuple to pass: {:?}",
+            result_with_suffix
+        );
     }
 
     // =========================================================================
@@ -7096,7 +7498,7 @@ mod tests {
                 }
                 return unit;
             }
-            "#
+            "#,
         );
         assert!(result.is_ok(), "Expected no duplicate error: {:?}", result);
     }
@@ -7114,7 +7516,7 @@ mod tests {
                     x q[0];
                 }
             }
-            "#
+            "#,
         );
         assert!(
             matches!(result, Err(SemanticError::DuplicateQubitInTick { ref allocator, index, .. }) if allocator == "q" && index == 0),
@@ -7136,7 +7538,7 @@ mod tests {
                     cx (q[0], q[1]);
                 }
             }
-            "#
+            "#,
         );
         assert!(
             matches!(result, Err(SemanticError::DuplicateQubitInTick { .. })),
@@ -7159,9 +7561,13 @@ mod tests {
                 }
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Permissive mode should allow duplicate qubits: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Permissive mode should allow duplicate qubits: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7180,7 +7586,7 @@ mod tests {
                 }
                 return unit;
             }
-            "#
+            "#,
         );
         assert!(result.is_err(), "Expected nested tick error");
         let err = result.unwrap_err();
@@ -7204,9 +7610,13 @@ mod tests {
                 tick { cx (q[0], q[1]); }
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Sequential ticks should be valid: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Sequential ticks should be valid: {:?}",
+            result
+        );
     }
 
     // =========================================================================
@@ -7226,9 +7636,13 @@ mod tests {
                 }
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected break inside loop to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected break inside loop to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7244,9 +7658,13 @@ mod tests {
                 }
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected continue inside loop to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected continue inside loop to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7258,7 +7676,7 @@ mod tests {
                 break;
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(
             matches!(result, Err(SemanticError::BreakContinueOutsideLoop { ref keyword, .. }) if keyword == "break"),
@@ -7276,7 +7694,7 @@ mod tests {
                 continue;
 
                 return unit;            }
-            "#
+            "#,
         );
         assert!(
             matches!(result, Err(SemanticError::BreakContinueOutsideLoop { ref keyword, .. }) if keyword == "continue"),
@@ -7300,9 +7718,13 @@ mod tests {
                 }
                 return unit;
             }
-            "#
+            "#,
         );
-        assert!(result.is_ok(), "Expected break in nested loop to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected break in nested loop to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7318,7 +7740,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected for loop with i64 range to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected for loop with i64 range to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7334,7 +7760,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected for loop with u32 range to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected for loop with u32 range to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7350,7 +7780,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected for loop with usize range to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected for loop with usize range to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7364,7 +7798,11 @@ mod tests {
                 return unit;            }
             "#,
         );
-        assert!(result.is_ok(), "Expected array with literal size to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected array with literal size to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7378,7 +7816,11 @@ mod tests {
                 return unit;            }
             "#,
         );
-        assert!(result.is_ok(), "Expected array with hex size to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected array with hex size to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7406,7 +7848,11 @@ mod tests {
                 return unit;            }
             "#,
         );
-        assert!(result.is_ok(), "Expected const propagation for array size to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected const propagation for array size to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7421,7 +7867,11 @@ mod tests {
                 return unit;            }
             "#,
         );
-        assert!(result.is_ok(), "Expected typed const propagation to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected typed const propagation to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7437,7 +7887,11 @@ mod tests {
                 return unit;            }
             "#,
         );
-        assert!(result.is_ok(), "Expected chained const propagation to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected chained const propagation to pass: {:?}",
+            result
+        );
     }
 
     // =========================================================================
@@ -7524,7 +7978,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected valid gate syntax to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected valid gate syntax to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7542,7 +8000,8 @@ mod tests {
         );
         assert!(
             matches!(result, Err(SemanticError::QubitIndexOutOfBounds { ref allocator, index: 5, capacity: 2, .. }) if allocator == "q"),
-            "Expected QubitIndexOutOfBounds error, got: {:?}", result
+            "Expected QubitIndexOutOfBounds error, got: {:?}",
+            result
         );
     }
 
@@ -7559,7 +8018,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected index at boundary to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected index at boundary to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7576,8 +8039,16 @@ mod tests {
             "#,
         );
         assert!(
-            matches!(result, Err(SemanticError::QubitIndexOutOfBounds { index: 2, capacity: 2, .. })),
-            "Expected QubitIndexOutOfBounds error for index at capacity, got: {:?}", result
+            matches!(
+                result,
+                Err(SemanticError::QubitIndexOutOfBounds {
+                    index: 2,
+                    capacity: 2,
+                    ..
+                })
+            ),
+            "Expected QubitIndexOutOfBounds error for index at capacity, got: {:?}",
+            result
         );
     }
 
@@ -7596,7 +8067,8 @@ mod tests {
         );
         assert!(
             matches!(result, Err(SemanticError::QubitIndexOutOfBounds { ref allocator, index: 5, capacity: 2, .. }) if allocator == "q"),
-            "Expected QubitIndexOutOfBounds error for measurement, got: {:?}", result
+            "Expected QubitIndexOutOfBounds error for measurement, got: {:?}",
+            result
         );
     }
 
@@ -7615,7 +8087,8 @@ mod tests {
         );
         assert!(
             matches!(result, Err(SemanticError::QubitIndexOutOfBounds { ref allocator, index: 5, capacity: 2, .. }) if allocator == "q"),
-            "Expected QubitIndexOutOfBounds error for array measurement, got: {:?}", result
+            "Expected QubitIndexOutOfBounds error for array measurement, got: {:?}",
+            result
         );
     }
 
@@ -7633,7 +8106,8 @@ mod tests {
         );
         assert!(
             matches!(result, Err(SemanticError::QubitIndexOutOfBounds { ref allocator, index: 5, capacity: 2, .. }) if allocator == "q"),
-            "Expected QubitIndexOutOfBounds error for pz, got: {:?}", result
+            "Expected QubitIndexOutOfBounds error for pz, got: {:?}",
+            result
         );
     }
 
@@ -7651,7 +8125,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "h(q[0]) should be valid (parens are grouping): {:?}", result);
+        assert!(
+            result.is_ok(),
+            "h(q[0]) should be valid (parens are grouping): {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7667,7 +8145,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "cx(q[0], q[1]) should be valid: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cx(q[0], q[1]) should be valid: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7683,7 +8165,10 @@ mod tests {
             }
         "#;
         let result = parse(source);
-        assert!(result.is_err(), "rx without angle should fail at parse time");
+        assert!(
+            result.is_err(),
+            "rx without angle should fail at parse time"
+        );
     }
 
     // =========================================================================
@@ -7701,7 +8186,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected type ascription `42 u32` to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected type ascription `42 u32` to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7715,7 +8204,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected type ascription `3.14 f64` to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected type ascription `3.14 f64` to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7729,7 +8222,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected type ascription `1/4 f64` to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected type ascription `1/4 f64` to pass: {:?}",
+            result
+        );
     }
 
     // =========================================================================
@@ -7747,7 +8244,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected angle literal `0.25 turns` to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected angle literal `0.25 turns` to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7761,7 +8262,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected angle literal `0.5 turns` to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected angle literal `0.5 turns` to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7776,7 +8281,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected angle literal to be a64 type: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected angle literal to be a64 type: {:?}",
+            result
+        );
     }
 
     // =========================================================================
@@ -7808,7 +8317,10 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_err(), "Expected undefined symbol error in struct init");
+        assert!(
+            result.is_err(),
+            "Expected undefined symbol error in struct init"
+        );
         if let Err(e) = result {
             assert!(
                 matches!(e, SemanticError::UndefinedSymbol { .. }),
@@ -7855,7 +8367,10 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_err(), "Recursion should be rejected even in permissive mode");
+        assert!(
+            result.is_err(),
+            "Recursion should be rejected even in permissive mode"
+        );
         if let Err(e) = result {
             assert!(
                 matches!(e, SemanticError::RecursionDetected { .. }),
@@ -7878,7 +8393,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected non-recursive call to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected non-recursive call to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7917,7 +8436,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected catch on error union to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected catch on error union to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7933,7 +8456,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected single qubit batch gate to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected single qubit batch gate to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7949,7 +8476,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected two qubit batch gate to pass: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected two qubit batch gate to pass: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -7965,10 +8496,20 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_err(), "Expected two qubit gate with single qubit to fail");
+        assert!(
+            result.is_err(),
+            "Expected two qubit gate with single qubit to fail"
+        );
         if let Err(e) = result {
             assert!(
-                matches!(e, SemanticError::GateArityMismatch { expected: 2, found: 1, .. }),
+                matches!(
+                    e,
+                    SemanticError::GateArityMismatch {
+                        expected: 2,
+                        found: 1,
+                        ..
+                    }
+                ),
                 "Expected GateArityMismatch, got {:?}",
                 e
             );
@@ -7988,10 +8529,20 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_err(), "Expected single qubit gate with pair to fail");
+        assert!(
+            result.is_err(),
+            "Expected single qubit gate with pair to fail"
+        );
         if let Err(e) = result {
             assert!(
-                matches!(e, SemanticError::GateArityMismatch { expected: 1, found: 2, .. }),
+                matches!(
+                    e,
+                    SemanticError::GateArityMismatch {
+                        expected: 1,
+                        found: 2,
+                        ..
+                    }
+                ),
                 "Expected GateArityMismatch, got {:?}",
                 e
             );
@@ -8006,8 +8557,18 @@ mod tests {
     fn test_contains_unknown_primitive_types() {
         // Primitives never contain Unknown
         assert!(!Type::Bool.contains_unknown());
-        assert!(!Type::UInt { bits: BitWidth::BITS_32 }.contains_unknown());
-        assert!(!Type::IInt { bits: BitWidth::BITS_64 }.contains_unknown());
+        assert!(
+            !Type::UInt {
+                bits: BitWidth::BITS_32
+            }
+            .contains_unknown()
+        );
+        assert!(
+            !Type::IInt {
+                bits: BitWidth::BITS_64
+            }
+            .contains_unknown()
+        );
         assert!(!Type::F64.contains_unknown());
         assert!(!Type::Qubit.contains_unknown());
         assert!(!Type::Unit.contains_unknown());
@@ -8031,7 +8592,9 @@ mod tests {
 
         // Array with concrete element doesn't contain unknown
         let arr_u32 = Type::Array {
-            element: Box::new(Type::UInt { bits: BitWidth::BITS_32 }),
+            element: Box::new(Type::UInt {
+                bits: BitWidth::BITS_32,
+            }),
             size: Some(10),
         };
         assert!(!arr_u32.contains_unknown());
@@ -8042,7 +8605,9 @@ mod tests {
         // Tuple with Unknown element
         let tuple_with_unknown = Type::Tuple {
             elements: vec![
-                Type::UInt { bits: BitWidth::BITS_32 },
+                Type::UInt {
+                    bits: BitWidth::BITS_32,
+                },
                 Type::Unknown,
                 Type::Bool,
             ],
@@ -8052,7 +8617,9 @@ mod tests {
         // Tuple without Unknown
         let tuple_concrete = Type::Tuple {
             elements: vec![
-                Type::UInt { bits: BitWidth::BITS_32 },
+                Type::UInt {
+                    bits: BitWidth::BITS_32,
+                },
                 Type::Bool,
             ],
         };
@@ -8076,7 +8643,9 @@ mod tests {
         // Unknown in error position
         let unknown_error = Type::ErrorUnion {
             error: Box::new(Type::Unknown),
-            payload: Box::new(Type::UInt { bits: BitWidth::BITS_32 }),
+            payload: Box::new(Type::UInt {
+                bits: BitWidth::BITS_32,
+            }),
         };
         assert!(unknown_error.contains_unknown());
 
@@ -8090,7 +8659,9 @@ mod tests {
         // Neither contains Unknown
         let concrete_union = Type::ErrorUnion {
             error: Box::new(Type::AnyError),
-            payload: Box::new(Type::UInt { bits: BitWidth::BITS_32 }),
+            payload: Box::new(Type::UInt {
+                bits: BitWidth::BITS_32,
+            }),
         };
         assert!(!concrete_union.contains_unknown());
     }
@@ -8098,7 +8669,9 @@ mod tests {
     #[test]
     fn test_resolve_success() {
         // Concrete type resolves successfully
-        let ty = Type::UInt { bits: BitWidth::BITS_32 };
+        let ty = Type::UInt {
+            bits: BitWidth::BITS_32,
+        };
         let resolved = ty.resolve();
         assert!(resolved.is_some());
         assert_eq!(resolved.unwrap().display_name(), "u32");
@@ -8122,7 +8695,9 @@ mod tests {
 
     #[test]
     fn test_resolved_type_methods() {
-        let ty = Type::UInt { bits: BitWidth::BITS_64 };
+        let ty = Type::UInt {
+            bits: BitWidth::BITS_64,
+        };
         let resolved = ty.resolve().unwrap();
 
         // Check wrapper methods work correctly
@@ -8214,7 +8789,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected defined type to work: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected defined type to work: {:?}",
+            result
+        );
     }
 
     // =========================================================================
@@ -8238,7 +8817,11 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected normal nesting to work: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected normal nesting to work: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -8256,21 +8839,37 @@ mod tests {
             }
             "#,
         );
-        assert!(result.is_ok(), "Expected normal symbol usage to work: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected normal symbol usage to work: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_max_scope_depth_constant() {
         // Verify the constant is reasonable
-        assert!(MAX_SCOPE_DEPTH >= 64, "MAX_SCOPE_DEPTH should be at least 64");
-        assert!(MAX_SCOPE_DEPTH <= 1024, "MAX_SCOPE_DEPTH should not be excessive");
+        assert!(
+            MAX_SCOPE_DEPTH >= 64,
+            "MAX_SCOPE_DEPTH should be at least 64"
+        );
+        assert!(
+            MAX_SCOPE_DEPTH <= 1024,
+            "MAX_SCOPE_DEPTH should not be excessive"
+        );
     }
 
     #[test]
     fn test_max_symbol_count_constant() {
         // Verify the constant is reasonable
-        assert!(MAX_SYMBOL_COUNT >= 10_000, "MAX_SYMBOL_COUNT should be at least 10000");
-        assert!(MAX_SYMBOL_COUNT <= 10_000_000, "MAX_SYMBOL_COUNT should not be excessive");
+        assert!(
+            MAX_SYMBOL_COUNT >= 10_000,
+            "MAX_SYMBOL_COUNT should be at least 10000"
+        );
+        assert!(
+            MAX_SYMBOL_COUNT <= 10_000_000,
+            "MAX_SYMBOL_COUNT should not be excessive"
+        );
     }
 
     // =========================================================================
@@ -8294,10 +8893,15 @@ mod tests {
 
         assert!(result.is_err());
         let errors = result.unwrap_err();
-        assert!(errors.len() >= 2, "Expected at least 2 errors, got {}", errors.len());
+        assert!(
+            errors.len() >= 2,
+            "Expected at least 2 errors, got {}",
+            errors.len()
+        );
 
         // Check that both undefined types are reported
-        let error_names: Vec<_> = errors.iter()
+        let error_names: Vec<_> = errors
+            .iter()
             .filter_map(|e| {
                 if let SemanticError::UndefinedType { name, .. } = e {
                     Some(name.as_str())
@@ -8306,8 +8910,14 @@ mod tests {
                 }
             })
             .collect();
-        assert!(error_names.contains(&"UndefinedType1"), "Should report UndefinedType1");
-        assert!(error_names.contains(&"UndefinedType2"), "Should report UndefinedType2");
+        assert!(
+            error_names.contains(&"UndefinedType1"),
+            "Should report UndefinedType1"
+        );
+        assert!(
+            error_names.contains(&"UndefinedType2"),
+            "Should report UndefinedType2"
+        );
     }
 
     #[test]
@@ -8361,7 +8971,8 @@ mod tests {
         assert_eq!(errors.len(), 2);
         assert!(!errors.is_empty());
 
-        let names: Vec<_> = errors.iter()
+        let names: Vec<_> = errors
+            .iter()
             .filter_map(|e| {
                 if let SemanticError::UndefinedType { name, .. } = e {
                     Some(name.clone())
@@ -8403,7 +9014,11 @@ mod tests {
             }
         "#;
         let result = analyze(source);
-        assert!(result.is_ok(), "Slice element access should work: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Slice element access should work: {:?}",
+            result.err()
+        );
     }
 
     // =========================================================================
@@ -8424,7 +9039,11 @@ mod tests {
             }
         "#;
         let result = analyze(source);
-        assert!(result.is_ok(), "Valid inline for should pass: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Valid inline for should pass: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -8441,7 +9060,11 @@ mod tests {
             }
         "#;
         let result = analyze(source);
-        assert!(result.is_ok(), "Inline for with comptime expr should pass: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Inline for with comptime expr should pass: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -8546,7 +9169,9 @@ mod tests {
         use crate::comptime::ComptimeValue;
 
         let args = vec![
-            ComptimeValue::Type(Type::UInt { bits: BitWidth::must(32) }),
+            ComptimeValue::Type(Type::UInt {
+                bits: BitWidth::must(32),
+            }),
             ComptimeValue::Uint(4),
         ];
         let mangled = SemanticAnalyzer::mangle_generic_name("make_array", &args);
@@ -8559,10 +9184,7 @@ mod tests {
     fn test_serialize_comptime_args() {
         use crate::comptime::ComptimeValue;
 
-        let args = vec![
-            ComptimeValue::Int(42),
-            ComptimeValue::Bool(true),
-        ];
+        let args = vec![ComptimeValue::Int(42), ComptimeValue::Bool(true)];
         let serialized = SemanticAnalyzer::serialize_comptime_args(&args);
         assert!(serialized.contains("42"));
         assert!(serialized.contains("true"));
@@ -8587,21 +9209,43 @@ mod tests {
                 "First param should be comptime (parser should set this). Got: {:?}",
                 fn_decl.params[0]
             );
-            assert!(!fn_decl.params[1].is_comptime, "Second param should not be comptime");
+            assert!(
+                !fn_decl.params[1].is_comptime,
+                "Second param should not be comptime"
+            );
         } else {
             panic!("Expected function declaration");
         }
 
         let mut analyzer = SemanticAnalyzer::new();
         let result = analyzer.analyze(&program);
-        assert!(result.is_ok(), "Generic function should parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Generic function should parse: {:?}",
+            result.err()
+        );
 
         // Check that the function was registered with comptime param info
         if let Some(symbol) = analyzer.symbols.lookup("repeat") {
-            if let SymbolKind::Function { comptime_param_indices, original_decl, .. } = &symbol.kind {
-                assert_eq!(comptime_param_indices.len(), 1, "Should have 1 comptime param");
-                assert_eq!(comptime_param_indices[0], 0, "First param should be comptime");
-                assert!(original_decl.is_some(), "Should store original decl for generic");
+            if let SymbolKind::Function {
+                comptime_param_indices,
+                original_decl,
+                ..
+            } = &symbol.kind
+            {
+                assert_eq!(
+                    comptime_param_indices.len(),
+                    1,
+                    "Should have 1 comptime param"
+                );
+                assert_eq!(
+                    comptime_param_indices[0], 0,
+                    "First param should be comptime"
+                );
+                assert!(
+                    original_decl.is_some(),
+                    "Should store original decl for generic"
+                );
             } else {
                 panic!("Expected function symbol");
             }
@@ -8623,9 +9267,20 @@ mod tests {
         let _ = analyzer.analyze(&program);
 
         if let Some(symbol) = analyzer.symbols.lookup("add") {
-            if let SymbolKind::Function { comptime_param_indices, original_decl, .. } = &symbol.kind {
-                assert!(comptime_param_indices.is_empty(), "Should have no comptime params");
-                assert!(original_decl.is_none(), "Should not store original decl for non-generic");
+            if let SymbolKind::Function {
+                comptime_param_indices,
+                original_decl,
+                ..
+            } = &symbol.kind
+            {
+                assert!(
+                    comptime_param_indices.is_empty(),
+                    "Should have no comptime params"
+                );
+                assert!(
+                    original_decl.is_none(),
+                    "Should not store original decl for non-generic"
+                );
             }
         }
     }
@@ -8664,7 +9319,11 @@ mod tests {
         let program = crate::parse(source).unwrap();
         let mut analyzer = SemanticAnalyzer::new();
         let result = analyzer.analyze(&program);
-        assert!(result.is_ok(), "Non-overlapping aliases should work: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Non-overlapping aliases should work: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -8702,7 +9361,11 @@ mod tests {
         let program = crate::parse(source).unwrap();
         let mut analyzer = SemanticAnalyzer::new();
         let result = analyzer.analyze(&program);
-        assert!(result.is_ok(), "Adjacent ranges should not overlap: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Adjacent ranges should not overlap: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -8720,7 +9383,11 @@ mod tests {
         let program = crate::parse(source).unwrap();
         let mut analyzer = SemanticAnalyzer::new();
         let result = analyzer.analyze(&program);
-        assert!(result.is_ok(), "Different sources can have same ranges: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Different sources can have same ranges: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -8740,7 +9407,11 @@ mod tests {
         let program = crate::parse(source).unwrap();
         let mut analyzer = SemanticAnalyzer::new();
         let result = analyzer.analyze(&program);
-        assert!(result.is_ok(), "Alias should be usable as slice: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Alias should be usable as slice: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -8759,13 +9430,15 @@ mod tests {
 
     #[test]
     fn test_array_index_out_of_bounds() {
-        let result = analyze(r#"
+        let result = analyze(
+            r#"
             fn main() -> unit {
                 arr: [3]i64 = [1, 2, 3];
                 x := arr[5];
                 return;
             }
-        "#);
+        "#,
+        );
         assert!(result.is_err(), "Expected ArrayIndexOutOfBounds error");
         let err = result.unwrap_err();
         assert!(
@@ -8777,37 +9450,53 @@ mod tests {
     #[test]
     fn test_array_index_at_boundary() {
         // arr[2] on [3]i64 is valid (indices 0, 1, 2)
-        let result = analyze(r#"
+        let result = analyze(
+            r#"
             fn main() -> unit {
                 arr: [3]i64 = [1, 2, 3];
                 x := arr[2];
                 return;
             }
-        "#);
-        assert!(result.is_ok(), "arr[2] on [3]i64 should be valid, got: {:?}", result);
+        "#,
+        );
+        assert!(
+            result.is_ok(),
+            "arr[2] on [3]i64 should be valid, got: {:?}",
+            result
+        );
     }
 
     #[test]
     fn test_array_index_literal_at_size() {
         // arr[3] on [3]i64 is out of bounds (valid indices are 0, 1, 2)
-        let result = analyze(r#"
+        let result = analyze(
+            r#"
             fn main() -> unit {
                 arr: [3]i64 = [1, 2, 3];
                 x := arr[3];
                 return;
             }
-        "#);
-        assert!(result.is_err(), "Expected ArrayIndexOutOfBounds for index == size");
+        "#,
+        );
+        assert!(
+            result.is_err(),
+            "Expected ArrayIndexOutOfBounds for index == size"
+        );
     }
 
     #[test]
     fn test_array_dynamic_index_no_error() {
         // Dynamic index should not produce a compile-time error
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             fn get(arr: [3]i64, i: i64) -> i64 {
                 return arr[i];
             }
-        "#).is_ok());
+        "#
+            )
+            .is_ok()
+        );
     }
 
     // =========================================================================
@@ -8817,51 +9506,78 @@ mod tests {
     #[test]
     fn test_declare_gate_registered() {
         // declare gate should be registered in the gate registry
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             declare gate my_rx(theta)(q);
-        "#).is_ok());
+        "#
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn test_declare_gate_no_params() {
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             declare gate my_x()(q);
-        "#).is_ok());
+        "#
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn test_declare_gate_multi_qubit() {
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             declare gate cnot()(control, target);
-        "#).is_ok());
+        "#
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn test_composite_gate_basic() {
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             gate my_h()(q) {
                 h q;
             }
-        "#).is_ok());
+        "#
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn test_composite_gate_multi_qubit() {
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             gate bell()(q0, q1) {
                 h q0;
                 cx (q0, q1);
             }
-        "#).is_ok());
+        "#
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn test_declare_gate_duplicate_rejected() {
         // Defining same gate name twice should fail
-        let result = analyze(r#"
+        let result = analyze(
+            r#"
             declare gate my_gate()(q);
             declare gate my_gate()(q);
-        "#);
+        "#,
+        );
         assert!(result.is_err(), "Duplicate gate declaration should fail");
     }
 
@@ -8902,24 +9618,36 @@ mod tests {
     fn test_declare_gate_builtin_exact_signature_allowed() {
         // Redeclaring a built-in with its exact signature is a harmless no-op.
         // `rz` is a 1-parameter, 1-qubit built-in.
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             declare gate rz(angle)(q);
-        "#).is_ok());
+        "#
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn test_declare_gate_builtin_mismatched_signature_rejected() {
         // `rz` is a 1-parameter built-in; redeclaring it with no parameters
         // would be uncallable under the fixed built-in parameterization.
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             declare gate rz()(q);
-        "#).is_err());
+        "#
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_builtin_gates_still_work() {
         // Built-in gates should still work alongside custom gate declarations
-        assert!(analyze(r#"
+        assert!(
+            analyze(
+                r#"
             declare gate custom_rx(theta)(q);
 
             fn apply(q: qubit) -> unit {
@@ -8927,6 +9655,9 @@ mod tests {
                 x q;
                 return;
             }
-        "#).is_ok());
+        "#
+            )
+            .is_ok()
+        );
     }
 }

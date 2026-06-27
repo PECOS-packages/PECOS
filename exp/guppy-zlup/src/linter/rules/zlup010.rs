@@ -3,13 +3,17 @@
 use rustpython_parser::ast::{Mod, Stmt};
 
 use super::super::diagnostic::{Diagnostic, Severity};
-use super::{make_location, LintRule};
+use super::{LintRule, make_location};
 
 /// Names that are allowed as module-level constants (typically UPPER_CASE).
 fn is_constant_name(name: &str) -> bool {
     // Allow UPPER_CASE names as constants
-    name.chars().all(|c| c.is_uppercase() || c == '_' || c.is_numeric())
-        && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+    name.chars()
+        .all(|c| c.is_uppercase() || c == '_' || c.is_numeric())
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
 }
 
 /// Known safe module-level definitions.
@@ -183,7 +187,7 @@ fn check_global_in_function(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source(source: &str) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

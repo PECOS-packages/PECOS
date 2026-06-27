@@ -46,7 +46,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use miette::{Diagnostic, NamedSource, SourceSpan};
 
 use zlup::codegen::SlrCodegen;
-use zlup::config::{Config, TargetConfig, CONFIG_FILE_NAME};
+use zlup::config::{CONFIG_FILE_NAME, Config, TargetConfig};
 use zlup::semantic::SemanticAnalyzer;
 
 // =============================================================================
@@ -352,9 +352,9 @@ impl Target {
     /// Default log elision level for this target.
     fn default_log_elision(&self) -> Option<u32> {
         match self {
-            Target::Simulator => None,        // Keep all logs
-            Target::Hardware => Some(300),    // Warn and above only
-            Target::Emulator => Some(200),    // Info and above
+            Target::Simulator => None,     // Keep all logs
+            Target::Hardware => Some(300), // Warn and above only
+            Target::Emulator => Some(200), // Info and above
         }
     }
 
@@ -366,7 +366,7 @@ impl Target {
     fn sim_mode(&self) -> zlup::codegen::slr::SimMode {
         use zlup::codegen::slr::SimMode;
         match self {
-            Target::Simulator => SimMode::Emit,   // Output actual sim commands
+            Target::Simulator => SimMode::Emit, // Output actual sim commands
             Target::Hardware => SimMode::Barrier, // Emit barrier to preserve ordering
             Target::Emulator => SimMode::Barrier, // Emit barrier to preserve ordering
         }
@@ -425,8 +425,8 @@ impl Mode {
     /// Log elision adjustment for this mode (added to target's default).
     fn log_elision_adjustment(&self) -> Option<u32> {
         match self {
-            Mode::Debug => None,          // Don't elide beyond target default
-            Mode::Release => Some(100),   // Bump elision by one level
+            Mode::Debug => None,        // Don't elide beyond target default
+            Mode::Release => Some(100), // Bump elision by one level
         }
     }
 
@@ -446,7 +446,7 @@ fn effective_settings(target: Target, mode: Mode) -> (bool, Option<u32>) {
 
     // Log elision: start with target default, then apply mode adjustment
     let log_elision = match (target.default_log_elision(), mode.log_elision_adjustment()) {
-        (Some(t), Some(m)) => Some(t.max(m)),  // Take the higher (more elision)
+        (Some(t), Some(m)) => Some(t.max(m)), // Take the higher (more elision)
         (Some(t), None) => Some(t),
         (None, Some(m)) => Some(m),
         (None, None) => None,
@@ -546,10 +546,12 @@ enum CliError {
 fn read_source(path: &PathBuf) -> Result<(String, String), CliError> {
     if path.as_os_str() == "-" {
         let mut source = String::new();
-        io::stdin().read_to_string(&mut source).map_err(|e| CliError::ReadError {
-            path: "<stdin>".to_string(),
-            source: e,
-        })?;
+        io::stdin()
+            .read_to_string(&mut source)
+            .map_err(|e| CliError::ReadError {
+                path: "<stdin>".to_string(),
+                source: e,
+            })?;
         Ok((source, "<stdin>".to_string()))
     } else {
         let source = fs::read_to_string(path).map_err(|e| CliError::ReadError {
@@ -634,14 +636,12 @@ fn write_output(path: Option<&PathBuf>, content: &str) -> Result<(), CliError> {
                 source: e,
             })
         }
-        _ => {
-            io::stdout()
-                .write_all(content.as_bytes())
-                .map_err(|e| CliError::WriteError {
-                    path: "<stdout>".to_string(),
-                    source: e,
-                })
-        }
+        _ => io::stdout()
+            .write_all(content.as_bytes())
+            .map_err(|e| CliError::WriteError {
+                path: "<stdout>".to_string(),
+                source: e,
+            }),
     }
 }
 
@@ -724,7 +724,11 @@ pub fn main() -> unit {
         source: e,
     })?;
 
-    eprintln!("Created new project '{}' at {}", name, project_dir.display());
+    eprintln!(
+        "Created new project '{}' at {}",
+        name,
+        project_dir.display()
+    );
     eprintln!("  {} - project configuration", CONFIG_FILE_NAME);
     eprintln!("  main.zlp - main source file");
     eprintln!();
@@ -747,11 +751,10 @@ fn cmd_build(
         source: e,
     })?;
 
-    let (config, config_path) = Config::find_and_load(&current_dir).map_err(|e| {
-        CliError::ConfigError {
+    let (config, config_path) =
+        Config::find_and_load(&current_dir).map_err(|e| CliError::ConfigError {
             message: e.to_string(),
-        }
-    })?;
+        })?;
 
     let project_root = Config::project_root(&config_path);
 
@@ -796,10 +799,7 @@ fn cmd_build(
         #[cfg(feature = "hugr")]
         Format::Hugr => "hugr",
     };
-    let output_name = entry_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let output_name = entry_path.file_stem().unwrap_or_default().to_string_lossy();
     let output_path = output_dir.join(format!("{}.{}", output_name, output_ext));
 
     // Compute effective settings
@@ -816,9 +816,20 @@ fn cmd_build(
     );
 
     // Compile
-    cmd_compile(entry_path, Some(output_path.clone()), target, format, mode, compact, Some(strict), None, false)?;
+    cmd_compile(
+        entry_path,
+        Some(output_path.clone()),
+        target,
+        format,
+        mode,
+        compact,
+        Some(strict),
+        None,
+        false,
+    )?;
 
-    eprintln!("Built {} -> {}",
+    eprintln!(
+        "Built {} -> {}",
         project_root.join(&config.package.entry).display(),
         output_path.display()
     );
@@ -908,18 +919,19 @@ fn cmd_compile(
             };
             codegen.set_sim_mode(sim_mode);
 
-            let slr_program = codegen
-                .compile(&program)
-                .map_err(|e: zlup::codegen::slr::SlrError| CliError::CodegenError {
-                    message: e.to_string(),
-                })?;
-
-            if compact {
+            let slr_program =
                 codegen
-                    .to_json_compact(&slr_program)
+                    .compile(&program)
                     .map_err(|e: zlup::codegen::slr::SlrError| CliError::CodegenError {
                         message: e.to_string(),
-                    })?
+                    })?;
+
+            if compact {
+                codegen.to_json_compact(&slr_program).map_err(
+                    |e: zlup::codegen::slr::SlrError| CliError::CodegenError {
+                        message: e.to_string(),
+                    },
+                )?
             } else {
                 codegen
                     .to_json(&slr_program)
@@ -932,11 +944,12 @@ fn cmd_compile(
             use zlup::codegen::PhirJsonCodegen;
 
             let mut codegen = PhirJsonCodegen::new();
-            let phir_json_program = codegen
-                .compile(&program)
-                .map_err(|e| CliError::CodegenError {
-                    message: e.to_string(),
-                })?;
+            let phir_json_program =
+                codegen
+                    .compile(&program)
+                    .map_err(|e| CliError::CodegenError {
+                        message: e.to_string(),
+                    })?;
 
             if compact {
                 codegen
@@ -1054,10 +1067,8 @@ fn cmd_parse(input: PathBuf, format: AstFormat) -> Result<(), CliError> {
     // Output
     let output = match format {
         AstFormat::Debug => format!("{:#?}", program),
-        AstFormat::Json => {
-            serde_json::to_string_pretty(&program)
-                .unwrap_or_else(|e| format!("JSON serialization error: {}", e))
-        }
+        AstFormat::Json => serde_json::to_string_pretty(&program)
+            .unwrap_or_else(|e| format!("JSON serialization error: {}", e)),
     };
 
     println!("{}", output);
@@ -1066,7 +1077,7 @@ fn cmd_parse(input: PathBuf, format: AstFormat) -> Result<(), CliError> {
 
 /// Execute the format command.
 fn cmd_format(input: PathBuf, write: bool, check: bool) -> Result<(), CliError> {
-    use zlup::formatter::{format, FormatOptions};
+    use zlup::formatter::{FormatOptions, format};
 
     let (source, filename) = read_source(&input)?;
     let options = FormatOptions::default();
@@ -1120,7 +1131,7 @@ fn cmd_lint(
     show_diff: bool,
     statistics_only: bool,
 ) -> Result<(), CliError> {
-    use zlup::linter::{apply_fixes, FixSafety, LintConfig, Linter, Severity};
+    use zlup::linter::{FixSafety, LintConfig, Linter, Severity, apply_fixes};
 
     let (source, filename) = read_source(&input)?;
 
@@ -1142,19 +1153,31 @@ fn cmd_lint(
     };
 
     // Run linter (with source for fix computation)
-    let diagnostics = Linter::new(config)
-        .with_source(&source)
-        .lint(&program);
+    let diagnostics = Linter::new(config).with_source(&source).lint(&program);
 
     // Statistics-only mode
     if statistics_only {
-        let errors = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Error | Severity::Deny)).count();
-        let warnings = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Warning)).count();
-        let hints = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Hint)).count();
+        let errors = diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error | Severity::Deny))
+            .count();
+        let warnings = diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Warning))
+            .count();
+        let hints = diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Hint))
+            .count();
         let fixable_safe = diagnostics.iter().filter(|d| d.has_safe_fix()).count();
-        let fixable_unsafe = diagnostics.iter().filter(|d| {
-            d.fix.as_ref().is_some_and(|f| f.safety == FixSafety::Unsafe)
-        }).count();
+        let fixable_unsafe = diagnostics
+            .iter()
+            .filter(|d| {
+                d.fix
+                    .as_ref()
+                    .is_some_and(|f| f.safety == FixSafety::Unsafe)
+            })
+            .count();
 
         println!("File: {}", filename);
         println!("Errors: {}", errors);
@@ -1204,11 +1227,21 @@ fn cmd_lint(
         }
 
         // Still return error if there are issues
-        let has_errors = diagnostics.iter().any(|d| matches!(d.severity, Severity::Error | Severity::Deny));
-        let has_warnings = diagnostics.iter().any(|d| matches!(d.severity, Severity::Warning));
+        let has_errors = diagnostics
+            .iter()
+            .any(|d| matches!(d.severity, Severity::Error | Severity::Deny));
+        let has_warnings = diagnostics
+            .iter()
+            .any(|d| matches!(d.severity, Severity::Warning));
         if has_errors || (deny_warnings && has_warnings) {
-            let errors = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Error | Severity::Deny)).count();
-            let warnings = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Warning)).count();
+            let errors = diagnostics
+                .iter()
+                .filter(|d| matches!(d.severity, Severity::Error | Severity::Deny))
+                .count();
+            let warnings = diagnostics
+                .iter()
+                .filter(|d| matches!(d.severity, Severity::Warning))
+                .count();
             return Err(CliError::LintFailed {
                 path: filename,
                 error_count: errors,
@@ -1228,7 +1261,10 @@ fn cmd_lint(
                 // Can't write back to stdin
                 return Err(CliError::WriteError {
                     path: "<stdin>".to_string(),
-                    source: io::Error::new(io::ErrorKind::InvalidInput, "cannot apply fixes to stdin"),
+                    source: io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "cannot apply fixes to stdin",
+                    ),
                 });
             }
 
@@ -1257,7 +1293,8 @@ fn cmd_lint(
 
             // Re-lint to show remaining issues
             let program = zlup::parse_file(&fix_result.source, &filename).map_err(|e| {
-                let start = e.location.line.saturating_sub(1) as usize * 80 + e.location.column as usize;
+                let start =
+                    e.location.line.saturating_sub(1) as usize * 80 + e.location.column as usize;
                 CliError::ParseError {
                     src: NamedSource::new(&filename, fix_result.source.clone()),
                     span: SourceSpan::from(start..start + 1),
@@ -1287,9 +1324,18 @@ fn cmd_lint(
                 LintFormat::Compact => print_diagnostics_compact(&remaining_diagnostics, &filename),
             }
 
-            let errors = remaining_diagnostics.iter().filter(|d| matches!(d.severity, Severity::Error | Severity::Deny)).count();
-            let warnings = remaining_diagnostics.iter().filter(|d| matches!(d.severity, Severity::Warning)).count();
-            let hints = remaining_diagnostics.iter().filter(|d| matches!(d.severity, Severity::Hint)).count();
+            let errors = remaining_diagnostics
+                .iter()
+                .filter(|d| matches!(d.severity, Severity::Error | Severity::Deny))
+                .count();
+            let warnings = remaining_diagnostics
+                .iter()
+                .filter(|d| matches!(d.severity, Severity::Warning))
+                .count();
+            let hints = remaining_diagnostics
+                .iter()
+                .filter(|d| matches!(d.severity, Severity::Hint))
+                .count();
 
             eprintln!();
             eprintln!(
@@ -1297,8 +1343,12 @@ fn cmd_lint(
                 errors, warnings, hints, filename
             );
 
-            let has_errors = remaining_diagnostics.iter().any(|d| matches!(d.severity, Severity::Error | Severity::Deny));
-            let has_warnings = remaining_diagnostics.iter().any(|d| matches!(d.severity, Severity::Warning));
+            let has_errors = remaining_diagnostics
+                .iter()
+                .any(|d| matches!(d.severity, Severity::Error | Severity::Deny));
+            let has_warnings = remaining_diagnostics
+                .iter()
+                .any(|d| matches!(d.severity, Severity::Warning));
 
             if has_errors || (deny_warnings && has_warnings) {
                 return Err(CliError::LintFailed {
@@ -1315,8 +1365,12 @@ fn cmd_lint(
     }
 
     // Check for errors
-    let has_errors = diagnostics.iter().any(|d| matches!(d.severity, Severity::Error | Severity::Deny));
-    let has_warnings = diagnostics.iter().any(|d| matches!(d.severity, Severity::Warning));
+    let has_errors = diagnostics
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Error | Severity::Deny));
+    let has_warnings = diagnostics
+        .iter()
+        .any(|d| matches!(d.severity, Severity::Warning));
 
     // Output diagnostics
     match format {
@@ -1327,9 +1381,18 @@ fn cmd_lint(
 
     // Summary
     if !diagnostics.is_empty() {
-        let errors = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Error | Severity::Deny)).count();
-        let warnings = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Warning)).count();
-        let hints = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Hint)).count();
+        let errors = diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error | Severity::Deny))
+            .count();
+        let warnings = diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Warning))
+            .count();
+        let hints = diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Hint))
+            .count();
         let fixable_safe = diagnostics.iter().filter(|d| d.has_safe_fix()).count();
         let fixable_total = diagnostics.iter().filter(|d| d.has_fix()).count();
 
@@ -1378,7 +1441,7 @@ fn print_diagnostics_pretty(diagnostics: &[zlup::linter::LintDiagnostic], filena
 
     for diag in diagnostics {
         let (severity_str, color) = match diag.severity {
-            Severity::Hint => ("hint", "\x1b[36m"),      // Cyan
+            Severity::Hint => ("hint", "\x1b[36m"),       // Cyan
             Severity::Warning => ("warning", "\x1b[33m"), // Yellow
             Severity::Error => ("error", "\x1b[31m"),     // Red
             Severity::Deny => ("deny", "\x1b[91m"),       // Bright Red
@@ -1389,7 +1452,15 @@ fn print_diagnostics_pretty(diagnostics: &[zlup::linter::LintDiagnostic], filena
         if let Some(ref loc) = diag.location {
             eprintln!(
                 "{}{}{}:{}{}: {}{}{}: {}",
-                bold, filename, reset, loc.line, loc.column, color, severity_str, reset, diag.message
+                bold,
+                filename,
+                reset,
+                loc.line,
+                loc.column,
+                color,
+                severity_str,
+                reset,
+                diag.message
             );
         } else {
             eprintln!(
@@ -1446,7 +1517,10 @@ fn print_diagnostics_compact(diagnostics: &[zlup::linter::LintDiagnostic], filen
                 filename, loc.line, loc.column, severity, diag.rule, diag.message
             );
         } else {
-            println!("{}: {} [{}] {}", filename, severity, diag.rule, diag.message);
+            println!(
+                "{}: {} [{}] {}",
+                filename, severity, diag.rule, diag.message
+            );
         }
     }
 }
@@ -1462,7 +1536,7 @@ fn print_unified_diff(original: &str, fixed: &str, filename: &str) {
     let cyan = "\x1b[36m";
     let reset = "\x1b[0m";
 
-    println!("{}--- a/{}{}",cyan, filename, reset);
+    println!("{}--- a/{}{}", cyan, filename, reset);
     println!("{}+++ b/{}{}", cyan, filename, reset);
 
     // Simple diff: find changed lines
@@ -1514,8 +1588,14 @@ fn print_unified_diff(original: &str, fixed: &str, filename: &str) {
 
         if has_changes {
             // Print hunk header
-            let orig_start = orig_hunk.first().map(|(n, _)| *n + 1).unwrap_or(hunk_start + 1);
-            let fixed_start = fixed_hunk.first().map(|(n, _)| *n + 1).unwrap_or(hunk_start + 1);
+            let orig_start = orig_hunk
+                .first()
+                .map(|(n, _)| *n + 1)
+                .unwrap_or(hunk_start + 1);
+            let fixed_start = fixed_hunk
+                .first()
+                .map(|(n, _)| *n + 1)
+                .unwrap_or(hunk_start + 1);
             println!(
                 "{}@@ -{},{} +{},{} @@{}",
                 cyan,
@@ -1551,7 +1631,9 @@ fn print_unified_diff(original: &str, fixed: &str, filename: &str) {
 // =============================================================================
 
 fn cmd_analyze(input: PathBuf, format: AnalyzeFormat, verbose: bool) -> Result<(), CliError> {
-    use zlup::analysis::{analyze_parallelism, AllocatorAnalysis, DependencyGraph, OperationTagger};
+    use zlup::analysis::{
+        AllocatorAnalysis, DependencyGraph, OperationTagger, analyze_parallelism,
+    };
 
     let (source, filename) = read_source(&input)?;
 
@@ -1581,9 +1663,14 @@ fn cmd_analyze(input: PathBuf, format: AnalyzeFormat, verbose: bool) -> Result<(
                 println!("  (none)");
             } else {
                 for (name, info) in &allocator_analysis.allocators {
-                    let size_str = info.size.map(|s| format!("[{}]", s)).unwrap_or_else(|| "[?]".to_string());
-                    println!("  {} {}qubit (scope depth: {}, line: {})",
-                        name, size_str, info.scope_depth, info.defined_at_line);
+                    let size_str = info
+                        .size
+                        .map(|s| format!("[{}]", s))
+                        .unwrap_or_else(|| "[?]".to_string());
+                    println!(
+                        "  {} {}qubit (scope depth: {}, line: {})",
+                        name, size_str, info.scope_depth, info.defined_at_line
+                    );
                 }
             }
             println!();
@@ -1609,42 +1696,56 @@ fn cmd_analyze(input: PathBuf, format: AnalyzeFormat, verbose: bool) -> Result<(
         AnalyzeFormat::Json => {
             use serde_json::json;
 
-            let allocators: Vec<_> = allocator_analysis.allocators.iter().map(|(name, info)| {
-                json!({
-                    "name": name,
-                    "size": info.size,
-                    "scope_depth": info.scope_depth,
-                    "defined_at_line": info.defined_at_line,
+            let allocators: Vec<_> = allocator_analysis
+                .allocators
+                .iter()
+                .map(|(name, info)| {
+                    json!({
+                        "name": name,
+                        "size": info.size,
+                        "scope_depth": info.scope_depth,
+                        "defined_at_line": info.defined_at_line,
+                    })
                 })
-            }).collect();
+                .collect();
 
-            let functions: Vec<_> = summaries.iter().map(|s| {
-                json!({
-                    "name": s.function_name,
-                    "total_ops": s.total_ops,
-                    "quantum_ops": s.quantum_ops,
-                    "classical_ops": s.classical_ops,
-                    "num_layers": s.num_layers,
-                    "max_parallelism": s.max_parallelism,
+            let functions: Vec<_> = summaries
+                .iter()
+                .map(|s| {
+                    json!({
+                        "name": s.function_name,
+                        "total_ops": s.total_ops,
+                        "quantum_ops": s.quantum_ops,
+                        "classical_ops": s.classical_ops,
+                        "num_layers": s.num_layers,
+                        "max_parallelism": s.max_parallelism,
+                    })
                 })
-            }).collect();
+                .collect();
 
             let layers = dep_graph.parallel_layers();
-            let layer_details: Vec<_> = layers.iter().enumerate().map(|(i, ops)| {
-                let op_details: Vec<_> = ops.iter().map(|&id| {
-                    let op = &dep_graph.operations[id];
+            let layer_details: Vec<_> = layers
+                .iter()
+                .enumerate()
+                .map(|(i, ops)| {
+                    let op_details: Vec<_> = ops
+                        .iter()
+                        .map(|&id| {
+                            let op = &dep_graph.operations[id];
+                            json!({
+                                "id": op.id,
+                                "description": op.description,
+                                "line": op.line,
+                                "is_quantum": op.touches_qubits(),
+                            })
+                        })
+                        .collect();
                     json!({
-                        "id": op.id,
-                        "description": op.description,
-                        "line": op.line,
-                        "is_quantum": op.touches_qubits(),
+                        "layer": i,
+                        "operations": op_details,
                     })
-                }).collect();
-                json!({
-                    "layer": i,
-                    "operations": op_details,
                 })
-            }).collect();
+                .collect();
 
             let output = json!({
                 "file": filename,
@@ -1672,10 +1773,12 @@ fn cmd_eval(expr: String, verbose: bool) -> Result<(), CliError> {
     // Read expression from stdin if -
     let input = if expr == "-" {
         let mut buf = String::new();
-        io::stdin().read_to_string(&mut buf).map_err(|e| CliError::ReadError {
-            path: "<stdin>".to_string(),
-            source: e,
-        })?;
+        io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| CliError::ReadError {
+                path: "<stdin>".to_string(),
+                source: e,
+            })?;
         buf
     } else {
         expr
@@ -1757,7 +1860,7 @@ fn cmd_eval(expr: String, verbose: bool) -> Result<(), CliError> {
 // =============================================================================
 
 fn cmd_doc(input: PathBuf, output: Option<PathBuf>, all: bool) -> Result<(), CliError> {
-    use zlup::docgen::{extract_doc_items, generate_markdown, DocConfig};
+    use zlup::docgen::{DocConfig, extract_doc_items, generate_markdown};
 
     let (source, filename) = read_source(&input)?;
 
@@ -1777,7 +1880,8 @@ fn cmd_doc(input: PathBuf, output: Option<PathBuf>, all: bool) -> Result<(), Cli
     };
 
     let items = extract_doc_items(&program, &config);
-    let module_name = input.file_stem()
+    let module_name = input
+        .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "module".to_string());
     let markdown = generate_markdown(&items, &module_name);
@@ -1796,7 +1900,7 @@ fn cmd_test(
     strict: bool,
     verbose: bool,
 ) -> Result<(), CliError> {
-    use zlup::test_runner::{format_results, TestOutcome, TestRunConfig, TestRunner};
+    use zlup::test_runner::{TestOutcome, TestRunConfig, TestRunner, format_results};
 
     let (source, filename) = read_source(&input)?;
 
@@ -1822,7 +1926,9 @@ fn cmd_test(
     print!("{}", output);
 
     // Exit with failure if any tests failed
-    let has_failures = results.iter().any(|r| matches!(r.outcome, TestOutcome::Fail(_)));
+    let has_failures = results
+        .iter()
+        .any(|r| matches!(r.outcome, TestOutcome::Fail(_)));
     if has_failures {
         return Err(CliError::CodegenError {
             message: "some tests failed".to_string(),
@@ -1863,7 +1969,9 @@ fn main() -> ExitCode {
             strict,
             log_level,
             elide_sim,
-        } => cmd_compile(input, output, target, format, mode, compact, strict, log_level, elide_sim),
+        } => cmd_compile(
+            input, output, target, format, mode, compact, strict, log_level, elide_sim,
+        ),
 
         Commands::Check { input, strict } => cmd_check(input, strict),
 
@@ -1884,15 +1992,33 @@ fn main() -> ExitCode {
             unsafe_fixes,
             diff,
             statistics,
-        } => cmd_lint(input, level, deny_warnings, format, fix, unsafe_fixes, diff, statistics),
+        } => cmd_lint(
+            input,
+            level,
+            deny_warnings,
+            format,
+            fix,
+            unsafe_fixes,
+            diff,
+            statistics,
+        ),
 
         Commands::Eval { expr, verbose } => cmd_eval(expr, verbose),
 
-        Commands::Analyze { input, format, verbose } => cmd_analyze(input, format, verbose),
+        Commands::Analyze {
+            input,
+            format,
+            verbose,
+        } => cmd_analyze(input, format, verbose),
 
         Commands::Doc { input, output, all } => cmd_doc(input, output, all),
 
-        Commands::Test { input, filter, strict, verbose } => cmd_test(input, filter, strict, verbose),
+        Commands::Test {
+            input,
+            filter,
+            strict,
+            verbose,
+        } => cmd_test(input, filter, strict, verbose),
     };
 
     match result {

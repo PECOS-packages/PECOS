@@ -21,8 +21,11 @@ struct TransformContext {
 impl TransformContext {
     /// Register a new qalloc.
     fn register_qalloc(&mut self, name: &str, size: i128) {
-        debug_assert!(!self.qalloc_sizes.contains_key(name),
-            "Invariant violation: duplicate qalloc for '{}'", name);
+        debug_assert!(
+            !self.qalloc_sizes.contains_key(name),
+            "Invariant violation: duplicate qalloc for '{}'",
+            name
+        );
         self.qalloc_sizes.insert(name.to_string(), size);
         self.declared_vars.insert(name.to_string());
     }
@@ -42,8 +45,11 @@ impl TransformContext {
         let size = self.qalloc_sizes.get(name).copied();
         #[cfg(debug_assertions)]
         if size.is_some() {
-            debug_assert!(self.declared_vars.contains(name),
-                "Invariant violation: qalloc '{}' in qalloc_sizes but not in declared_vars", name);
+            debug_assert!(
+                self.declared_vars.contains(name),
+                "Invariant violation: qalloc '{}' in qalloc_sizes but not in declared_vars",
+                name
+            );
         }
         size
     }
@@ -51,8 +57,11 @@ impl TransformContext {
     /// Mark an allocator as used (for gates).
     #[cfg(debug_assertions)]
     fn mark_allocator_used(&mut self, name: &str) {
-        debug_assert!(self.qalloc_sizes.contains_key(name),
-            "Invariant violation: gate uses allocator '{}' before it was allocated", name);
+        debug_assert!(
+            self.qalloc_sizes.contains_key(name),
+            "Invariant violation: gate uses allocator '{}' before it was allocated",
+            name
+        );
         self.used_allocators.insert(name.to_string());
     }
 
@@ -104,16 +113,18 @@ fn transform_function(func: &Function) -> Result<zlup_ast::FnDecl, TransformErro
     };
 
     // Check if the last statement is already a return
-    let has_trailing_return = body.statements.last().is_some_and(|stmt| {
-        matches!(stmt, zlup_ast::Stmt::Return(_))
-    });
+    let has_trailing_return = body
+        .statements
+        .last()
+        .is_some_and(|stmt| matches!(stmt, zlup_ast::Stmt::Return(_)));
 
     // Add implicit return if needed (return; is equivalent to return unit; in Zlup)
     if is_unit_return && !has_trailing_return {
-        body.statements.push(zlup_ast::Stmt::Return(zlup_ast::ReturnStmt {
-            value: None,
-            location: None,
-        }));
+        body.statements
+            .push(zlup_ast::Stmt::Return(zlup_ast::ReturnStmt {
+                value: None,
+                location: None,
+            }));
     }
 
     Ok(zlup_ast::FnDecl {
@@ -153,7 +164,9 @@ fn transform_type(ty: &TypeExpr) -> zlup_ast::TypeExpr {
                 }),
             }
         }
-        "qalloc" => zlup_ast::TypeExpr::QAlloc(ty.size.as_ref().map(|s| Box::new(transform_expr(s)))),
+        "qalloc" => {
+            zlup_ast::TypeExpr::QAlloc(ty.size.as_ref().map(|s| Box::new(transform_expr(s))))
+        }
         "array" => {
             let element = ty
                 .element
@@ -178,13 +191,17 @@ fn transform_type(ty: &TypeExpr) -> zlup_ast::TypeExpr {
         "tuple" => {
             // In quantum code, tuple[bool, ...] typically contains measurement results
             // which are u1 in Zlup, so map bool->u1 within tuples
-            let elements: Vec<zlup_ast::TypeExpr> = ty.elements.iter().map(|elem| {
-                if elem.kind == "primitive" && elem.name.as_deref() == Some("bool") {
-                    zlup_ast::TypeExpr::Primitive(zlup_ast::PrimitiveType::UInt { bits: 1 })
-                } else {
-                    transform_type(elem)
-                }
-            }).collect();
+            let elements: Vec<zlup_ast::TypeExpr> = ty
+                .elements
+                .iter()
+                .map(|elem| {
+                    if elem.kind == "primitive" && elem.name.as_deref() == Some("bool") {
+                        zlup_ast::TypeExpr::Primitive(zlup_ast::PrimitiveType::UInt { bits: 1 })
+                    } else {
+                        transform_type(elem)
+                    }
+                })
+                .collect();
             zlup_ast::TypeExpr::Tuple(elements)
         }
         "named" => {
@@ -203,7 +220,10 @@ fn transform_block(stmts: &[Stmt]) -> Result<zlup_ast::Block, TransformError> {
     transform_block_with_ctx(stmts, &mut ctx)
 }
 
-fn transform_block_with_ctx(stmts: &[Stmt], ctx: &mut TransformContext) -> Result<zlup_ast::Block, TransformError> {
+fn transform_block_with_ctx(
+    stmts: &[Stmt],
+    ctx: &mut TransformContext,
+) -> Result<zlup_ast::Block, TransformError> {
     let mut statements = Vec::new();
 
     for stmt in stmts {
@@ -225,10 +245,16 @@ fn transform_stmt(stmt: &Stmt) -> Result<Vec<zlup_ast::Stmt>, TransformError> {
     transform_stmt_with_ctx(stmt, &mut ctx)
 }
 
-fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Vec<zlup_ast::Stmt>, TransformError> {
+fn transform_stmt_with_ctx(
+    stmt: &Stmt,
+    ctx: &mut TransformContext,
+) -> Result<Vec<zlup_ast::Stmt>, TransformError> {
     match stmt.kind {
         StmtKind::Qalloc => {
-            let name = stmt.name.as_ref().ok_or(TransformError::MissingField("name"))?;
+            let name = stmt
+                .name
+                .as_ref()
+                .ok_or(TransformError::MissingField("name"))?;
 
             // Extract the size value for tracking
             let size_value = stmt.size.as_ref().and_then(|s| {
@@ -242,15 +268,13 @@ fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Ve
             // Track the qalloc size and register variable using context methods
             ctx.register_qalloc(name, size_value.unwrap_or(1));
 
-            let size = stmt
-                .size
-                .as_ref()
-                .map(transform_expr)
-                .unwrap_or_else(|| zlup_ast::Expr::IntLit(zlup_ast::IntLit {
+            let size = stmt.size.as_ref().map(transform_expr).unwrap_or_else(|| {
+                zlup_ast::Expr::IntLit(zlup_ast::IntLit {
                     value: 1,
                     suffix: None,
                     location: None,
-                }));
+                })
+            });
 
             // Create a binding with qalloc(N) call as the value
             // In Zlup: `mut q := qalloc(N);`
@@ -329,12 +353,16 @@ fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Ve
                     } else {
                         // Multi-qubit register: mz([N]u1) q
                         zlup_ast::TypeExpr::Array(Box::new(zlup_ast::ArrayType {
-                            element: zlup_ast::TypeExpr::Primitive(zlup_ast::PrimitiveType::UInt { bits: 1 }),
-                            size: size.map(|n| zlup_ast::Expr::IntLit(zlup_ast::IntLit {
-                                value: n,
-                                suffix: None,
-                                location: None,
-                            })),
+                            element: zlup_ast::TypeExpr::Primitive(zlup_ast::PrimitiveType::UInt {
+                                bits: 1,
+                            }),
+                            size: size.map(|n| {
+                                zlup_ast::Expr::IntLit(zlup_ast::IntLit {
+                                    value: n,
+                                    suffix: None,
+                                    location: None,
+                                })
+                            }),
                             sentinel: None,
                         }))
                     };
@@ -371,7 +399,9 @@ fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Ve
                         location: None,
                     })),
                     zlup_ast::TypeExpr::Array(Box::new(zlup_ast::ArrayType {
-                        element: zlup_ast::TypeExpr::Primitive(zlup_ast::PrimitiveType::UInt { bits: 1 }),
+                        element: zlup_ast::TypeExpr::Primitive(zlup_ast::PrimitiveType::UInt {
+                            bits: 1,
+                        }),
                         size: Some(zlup_ast::Expr::IntLit(zlup_ast::IntLit {
                             value: n,
                             suffix: None,
@@ -412,7 +442,10 @@ fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Ve
         }
 
         StmtKind::For => {
-            let var = stmt.var.as_ref().ok_or(TransformError::MissingField("var"))?;
+            let var = stmt
+                .var
+                .as_ref()
+                .ok_or(TransformError::MissingField("var"))?;
             let range = stmt
                 .range
                 .as_ref()
@@ -528,7 +561,10 @@ fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Ve
             let else_body = if stmt.else_body.is_empty() {
                 None
             } else {
-                Some(zlup_ast::ElseBranch::Else(transform_block_with_ctx(&stmt.else_body, ctx)?))
+                Some(zlup_ast::ElseBranch::Else(transform_block_with_ctx(
+                    &stmt.else_body,
+                    ctx,
+                )?))
             };
 
             // In Guppy, measurement results (bool) are used directly as conditions.
@@ -575,7 +611,10 @@ fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Ve
             // by checking if ctx has seen this name before. If not seen, create a binding.
             // If seen, create an assignment.
             if target.kind == ExprKind::Ident {
-                let name = target.name.as_ref().ok_or(TransformError::MissingField("name"))?;
+                let name = target
+                    .name
+                    .as_ref()
+                    .ok_or(TransformError::MissingField("name"))?;
                 if ctx.is_declared(name) {
                     // Reassignment to existing variable
                     Ok(vec![zlup_ast::Stmt::Assign(zlup_ast::AssignStmt {
@@ -630,7 +669,10 @@ fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Ve
         }
 
         StmtKind::Binding => {
-            let name = stmt.name.as_ref().ok_or(TransformError::MissingField("name"))?;
+            let name = stmt
+                .name
+                .as_ref()
+                .ok_or(TransformError::MissingField("name"))?;
             let ty = stmt.ty.as_ref().map(transform_type);
             let value = stmt.value.as_ref().map(transform_expr);
 
@@ -654,7 +696,10 @@ fn transform_stmt_with_ctx(stmt: &Stmt, ctx: &mut TransformContext) -> Result<Ve
         })]),
 
         StmtKind::Result => {
-            let tag = stmt.tag.as_ref().ok_or(TransformError::MissingField("tag"))?;
+            let tag = stmt
+                .tag
+                .as_ref()
+                .ok_or(TransformError::MissingField("tag"))?;
             let value = stmt
                 .value
                 .as_ref()
@@ -704,11 +749,15 @@ fn transform_expr(expr: &Expr) -> zlup_ast::Expr {
                         value: *b,
                         location: None,
                     }),
-                    serde_json::Value::String(s) => zlup_ast::Expr::StringLit(zlup_ast::StringLit {
-                        value: s.clone(),
-                        location: None,
-                    }),
-                    serde_json::Value::Null => zlup_ast::Expr::Null(zlup_ast::NullLit { location: None }),
+                    serde_json::Value::String(s) => {
+                        zlup_ast::Expr::StringLit(zlup_ast::StringLit {
+                            value: s.clone(),
+                            location: None,
+                        })
+                    }
+                    serde_json::Value::Null => {
+                        zlup_ast::Expr::Null(zlup_ast::NullLit { location: None })
+                    }
                     _ => zlup_ast::Expr::Unit(zlup_ast::UnitLit { location: None }),
                 }
             } else {
@@ -957,7 +1006,10 @@ fn transform_binary_op(op: &str) -> Result<zlup_ast::BinaryOp, TransformError> {
         "bitxor" => Ok(zlup_ast::BinaryOp::BitXor),
         "shl" => Ok(zlup_ast::BinaryOp::Shl),
         "shr" => Ok(zlup_ast::BinaryOp::Shr),
-        _ => Err(TransformError::UnsupportedOp(format!("unknown binary operator: {}", op))),
+        _ => Err(TransformError::UnsupportedOp(format!(
+            "unknown binary operator: {}",
+            op
+        ))),
     }
 }
 
@@ -966,7 +1018,10 @@ fn transform_unary_op(op: &str) -> Result<zlup_ast::UnaryOp, TransformError> {
         "neg" => Ok(zlup_ast::UnaryOp::Neg),
         "not" => Ok(zlup_ast::UnaryOp::Not),
         "bitnot" => Ok(zlup_ast::UnaryOp::BitNot),
-        _ => Err(TransformError::UnsupportedOp(format!("unknown unary operator: {}", op))),
+        _ => Err(TransformError::UnsupportedOp(format!(
+            "unknown unary operator: {}",
+            op
+        ))),
     }
 }
 

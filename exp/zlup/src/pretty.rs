@@ -113,12 +113,16 @@ impl PrettyPrinter {
             TopLevelDecl::DeclareGate(g) => {
                 self.write(&format!("declare gate {}(", g.name));
                 for (i, p) in g.params.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.write(&p.name);
                 }
                 self.write(")(");
                 for (i, q) in g.qubits.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.write(&q.name);
                 }
                 self.write(");");
@@ -127,12 +131,16 @@ impl PrettyPrinter {
             TopLevelDecl::Gate(g) => {
                 self.write(&format!("gate {}(", g.name));
                 for (i, p) in g.params.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.write(&p.name);
                 }
                 self.write(")(");
                 for (i, q) in g.qubits.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.write(&q.name);
                 }
                 self.write(") ");
@@ -218,16 +226,17 @@ impl PrettyPrinter {
         // Check for Rust-style self parameter
         if param.name == "self"
             && let TypeExpr::Pointer(ptr) = &param.ty
-                && let TypeExpr::Named(path) = &ptr.pointee
-                    && path.segments == vec!["Self".to_string()] {
-                        // This is a self parameter - print as &self or &mut self
-                        if ptr.is_const {
-                            self.write("&self");
-                        } else {
-                            self.write("&mut self");
-                        }
-                        return;
-                    }
+            && let TypeExpr::Named(path) = &ptr.pointee
+            && path.segments == vec!["Self".to_string()]
+        {
+            // This is a self parameter - print as &self or &mut self
+            if ptr.is_const {
+                self.write("&self");
+            } else {
+                self.write("&mut self");
+            }
+            return;
+        }
 
         // Regular parameter
         if param.is_comptime {
@@ -1128,7 +1137,8 @@ impl PrettyPrinter {
                         self.write(", ");
                     }
                     // Check for shorthand: field name matches identifier value
-                    let is_shorthand = matches!(&field.value, Expr::Ident(ident) if ident.name == field.name);
+                    let is_shorthand =
+                        matches!(&field.value, Expr::Ident(ident) if ident.name == field.name);
                     if is_shorthand {
                         // Shorthand: just `name` instead of `name: name`
                         self.write(&field.name);

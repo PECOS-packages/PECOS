@@ -18,8 +18,13 @@ use pecos_core::Angle64;
 use pecos_engines::byte_message::ByteMessage;
 use pecos_engines::hybrid::builder::HybridEngineBuilder;
 use pecos_engines::quantum::StateVecEngine;
-use pecos_engines::{ClassicalControlEngine, ClassicalEngine, ControlEngine, Data, Engine, EngineStage, PecosError, Shot};
+use pecos_engines::{
+    ClassicalControlEngine, ClassicalEngine, ControlEngine, Data, Engine, EngineStage, PecosError,
+    Shot,
+};
 use pliron::{
+    attribute::AttrObj,
+    basic_block::BasicBlock,
     builtin::{
         attributes::IntegerAttr,
         op_interfaces::{
@@ -29,13 +34,11 @@ use pliron::{
         ops::{FuncOp, ModuleOp},
         types::{FunctionType, IntegerType, Signedness},
     },
-    attribute::AttrObj,
-    basic_block::BasicBlock,
     common_traits::Verify,
     context::{Context, Ptr},
     derive::{pliron_attr, pliron_op, pliron_type},
     linked_list::ContainsLinkedList,
-    op::{verify_op, Op},
+    op::{Op, verify_op},
     operation::Operation,
     printable::Printable,
     result::Result,
@@ -66,11 +69,17 @@ pub fn run_and_check(label: &str, msg: ByteMessage, shots: usize) {
         let o = out.outcomes().unwrap();
         assert_eq!(o.len(), 2, "expected 2 measurement outcomes");
         let combined = (o[1] << 1) | o[0]; // q1 q0
-        assert!(combined == 0 || combined == 3, "{label}: Bell must be 00 or 11, got {combined}");
+        assert!(
+            combined == 0 || combined == 3,
+            "{label}: Bell must be 00 or 11, got {combined}"
+        );
         saw0 |= combined == 0;
         saw3 |= combined == 3;
     }
-    assert!(saw0 && saw3, "{label}: expected both 00 and 11 over {shots} shots");
+    assert!(
+        saw0 && saw3,
+        "{label}: expected both 00 and 11 over {shots} shots"
+    );
     println!("[{label}] OK -- all {shots} shots in {{0,3}}, saw both 00 and 11");
 }
 
@@ -164,12 +173,22 @@ impl MeasurementRegistry {
 
 /// Store a fixed-point `Angle64` on an op as a `qec.angle` attribute.
 pub fn set_angle(ctx: &Context, op: Ptr<Operation>, angle: Angle64) {
-    op.deref_mut(ctx).attributes.0.insert(angle_attr::ANGLE.clone(), Box::new(Angle64Attr::from(angle)));
+    op.deref_mut(ctx).attributes.0.insert(
+        angle_attr::ANGLE.clone(),
+        Box::new(Angle64Attr::from(angle)),
+    );
 }
 pub fn get_angle(ctx: &Context, op: Ptr<Operation>) -> Angle64 {
     let o = op.deref(ctx);
-    let a: AttrObj = o.attributes.0.get(&*angle_attr::ANGLE).expect("angle attr").clone();
-    let aa = a.downcast::<Angle64Attr>().unwrap_or_else(|_| panic!("angle not Angle64Attr"));
+    let a: AttrObj = o
+        .attributes
+        .0
+        .get(&*angle_attr::ANGLE)
+        .expect("angle attr")
+        .clone();
+    let aa = a
+        .downcast::<Angle64Attr>()
+        .unwrap_or_else(|_| panic!("angle not Angle64Attr"));
     Angle64::from(*aa)
 }
 
@@ -178,7 +197,14 @@ pub struct QallocOp;
 impl QallocOp {
     pub fn new(ctx: &mut Context) -> Self {
         let a = alloc_ty(ctx);
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![a], vec![], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![a],
+            vec![],
+            vec![],
+            0,
+        );
         QallocOp { op }
     }
 }
@@ -188,16 +214,33 @@ pub struct SlotOp;
 impl SlotOp {
     pub fn new(ctx: &mut Context, alloc: Value, index: u64) -> Self {
         let r = qubitref_ty(ctx);
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![r], vec![alloc], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![r],
+            vec![alloc],
+            vec![],
+            0,
+        );
         let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
         let attr = IntegerAttr::new(i64_ty, APInt::from_u64(index, bw(64)));
-        op.deref_mut(ctx).attributes.0.insert(slot_attr::INDEX.clone(), Box::new(attr));
+        op.deref_mut(ctx)
+            .attributes
+            .0
+            .insert(slot_attr::INDEX.clone(), Box::new(attr));
         SlotOp { op }
     }
     pub fn index(&self, ctx: &Context) -> u64 {
         let op = self.get_operation().deref(ctx);
-        let attr: AttrObj = op.attributes.0.get(&*slot_attr::INDEX).expect("slot index attr").clone();
-        let int_attr = attr.downcast::<IntegerAttr>().unwrap_or_else(|_| panic!("not IntegerAttr"));
+        let attr: AttrObj = op
+            .attributes
+            .0
+            .get(&*slot_attr::INDEX)
+            .expect("slot index attr")
+            .clone();
+        let int_attr = attr
+            .downcast::<IntegerAttr>()
+            .unwrap_or_else(|_| panic!("not IntegerAttr"));
         Into::<APInt>::into(*int_attr).to_u64()
     }
 }
@@ -214,7 +257,14 @@ impl Verify for SlotOp {
 pub struct PrepareOp;
 impl PrepareOp {
     pub fn new(ctx: &mut Context, qref: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![qref], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![qref],
+            vec![],
+            0,
+        );
         PrepareOp { op }
     }
 }
@@ -231,7 +281,14 @@ impl Verify for PrepareOp {
 pub struct HOp;
 impl HOp {
     pub fn new(ctx: &mut Context, qref: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![qref], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![qref],
+            vec![],
+            0,
+        );
         HOp { op }
     }
 }
@@ -248,7 +305,14 @@ impl Verify for HOp {
 pub struct CxOp;
 impl CxOp {
     pub fn new(ctx: &mut Context, ctrl: Value, tgt: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![ctrl, tgt], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![ctrl, tgt],
+            vec![],
+            0,
+        );
         CxOp { op }
     }
 }
@@ -267,7 +331,14 @@ impl Verify for CxOp {
 pub struct CzOp;
 impl CzOp {
     pub fn new(ctx: &mut Context, a: Value, b: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![a, b], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![a, b],
+            vec![],
+            0,
+        );
         CzOp { op }
     }
 }
@@ -286,7 +357,14 @@ impl Verify for CzOp {
 pub struct SwapOp;
 impl SwapOp {
     pub fn new(ctx: &mut Context, a: Value, b: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![a, b], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![a, b],
+            vec![],
+            0,
+        );
         SwapOp { op }
     }
 }
@@ -309,7 +387,14 @@ pub struct MeasureOp;
 impl MeasureOp {
     pub fn new(ctx: &mut Context, qref: Value) -> Self {
         let i1 = IntegerType::get(ctx, 1, Signedness::Signless);
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![i1.into()], vec![qref], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![i1.into()],
+            vec![qref],
+            vec![],
+            0,
+        );
         MeasureOp { op }
     }
 }
@@ -329,16 +414,28 @@ impl Verify for MeasureOp {
 pub struct RecordOp;
 impl RecordOp {
     pub fn new(ctx: &mut Context, result: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![result], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![result],
+            vec![],
+            0,
+        );
         RecordOp { op }
     }
 }
 impl Verify for RecordOp {
     fn verify(&self, ctx: &Context) -> Result<()> {
         let opnd = self.get_operation().deref(ctx).get_operand(0);
-        let records_a_measure = opnd.defining_op().is_some_and(|o| Operation::get_op::<MeasureOp>(o, ctx).is_some());
+        let records_a_measure = opnd
+            .defining_op()
+            .is_some_and(|o| Operation::get_op::<MeasureOp>(o, ctx).is_some());
         if !records_a_measure {
-            return verify_err!(self.loc(ctx), "qec.record operand must be a qec.measure result");
+            return verify_err!(
+                self.loc(ctx),
+                "qec.record operand must be a qec.measure result"
+            );
         }
         // Region scope: the recorded measurement must be visible from this record op -- i.e. its
         // defining block must be the record's block or an enclosing one. Recording a measurement
@@ -354,7 +451,10 @@ impl Verify for RecordOp {
             }
         };
         if !visible {
-            return verify_err!(self.loc(ctx), "qec.record operand is defined in a non-enclosing region (cross-region escape needs yield)");
+            return verify_err!(
+                self.loc(ctx),
+                "qec.record operand is defined in a non-enclosing region (cross-region escape needs yield)"
+            );
         }
         Ok(())
     }
@@ -366,7 +466,14 @@ impl Verify for RecordOp {
 pub struct CondXOp;
 impl CondXOp {
     pub fn new(ctx: &mut Context, cond: Value, target: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![cond, target], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![cond, target],
+            vec![],
+            0,
+        );
         CondXOp { op }
     }
 }
@@ -376,9 +483,13 @@ impl Verify for CondXOp {
         // We inspect the operand's actual type read-only (TypePtr::from_ptr + width) rather than
         // construct the expected i1 -- constructing a parameterized type needs &mut Context.
         let cond_ty = self.get_operation().deref(ctx).get_operand(0).get_type(ctx);
-        let cond_is_i1 = TypePtr::<IntegerType>::from_ptr(cond_ty, ctx).is_ok_and(|tp| tp.deref(ctx).width() == 1);
+        let cond_is_i1 = TypePtr::<IntegerType>::from_ptr(cond_ty, ctx)
+            .is_ok_and(|tp| tp.deref(ctx).width() == 1);
         if !cond_is_i1 {
-            return verify_err!(self.loc(ctx), "qec.cond_x condition (operand 0) must be an i1 measurement result");
+            return verify_err!(
+                self.loc(ctx),
+                "qec.cond_x condition (operand 0) must be an i1 measurement result"
+            );
         }
         if self.get_operation().deref(ctx).get_operand(1).get_type(ctx) != qubitref_ty(ctx) {
             return verify_err!(self.loc(ctx), "qec.cond_x target must be a qec.qubitref");
@@ -392,7 +503,14 @@ impl Verify for CondXOp {
 pub struct XOp;
 impl XOp {
     pub fn new(ctx: &mut Context, qref: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![qref], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![qref],
+            vec![],
+            0,
+        );
         XOp { op }
     }
 }
@@ -411,7 +529,14 @@ impl Verify for XOp {
 pub struct IfOp;
 impl IfOp {
     pub fn new(ctx: &mut Context, cond: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![cond], vec![], 2);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![cond],
+            vec![],
+            2,
+        );
         IfOp { op }
     }
     /// Create + attach a fresh single block for region `idx` and return it (for building).
@@ -427,9 +552,13 @@ impl Verify for IfOp {
         // the condition (operand 0) must be an i1 measurement result (region count is enforced by
         // NRegionsInterface<2>); inspect the operand's type read-only, do not construct it.
         let cond_ty = self.get_operation().deref(ctx).get_operand(0).get_type(ctx);
-        let is_i1 = TypePtr::<IntegerType>::from_ptr(cond_ty, ctx).is_ok_and(|tp| tp.deref(ctx).width() == 1);
+        let is_i1 = TypePtr::<IntegerType>::from_ptr(cond_ty, ctx)
+            .is_ok_and(|tp| tp.deref(ctx).width() == 1);
         if !is_i1 {
-            return verify_err!(self.loc(ctx), "qec.if condition (operand 0) must be an i1 measurement result");
+            return verify_err!(
+                self.loc(ctx),
+                "qec.if condition (operand 0) must be an i1 measurement result"
+            );
         }
         Ok(())
     }
@@ -440,7 +569,14 @@ impl Verify for IfOp {
 pub struct RzOp;
 impl RzOp {
     pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![q],
+            vec![],
+            0,
+        );
         set_angle(ctx, op, angle);
         RzOp { op }
     }
@@ -457,7 +593,14 @@ impl Verify for RzOp {
 pub struct RxOp;
 impl RxOp {
     pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![q],
+            vec![],
+            0,
+        );
         set_angle(ctx, op, angle);
         RxOp { op }
     }
@@ -474,7 +617,14 @@ impl Verify for RxOp {
 pub struct RyOp;
 impl RyOp {
     pub fn new(ctx: &mut Context, q: Value, angle: Angle64) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![q], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![q],
+            vec![],
+            0,
+        );
         set_angle(ctx, op, angle);
         RyOp { op }
     }
@@ -492,7 +642,14 @@ impl Verify for RyOp {
 pub struct SzzOp;
 impl SzzOp {
     pub fn new(ctx: &mut Context, a: Value, b: Value) -> Self {
-        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![a, b], vec![], 0);
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![a, b],
+            vec![],
+            0,
+        );
         SzzOp { op }
     }
 }
@@ -518,7 +675,11 @@ pub fn build_bell_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>) {
     let bb = func.get_entry_block(ctx);
 
     macro_rules! push {
-        ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+        ($op:expr) => {{
+            let o = $op;
+            o.get_operation().insert_at_back(bb, ctx);
+            o
+        }};
     }
 
     let q = push!(QallocOp::new(ctx));
@@ -651,7 +812,10 @@ impl ControlEngine for PlironBellEngine {
     type Output = Shot;
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
-    fn start(&mut self, _input: ()) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
+    fn start(
+        &mut self,
+        _input: (),
+    ) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
         self.sent = false;
         self.outcomes.clear();
         let cmds = self.generate_commands()?;
@@ -661,7 +825,10 @@ impl ControlEngine for PlironBellEngine {
             Ok(EngineStage::NeedsProcessing(cmds))
         }
     }
-    fn continue_processing(&mut self, measurements: ByteMessage) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
+    fn continue_processing(
+        &mut self,
+        measurements: ByteMessage,
+    ) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
         self.handle_measurements(measurements)?;
         // Bell is a single batch with no classical feedback: once the (only) batch's measurements
         // are in, we are done. (A general engine would loop on generate_commands + a `finished`
@@ -677,10 +844,16 @@ impl ControlEngine for PlironBellEngine {
 pub fn run_milestone_2() {
     let ctx = &mut Context::new();
     let (module, bb) = build_bell_ir(ctx);
-    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-2 verify] FAILED: {}", e.disp(ctx)));
+    verify_op(&module, ctx)
+        .unwrap_or_else(|e| panic!("[milestone-2 verify] FAILED: {}", e.disp(ctx)));
     let msg = emit_bytemessage(ctx, bb); // pliron-emitted Bell ByteMessage
 
-    let mut engine = PlironBellEngine { msg, num_qubits: 2, sent: false, outcomes: Vec::new() };
+    let mut engine = PlironBellEngine {
+        msg,
+        num_qubits: 2,
+        sent: false,
+        outcomes: Vec::new(),
+    };
     let mut qsys = StateVecEngine::new(2);
 
     // Drive the ControlEngine protocol by hand (start -> {process, continue_processing} loop ->
@@ -699,13 +872,25 @@ pub fn run_milestone_2() {
                 }
             }
         };
-        let v = shot.data.get("c").and_then(Data::as_u32).expect("register c");
-        assert!(v == 0 || v == 3, "milestone-2: Bell via ClassicalEngine must be 00 or 11, got {v}");
+        let v = shot
+            .data
+            .get("c")
+            .and_then(Data::as_u32)
+            .expect("register c");
+        assert!(
+            v == 0 || v == 3,
+            "milestone-2: Bell via ClassicalEngine must be 00 or 11, got {v}"
+        );
         saw0 |= v == 0;
         saw3 |= v == 3;
     }
-    assert!(saw0 && saw3, "milestone-2: expected both 00 and 11 over 200 shots");
-    println!("[milestone-2 pliron ClassicalControlEngine -> StateVecEngine] OK -- 200 shots in {{0,3}}, saw both (register \"c\")");
+    assert!(
+        saw0 && saw3,
+        "milestone-2: expected both 00 and 11 over 200 shots"
+    );
+    println!(
+        "[milestone-2 pliron ClassicalControlEngine -> StateVecEngine] OK -- 200 shots in {{0,3}}, saw both (register \"c\")"
+    );
 }
 
 // ===================== Milestone 3: parse a real bell.ll into pliron qec IR =====================
@@ -713,20 +898,30 @@ pub fn run_milestone_2() {
 /// Structured rejection for anything outside the covered QIS-LLVM subset (see the strangler scope
 /// doc) -- used instead of silently dropping unrecognized calls or panicking on malformed structure.
 fn unsupported_qis(msg: impl Into<String>) -> PecosError {
-    PecosError::Feature(format!("pecos-phir-pliron: unsupported QIS-LLVM-IR -- {}", msg.into()))
+    PecosError::Feature(format!(
+        "pecos-phir-pliron: unsupported QIS-LLVM-IR -- {}",
+        msg.into()
+    ))
 }
 
 /// Minimal QIS-LLVM-IR -> pliron `qec` IR parser for the Bell-style straight-line subset. Recognizes
 /// `__quantum__qis__{h,cx,m}__body` + `__quantum__rt__result_record_output`; any other `__quantum__`
 /// call (or a malformed operand list) is rejected with a structured error rather than dropped.
-pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(ModuleOp, Ptr<BasicBlock>, MeasurementRegistry), PecosError> {
+pub fn parse_bell_ll(
+    ctx: &mut Context,
+    src: &str,
+) -> std::result::Result<(ModuleOp, Ptr<BasicBlock>, MeasurementRegistry), PecosError> {
     validate_straight_line_qis_shape(src)?;
 
     fn i64_args(line: &str) -> Vec<usize> {
         match (line.find('('), line.rfind(')')) {
             (Some(l), Some(r)) if r > l => line[l + 1..r]
                 .split(',')
-                .filter_map(|t| t.trim().strip_prefix("i64 ").and_then(|n| n.trim().parse::<usize>().ok()))
+                .filter_map(|t| {
+                    t.trim()
+                        .strip_prefix("i64 ")
+                        .and_then(|n| n.trim().parse::<usize>().ok())
+                })
                 .collect(),
             _ => Vec::new(),
         }
@@ -752,11 +947,15 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modul
         }
         let a = i64_args(l);
         if l.contains("__quantum__qis__h__body") {
-            let q = *a.first().ok_or_else(|| unsupported_qis("h__body missing qubit operand"))?;
+            let q = *a
+                .first()
+                .ok_or_else(|| unsupported_qis("h__body missing qubit operand"))?;
             qubits.insert(q);
             parsed.push(("h", a));
         } else if l.contains("__quantum__qis__x__body") {
-            let q = *a.first().ok_or_else(|| unsupported_qis("x__body missing qubit operand"))?;
+            let q = *a
+                .first()
+                .ok_or_else(|| unsupported_qis("x__body missing qubit operand"))?;
             qubits.insert(q);
             parsed.push(("x", a));
         } else if l.contains("__quantum__qis__cx__body") {
@@ -788,11 +987,15 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modul
             parsed.push(("m", a));
         } else if l.contains("__quantum__rt__result_record_output") {
             if a.is_empty() {
-                return Err(unsupported_qis("result_record_output missing result_id operand"));
+                return Err(unsupported_qis(
+                    "result_record_output missing result_id operand",
+                ));
             }
             parsed.push(("record", a));
         } else if l.contains("__quantum__") {
-            return Err(unsupported_qis(format!("operation not in the covered subset: {l}")));
+            return Err(unsupported_qis(format!(
+                "operation not in the covered subset: {l}"
+            )));
         }
     }
     // pass 2: build the pliron qec IR + the measurement-SSA registry
@@ -802,7 +1005,11 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modul
     module.append_operation(ctx, func.get_operation(), 0);
     let bb = func.get_entry_block(ctx);
     macro_rules! push {
-        ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+        ($op:expr) => {{
+            let o = $op;
+            o.get_operation().insert_at_back(bb, ctx);
+            o
+        }};
     }
 
     let q = push!(QallocOp::new(ctx));
@@ -838,13 +1045,22 @@ pub fn parse_bell_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modul
                 let v = m.get_result(ctx);
                 let rid = a[1] as u64;
                 measured.insert(rid, v);
-                reg.record(v, MeasurementInfo { qubit: a[0], basis: Basis::Z, export_label: rid });
+                reg.record(
+                    v,
+                    MeasurementInfo {
+                        qubit: a[0],
+                        basis: Basis::Z,
+                        export_label: rid,
+                    },
+                );
             }
             "record" => {
                 let rid = a[0] as u64;
-                let v = *measured
-                    .get(&rid)
-                    .ok_or_else(|| unsupported_qis(format!("result_record_output references unknown result-id {rid}")))?;
+                let v = *measured.get(&rid).ok_or_else(|| {
+                    unsupported_qis(format!(
+                        "result_record_output references unknown result-id {rid}"
+                    ))
+                })?;
                 push!(RecordOp::new(ctx, v));
             }
             _ => {}
@@ -860,7 +1076,8 @@ pub fn run_milestone_3() {
     let (module, bb, _reg) = parse_bell_ll(ctx, src).expect("milestone-3: parse bell.ll");
     println!("=== bell.ll parsed into pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
-    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-3 verify] FAILED: {}", e.disp(ctx)));
+    verify_op(&module, ctx)
+        .unwrap_or_else(|e| panic!("[milestone-3 verify] FAILED: {}", e.disp(ctx)));
     let msg = emit_bytemessage(ctx, bb);
     run_and_check("milestone-3 bell.ll -> pliron qec -> sim", msg, 200);
 }
@@ -897,7 +1114,12 @@ pub struct AdaptivePlan {
 /// Build the `Cmd::Mz` for a `qec.measure`, asserting the registry's qubit agrees with the IR slot
 /// index. The registry is a side-table, so `verify` can't catch a mismatch; this fails loud at
 /// plan-build time if the registry and the IR ever drift apart.
-fn measure_to_mz(ctx: &Context, m: MeasureOp, qubit_of: &HashMap<Value, usize>, reg: &MeasurementRegistry) -> Cmd {
+fn measure_to_mz(
+    ctx: &Context,
+    m: MeasureOp,
+    qubit_of: &HashMap<Value, usize>,
+    reg: &MeasurementRegistry,
+) -> Cmd {
     let operand = m.get_operation().deref(ctx).get_operand(0);
     let slot_qubit = qubit_of[&operand];
     let info = reg.get(m.get_result(ctx));
@@ -912,7 +1134,11 @@ fn measure_to_mz(ctx: &Context, m: MeasureOp, qubit_of: &HashMap<Value, usize>, 
 /// Walk a `qec` block once and split it into the two-batch adaptive plan at the `cond_x` boundary.
 /// Gate qubits come from the explicit slot-index map; measurement metadata (qubit + export label)
 /// comes from the `MeasurementRegistry`, keyed by the measure op's SSA value.
-pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegistry) -> AdaptivePlan {
+pub fn plan_from_ir(
+    ctx: &Context,
+    block: Ptr<BasicBlock>,
+    reg: &MeasurementRegistry,
+) -> AdaptivePlan {
     let mut qubit_of: HashMap<Value, usize> = HashMap::new();
     let (mut batch1, mut batch2): (Vec<Cmd>, Vec<Cmd>) = (Vec::new(), Vec::new());
     let mut after_cond = false;
@@ -935,10 +1161,19 @@ pub fn plan_from_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegi
             cond_target = qubit_of[&c.get_operation().deref(ctx).get_operand(1)];
             after_cond = true;
         } else if let Some(cmd) = gate_op_to_cmd(ctx, op, &qubit_of) {
-            if after_cond { batch2.push(cmd) } else { batch1.push(cmd) }
+            if after_cond {
+                batch2.push(cmd)
+            } else {
+                batch1.push(cmd)
+            }
         }
     }
-    AdaptivePlan { batch1, cond_outcome_idx, cond_target, batch2 }
+    AdaptivePlan {
+        batch1,
+        cond_outcome_idx,
+        cond_target,
+        batch2,
+    }
 }
 
 /// Number of qubits a Cmd stream touches = max referenced qubit index + 1 (0 if it touches none).
@@ -948,7 +1183,13 @@ pub fn cmds_num_qubits(batches: &[&[Cmd]]) -> usize {
     for cmds in batches {
         for c in *cmds {
             let hi = match *c {
-                Cmd::Pz(q) | Cmd::H(q) | Cmd::X(q) | Cmd::Rz(q, _) | Cmd::Rx(q, _) | Cmd::Ry(q, _) | Cmd::Mz(q, _) => q,
+                Cmd::Pz(q)
+                | Cmd::H(q)
+                | Cmd::X(q)
+                | Cmd::Rz(q, _)
+                | Cmd::Rx(q, _)
+                | Cmd::Ry(q, _)
+                | Cmd::Mz(q, _) => q,
                 Cmd::Szz(a, b) | Cmd::Cx(a, b) | Cmd::Cz(a, b) | Cmd::Swap(a, b) => a.max(b),
             };
             n = n.max(hi + 1);
@@ -960,17 +1201,39 @@ pub fn cmds_num_qubits(batches: &[&[Cmd]]) -> usize {
 pub fn emit_cmds(b: &mut pecos_engines::byte_message::ByteMessageBuilder, cmds: &[Cmd]) {
     for c in cmds {
         match *c {
-            Cmd::Pz(q) => { b.pz(&[q]); }
-            Cmd::H(q) => { b.h(&[q]); }
-            Cmd::X(q) => { b.x(&[q]); }
-            Cmd::Rz(q, a) => { b.rz(a, &[q]); }
-            Cmd::Rx(q, a) => { b.rx(a, &[q]); }
-            Cmd::Ry(q, a) => { b.ry(a, &[q]); }
-            Cmd::Szz(a, c0) => { b.szz(&[(a, c0)]); }
-            Cmd::Cx(c0, t) => { b.cx(&[(c0, t)]); }
-            Cmd::Cz(a, c0) => { b.cz(&[(a, c0)]); }
-            Cmd::Swap(a, c0) => { b.swap(&[(a, c0)]); }
-            Cmd::Mz(q, _rid) => { b.mz(&[q]); } // result-id is bookkeeping, not a simulator op
+            Cmd::Pz(q) => {
+                b.pz(&[q]);
+            }
+            Cmd::H(q) => {
+                b.h(&[q]);
+            }
+            Cmd::X(q) => {
+                b.x(&[q]);
+            }
+            Cmd::Rz(q, a) => {
+                b.rz(a, &[q]);
+            }
+            Cmd::Rx(q, a) => {
+                b.rx(a, &[q]);
+            }
+            Cmd::Ry(q, a) => {
+                b.ry(a, &[q]);
+            }
+            Cmd::Szz(a, c0) => {
+                b.szz(&[(a, c0)]);
+            }
+            Cmd::Cx(c0, t) => {
+                b.cx(&[(c0, t)]);
+            }
+            Cmd::Cz(a, c0) => {
+                b.cz(&[(a, c0)]);
+            }
+            Cmd::Swap(a, c0) => {
+                b.swap(&[(a, c0)]);
+            }
+            Cmd::Mz(q, _rid) => {
+                b.mz(&[q]);
+            } // result-id is bookkeeping, not a simulator op
         }
     }
 }
@@ -1029,7 +1292,11 @@ impl ClassicalEngine for PlironAdaptiveEngine {
     }
     fn handle_measurements(&mut self, m: ByteMessage) -> std::result::Result<(), PecosError> {
         let o = m.outcomes()?;
-        if self.stage == 1 { self.b1 = o } else { self.b2 = o }
+        if self.stage == 1 {
+            self.b1 = o
+        } else {
+            self.b2 = o
+        }
         Ok(())
     }
     fn get_results(&self) -> std::result::Result<Shot, PecosError> {
@@ -1064,7 +1331,10 @@ impl ControlEngine for PlironAdaptiveEngine {
         self.stage = 1;
         Ok(EngineStage::NeedsProcessing(self.batch1_msg()))
     }
-    fn continue_processing(&mut self, meas: ByteMessage) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
+    fn continue_processing(
+        &mut self,
+        meas: ByteMessage,
+    ) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
         if self.stage == 1 {
             self.b1 = meas.outcomes()?;
             self.stage = 2;
@@ -1086,7 +1356,11 @@ pub fn build_adaptive_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>, Measu
     module.append_operation(ctx, func.get_operation(), 0);
     let bb = func.get_entry_block(ctx);
     macro_rules! push {
-        ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+        ($op:expr) => {{
+            let o = $op;
+            o.get_operation().insert_at_back(bb, ctx);
+            o
+        }};
     }
     let q = push!(QallocOp::new(ctx));
     let qv = q.get_result(ctx);
@@ -1100,10 +1374,24 @@ pub fn build_adaptive_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>, Measu
     let mut reg = MeasurementRegistry::default();
     let m0 = push!(MeasureOp::new(ctx, s0v)); // mid measure (conditioning)
     let m0v = m0.get_result(ctx);
-    reg.record(m0v, MeasurementInfo { qubit: 0, basis: Basis::Z, export_label: 0 });
+    reg.record(
+        m0v,
+        MeasurementInfo {
+            qubit: 0,
+            basis: Basis::Z,
+            export_label: 0,
+        },
+    );
     push!(CondXOp::new(ctx, m0v, s1v)); // X q1 iff m0 == 1
     let m1 = push!(MeasureOp::new(ctx, s1v)); // final measure
-    reg.record(m1.get_result(ctx), MeasurementInfo { qubit: 1, basis: Basis::Z, export_label: 1 });
+    reg.record(
+        m1.get_result(ctx),
+        MeasurementInfo {
+            qubit: 1,
+            basis: Basis::Z,
+            export_label: 1,
+        },
+    );
     push!(EndOp::new(ctx));
     (module, bb, reg)
 }
@@ -1113,9 +1401,15 @@ pub fn run_milestone_4() {
     let (module, bb, reg) = build_adaptive_ir(ctx);
     println!("=== adaptive (mid-measure -> cond_x -> final) pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
-    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-4 verify] FAILED: {}", e.disp(ctx)));
+    verify_op(&module, ctx)
+        .unwrap_or_else(|e| panic!("[milestone-4 verify] FAILED: {}", e.disp(ctx)));
     let plan = plan_from_ir(ctx, bb, &reg);
-    let engine = PlironAdaptiveEngine { plan, stage: 0, b1: Vec::new(), b2: Vec::new() };
+    let engine = PlironAdaptiveEngine {
+        plan,
+        stage: 0,
+        b1: Vec::new(),
+        b2: Vec::new(),
+    };
 
     // Drive through the REAL HybridEngine this time (closes the "wrapper unrun" gap from round 3).
     let mut hybrid = HybridEngineBuilder::new()
@@ -1127,7 +1421,11 @@ pub fn run_milestone_4() {
     for _ in 0..200 {
         let shot = hybrid.run_shot().unwrap();
         let mid = shot.data.get("mid").and_then(Data::as_u32).expect("mid");
-        let fin = shot.data.get("final").and_then(Data::as_u32).expect("final");
+        let fin = shot
+            .data
+            .get("final")
+            .and_then(Data::as_u32)
+            .expect("final");
         if fin != mid {
             all_eq = false;
         }
@@ -1135,9 +1433,17 @@ pub fn run_milestone_4() {
         saw_mid1 |= mid == 1;
         Engine::reset(&mut hybrid).unwrap();
     }
-    assert!(all_eq, "milestone-4: final must equal mid in every shot (measurement-conditioned X feedback)");
-    assert!(saw_mid0 && saw_mid1, "milestone-4: expected both mid=0 and mid=1 over 200 shots");
-    println!("[milestone-4 adaptive multi-batch via HybridEngine] OK -- final==mid in all 200 shots, saw mid 0 and 1");
+    assert!(
+        all_eq,
+        "milestone-4: final must equal mid in every shot (measurement-conditioned X feedback)"
+    );
+    assert!(
+        saw_mid0 && saw_mid1,
+        "milestone-4: expected both mid=0 and mid=1 over 200 shots"
+    );
+    println!(
+        "[milestone-4 adaptive multi-batch via HybridEngine] OK -- final==mid in all 200 shots, saw mid 0 and 1"
+    );
 }
 
 // ===================== Milestone 5: region-based conditional control flow (qec.if) =====================
@@ -1151,7 +1457,11 @@ pub fn run_milestone_4() {
 /// `qec.slot`/`qec.if`/`qec.record`/`qec.qalloc`/`qec.end`/`qec.measure`). Shared by every plan
 /// walker so none of them can silently drop a gate another handles (the round-7 drift bug).
 /// Measurement is deliberately excluded -- it needs the registry + per-walker bookkeeping.
-fn gate_op_to_cmd(ctx: &Context, op: Ptr<Operation>, qubit_of: &HashMap<Value, usize>) -> Option<Cmd> {
+fn gate_op_to_cmd(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    qubit_of: &HashMap<Value, usize>,
+) -> Option<Cmd> {
     let q = |i: usize, o: Ptr<Operation>| qubit_of[&o.deref(ctx).get_operand(i)];
     if let Some(p) = Operation::get_op::<PrepareOp>(op, ctx) {
         Some(Cmd::Pz(q(0, p.get_operation())))
@@ -1164,19 +1474,37 @@ fn gate_op_to_cmd(ctx: &Context, op: Ptr<Operation>, qubit_of: &HashMap<Value, u
     } else if let Some(cz) = Operation::get_op::<CzOp>(op, ctx) {
         Some(Cmd::Cz(q(0, cz.get_operation()), q(1, cz.get_operation())))
     } else if let Some(sw) = Operation::get_op::<SwapOp>(op, ctx) {
-        Some(Cmd::Swap(q(0, sw.get_operation()), q(1, sw.get_operation())))
+        Some(Cmd::Swap(
+            q(0, sw.get_operation()),
+            q(1, sw.get_operation()),
+        ))
     } else if let Some(r) = Operation::get_op::<RzOp>(op, ctx) {
-        Some(Cmd::Rz(q(0, r.get_operation()), get_angle(ctx, r.get_operation())))
+        Some(Cmd::Rz(
+            q(0, r.get_operation()),
+            get_angle(ctx, r.get_operation()),
+        ))
     } else if let Some(r) = Operation::get_op::<RxOp>(op, ctx) {
-        Some(Cmd::Rx(q(0, r.get_operation()), get_angle(ctx, r.get_operation())))
+        Some(Cmd::Rx(
+            q(0, r.get_operation()),
+            get_angle(ctx, r.get_operation()),
+        ))
     } else if let Some(r) = Operation::get_op::<RyOp>(op, ctx) {
-        Some(Cmd::Ry(q(0, r.get_operation()), get_angle(ctx, r.get_operation())))
+        Some(Cmd::Ry(
+            q(0, r.get_operation()),
+            get_angle(ctx, r.get_operation()),
+        ))
     } else {
-        Operation::get_op::<SzzOp>(op, ctx).map(|z| Cmd::Szz(q(0, z.get_operation()), q(1, z.get_operation())))
+        Operation::get_op::<SzzOp>(op, ctx)
+            .map(|z| Cmd::Szz(q(0, z.get_operation()), q(1, z.get_operation())))
     }
 }
 
-pub fn block_to_cmds(ctx: &Context, block: Ptr<BasicBlock>, qubit_of: &HashMap<Value, usize>, reg: &MeasurementRegistry) -> Vec<Cmd> {
+pub fn block_to_cmds(
+    ctx: &Context,
+    block: Ptr<BasicBlock>,
+    qubit_of: &HashMap<Value, usize>,
+    reg: &MeasurementRegistry,
+) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     for op in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
         if let Some(cmd) = gate_op_to_cmd(ctx, op, qubit_of) {
@@ -1201,7 +1529,8 @@ pub struct IfPlan {
 /// then/else command lists. Measurement metadata + export order come from the registry.
 pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementRegistry) -> IfPlan {
     let mut qubit_of: HashMap<Value, usize> = HashMap::new();
-    let (mut batch1, mut post, mut then_cmds, mut else_cmds) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut batch1, mut post, mut then_cmds, mut else_cmds) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut after_if = false;
     let mut mz_b1 = 0usize;
     let mut cond_outcome_idx = 0usize;
@@ -1223,7 +1552,11 @@ pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementR
             else_cmds = block_to_cmds(ctx, ifop.get_body(ctx, 1), &qubit_of, reg);
             after_if = true;
         } else if let Some(cmd) = gate_op_to_cmd(ctx, op, &qubit_of) {
-            if after_if { post.push(cmd) } else { batch1.push(cmd) }
+            if after_if {
+                post.push(cmd)
+            } else {
+                batch1.push(cmd)
+            }
         } else if let Some(rec) = Operation::get_op::<RecordOp>(op, ctx) {
             // export order = textual order of qec.record; resolve the recorded measurement-SSA value
             // to its export label via the registry (the value is the identity).
@@ -1231,7 +1564,14 @@ pub fn plan_from_if_ir(ctx: &Context, block: Ptr<BasicBlock>, reg: &MeasurementR
             export.push(reg.get(recorded).export_label);
         }
     }
-    IfPlan { batch1, cond_outcome_idx, then_cmds, else_cmds, post, export }
+    IfPlan {
+        batch1,
+        cond_outcome_idx,
+        then_cmds,
+        else_cmds,
+        post,
+        export,
+    }
 }
 
 #[derive(Clone)]
@@ -1253,7 +1593,11 @@ impl PlironIfEngine {
         b.build()
     }
     fn taken_cmds(&self) -> &[Cmd] {
-        if self.b1.get(self.cond_outcome_idx).copied() == Some(1) { &self.then_cmds } else { &self.else_cmds }
+        if self.b1.get(self.cond_outcome_idx).copied() == Some(1) {
+            &self.then_cmds
+        } else {
+            &self.else_cmds
+        }
     }
     fn b2_msg(&self) -> ByteMessage {
         let mut b = ByteMessage::quantum_operations_builder();
@@ -1286,19 +1630,35 @@ impl PlironIfEngine {
 impl Engine for PlironIfEngine {
     type Input = ();
     type Output = Shot;
-    fn process(&mut self, _i: ()) -> std::result::Result<Shot, PecosError> { self.get_results() }
-    fn reset(&mut self) -> std::result::Result<(), PecosError> { self.stage = 0; self.b1.clear(); self.b2.clear(); Ok(()) }
+    fn process(&mut self, _i: ()) -> std::result::Result<Shot, PecosError> {
+        self.get_results()
+    }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> {
+        self.stage = 0;
+        self.b1.clear();
+        self.b2.clear();
+        Ok(())
+    }
 }
 impl ClassicalEngine for PlironIfEngine {
     fn num_qubits(&self) -> usize {
         cmds_num_qubits(&[&self.batch1, &self.then_cmds, &self.else_cmds, &self.post])
     }
     fn generate_commands(&mut self) -> std::result::Result<ByteMessage, PecosError> {
-        if self.stage == 0 { self.stage = 1; Ok(self.b1_msg()) } else { Ok(ByteMessage::create_empty()) }
+        if self.stage == 0 {
+            self.stage = 1;
+            Ok(self.b1_msg())
+        } else {
+            Ok(ByteMessage::create_empty())
+        }
     }
     fn handle_measurements(&mut self, m: ByteMessage) -> std::result::Result<(), PecosError> {
         let o = m.outcomes()?;
-        if self.stage == 1 { self.b1 = o } else { self.b2 = o }
+        if self.stage == 1 {
+            self.b1 = o
+        } else {
+            self.b2 = o
+        }
         Ok(())
     }
     fn get_results(&self) -> std::result::Result<Shot, PecosError> {
@@ -1310,10 +1670,18 @@ impl ClassicalEngine for PlironIfEngine {
         }
         Ok(s)
     }
-    fn compile(&self) -> std::result::Result<(), PecosError> { Ok(()) }
-    fn reset(&mut self) -> std::result::Result<(), PecosError> { Engine::reset(self) }
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    fn compile(&self) -> std::result::Result<(), PecosError> {
+        Ok(())
+    }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> {
+        Engine::reset(self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 impl ControlEngine for PlironIfEngine {
     type Input = ();
@@ -1326,7 +1694,10 @@ impl ControlEngine for PlironIfEngine {
         self.b2.clear();
         Ok(EngineStage::NeedsProcessing(self.b1_msg()))
     }
-    fn continue_processing(&mut self, meas: ByteMessage) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
+    fn continue_processing(
+        &mut self,
+        meas: ByteMessage,
+    ) -> std::result::Result<EngineStage<ByteMessage, Shot>, PecosError> {
         if self.stage == 1 {
             self.b1 = meas.outcomes()?;
             self.stage = 2;
@@ -1336,7 +1707,9 @@ impl ControlEngine for PlironIfEngine {
             Ok(EngineStage::Complete(self.get_results()?))
         }
     }
-    fn reset(&mut self) -> std::result::Result<(), PecosError> { Engine::reset(self) }
+    fn reset(&mut self) -> std::result::Result<(), PecosError> {
+        Engine::reset(self)
+    }
 }
 
 pub fn build_if_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>, MeasurementRegistry) {
@@ -1346,7 +1719,11 @@ pub fn build_if_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>, Measurement
     module.append_operation(ctx, func.get_operation(), 0);
     let bb = func.get_entry_block(ctx);
     macro_rules! push {
-        ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+        ($op:expr) => {{
+            let o = $op;
+            o.get_operation().insert_at_back(bb, ctx);
+            o
+        }};
     }
     let q = push!(QallocOp::new(ctx));
     let qv = q.get_result(ctx);
@@ -1360,14 +1737,30 @@ pub fn build_if_ir(ctx: &mut Context) -> (ModuleOp, Ptr<BasicBlock>, Measurement
     let mut reg = MeasurementRegistry::default();
     let m0 = push!(MeasureOp::new(ctx, s0v)); // mid measure (conditioning)
     let m0v = m0.get_result(ctx);
-    reg.record(m0v, MeasurementInfo { qubit: 0, basis: Basis::Z, export_label: 0 });
+    reg.record(
+        m0v,
+        MeasurementInfo {
+            qubit: 0,
+            basis: Basis::Z,
+            export_label: 0,
+        },
+    );
     let ifop = push!(IfOp::new(ctx, m0v)); // if m0 { x q1 } else { }
     let then_bb = ifop.make_region_block(ctx, 0);
-    XOp::new(ctx, s1v).get_operation().insert_at_back(then_bb, ctx);
+    XOp::new(ctx, s1v)
+        .get_operation()
+        .insert_at_back(then_bb, ctx);
     let _else_bb = ifop.make_region_block(ctx, 1);
     let m1 = push!(MeasureOp::new(ctx, s1v)); // final measure
     let m1v = m1.get_result(ctx);
-    reg.record(m1v, MeasurementInfo { qubit: 1, basis: Basis::Z, export_label: 1 });
+    reg.record(
+        m1v,
+        MeasurementInfo {
+            qubit: 1,
+            basis: Basis::Z,
+            export_label: 1,
+        },
+    );
     push!(RecordOp::new(ctx, m0v)); // record mid  -> register r0
     push!(RecordOp::new(ctx, m1v)); // record final -> register r1
     push!(EndOp::new(ctx));
@@ -1379,7 +1772,8 @@ pub fn run_milestone_5() {
     let (module, bb, reg) = build_if_ir(ctx);
     println!("=== region-based conditional (qec.if) pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
-    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-5 verify] FAILED: {}", e.disp(ctx)));
+    verify_op(&module, ctx)
+        .unwrap_or_else(|e| panic!("[milestone-5 verify] FAILED: {}", e.disp(ctx)));
     let plan = plan_from_if_ir(ctx, bb, &reg);
     let engine = PlironIfEngine {
         batch1: plan.batch1,
@@ -1400,8 +1794,16 @@ pub fn run_milestone_5() {
     for _ in 0..200 {
         let shot = hybrid.run_shot().unwrap();
         // explicit export mapping: r0 = mid (result-id 0), r1 = final (result-id 1)
-        let mid = shot.data.get("r0").and_then(Data::as_u32).expect("r0 (mid)");
-        let fin = shot.data.get("r1").and_then(Data::as_u32).expect("r1 (final)");
+        let mid = shot
+            .data
+            .get("r0")
+            .and_then(Data::as_u32)
+            .expect("r0 (mid)");
+        let fin = shot
+            .data
+            .get("r1")
+            .and_then(Data::as_u32)
+            .expect("r1 (final)");
         if fin != mid {
             all_eq = false;
         }
@@ -1409,9 +1811,14 @@ pub fn run_milestone_5() {
         saw1 |= mid == 1;
         Engine::reset(&mut hybrid).unwrap();
     }
-    assert!(all_eq, "milestone-5: final must equal mid (region-based qec.if feedback)");
+    assert!(
+        all_eq,
+        "milestone-5: final must equal mid (region-based qec.if feedback)"
+    );
     assert!(saw0 && saw1, "milestone-5: expected both mid=0 and mid=1");
-    println!("[milestone-5 region-based qec.if via HybridEngine] OK -- r1(final)==r0(mid) in all 200 shots, saw mid 0 and 1");
+    println!(
+        "[milestone-5 region-based qec.if via HybridEngine] OK -- r1(final)==r0(mid) in all 200 shots, saw mid 0 and 1"
+    );
 }
 
 // ===================== Milestone 6: parse the literal qprog.ll (adaptive) =====================
@@ -1429,8 +1836,8 @@ pub enum ParsedOp {
     Cz(usize, usize),
     Swap(usize, usize),
     X(usize),
-    M(usize, u64),  // (qubit, QIS result-id = 2nd i64 of m__body)
-    Record(u64),    // result_record_output(result-id): export this measurement-SSA, in this order
+    M(usize, u64), // (qubit, QIS result-id = 2nd i64 of m__body)
+    Record(u64),   // result_record_output(result-id): export this measurement-SSA, in this order
 }
 
 pub fn inner_parens(l: &str) -> &str {
@@ -1458,7 +1865,12 @@ pub fn doubles_and_ints(inner: &str) -> (Vec<f64>, Vec<usize>) {
 pub fn br_labels(l: &str) -> Vec<String> {
     l.split("label %")
         .skip(1)
-        .filter_map(|s| s.split([',', ' ']).next().filter(|x| !x.is_empty()).map(str::to_string))
+        .filter_map(|s| {
+            s.split([',', ' '])
+                .next()
+                .filter(|x| !x.is_empty())
+                .map(str::to_string)
+        })
         .collect()
 }
 
@@ -1478,16 +1890,20 @@ enum LastQuantumOp {
 enum LlTerminator {
     Ret,
     Br(String),
-    CondBr { cond: String, then_label: String, else_label: String },
+    CondBr {
+        cond: String,
+        then_label: String,
+        else_label: String,
+    },
 }
 
 /// A parsed `%result = icmp <pred> i32 <op>, <op>` -- enough to prove the branch condition's dataflow.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct IcmpShape {
-    result: String,            // the `%name` the icmp defines
+    result: String,              // the `%name` the icmp defines
     measure_ref: Option<String>, // the `%ssa` operand (the measurement result it compares), if any
-    rhs_const: Option<u64>,    // the integer-literal operand, if any
-    pred_eq: bool,             // predicate is `eq`
+    rhs_const: Option<u64>,      // the integer-literal operand, if any
+    pred_eq: bool,               // predicate is `eq`
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1495,7 +1911,7 @@ struct LlBlockShape {
     label: String,
     terminator: Option<LlTerminator>,
     last_quantum_before_terminator: Option<LastQuantumOp>,
-    measures: Vec<String>, // SSA result names of `m__body` calls, in order
+    measures: Vec<String>,   // SSA result names of `m__body` calls, in order
     icmp: Option<IcmpShape>, // the last `icmp` defined in the block
 }
 
@@ -1522,7 +1938,12 @@ fn parse_icmp(result: &str, rhs: &str) -> Option<IcmpShape> {
             rhs_const = Some(k);
         }
     }
-    Some(IcmpShape { result: result.to_string(), measure_ref, rhs_const, pred_eq: pred == "eq" })
+    Some(IcmpShape {
+        result: result.to_string(),
+        measure_ref,
+        rhs_const,
+        pred_eq: pred == "eq",
+    })
 }
 
 fn block_name(label: &str) -> &str {
@@ -1553,17 +1974,25 @@ fn collect_qmain_cfg(src: &str) -> std::result::Result<Vec<LlBlockShape>, PecosE
         }
         if l.ends_with(':') && !l.contains(' ') {
             blocks.push(cur);
-            cur = LlBlockShape { label: l.trim_end_matches(':').to_string(), ..Default::default() };
+            cur = LlBlockShape {
+                label: l.trim_end_matches(':').to_string(),
+                ..Default::default()
+            };
             continue;
         }
         if cur.terminator.is_some() {
-            return Err(unsupported_qis(format!("instructions after terminator in block {}", block_name(&cur.label))));
+            return Err(unsupported_qis(format!(
+                "instructions after terminator in block {}",
+                block_name(&cur.label)
+            )));
         }
         if l.starts_with("br ") {
             let labels = br_labels(l);
             cur.terminator = Some(if l.starts_with("br i1 ") {
                 if labels.len() != 2 {
-                    return Err(unsupported_qis(format!("conditional branch must name two labels: {l}")));
+                    return Err(unsupported_qis(format!(
+                        "conditional branch must name two labels: {l}"
+                    )));
                 }
                 let cond = l
                     .strip_prefix("br i1 ")
@@ -1571,7 +2000,11 @@ fn collect_qmain_cfg(src: &str) -> std::result::Result<Vec<LlBlockShape>, PecosE
                     .map(str::trim)
                     .unwrap_or_default()
                     .to_string();
-                LlTerminator::CondBr { cond, then_label: labels[0].clone(), else_label: labels[1].clone() }
+                LlTerminator::CondBr {
+                    cond,
+                    then_label: labels[0].clone(),
+                    else_label: labels[1].clone(),
+                }
             } else if labels.len() == 1 {
                 LlTerminator::Br(labels[0].clone())
             } else {
@@ -1602,10 +2035,14 @@ fn collect_qmain_cfg(src: &str) -> std::result::Result<Vec<LlBlockShape>, PecosE
 
 fn validate_straight_line_blocks(blocks: &[LlBlockShape]) -> std::result::Result<(), PecosError> {
     if blocks.len() != 1 || blocks.first().is_some_and(|b| !b.label.is_empty()) {
-        return Err(unsupported_qis("straight-line subset must have exactly one basic block; control-flow labels/branches are unsupported"));
+        return Err(unsupported_qis(
+            "straight-line subset must have exactly one basic block; control-flow labels/branches are unsupported",
+        ));
     }
     match blocks.first().and_then(|b| b.terminator.as_ref()) {
-        Some(LlTerminator::Br(_)) | Some(LlTerminator::CondBr { .. }) => Err(unsupported_qis("straight-line subset cannot contain branch control flow")),
+        Some(LlTerminator::Br(_)) | Some(LlTerminator::CondBr { .. }) => Err(unsupported_qis(
+            "straight-line subset cannot contain branch control flow",
+        )),
         Some(LlTerminator::Ret) | None => Ok(()),
     }
 }
@@ -1618,7 +2055,10 @@ fn validate_straight_line_qis_shape(src: &str) -> std::result::Result<(), PecosE
 fn single_diamond_branch_target(block: &LlBlockShape) -> std::result::Result<&str, PecosError> {
     match &block.terminator {
         Some(LlTerminator::Br(target)) => Ok(target.as_str()),
-        _ => Err(unsupported_qis(format!("then/else block {} must end with an unconditional branch to the common merge block", block_name(&block.label)))),
+        _ => Err(unsupported_qis(format!(
+            "then/else block {} must end with an unconditional branch to the common merge block",
+            block_name(&block.label)
+        ))),
     }
 }
 
@@ -1628,26 +2068,47 @@ fn validate_single_diamond_blocks(blocks: &[LlBlockShape]) -> std::result::Resul
         .filter(|b| matches!(&b.terminator, Some(LlTerminator::CondBr { .. })))
         .collect();
     if cond_blocks.len() > 1 {
-        return Err(unsupported_qis("more than one conditional branch -- only a single diamond is supported"));
+        return Err(unsupported_qis(
+            "more than one conditional branch -- only a single diamond is supported",
+        ));
     }
     if cond_blocks.is_empty() {
-        return Err(unsupported_qis("single-diamond subset requires one conditional branch"));
+        return Err(unsupported_qis(
+            "single-diamond subset requires one conditional branch",
+        ));
     }
 
-    let entry = blocks.iter().find(|b| b.label.is_empty()).ok_or_else(|| unsupported_qis("missing entry block"))?;
+    let entry = blocks
+        .iter()
+        .find(|b| b.label.is_empty())
+        .ok_or_else(|| unsupported_qis("missing entry block"))?;
     if !cond_blocks[0].label.is_empty() {
-        return Err(unsupported_qis("single-diamond conditional branch must be in the entry block"));
+        return Err(unsupported_qis(
+            "single-diamond conditional branch must be in the entry block",
+        ));
     }
     if entry.last_quantum_before_terminator != Some(LastQuantumOp::Measure) {
-        return Err(unsupported_qis("entry conditional branch must follow a mid-measurement"));
+        return Err(unsupported_qis(
+            "entry conditional branch must follow a mid-measurement",
+        ));
     }
 
     let (cond, then_label, else_label) = match &entry.terminator {
-        Some(LlTerminator::CondBr { cond, then_label, else_label }) => (cond, then_label, else_label),
-        _ => return Err(unsupported_qis("entry block must terminate with the single conditional branch")),
+        Some(LlTerminator::CondBr {
+            cond,
+            then_label,
+            else_label,
+        }) => (cond, then_label, else_label),
+        _ => {
+            return Err(unsupported_qis(
+                "entry block must terminate with the single conditional branch",
+            ));
+        }
     };
     if then_label == else_label {
-        return Err(unsupported_qis("conditional branch arms must target distinct blocks"));
+        return Err(unsupported_qis(
+            "conditional branch arms must target distinct blocks",
+        ));
     }
 
     // Branch-condition dataflow: prove the branch is driven by the trailing mid-measurement, i.e.
@@ -1656,62 +2117,84 @@ fn validate_single_diamond_blocks(blocks: &[LlBlockShape]) -> std::result::Resul
     // `mid==1` case, so we require exactly that: the branch uses an `icmp eq <last-measure>, 1`.
     // (Without this, a constant condition like `icmp eq i32 0, 1` or a branch on an *earlier*
     // measurement would pass the shape check and be silently mis-lowered.)
-    let icmp = entry
-        .icmp
-        .as_ref()
-        .ok_or_else(|| unsupported_qis("conditional branch condition must be produced by an `icmp` on the mid-measurement"))?;
+    let icmp = entry.icmp.as_ref().ok_or_else(|| {
+        unsupported_qis(
+            "conditional branch condition must be produced by an `icmp` on the mid-measurement",
+        )
+    })?;
     if icmp.result != *cond {
-        return Err(unsupported_qis("conditional branch does not use the entry `icmp` result"));
+        return Err(unsupported_qis(
+            "conditional branch does not use the entry `icmp` result",
+        ));
     }
     if !icmp.pred_eq || icmp.rhs_const != Some(1) {
-        return Err(unsupported_qis("only `icmp eq <mid-measure>, 1` branch conditions are supported"));
+        return Err(unsupported_qis(
+            "only `icmp eq <mid-measure>, 1` branch conditions are supported",
+        ));
     }
-    let measure_ref = icmp
-        .measure_ref
-        .as_deref()
-        .ok_or_else(|| unsupported_qis("branch condition must compare a measurement result, not a constant"))?;
-    let last_measure = entry
-        .measures
-        .last()
-        .map(String::as_str)
-        .ok_or_else(|| unsupported_qis("entry block has no named measurement to condition on"))?;
+    let measure_ref = icmp.measure_ref.as_deref().ok_or_else(|| {
+        unsupported_qis("branch condition must compare a measurement result, not a constant")
+    })?;
+    let last_measure =
+        entry.measures.last().map(String::as_str).ok_or_else(|| {
+            unsupported_qis("entry block has no named measurement to condition on")
+        })?;
     if measure_ref != last_measure {
-        return Err(unsupported_qis("conditional branch must condition on the trailing mid-measurement, not an earlier one"));
+        return Err(unsupported_qis(
+            "conditional branch must condition on the trailing mid-measurement, not an earlier one",
+        ));
     }
 
     let mut by_label: HashMap<&str, &LlBlockShape> = HashMap::new();
     for block in blocks {
         if by_label.insert(block.label.as_str(), block).is_some() {
-            return Err(unsupported_qis(format!("duplicate basic-block label {}", block_name(&block.label))));
+            return Err(unsupported_qis(format!(
+                "duplicate basic-block label {}",
+                block_name(&block.label)
+            )));
         }
     }
 
-    let then_block = by_label
-        .get(then_label.as_str())
-        .copied()
-        .ok_or_else(|| unsupported_qis(format!("conditional branch target {then_label} is missing")))?;
-    let else_block = by_label
-        .get(else_label.as_str())
-        .copied()
-        .ok_or_else(|| unsupported_qis(format!("conditional branch target {else_label} is missing")))?;
+    let then_block = by_label.get(then_label.as_str()).copied().ok_or_else(|| {
+        unsupported_qis(format!("conditional branch target {then_label} is missing"))
+    })?;
+    let else_block = by_label.get(else_label.as_str()).copied().ok_or_else(|| {
+        unsupported_qis(format!("conditional branch target {else_label} is missing"))
+    })?;
 
     let then_merge = single_diamond_branch_target(then_block)?;
     let else_merge = single_diamond_branch_target(else_block)?;
     if then_merge != else_merge {
-        return Err(unsupported_qis("then/else blocks must branch to the same merge block"));
+        return Err(unsupported_qis(
+            "then/else blocks must branch to the same merge block",
+        ));
     }
     if then_merge.is_empty() || then_merge == then_label || then_merge == else_label {
-        return Err(unsupported_qis("single-diamond merge target must be a distinct non-entry block"));
+        return Err(unsupported_qis(
+            "single-diamond merge target must be a distinct non-entry block",
+        ));
     }
 
-    let merge_block = by_label.get(then_merge).copied().ok_or_else(|| unsupported_qis(format!("merge block {then_merge} is missing")))?;
+    let merge_block = by_label
+        .get(then_merge)
+        .copied()
+        .ok_or_else(|| unsupported_qis(format!("merge block {then_merge} is missing")))?;
     if !matches!(merge_block.terminator, Some(LlTerminator::Ret) | None) {
-        return Err(unsupported_qis("single-diamond merge block must not branch again"));
+        return Err(unsupported_qis(
+            "single-diamond merge block must not branch again",
+        ));
     }
 
     for block in blocks {
-        if !block.label.is_empty() && block.label != *then_label && block.label != *else_label && block.label != then_merge {
-            return Err(unsupported_qis(format!("extra basic block {} outside the single-diamond shape", block_name(&block.label))));
+        if !block.label.is_empty()
+            && block.label != *then_label
+            && block.label != *else_label
+            && block.label != then_merge
+        {
+            return Err(unsupported_qis(format!(
+                "extra basic block {} outside the single-diamond shape",
+                block_name(&block.label)
+            )));
         }
     }
     Ok(())
@@ -1739,8 +2222,18 @@ fn classify_covered_qis_shape(src: &str) -> std::result::Result<QisLlShape, Peco
 pub fn collect_qubits(ops: &[ParsedOp], set: &mut BTreeSet<usize>) {
     for p in ops {
         match *p {
-            ParsedOp::H(q) | ParsedOp::Rz(q, _) | ParsedOp::Rx(q, _) | ParsedOp::Ry(q, _) | ParsedOp::X(q) | ParsedOp::M(q, _) => { set.insert(q); }
-            ParsedOp::Szz(a, b) | ParsedOp::Cz(a, b) | ParsedOp::Swap(a, b) => { set.insert(a); set.insert(b); }
+            ParsedOp::H(q)
+            | ParsedOp::Rz(q, _)
+            | ParsedOp::Rx(q, _)
+            | ParsedOp::Ry(q, _)
+            | ParsedOp::X(q)
+            | ParsedOp::M(q, _) => {
+                set.insert(q);
+            }
+            ParsedOp::Szz(a, b) | ParsedOp::Cz(a, b) | ParsedOp::Swap(a, b) => {
+                set.insert(a);
+                set.insert(b);
+            }
             ParsedOp::Record(_) => {}
         }
     }
@@ -1748,29 +2241,79 @@ pub fn collect_qubits(ops: &[ParsedOp], set: &mut BTreeSet<usize>) {
 /// Emit one parsed op into `block`. `measured` accumulates `result-id -> measurement-SSA Value` so a
 /// later `ParsedOp::Record` resolves exactly which `qec.measure` becomes a program output; `reg`
 /// gets each measurement's metadata (qubit, basis, export label) keyed by its SSA value.
-pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot_of: &HashMap<usize, Value>, measured: &mut HashMap<u64, Value>, reg: &mut MeasurementRegistry) -> std::result::Result<(), PecosError> {
+pub fn emit_parsed(
+    ctx: &mut Context,
+    p: &ParsedOp,
+    block: Ptr<BasicBlock>,
+    slot_of: &HashMap<usize, Value>,
+    measured: &mut HashMap<u64, Value>,
+    reg: &mut MeasurementRegistry,
+) -> std::result::Result<(), PecosError> {
     match *p {
-        ParsedOp::H(q) => { HOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::H(q) => {
+            HOp::new(ctx, slot_of[&q])
+                .get_operation()
+                .insert_at_back(block, ctx);
+        }
         // .ll angles are f64 radians (the wire format); convert to fixed-point Angle64 at the boundary.
-        ParsedOp::Rz(q, t) => { RzOp::new(ctx, slot_of[&q], Angle64::from_radians(t)).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::Rx(q, t) => { RxOp::new(ctx, slot_of[&q], Angle64::from_radians(t)).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::Ry(q, t) => { RyOp::new(ctx, slot_of[&q], Angle64::from_radians(t)).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::Szz(a, b) => { SzzOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::Cz(a, b) => { CzOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::Swap(a, b) => { SwapOp::new(ctx, slot_of[&a], slot_of[&b]).get_operation().insert_at_back(block, ctx); }
-        ParsedOp::X(q) => { XOp::new(ctx, slot_of[&q]).get_operation().insert_at_back(block, ctx); }
+        ParsedOp::Rz(q, t) => {
+            RzOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+                .get_operation()
+                .insert_at_back(block, ctx);
+        }
+        ParsedOp::Rx(q, t) => {
+            RxOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+                .get_operation()
+                .insert_at_back(block, ctx);
+        }
+        ParsedOp::Ry(q, t) => {
+            RyOp::new(ctx, slot_of[&q], Angle64::from_radians(t))
+                .get_operation()
+                .insert_at_back(block, ctx);
+        }
+        ParsedOp::Szz(a, b) => {
+            SzzOp::new(ctx, slot_of[&a], slot_of[&b])
+                .get_operation()
+                .insert_at_back(block, ctx);
+        }
+        ParsedOp::Cz(a, b) => {
+            CzOp::new(ctx, slot_of[&a], slot_of[&b])
+                .get_operation()
+                .insert_at_back(block, ctx);
+        }
+        ParsedOp::Swap(a, b) => {
+            SwapOp::new(ctx, slot_of[&a], slot_of[&b])
+                .get_operation()
+                .insert_at_back(block, ctx);
+        }
+        ParsedOp::X(q) => {
+            XOp::new(ctx, slot_of[&q])
+                .get_operation()
+                .insert_at_back(block, ctx);
+        }
         ParsedOp::M(q, rid) => {
             let m = MeasureOp::new(ctx, slot_of[&q]);
             m.get_operation().insert_at_back(block, ctx);
             let v = m.get_result(ctx);
             measured.insert(rid, v);
-            reg.record(v, MeasurementInfo { qubit: q, basis: Basis::Z, export_label: rid });
+            reg.record(
+                v,
+                MeasurementInfo {
+                    qubit: q,
+                    basis: Basis::Z,
+                    export_label: rid,
+                },
+            );
         }
         ParsedOp::Record(rid) => {
-            let v = *measured
-                .get(&rid)
-                .ok_or_else(|| unsupported_qis(format!("result_record_output references unknown result-id {rid}")))?;
-            RecordOp::new(ctx, v).get_operation().insert_at_back(block, ctx);
+            let v = *measured.get(&rid).ok_or_else(|| {
+                unsupported_qis(format!(
+                    "result_record_output references unknown result-id {rid}"
+                ))
+            })?;
+            RecordOp::new(ctx, v)
+                .get_operation()
+                .insert_at_back(block, ctx);
         }
     }
     Ok(())
@@ -1779,7 +2322,10 @@ pub fn emit_parsed(ctx: &mut Context, p: &ParsedOp, block: Ptr<BasicBlock>, slot
 /// Parse the adaptive single-diamond QIS-LLVM subset, lifting the conditional branch into a `qec.if`.
 /// Rejects (structured error, not silent-drop/panic) anything outside the subset: unrecognized
 /// `__quantum__` calls, malformed operand lists, and more than one conditional branch.
-pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> std::result::Result<(ModuleOp, Ptr<BasicBlock>, MeasurementRegistry), PecosError> {
+pub fn parse_qprog_ll(
+    ctx: &mut Context,
+    src: &str,
+) -> std::result::Result<(ModuleOp, Ptr<BasicBlock>, MeasurementRegistry), PecosError> {
     validate_single_diamond_qis_shape(src)?;
 
     // pass 1: collect ops per block label (entry = "") and the conditional-branch targets.
@@ -1790,17 +2336,33 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modu
     let mut in_func = false;
     for raw in src.lines() {
         let l = raw.trim();
-        if l.starts_with("define ") && l.contains("@qmain") { in_func = true; continue; }
-        if !in_func { continue; }
-        if l == "}" { blocks.push((std::mem::take(&mut cur_label), std::mem::take(&mut cur_ops))); break; }
+        if l.starts_with("define ") && l.contains("@qmain") {
+            in_func = true;
+            continue;
+        }
+        if !in_func {
+            continue;
+        }
+        if l == "}" {
+            blocks.push((std::mem::take(&mut cur_label), std::mem::take(&mut cur_ops)));
+            break;
+        }
         if l.ends_with(':') && !l.contains(' ') {
             blocks.push((std::mem::take(&mut cur_label), std::mem::take(&mut cur_ops)));
             cur_label = l.trim_end_matches(':').to_string();
             continue;
         }
         let (ds, is) = doubles_and_ints(inner_parens(l));
-        let iq = |i: usize| is.get(i).copied().ok_or_else(|| unsupported_qis(format!("missing i64 operand {i}: {l}")));
-        let da = |i: usize| ds.get(i).copied().ok_or_else(|| unsupported_qis(format!("missing double operand {i}: {l}")));
+        let iq = |i: usize| {
+            is.get(i)
+                .copied()
+                .ok_or_else(|| unsupported_qis(format!("missing i64 operand {i}: {l}")))
+        };
+        let da = |i: usize| {
+            ds.get(i)
+                .copied()
+                .ok_or_else(|| unsupported_qis(format!("missing double operand {i}: {l}")))
+        };
         if l.contains("__quantum__qis__h__body") {
             cur_ops.push(ParsedOp::H(iq(0)?));
         } else if l.contains("__quantum__qis__rz__body") {
@@ -1825,28 +2387,42 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modu
             let labels = br_labels(l);
             if labels.len() == 2 {
                 if then_label.is_some() {
-                    return Err(unsupported_qis("more than one conditional branch -- only a single diamond is supported"));
+                    return Err(unsupported_qis(
+                        "more than one conditional branch -- only a single diamond is supported",
+                    ));
                 }
                 then_label = Some(labels[0].clone());
                 else_label = Some(labels[1].clone());
             }
         } else if l.contains("__quantum__") {
-            return Err(unsupported_qis(format!("operation not in the covered subset: {l}")));
+            return Err(unsupported_qis(format!(
+                "operation not in the covered subset: {l}"
+            )));
         }
     }
-    let find = |lab: &str| blocks.iter().find(|(l, _)| l == lab).map(|(_, o)| o.clone()).unwrap_or_default();
+    let find = |lab: &str| {
+        blocks
+            .iter()
+            .find(|(l, _)| l == lab)
+            .map(|(_, o)| o.clone())
+            .unwrap_or_default()
+    };
     let entry_ops = find("");
     let then_ops = then_label.as_deref().map(find).unwrap_or_default();
     let else_ops = else_label.as_deref().map(find).unwrap_or_default();
     let merge_ops = blocks
         .iter()
-        .find(|(l, _)| !l.is_empty() && Some(l) != then_label.as_ref() && Some(l) != else_label.as_ref())
+        .find(|(l, _)| {
+            !l.is_empty() && Some(l) != then_label.as_ref() && Some(l) != else_label.as_ref()
+        })
         .map(|(_, o)| o.clone())
         .unwrap_or_default();
 
     // pass 2: build the pliron qec IR.
     let mut qubits = BTreeSet::new();
-    for ops in [&entry_ops, &then_ops, &else_ops, &merge_ops] { collect_qubits(ops, &mut qubits); }
+    for ops in [&entry_ops, &then_ops, &else_ops, &merge_ops] {
+        collect_qubits(ops, &mut qubits);
+    }
 
     let module = ModuleOp::new(ctx, "qprog".try_into().unwrap());
     let func_ty = FunctionType::get(ctx, vec![], vec![]);
@@ -1863,7 +2439,9 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modu
         s.get_operation().insert_at_back(bb, ctx);
         let sv = s.get_result(ctx);
         slot_of.insert(idx, sv);
-        PrepareOp::new(ctx, sv).get_operation().insert_at_back(bb, ctx);
+        PrepareOp::new(ctx, sv)
+            .get_operation()
+            .insert_at_back(bb, ctx);
     }
     // result-id -> measurement-SSA Value, so result_record_output can name the recorded measurement.
     let mut measured: HashMap<u64, Value> = HashMap::new();
@@ -1871,23 +2449,42 @@ pub fn parse_qprog_ll(ctx: &mut Context, src: &str) -> std::result::Result<(Modu
     // entry gates (everything before the trailing mid-measure), then the mid measure (the cond).
     let (mid_q, mid_rid) = match entry_ops.last() {
         Some(ParsedOp::M(q, rid)) => (*q, *rid),
-        _ => return Err(unsupported_qis("entry block must end with a mid-measurement (single-diamond adaptive shape)")),
+        _ => {
+            return Err(unsupported_qis(
+                "entry block must end with a mid-measurement (single-diamond adaptive shape)",
+            ));
+        }
     };
-    for p in &entry_ops[..entry_ops.len() - 1] { emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg)?; }
+    for p in &entry_ops[..entry_ops.len() - 1] {
+        emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg)?;
+    }
     let m0 = MeasureOp::new(ctx, slot_of[&mid_q]);
     m0.get_operation().insert_at_back(bb, ctx);
     let m0v = m0.get_result(ctx);
     measured.insert(mid_rid, m0v);
-    reg.record(m0v, MeasurementInfo { qubit: mid_q, basis: Basis::Z, export_label: mid_rid });
+    reg.record(
+        m0v,
+        MeasurementInfo {
+            qubit: mid_q,
+            basis: Basis::Z,
+            export_label: mid_rid,
+        },
+    );
     // lift the diamond into qec.if(mid) { then } { else }
     let ifop = IfOp::new(ctx, m0v);
     ifop.get_operation().insert_at_back(bb, ctx);
     let then_bb = ifop.make_region_block(ctx, 0);
-    for p in &then_ops { emit_parsed(ctx, p, then_bb, &slot_of, &mut measured, &mut reg)?; }
+    for p in &then_ops {
+        emit_parsed(ctx, p, then_bb, &slot_of, &mut measured, &mut reg)?;
+    }
     let else_bb = ifop.make_region_block(ctx, 1);
-    for p in &else_ops { emit_parsed(ctx, p, else_bb, &slot_of, &mut measured, &mut reg)?; }
+    for p in &else_ops {
+        emit_parsed(ctx, p, else_bb, &slot_of, &mut measured, &mut reg)?;
+    }
     // final measurements + result_record_output ops (the export list)
-    for p in &merge_ops { emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg)?; }
+    for p in &merge_ops {
+        emit_parsed(ctx, p, bb, &slot_of, &mut measured, &mut reg)?;
+    }
     EndOp::new(ctx).get_operation().insert_at_back(bb, ctx);
     Ok((module, bb, reg))
 }
@@ -1898,7 +2495,8 @@ pub fn run_milestone_6() {
     let (module, bb, reg) = parse_qprog_ll(ctx, src).expect("milestone-6: parse qprog.ll");
     println!("=== qprog.ll parsed into pliron qec IR (rotations + qec.if) ===");
     println!("{}", module.get_operation().disp(ctx));
-    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-6 verify] FAILED: {}", e.disp(ctx)));
+    verify_op(&module, ctx)
+        .unwrap_or_else(|e| panic!("[milestone-6 verify] FAILED: {}", e.disp(ctx)));
     let plan = plan_from_if_ir(ctx, bb, &reg);
     let engine = PlironIfEngine {
         batch1: plan.batch1,
@@ -1920,21 +2518,41 @@ pub fn run_milestone_6() {
     let mut n = 0;
     for _ in 0..200 {
         let shot = hybrid.run_shot().unwrap();
-        let f0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0 (final_q0)");
-        let f1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1 (final_q1)");
-        let mid = shot.data.get("r2").and_then(Data::as_u32).expect("r2 (mid)");
+        let f0 = shot
+            .data
+            .get("r0")
+            .and_then(Data::as_u32)
+            .expect("r0 (final_q0)");
+        let f1 = shot
+            .data
+            .get("r1")
+            .and_then(Data::as_u32)
+            .expect("r1 (final_q1)");
+        let mid = shot
+            .data
+            .get("r2")
+            .and_then(Data::as_u32)
+            .expect("r2 (mid)");
         // q0 only sees Z-diagonal ops (rz, szz), so its mid and final measures are deterministically 0.
         assert_eq!(mid, 0, "milestone-6: q0 is Z-diagonal, mid (r2) must be 0");
-        assert_eq!(f0, 0, "milestone-6: q0 is Z-diagonal, final_q0 (r0) must be 0");
+        assert_eq!(
+            f0, 0,
+            "milestone-6: q0 is Z-diagonal, final_q0 (r0) must be 0"
+        );
         seen.insert((mid, f0, f1));
         n += 1;
         Engine::reset(&mut hybrid).unwrap();
     }
     assert_eq!(n, 200, "milestone-6: expected 200 shots");
-    assert!(!seen.is_empty(), "milestone-6: qprog.ll must produce results");
+    assert!(
+        !seen.is_empty(),
+        "milestone-6: qprog.ll must produce results"
+    );
     // The conditional branch is never taken here (mid is deterministically 0) -- branch-firing is
     // exercised by M5/M7; the quantum variety is on q1 (rx(pi)+ry+szz), so r1 varies across shots.
-    println!("[milestone-6 qprog.ll -> pliron qec (rotations + qec.if) -> HybridEngine] OK -- {n} shots, observed (r2_mid,r0_final_q0,r1_final_q1): {seen:?}");
+    println!(
+        "[milestone-6 qprog.ll -> pliron qec (rotations + qec.if) -> HybridEngine] OK -- {n} shots, observed (r2_mid,r0_final_q0,r1_final_q1): {seen:?}"
+    );
 }
 
 /// M7 step 2: a branch-*taken* fixture parsed from `.ll` — proves `qec.if` firing from parsed input
@@ -1942,12 +2560,18 @@ pub fn run_milestone_6() {
 pub fn run_milestone_7() {
     let ctx = &mut Context::new();
     let src = include_str!("../fixtures/adaptive_branch.ll");
-    let (module, bb, reg) = parse_qprog_ll(ctx, src).expect("milestone-7: parse adaptive_branch.ll");
+    let (module, bb, reg) =
+        parse_qprog_ll(ctx, src).expect("milestone-7: parse adaptive_branch.ll");
     println!("=== adaptive_branch.ll parsed into pliron qec IR ===");
     println!("{}", module.get_operation().disp(ctx));
-    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[milestone-7 verify] FAILED: {}", e.disp(ctx)));
+    verify_op(&module, ctx)
+        .unwrap_or_else(|e| panic!("[milestone-7 verify] FAILED: {}", e.disp(ctx)));
     let plan = plan_from_if_ir(ctx, bb, &reg);
-    assert_eq!(plan.export, vec![2, 1], "milestone-7: result_record_output order must be [2,1] (mid, final_q1)");
+    assert_eq!(
+        plan.export,
+        vec![2, 1],
+        "milestone-7: result_record_output order must be [2,1] (mid, final_q1)"
+    );
     let engine = PlironIfEngine {
         batch1: plan.batch1,
         cond_outcome_idx: plan.cond_outcome_idx,
@@ -1967,8 +2591,16 @@ pub fn run_milestone_7() {
     let (mut all_eq, mut saw0, mut saw1) = (true, false, false);
     for _ in 0..200 {
         let shot = hybrid.run_shot().unwrap();
-        let mid = shot.data.get("r2").and_then(Data::as_u32).expect("r2 (mid)");
-        let fin = shot.data.get("r1").and_then(Data::as_u32).expect("r1 (final_q1)");
+        let mid = shot
+            .data
+            .get("r2")
+            .and_then(Data::as_u32)
+            .expect("r2 (mid)");
+        let fin = shot
+            .data
+            .get("r1")
+            .and_then(Data::as_u32)
+            .expect("r1 (final_q1)");
         if fin != mid {
             all_eq = false;
         }
@@ -1976,9 +2608,17 @@ pub fn run_milestone_7() {
         saw1 |= mid == 1;
         Engine::reset(&mut hybrid).unwrap();
     }
-    assert!(all_eq, "milestone-7: final_q1 (r1) must equal mid (r2) -- qec.if firing from parsed input");
-    assert!(saw0 && saw1, "milestone-7: branch must both fire (mid=1) and not (mid=0)");
-    println!("[milestone-7 adaptive_branch.ll -> qec.if branch TAKEN from parsed input] OK -- r1(final_q1)==r2(mid) all 200 shots, mid 0 and 1 both seen");
+    assert!(
+        all_eq,
+        "milestone-7: final_q1 (r1) must equal mid (r2) -- qec.if firing from parsed input"
+    );
+    assert!(
+        saw0 && saw1,
+        "milestone-7: branch must both fire (mid=1) and not (mid=0)"
+    );
+    println!(
+        "[milestone-7 adaptive_branch.ll -> qec.if branch TAKEN from parsed input] OK -- r1(final_q1)==r2(mid) all 200 shots, mid 0 and 1 both seen"
+    );
 }
 
 /// Coverage for a measurement INSIDE the conditional branch: `b2`'s length varies with the taken
@@ -1989,12 +2629,20 @@ pub fn run_branch_measure() {
     let ctx = &mut Context::new();
     let src = include_str!("../fixtures/branch_measure.ll");
     let (module, bb, reg) = parse_qprog_ll(ctx, src).expect("branch_measure: parse");
-    verify_op(&module, ctx).unwrap_or_else(|e| panic!("[branch_measure verify] FAILED: {}", e.disp(ctx)));
+    verify_op(&module, ctx)
+        .unwrap_or_else(|e| panic!("[branch_measure verify] FAILED: {}", e.disp(ctx)));
     let plan = plan_from_if_ir(ctx, bb, &reg);
     // structural: the then-branch really does contain a measurement (this is what we are covering),
     // and the in-branch measure (result-id 3) is NOT in the export list.
-    assert!(plan.then_cmds.iter().any(|c| matches!(c, Cmd::Mz(..))), "then-branch must contain a measurement");
-    assert_eq!(plan.export, vec![0, 1], "only the unconditional finals are recorded (in-branch m1 is not)");
+    assert!(
+        plan.then_cmds.iter().any(|c| matches!(c, Cmd::Mz(..))),
+        "then-branch must contain a measurement"
+    );
+    assert_eq!(
+        plan.export,
+        vec![0, 1],
+        "only the unconditional finals are recorded (in-branch m1 is not)"
+    );
     let engine = PlironIfEngine {
         batch1: plan.batch1,
         cond_outcome_idx: plan.cond_outcome_idx,
@@ -2014,8 +2662,16 @@ pub fn run_branch_measure() {
     for _ in 0..200 {
         let shot = hybrid.run_shot().unwrap();
         // r0 = final_q0 (== mid), r1 = final_q1 (== mid). The in-branch measure of q1 leaves q1 == mid.
-        let r0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0 (final_q0)");
-        let r1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1 (final_q1)");
+        let r0 = shot
+            .data
+            .get("r0")
+            .and_then(Data::as_u32)
+            .expect("r0 (final_q0)");
+        let r1 = shot
+            .data
+            .get("r1")
+            .and_then(Data::as_u32)
+            .expect("r1 (final_q1)");
         if r0 != r1 {
             all_eq = false;
         }
@@ -2023,9 +2679,17 @@ pub fn run_branch_measure() {
         saw1 |= r0 == 1;
         Engine::reset(&mut hybrid).unwrap();
     }
-    assert!(all_eq, "branch_measure: final_q0 (r0) must equal final_q1 (r1) -- variable-length b2 reconstructed correctly");
-    assert!(saw0 && saw1, "branch_measure: branch must both fire and not (r0 both 0 and 1)");
-    println!("[branch_measure measure-inside-branch -> variable-length b2 reconstruction] OK -- r0==r1 all 200 shots, both 0 and 1 seen");
+    assert!(
+        all_eq,
+        "branch_measure: final_q0 (r0) must equal final_q1 (r1) -- variable-length b2 reconstructed correctly"
+    );
+    assert!(
+        saw0 && saw1,
+        "branch_measure: branch must both fire and not (r0 both 0 and 1)"
+    );
+    println!(
+        "[branch_measure measure-inside-branch -> variable-length b2 reconstruction] OK -- r0==r1 all 200 shots, both 0 and 1 seen"
+    );
 }
 
 // ===================== public adapter: the opt-in QIS-LLVM-IR -> pliron call path =====================
@@ -2039,14 +2703,17 @@ pub fn run_branch_measure() {
 /// `result_record_output` export). The returned engine reports its own `num_qubits()` for sizing the
 /// quantum backend. Returns a structured error if the source is outside the covered subset or the
 /// lowered IR fails verification.
-pub fn from_qis_llvm_ir_pliron(src: &str) -> std::result::Result<Box<dyn ClassicalControlEngine>, PecosError> {
+pub fn from_qis_llvm_ir_pliron(
+    src: &str,
+) -> std::result::Result<Box<dyn ClassicalControlEngine>, PecosError> {
     let ctx = &mut Context::new();
     let (module, bb, reg) = match classify_covered_qis_shape(src)? {
         QisLlShape::SingleDiamond => parse_qprog_ll(ctx, src)?,
         QisLlShape::StraightLine => parse_bell_ll(ctx, src)?,
     };
-    verify_op(&module, ctx)
-        .map_err(|e| PecosError::Compilation(format!("pliron qec verification failed: {}", e.disp(ctx))))?;
+    verify_op(&module, ctx).map_err(|e| {
+        PecosError::Compilation(format!("pliron qec verification failed: {}", e.disp(ctx)))
+    })?;
     let plan = plan_from_if_ir(ctx, bb, &reg);
     Ok(Box::new(PlironIfEngine {
         batch1: plan.batch1,
@@ -2086,7 +2753,11 @@ mod tests {
         let (module, bb, reg) = parse_bell_ll(ctx, bell).expect("port lowers bell.ll");
         verify_op(&module, ctx).expect("port lowers bell.ll (with qec.record) and verifies");
         let plan = plan_from_if_ir(ctx, bb, &reg);
-        assert_eq!(plan.export, vec![0, 1], "bell.ll records result-ids 0 (q0) then 1 (q1)");
+        assert_eq!(
+            plan.export,
+            vec![0, 1],
+            "bell.ll records result-ids 0 (q0) then 1 (q1)"
+        );
         let engine = PlironIfEngine {
             batch1: plan.batch1,
             cond_outcome_idx: plan.cond_outcome_idx,
@@ -2107,7 +2778,10 @@ mod tests {
             let shot = hybrid.run_shot().unwrap();
             let r0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0 (q0)");
             let r1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1 (q1)");
-            assert_eq!(r0, r1, "port bell.ll via qec.record export must be Bell-correlated, got r0={r0} r1={r1}");
+            assert_eq!(
+                r0, r1,
+                "port bell.ll via qec.record export must be Bell-correlated, got r0={r0} r1={r1}"
+            );
             saw0 |= r0 == 0;
             saw1 |= r0 == 1;
             Engine::reset(&mut hybrid).unwrap();
@@ -2128,7 +2802,9 @@ mod tests {
              registers; the port exports r0/r1. pecos-phir gave: {:?}",
             shot.data.keys().collect::<Vec<_>>()
         );
-        println!("[differential bell.ll] port -> r0==r1 Bell pair via qec.record export; pecos-phir -> empty Shot (record_output elided)");
+        println!(
+            "[differential bell.ll] port -> r0==r1 Bell pair via qec.record export; pecos-phir -> empty Shot (record_output elided)"
+        );
     }
 
     /// qprog.ll rotation divergence: the port lowers `rz/rx/ry/zz` (M6 runs it end-to-end), while
@@ -2150,7 +2826,9 @@ mod tests {
             msg.contains("angle") || msg.contains("rz"),
             "expected the divergence to be the rz-angle resolution; got: {msg}"
         );
-        println!("[differential qprog.ll] port lowers rotations + qec.if; pecos-phir errors: {msg}");
+        println!(
+            "[differential qprog.ll] port lowers rotations + qec.if; pecos-phir errors: {msg}"
+        );
     }
 
     /// The real call path: drive the PUBLIC `from_qis_llvm_ir_pliron` adapter (not the internal
@@ -2161,7 +2839,8 @@ mod tests {
         use pecos_engines::hybrid::HybridEngineBuilder;
 
         // bell.ll (straight-line) -> r0==r1 Bell pair via the registry/qec.record export.
-        let eng = from_qis_llvm_ir_pliron(include_str!("../../../examples/llvm/bell.ll")).expect("adapter lowers bell.ll");
+        let eng = from_qis_llvm_ir_pliron(include_str!("../../../examples/llvm/bell.ll"))
+            .expect("adapter lowers bell.ll");
         let n = eng.num_qubits();
         let mut hybrid = HybridEngineBuilder::new()
             .with_classical_engine(eng)
@@ -2172,7 +2851,10 @@ mod tests {
             let shot = hybrid.run_shot().unwrap();
             let r0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0");
             let r1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1");
-            assert_eq!(r0, r1, "bell via adapter must be Bell-correlated, got r0={r0} r1={r1}");
+            assert_eq!(
+                r0, r1,
+                "bell via adapter must be Bell-correlated, got r0={r0} r1={r1}"
+            );
             saw0 |= r0 == 0;
             saw1 |= r0 == 1;
             Engine::reset(&mut hybrid).unwrap();
@@ -2180,7 +2862,8 @@ mod tests {
         assert!(saw0 && saw1, "bell via adapter must see both 00 and 11");
 
         // qprog.ll (diamond) -> records r0/r1/r2; q0 is Z-diagonal so mid (r2) and final_q0 (r0) are 0.
-        let eng = from_qis_llvm_ir_pliron(include_str!("../../../examples/llvm/qprog.ll")).expect("adapter lowers qprog.ll");
+        let eng = from_qis_llvm_ir_pliron(include_str!("../../../examples/llvm/qprog.ll"))
+            .expect("adapter lowers qprog.ll");
         let n = eng.num_qubits();
         let mut hybrid = HybridEngineBuilder::new()
             .with_classical_engine(eng)
@@ -2188,9 +2871,20 @@ mod tests {
             .build();
         for _ in 0..50 {
             let shot = hybrid.run_shot().unwrap();
-            assert_eq!(shot.data.get("r2").and_then(Data::as_u32), Some(0), "qprog mid (r2) deterministically 0");
-            assert_eq!(shot.data.get("r0").and_then(Data::as_u32), Some(0), "qprog final_q0 (r0) deterministically 0");
-            assert!(shot.data.get("r1").and_then(Data::as_u32).is_some(), "qprog final_q1 (r1) present");
+            assert_eq!(
+                shot.data.get("r2").and_then(Data::as_u32),
+                Some(0),
+                "qprog mid (r2) deterministically 0"
+            );
+            assert_eq!(
+                shot.data.get("r0").and_then(Data::as_u32),
+                Some(0),
+                "qprog final_q0 (r0) deterministically 0"
+            );
+            assert!(
+                shot.data.get("r1").and_then(Data::as_u32).is_some(),
+                "qprog final_q1 (r1) present"
+            );
             Engine::reset(&mut hybrid).unwrap();
         }
     }
@@ -2201,7 +2895,8 @@ mod tests {
     #[test]
     fn adapter_cz_swap_gates() {
         use pecos_engines::hybrid::HybridEngineBuilder;
-        let eng = from_qis_llvm_ir_pliron(include_str!("../fixtures/cz_swap.ll")).expect("adapter lowers cz_swap.ll");
+        let eng = from_qis_llvm_ir_pliron(include_str!("../fixtures/cz_swap.ll"))
+            .expect("adapter lowers cz_swap.ll");
         let n = eng.num_qubits();
         assert_eq!(n, 3, "cz_swap uses qubits 0,1,2");
         let mut hybrid = HybridEngineBuilder::new()
@@ -2210,17 +2905,34 @@ mod tests {
             .build();
         for _ in 0..50 {
             let shot = hybrid.run_shot().unwrap();
-            assert_eq!(shot.data.get("r0").and_then(Data::as_u32), Some(1), "cz+h must drive q0 to 1");
-            assert_eq!(shot.data.get("r1").and_then(Data::as_u32), Some(0), "swap moves the 1 off q1");
-            assert_eq!(shot.data.get("r2").and_then(Data::as_u32), Some(1), "swap moves the 1 onto q2");
+            assert_eq!(
+                shot.data.get("r0").and_then(Data::as_u32),
+                Some(1),
+                "cz+h must drive q0 to 1"
+            );
+            assert_eq!(
+                shot.data.get("r1").and_then(Data::as_u32),
+                Some(0),
+                "swap moves the 1 off q1"
+            );
+            assert_eq!(
+                shot.data.get("r2").and_then(Data::as_u32),
+                Some(1),
+                "swap moves the 1 onto q2"
+            );
             Engine::reset(&mut hybrid).unwrap();
         }
     }
     #[test]
     fn adapter_ghz3_dynamic_qubit_count() {
         use pecos_engines::hybrid::HybridEngineBuilder;
-        let eng = from_qis_llvm_ir_pliron(include_str!("../fixtures/ghz3.ll")).expect("adapter lowers ghz3.ll");
-        assert_eq!(eng.num_qubits(), 3, "GHZ-3 engine must report 3 qubits (dynamic, not hard-coded 2)");
+        let eng = from_qis_llvm_ir_pliron(include_str!("../fixtures/ghz3.ll"))
+            .expect("adapter lowers ghz3.ll");
+        assert_eq!(
+            eng.num_qubits(),
+            3,
+            "GHZ-3 engine must report 3 qubits (dynamic, not hard-coded 2)"
+        );
         let n = eng.num_qubits();
         let mut hybrid = HybridEngineBuilder::new()
             .with_classical_engine(eng)
@@ -2232,7 +2944,10 @@ mod tests {
             let r0 = shot.data.get("r0").and_then(Data::as_u32).expect("r0");
             let r1 = shot.data.get("r1").and_then(Data::as_u32).expect("r1");
             let r2 = shot.data.get("r2").and_then(Data::as_u32).expect("r2");
-            assert!(r0 == r1 && r1 == r2, "GHZ-3 must be fully correlated, got r0={r0} r1={r1} r2={r2}");
+            assert!(
+                r0 == r1 && r1 == r2,
+                "GHZ-3 must be fully correlated, got r0={r0} r1={r1} r2={r2}"
+            );
             saw0 |= r0 == 0;
             saw1 |= r0 == 1;
             Engine::reset(&mut hybrid).unwrap();
@@ -2297,7 +3012,10 @@ mod tests {
             .collect();
         infos.sort_by_key(|&(q, _, label)| (label, q));
         // qprog.ll: result-id 0 = final q0, 1 = final q1, 2 = mid q0 -- all Z measurements.
-        assert_eq!(infos, vec![(0, Basis::Z, 0), (1, Basis::Z, 1), (0, Basis::Z, 2)]);
+        assert_eq!(
+            infos,
+            vec![(0, Basis::Z, 0), (1, Basis::Z, 1), (0, Basis::Z, 2)]
+        );
     }
 
     // ---- negative tests: prove the verifiers and seam invariants actually bite ----
@@ -2310,7 +3028,10 @@ mod tests {
         let alloc = QallocOp::new(ctx);
         let bad = HOp::new(ctx, alloc.get_result(ctx));
         let res = verify_op(&bad, ctx);
-        assert!(res.is_err(), "qec.h on a qec.alloc handle must fail verification, got Ok");
+        assert!(
+            res.is_err(),
+            "qec.h on a qec.alloc handle must fail verification, got Ok"
+        );
     }
 
     /// `qec.cond_x`'s condition (operand 0) must be an `i1` measurement result. A non-`i1` condition
@@ -2323,7 +3044,8 @@ mod tests {
         let s1 = SlotOp::new(ctx, alloc.get_result(ctx), 1);
         // use a qubitref (operand 0) as the condition -- it is not an i1 measurement result.
         let bad = CondXOp::new(ctx, s0.get_result(ctx), s1.get_result(ctx));
-        let err = verify_op(&bad, ctx).expect_err("qec.cond_x with a non-i1 condition must fail verification");
+        let err = verify_op(&bad, ctx)
+            .expect_err("qec.cond_x with a non-i1 condition must fail verification");
         assert!(
             format!("{}", err.disp(ctx)).contains("i1"),
             "expected the i1-condition rejection, got: {}",
@@ -2339,7 +3061,10 @@ mod tests {
         let alloc = QallocOp::new(ctx);
         // rz on a qec.alloc handle (not a qubitref).
         let bad = RzOp::new(ctx, alloc.get_result(ctx), Angle64::from_radians(0.5));
-        assert!(verify_op(&bad, ctx).is_err(), "qec.rz on a qec.alloc handle must fail verification");
+        assert!(
+            verify_op(&bad, ctx).is_err(),
+            "qec.rz on a qec.alloc handle must fail verification"
+        );
     }
 
     /// `qec.if`'s condition must be an `i1`; a non-`i1` (here a qubitref) must be rejected -- guards
@@ -2352,7 +3077,8 @@ mod tests {
         let ifop = IfOp::new(ctx, s0v); // qubitref condition -- not an i1
         ifop.make_region_block(ctx, 0);
         ifop.make_region_block(ctx, 1);
-        let err = verify_op(&ifop, ctx).expect_err("qec.if with a non-i1 condition must fail verification");
+        let err = verify_op(&ifop, ctx)
+            .expect_err("qec.if with a non-i1 condition must fail verification");
         assert!(
             format!("{}", err.disp(ctx)).contains("i1"),
             "expected the i1-condition rejection, got: {}",
@@ -2372,14 +3098,25 @@ mod tests {
         module.append_operation(ctx, func.get_operation(), 0);
         let bb = func.get_entry_block(ctx);
         macro_rules! push {
-            ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+            ($op:expr) => {{
+                let o = $op;
+                o.get_operation().insert_at_back(bb, ctx);
+                o
+            }};
         }
         let qv = push!(QallocOp::new(ctx)).get_result(ctx);
         let sv = push!(SlotOp::new(ctx, qv, 0)).get_result(ctx); // slot index 0
         push!(PrepareOp::new(ctx, sv));
         let m = push!(MeasureOp::new(ctx, sv));
         let mut reg = MeasurementRegistry::default();
-        reg.record(m.get_result(ctx), MeasurementInfo { qubit: 1, basis: Basis::Z, export_label: 0 }); // qubit 1 != slot 0
+        reg.record(
+            m.get_result(ctx),
+            MeasurementInfo {
+                qubit: 1,
+                basis: Basis::Z,
+                export_label: 0,
+            },
+        ); // qubit 1 != slot 0
         let _ = plan_from_if_ir(ctx, bb, &reg); // measure_to_mz must assert and panic
     }
 
@@ -2394,14 +3131,22 @@ mod tests {
         module.append_operation(ctx, func.get_operation(), 0);
         let bb = func.get_entry_block(ctx);
         macro_rules! push {
-            ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+            ($op:expr) => {{
+                let o = $op;
+                o.get_operation().insert_at_back(bb, ctx);
+                o
+            }};
         }
         let q = push!(QallocOp::new(ctx));
         let sv = push!(SlotOp::new(ctx, q.get_result(ctx), 0)).get_result(ctx);
         let angle = Angle64::from_radians(1.07);
         let rz = push!(RzOp::new(ctx, sv, angle));
         let got = get_angle(ctx, rz.get_operation());
-        assert_eq!(got.fraction(), angle.fraction(), "qec.angle must round-trip the Angle64 fixed-point fraction exactly");
+        assert_eq!(
+            got.fraction(),
+            angle.fraction(),
+            "qec.angle must round-trip the Angle64 fixed-point fraction exactly"
+        );
     }
 
     /// Recording a measurement defined *inside* a `qec.if` region from the OUTER block is a
@@ -2416,7 +3161,11 @@ mod tests {
         module.append_operation(ctx, func.get_operation(), 0);
         let bb = func.get_entry_block(ctx);
         macro_rules! push {
-            ($op:expr) => {{ let o = $op; o.get_operation().insert_at_back(bb, ctx); o }};
+            ($op:expr) => {{
+                let o = $op;
+                o.get_operation().insert_at_back(bb, ctx);
+                o
+            }};
         }
         let q = push!(QallocOp::new(ctx));
         let qv = q.get_result(ctx);
@@ -2451,8 +3200,14 @@ mod tests {
     #[test]
     fn empty_message_is_semantically_empty() {
         let empty = ByteMessage::create_empty();
-        assert!(empty.is_empty().unwrap(), "create_empty() must be semantically empty (is_empty()==Ok(true))");
-        assert!(!empty.as_bytes().is_empty(), "create_empty().as_bytes() is NOT byte-empty -- that is the footgun");
+        assert!(
+            empty.is_empty().unwrap(),
+            "create_empty() must be semantically empty (is_empty()==Ok(true))"
+        );
+        assert!(
+            !empty.as_bytes().is_empty(),
+            "create_empty().as_bytes() is NOT byte-empty -- that is the footgun"
+        );
     }
 
     /// A `result_record_output` that names a result-id no measurement produced must return a
@@ -2638,7 +3393,9 @@ final:
 }
 ";
         let Err(err) = from_qis_llvm_ir_pliron(BAD) else {
-            panic!("conditional branch without mid-measurement must error, but adapter lowering succeeded");
+            panic!(
+                "conditional branch without mid-measurement must error, but adapter lowering succeeded"
+            );
         };
         assert!(
             format!("{err}").contains("mid-measurement"),

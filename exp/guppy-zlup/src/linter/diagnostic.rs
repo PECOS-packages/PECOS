@@ -108,28 +108,33 @@ impl Diagnostic {
     pub fn with_source_context(mut self, source: &str) -> Self {
         let line_num = self.location.line as usize;
         if line_num > 0
-            && let Some(line) = source.lines().nth(line_num - 1) {
-                self.source_context = Some(line.to_string());
-            }
+            && let Some(line) = source.lines().nth(line_num - 1)
+        {
+            self.source_context = Some(line.to_string());
+        }
         self
     }
 
-    pub fn error(rule_id: impl Into<String>, message: impl Into<String>, location: SourceLocation) -> Self {
+    pub fn error(
+        rule_id: impl Into<String>,
+        message: impl Into<String>,
+        location: SourceLocation,
+    ) -> Self {
         Self::new(rule_id, message, Severity::Error, location)
     }
 
-    pub fn warning(rule_id: impl Into<String>, message: impl Into<String>, location: SourceLocation) -> Self {
+    pub fn warning(
+        rule_id: impl Into<String>,
+        message: impl Into<String>,
+        location: SourceLocation,
+    ) -> Self {
         Self::new(rule_id, message, Severity::Warning, location)
     }
 }
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-            "{}: [{}] {}",
-            self.severity, self.rule_id, self.message
-        )?;
+        writeln!(f, "{}: [{}] {}", self.severity, self.rule_id, self.message)?;
         writeln!(f, "  --> {}", self.location)?;
 
         // Show source context if available

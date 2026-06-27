@@ -47,14 +47,28 @@ impl LintRule for ZLUP009AssertionDensity {
 fn check_stmt(stmt: &Stmt, filename: &str, source: &str, diagnostics: &mut Vec<Diagnostic>) {
     match stmt {
         Stmt::FunctionDef(func) => {
-            check_function(&func.name, &func.body, func.range, filename, source, diagnostics);
+            check_function(
+                &func.name,
+                &func.body,
+                func.range,
+                filename,
+                source,
+                diagnostics,
+            );
             // Check nested functions
             for s in &func.body {
                 check_stmt(s, filename, source, diagnostics);
             }
         }
         Stmt::AsyncFunctionDef(func) => {
-            check_function(&func.name, &func.body, func.range, filename, source, diagnostics);
+            check_function(
+                &func.name,
+                &func.body,
+                func.range,
+                filename,
+                source,
+                diagnostics,
+            );
             for s in &func.body {
                 check_stmt(s, filename, source, diagnostics);
             }
@@ -186,7 +200,7 @@ fn has_assertion_in_body(body: &[Stmt]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source(source: &str) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

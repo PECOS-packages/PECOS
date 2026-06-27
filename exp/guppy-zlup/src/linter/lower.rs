@@ -7,9 +7,8 @@
 use rustpython_parser::ast::{self, Constant, Expr as PyExpr, Mod, Ranged, Stmt as PyStmt};
 
 use super::ast::{
-    AssignTarget, BinOp, BoolOpKind, CmpOp, Comprehension, ExceptHandler, Expr, ForIter,
-    Function, GateKind, Keyword, Module, Param, PrimitiveType, Span, Stmt, Type, UnaryOp,
-    WithItem,
+    AssignTarget, BinOp, BoolOpKind, CmpOp, Comprehension, ExceptHandler, Expr, ForIter, Function,
+    GateKind, Keyword, Module, Param, PrimitiveType, Span, Stmt, Type, UnaryOp, WithItem,
 };
 
 /// Errors that can occur during lowering.
@@ -211,9 +210,10 @@ fn lower_stmt(stmt: &PyStmt) -> Result<Stmt, LowerError> {
 
             // Check if this is a gate call
             if let PyExpr::Call(call) = expr.as_ref()
-                && let Some(stmt) = try_lower_gate_call(call, span)? {
-                    return Ok(stmt);
-                }
+                && let Some(stmt) = try_lower_gate_call(call, span)?
+            {
+                return Ok(stmt);
+            }
 
             Ok(Stmt::Expr {
                 value: lower_expr(expr)?,
@@ -455,7 +455,10 @@ fn lower_assign(assign: &ast::StmtAssign) -> Result<Stmt, LowerError> {
     let span = make_span(assign.range);
 
     if assign.targets.len() != 1 {
-        return Err(LowerError::Unsupported("multiple assignment targets".into(), span));
+        return Err(LowerError::Unsupported(
+            "multiple assignment targets".into(),
+            span,
+        ));
     }
 
     let target_expr = &assign.targets[0];
@@ -463,45 +466,53 @@ fn lower_assign(assign: &ast::StmtAssign) -> Result<Stmt, LowerError> {
     // Check for qubit allocation: q = qubit[n]
     if let PyExpr::Subscript(sub) = assign.value.as_ref()
         && let PyExpr::Name(name) = sub.value.as_ref()
-            && name.id.as_str() == "qubit" {
-                let var_name = if let PyExpr::Name(n) = target_expr {
-                    n.id.to_string()
-                } else {
-                    return Err(LowerError::Unsupported("complex qalloc target".into(), span));
-                };
+        && name.id.as_str() == "qubit"
+    {
+        let var_name = if let PyExpr::Name(n) = target_expr {
+            n.id.to_string()
+        } else {
+            return Err(LowerError::Unsupported(
+                "complex qalloc target".into(),
+                span,
+            ));
+        };
 
-                let size = lower_expr(&sub.slice)?;
+        let size = lower_expr(&sub.slice)?;
 
-                return Ok(Stmt::Qalloc {
-                    name: var_name,
-                    size,
-                    span,
-                });
-            }
+        return Ok(Stmt::Qalloc {
+            name: var_name,
+            size,
+            span,
+        });
+    }
 
     // Check for measurement: m = measure(q)
     if let PyExpr::Call(call) = assign.value.as_ref()
         && let PyExpr::Name(func_name) = call.func.as_ref()
-            && func_name.id.as_str() == "measure" {
-                let result_name = if let PyExpr::Name(n) = target_expr {
-                    n.id.to_string()
-                } else {
-                    return Err(LowerError::Unsupported("complex measure target".into(), span));
-                };
+        && func_name.id.as_str() == "measure"
+    {
+        let result_name = if let PyExpr::Name(n) = target_expr {
+            n.id.to_string()
+        } else {
+            return Err(LowerError::Unsupported(
+                "complex measure target".into(),
+                span,
+            ));
+        };
 
-                let target = call
-                    .args
-                    .first()
-                    .map(lower_expr)
-                    .transpose()?
-                    .ok_or_else(|| LowerError::Unsupported("measure without target".into(), span))?;
+        let target = call
+            .args
+            .first()
+            .map(lower_expr)
+            .transpose()?
+            .ok_or_else(|| LowerError::Unsupported("measure without target".into(), span))?;
 
-                return Ok(Stmt::Measure {
-                    target,
-                    result: Some(result_name),
-                    span,
-                });
-            }
+        return Ok(Stmt::Measure {
+            target,
+            result: Some(result_name),
+            span,
+        });
+    }
 
     // Regular assignment
     let target = lower_assign_target(target_expr)?;
@@ -553,32 +564,33 @@ fn lower_for_iter(expr: &PyExpr) -> Result<ForIter, LowerError> {
     // Check for range(...)
     if let PyExpr::Call(call) = expr
         && let PyExpr::Name(name) = call.func.as_ref()
-            && name.id.as_str() == "range" {
-                match call.args.len() {
-                    1 => {
-                        return Ok(ForIter::Range {
-                            start: None,
-                            end: Box::new(lower_expr(&call.args[0])?),
-                            step: None,
-                        });
-                    }
-                    2 => {
-                        return Ok(ForIter::Range {
-                            start: Some(Box::new(lower_expr(&call.args[0])?)),
-                            end: Box::new(lower_expr(&call.args[1])?),
-                            step: None,
-                        });
-                    }
-                    3 => {
-                        return Ok(ForIter::Range {
-                            start: Some(Box::new(lower_expr(&call.args[0])?)),
-                            end: Box::new(lower_expr(&call.args[1])?),
-                            step: Some(Box::new(lower_expr(&call.args[2])?)),
-                        });
-                    }
-                    _ => {}
-                }
+        && name.id.as_str() == "range"
+    {
+        match call.args.len() {
+            1 => {
+                return Ok(ForIter::Range {
+                    start: None,
+                    end: Box::new(lower_expr(&call.args[0])?),
+                    step: None,
+                });
             }
+            2 => {
+                return Ok(ForIter::Range {
+                    start: Some(Box::new(lower_expr(&call.args[0])?)),
+                    end: Box::new(lower_expr(&call.args[1])?),
+                    step: None,
+                });
+            }
+            3 => {
+                return Ok(ForIter::Range {
+                    start: Some(Box::new(lower_expr(&call.args[0])?)),
+                    end: Box::new(lower_expr(&call.args[1])?),
+                    step: Some(Box::new(lower_expr(&call.args[2])?)),
+                });
+            }
+            _ => {}
+        }
+    }
 
     Ok(ForIter::Iter(Box::new(lower_expr(expr)?)))
 }
@@ -699,7 +711,11 @@ fn lower_expr(expr: &PyExpr) -> Result<Expr, LowerError> {
         }
 
         PyExpr::Tuple(tuple) => {
-            let elts = tuple.elts.iter().map(lower_expr).collect::<Result<_, _>>()?;
+            let elts = tuple
+                .elts
+                .iter()
+                .map(lower_expr)
+                .collect::<Result<_, _>>()?;
             Ok(Expr::Tuple { elts, span })
         }
 
@@ -709,7 +725,11 @@ fn lower_expr(expr: &PyExpr) -> Result<Expr, LowerError> {
                 .iter()
                 .map(|k| k.as_ref().and_then(|k| lower_expr(k).ok()))
                 .collect();
-            let values = dict.values.iter().map(lower_expr).collect::<Result<_, _>>()?;
+            let values = dict
+                .values
+                .iter()
+                .map(lower_expr)
+                .collect::<Result<_, _>>()?;
             Ok(Expr::Dict { keys, values, span })
         }
 
@@ -907,8 +927,20 @@ def bell():
 
         let body = &module.functions[0].body;
         assert!(matches!(body[0], Stmt::Qalloc { .. }));
-        assert!(matches!(body[1], Stmt::Gate { gate: GateKind::H, .. }));
-        assert!(matches!(body[2], Stmt::Gate { gate: GateKind::Cx, .. }));
+        assert!(matches!(
+            body[1],
+            Stmt::Gate {
+                gate: GateKind::H,
+                ..
+            }
+        ));
+        assert!(matches!(
+            body[2],
+            Stmt::Gate {
+                gate: GateKind::Cx,
+                ..
+            }
+        ));
     }
 
     #[test]

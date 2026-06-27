@@ -2,12 +2,18 @@
 
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 
-use super::{make_location, LintRule};
 use super::super::diagnostic::{Diagnostic, Severity};
+use super::{LintRule, make_location};
 
 /// Functions/types that perform allocation.
 const ALLOCATION_FUNCTIONS: &[&str] = &[
-    "qalloc", "qubit", "list", "dict", "set", "bytearray", "array",
+    "qalloc",
+    "qubit",
+    "list",
+    "dict",
+    "set",
+    "bytearray",
+    "array",
 ];
 
 /// Methods that may cause allocation.
@@ -135,9 +141,10 @@ fn check_stmt(
         }
         Stmt::AnnAssign(ann) => {
             if loop_depth > 0
-                && let Some(value) = &ann.value {
-                    check_expr(value, filename, source, diagnostics);
-                }
+                && let Some(value) = &ann.value
+            {
+                check_expr(value, filename, source, diagnostics);
+            }
         }
         _ => {}
     }
@@ -191,17 +198,18 @@ fn check_expr(expr: &Expr, filename: &str, source: &str, diagnostics: &mut Vec<D
         Expr::Subscript(sub) => {
             // Check for qubit[n] allocation
             if let Expr::Name(name) = sub.value.as_ref()
-                && name.id.as_str() == "qubit" {
-                    diagnostics.push(
-                        Diagnostic::error(
-                            "ZLUP003",
-                            "'qubit[...]' allocates qubits inside a loop",
-                            make_location(sub.range, filename, source),
-                        )
-                        .with_suggestion("Allocate qubits outside the loop")
-                        .with_source_context(source),
-                    );
-                }
+                && name.id.as_str() == "qubit"
+            {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "ZLUP003",
+                        "'qubit[...]' allocates qubits inside a loop",
+                        make_location(sub.range, filename, source),
+                    )
+                    .with_suggestion("Allocate qubits outside the loop")
+                    .with_source_context(source),
+                );
+            }
         }
 
         Expr::ListComp(comp) => {
@@ -260,7 +268,7 @@ fn check_expr(expr: &Expr, filename: &str, source: &str, diagnostics: &mut Vec<D
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source(source: &str) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

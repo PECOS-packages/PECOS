@@ -2,8 +2,8 @@
 
 use rustpython_parser::ast::{self, Constant, Expr, Mod, Stmt};
 
-use super::{make_location, LintRule};
 use super::super::diagnostic::{Diagnostic, Severity};
+use super::{LintRule, make_location};
 
 /// Detects unbounded loops that violate NASA Power of 10 rules.
 pub struct ZLUP001UnboundedLoops;
@@ -136,21 +136,22 @@ fn check_while_loop(
 
         // Check for `while 1:`
         if let Constant::Int(ref i) = c.value
-            && (i.to_u32_digits().1 == [1] || i.to_string() == "1") {
-                // Only report if there's no unconditional break
-                if !has_unconditional_break(&while_stmt.body) {
-                    diagnostics.push(
-                        Diagnostic::error(
-                            "ZLUP001",
-                            "'while 1' creates an unbounded loop",
-                            make_location(while_stmt.range, filename, source),
-                        )
-                        .with_suggestion("Use a for loop with a fixed upper bound instead")
-                        .with_source_context(source),
-                    );
-                }
-                return;
+            && (i.to_u32_digits().1 == [1] || i.to_string() == "1")
+        {
+            // Only report if there's no unconditional break
+            if !has_unconditional_break(&while_stmt.body) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "ZLUP001",
+                        "'while 1' creates an unbounded loop",
+                        make_location(while_stmt.range, filename, source),
+                    )
+                    .with_suggestion("Use a for loop with a fixed upper bound instead")
+                    .with_source_context(source),
+                );
             }
+            return;
+        }
     }
 
     // Check for while loops without a clear termination condition
@@ -192,9 +193,11 @@ fn has_unconditional_break(body: &[Stmt]) -> bool {
         }
         // Check for guaranteed break in all branches of an if
         if let Stmt::If(if_stmt) = stmt
-            && has_unconditional_break(&if_stmt.body) && has_unconditional_break(&if_stmt.orelse) {
-                return true;
-            }
+            && has_unconditional_break(&if_stmt.body)
+            && has_unconditional_break(&if_stmt.orelse)
+        {
+            return true;
+        }
     }
     false
 }
@@ -202,7 +205,7 @@ fn has_unconditional_break(body: &[Stmt]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source(source: &str) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

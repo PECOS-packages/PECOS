@@ -329,10 +329,12 @@ impl ModuleLoader {
             // Try std/std.zlp (directory with entry file)
             let std_dir_entry = stdlib.join("std").join("std.zlp");
             if std_dir_entry.exists() {
-                return std_dir_entry.canonicalize().map_err(|e| ModuleError::ReadError {
-                    path: std_dir_entry.display().to_string(),
-                    source: e,
-                });
+                return std_dir_entry
+                    .canonicalize()
+                    .map_err(|e| ModuleError::ReadError {
+                        path: std_dir_entry.display().to_string(),
+                        source: e,
+                    });
             }
 
             // Try std.zlp directly
@@ -354,10 +356,12 @@ impl ModuleLoader {
             // Try lib/std/std.zlp
             let std_dir_entry = lib_dir.join("std").join("std.zlp");
             if std_dir_entry.exists() {
-                return std_dir_entry.canonicalize().map_err(|e| ModuleError::ReadError {
-                    path: std_dir_entry.display().to_string(),
-                    source: e,
-                });
+                return std_dir_entry
+                    .canonicalize()
+                    .map_err(|e| ModuleError::ReadError {
+                        path: std_dir_entry.display().to_string(),
+                        source: e,
+                    });
             }
 
             // Try lib/std.zlp
@@ -375,10 +379,12 @@ impl ModuleLoader {
             // Try std/std.zlp
             let std_dir_entry = search_path.join("std").join("std.zlp");
             if std_dir_entry.exists() {
-                return std_dir_entry.canonicalize().map_err(|e| ModuleError::ReadError {
-                    path: std_dir_entry.display().to_string(),
-                    source: e,
-                });
+                return std_dir_entry
+                    .canonicalize()
+                    .map_err(|e| ModuleError::ReadError {
+                        path: std_dir_entry.display().to_string(),
+                        source: e,
+                    });
             }
 
             // Try std.zlp
@@ -420,16 +426,22 @@ impl ModuleLoader {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or(import_path);
-            candidates.push(base_dir.join(import_path).join(format!("{}.zlp", module_name)));
+            candidates.push(
+                base_dir
+                    .join(import_path)
+                    .join(format!("{}.zlp", module_name)),
+            );
         }
 
         // Try candidates relative to base_dir
         for candidate in &candidates {
             if candidate.exists() {
-                return candidate.canonicalize().map_err(|e| ModuleError::ReadError {
-                    path: candidate.display().to_string(),
-                    source: e,
-                });
+                return candidate
+                    .canonicalize()
+                    .map_err(|e| ModuleError::ReadError {
+                        path: candidate.display().to_string(),
+                        source: e,
+                    });
             }
         }
 
@@ -444,16 +456,20 @@ impl ModuleLoader {
                     .unwrap_or(import_path);
                 vec![
                     search_path.join(format!("{}.zlp", import_path)),
-                    search_path.join(import_path).join(format!("{}.zlp", module_name)),
+                    search_path
+                        .join(import_path)
+                        .join(format!("{}.zlp", module_name)),
                 ]
             };
 
             for candidate in search_candidates {
                 if candidate.exists() {
-                    return candidate.canonicalize().map_err(|e| ModuleError::ReadError {
-                        path: candidate.display().to_string(),
-                        source: e,
-                    });
+                    return candidate
+                        .canonicalize()
+                        .map_err(|e| ModuleError::ReadError {
+                            path: candidate.display().to_string(),
+                            source: e,
+                        });
                 }
             }
         }

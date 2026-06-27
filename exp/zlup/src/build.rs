@@ -352,7 +352,9 @@ impl Build {
         let exe = Executable {
             name: options.name,
             root_source: self.project_root.join(&options.root_source),
-            target: options.target.unwrap_or_else(|| self.default_target.clone()),
+            target: options
+                .target
+                .unwrap_or_else(|| self.default_target.clone()),
             optimize: options.optimize.unwrap_or(self.default_optimize),
             strict: options.strict,
             defines: BTreeMap::new(),
@@ -370,7 +372,9 @@ impl Build {
         let lib = Library {
             name: options.name,
             root_source: self.project_root.join(&options.root_source),
-            target: options.target.unwrap_or_else(|| self.default_target.clone()),
+            target: options
+                .target
+                .unwrap_or_else(|| self.default_target.clone()),
             optimize: options.optimize.unwrap_or(self.default_optimize),
             strict: options.strict,
             step,
@@ -493,7 +497,8 @@ impl BuildRunner {
                     } else if let Ok(n) = value.parse::<i64>() {
                         self.build.set_option(name, OptionValue::Int(n));
                     } else {
-                        self.build.set_option(name, OptionValue::String(value.to_string()));
+                        self.build
+                            .set_option(name, OptionValue::String(value.to_string()));
                     }
                 } else {
                     // -Dflag without value means true
@@ -517,7 +522,10 @@ impl BuildRunner {
 
         if !build_file.exists() {
             return Err(BuildError {
-                message: format!("build.zlp not found in {}", self.build.project_root.display()),
+                message: format!(
+                    "build.zlp not found in {}",
+                    self.build.project_root.display()
+                ),
             });
         }
 
@@ -526,11 +534,10 @@ impl BuildRunner {
         })?;
 
         // Parse the build file
-        let _ast = crate::parse_file(&source, build_file.to_string_lossy()).map_err(|e| {
-            BuildError {
+        let _ast =
+            crate::parse_file(&source, build_file.to_string_lossy()).map_err(|e| BuildError {
                 message: format!("failed to parse build.zlp: {}", e),
-            }
-        })?;
+            })?;
 
         // TODO: Execute the build function using the comptime evaluator
         // For now, we just validate that build.zlp parses correctly
@@ -601,17 +608,17 @@ impl BuildRunner {
 
     /// Run all tests.
     fn run_tests(&self) -> BuildResult<()> {
-        use crate::test_runner::{format_results, TestOutcome, TestRunConfig, TestRunner};
+        use crate::test_runner::{TestOutcome, TestRunConfig, TestRunner, format_results};
 
         for test in &self.build.tests {
             println!("Running test: {}", test.root_source.display());
 
-            let source = std::fs::read_to_string(&test.root_source).map_err(|e| {
-                BuildError { message: format!("failed to read {}: {}", test.root_source.display(), e) }
+            let source = std::fs::read_to_string(&test.root_source).map_err(|e| BuildError {
+                message: format!("failed to read {}: {}", test.root_source.display(), e),
             })?;
 
-            let program = crate::parser::parse(&source).map_err(|e| {
-                BuildError { message: format!("parse error: {}", e) }
+            let program = crate::parser::parse(&source).map_err(|e| BuildError {
+                message: format!("parse error: {}", e),
             })?;
 
             let config = TestRunConfig::default();
@@ -619,9 +626,13 @@ impl BuildRunner {
             let results = runner.run(&program);
             print!("{}", format_results(&results));
 
-            let has_failures = results.iter().any(|r| matches!(r.outcome, TestOutcome::Fail(_)));
+            let has_failures = results
+                .iter()
+                .any(|r| matches!(r.outcome, TestOutcome::Fail(_)));
             if has_failures {
-                return Err(BuildError { message: "some tests failed".to_string() });
+                return Err(BuildError {
+                    message: "some tests failed".to_string(),
+                });
             }
         }
         Ok(())

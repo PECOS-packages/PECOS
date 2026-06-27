@@ -38,7 +38,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::ast::{BinaryOp, Expr, FnDecl, ForRange, FStringPart, PrimitiveType, Stmt, TypeExpr, UnaryOp};
+use crate::ast::{
+    BinaryOp, Expr, FStringPart, FnDecl, ForRange, PrimitiveType, Stmt, TypeExpr, UnaryOp,
+};
 use crate::rational::Rational;
 use crate::semantic::{BitWidth, SemanticError, Type};
 
@@ -142,9 +144,7 @@ pub enum ComptimeValue {
         fields: BTreeMap<String, ComptimeValue>,
     },
     /// Slice reference (ptr + len)
-    Slice {
-        data: Vec<ComptimeValue>,
-    },
+    Slice { data: Vec<ComptimeValue> },
     /// String literal
     String(String),
     /// A comptime function (for generic type constructors)
@@ -164,9 +164,16 @@ impl PartialEq for ComptimeValue {
             (ComptimeValue::Undefined, ComptimeValue::Undefined) => true,
             (ComptimeValue::Unit, ComptimeValue::Unit) => true,
             (ComptimeValue::Array(a), ComptimeValue::Array(b)) => a == b,
-            (ComptimeValue::Struct { name: n1, fields: f1 }, ComptimeValue::Struct { name: n2, fields: f2 }) => {
-                n1 == n2 && f1 == f2
-            }
+            (
+                ComptimeValue::Struct {
+                    name: n1,
+                    fields: f1,
+                },
+                ComptimeValue::Struct {
+                    name: n2,
+                    fields: f2,
+                },
+            ) => n1 == n2 && f1 == f2,
             (ComptimeValue::Slice { data: d1 }, ComptimeValue::Slice { data: d2 }) => d1 == d2,
             (ComptimeValue::String(a), ComptimeValue::String(b)) => a == b,
             (ComptimeValue::Function(_), ComptimeValue::Function(_)) => false, // Functions not comparable
@@ -227,8 +234,12 @@ impl ComptimeValue {
     /// Get the type of this comptime value.
     pub fn get_type(&self) -> Type {
         match self {
-            ComptimeValue::Int(_) => Type::IInt { bits: BitWidth::BITS_64 },
-            ComptimeValue::Uint(_) => Type::UInt { bits: BitWidth::BITS_64 },
+            ComptimeValue::Int(_) => Type::IInt {
+                bits: BitWidth::BITS_64,
+            },
+            ComptimeValue::Uint(_) => Type::UInt {
+                bits: BitWidth::BITS_64,
+            },
             ComptimeValue::Float(_) => Type::F64,
             ComptimeValue::Rational(_) => Type::F64, // Rationals coerce to f64 when needed
             ComptimeValue::Bool(_) => Type::Bool,
@@ -262,7 +273,9 @@ impl ComptimeValue {
                 }
             }
             ComptimeValue::String(_) => Type::Slice {
-                element: Box::new(Type::UInt { bits: BitWidth::BITS_8 }),
+                element: Box::new(Type::UInt {
+                    bits: BitWidth::BITS_8,
+                }),
             },
             ComptimeValue::Function(_) => Type::Type, // Comptime functions return types
         }
@@ -484,7 +497,9 @@ impl ComptimeEvaluator {
                 ComptimeValue::Struct { name, fields } => {
                     let field_strs: Vec<_> = fields
                         .iter()
-                        .map(|(k, v)| format!("{}:{}", k, Self::serialize_args_for_cache(&[v.clone()])))
+                        .map(|(k, v)| {
+                            format!("{}:{}", k, Self::serialize_args_for_cache(&[v.clone()]))
+                        })
                         .collect();
                     format!("st{}[{}]", name, field_strs.join(";"))
                 }
@@ -506,18 +521,28 @@ impl ComptimeEvaluator {
                 let field_strs: Vec<_> = fields
                     .iter()
                     .map(|(field_name, field_ty)| {
-                        format!("{}:{}", field_name, Self::serialize_type_for_cache(field_ty))
+                        format!(
+                            "{}:{}",
+                            field_name,
+                            Self::serialize_type_for_cache(field_ty)
+                        )
                     })
                     .collect();
                 format!("struct{}[{}]", name, field_strs.join(";"))
             }
             Type::Array { element, size } => {
-                format!("[{}]{}", size.unwrap_or(0), Self::serialize_type_for_cache(element))
+                format!(
+                    "[{}]{}",
+                    size.unwrap_or(0),
+                    Self::serialize_type_for_cache(element)
+                )
             }
             Type::Slice { element } => {
                 format!("[]{}", Self::serialize_type_for_cache(element))
             }
-            Type::Pointer { pointee, is_const, .. } => {
+            Type::Pointer {
+                pointee, is_const, ..
+            } => {
                 let prefix = if *is_const { "*const" } else { "*" };
                 format!("{}{}", prefix, Self::serialize_type_for_cache(pointee))
             }
@@ -594,14 +619,16 @@ impl ComptimeEvaluator {
         // Valid bit widths are 1-128
         if let Some(bits_str) = name.strip_prefix('u') {
             if let Ok(bits) = bits_str.parse::<u16>()
-                && let Some(bw) = BitWidth::new(bits) {
-                    return Some(Type::UInt { bits: bw });
-                }
+                && let Some(bw) = BitWidth::new(bits)
+            {
+                return Some(Type::UInt { bits: bw });
+            }
         } else if let Some(bits_str) = name.strip_prefix('i')
             && let Ok(bits) = bits_str.parse::<u16>()
-                && let Some(bw) = BitWidth::new(bits) {
-                    return Some(Type::IInt { bits: bw });
-                }
+            && let Some(bw) = BitWidth::new(bits)
+        {
+            return Some(Type::IInt { bits: bw });
+        }
 
         None
     }
@@ -612,10 +639,10 @@ impl ComptimeEvaluator {
             TypeExpr::Primitive(prim) => Ok(match prim {
                 PrimitiveType::Bool => Type::Bool,
                 PrimitiveType::UInt { bits } => Type::UInt {
-                    bits: BitWidth::new(*bits).unwrap_or(BitWidth::BITS_64)
+                    bits: BitWidth::new(*bits).unwrap_or(BitWidth::BITS_64),
                 },
                 PrimitiveType::IInt { bits } => Type::IInt {
-                    bits: BitWidth::new(*bits).unwrap_or(BitWidth::BITS_64)
+                    bits: BitWidth::new(*bits).unwrap_or(BitWidth::BITS_64),
                 },
                 PrimitiveType::Usize => Type::Usize,
                 PrimitiveType::Isize => Type::Isize,
@@ -666,9 +693,10 @@ impl ComptimeEvaluator {
                 }
                 // For single-segment names, try direct lookup
                 if path.segments.len() == 1
-                    && let Some(ComptimeValue::Type(ty)) = self.context.lookup(&path.segments[0]) {
-                        return Ok(ty.clone());
-                    }
+                    && let Some(ComptimeValue::Type(ty)) = self.context.lookup(&path.segments[0])
+                {
+                    return Ok(ty.clone());
+                }
                 // Unresolved named type - return Unknown (will be resolved by semantic analyzer)
                 Ok(Type::Unknown)
             }
@@ -689,7 +717,10 @@ impl ComptimeEvaluator {
                 })
             }
             _ => Err(ComptimeError {
-                message: format!("type expression not yet supported at comptime: {:?}", type_expr),
+                message: format!(
+                    "type expression not yet supported at comptime: {:?}",
+                    type_expr
+                ),
             }),
         }
     }
@@ -797,130 +828,200 @@ impl ComptimeEvaluator {
 
     // Arithmetic operations
 
-    fn eval_add(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_add(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
-            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => {
-                a.checked_add(*b).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => a
+                .checked_add(*b)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in addition".to_string(),
-                })
-            }
-            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => {
-                a.checked_add(*b).map(ComptimeValue::Uint).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => a
+                .checked_add(*b)
+                .map(ComptimeValue::Uint)
+                .ok_or_else(|| ComptimeError {
                     message: "unsigned integer overflow in addition".to_string(),
-                })
-            }
-            (ComptimeValue::Int(a), ComptimeValue::Uint(b)) => {
-                a.checked_add(*b as i64).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Int(a), ComptimeValue::Uint(b)) => a
+                .checked_add(*b as i64)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in addition".to_string(),
-                })
-            }
-            (ComptimeValue::Uint(a), ComptimeValue::Int(b)) => {
-                (*a as i64).checked_add(*b).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Uint(a), ComptimeValue::Int(b)) => (*a as i64)
+                .checked_add(*b)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in addition".to_string(),
-                })
-            }
+                }),
             // Rational arithmetic
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(*a + *b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Rational(*a + Rational::from_int(*b))),
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(Rational::from_int(*a) + *b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Rational(*a + Rational::from_int(*b as i64))),
-            (ComptimeValue::Uint(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(Rational::from_int(*a as i64) + *b)),
+            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(*a + *b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
+                Ok(ComptimeValue::Rational(*a + Rational::from_int(*b)))
+            }
+            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(Rational::from_int(*a) + *b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Uint(b)) => {
+                Ok(ComptimeValue::Rational(*a + Rational::from_int(*b as i64)))
+            }
+            (ComptimeValue::Uint(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(Rational::from_int(*a as i64) + *b))
+            }
             // Float arithmetic - validate results are finite
             (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Self::validate_float(a + b),
             (ComptimeValue::Float(a), ComptimeValue::Int(b)) => Self::validate_float(a + *b as f64),
             (ComptimeValue::Int(a), ComptimeValue::Float(b)) => Self::validate_float(*a as f64 + b),
             // Rational with float promotes to float
-            (ComptimeValue::Rational(a), ComptimeValue::Float(b)) => Self::validate_float(a.to_f64() + b),
-            (ComptimeValue::Float(a), ComptimeValue::Rational(b)) => Self::validate_float(a + b.to_f64()),
+            (ComptimeValue::Rational(a), ComptimeValue::Float(b)) => {
+                Self::validate_float(a.to_f64() + b)
+            }
+            (ComptimeValue::Float(a), ComptimeValue::Rational(b)) => {
+                Self::validate_float(a + b.to_f64())
+            }
             _ => Err(ComptimeError {
                 message: format!("cannot add {} and {}", left, right),
             }),
         }
     }
 
-    fn eval_sub(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_sub(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
-            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => {
-                a.checked_sub(*b).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => a
+                .checked_sub(*b)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in subtraction".to_string(),
-                })
-            }
-            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => {
-                a.checked_sub(*b).map(ComptimeValue::Uint).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => a
+                .checked_sub(*b)
+                .map(ComptimeValue::Uint)
+                .ok_or_else(|| ComptimeError {
                     message: "unsigned integer underflow in subtraction".to_string(),
-                })
-            }
-            (ComptimeValue::Int(a), ComptimeValue::Uint(b)) => {
-                a.checked_sub(*b as i64).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Int(a), ComptimeValue::Uint(b)) => a
+                .checked_sub(*b as i64)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in subtraction".to_string(),
-                })
-            }
-            (ComptimeValue::Uint(a), ComptimeValue::Int(b)) => {
-                (*a as i64).checked_sub(*b).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Uint(a), ComptimeValue::Int(b)) => (*a as i64)
+                .checked_sub(*b)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in subtraction".to_string(),
-                })
-            }
+                }),
             // Rational arithmetic
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(*a - *b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Rational(*a - Rational::from_int(*b))),
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(Rational::from_int(*a) - *b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Rational(*a - Rational::from_int(*b as i64))),
-            (ComptimeValue::Uint(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(Rational::from_int(*a as i64) - *b)),
+            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(*a - *b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
+                Ok(ComptimeValue::Rational(*a - Rational::from_int(*b)))
+            }
+            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(Rational::from_int(*a) - *b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Uint(b)) => {
+                Ok(ComptimeValue::Rational(*a - Rational::from_int(*b as i64)))
+            }
+            (ComptimeValue::Uint(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(Rational::from_int(*a as i64) - *b))
+            }
             // Float arithmetic - validate results are finite
             (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Self::validate_float(a - b),
             (ComptimeValue::Float(a), ComptimeValue::Int(b)) => Self::validate_float(a - *b as f64),
             (ComptimeValue::Int(a), ComptimeValue::Float(b)) => Self::validate_float(*a as f64 - b),
             // Rational with float promotes to float
-            (ComptimeValue::Rational(a), ComptimeValue::Float(b)) => Self::validate_float(a.to_f64() - b),
-            (ComptimeValue::Float(a), ComptimeValue::Rational(b)) => Self::validate_float(a - b.to_f64()),
+            (ComptimeValue::Rational(a), ComptimeValue::Float(b)) => {
+                Self::validate_float(a.to_f64() - b)
+            }
+            (ComptimeValue::Float(a), ComptimeValue::Rational(b)) => {
+                Self::validate_float(a - b.to_f64())
+            }
             _ => Err(ComptimeError {
                 message: format!("cannot subtract {} and {}", left, right),
             }),
         }
     }
 
-    fn eval_mul(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_mul(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
-            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => {
-                a.checked_mul(*b).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+            (ComptimeValue::Int(a), ComptimeValue::Int(b)) => a
+                .checked_mul(*b)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in multiplication".to_string(),
-                })
-            }
-            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => {
-                a.checked_mul(*b).map(ComptimeValue::Uint).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => a
+                .checked_mul(*b)
+                .map(ComptimeValue::Uint)
+                .ok_or_else(|| ComptimeError {
                     message: "unsigned integer overflow in multiplication".to_string(),
-                })
-            }
-            (ComptimeValue::Int(a), ComptimeValue::Uint(b)) => {
-                a.checked_mul(*b as i64).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Int(a), ComptimeValue::Uint(b)) => a
+                .checked_mul(*b as i64)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in multiplication".to_string(),
-                })
-            }
-            (ComptimeValue::Uint(a), ComptimeValue::Int(b)) => {
-                (*a as i64).checked_mul(*b).map(ComptimeValue::Int).ok_or_else(|| ComptimeError {
+                }),
+            (ComptimeValue::Uint(a), ComptimeValue::Int(b)) => (*a as i64)
+                .checked_mul(*b)
+                .map(ComptimeValue::Int)
+                .ok_or_else(|| ComptimeError {
                     message: "integer overflow in multiplication".to_string(),
-                })
-            }
+                }),
             // Rational arithmetic
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(*a * *b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Rational(*a * Rational::from_int(*b))),
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(Rational::from_int(*a) * *b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Rational(*a * Rational::from_int(*b as i64))),
-            (ComptimeValue::Uint(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Rational(Rational::from_int(*a as i64) * *b)),
+            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(*a * *b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
+                Ok(ComptimeValue::Rational(*a * Rational::from_int(*b)))
+            }
+            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(Rational::from_int(*a) * *b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Uint(b)) => {
+                Ok(ComptimeValue::Rational(*a * Rational::from_int(*b as i64)))
+            }
+            (ComptimeValue::Uint(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Rational(Rational::from_int(*a as i64) * *b))
+            }
             // Float arithmetic - validate results are finite
             (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Self::validate_float(a * b),
             (ComptimeValue::Float(a), ComptimeValue::Int(b)) => Self::validate_float(a * *b as f64),
             (ComptimeValue::Int(a), ComptimeValue::Float(b)) => Self::validate_float(*a as f64 * b),
             // Rational with float promotes to float
-            (ComptimeValue::Rational(a), ComptimeValue::Float(b)) => Self::validate_float(a.to_f64() * b),
-            (ComptimeValue::Float(a), ComptimeValue::Rational(b)) => Self::validate_float(a * b.to_f64()),
+            (ComptimeValue::Rational(a), ComptimeValue::Float(b)) => {
+                Self::validate_float(a.to_f64() * b)
+            }
+            (ComptimeValue::Float(a), ComptimeValue::Rational(b)) => {
+                Self::validate_float(a * b.to_f64())
+            }
             _ => Err(ComptimeError {
                 message: format!("cannot multiply {} and {}", left, right),
             }),
         }
     }
 
-    fn eval_div(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_div(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => {
                 if *b == 0 {
@@ -980,35 +1081,45 @@ impl ComptimeEvaluator {
             // Float arithmetic - check for division by zero
             (ComptimeValue::Float(a), ComptimeValue::Float(b)) => {
                 if *b == 0.0 {
-                    Err(ComptimeError { message: "division by zero".to_string() })
+                    Err(ComptimeError {
+                        message: "division by zero".to_string(),
+                    })
                 } else {
                     Self::validate_float(a / b)
                 }
             }
             (ComptimeValue::Int(a), ComptimeValue::Float(b)) => {
                 if *b == 0.0 {
-                    Err(ComptimeError { message: "division by zero".to_string() })
+                    Err(ComptimeError {
+                        message: "division by zero".to_string(),
+                    })
                 } else {
                     Self::validate_float(*a as f64 / b)
                 }
             }
             (ComptimeValue::Float(a), ComptimeValue::Int(b)) => {
                 if *b == 0 {
-                    Err(ComptimeError { message: "division by zero".to_string() })
+                    Err(ComptimeError {
+                        message: "division by zero".to_string(),
+                    })
                 } else {
                     Self::validate_float(a / *b as f64)
                 }
             }
             (ComptimeValue::Uint(a), ComptimeValue::Float(b)) => {
                 if *b == 0.0 {
-                    Err(ComptimeError { message: "division by zero".to_string() })
+                    Err(ComptimeError {
+                        message: "division by zero".to_string(),
+                    })
                 } else {
                     Self::validate_float(*a as f64 / b)
                 }
             }
             (ComptimeValue::Float(a), ComptimeValue::Uint(b)) => {
                 if *b == 0 {
-                    Err(ComptimeError { message: "division by zero".to_string() })
+                    Err(ComptimeError {
+                        message: "division by zero".to_string(),
+                    })
                 } else {
                     Self::validate_float(a / *b as f64)
                 }
@@ -1016,14 +1127,18 @@ impl ComptimeEvaluator {
             // Rational with float promotes to float
             (ComptimeValue::Rational(a), ComptimeValue::Float(b)) => {
                 if *b == 0.0 {
-                    Err(ComptimeError { message: "division by zero".to_string() })
+                    Err(ComptimeError {
+                        message: "division by zero".to_string(),
+                    })
                 } else {
                     Self::validate_float(a.to_f64() / b)
                 }
             }
             (ComptimeValue::Float(a), ComptimeValue::Rational(b)) => {
                 if b.is_zero() {
-                    Err(ComptimeError { message: "division by zero".to_string() })
+                    Err(ComptimeError {
+                        message: "division by zero".to_string(),
+                    })
                 } else {
                     Self::validate_float(a / b.to_f64())
                 }
@@ -1034,7 +1149,11 @@ impl ComptimeEvaluator {
         }
     }
 
-    fn eval_mod(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_mod(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => {
                 if *b == 0 {
@@ -1062,64 +1181,112 @@ impl ComptimeEvaluator {
 
     // Comparison operations
 
-    fn eval_eq(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_eq(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         Ok(ComptimeValue::Bool(left == right))
     }
 
-    fn eval_ne(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_ne(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         Ok(ComptimeValue::Bool(left != right))
     }
 
-    fn eval_lt(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_lt(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(a < b)),
             (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Bool(a < b)),
             (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Ok(ComptimeValue::Bool(a < b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Bool(a < b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(*a < Rational::from_int(*b))),
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Bool(Rational::from_int(*a) < *b)),
+            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Bool(a < b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
+                Ok(ComptimeValue::Bool(*a < Rational::from_int(*b)))
+            }
+            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Bool(Rational::from_int(*a) < *b))
+            }
             _ => Err(ComptimeError {
                 message: format!("cannot compare {} < {}", left, right),
             }),
         }
     }
 
-    fn eval_le(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_le(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(a <= b)),
             (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Bool(a <= b)),
             (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Ok(ComptimeValue::Bool(a <= b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Bool(a <= b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(*a <= Rational::from_int(*b))),
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Bool(Rational::from_int(*a) <= *b)),
+            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Bool(a <= b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
+                Ok(ComptimeValue::Bool(*a <= Rational::from_int(*b)))
+            }
+            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Bool(Rational::from_int(*a) <= *b))
+            }
             _ => Err(ComptimeError {
                 message: format!("cannot compare {} <= {}", left, right),
             }),
         }
     }
 
-    fn eval_gt(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_gt(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(a > b)),
             (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Bool(a > b)),
             (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Ok(ComptimeValue::Bool(a > b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Bool(a > b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(*a > Rational::from_int(*b))),
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Bool(Rational::from_int(*a) > *b)),
+            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Bool(a > b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
+                Ok(ComptimeValue::Bool(*a > Rational::from_int(*b)))
+            }
+            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Bool(Rational::from_int(*a) > *b))
+            }
             _ => Err(ComptimeError {
                 message: format!("cannot compare {} > {}", left, right),
             }),
         }
     }
 
-    fn eval_ge(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_ge(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(a >= b)),
             (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Bool(a >= b)),
             (ComptimeValue::Float(a), ComptimeValue::Float(b)) => Ok(ComptimeValue::Bool(a >= b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Bool(a >= b)),
-            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Bool(*a >= Rational::from_int(*b))),
-            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => Ok(ComptimeValue::Bool(Rational::from_int(*a) >= *b)),
+            (ComptimeValue::Rational(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Bool(a >= b))
+            }
+            (ComptimeValue::Rational(a), ComptimeValue::Int(b)) => {
+                Ok(ComptimeValue::Bool(*a >= Rational::from_int(*b)))
+            }
+            (ComptimeValue::Int(a), ComptimeValue::Rational(b)) => {
+                Ok(ComptimeValue::Bool(Rational::from_int(*a) >= *b))
+            }
             _ => Err(ComptimeError {
                 message: format!("cannot compare {} >= {}", left, right),
             }),
@@ -1128,7 +1295,11 @@ impl ComptimeEvaluator {
 
     // Logical operations
 
-    fn eval_and(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_and(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Bool(a), ComptimeValue::Bool(b)) => Ok(ComptimeValue::Bool(*a && *b)),
             _ => Err(ComptimeError {
@@ -1137,7 +1308,11 @@ impl ComptimeEvaluator {
         }
     }
 
-    fn eval_or(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_or(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Bool(a), ComptimeValue::Bool(b)) => Ok(ComptimeValue::Bool(*a || *b)),
             _ => Err(ComptimeError {
@@ -1148,7 +1323,11 @@ impl ComptimeEvaluator {
 
     // Bitwise operations
 
-    fn eval_bit_and(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_bit_and(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Int(a & b)),
             (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Uint(a & b)),
@@ -1158,7 +1337,11 @@ impl ComptimeEvaluator {
         }
     }
 
-    fn eval_bit_or(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_bit_or(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Int(a | b)),
             (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Uint(a | b)),
@@ -1168,7 +1351,11 @@ impl ComptimeEvaluator {
         }
     }
 
-    fn eval_bit_xor(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_bit_xor(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match (left, right) {
             (ComptimeValue::Int(a), ComptimeValue::Int(b)) => Ok(ComptimeValue::Int(a ^ b)),
             (ComptimeValue::Uint(a), ComptimeValue::Uint(b)) => Ok(ComptimeValue::Uint(a ^ b)),
@@ -1178,7 +1365,11 @@ impl ComptimeEvaluator {
         }
     }
 
-    fn eval_shl(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_shl(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         let shift = right.as_uint().ok_or_else(|| ComptimeError {
             message: "shift amount must be unsigned integer".to_string(),
         })?;
@@ -1186,7 +1377,10 @@ impl ComptimeEvaluator {
         // Validate shift amount is within bounds (max 63 for 64-bit integers)
         if shift >= 64 {
             return Err(ComptimeError {
-                message: format!("shift amount {} is too large (max 63 for 64-bit integers)", shift),
+                message: format!(
+                    "shift amount {} is too large (max 63 for 64-bit integers)",
+                    shift
+                ),
             });
         }
         let shift = shift as u32;
@@ -1200,7 +1394,11 @@ impl ComptimeEvaluator {
         }
     }
 
-    fn eval_shr(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_shr(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         let shift = right.as_uint().ok_or_else(|| ComptimeError {
             message: "shift amount must be unsigned integer".to_string(),
         })?;
@@ -1208,7 +1406,10 @@ impl ComptimeEvaluator {
         // Validate shift amount is within bounds (max 63 for 64-bit integers)
         if shift >= 64 {
             return Err(ComptimeError {
-                message: format!("shift amount {} is too large (max 63 for 64-bit integers)", shift),
+                message: format!(
+                    "shift amount {} is too large (max 63 for 64-bit integers)",
+                    shift
+                ),
             });
         }
         let shift = shift as u32;
@@ -1224,7 +1425,11 @@ impl ComptimeEvaluator {
 
     // Optional operations
 
-    fn eval_orelse(&self, left: &ComptimeValue, right: &ComptimeValue) -> ComptimeResult<ComptimeValue> {
+    fn eval_orelse(
+        &self,
+        left: &ComptimeValue,
+        right: &ComptimeValue,
+    ) -> ComptimeResult<ComptimeValue> {
         match left {
             ComptimeValue::Null => Ok(right.clone()),
             other => Ok(other.clone()),
@@ -1288,19 +1493,17 @@ impl ComptimeEvaluator {
                     ComptimeValue::Uint(u) => *u as f64,
                     _ => {
                         return Err(ComptimeError {
-                            message: format!(
-                                "angle value must be numeric, found {:?}",
-                                val
-                            ),
-                        })
+                            message: format!("angle value must be numeric, found {:?}", val),
+                        });
                     }
                 };
 
                 // For radian values, try to detect pi-multiples and preserve precision
                 if let AngleUnit::Rad = angle.unit
-                    && let Some(turns_rational) = Rational::radians_to_turns(numeric) {
-                        return Ok(ComptimeValue::Rational(turns_rational));
-                    }
+                    && let Some(turns_rational) = Rational::radians_to_turns(numeric)
+                {
+                    return Ok(ComptimeValue::Rational(turns_rational));
+                }
 
                 // Fall back to float conversion
                 let turns = angle.unit.to_turns(numeric);
@@ -1323,7 +1526,7 @@ impl ComptimeEvaluator {
                                         "cannot convert {:?} to {}",
                                         val, asc.type_name
                                     ),
-                                })
+                                });
                             }
                         };
                         Ok(ComptimeValue::Float(f))
@@ -1333,16 +1536,15 @@ impl ComptimeEvaluator {
                         match val {
                             ComptimeValue::Rational(r) => Ok(ComptimeValue::Rational(r)),
                             ComptimeValue::Float(f) => Ok(ComptimeValue::Float(f)),
-                            ComptimeValue::Int(i) => Ok(ComptimeValue::Rational(Rational::from_int(i))),
-                            ComptimeValue::Uint(u) => Ok(ComptimeValue::Rational(Rational::from_int(u as i64))),
-                            _ => {
-                                Err(ComptimeError {
-                                    message: format!(
-                                        "cannot convert {:?} to a64",
-                                        val
-                                    ),
-                                })
+                            ComptimeValue::Int(i) => {
+                                Ok(ComptimeValue::Rational(Rational::from_int(i)))
                             }
+                            ComptimeValue::Uint(u) => {
+                                Ok(ComptimeValue::Rational(Rational::from_int(u as i64)))
+                            }
+                            _ => Err(ComptimeError {
+                                message: format!("cannot convert {:?} to a64", val),
+                            }),
                         }
                     }
                     t if t.starts_with('u') => {
@@ -1356,7 +1558,7 @@ impl ComptimeEvaluator {
                                         "cannot convert {:?} to {}",
                                         val, asc.type_name
                                     ),
-                                })
+                                });
                             }
                         };
                         Ok(ComptimeValue::Uint(u))
@@ -1372,7 +1574,7 @@ impl ComptimeEvaluator {
                                         "cannot convert {:?} to {}",
                                         val, asc.type_name
                                     ),
-                                })
+                                });
                             }
                         };
                         Ok(ComptimeValue::Int(i))
@@ -1472,13 +1674,21 @@ impl ComptimeEvaluator {
                     (ComptimeValue::Array(arr), ComptimeValue::Int(i)) => {
                         let i = *i as usize;
                         arr.get(i).cloned().ok_or_else(|| ComptimeError {
-                            message: format!("index {} out of bounds for array of length {}", i, arr.len()),
+                            message: format!(
+                                "index {} out of bounds for array of length {}",
+                                i,
+                                arr.len()
+                            ),
                         })
                     }
                     (ComptimeValue::Array(arr), ComptimeValue::Uint(i)) => {
                         let i = *i as usize;
                         arr.get(i).cloned().ok_or_else(|| ComptimeError {
-                            message: format!("index {} out of bounds for array of length {}", i, arr.len()),
+                            message: format!(
+                                "index {} out of bounds for array of length {}",
+                                i,
+                                arr.len()
+                            ),
                         })
                     }
                     _ => Err(ComptimeError {
@@ -1491,11 +1701,12 @@ impl ComptimeEvaluator {
                 let object = self.eval_expr(&field.object)?;
 
                 match object {
-                    ComptimeValue::Struct { fields, .. } => {
-                        fields.get(&field.field).cloned().ok_or_else(|| ComptimeError {
+                    ComptimeValue::Struct { fields, .. } => fields
+                        .get(&field.field)
+                        .cloned()
+                        .ok_or_else(|| ComptimeError {
                             message: format!("no field '{}' on struct", field.field),
-                        })
-                    }
+                        }),
                     _ => Err(ComptimeError {
                         message: format!("cannot access field on {}", object),
                     }),
@@ -1503,11 +1714,15 @@ impl ComptimeEvaluator {
             }
 
             Expr::Range(range) => {
-                let start = range.start.as_ref()
+                let start = range
+                    .start
+                    .as_ref()
                     .map(|e| self.eval_expr(e))
                     .transpose()?
                     .unwrap_or(ComptimeValue::Int(0));
-                let end = range.end.as_ref()
+                let end = range
+                    .end
+                    .as_ref()
                     .map(|e| self.eval_expr(e))
                     .transpose()?
                     .ok_or_else(|| ComptimeError {
@@ -1516,15 +1731,11 @@ impl ComptimeEvaluator {
 
                 match (&start, &end) {
                     (ComptimeValue::Int(s), ComptimeValue::Int(e)) => {
-                        let arr: Vec<ComptimeValue> = (*s..*e)
-                            .map(ComptimeValue::Int)
-                            .collect();
+                        let arr: Vec<ComptimeValue> = (*s..*e).map(ComptimeValue::Int).collect();
                         Ok(ComptimeValue::Array(arr))
                     }
                     (ComptimeValue::Uint(s), ComptimeValue::Uint(e)) => {
-                        let arr: Vec<ComptimeValue> = (*s..*e)
-                            .map(ComptimeValue::Uint)
-                            .collect();
+                        let arr: Vec<ComptimeValue> = (*s..*e).map(ComptimeValue::Uint).collect();
                         Ok(ComptimeValue::Array(arr))
                     }
                     _ => Err(ComptimeError {
@@ -1534,20 +1745,14 @@ impl ComptimeEvaluator {
             }
 
             Expr::ArrayInit(arr) => {
-                let values: ComptimeResult<Vec<ComptimeValue>> = arr
-                    .elements
-                    .iter()
-                    .map(|e| self.eval_expr(e))
-                    .collect();
+                let values: ComptimeResult<Vec<ComptimeValue>> =
+                    arr.elements.iter().map(|e| self.eval_expr(e)).collect();
                 Ok(ComptimeValue::Array(values?))
             }
 
             Expr::BracketArray(arr) => {
-                let values: ComptimeResult<Vec<ComptimeValue>> = arr
-                    .elements
-                    .iter()
-                    .map(|e| self.eval_expr(e))
-                    .collect();
+                let values: ComptimeResult<Vec<ComptimeValue>> =
+                    arr.elements.iter().map(|e| self.eval_expr(e)).collect();
                 Ok(ComptimeValue::Array(values?))
             }
 
@@ -1569,7 +1774,9 @@ impl ComptimeEvaluator {
                             return Err(ComptimeError {
                                 message: format!(
                                     "function '{}' expects {} arguments, got {}",
-                                    func.name, func.params.len(), arg_values.len()
+                                    func.name,
+                                    func.params.len(),
+                                    arg_values.len()
                                 ),
                             });
                         }
@@ -1655,12 +1862,9 @@ impl ComptimeEvaluator {
             }),
 
             Expr::Tuple(tuple) => {
-                let values: ComptimeResult<Vec<ComptimeValue>> = tuple
-                    .elements
-                    .iter()
-                    .map(|e| self.eval_expr(e))
-                    .collect();
-                Ok(ComptimeValue::Array(values?))  // Represent tuples as arrays for now
+                let values: ComptimeResult<Vec<ComptimeValue>> =
+                    tuple.elements.iter().map(|e| self.eval_expr(e)).collect();
+                Ok(ComptimeValue::Array(values?)) // Represent tuples as arrays for now
             }
 
             Expr::Set(_) => Err(ComptimeError {
@@ -1700,9 +1904,7 @@ impl ComptimeEvaluator {
             }),
 
             // Function literal - creates a comptime function value
-            Expr::FnLit(func) => {
-                Ok(ComptimeValue::Function(func.clone()))
-            }
+            Expr::FnLit(func) => Ok(ComptimeValue::Function(func.clone())),
 
             // Channel expressions (@emit.log.*, @emit.sim.*, @emit.hw.*, custom channels)
             // At comptime, these evaluate to unit (actual behavior happens at runtime)
@@ -1868,8 +2070,16 @@ impl ComptimeEvaluator {
     /// Get the TypeInfoKind for a Type.
     fn get_type_info_kind(ty: &Type) -> TypeInfoKind {
         match ty {
-            Type::Bool | Type::UInt { .. } | Type::IInt { .. } | Type::Usize | Type::Isize |
-            Type::F16 | Type::F32 | Type::F64 | Type::F128 | Type::A64 => TypeInfoKind::Primitive,
+            Type::Bool
+            | Type::UInt { .. }
+            | Type::IInt { .. }
+            | Type::Usize
+            | Type::Isize
+            | Type::F16
+            | Type::F32
+            | Type::F64
+            | Type::F128
+            | Type::A64 => TypeInfoKind::Primitive,
             Type::Array { .. } => TypeInfoKind::Array,
             Type::Slice { .. } => TypeInfoKind::Slice,
             Type::Set { .. } => TypeInfoKind::Struct, // Set is like a collection
@@ -1906,16 +2116,36 @@ impl ComptimeEvaluator {
                 // Try to resolve primitive types
                 match ident.name.as_str() {
                     "bool" => Ok(Type::Bool),
-                    "u8" => Ok(Type::UInt { bits: BitWidth::must(8) }),
-                    "u16" => Ok(Type::UInt { bits: BitWidth::must(16) }),
-                    "u32" => Ok(Type::UInt { bits: BitWidth::must(32) }),
-                    "u64" => Ok(Type::UInt { bits: BitWidth::must(64) }),
-                    "u128" => Ok(Type::UInt { bits: BitWidth::must(128) }),
-                    "i8" => Ok(Type::IInt { bits: BitWidth::must(8) }),
-                    "i16" => Ok(Type::IInt { bits: BitWidth::must(16) }),
-                    "i32" => Ok(Type::IInt { bits: BitWidth::must(32) }),
-                    "i64" => Ok(Type::IInt { bits: BitWidth::must(64) }),
-                    "i128" => Ok(Type::IInt { bits: BitWidth::must(128) }),
+                    "u8" => Ok(Type::UInt {
+                        bits: BitWidth::must(8),
+                    }),
+                    "u16" => Ok(Type::UInt {
+                        bits: BitWidth::must(16),
+                    }),
+                    "u32" => Ok(Type::UInt {
+                        bits: BitWidth::must(32),
+                    }),
+                    "u64" => Ok(Type::UInt {
+                        bits: BitWidth::must(64),
+                    }),
+                    "u128" => Ok(Type::UInt {
+                        bits: BitWidth::must(128),
+                    }),
+                    "i8" => Ok(Type::IInt {
+                        bits: BitWidth::must(8),
+                    }),
+                    "i16" => Ok(Type::IInt {
+                        bits: BitWidth::must(16),
+                    }),
+                    "i32" => Ok(Type::IInt {
+                        bits: BitWidth::must(32),
+                    }),
+                    "i64" => Ok(Type::IInt {
+                        bits: BitWidth::must(64),
+                    }),
+                    "i128" => Ok(Type::IInt {
+                        bits: BitWidth::must(128),
+                    }),
                     "usize" => Ok(Type::Usize),
                     "isize" => Ok(Type::Isize),
                     "f16" => Ok(Type::F16),
@@ -1945,18 +2175,27 @@ impl ComptimeEvaluator {
         let kind = Self::get_type_info_kind(&ty);
 
         let mut fields = BTreeMap::new();
-        fields.insert("kind".to_string(), ComptimeValue::String(kind.as_str().to_string()));
+        fields.insert(
+            "kind".to_string(),
+            ComptimeValue::String(kind.as_str().to_string()),
+        );
         fields.insert("name".to_string(), ComptimeValue::String(ty.display_name()));
 
         // Add type-specific information
         match &ty {
-            Type::Struct { name, fields: struct_fields } => {
+            Type::Struct {
+                name,
+                fields: struct_fields,
+            } => {
                 let field_names: Vec<ComptimeValue> = struct_fields
                     .iter()
                     .map(|(n, _)| ComptimeValue::String(n.clone()))
                     .collect();
                 fields.insert("fields".to_string(), ComptimeValue::Array(field_names));
-                fields.insert("struct_name".to_string(), ComptimeValue::String(name.clone()));
+                fields.insert(
+                    "struct_name".to_string(),
+                    ComptimeValue::String(name.clone()),
+                );
             }
             Type::Enum { name, variants } => {
                 let variant_names: Vec<ComptimeValue> = variants
@@ -1966,13 +2205,20 @@ impl ComptimeEvaluator {
                 fields.insert("variants".to_string(), ComptimeValue::Array(variant_names));
                 fields.insert("enum_name".to_string(), ComptimeValue::String(name.clone()));
             }
-            Type::Union { name, fields: union_fields, is_tagged } => {
+            Type::Union {
+                name,
+                fields: union_fields,
+                is_tagged,
+            } => {
                 let field_names: Vec<ComptimeValue> = union_fields
                     .iter()
                     .map(|(n, _)| ComptimeValue::String(n.clone()))
                     .collect();
                 fields.insert("fields".to_string(), ComptimeValue::Array(field_names));
-                fields.insert("union_name".to_string(), ComptimeValue::String(name.clone()));
+                fields.insert(
+                    "union_name".to_string(),
+                    ComptimeValue::String(name.clone()),
+                );
                 fields.insert("is_tagged".to_string(), ComptimeValue::Bool(*is_tagged));
             }
             Type::ErrorSet { name, errors } => {
@@ -1981,7 +2227,10 @@ impl ComptimeEvaluator {
                     .map(|(n, _)| ComptimeValue::String(n.clone()))
                     .collect();
                 fields.insert("errors".to_string(), ComptimeValue::Array(error_names));
-                fields.insert("error_set_name".to_string(), ComptimeValue::String(name.clone()));
+                fields.insert(
+                    "error_set_name".to_string(),
+                    ComptimeValue::String(name.clone()),
+                );
             }
             Type::FaultSet { name, faults } => {
                 let fault_names: Vec<ComptimeValue> = faults
@@ -1989,7 +2238,10 @@ impl ComptimeEvaluator {
                     .map(|(n, _)| ComptimeValue::String(n.clone()))
                     .collect();
                 fields.insert("faults".to_string(), ComptimeValue::Array(fault_names));
-                fields.insert("fault_set_name".to_string(), ComptimeValue::String(name.clone()));
+                fields.insert(
+                    "fault_set_name".to_string(),
+                    ComptimeValue::String(name.clone()),
+                );
             }
             Type::Array { element, size } => {
                 fields.insert("element".to_string(), ComptimeValue::Type(*element.clone()));
@@ -2000,7 +2252,11 @@ impl ComptimeEvaluator {
             Type::Slice { element } => {
                 fields.insert("element".to_string(), ComptimeValue::Type(*element.clone()));
             }
-            Type::Pointer { pointee, is_const, is_many } => {
+            Type::Pointer {
+                pointee,
+                is_const,
+                is_many,
+            } => {
                 fields.insert("pointee".to_string(), ComptimeValue::Type(*pointee.clone()));
                 fields.insert("is_const".to_string(), ComptimeValue::Bool(*is_const));
                 fields.insert("is_many".to_string(), ComptimeValue::Bool(*is_many));
@@ -2012,13 +2268,19 @@ impl ComptimeEvaluator {
                 fields.insert("error".to_string(), ComptimeValue::Type(*error.clone()));
                 fields.insert("payload".to_string(), ComptimeValue::Type(*payload.clone()));
             }
-            Type::Function { params, return_type } => {
+            Type::Function {
+                params,
+                return_type,
+            } => {
                 let param_types: Vec<ComptimeValue> = params
                     .iter()
                     .map(|p| ComptimeValue::Type(p.clone()))
                     .collect();
                 fields.insert("params".to_string(), ComptimeValue::Array(param_types));
-                fields.insert("return_type".to_string(), ComptimeValue::Type(*return_type.clone()));
+                fields.insert(
+                    "return_type".to_string(),
+                    ComptimeValue::Type(*return_type.clone()),
+                );
             }
             Type::Tuple { elements } => {
                 let element_types: Vec<ComptimeValue> = elements
@@ -2115,36 +2377,63 @@ impl ComptimeEvaluator {
 
                 let kind_str = match kind {
                     ComptimeValue::String(s) => s.as_str(),
-                    _ => return Err(ComptimeError {
-                        message: "TypeInfo.kind must be a string".to_string(),
-                    }),
+                    _ => {
+                        return Err(ComptimeError {
+                            message: "TypeInfo.kind must be a string".to_string(),
+                        });
+                    }
                 };
 
                 // Construct the type based on kind
                 let ty = match kind_str {
                     "primitive" => {
                         // Get the name to determine which primitive
-                        let name = fields.get("name").and_then(|v| {
-                            if let ComptimeValue::String(s) = v { Some(s.as_str()) } else { None }
-                        }).ok_or_else(|| ComptimeError {
-                            message: "primitive TypeInfo requires 'name' field".to_string(),
-                        })?;
+                        let name = fields
+                            .get("name")
+                            .and_then(|v| {
+                                if let ComptimeValue::String(s) = v {
+                                    Some(s.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .ok_or_else(|| ComptimeError {
+                                message: "primitive TypeInfo requires 'name' field".to_string(),
+                            })?;
 
                         match name {
                             "bool" => Type::Bool,
-                            "u8" => Type::UInt { bits: BitWidth::must(8) },
-                            "u16" => Type::UInt { bits: BitWidth::must(16) },
-                            "u32" => Type::UInt { bits: BitWidth::must(32) },
-                            "u64" => Type::UInt { bits: BitWidth::must(64) },
-                            "i8" => Type::IInt { bits: BitWidth::must(8) },
-                            "i16" => Type::IInt { bits: BitWidth::must(16) },
-                            "i32" => Type::IInt { bits: BitWidth::must(32) },
-                            "i64" => Type::IInt { bits: BitWidth::must(64) },
+                            "u8" => Type::UInt {
+                                bits: BitWidth::must(8),
+                            },
+                            "u16" => Type::UInt {
+                                bits: BitWidth::must(16),
+                            },
+                            "u32" => Type::UInt {
+                                bits: BitWidth::must(32),
+                            },
+                            "u64" => Type::UInt {
+                                bits: BitWidth::must(64),
+                            },
+                            "i8" => Type::IInt {
+                                bits: BitWidth::must(8),
+                            },
+                            "i16" => Type::IInt {
+                                bits: BitWidth::must(16),
+                            },
+                            "i32" => Type::IInt {
+                                bits: BitWidth::must(32),
+                            },
+                            "i64" => Type::IInt {
+                                bits: BitWidth::must(64),
+                            },
                             "f32" => Type::F32,
                             "f64" => Type::F64,
-                            _ => return Err(ComptimeError {
-                                message: format!("unknown primitive type '{}'", name),
-                            }),
+                            _ => {
+                                return Err(ComptimeError {
+                                    message: format!("unknown primitive type '{}'", name),
+                                });
+                            }
                         }
                     }
                     "array" => {
@@ -2153,18 +2442,21 @@ impl ComptimeEvaluator {
                         })?;
                         let element_ty = match element {
                             ComptimeValue::Type(t) => t.clone(),
-                            _ => return Err(ComptimeError {
-                                message: "TypeInfo.element must be a type".to_string(),
-                            }),
-                        };
-                        let size = fields.get("size").and_then(|v| {
-                            match v {
-                                ComptimeValue::Uint(n) => Some(*n),
-                                ComptimeValue::Int(n) if *n >= 0 => Some(*n as u64),
-                                _ => None,
+                            _ => {
+                                return Err(ComptimeError {
+                                    message: "TypeInfo.element must be a type".to_string(),
+                                });
                             }
+                        };
+                        let size = fields.get("size").and_then(|v| match v {
+                            ComptimeValue::Uint(n) => Some(*n),
+                            ComptimeValue::Int(n) if *n >= 0 => Some(*n as u64),
+                            _ => None,
                         });
-                        Type::Array { element: Box::new(element_ty), size }
+                        Type::Array {
+                            element: Box::new(element_ty),
+                            size,
+                        }
                     }
                     "slice" => {
                         let element = fields.get("element").ok_or_else(|| ComptimeError {
@@ -2172,11 +2464,15 @@ impl ComptimeEvaluator {
                         })?;
                         let element_ty = match element {
                             ComptimeValue::Type(t) => t.clone(),
-                            _ => return Err(ComptimeError {
-                                message: "TypeInfo.element must be a type".to_string(),
-                            }),
+                            _ => {
+                                return Err(ComptimeError {
+                                    message: "TypeInfo.element must be a type".to_string(),
+                                });
+                            }
                         };
-                        Type::Slice { element: Box::new(element_ty) }
+                        Type::Slice {
+                            element: Box::new(element_ty),
+                        }
                     }
                     "optional" => {
                         let child = fields.get("child").ok_or_else(|| ComptimeError {
@@ -2184,18 +2480,24 @@ impl ComptimeEvaluator {
                         })?;
                         let child_ty = match child {
                             ComptimeValue::Type(t) => t.clone(),
-                            _ => return Err(ComptimeError {
-                                message: "TypeInfo.child must be a type".to_string(),
-                            }),
+                            _ => {
+                                return Err(ComptimeError {
+                                    message: "TypeInfo.child must be a type".to_string(),
+                                });
+                            }
                         };
-                        Type::Optional { inner: Box::new(child_ty) }
+                        Type::Optional {
+                            inner: Box::new(child_ty),
+                        }
                     }
                     "unit" => Type::Unit,
                     "never" => Type::Never,
                     "type" => Type::Type,
-                    _ => return Err(ComptimeError {
-                        message: format!("cannot construct type from kind '{}'", kind_str),
-                    }),
+                    _ => {
+                        return Err(ComptimeError {
+                            message: format!("cannot construct type from kind '{}'", kind_str),
+                        });
+                    }
                 };
 
                 Ok(ComptimeValue::Type(ty))
@@ -2481,13 +2783,15 @@ mod tests {
         let fallback = ComptimeValue::Int(42);
 
         assert_eq!(
-            eval.eval_binary_op(BinaryOp::Orelse, &null, &fallback).unwrap(),
+            eval.eval_binary_op(BinaryOp::Orelse, &null, &fallback)
+                .unwrap(),
             ComptimeValue::Int(42)
         );
 
         let some = ComptimeValue::Int(10);
         assert_eq!(
-            eval.eval_binary_op(BinaryOp::Orelse, &some, &fallback).unwrap(),
+            eval.eval_binary_op(BinaryOp::Orelse, &some, &fallback)
+                .unwrap(),
             ComptimeValue::Int(10)
         );
     }
@@ -2579,14 +2883,12 @@ mod tests {
         // Create a simple comptime function that returns a type
         let func = FnDecl {
             name: "makeArray".to_string(),
-            params: vec![
-                Param {
-                    name: "T".to_string(),
-                    ty: TypeExpr::Type,
-                    is_comptime: true,
-                    location: None,
-                },
-            ],
+            params: vec![Param {
+                name: "T".to_string(),
+                ty: TypeExpr::Type,
+                is_comptime: true,
+                location: None,
+            }],
             return_type: Some(TypeExpr::Type),
             body: Block {
                 label: None,
@@ -2600,7 +2902,7 @@ mod tests {
             },
             is_pub: false,
             is_inline: false,
-                        error_mode: None,
+            error_mode: None,
             doc_comment: None,
             location: None,
         };
@@ -2611,7 +2913,7 @@ mod tests {
 
     #[test]
     fn test_comptime_anon_struct() {
-        use crate::ast::{AnonStructExpr, StructField, TypeExpr, PrimitiveType};
+        use crate::ast::{AnonStructExpr, PrimitiveType, StructField, TypeExpr};
 
         let mut eval = ComptimeEvaluator::new();
 
@@ -2655,7 +2957,7 @@ mod tests {
 
     #[test]
     fn test_comptime_function_call() {
-        use crate::ast::{Block, CallExpr, Param, TypeExpr, Ident};
+        use crate::ast::{Block, CallExpr, Ident, Param, TypeExpr};
 
         let mut eval = ComptimeEvaluator::new();
 
@@ -2663,14 +2965,12 @@ mod tests {
         // This is an identity function for types
         let func = FnDecl {
             name: "identity".to_string(),
-            params: vec![
-                Param {
-                    name: "T".to_string(),
-                    ty: TypeExpr::Type,
-                    is_comptime: true,
-                    location: None,
-                },
-            ],
+            params: vec![Param {
+                name: "T".to_string(),
+                ty: TypeExpr::Type,
+                is_comptime: true,
+                location: None,
+            }],
             return_type: Some(TypeExpr::Type),
             body: Block {
                 label: None,
@@ -2684,13 +2984,14 @@ mod tests {
             },
             is_pub: false,
             is_inline: false,
-                        error_mode: None,
+            error_mode: None,
             doc_comment: None,
             location: None,
         };
 
         // Store function in context
-        eval.context.define("identity", ComptimeValue::Function(Box::new(func)));
+        eval.context
+            .define("identity", ComptimeValue::Function(Box::new(func)));
 
         // Call identity(u32)
         let call = CallExpr {
@@ -2735,8 +3036,7 @@ mod tests {
     #[test]
     fn test_inline_for_with_comptime_function_nested_types() {
         use crate::ast::{
-            AnonStructExpr, ArrayType, Block, CallExpr, Ident, IntLit,
-            Param, StructField, TypeExpr,
+            AnonStructExpr, ArrayType, Block, CallExpr, Ident, IntLit, Param, StructField, TypeExpr,
         };
 
         let mut eval = ComptimeEvaluator::new();
@@ -2783,13 +3083,16 @@ mod tests {
             },
             is_pub: false,
             is_inline: false,
-                        error_mode: None,
+            error_mode: None,
             doc_comment: None,
             location: None,
         };
 
         // Store function in context
-        eval.context.define("WrapArray", ComptimeValue::Function(Box::new(wrap_array_func)));
+        eval.context.define(
+            "WrapArray",
+            ComptimeValue::Function(Box::new(wrap_array_func)),
+        );
 
         // Now simulate the comptime block:
         // comptime {
@@ -2799,7 +3102,12 @@ mod tests {
         // }
 
         // Step 1: mut T := u8;
-        eval.context.define("T", ComptimeValue::Type(Type::UInt { bits: BitWidth::BITS_8 }));
+        eval.context.define(
+            "T",
+            ComptimeValue::Type(Type::UInt {
+                bits: BitWidth::BITS_8,
+            }),
+        );
 
         // Step 2: Simulate inline for with 3 iterations
         for _ in 0..3 {
@@ -2831,24 +3139,46 @@ mod tests {
                 assert_eq!(fields[0].0, "data", "Field name should be 'data'");
 
                 // Level 1 field type: [7]struct { ... }
-                if let Type::Array { element: level2, size } = &fields[0].1 {
+                if let Type::Array {
+                    element: level2,
+                    size,
+                } = &fields[0].1
+                {
                     assert_eq!(*size, Some(7), "Array size should be 7 at level 1");
 
                     // Level 2: struct { data: [7]... }
-                    if let Type::Struct { fields: fields2, .. } = level2.as_ref() {
+                    if let Type::Struct {
+                        fields: fields2, ..
+                    } = level2.as_ref()
+                    {
                         assert_eq!(fields2.len(), 1, "Expected 1 field at level 2");
 
                         // Level 2 field type: [7]struct { ... }
-                        if let Type::Array { element: level3, size: size2 } = &fields2[0].1 {
+                        if let Type::Array {
+                            element: level3,
+                            size: size2,
+                        } = &fields2[0].1
+                        {
                             assert_eq!(*size2, Some(7), "Array size should be 7 at level 2");
 
                             // Level 3: struct { data: [7]u8 }
-                            if let Type::Struct { fields: fields3, .. } = level3.as_ref() {
+                            if let Type::Struct {
+                                fields: fields3, ..
+                            } = level3.as_ref()
+                            {
                                 assert_eq!(fields3.len(), 1, "Expected 1 field at level 3");
 
                                 // Level 3 field type: [7]u8
-                                if let Type::Array { element: inner, size: size3 } = &fields3[0].1 {
-                                    assert_eq!(*size3, Some(7), "Array size should be 7 at level 3");
+                                if let Type::Array {
+                                    element: inner,
+                                    size: size3,
+                                } = &fields3[0].1
+                                {
+                                    assert_eq!(
+                                        *size3,
+                                        Some(7),
+                                        "Array size should be 7 at level 3"
+                                    );
                                     assert!(
                                         matches!(inner.as_ref(), Type::UInt { bits } if *bits == BitWidth::BITS_8),
                                         "Innermost type should be u8, got {:?}",
@@ -2881,9 +3211,7 @@ mod tests {
     /// Uses the actual for loop evaluation, not manual simulation.
     #[test]
     fn test_comptime_block_with_inline_for() {
-        use crate::ast::{
-            Block, ForRange, ForStmt, Ident, IntLit, AssignStmt, Stmt,
-        };
+        use crate::ast::{AssignStmt, Block, ForRange, ForStmt, Ident, IntLit, Stmt};
 
         let mut eval = ComptimeEvaluator::new();
 
@@ -2898,8 +3226,16 @@ mod tests {
         let for_stmt = ForStmt {
             captures: vec!["i".to_string()],
             range: ForRange::Range {
-                start: Expr::IntLit(IntLit { value: 0, suffix: None, location: None }),
-                end: Expr::IntLit(IntLit { value: 5, suffix: None, location: None }),
+                start: Expr::IntLit(IntLit {
+                    value: 0,
+                    suffix: None,
+                    location: None,
+                }),
+                end: Expr::IntLit(IntLit {
+                    value: 5,
+                    suffix: None,
+                    location: None,
+                }),
             },
             body: Block {
                 label: None,
@@ -2907,12 +3243,21 @@ mod tests {
                 statements: vec![
                     // sum = sum + i
                     Stmt::Assign(AssignStmt {
-                        target: Expr::Ident(Ident { name: "sum".to_string(), location: None }),
+                        target: Expr::Ident(Ident {
+                            name: "sum".to_string(),
+                            location: None,
+                        }),
                         op: crate::ast::AssignOp::Assign,
                         value: Expr::Binary(Box::new(crate::ast::BinaryExpr {
-                            left: Expr::Ident(Ident { name: "sum".to_string(), location: None }),
+                            left: Expr::Ident(Ident {
+                                name: "sum".to_string(),
+                                location: None,
+                            }),
                             op: BinaryOp::Add,
-                            right: Expr::Ident(Ident { name: "i".to_string(), location: None }),
+                            right: Expr::Ident(Ident {
+                                name: "i".to_string(),
+                                location: None,
+                            }),
                             location: None,
                         })),
                         location: None,
@@ -2947,15 +3292,27 @@ mod tests {
         let one = ComptimeValue::Int(1);
         let four = ComptimeValue::Int(4);
         let result = eval.eval_div(&one, &four).unwrap();
-        assert_eq!(result, ComptimeValue::Rational(Rational::new(1, 4)), "1/4 should be Rational(1/4)");
+        assert_eq!(
+            result,
+            ComptimeValue::Rational(Rational::new(1, 4)),
+            "1/4 should be Rational(1/4)"
+        );
         // Verify it converts to correct float
         assert_eq!(result.as_float(), Some(0.25), "1/4 as float should be 0.25");
 
         // 1/8 should be Rational(1/8)
         let eight = ComptimeValue::Int(8);
         let result = eval.eval_div(&one, &eight).unwrap();
-        assert_eq!(result, ComptimeValue::Rational(Rational::new(1, 8)), "1/8 should be Rational(1/8)");
-        assert_eq!(result.as_float(), Some(0.125), "1/8 as float should be 0.125");
+        assert_eq!(
+            result,
+            ComptimeValue::Rational(Rational::new(1, 8)),
+            "1/8 should be Rational(1/8)"
+        );
+        assert_eq!(
+            result.as_float(),
+            Some(0.125),
+            "1/8 as float should be 0.125"
+        );
 
         // 4/2 is exact, should return Int
         let two = ComptimeValue::Int(2);
@@ -3049,7 +3406,9 @@ mod tests {
             TypeInfoKind::Primitive
         );
         assert_eq!(
-            ComptimeEvaluator::get_type_info_kind(&Type::UInt { bits: BitWidth::must(32) }),
+            ComptimeEvaluator::get_type_info_kind(&Type::UInt {
+                bits: BitWidth::must(32)
+            }),
             TypeInfoKind::Primitive
         );
         assert_eq!(
@@ -3082,10 +3441,7 @@ mod tests {
         assert_eq!(
             ComptimeEvaluator::get_type_info_kind(&Type::Struct {
                 name: "Point".to_string(),
-                fields: vec![
-                    ("x".to_string(), Type::F64),
-                    ("y".to_string(), Type::F64),
-                ],
+                fields: vec![("x".to_string(), Type::F64), ("y".to_string(), Type::F64),],
             }),
             TypeInfoKind::Struct
         );
@@ -3147,7 +3503,12 @@ mod tests {
             location: Some(SourceLocation::default()),
         });
         let result = eval.resolve_type_from_expr(&u32_expr).unwrap();
-        assert_eq!(result, Type::UInt { bits: BitWidth::must(32) });
+        assert_eq!(
+            result,
+            Type::UInt {
+                bits: BitWidth::must(32)
+            }
+        );
 
         let f64_expr = Expr::Ident(Ident {
             name: "f64".to_string(),
@@ -3232,11 +3593,7 @@ mod tests {
             "Color",
             ComptimeValue::Type(Type::Enum {
                 name: "Color".to_string(),
-                variants: vec![
-                    "Red".to_string(),
-                    "Green".to_string(),
-                    "Blue".to_string(),
-                ],
+                variants: vec!["Red".to_string(), "Green".to_string(), "Blue".to_string()],
             }),
         );
 
@@ -3265,9 +3622,20 @@ mod tests {
 
         // Create a TypeInfo struct for an array type
         let mut fields = BTreeMap::new();
-        fields.insert("kind".to_string(), ComptimeValue::String("array".to_string()));
-        fields.insert("name".to_string(), ComptimeValue::String("[4]u32".to_string()));
-        fields.insert("element".to_string(), ComptimeValue::Type(Type::UInt { bits: BitWidth::must(32) }));
+        fields.insert(
+            "kind".to_string(),
+            ComptimeValue::String("array".to_string()),
+        );
+        fields.insert(
+            "name".to_string(),
+            ComptimeValue::String("[4]u32".to_string()),
+        );
+        fields.insert(
+            "element".to_string(),
+            ComptimeValue::Type(Type::UInt {
+                bits: BitWidth::must(32),
+            }),
+        );
         fields.insert("size".to_string(), ComptimeValue::Uint(4));
 
         // Store the TypeInfo in context
@@ -3287,7 +3655,12 @@ mod tests {
 
         // Should be an array type
         if let ComptimeValue::Type(Type::Array { element, size }) = result {
-            assert_eq!(*element, Type::UInt { bits: BitWidth::must(32) });
+            assert_eq!(
+                *element,
+                Type::UInt {
+                    bits: BitWidth::must(32)
+                }
+            );
             assert_eq!(size, Some(4));
         } else {
             panic!("Expected array type, got {:?}", result);
@@ -3344,7 +3717,8 @@ mod tests {
             location: None,
         };
 
-        eval.context.define("add_10", ComptimeValue::Function(Box::new(add_10_func)));
+        eval.context
+            .define("add_10", ComptimeValue::Function(Box::new(add_10_func)));
 
         // Call the function with argument 5
         let call1 = crate::ast::CallExpr {
@@ -3361,7 +3735,9 @@ mod tests {
         };
 
         // First call - should compute and cache
-        let result1 = eval.eval_expr(&Expr::Call(Box::new(call1.clone()))).unwrap();
+        let result1 = eval
+            .eval_expr(&Expr::Call(Box::new(call1.clone())))
+            .unwrap();
         assert_eq!(result1, ComptimeValue::Int(15));
 
         // Verify it's in the cache

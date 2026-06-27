@@ -161,14 +161,13 @@ fn format_params(params: &[Param]) -> String {
 
 fn format_type_expr(ty: &TypeExpr) -> String {
     // Simplified type expression formatting
-    format!("{:?}", ty)
-        .chars()
-        .take(80)
-        .collect()
+    format!("{:?}", ty).chars().take(80).collect()
 }
 
 fn extract_fn_doc(f: &FnDecl) -> DocItem {
-    let ret = f.return_type.as_ref()
+    let ret = f
+        .return_type
+        .as_ref()
         .map(|t| format!(" -> {}", format_type_expr(t)))
         .unwrap_or_default();
     let sig = format!("fn {}({}){}", f.name, format_params(&f.params), ret);
@@ -185,12 +184,17 @@ fn extract_fn_doc(f: &FnDecl) -> DocItem {
 }
 
 fn extract_extern_fn_doc(f: &ExternFnDecl) -> DocItem {
-    let ret = f.return_type.as_ref()
+    let ret = f
+        .return_type
+        .as_ref()
         .map(|t| format!(" -> {}", format_type_expr(t)))
         .unwrap_or_default();
     let sig = format!(
         "extern \"{}\" fn {}({}){}",
-        f.calling_convention, f.name, format_params(&f.params), ret
+        f.calling_convention,
+        f.name,
+        format_params(&f.params),
+        ret
     );
 
     DocItem {
@@ -205,13 +209,15 @@ fn extract_extern_fn_doc(f: &ExternFnDecl) -> DocItem {
 }
 
 fn extract_struct_doc(s: &StructDecl) -> DocItem {
-    let children = s.fields.iter().map(|f| {
-        DocChild {
+    let children = s
+        .fields
+        .iter()
+        .map(|f| DocChild {
             name: f.name.clone(),
             description: format_type_expr(&f.ty),
             doc: f.doc_comment.clone(),
-        }
-    }).collect();
+        })
+        .collect();
 
     DocItem {
         kind: DocItemKind::Struct,
@@ -225,13 +231,15 @@ fn extract_struct_doc(s: &StructDecl) -> DocItem {
 }
 
 fn extract_enum_doc(e: &EnumDecl) -> DocItem {
-    let children = e.variants.iter().map(|v| {
-        DocChild {
+    let children = e
+        .variants
+        .iter()
+        .map(|v| DocChild {
             name: v.name.clone(),
             description: String::new(),
             doc: None,
-        }
-    }).collect();
+        })
+        .collect();
 
     DocItem {
         kind: DocItemKind::Enum,
@@ -245,16 +253,21 @@ fn extract_enum_doc(e: &EnumDecl) -> DocItem {
 }
 
 fn extract_union_doc(u: &UnionDecl) -> DocItem {
-    let children = u.fields.iter().map(|f| {
-        let desc = f.ty.as_ref()
-            .map(|t| format_type_expr(t))
-            .unwrap_or_default();
-        DocChild {
-            name: f.name.clone(),
-            description: desc,
-            doc: None,
-        }
-    }).collect();
+    let children = u
+        .fields
+        .iter()
+        .map(|f| {
+            let desc =
+                f.ty.as_ref()
+                    .map(|t| format_type_expr(t))
+                    .unwrap_or_default();
+            DocChild {
+                name: f.name.clone(),
+                description: desc,
+                doc: None,
+            }
+        })
+        .collect();
 
     DocItem {
         kind: DocItemKind::Union,
@@ -268,13 +281,15 @@ fn extract_union_doc(u: &UnionDecl) -> DocItem {
 }
 
 fn extract_error_set_doc(e: &ErrorSetDecl) -> DocItem {
-    let children = e.variants.iter().map(|v| {
-        DocChild {
+    let children = e
+        .variants
+        .iter()
+        .map(|v| DocChild {
             name: v.name.clone(),
             description: String::new(),
             doc: None,
-        }
-    }).collect();
+        })
+        .collect();
 
     DocItem {
         kind: DocItemKind::ErrorSet,
@@ -288,13 +303,15 @@ fn extract_error_set_doc(e: &ErrorSetDecl) -> DocItem {
 }
 
 fn extract_fault_set_doc(f: &FaultSetDecl) -> DocItem {
-    let children = f.variants.iter().map(|v| {
-        DocChild {
+    let children = f
+        .variants
+        .iter()
+        .map(|v| DocChild {
             name: v.name.clone(),
             description: String::new(),
             doc: None,
-        }
-    }).collect();
+        })
+        .collect();
 
     DocItem {
         kind: DocItemKind::FaultSet,
@@ -372,9 +389,7 @@ pub fn generate_markdown(items: &[DocItem], module_name: &str) -> String {
                     let doc_str = child.doc.as_deref().unwrap_or("");
                     out.push_str(&format!(
                         "| `{}` | `{}` | {} |\n",
-                        child.name,
-                        child.description,
-                        doc_str
+                        child.name, child.description, doc_str
                     ));
                 }
                 out.push('\n');
@@ -484,17 +499,15 @@ mod tests {
 
     #[test]
     fn test_generate_markdown_basic() {
-        let items = vec![
-            DocItem {
-                kind: DocItemKind::Function,
-                name: "main".to_string(),
-                signature: "fn main() -> unit".to_string(),
-                doc: Some("Entry point.".to_string()),
-                children: Vec::new(),
-                is_pub: true,
-                location: None,
-            },
-        ];
+        let items = vec![DocItem {
+            kind: DocItemKind::Function,
+            name: "main".to_string(),
+            signature: "fn main() -> unit".to_string(),
+            doc: Some("Entry point.".to_string()),
+            children: Vec::new(),
+            is_pub: true,
+            location: None,
+        }];
         let md = generate_markdown(&items, "my_module");
         assert!(md.contains("# my_module"));
         assert!(md.contains("## Functions"));
@@ -504,28 +517,26 @@ mod tests {
 
     #[test]
     fn test_generate_markdown_with_children() {
-        let items = vec![
-            DocItem {
-                kind: DocItemKind::Struct,
-                name: "Point".to_string(),
-                signature: "struct Point".to_string(),
-                doc: None,
-                children: vec![
-                    DocChild {
-                        name: "x".to_string(),
-                        description: "f64".to_string(),
-                        doc: None,
-                    },
-                    DocChild {
-                        name: "y".to_string(),
-                        description: "f64".to_string(),
-                        doc: None,
-                    },
-                ],
-                is_pub: true,
-                location: None,
-            },
-        ];
+        let items = vec![DocItem {
+            kind: DocItemKind::Struct,
+            name: "Point".to_string(),
+            signature: "struct Point".to_string(),
+            doc: None,
+            children: vec![
+                DocChild {
+                    name: "x".to_string(),
+                    description: "f64".to_string(),
+                    doc: None,
+                },
+                DocChild {
+                    name: "y".to_string(),
+                    description: "f64".to_string(),
+                    doc: None,
+                },
+            ],
+            is_pub: true,
+            location: None,
+        }];
         let md = generate_markdown(&items, "geometry");
         assert!(md.contains("## Structs"));
         assert!(md.contains("| `x` |"));

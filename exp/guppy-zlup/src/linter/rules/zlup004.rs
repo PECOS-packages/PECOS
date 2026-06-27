@@ -2,8 +2,8 @@
 
 use rustpython_parser::ast::{Expr, Mod, Stmt};
 
-use super::{make_location, LintRule};
 use super::super::diagnostic::{Diagnostic, Severity};
+use super::{LintRule, make_location};
 
 /// Functions that enable dynamic dispatch or code execution.
 const DYNAMIC_FUNCTIONS: &[(&str, &str)] = &[
@@ -244,7 +244,7 @@ fn get_suggestion(func_name: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source(source: &str) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

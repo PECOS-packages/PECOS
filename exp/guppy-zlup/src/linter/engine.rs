@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use rustpython_parser::{parse, Mode};
+use rustpython_parser::{Mode, parse};
 
 use super::config::Config;
 use super::diagnostic::{Diagnostic, Severity, SourceLocation};
@@ -97,7 +97,9 @@ impl Linter {
             rules.push(Box::new(rules::ZLUP006MissingTypes));
         }
         if config.is_rule_enabled("ZLUP007") {
-            rules.push(Box::new(rules::ZLUP007ComplexControlFlow::new(config.max_complexity)));
+            rules.push(Box::new(rules::ZLUP007ComplexControlFlow::new(
+                config.max_complexity,
+            )));
         }
         if config.is_rule_enabled("ZLUP008") {
             rules.push(Box::new(rules::ZLUP008CallDepth::default()));
@@ -158,10 +160,18 @@ mod tests {
     #[test]
     fn test_lint_result_merge() {
         let mut r1 = LintResult::new();
-        r1.add(Diagnostic::error("TEST", "error", SourceLocation::new(1, 0)));
+        r1.add(Diagnostic::error(
+            "TEST",
+            "error",
+            SourceLocation::new(1, 0),
+        ));
 
         let mut r2 = LintResult::new();
-        r2.add(Diagnostic::warning("TEST", "warning", SourceLocation::new(2, 0)));
+        r2.add(Diagnostic::warning(
+            "TEST",
+            "warning",
+            SourceLocation::new(2, 0),
+        ));
 
         r1.merge(r2);
         assert!(r1.has_errors);

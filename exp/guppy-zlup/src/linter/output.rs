@@ -25,7 +25,10 @@ impl std::str::FromStr for OutputFormat {
             "text" => Ok(OutputFormat::Text),
             "json" => Ok(OutputFormat::Json),
             "sarif" => Ok(OutputFormat::Sarif),
-            _ => Err(format!("Unknown output format: '{}'. Valid options: text, json, sarif", s)),
+            _ => Err(format!(
+                "Unknown output format: '{}'. Valid options: text, json, sarif",
+                s
+            )),
         }
     }
 }
@@ -37,8 +40,16 @@ impl LintResult {
             diagnostics: &self.diagnostics,
             summary: JsonSummary {
                 total: self.diagnostics.len(),
-                errors: self.diagnostics.iter().filter(|d| matches!(d.severity, Severity::Error)).count(),
-                warnings: self.diagnostics.iter().filter(|d| matches!(d.severity, Severity::Warning)).count(),
+                errors: self
+                    .diagnostics
+                    .iter()
+                    .filter(|d| matches!(d.severity, Severity::Error))
+                    .count(),
+                warnings: self
+                    .diagnostics
+                    .iter()
+                    .filter(|d| matches!(d.severity, Severity::Warning))
+                    .count(),
                 has_errors: self.has_errors,
                 has_warnings: self.has_warnings,
             },
@@ -262,14 +273,17 @@ fn get_rule_description(rule_id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::diagnostic::SourceLocation;
+    use super::*;
 
     #[test]
     fn test_output_format_parse() {
         assert_eq!("text".parse::<OutputFormat>().unwrap(), OutputFormat::Text);
         assert_eq!("json".parse::<OutputFormat>().unwrap(), OutputFormat::Json);
-        assert_eq!("sarif".parse::<OutputFormat>().unwrap(), OutputFormat::Sarif);
+        assert_eq!(
+            "sarif".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Sarif
+        );
         assert_eq!("JSON".parse::<OutputFormat>().unwrap(), OutputFormat::Json);
         assert!("invalid".parse::<OutputFormat>().is_err());
     }

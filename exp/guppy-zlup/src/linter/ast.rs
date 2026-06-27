@@ -147,16 +147,10 @@ pub enum Stmt {
     },
 
     /// Return statement
-    Return {
-        value: Option<Expr>,
-        span: Span,
-    },
+    Return { value: Option<Expr>, span: Span },
 
     /// Expression statement
-    Expr {
-        value: Expr,
-        span: Span,
-    },
+    Expr { value: Expr, span: Span },
 
     /// Pass statement
     Pass { span: Span },
@@ -168,10 +162,7 @@ pub enum Stmt {
     Continue { span: Span },
 
     /// Barrier (quantum synchronization)
-    Barrier {
-        qubits: Vec<Expr>,
-        span: Span,
-    },
+    Barrier { qubits: Vec<Expr>, span: Span },
 
     /// Try/except block
     Try {
@@ -220,9 +211,17 @@ pub enum AssignTarget {
     /// Simple name: x
     Name { name: String, span: Span },
     /// Subscript: x[i]
-    Subscript { value: Box<Expr>, slice: Box<Expr>, span: Span },
+    Subscript {
+        value: Box<Expr>,
+        slice: Box<Expr>,
+        span: Span,
+    },
     /// Attribute: x.attr
-    Attribute { value: Box<Expr>, attr: String, span: Span },
+    Attribute {
+        value: Box<Expr>,
+        attr: String,
+        span: Span,
+    },
     /// Tuple unpacking: (a, b)
     Tuple { elts: Vec<AssignTarget>, span: Span },
 }
@@ -555,11 +554,7 @@ impl GateKind {
             | GateKind::Ry
             | GateKind::Rz
             | GateKind::Pz => 1,
-            GateKind::Cx
-            | GateKind::Cy
-            | GateKind::Cz
-            | GateKind::Swap
-            | GateKind::Iswap => 2,
+            GateKind::Cx | GateKind::Cy | GateKind::Cz | GateKind::Swap | GateKind::Iswap => 2,
             GateKind::Ccx => 3,
             GateKind::Custom(_) => 0, // Unknown
         }

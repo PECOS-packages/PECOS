@@ -2,8 +2,8 @@
 
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 
-use super::{make_location, LintRule};
 use super::super::diagnostic::{Diagnostic, Severity};
+use super::{LintRule, make_location};
 
 /// Detects functions with overly complex control flow.
 pub struct ZLUP007ComplexControlFlow {
@@ -42,7 +42,13 @@ impl LintRule for ZLUP007ComplexControlFlow {
         };
 
         for stmt in &module.body {
-            check_stmt(stmt, filename, source, self.max_complexity, &mut diagnostics);
+            check_stmt(
+                stmt,
+                filename,
+                source,
+                self.max_complexity,
+                &mut diagnostics,
+            );
         }
 
         diagnostics
@@ -287,7 +293,7 @@ fn count_decision_points_expr(expr: &Expr) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source_with_max(source: &str, max: u32) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

@@ -56,7 +56,9 @@ pub enum PhirJsonError {
     #[error("undefined allocator '{name}'")]
     UndefinedAllocator { name: String },
 
-    #[error("qubit index {index} out of bounds for allocator '{allocator}' with capacity {capacity}")]
+    #[error(
+        "qubit index {index} out of bounds for allocator '{allocator}' with capacity {capacity}"
+    )]
     QubitIndexOutOfBounds {
         allocator: String,
         index: usize,
@@ -246,12 +248,13 @@ impl PhirJsonQop {
     }
 
     /// Create a two-qubit gate operation.
-    pub fn two_qubit(gate: impl Into<String>, pairs: Vec<((String, usize), (String, usize))>) -> Self {
+    pub fn two_qubit(
+        gate: impl Into<String>,
+        pairs: Vec<((String, usize), (String, usize))>,
+    ) -> Self {
         let args: Vec<serde_json::Value> = pairs
             .into_iter()
-            .map(|((n1, i1), (n2, i2))| {
-                serde_json::json!([[n1, i1], [n2, i2]])
-            })
+            .map(|((n1, i1), (n2, i2))| serde_json::json!([[n1, i1], [n2, i2]]))
             .collect();
         Self {
             qop: gate.into(),
@@ -262,7 +265,12 @@ impl PhirJsonQop {
     }
 
     /// Create a single-qubit rotation.
-    pub fn rotation(gate: impl Into<String>, angle: f64, unit: &str, qubits: Vec<(String, usize)>) -> Self {
+    pub fn rotation(
+        gate: impl Into<String>,
+        angle: f64,
+        unit: &str,
+        qubits: Vec<(String, usize)>,
+    ) -> Self {
         let args: Vec<serde_json::Value> = qubits
             .into_iter()
             .map(|(name, idx)| serde_json::json!([name, idx]))
@@ -426,48 +434,184 @@ struct GateInfo {
 fn get_gate_info(kind: GateKind) -> GateInfo {
     match kind {
         // Single-qubit gates
-        GateKind::H => GateInfo { phir_name: "H", num_qubits: 1, num_angles: 0 },
-        GateKind::X => GateInfo { phir_name: "X", num_qubits: 1, num_angles: 0 },
-        GateKind::Y => GateInfo { phir_name: "Y", num_qubits: 1, num_angles: 0 },
-        GateKind::Z => GateInfo { phir_name: "Z", num_qubits: 1, num_angles: 0 },
-        GateKind::T => GateInfo { phir_name: "T", num_qubits: 1, num_angles: 0 },
-        GateKind::Tdg => GateInfo { phir_name: "Tdg", num_qubits: 1, num_angles: 0 },
-        GateKind::SX => GateInfo { phir_name: "SX", num_qubits: 1, num_angles: 0 },
-        GateKind::SXdg => GateInfo { phir_name: "SXdg", num_qubits: 1, num_angles: 0 },
-        GateKind::SY => GateInfo { phir_name: "SY", num_qubits: 1, num_angles: 0 },
-        GateKind::SYdg => GateInfo { phir_name: "SYdg", num_qubits: 1, num_angles: 0 },
-        GateKind::SZ => GateInfo { phir_name: "SZ", num_qubits: 1, num_angles: 0 },
-        GateKind::SZdg => GateInfo { phir_name: "SZdg", num_qubits: 1, num_angles: 0 },
-        GateKind::F => GateInfo { phir_name: "F", num_qubits: 1, num_angles: 0 },
-        GateKind::Fdg => GateInfo { phir_name: "Fdg", num_qubits: 1, num_angles: 0 },
-        GateKind::F4 => GateInfo { phir_name: "F4", num_qubits: 1, num_angles: 0 },
-        GateKind::F4dg => GateInfo { phir_name: "F4dg", num_qubits: 1, num_angles: 0 },
+        GateKind::H => GateInfo {
+            phir_name: "H",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::X => GateInfo {
+            phir_name: "X",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::Y => GateInfo {
+            phir_name: "Y",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::Z => GateInfo {
+            phir_name: "Z",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::T => GateInfo {
+            phir_name: "T",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::Tdg => GateInfo {
+            phir_name: "Tdg",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::SX => GateInfo {
+            phir_name: "SX",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::SXdg => GateInfo {
+            phir_name: "SXdg",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::SY => GateInfo {
+            phir_name: "SY",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::SYdg => GateInfo {
+            phir_name: "SYdg",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::SZ => GateInfo {
+            phir_name: "SZ",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::SZdg => GateInfo {
+            phir_name: "SZdg",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::F => GateInfo {
+            phir_name: "F",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::Fdg => GateInfo {
+            phir_name: "Fdg",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::F4 => GateInfo {
+            phir_name: "F4",
+            num_qubits: 1,
+            num_angles: 0,
+        },
+        GateKind::F4dg => GateInfo {
+            phir_name: "F4dg",
+            num_qubits: 1,
+            num_angles: 0,
+        },
 
         // Single-qubit rotations
-        GateKind::RX => GateInfo { phir_name: "RX", num_qubits: 1, num_angles: 1 },
-        GateKind::RY => GateInfo { phir_name: "RY", num_qubits: 1, num_angles: 1 },
-        GateKind::RZ => GateInfo { phir_name: "RZ", num_qubits: 1, num_angles: 1 },
+        GateKind::RX => GateInfo {
+            phir_name: "RX",
+            num_qubits: 1,
+            num_angles: 1,
+        },
+        GateKind::RY => GateInfo {
+            phir_name: "RY",
+            num_qubits: 1,
+            num_angles: 1,
+        },
+        GateKind::RZ => GateInfo {
+            phir_name: "RZ",
+            num_qubits: 1,
+            num_angles: 1,
+        },
 
         // Two-qubit gates
-        GateKind::CX => GateInfo { phir_name: "CX", num_qubits: 2, num_angles: 0 },
-        GateKind::CY => GateInfo { phir_name: "CY", num_qubits: 2, num_angles: 0 },
-        GateKind::CZ => GateInfo { phir_name: "CZ", num_qubits: 2, num_angles: 0 },
-        GateKind::CH => GateInfo { phir_name: "CH", num_qubits: 2, num_angles: 0 },
-        GateKind::SWAP => GateInfo { phir_name: "SWAP", num_qubits: 2, num_angles: 0 },
-        GateKind::ISWAP => GateInfo { phir_name: "ISWAP", num_qubits: 2, num_angles: 0 },
-        GateKind::SXX => GateInfo { phir_name: "SXX", num_qubits: 2, num_angles: 0 },
-        GateKind::SXXdg => GateInfo { phir_name: "SXXdg", num_qubits: 2, num_angles: 0 },
-        GateKind::SYY => GateInfo { phir_name: "SYY", num_qubits: 2, num_angles: 0 },
-        GateKind::SYYdg => GateInfo { phir_name: "SYYdg", num_qubits: 2, num_angles: 0 },
-        GateKind::SZZ => GateInfo { phir_name: "SZZ", num_qubits: 2, num_angles: 0 },
-        GateKind::SZZdg => GateInfo { phir_name: "SZZdg", num_qubits: 2, num_angles: 0 },
-        GateKind::RZZ => GateInfo { phir_name: "RZZ", num_qubits: 2, num_angles: 1 },
+        GateKind::CX => GateInfo {
+            phir_name: "CX",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::CY => GateInfo {
+            phir_name: "CY",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::CZ => GateInfo {
+            phir_name: "CZ",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::CH => GateInfo {
+            phir_name: "CH",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::SWAP => GateInfo {
+            phir_name: "SWAP",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::ISWAP => GateInfo {
+            phir_name: "ISWAP",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::SXX => GateInfo {
+            phir_name: "SXX",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::SXXdg => GateInfo {
+            phir_name: "SXXdg",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::SYY => GateInfo {
+            phir_name: "SYY",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::SYYdg => GateInfo {
+            phir_name: "SYYdg",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::SZZ => GateInfo {
+            phir_name: "SZZ",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::SZZdg => GateInfo {
+            phir_name: "SZZdg",
+            num_qubits: 2,
+            num_angles: 0,
+        },
+        GateKind::RZZ => GateInfo {
+            phir_name: "RZZ",
+            num_qubits: 2,
+            num_angles: 1,
+        },
 
         // Three-qubit gates
-        GateKind::CCX => GateInfo { phir_name: "CCX", num_qubits: 3, num_angles: 0 },
+        GateKind::CCX => GateInfo {
+            phir_name: "CCX",
+            num_qubits: 3,
+            num_angles: 0,
+        },
 
         // Prepare operations (treated as Init)
-        GateKind::PZ => GateInfo { phir_name: "Init", num_qubits: 1, num_angles: 0 },
+        GateKind::PZ => GateInfo {
+            phir_name: "Init",
+            num_qubits: 1,
+            num_angles: 0,
+        },
     }
 }
 
@@ -532,33 +676,36 @@ impl PhirJsonCodegen {
 
         // Add quantum variable definitions
         for alloc in self.allocators.values() {
-            phir.ops.push(PhirJsonOp::QvarDefine(PhirJsonQvarDefine::new(
-                &alloc.name,
-                alloc.capacity,
-            )));
+            phir.ops
+                .push(PhirJsonOp::QvarDefine(PhirJsonQvarDefine::new(
+                    &alloc.name,
+                    alloc.capacity,
+                )));
         }
 
         // Add classical variable definitions
         for reg in self.registers.values() {
-            phir.ops.push(PhirJsonOp::CvarDefine(PhirJsonCvarDefine::new(
-                &reg.name,
-                reg.size,
-            )));
+            phir.ops
+                .push(PhirJsonOp::CvarDefine(PhirJsonCvarDefine::new(
+                    &reg.name, reg.size,
+                )));
         }
 
         // Second pass: convert main function body
         for decl in &program.declarations {
             if let TopLevelDecl::Fn(fn_decl) = decl
-                && fn_decl.name == "main" {
-                    let ops = self.convert_block(&fn_decl.body)?;
-                    phir.ops.extend(ops);
-                }
+                && fn_decl.name == "main"
+            {
+                let ops = self.convert_block(&fn_decl.body)?;
+                phir.ops.extend(ops);
+            }
         }
 
         // Export all classical variables
         if !self.registers.is_empty() {
             let vars: Vec<String> = self.registers.keys().cloned().collect();
-            phir.ops.push(PhirJsonOp::CvarExport(PhirJsonCvarExport::new(vars)));
+            phir.ops
+                .push(PhirJsonOp::CvarExport(PhirJsonCvarExport::new(vars)));
         }
 
         Ok(phir)
@@ -573,17 +720,18 @@ impl PhirJsonCodegen {
 
         // Add definitions
         for alloc in self.allocators.values() {
-            phir.ops.push(PhirJsonOp::QvarDefine(PhirJsonQvarDefine::new(
-                &alloc.name,
-                alloc.capacity,
-            )));
+            phir.ops
+                .push(PhirJsonOp::QvarDefine(PhirJsonQvarDefine::new(
+                    &alloc.name,
+                    alloc.capacity,
+                )));
         }
 
         for reg in self.registers.values() {
-            phir.ops.push(PhirJsonOp::CvarDefine(PhirJsonCvarDefine::new(
-                &reg.name,
-                reg.size,
-            )));
+            phir.ops
+                .push(PhirJsonOp::CvarDefine(PhirJsonCvarDefine::new(
+                    &reg.name, reg.size,
+                )));
         }
 
         // Convert body
@@ -662,29 +810,31 @@ impl PhirJsonCodegen {
             // Check for qalloc
             if let Expr::Call(call) = init
                 && self.get_callee_name(call) == Some("qalloc".to_string())
-                    && let Some(Expr::IntLit(IntLit { value, .. })) = call.args.first() {
-                        self.allocators.insert(
-                            binding.name.clone(),
-                            AllocatorInfo {
-                                name: binding.name.clone(),
-                                capacity: *value as usize,
-                            },
-                        );
-                    }
+                && let Some(Expr::IntLit(IntLit { value, .. })) = call.args.first()
+            {
+                self.allocators.insert(
+                    binding.name.clone(),
+                    AllocatorInfo {
+                        name: binding.name.clone(),
+                        capacity: *value as usize,
+                    },
+                );
+            }
 
             // Check for typed measurement (creates a register)
             if let Expr::Call(call) = init
                 && let Some(name) = self.get_callee_name(call)
-                    && (name == "mz" || name == "mx" || name == "my") {
-                        let size = call.args.len().max(1);
-                        self.registers.insert(
-                            binding.name.clone(),
-                            RegisterInfo {
-                                name: binding.name.clone(),
-                                size,
-                            },
-                        );
-                    }
+                && (name == "mz" || name == "mx" || name == "my")
+            {
+                let size = call.args.len().max(1);
+                self.registers.insert(
+                    binding.name.clone(),
+                    RegisterInfo {
+                        name: binding.name.clone(),
+                        size,
+                    },
+                );
+            }
         }
         Ok(())
     }
@@ -741,23 +891,25 @@ impl PhirJsonCodegen {
         if let Some(ref init) = binding.value {
             // Check for qalloc - already handled in collection phase
             if let Expr::Call(call) = init
-                && self.get_callee_name(call) == Some("qalloc".to_string()) {
-                    return Ok(vec![]);
-                }
+                && self.get_callee_name(call) == Some("qalloc".to_string())
+            {
+                return Ok(vec![]);
+            }
 
             // Check for measurement call (mz(...) [targets])
             if let Expr::Call(call) = init
                 && let Some(name) = self.get_callee_name(call)
-                    && (name == "mz" || name == "mx" || name == "my") {
-                        let qubits = self.extract_qubits_from_args(&call.args)?;
-                        let results: Vec<(String, usize)> = qubits
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| (binding.name.clone(), i))
-                            .collect();
-                        ops.push(PhirJsonOp::Qop(PhirJsonQop::measure(qubits, results)));
-                        return Ok(ops);
-                    }
+                && (name == "mz" || name == "mx" || name == "my")
+            {
+                let qubits = self.extract_qubits_from_args(&call.args)?;
+                let results: Vec<(String, usize)> = qubits
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| (binding.name.clone(), i))
+                    .collect();
+                ops.push(PhirJsonOp::Qop(PhirJsonQop::measure(qubits, results)));
+                return Ok(ops);
+            }
 
             // Check for measurement expression (mz(T) targets)
             if let Expr::Measure(measure_expr) = init {
@@ -798,7 +950,10 @@ impl PhirJsonCodegen {
         }
     }
 
-    fn convert_gate_expr(&self, gate_expr: &crate::ast::GateExpr) -> PhirJsonResult<Vec<PhirJsonOp>> {
+    fn convert_gate_expr(
+        &self,
+        gate_expr: &crate::ast::GateExpr,
+    ) -> PhirJsonResult<Vec<PhirJsonOp>> {
         let gate_info = get_gate_info(gate_expr.kind);
 
         // Handle prepare operations
@@ -807,12 +962,13 @@ impl PhirJsonCodegen {
             if qubits.is_empty() {
                 // Prepare all qubits in the allocator
                 if let Expr::Ident(ident) = &gate_expr.target
-                    && let Some(alloc) = self.allocators.get(&ident.name) {
-                        let all_qubits: Vec<(String, usize)> = (0..alloc.capacity)
-                            .map(|i| (alloc.name.clone(), i))
-                            .collect();
-                        return Ok(vec![PhirJsonOp::Qop(PhirJsonQop::init(all_qubits))]);
-                    }
+                    && let Some(alloc) = self.allocators.get(&ident.name)
+                {
+                    let all_qubits: Vec<(String, usize)> = (0..alloc.capacity)
+                        .map(|i| (alloc.name.clone(), i))
+                        .collect();
+                    return Ok(vec![PhirJsonOp::Qop(PhirJsonQop::init(all_qubits))]);
+                }
             }
             return Ok(vec![PhirJsonOp::Qop(PhirJsonQop::init(qubits))]);
         }
@@ -834,7 +990,10 @@ impl PhirJsonCodegen {
                     qubits,
                 ))])
             } else {
-                Ok(vec![PhirJsonOp::Qop(PhirJsonQop::single_qubit(gate_info.phir_name, qubits))])
+                Ok(vec![PhirJsonOp::Qop(PhirJsonQop::single_qubit(
+                    gate_info.phir_name,
+                    qubits,
+                ))])
             }
         } else {
             // Two-qubit gate - pair up qubits
@@ -849,11 +1008,17 @@ impl PhirJsonCodegen {
                 .chunks(2)
                 .map(|chunk| (chunk[0].clone(), chunk[1].clone()))
                 .collect();
-            Ok(vec![PhirJsonOp::Qop(PhirJsonQop::two_qubit(gate_info.phir_name, pairs))])
+            Ok(vec![PhirJsonOp::Qop(PhirJsonQop::two_qubit(
+                gate_info.phir_name,
+                pairs,
+            ))])
         }
     }
 
-    fn convert_measure_expr(&mut self, measure_expr: &crate::ast::MeasureExpr) -> PhirJsonResult<Vec<PhirJsonOp>> {
+    fn convert_measure_expr(
+        &mut self,
+        measure_expr: &crate::ast::MeasureExpr,
+    ) -> PhirJsonResult<Vec<PhirJsonOp>> {
         let qubits = self.extract_qubits_from_target(&measure_expr.targets)?;
         let reg_name = format!("m{}", self.register_counter);
         self.register_counter += 1;
@@ -870,9 +1035,10 @@ impl PhirJsonCodegen {
         match target {
             Expr::Index(idx_expr) => {
                 if let Expr::Ident(ident) = &idx_expr.object
-                    && let Some(idx) = self.eval_index(&idx_expr.index) {
-                        qubits.push((ident.name.clone(), idx));
-                    }
+                    && let Some(idx) = self.eval_index(&idx_expr.index)
+                {
+                    qubits.push((ident.name.clone(), idx));
+                }
             }
             Expr::Tuple(tuple_expr) => {
                 for elem in &tuple_expr.elements {
@@ -911,12 +1077,13 @@ impl PhirJsonCodegen {
             if qubits.is_empty() {
                 // Prepare all qubits in the allocator
                 if let Some(Expr::Ident(ident)) = call.args.first()
-                    && let Some(alloc) = self.allocators.get(&ident.name) {
-                        let all_qubits: Vec<(String, usize)> = (0..alloc.capacity)
-                            .map(|i| (alloc.name.clone(), i))
-                            .collect();
-                        return Ok(vec![PhirJsonOp::Qop(PhirJsonQop::init(all_qubits))]);
-                    }
+                    && let Some(alloc) = self.allocators.get(&ident.name)
+                {
+                    let all_qubits: Vec<(String, usize)> = (0..alloc.capacity)
+                        .map(|i| (alloc.name.clone(), i))
+                        .collect();
+                    return Ok(vec![PhirJsonOp::Qop(PhirJsonQop::init(all_qubits))]);
+                }
             }
             return Ok(vec![PhirJsonOp::Qop(PhirJsonQop::init(qubits))]);
         }
@@ -975,7 +1142,10 @@ impl PhirJsonCodegen {
                     qubits,
                 ))])
             } else {
-                Ok(vec![PhirJsonOp::Qop(PhirJsonQop::single_qubit(gate_info.phir_name, qubits))])
+                Ok(vec![PhirJsonOp::Qop(PhirJsonQop::single_qubit(
+                    gate_info.phir_name,
+                    qubits,
+                ))])
             }
         } else {
             // Two-qubit gate - pair up qubits
@@ -990,20 +1160,25 @@ impl PhirJsonCodegen {
                 .chunks(2)
                 .map(|chunk| (chunk[0].clone(), chunk[1].clone()))
                 .collect();
-            Ok(vec![PhirJsonOp::Qop(PhirJsonQop::two_qubit(gate_info.phir_name, pairs))])
+            Ok(vec![PhirJsonOp::Qop(PhirJsonQop::two_qubit(
+                gate_info.phir_name,
+                pairs,
+            ))])
         }
     }
 
     fn convert_prepare(&self, prepare_op: &PrepareOp) -> PhirJsonResult<Vec<PhirJsonOp>> {
-        let alloc = self
-            .allocators
-            .get(&prepare_op.allocator)
-            .ok_or_else(|| PhirJsonError::UndefinedAllocator {
+        let alloc = self.allocators.get(&prepare_op.allocator).ok_or_else(|| {
+            PhirJsonError::UndefinedAllocator {
                 name: prepare_op.allocator.clone(),
-            })?;
+            }
+        })?;
 
         let qubits: Vec<(String, usize)> = if let Some(ref slots) = prepare_op.slots {
-            slots.iter().map(|&i| (alloc.name.clone(), i as usize)).collect()
+            slots
+                .iter()
+                .map(|&i| (alloc.name.clone(), i as usize))
+                .collect()
         } else {
             (0..alloc.capacity)
                 .map(|i| (alloc.name.clone(), i))
@@ -1019,7 +1194,8 @@ impl PhirJsonCodegen {
             .results
             .iter()
             .filter_map(|br| {
-                self.eval_index(&br.index).map(|idx| (br.register.clone(), idx))
+                self.eval_index(&br.index)
+                    .map(|idx| (br.register.clone(), idx))
             })
             .collect();
 
@@ -1050,15 +1226,14 @@ impl PhirJsonCodegen {
         let mut ops = Vec::new();
 
         if let ForRange::Range { start, end, .. } = &for_stmt.range
-            && let (Some(start_val), Some(end_val)) = (
-                self.try_eval_const(start),
-                self.try_eval_const(end),
-            ) {
-                for _ in start_val..end_val {
-                    ops.extend(self.convert_block(&for_stmt.body)?);
-                }
-                return Ok(ops);
+            && let (Some(start_val), Some(end_val)) =
+                (self.try_eval_const(start), self.try_eval_const(end))
+        {
+            for _ in start_val..end_val {
+                ops.extend(self.convert_block(&for_stmt.body)?);
             }
+            return Ok(ops);
+        }
 
         Err(PhirJsonError::UnsupportedStatement(
             "for loops with non-constant bounds".to_string(),
@@ -1098,7 +1273,8 @@ impl PhirJsonCodegen {
         targets
             .iter()
             .filter_map(|slot| {
-                self.eval_index(&slot.index).map(|idx| (slot.allocator.clone(), idx))
+                self.eval_index(&slot.index)
+                    .map(|idx| (slot.allocator.clone(), idx))
             })
             .collect()
     }
@@ -1109,26 +1285,29 @@ impl PhirJsonCodegen {
             match arg {
                 Expr::Index(idx_expr) => {
                     if let Expr::Ident(ident) = &idx_expr.object
-                        && let Some(idx) = self.eval_index(&idx_expr.index) {
-                            qubits.push((ident.name.clone(), idx));
-                        }
+                        && let Some(idx) = self.eval_index(&idx_expr.index)
+                    {
+                        qubits.push((ident.name.clone(), idx));
+                    }
                 }
                 Expr::Tuple(tuple_expr) => {
                     for elem in &tuple_expr.elements {
                         if let Expr::Index(idx_expr) = elem
                             && let Expr::Ident(ident) = &idx_expr.object
-                                && let Some(idx) = self.eval_index(&idx_expr.index) {
-                                    qubits.push((ident.name.clone(), idx));
-                                }
+                            && let Some(idx) = self.eval_index(&idx_expr.index)
+                        {
+                            qubits.push((ident.name.clone(), idx));
+                        }
                     }
                 }
                 Expr::BracketArray(arr) => {
                     for elem in &arr.elements {
                         if let Expr::Index(idx_expr) = elem
                             && let Expr::Ident(ident) = &idx_expr.object
-                                && let Some(idx) = self.eval_index(&idx_expr.index) {
-                                    qubits.push((ident.name.clone(), idx));
-                                }
+                            && let Some(idx) = self.eval_index(&idx_expr.index)
+                        {
+                            qubits.push((ident.name.clone(), idx));
+                        }
                     }
                 }
                 _ => {}
@@ -1170,7 +1349,9 @@ impl PhirJsonCodegen {
                 Ok(serde_json::Value::Number((*value as i64).into()))
             }
             Expr::FloatLit(fl) => Ok(serde_json::json!(fl.value)),
-            Expr::BoolLit(bl) => Ok(serde_json::Value::Number(if bl.value { 1 } else { 0 }.into())),
+            Expr::BoolLit(bl) => Ok(serde_json::Value::Number(
+                if bl.value { 1 } else { 0 }.into(),
+            )),
             Expr::Ident(ident) => Ok(serde_json::Value::String(ident.name.clone())),
             Expr::Binary(bin) => {
                 let left = self.convert_expr_to_value(&bin.left)?;
@@ -1209,9 +1390,10 @@ impl PhirJsonCodegen {
             }
             Expr::Index(idx) => {
                 if let Expr::Ident(ident) = &idx.object
-                    && let Some(i) = self.eval_index(&idx.index) {
-                        return Ok(serde_json::json!([ident.name, i]));
-                    }
+                    && let Some(i) = self.eval_index(&idx.index)
+                {
+                    return Ok(serde_json::json!([ident.name, i]));
+                }
                 Err(PhirJsonError::UnsupportedExpression)
             }
             _ => Err(PhirJsonError::UnsupportedExpression),

@@ -1,8 +1,8 @@
 //! CLI integration tests for Zlup.
 
 use std::fs;
-use std::process::Command;
 use std::path::PathBuf;
+use std::process::Command;
 
 /// Get the path to the zlup binary.
 fn zlup_bin() -> Command {
@@ -28,10 +28,7 @@ fn test_help() {
 
 #[test]
 fn test_version() {
-    let output = zlup_bin()
-        .arg("--version")
-        .output()
-        .expect("failed to run");
+    let output = zlup_bin().arg("--version").output().expect("failed to run");
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -429,8 +426,12 @@ fn temp_dir(test_name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("zlup-test-{}-{}-{}",
-        test_name, std::process::id(), timestamp));
+    let dir = std::env::temp_dir().join(format!(
+        "zlup-test-{}-{}-{}",
+        test_name,
+        std::process::id(),
+        timestamp
+    ));
     fs::create_dir_all(&dir).expect("failed to create temp dir");
     dir
 }
@@ -467,12 +468,22 @@ fn test_init_creates_project() {
         .output()
         .expect("failed to run");
 
-    assert!(output.status.success(), "init failed: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "init failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Check files were created
     assert!(project_dir.exists(), "project dir should exist");
-    assert!(project_dir.join("zlup.toml").exists(), "zlup.toml should exist");
-    assert!(project_dir.join("main.zlp").exists(), "main.zlp should exist");
+    assert!(
+        project_dir.join("zlup.toml").exists(),
+        "zlup.toml should exist"
+    );
+    assert!(
+        project_dir.join("main.zlp").exists(),
+        "main.zlp should exist"
+    );
 
     // Check zlup.toml content
     let toml_content = fs::read_to_string(project_dir.join("zlup.toml")).expect("read zlup.toml");
@@ -505,7 +516,11 @@ fn test_init_project_exists_error() {
 
     assert!(!output.status.success(), "should fail when project exists");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("exists"), "should report project exists: {}", stderr);
+    assert!(
+        stderr.contains("exists"),
+        "should report project exists: {}",
+        stderr
+    );
 
     // Cleanup
     cleanup_temp_dir(&temp);
@@ -541,8 +556,11 @@ fn test_build_no_config_error() {
 
     assert!(!output.status.success(), "should fail without zlup.toml");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("config") || stderr.contains("not found"),
-            "should report config not found: {}", stderr);
+    assert!(
+        stderr.contains("config") || stderr.contains("not found"),
+        "should report config not found: {}",
+        stderr
+    );
 
     // Cleanup
     cleanup_temp_dir(&temp);
@@ -561,7 +579,11 @@ fn test_init_then_build() {
         .output()
         .expect("failed to run init");
 
-    assert!(output.status.success(), "init failed: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "init failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Build project
     let output = zlup_bin()
@@ -570,11 +592,19 @@ fn test_init_then_build() {
         .output()
         .expect("failed to run build");
 
-    assert!(output.status.success(), "build failed: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "build failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Check output file was created
     let output_file = project_dir.join("build").join("main.slr.json");
-    assert!(output_file.exists(), "output file should exist at {:?}", output_file);
+    assert!(
+        output_file.exists(),
+        "output file should exist at {:?}",
+        output_file
+    );
 
     // Verify it's valid JSON
     let content = fs::read_to_string(&output_file).expect("read output");
@@ -598,7 +628,11 @@ fn test_build_with_strict_override() {
         .output()
         .expect("failed to run init");
 
-    assert!(output.status.success(), "init failed: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "init failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Build with strict override
     let output = zlup_bin()
@@ -611,7 +645,11 @@ fn test_build_with_strict_override() {
     // Note: The actual success/failure depends on semantic analyzer's strict mode behavior
     // which may flag qubit operations that aren't fully tracked
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("strict"), "should show strict mode in output: {}", stderr);
+    assert!(
+        stderr.contains("strict"),
+        "should show strict mode in output: {}",
+        stderr
+    );
 
     // Cleanup
     cleanup_temp_dir(&temp);
@@ -629,7 +667,11 @@ fn examples_dir() -> PathBuf {
 /// Test that an example file parses and semantic checks correctly
 fn test_example_checks(filename: &str) {
     let example_path = examples_dir().join(filename);
-    assert!(example_path.exists(), "Example file should exist: {:?}", example_path);
+    assert!(
+        example_path.exists(),
+        "Example file should exist: {:?}",
+        example_path
+    );
 
     let output = zlup_bin()
         .args(["check", example_path.to_str().unwrap()])
@@ -648,10 +690,21 @@ fn test_example_checks(filename: &str) {
 /// Test that an example file compiles to SLR-AST
 fn test_example_compiles_slr(filename: &str) {
     let example_path = examples_dir().join(filename);
-    assert!(example_path.exists(), "Example file should exist: {:?}", example_path);
+    assert!(
+        example_path.exists(),
+        "Example file should exist: {:?}",
+        example_path
+    );
 
     let output = zlup_bin()
-        .args(["compile", example_path.to_str().unwrap(), "--format", "slr", "-o", "-"])
+        .args([
+            "compile",
+            example_path.to_str().unwrap(),
+            "--format",
+            "slr",
+            "-o",
+            "-",
+        ])
         .output()
         .expect("failed to run compile");
 
@@ -678,10 +731,21 @@ fn test_example_compiles_slr(filename: &str) {
 /// Test that an example file compiles to QASM
 fn test_example_compiles_qasm(filename: &str) {
     let example_path = examples_dir().join(filename);
-    assert!(example_path.exists(), "Example file should exist: {:?}", example_path);
+    assert!(
+        example_path.exists(),
+        "Example file should exist: {:?}",
+        example_path
+    );
 
     let output = zlup_bin()
-        .args(["compile", example_path.to_str().unwrap(), "--format", "qasm", "-o", "-"])
+        .args([
+            "compile",
+            example_path.to_str().unwrap(),
+            "--format",
+            "qasm",
+            "-o",
+            "-",
+        ])
         .output()
         .expect("failed to run compile");
 
@@ -841,13 +905,20 @@ fn test_analyze_stdin_text() {
     }
 
     let output = child.wait_with_output().expect("failed to wait");
-    assert!(output.status.success(), "analyze failed: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "analyze failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Parallelism Analysis"), "Missing header");
     assert!(stdout.contains("Allocators:"), "Missing allocators section");
     assert!(stdout.contains("q"), "Missing allocator q");
-    assert!(stdout.contains("Function Analysis:"), "Missing function analysis");
+    assert!(
+        stdout.contains("Function Analysis:"),
+        "Missing function analysis"
+    );
     assert!(stdout.contains("main"), "Missing main function");
 }
 
@@ -874,18 +945,31 @@ fn test_analyze_stdin_json() {
     }
 
     let output = child.wait_with_output().expect("failed to wait");
-    assert!(output.status.success(), "analyze failed: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "analyze failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Parse as JSON to verify structure
-    let json: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("Output should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("Output should be valid JSON");
 
-    assert!(json["allocators"].is_array(), "Should have allocators array");
+    assert!(
+        json["allocators"].is_array(),
+        "Should have allocators array"
+    );
     assert!(json["functions"].is_array(), "Should have functions array");
-    assert!(json["parallel_layers"].is_array(), "Should have parallel_layers array");
-    assert!(json["total_operations"].is_number(), "Should have total_operations");
+    assert!(
+        json["parallel_layers"].is_array(),
+        "Should have parallel_layers array"
+    );
+    assert!(
+        json["total_operations"].is_number(),
+        "Should have total_operations"
+    );
 }
 
 #[test]
@@ -912,11 +996,21 @@ fn test_analyze_verbose() {
     }
 
     let output = child.wait_with_output().expect("failed to wait");
-    assert!(output.status.success(), "analyze failed: {:?}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "analyze failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Dependency Graph"), "Verbose should include dependency graph");
-    assert!(stdout.contains("Parallel Layers"), "Verbose should include parallel layers");
+    assert!(
+        stdout.contains("Dependency Graph"),
+        "Verbose should include dependency graph"
+    );
+    assert!(
+        stdout.contains("Parallel Layers"),
+        "Verbose should include parallel layers"
+    );
 }
 
 #[test]
@@ -957,14 +1051,19 @@ fn test_analyze_disjoint_allocators() {
     // Check max parallelism > 1 (H gates on different allocators can run in parallel)
     let functions = json["functions"].as_array().expect("functions array");
     let main_func = &functions[0];
-    let max_parallelism = main_func["max_parallelism"].as_u64().expect("max_parallelism");
-    assert!(max_parallelism >= 2, "Disjoint allocators should enable parallelism");
+    let max_parallelism = main_func["max_parallelism"]
+        .as_u64()
+        .expect("max_parallelism");
+    assert!(
+        max_parallelism >= 2,
+        "Disjoint allocators should enable parallelism"
+    );
 }
 
 #[test]
 fn test_analyze_parse_error() {
     // Invalid syntax should fail
-    let source = "fn main( { }";  // Missing closing paren and return type
+    let source = "fn main( { }"; // Missing closing paren and return type
 
     let mut child = zlup_bin()
         .args(["analyze", "-"])
@@ -1033,5 +1132,5 @@ fn test_analyze_semantic_error() {
     let output = child.wait_with_output().expect("failed to wait");
     // Note: semantic errors in permissive mode may still allow analysis
     // This test verifies the command handles the input without crashing
-    let _ = output.status;  // May or may not succeed depending on strictness
+    let _ = output.status; // May or may not succeed depending on strictness
 }

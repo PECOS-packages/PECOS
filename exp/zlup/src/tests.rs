@@ -769,7 +769,7 @@ fn test_block_expression() {
 fn test_builtin_calls() {
     assert_parses!(r#"std := @import("std");"#);
     // Self is now a keyword (like Rust), no need for @This() alias
-    assert_parses!("x := Self;");  // Self can be used as a type value
+    assert_parses!("x := Self;"); // Self can be used as a type value
     assert_parses!("size := @sizeOf(u32);");
 }
 
@@ -835,13 +835,15 @@ fn test_array_size_expressions() {
     // Parenthesized expression
     assert_parses!("h: [(N + 1) * 2]u8 = undefined;");
     // In function returning comptime type
-    assert_parses!(r#"
+    assert_parses!(
+        r#"
         pub MyArray := fn(comptime N: usize) -> type {
             struct {
                 data: [N + 1]u8 = undefined,
             }
         };
-    "#);
+    "#
+    );
 }
 
 #[test]
@@ -1681,7 +1683,7 @@ fn test_suggest_gate_name_typo() {
     use crate::parser::suggest_gate_name;
     // Close misspellings should suggest the correct gate
     assert_eq!(suggest_gate_name("cx"), Some("cx")); // exact match (dist 0)
-    assert_eq!(suggest_gate_name("hh"), Some("h"));  // edit distance 1
+    assert_eq!(suggest_gate_name("hh"), Some("h")); // edit distance 1
     assert_eq!(suggest_gate_name("swp"), Some("swap")); // edit distance 1
 }
 
@@ -1708,37 +1710,27 @@ fn test_edit_distance() {
 
 #[test]
 fn test_parse_declare_gate() {
-    assert_parses!(
-        "declare gate my_gate(theta)(q);"
-    );
+    assert_parses!("declare gate my_gate(theta)(q);");
 }
 
 #[test]
 fn test_parse_declare_gate_no_params() {
-    assert_parses!(
-        "declare gate my_x()(q);"
-    );
+    assert_parses!("declare gate my_x()(q);");
 }
 
 #[test]
 fn test_parse_declare_gate_multiple_qubits() {
-    assert_parses!(
-        "declare gate cnot()(control, target);"
-    );
+    assert_parses!("declare gate cnot()(control, target);");
 }
 
 #[test]
 fn test_parse_declare_gate_multiple_params() {
-    assert_parses!(
-        "declare gate u3(theta, phi, lambda)(q);"
-    );
+    assert_parses!("declare gate u3(theta, phi, lambda)(q);");
 }
 
 #[test]
 fn test_parse_declare_gate_pub() {
-    assert_parses!(
-        "pub declare gate rz(angle)(q);"
-    );
+    assert_parses!("pub declare gate rz(angle)(q);");
 }
 
 #[test]
@@ -1804,7 +1796,5 @@ fn test_parse_declare_gate_and_fn_together() {
 
 #[test]
 fn test_parse_composite_gate_with_typed_param() {
-    assert_parses!(
-        "gate rz(theta: a64)(q) { h q; }"
-    );
+    assert_parses!("gate rz(theta: a64)(q) { h q; }");
 }

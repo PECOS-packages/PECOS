@@ -94,11 +94,7 @@ impl Rational {
 
     /// Convert to an integer if exact, otherwise None.
     pub fn to_integer(&self) -> Option<i64> {
-        if self.den == 1 {
-            Some(self.num)
-        } else {
-            None
-        }
+        if self.den == 1 { Some(self.num) } else { None }
     }
 
     /// Convert to f64.
@@ -405,11 +401,7 @@ impl Rational {
 
         let result = if diff1 <= diff2 { bound1 } else { bound2 };
 
-        if self.num < 0 {
-            -result
-        } else {
-            result
-        }
+        if self.num < 0 { -result } else { result }
     }
 
     /// Smart float-to-rational conversion.
@@ -438,9 +430,10 @@ impl Rational {
 
         // 3. Check for common fractions (most quantum angles)
         if let Some(r) = Self::from_f64_common(value)
-            && r.den <= max_denominator {
-                return Some(r);
-            }
+            && r.den <= max_denominator
+        {
+            return Some(r);
+        }
 
         // 4. Try exact conversion with limit
         if let Some(exact) = Self::from_f64_exact(value) {
@@ -715,7 +708,10 @@ mod tests {
         assert_eq!(Rational::from_f64_common(0.25), Some(Rational::new(1, 4)));
         assert_eq!(Rational::from_f64_common(0.125), Some(Rational::new(1, 8)));
         assert_eq!(Rational::from_f64_common(0.5), Some(Rational::new(1, 2)));
-        assert_eq!(Rational::from_f64_common(1.0 / 3.0), Some(Rational::new(1, 3)));
+        assert_eq!(
+            Rational::from_f64_common(1.0 / 3.0),
+            Some(Rational::new(1, 3))
+        );
     }
 
     #[test]
@@ -776,7 +772,10 @@ mod tests {
     fn test_limit_denominator() {
         // 0.1 exact representation has large denominator
         let exact = Rational::from_f64_exact(0.1).unwrap();
-        assert!(exact.denominator() > 10, "0.1 exact should have large denominator");
+        assert!(
+            exact.denominator() > 10,
+            "0.1 exact should have large denominator"
+        );
 
         // Limit to 10 should give 1/10
         let limited = exact.limit_denominator(10);
@@ -811,9 +810,15 @@ mod tests {
     #[test]
     fn test_from_f64_best() {
         // Common fractions should be recognized
-        assert_eq!(Rational::from_f64_best(0.25, 100), Some(Rational::new(1, 4)));
+        assert_eq!(
+            Rational::from_f64_best(0.25, 100),
+            Some(Rational::new(1, 4))
+        );
         assert_eq!(Rational::from_f64_best(0.5, 100), Some(Rational::new(1, 2)));
-        assert_eq!(Rational::from_f64_best(1.0 / 3.0, 100), Some(Rational::new(1, 3)));
+        assert_eq!(
+            Rational::from_f64_best(1.0 / 3.0, 100),
+            Some(Rational::new(1, 3))
+        );
 
         // Integers
         assert_eq!(Rational::from_f64_best(5.0, 100), Some(Rational::new(5, 1)));
@@ -827,18 +832,30 @@ mod tests {
     fn test_quantum_angle_fractions() {
         // Common quantum computing angles as fractions of a turn
         // T-gate: 1/8 turn
-        assert_eq!(Rational::from_f64_best(0.125, 100), Some(Rational::new(1, 8)));
+        assert_eq!(
+            Rational::from_f64_best(0.125, 100),
+            Some(Rational::new(1, 8))
+        );
 
         // S-gate: 1/4 turn
-        assert_eq!(Rational::from_f64_best(0.25, 100), Some(Rational::new(1, 4)));
+        assert_eq!(
+            Rational::from_f64_best(0.25, 100),
+            Some(Rational::new(1, 4))
+        );
 
         // Z-gate: 1/2 turn
         assert_eq!(Rational::from_f64_best(0.5, 100), Some(Rational::new(1, 2)));
 
         // T-dagger: 7/8 turn
-        assert_eq!(Rational::from_f64_best(0.875, 100), Some(Rational::new(7, 8)));
+        assert_eq!(
+            Rational::from_f64_best(0.875, 100),
+            Some(Rational::new(7, 8))
+        );
 
         // S-dagger: 3/4 turn
-        assert_eq!(Rational::from_f64_best(0.75, 100), Some(Rational::new(3, 4)));
+        assert_eq!(
+            Rational::from_f64_best(0.75, 100),
+            Some(Rational::new(3, 4))
+        );
     }
 }

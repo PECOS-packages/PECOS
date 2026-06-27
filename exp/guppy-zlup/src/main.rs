@@ -6,14 +6,18 @@ use std::sync::mpsc::channel;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use guppy_zlup::{compile_file, ir, lint_source, CompileError, Config, LintResult, Linter, OutputFormat, Severity};
+use guppy_zlup::{
+    CompileError, Config, LintResult, Linter, OutputFormat, Severity, compile_file, ir, lint_source,
+};
 use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 use rayon::prelude::*;
 
 #[derive(Parser)]
 #[command(name = "guppy-zlup")]
 #[command(author, version, about = "Guppy linter and Zlup compiler")]
-#[command(long_about = "Validate Guppy quantum programs against NASA Power of 10 rules and compile to Zlup")]
+#[command(
+    long_about = "Validate Guppy quantum programs against NASA Power of 10 rules and compile to Zlup"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -174,9 +178,23 @@ fn main() -> ExitCode {
             watch,
         } => {
             if watch {
-                cmd_watch(&files, warnings_as_errors, config.as_deref(), &disabled_rules, max_complexity, format.into())
+                cmd_watch(
+                    &files,
+                    warnings_as_errors,
+                    config.as_deref(),
+                    &disabled_rules,
+                    max_complexity,
+                    format.into(),
+                )
             } else {
-                cmd_check(&files, warnings_as_errors, config.as_deref(), &disabled_rules, max_complexity, format.into())
+                cmd_check(
+                    &files,
+                    warnings_as_errors,
+                    config.as_deref(),
+                    &disabled_rules,
+                    max_complexity,
+                    format.into(),
+                )
             }
         }
 
@@ -240,7 +258,11 @@ fn walkdir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
         if path.is_dir() {
             // Skip hidden directories and common non-source dirs
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.starts_with('.') && name != "__pycache__" && name != "node_modules" && name != "venv" {
+            if !name.starts_with('.')
+                && name != "__pycache__"
+                && name != "node_modules"
+                && name != "venv"
+            {
                 files.extend(walkdir(&path)?);
             }
         } else if path.extension().is_some_and(|ext| ext == "py") {
@@ -351,7 +373,9 @@ fn cmd_check(
             .count();
         println!(
             "\nFound {} error(s) and {} warning(s) in {} file(s).",
-            error_count, warning_count, files.len()
+            error_count,
+            warning_count,
+            files.len()
         );
     }
 
@@ -376,7 +400,14 @@ fn cmd_watch(
     println!("Watching for changes... (press Ctrl+C to stop)");
 
     // Run initial check
-    let _ = cmd_check(paths, warnings_as_errors, config_path, disabled_rules, max_complexity, format);
+    let _ = cmd_check(
+        paths,
+        warnings_as_errors,
+        config_path,
+        disabled_rules,
+        max_complexity,
+        format,
+    );
     println!("\n---\n");
 
     // Set up file watcher
@@ -398,7 +429,10 @@ fn cmd_watch(
             path.as_path()
         };
 
-        if let Err(e) = debouncer.watcher().watch(watch_path, RecursiveMode::Recursive) {
+        if let Err(e) = debouncer
+            .watcher()
+            .watch(watch_path, RecursiveMode::Recursive)
+        {
             eprintln!("Error watching {}: {}", watch_path.display(), e);
         }
     }
@@ -412,9 +446,9 @@ fn cmd_watch(
         match rx.recv() {
             Ok(Ok(events)) => {
                 // Check if any Python files changed
-                let has_py_changes = events.iter().any(|e| {
-                    e.path.extension().is_some_and(|ext| ext == "py")
-                });
+                let has_py_changes = events
+                    .iter()
+                    .any(|e| e.path.extension().is_some_and(|ext| ext == "py"));
 
                 if has_py_changes {
                     // Clear screen (optional, works on most terminals)
@@ -530,7 +564,13 @@ fn cmd_compile_ir(input: &Path, output: Option<&Path>, to_stdout: bool, analyze:
     ExitCode::SUCCESS
 }
 
-fn cmd_compile_source(input: &PathBuf, output: Option<&Path>, to_stdout: bool, validate: bool, analyze: bool) -> ExitCode {
+fn cmd_compile_source(
+    input: &PathBuf,
+    output: Option<&Path>,
+    to_stdout: bool,
+    validate: bool,
+    analyze: bool,
+) -> ExitCode {
     // Run guppylang validation if requested
     if validate {
         let exit = cmd_validate(std::slice::from_ref(input), false);
@@ -677,7 +717,9 @@ fn cmd_analyze(input: &PathBuf, is_ir: bool, format: AnalyzeFormat, verbose: boo
 }
 
 fn run_analysis(zlup_source: &str, format: AnalyzeFormat, verbose: bool) {
-    use zlup::analysis::{analyze_parallelism, AllocatorAnalysis, DependencyGraph, OperationTagger};
+    use zlup::analysis::{
+        AllocatorAnalysis, DependencyGraph, OperationTagger, analyze_parallelism,
+    };
 
     // Parse the Zlup source
     let program = match zlup::parse(zlup_source) {
@@ -704,9 +746,14 @@ fn run_analysis(zlup_source: &str, format: AnalyzeFormat, verbose: bool) {
                 println!("  (none)");
             } else {
                 for (name, info) in &allocator_analysis.allocators {
-                    let size_str = info.size.map(|s| format!("[{}]", s)).unwrap_or_else(|| "[?]".to_string());
-                    println!("  {} {}qubit (scope depth: {}, line: {})",
-                        name, size_str, info.scope_depth, info.defined_at_line);
+                    let size_str = info
+                        .size
+                        .map(|s| format!("[{}]", s))
+                        .unwrap_or_else(|| "[?]".to_string());
+                    println!(
+                        "  {} {}qubit (scope depth: {}, line: {})",
+                        name, size_str, info.scope_depth, info.defined_at_line
+                    );
                 }
             }
             println!();
@@ -732,42 +779,56 @@ fn run_analysis(zlup_source: &str, format: AnalyzeFormat, verbose: bool) {
         AnalyzeFormat::Json => {
             use serde_json::json;
 
-            let allocators: Vec<_> = allocator_analysis.allocators.iter().map(|(name, info)| {
-                json!({
-                    "name": name,
-                    "size": info.size,
-                    "scope_depth": info.scope_depth,
-                    "defined_at_line": info.defined_at_line,
+            let allocators: Vec<_> = allocator_analysis
+                .allocators
+                .iter()
+                .map(|(name, info)| {
+                    json!({
+                        "name": name,
+                        "size": info.size,
+                        "scope_depth": info.scope_depth,
+                        "defined_at_line": info.defined_at_line,
+                    })
                 })
-            }).collect();
+                .collect();
 
-            let functions: Vec<_> = summaries.iter().map(|s| {
-                json!({
-                    "name": s.function_name,
-                    "total_ops": s.total_ops,
-                    "quantum_ops": s.quantum_ops,
-                    "classical_ops": s.classical_ops,
-                    "num_layers": s.num_layers,
-                    "max_parallelism": s.max_parallelism,
+            let functions: Vec<_> = summaries
+                .iter()
+                .map(|s| {
+                    json!({
+                        "name": s.function_name,
+                        "total_ops": s.total_ops,
+                        "quantum_ops": s.quantum_ops,
+                        "classical_ops": s.classical_ops,
+                        "num_layers": s.num_layers,
+                        "max_parallelism": s.max_parallelism,
+                    })
                 })
-            }).collect();
+                .collect();
 
             let layers = dep_graph.parallel_layers();
-            let layer_details: Vec<_> = layers.iter().enumerate().map(|(i, ops)| {
-                let op_details: Vec<_> = ops.iter().map(|&id| {
-                    let op = &dep_graph.operations[id];
+            let layer_details: Vec<_> = layers
+                .iter()
+                .enumerate()
+                .map(|(i, ops)| {
+                    let op_details: Vec<_> = ops
+                        .iter()
+                        .map(|&id| {
+                            let op = &dep_graph.operations[id];
+                            json!({
+                                "id": op.id,
+                                "description": op.description,
+                                "line": op.line,
+                                "is_quantum": op.touches_qubits(),
+                            })
+                        })
+                        .collect();
                     json!({
-                        "id": op.id,
-                        "description": op.description,
-                        "line": op.line,
-                        "is_quantum": op.touches_qubits(),
+                        "layer": i,
+                        "operations": op_details,
                     })
-                }).collect();
-                json!({
-                    "layer": i,
-                    "operations": op_details,
                 })
-            }).collect();
+                .collect();
 
             let output = json!({
                 "allocators": allocators,
@@ -856,7 +917,9 @@ fn cmd_validate(files: &[PathBuf], json_output: bool) -> ExitCode {
             }
             Err(e) => {
                 eprintln!("Error running validation for {}: {}", file.display(), e);
-                eprintln!("Make sure Python with guppylang is available (uv run python or python3)");
+                eprintln!(
+                    "Make sure Python with guppylang is available (uv run python or python3)"
+                );
                 all_valid = false;
             }
         }
@@ -869,7 +932,10 @@ fn cmd_validate(files: &[PathBuf], json_output: bool) -> ExitCode {
         });
         println!("{}", serde_json::to_string_pretty(&combined).unwrap());
     } else if all_valid {
-        println!("\nAll {} file(s) validated successfully!", python_files.len());
+        println!(
+            "\nAll {} file(s) validated successfully!",
+            python_files.len()
+        );
     } else {
         println!("\nValidation failed for some files.");
     }

@@ -40,25 +40,60 @@ const TT_PROPERTY: u32 = 9;
 
 /// Keywords in Zlup
 const KEYWORDS: &[&str] = &[
-    "fn", "mut", "if", "else", "for", "return", "defer", "errdefer",
-    "struct", "enum", "union", "error", "try", "catch", "orelse", "break", "continue",
-    "comptime", "inline", "pub", "and", "or", "not", "true", "false", "null", "undefined",
+    "fn",
+    "mut",
+    "if",
+    "else",
+    "for",
+    "return",
+    "defer",
+    "errdefer",
+    "struct",
+    "enum",
+    "union",
+    "error",
+    "try",
+    "catch",
+    "orelse",
+    "break",
+    "continue",
+    "comptime",
+    "inline",
+    "pub",
+    "and",
+    "or",
+    "not",
+    "true",
+    "false",
+    "null",
+    "undefined",
 ];
 
 /// Built-in types
 const TYPES: &[&str] = &[
-    "unit", "bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
-    "usize", "isize", "QubitArray", "Qubit",
+    "unit",
+    "bool",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "f32",
+    "f64",
+    "usize",
+    "isize",
+    "QubitArray",
+    "Qubit",
 ];
 
 /// Quantum gate names (functions)
 const GATES: &[&str] = &[
-    "h", "H", "x", "X", "y", "Y", "z", "Z", "s", "S", "t", "T",
-    "cx", "CX", "cnot", "CNOT", "cz", "CZ", "cy", "CY",
-    "rx", "RX", "ry", "RY", "rz", "RZ",
-    "swap", "SWAP", "ccx", "CCX", "toffoli",
-    "mz", "mx", "my", "measure", "pz",
-    "qalloc",
+    "h", "H", "x", "X", "y", "Y", "z", "Z", "s", "S", "t", "T", "cx", "CX", "cnot", "CNOT", "cz",
+    "CZ", "cy", "CY", "rx", "RX", "ry", "RY", "rz", "RZ", "swap", "SWAP", "ccx", "CCX", "toffoli",
+    "mz", "mx", "my", "measure", "pz", "qalloc",
 ];
 
 /// Built-in functions
@@ -218,7 +253,9 @@ pub fn token_types_for_source(source: &str) -> Vec<SemanticToken> {
             // Operators (multi-char)
             if is_operator_char(c) {
                 let start = char_idx;
-                while (char_idx as usize) < chars.len() && is_operator_char(chars[char_idx as usize]) {
+                while (char_idx as usize) < chars.len()
+                    && is_operator_char(chars[char_idx as usize])
+                {
                     char_idx += 1;
                 }
                 let len = char_idx - start;

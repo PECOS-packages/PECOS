@@ -31,10 +31,17 @@ fn lint_should_error(source: &str, expected_rule: &str) {
         expected_rule
     );
     assert!(
-        result.diagnostics.iter().any(|d| d.rule_id == expected_rule),
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.rule_id == expected_rule),
         "Expected rule {} but got: {:?}",
         expected_rule,
-        result.diagnostics.iter().map(|d| &d.rule_id).collect::<Vec<_>>()
+        result
+            .diagnostics
+            .iter()
+            .map(|d| &d.rule_id)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -48,7 +55,10 @@ fn test_e2e_simple_function() {
 def add(a: int, b: int) -> int:
     return a + b
 "#;
-    compile_and_check(source, &["fn add(a: i64, b: i64)", "-> i64", "return a + b"]);
+    compile_and_check(
+        source,
+        &["fn add(a: i64, b: i64)", "-> i64", "return a + b"],
+    );
 }
 
 #[test]
@@ -68,7 +78,10 @@ def compute() -> int:
     y: int = 20
     return x + y
 "#;
-    compile_and_check(source, &["mut x: i64 = 10", "mut y: i64 = 20", "return x + y"]);
+    compile_and_check(
+        source,
+        &["mut x: i64 = 10", "mut y: i64 = 20", "return x + y"],
+    );
 }
 
 // =============================================================================
@@ -424,7 +437,10 @@ def matrix_sum() -> int:
             total += 1
     return total
 "#;
-    compile_and_check(source, &["for i in 0..3", "for j in 0..4", "total = total + 1"]);
+    compile_and_check(
+        source,
+        &["for i in 0..3", "for j in 0..4", "total = total + 1"],
+    );
 }
 
 #[test]
@@ -481,7 +497,10 @@ def swap_like() -> int:
     c = a
     return a + b + c
 "#;
-    compile_and_check(source, &["mut a: i64 = 1", "mut b: i64 = 2", "mut c: i64 = 3"]);
+    compile_and_check(
+        source,
+        &["mut a: i64 = 1", "mut b: i64 = 2", "mut c: i64 = 3"],
+    );
 }
 
 #[test]
@@ -537,7 +556,16 @@ def nested_cond(a: int, b: int) -> int:
     else:
         return 3
 "#;
-    compile_and_check(source, &["if (a > 0)", "if (b > 0)", "return 1", "return 2", "return 3"]);
+    compile_and_check(
+        source,
+        &[
+            "if (a > 0)",
+            "if (b > 0)",
+            "return 1",
+            "return 2",
+            "return 3",
+        ],
+    );
 }
 
 #[test]
@@ -564,7 +592,16 @@ def multi_reg() -> None:
     h(b[0])
     cx(a[0], b[0])
 "#;
-    compile_and_check(source, &["qalloc(2)", "qalloc(3)", "h a[0]", "h b[0]", "cx (a[0], b[0])"]);
+    compile_and_check(
+        source,
+        &[
+            "qalloc(2)",
+            "qalloc(3)",
+            "h a[0]",
+            "h b[0]",
+            "cx (a[0], b[0])",
+        ],
+    );
 }
 
 #[test]
@@ -602,7 +639,7 @@ def half(x: int) -> int:
 
 #[test]
 fn test_e2e_analysis_after_compile() {
-    use zlup::analysis::{analyze_parallelism, AllocatorAnalysis};
+    use zlup::analysis::{AllocatorAnalysis, analyze_parallelism};
 
     let source = r#"
 def bell() -> None:
@@ -618,14 +655,20 @@ def bell() -> None:
     let program = zlup::parse(&zlup_source).expect("parse failed");
 
     let allocator_analysis = AllocatorAnalysis::analyze(&program);
-    assert!(allocator_analysis.allocators.contains_key("q"), "Should detect allocator q");
+    assert!(
+        allocator_analysis.allocators.contains_key("q"),
+        "Should detect allocator q"
+    );
 
     let summaries = analyze_parallelism(&program);
     assert!(!summaries.is_empty(), "Should have function summaries");
 
     let bell_summary = summaries.iter().find(|s| s.function_name == "bell");
     assert!(bell_summary.is_some(), "Should have bell function summary");
-    assert!(bell_summary.unwrap().quantum_ops >= 2, "Should have at least 2 quantum ops");
+    assert!(
+        bell_summary.unwrap().quantum_ops >= 2,
+        "Should have at least 2 quantum ops"
+    );
 }
 
 #[test]
@@ -647,7 +690,10 @@ def parallel_prep() -> None:
     let summary = &summaries[0];
 
     // Two independent H gates on different allocators should enable parallelism
-    assert!(summary.max_parallelism >= 2, "Disjoint allocators should enable parallelism");
+    assert!(
+        summary.max_parallelism >= 2,
+        "Disjoint allocators should enable parallelism"
+    );
 }
 
 #[test]
@@ -686,5 +732,8 @@ def bad_loop() -> None:
 
     // lint_and_compile should fail
     let compile_result = lint_and_compile(source, None);
-    assert!(compile_result.is_err(), "Should fail to compile with lint errors");
+    assert!(
+        compile_result.is_err(),
+        "Should fail to compile with lint errors"
+    );
 }

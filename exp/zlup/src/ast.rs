@@ -769,11 +769,11 @@ pub enum Expr {
     // Literals
     IntLit(IntLit),
     FloatLit(FloatLit),
-    AngleLit(Box<AngleLit>),       // 0.25 turns, pi/4 rad - angle with explicit unit
-    TypeAscription(Box<TypeAscription>),  // 42 u32, 1/4 f64 - expression with type suffix
+    AngleLit(Box<AngleLit>), // 0.25 turns, pi/4 rad - angle with explicit unit
+    TypeAscription(Box<TypeAscription>), // 42 u32, 1/4 f64 - expression with type suffix
     BoolLit(BoolLit),
     StringLit(StringLit),
-    FString(Box<FStringExpr>),  // f"Hello {name}!" - Python-style interpolation
+    FString(Box<FStringExpr>), // f"Hello {name}!" - Python-style interpolation
     CharLit(CharLit),
     Null(NullLit),
     Undefined(UndefinedLit),
@@ -792,37 +792,37 @@ pub enum Expr {
     Field(Box<FieldExpr>),
     Index(Box<IndexExpr>),
     Call(Box<CallExpr>),
-    BatchApply(Box<BatchApplyExpr>),  // h { q[0], q[1] } - batch gate apply
+    BatchApply(Box<BatchApplyExpr>), // h { q[0], q[1] } - batch gate apply
 
     // Special
     If(Box<IfExpr>),
     Block(Box<BlockExpr>),
     Comptime(Box<ComptimeExpr>),
     Builtin(Box<BuiltinExpr>),
-    AnonStruct(Box<AnonStructExpr>),  // struct { x: i32, y: i32 } - anonymous struct type
+    AnonStruct(Box<AnonStructExpr>), // struct { x: i32, y: i32 } - anonymous struct type
     StructInit(Box<StructInitExpr>),
     ArrayInit(Box<ArrayInitExpr>),
-    BracketArray(Box<BracketArrayExpr>),  // [a, b, c] literal
-    Tuple(Box<TupleExpr>),                // (a, b) tuple
-    Set(Box<SetExpr>),                    // {a, b, c} set literal
+    BracketArray(Box<BracketArrayExpr>), // [a, b, c] literal
+    Tuple(Box<TupleExpr>),               // (a, b) tuple
+    Set(Box<SetExpr>),                   // {a, b, c} set literal
     Range(Box<RangeExpr>),
-    Measure(Box<MeasureExpr>),            // mz(T) targets - measurement
-    Gate(Box<GateExpr>),                  // h q[0], rx(0.123) q[0] - quantum gate
+    Measure(Box<MeasureExpr>), // mz(T) targets - measurement
+    Gate(Box<GateExpr>),       // h q[0], rx(0.123) q[0] - quantum gate
 
     // Error/fault handling
-    ErrorValue(Box<ErrorValueExpr>),      // error.Name literal
-    FaultValue(Box<FaultValueExpr>),      // fault.Name literal
-    Catch(Box<CatchExpr>),                // a catch |err| b
-    TryBlock(Box<TryBlockExpr>),          // try { } or try! { } as expression
+    ErrorValue(Box<ErrorValueExpr>), // error.Name literal
+    FaultValue(Box<FaultValueExpr>), // fault.Name literal
+    Catch(Box<CatchExpr>),           // a catch |err| b
+    TryBlock(Box<TryBlockExpr>),     // try { } or try! { } as expression
 
     // Function literal (for comptime type constructors)
-    FnLit(Box<FnDecl>),                   // fn(params) -> ret { body }
+    FnLit(Box<FnDecl>), // fn(params) -> ret { body }
 
     // Result emission (program output channel - special, never elided)
-    Result(Box<ResultExpr>),              // result("tag", value) - emit to caller
+    Result(Box<ResultExpr>), // result("tag", value) - emit to caller
 
     // Side-channel communication (sticky/barrier semantics)
-    Channel(Box<ChannelExpr>),            // @emit.channel.command(...) - log, sim, hw, custom
+    Channel(Box<ChannelExpr>), // @emit.channel.command(...) - log, sim, hw, custom
 }
 
 /// Try block as expression.
@@ -1252,7 +1252,7 @@ pub struct TupleExpr {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetExpr {
     pub elements: Vec<Expr>,
-    pub element_type: Option<TypeExpr>,  // For empty_set: Set(T){}
+    pub element_type: Option<TypeExpr>, // For empty_set: Set(T){}
     pub location: Option<SourceLocation>,
 }
 
@@ -1401,11 +1401,11 @@ pub enum TypeExpr {
     Array(Box<ArrayType>),
     Pointer(Box<PointerType>),
     Optional(Box<TypeExpr>),
-    ErrorUnion(Box<ErrorUnionType>),        // E!T - single error, either/or
+    ErrorUnion(Box<ErrorUnionType>), // E!T - single error, either/or
     CollectedErrors(Box<CollectedErrorsType>), // []E!T - collected errors, both
     Fn(Box<FnType>),
     Tuple(Vec<TypeExpr>),
-    Set(Box<TypeExpr>),  // Set(T) - unordered unique elements
+    Set(Box<TypeExpr>), // Set(T) - unordered unique elements
 
     // Inline/anonymous struct type: struct { x: i32, y: i32 }
     Struct(Box<InlineStructType>),
@@ -1425,8 +1425,8 @@ pub enum TypeExpr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrimitiveType {
     // Arbitrary-width integers (like Zig: u1, u4, u7, u128, etc.)
-    UInt { bits: u16 },  // Unsigned integer with N bits
-    IInt { bits: u16 },  // Signed integer with N bits
+    UInt { bits: u16 }, // Unsigned integer with N bits
+    IInt { bits: u16 }, // Signed integer with N bits
     Usize,              // Platform-dependent unsigned size
     Isize,              // Platform-dependent signed size
     // Floating point
@@ -1451,7 +1451,7 @@ pub struct ArrayType {
 pub struct PointerType {
     pub pointee: TypeExpr,
     pub is_const: bool,
-    pub is_many: bool,    // [*] vs *
+    pub is_many: bool, // [*] vs *
     pub sentinel: Option<Expr>,
 }
 

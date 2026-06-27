@@ -14,5 +14,5 @@ pub mod rules;
 pub use config::Config;
 pub use diagnostic::{Diagnostic, Severity};
 pub use engine::{LintResult, Linter};
-pub use lower::{lower_source, LowerError};
+pub use lower::{LowerError, lower_source};
 pub use output::OutputFormat;

@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo bench --bench compiler
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use zlup::codegen::{QasmCodegen, SlrCodegen};
 use zlup::semantic::SemanticAnalyzer;
 

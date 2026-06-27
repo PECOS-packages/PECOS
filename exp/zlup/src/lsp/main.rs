@@ -252,10 +252,7 @@ impl LanguageServer for ZlupsServer {
         Ok(Some(CompletionResponse::Array(completions)))
     }
 
-    async fn formatting(
-        &self,
-        params: DocumentFormattingParams,
-    ) -> Result<Option<Vec<TextEdit>>> {
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let docs = self.documents.read().await;
         let Some(doc) = docs.get(&params.text_document.uri) else {
             return Ok(None);
@@ -290,7 +287,11 @@ impl LanguageServer for ZlupsServer {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let uri = params.text_document_position_params.text_document.uri.clone();
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .clone();
         let position = params.text_document_position_params.position;
 
         let docs = self.documents.read().await;
@@ -314,13 +315,14 @@ impl LanguageServer for ZlupsServer {
 
         // Look up the symbol
         if let Some(symbol) = analyzer.symbols.lookup(&word)
-            && let Some(loc) = &symbol.location {
-                let range = location_to_range(loc);
-                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                    uri,
-                    range,
-                })));
-            }
+            && let Some(loc) = &symbol.location
+        {
+            let range = location_to_range(loc);
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri,
+                range,
+            })));
+        }
 
         Ok(None)
     }
@@ -722,11 +724,19 @@ fn format_line(line: &str) -> String {
                 let next = chars.peek().copied();
                 if next == Some('=') || next == Some('>') {
                     // Part of ==, =>, don't add space before
-                    if !result.ends_with(' ') && !result.ends_with('!') && !result.ends_with('<') && !result.ends_with('>') {
+                    if !result.ends_with(' ')
+                        && !result.ends_with('!')
+                        && !result.ends_with('<')
+                        && !result.ends_with('>')
+                    {
                         result.push(' ');
                     }
                     result.push('=');
-                } else if prev_char == '!' || prev_char == '<' || prev_char == '>' || prev_char == '=' {
+                } else if prev_char == '!'
+                    || prev_char == '<'
+                    || prev_char == '>'
+                    || prev_char == '='
+                {
                     // Part of !=, <=, >=, ==
                     result.push('=');
                     if chars.peek() != Some(&' ') {
@@ -746,7 +756,10 @@ fn format_line(line: &str) -> String {
             // Ensure space after colon in type annotations (but not ::)
             ':' => {
                 result.push(':');
-                if chars.peek() != Some(&':') && chars.peek() != Some(&' ') && chars.peek().is_some() {
+                if chars.peek() != Some(&':')
+                    && chars.peek() != Some(&' ')
+                    && chars.peek().is_some()
+                {
                     result.push(' ');
                 }
             }
@@ -771,17 +784,33 @@ fn get_default_completions() -> Vec<CompletionItem> {
 
     // Keywords
     let keywords = [
-        ("fn", "Function declaration", "fn ${1:name}(${2:params}) -> ${3:unit} {\n\treturn unit;\n}"),
+        (
+            "fn",
+            "Function declaration",
+            "fn ${1:name}(${2:params}) -> ${3:unit} {\n\treturn unit;\n}",
+        ),
         ("mut", "Mutable binding", "mut ${1:name} := ${0:value};"),
         ("if", "Conditional", "if ${1:condition} {\n\t$0\n}"),
         ("else", "Else branch", "else {\n\t$0\n}"),
-        ("for", "Bounded for loop", "for ${1:i} in ${2:0}..${3:n} {\n\t$0\n}"),
+        (
+            "for",
+            "Bounded for loop",
+            "for ${1:i} in ${2:0}..${3:n} {\n\t$0\n}",
+        ),
         ("return", "Return statement", "return ${0:value};"),
         ("defer", "Defer statement", "defer ${0:expr};"),
         ("errdefer", "Error defer", "errdefer ${0:expr};"),
-        ("struct", "Struct type", "struct {\n\t${1:field}: ${2:type},\n}"),
+        (
+            "struct",
+            "Struct type",
+            "struct {\n\t${1:field}: ${2:type},\n}",
+        ),
         ("enum", "Enum type", "enum {\n\t${1:Variant},\n}"),
-        ("union", "Tagged union", "union(enum) {\n\t${1:Variant}: ${2:type},\n}"),
+        (
+            "union",
+            "Tagged union",
+            "union(enum) {\n\t${1:Variant}: ${2:type},\n}",
+        ),
         ("error", "Error set", "error {\n\t${1:ErrorName},\n}"),
         ("set", "Set literal", "set { ${0:elements} }"),
     ];
@@ -799,7 +828,16 @@ fn get_default_completions() -> Vec<CompletionItem> {
 
     // Types
     let types = [
-        "unit", "bool", "i32", "i64", "u32", "u64", "f32", "f64", "usize", "QubitArray",
+        "unit",
+        "bool",
+        "i32",
+        "i64",
+        "u32",
+        "u64",
+        "f32",
+        "f64",
+        "usize",
+        "QubitArray",
     ];
 
     for ty in types {

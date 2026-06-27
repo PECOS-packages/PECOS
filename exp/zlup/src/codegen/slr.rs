@@ -48,7 +48,9 @@ pub enum SlrError {
     #[error("undefined allocator '{name}'")]
     UndefinedAllocator { name: String },
 
-    #[error("qubit index {index} out of bounds for allocator '{allocator}' with capacity {capacity}")]
+    #[error(
+        "qubit index {index} out of bounds for allocator '{allocator}' with capacity {capacity}"
+    )]
     QubitIndexOutOfBounds {
         allocator: String,
         index: usize,
@@ -233,7 +235,10 @@ impl SlrGateOp {
         self
     }
 
-    pub fn with_attrs(mut self, attrs: std::collections::BTreeMap<String, SlrAttributeValue>) -> Self {
+    pub fn with_attrs(
+        mut self,
+        attrs: std::collections::BTreeMap<String, SlrAttributeValue>,
+    ) -> Self {
         self.attrs = attrs;
         self
     }
@@ -289,7 +294,11 @@ impl SlrMeasureOp {
         }
     }
 
-    pub fn with_result_type(targets: Vec<SlrSlotRef>, results: Vec<SlrBitRef>, result_type: &str) -> Self {
+    pub fn with_result_type(
+        targets: Vec<SlrSlotRef>,
+        results: Vec<SlrBitRef>,
+        result_type: &str,
+    ) -> Self {
         Self {
             node_type: "MeasureOp",
             targets,
@@ -451,7 +460,10 @@ impl SlrTickStmt {
         self
     }
 
-    pub fn with_attrs(mut self, attrs: std::collections::BTreeMap<String, SlrAttributeValue>) -> Self {
+    pub fn with_attrs(
+        mut self,
+        attrs: std::collections::BTreeMap<String, SlrAttributeValue>,
+    ) -> Self {
         self.attrs = attrs;
         self
     }
@@ -639,7 +651,10 @@ pub enum SlrCType {
     Angle { bits: u8 },
     /// Pointer type
     #[serde(rename = "pointer")]
-    Pointer { element: Box<SlrCType>, is_const: bool },
+    Pointer {
+        element: Box<SlrCType>,
+        is_const: bool,
+    },
     /// Void type (for return)
     #[serde(rename = "void")]
     Void,
@@ -894,18 +909,39 @@ fn gate_kind_arity(kind: &crate::ast::GateKind) -> usize {
     use crate::ast::GateKind;
     match kind {
         // Single-qubit gates
-        GateKind::X | GateKind::Y | GateKind::Z | GateKind::H
-        | GateKind::T | GateKind::Tdg
-        | GateKind::SX | GateKind::SY | GateKind::SZ
-        | GateKind::SXdg | GateKind::SYdg | GateKind::SZdg
-        | GateKind::RX | GateKind::RY | GateKind::RZ
-        | GateKind::F | GateKind::Fdg | GateKind::F4 | GateKind::F4dg
+        GateKind::X
+        | GateKind::Y
+        | GateKind::Z
+        | GateKind::H
+        | GateKind::T
+        | GateKind::Tdg
+        | GateKind::SX
+        | GateKind::SY
+        | GateKind::SZ
+        | GateKind::SXdg
+        | GateKind::SYdg
+        | GateKind::SZdg
+        | GateKind::RX
+        | GateKind::RY
+        | GateKind::RZ
+        | GateKind::F
+        | GateKind::Fdg
+        | GateKind::F4
+        | GateKind::F4dg
         | GateKind::PZ => 1,
         // Two-qubit gates
-        GateKind::CX | GateKind::CY | GateKind::CZ | GateKind::CH
-        | GateKind::SWAP | GateKind::ISWAP
-        | GateKind::SXX | GateKind::SYY | GateKind::SZZ
-        | GateKind::SXXdg | GateKind::SYYdg | GateKind::SZZdg
+        GateKind::CX
+        | GateKind::CY
+        | GateKind::CZ
+        | GateKind::CH
+        | GateKind::SWAP
+        | GateKind::ISWAP
+        | GateKind::SXX
+        | GateKind::SYY
+        | GateKind::SZZ
+        | GateKind::SXXdg
+        | GateKind::SYYdg
+        | GateKind::SZZdg
         | GateKind::RZZ => 2,
         // Three-qubit gates
         GateKind::CCX => 3,
@@ -1339,10 +1375,11 @@ impl SlrCodegen {
         // Second pass: convert statements
         for decl in &program.declarations {
             if let TopLevelDecl::Fn(fn_decl) = decl
-                && fn_decl.name == "main" {
-                    let body = self.convert_block(&fn_decl.body)?;
-                    slr_program.body = body;
-                }
+                && fn_decl.name == "main"
+            {
+                let body = self.convert_block(&fn_decl.body)?;
+                slr_program.body = body;
+            }
         }
 
         Ok(slr_program)
@@ -1528,7 +1565,10 @@ impl SlrCodegen {
     }
 
     /// Convert new measure syntax: mz(T) targets
-    fn convert_measure_expr(&mut self, measure: &crate::ast::MeasureExpr) -> SlrResult<Vec<SlrStatement>> {
+    fn convert_measure_expr(
+        &mut self,
+        measure: &crate::ast::MeasureExpr,
+    ) -> SlrResult<Vec<SlrStatement>> {
         let mut results = Vec::new();
         let mut targets = Vec::new();
 
@@ -1583,10 +1623,17 @@ impl SlrCodegen {
             }
         }
 
-        Ok(vec![SlrStatement::Measure(SlrMeasureOp::with_result_type(targets, results, &result_type))])
+        Ok(vec![SlrStatement::Measure(SlrMeasureOp::with_result_type(
+            targets,
+            results,
+            &result_type,
+        ))])
     }
 
-    fn convert_expr_stmt(&mut self, expr_stmt: &crate::ast::ExprStmt) -> SlrResult<Vec<SlrStatement>> {
+    fn convert_expr_stmt(
+        &mut self,
+        expr_stmt: &crate::ast::ExprStmt,
+    ) -> SlrResult<Vec<SlrStatement>> {
         // Convert attributes for gates
         let attrs = self.convert_attributes(&expr_stmt.attrs);
 
@@ -1602,7 +1649,10 @@ impl SlrCodegen {
     }
 
     /// Convert builtin expressions like @swap.
-    fn convert_builtin_expr(&self, builtin: &crate::ast::BuiltinExpr) -> SlrResult<Vec<SlrStatement>> {
+    fn convert_builtin_expr(
+        &self,
+        builtin: &crate::ast::BuiltinExpr,
+    ) -> SlrResult<Vec<SlrStatement>> {
         match builtin.name.as_str() {
             "swap" => {
                 // @swap(&a, &b) - emit as SwapOp
@@ -1644,7 +1694,10 @@ impl SlrCodegen {
     /// Result sends are never elided - they represent the actual program output.
     fn convert_result_expr(&self, result: &crate::ast::ResultExpr) -> SlrResult<Vec<SlrStatement>> {
         let value = self.convert_expression(&result.value)?;
-        Ok(vec![SlrStatement::Send(SlrSendStmt::result(&result.tag, value))])
+        Ok(vec![SlrStatement::Send(SlrSendStmt::result(
+            &result.tag,
+            value,
+        ))])
     }
 
     /// Convert a channel expression to SLR statements.
@@ -1654,7 +1707,10 @@ impl SlrCodegen {
     /// - @emit.sim.*: Simulator control with barrier/elide modes
     /// - @emit.hw.*: Hardware messages (elided for simulator)
     /// - Custom channels: Configurable behavior
-    fn convert_channel_expr(&mut self, channel: &crate::ast::ChannelExpr) -> SlrResult<Vec<SlrStatement>> {
+    fn convert_channel_expr(
+        &mut self,
+        channel: &crate::ast::ChannelExpr,
+    ) -> SlrResult<Vec<SlrStatement>> {
         match channel.channel.as_str() {
             "log" => self.convert_log_channel(channel),
             "sim" => self.convert_sim_channel(channel),
@@ -1664,7 +1720,10 @@ impl SlrCodegen {
     }
 
     /// Convert @emit.log.* channel expressions.
-    fn convert_log_channel(&self, channel: &crate::ast::ChannelExpr) -> SlrResult<Vec<SlrStatement>> {
+    fn convert_log_channel(
+        &self,
+        channel: &crate::ast::ChannelExpr,
+    ) -> SlrResult<Vec<SlrStatement>> {
         // Map command to log level
         let (level, numeric_level, level_consumes_arg) = match channel.command.as_str() {
             "trace" => (SlrLogLevel::Standard("trace".to_string()), 0u32, false),
@@ -1675,8 +1734,10 @@ impl SlrCodegen {
             "at" => {
                 // @emit.log.at(level, message) or @emit.log.at(level, ns, message) - first arg is level
                 if let Some(level_arg) = channel.args.first() {
-                    if let Ok(SlrExpression::Literal(SlrLiteralExpr { value: SlrLiteralValue::Int(n), .. })) =
-                        self.convert_expression(level_arg.value())
+                    if let Ok(SlrExpression::Literal(SlrLiteralExpr {
+                        value: SlrLiteralValue::Int(n),
+                        ..
+                    })) = self.convert_expression(level_arg.value())
                     {
                         (SlrLogLevel::Numeric(n), n as u32, true)
                     } else {
@@ -1694,14 +1755,15 @@ impl SlrCodegen {
             return Ok(vec![]);
         }
 
-
         // Start index after the level argument (if "at" command)
         let start_idx = if level_consumes_arg { 1 } else { 0 };
 
         // Determine namespace and message
         // If first positional is string literal AND there's another arg, first is namespace
         let (sub_namespace, message) = {
-            let remaining: Vec<_> = channel.args.iter()
+            let remaining: Vec<_> = channel
+                .args
+                .iter()
                 .skip(start_idx)
                 .filter(|arg| arg.name() != Some("data"))
                 .collect();
@@ -1746,12 +1808,17 @@ impl SlrCodegen {
     }
 
     /// Convert @emit.sim.* channel expressions.
-    fn convert_sim_channel(&mut self, channel: &crate::ast::ChannelExpr) -> SlrResult<Vec<SlrStatement>> {
+    fn convert_sim_channel(
+        &mut self,
+        channel: &crate::ast::ChannelExpr,
+    ) -> SlrResult<Vec<SlrStatement>> {
         match self.sim_mode {
             SimMode::Elide => Ok(vec![]),
             SimMode::Barrier => {
                 let scope_allocators: Vec<String> = self.allocators.keys().cloned().collect();
-                Ok(vec![SlrStatement::Barrier(SlrBarrierOp::new(scope_allocators))])
+                Ok(vec![SlrStatement::Barrier(SlrBarrierOp::new(
+                    scope_allocators,
+                ))])
             }
             SimMode::Emit => {
                 // Handle @emit.sim.send(key, value) specially - key comes from first arg
@@ -1765,7 +1832,9 @@ impl SlrCodegen {
                             return Err(SlrError::UnsupportedExpression);
                         };
                         let value = self.convert_expression(channel.args[1].value())?;
-                        return Ok(vec![SlrStatement::Send(SlrSendStmt::sim_with_value(&key, value))]);
+                        return Ok(vec![SlrStatement::Send(SlrSendStmt::sim_with_value(
+                            &key, value,
+                        ))]);
                     } else if channel.args.len() == 1 {
                         // Just a key, no value
                         let key_expr = channel.args[0].value();
@@ -1783,7 +1852,9 @@ impl SlrCodegen {
                 let key = channel.command.clone();
                 if let Some(arg) = channel.args.first() {
                     let value = self.convert_expression(arg.value())?;
-                    Ok(vec![SlrStatement::Send(SlrSendStmt::sim_with_value(&key, value))])
+                    Ok(vec![SlrStatement::Send(SlrSendStmt::sim_with_value(
+                        &key, value,
+                    ))])
                 } else {
                     Ok(vec![SlrStatement::Send(SlrSendStmt::sim(&key))])
                 }
@@ -1792,7 +1863,10 @@ impl SlrCodegen {
     }
 
     /// Convert @emit.hw.* channel expressions.
-    fn convert_hw_channel(&mut self, channel: &crate::ast::ChannelExpr) -> SlrResult<Vec<SlrStatement>> {
+    fn convert_hw_channel(
+        &mut self,
+        channel: &crate::ast::ChannelExpr,
+    ) -> SlrResult<Vec<SlrStatement>> {
         // hw channel is opposite of sim: active for hardware, elided for simulator
         match self.sim_mode {
             SimMode::Emit => {
@@ -1804,7 +1878,9 @@ impl SlrCodegen {
                 let key = channel.command.clone();
                 if let Some(arg) = channel.args.first() {
                     let value = self.convert_expression(arg.value())?;
-                    Ok(vec![SlrStatement::Send(SlrSendStmt::new("hw", &key).with_value(value))])
+                    Ok(vec![SlrStatement::Send(
+                        SlrSendStmt::new("hw", &key).with_value(value),
+                    )])
                 } else {
                     Ok(vec![SlrStatement::Send(SlrSendStmt::new("hw", &key))])
                 }
@@ -1813,15 +1889,23 @@ impl SlrCodegen {
     }
 
     /// Convert custom channel expressions.
-    fn convert_custom_channel(&mut self, channel: &crate::ast::ChannelExpr) -> SlrResult<Vec<SlrStatement>> {
+    fn convert_custom_channel(
+        &mut self,
+        channel: &crate::ast::ChannelExpr,
+    ) -> SlrResult<Vec<SlrStatement>> {
         // Custom channels emit as SendStmt with channel name
         // They act as barriers (sticky)
         let key = channel.command.clone();
         if let Some(arg) = channel.args.first() {
             let value = self.convert_expression(arg.value())?;
-            Ok(vec![SlrStatement::Send(SlrSendStmt::new(&channel.channel, &key).with_value(value))])
+            Ok(vec![SlrStatement::Send(
+                SlrSendStmt::new(&channel.channel, &key).with_value(value),
+            )])
         } else {
-            Ok(vec![SlrStatement::Send(SlrSendStmt::new(&channel.channel, &key))])
+            Ok(vec![SlrStatement::Send(SlrSendStmt::new(
+                &channel.channel,
+                &key,
+            ))])
         }
     }
 
@@ -2008,9 +2092,7 @@ impl SlrCodegen {
     ) -> SlrResult<Vec<SlrStatement>> {
         match &gate.target {
             // pz q - prepare all qubits in allocator
-            Expr::Ident(ident) => {
-                Ok(vec![SlrStatement::Prepare(SlrPrepareOp::all(&ident.name))])
-            }
+            Expr::Ident(ident) => Ok(vec![SlrStatement::Prepare(SlrPrepareOp::all(&ident.name))]),
             // pz q[0] - prepare single qubit
             Expr::Index(_) => {
                 let slot_ref = self.extract_slot_ref(&gate.target)?;
@@ -2021,7 +2103,8 @@ impl SlrCodegen {
             }
             // pz {q[0], q[1]} - prepare batch (set)
             Expr::Set(set) => {
-                let mut slots_by_alloc: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
+                let mut slots_by_alloc: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
                 for elem in &set.elements {
                     let slot_ref = self.extract_slot_ref(elem)?;
                     slots_by_alloc
@@ -2037,7 +2120,8 @@ impl SlrCodegen {
             }
             // pz [q[0], q[1]] - prepare batch (array)
             Expr::BracketArray(arr) => {
-                let mut slots_by_alloc: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
+                let mut slots_by_alloc: std::collections::BTreeMap<String, Vec<usize>> =
+                    std::collections::BTreeMap::new();
                 for elem in &arr.elements {
                     let slot_ref = self.extract_slot_ref(elem)?;
                     slots_by_alloc
@@ -2088,7 +2172,10 @@ impl SlrCodegen {
     }
 
     /// Convert AST attributes to SLR attributes.
-    fn convert_attributes(&self, attrs: &[crate::ast::Attribute]) -> std::collections::BTreeMap<String, SlrAttributeValue> {
+    fn convert_attributes(
+        &self,
+        attrs: &[crate::ast::Attribute],
+    ) -> std::collections::BTreeMap<String, SlrAttributeValue> {
         let mut result = std::collections::BTreeMap::new();
         for attr in attrs {
             let value = match &attr.value {
@@ -2133,9 +2220,7 @@ impl SlrCodegen {
                 .map(|arg| self.convert_expression(arg))
                 .collect();
             return Ok(vec![SlrStatement::ExternCall(SlrExternCall::new(
-                name,
-                args?,
-                None, // Result variable set later during assignment handling
+                name, args?, None, // Result variable set later during assignment handling
             ))]);
         }
 
@@ -2163,10 +2248,20 @@ impl SlrCodegen {
         // Check if qubit argument is a Set or BracketArray (batch operation)
         if !qubit_args.is_empty() {
             if let Expr::Set(set_expr) = &qubit_args[0] {
-                return self.convert_batch_gate_with_attrs(gate_info, &set_expr.elements, params, attrs);
+                return self.convert_batch_gate_with_attrs(
+                    gate_info,
+                    &set_expr.elements,
+                    params,
+                    attrs,
+                );
             }
             if let Expr::BracketArray(arr_expr) = &qubit_args[0] {
-                return self.convert_batch_gate_with_attrs(gate_info, &arr_expr.elements, params, attrs);
+                return self.convert_batch_gate_with_attrs(
+                    gate_info,
+                    &arr_expr.elements,
+                    params,
+                    attrs,
+                );
             }
         }
 
@@ -2205,7 +2300,12 @@ impl SlrCodegen {
         elements: &[Expr],
         params: Vec<SlrExpression>,
     ) -> SlrResult<Vec<SlrStatement>> {
-        self.convert_batch_gate_with_attrs(gate_info, elements, params, std::collections::BTreeMap::new())
+        self.convert_batch_gate_with_attrs(
+            gate_info,
+            elements,
+            params,
+            std::collections::BTreeMap::new(),
+        )
     }
 
     /// Convert a batch gate operation with attributes into multiple SLR gates.
@@ -2361,7 +2461,9 @@ impl SlrCodegen {
         }
 
         Ok(vec![SlrStatement::Measure(SlrMeasureOp::with_result_type(
-            targets, results, &result_type,
+            targets,
+            results,
+            &result_type,
         ))])
     }
 
@@ -2376,7 +2478,10 @@ impl SlrCodegen {
     }
 
     /// Extract measurement result type from a TypeExpr (for new mz(T) target syntax).
-    fn extract_measurement_result_type_from_type_expr(&self, type_expr: &crate::ast::TypeExpr) -> String {
+    fn extract_measurement_result_type_from_type_expr(
+        &self,
+        type_expr: &crate::ast::TypeExpr,
+    ) -> String {
         use crate::ast::{PrimitiveType, TypeExpr};
         match type_expr {
             TypeExpr::Primitive(prim) => match prim {
@@ -2484,7 +2589,10 @@ impl SlrCodegen {
         ))
     }
 
-    fn convert_prepare_op(&mut self, prepare_op: &crate::ast::PrepareOp) -> SlrResult<SlrStatement> {
+    fn convert_prepare_op(
+        &mut self,
+        prepare_op: &crate::ast::PrepareOp,
+    ) -> SlrResult<SlrStatement> {
         if let Some(ref slots) = prepare_op.slots {
             let slot_indices: Vec<usize> = slots.iter().map(|&s| s as usize).collect();
             Ok(SlrStatement::Prepare(SlrPrepareOp::slots(
@@ -2492,11 +2600,16 @@ impl SlrCodegen {
                 slot_indices,
             )))
         } else {
-            Ok(SlrStatement::Prepare(SlrPrepareOp::all(&prepare_op.allocator)))
+            Ok(SlrStatement::Prepare(SlrPrepareOp::all(
+                &prepare_op.allocator,
+            )))
         }
     }
 
-    fn convert_measure_op(&mut self, measure_op: &crate::ast::MeasureOp) -> SlrResult<SlrStatement> {
+    fn convert_measure_op(
+        &mut self,
+        measure_op: &crate::ast::MeasureOp,
+    ) -> SlrResult<SlrStatement> {
         let mut targets = Vec::new();
         let mut results = Vec::new();
 
@@ -2524,7 +2637,10 @@ impl SlrCodegen {
         Ok(SlrStatement::Measure(SlrMeasureOp::new(targets, results)))
     }
 
-    fn convert_barrier_op(&mut self, barrier_op: &crate::ast::BarrierOp) -> SlrResult<SlrStatement> {
+    fn convert_barrier_op(
+        &mut self,
+        barrier_op: &crate::ast::BarrierOp,
+    ) -> SlrResult<SlrStatement> {
         Ok(SlrStatement::Barrier(SlrBarrierOp::new(
             barrier_op.allocators.clone(),
         )))
@@ -2584,8 +2700,12 @@ impl SlrCodegen {
                     Some(crate::ast::AttributeValue::Bool(b)) => SlrAttributeValue::Bool(*b),
                     Some(crate::ast::AttributeValue::Int(i)) => SlrAttributeValue::Int(*i),
                     Some(crate::ast::AttributeValue::Float(f)) => SlrAttributeValue::Float(*f),
-                    Some(crate::ast::AttributeValue::String(s)) => SlrAttributeValue::String(s.clone()),
-                    Some(crate::ast::AttributeValue::Ident(s)) => SlrAttributeValue::String(s.clone()),
+                    Some(crate::ast::AttributeValue::String(s)) => {
+                        SlrAttributeValue::String(s.clone())
+                    }
+                    Some(crate::ast::AttributeValue::Ident(s)) => {
+                        SlrAttributeValue::String(s.clone())
+                    }
                     None => SlrAttributeValue::Bool(true), // Flag attributes default to true
                 };
                 attrs.insert(attr.name.clone(), value);
@@ -2625,23 +2745,28 @@ impl SlrCodegen {
             .unwrap_or_else(|| "_".to_string());
 
         let body = self.convert_block(&for_stmt.body)?;
-        Ok(SlrStatement::For(SlrForStmt::new(variable, start, end, body)))
+        Ok(SlrStatement::For(SlrForStmt::new(
+            variable, start, end, body,
+        )))
     }
 
     fn try_extract_repeat_count(&self, for_stmt: &ForStmt) -> Option<usize> {
         // Check for patterns like: for _ in 0..10 { }
         if let ForRange::Range { start, end } = &for_stmt.range
             && let Expr::IntLit(start_lit) = start
-                && start_lit.value == 0
-                    && let Expr::IntLit(end_lit) = end {
-                        return Some(end_lit.value as usize);
-                    }
+            && start_lit.value == 0
+            && let Expr::IntLit(end_lit) = end
+        {
+            return Some(end_lit.value as usize);
+        }
         None
     }
 
     fn convert_expression(&self, expr: &Expr) -> SlrResult<SlrExpression> {
         match expr {
-            Expr::IntLit(lit) => Ok(SlrExpression::Literal(SlrLiteralExpr::int(lit.value as i64))),
+            Expr::IntLit(lit) => Ok(SlrExpression::Literal(SlrLiteralExpr::int(
+                lit.value as i64,
+            ))),
             Expr::FloatLit(lit) => Ok(SlrExpression::Literal(SlrLiteralExpr::float(lit.value))),
             Expr::BoolLit(lit) => Ok(SlrExpression::Literal(SlrLiteralExpr::bool(lit.value))),
             Expr::Ident(ident) => {
@@ -2686,14 +2811,17 @@ impl SlrCodegen {
 
                 // For radians, try to recognize common pi-based patterns for exact conversion
                 if let AngleUnit::Rad = angle.unit
-                    && let Some(exact_turns) = recognize_exact_radian_pattern(&angle.value) {
-                        return Ok(SlrExpression::Literal(SlrLiteralExpr::angle(exact_turns)));
-                    }
+                    && let Some(exact_turns) = recognize_exact_radian_pattern(&angle.value)
+                {
+                    return Ok(SlrExpression::Literal(SlrLiteralExpr::angle(exact_turns)));
+                }
 
                 // Fall back to floating-point evaluation
                 use crate::comptime::ComptimeEvaluator;
                 let mut eval = ComptimeEvaluator::new();
-                let value = eval.eval_expr(&angle.value).map_err(|_| SlrError::InvalidAngle)?;
+                let value = eval
+                    .eval_expr(&angle.value)
+                    .map_err(|_| SlrError::InvalidAngle)?;
                 let numeric = match value {
                     crate::comptime::ComptimeValue::Float(f) => f,
                     crate::comptime::ComptimeValue::Int(i) => i as f64,
@@ -2749,11 +2877,13 @@ impl SlrCodegen {
     fn try_extract_child_allocator(&self, expr: &Expr) -> Option<(String, usize)> {
         if let Expr::Call(call) = expr
             && let Expr::Field(field) = &call.callee
-                && field.field == "child" && call.args.len() == 1 {
-                    let parent = self.extract_identifier(&field.object).ok()?;
-                    let size = self.extract_integer(&call.args[0]).ok()?;
-                    return Some((parent, size));
-                }
+            && field.field == "child"
+            && call.args.len() == 1
+        {
+            let parent = self.extract_identifier(&field.object).ok()?;
+            let size = self.extract_integer(&call.args[0]).ok()?;
+            return Some((parent, size));
+        }
         None
     }
 
@@ -2784,12 +2914,12 @@ impl SlrCodegen {
         let idx = self.extract_integer(&index.index)?;
 
         // Validate allocator exists
-        let alloc = self
-            .allocators
-            .get(&allocator)
-            .ok_or_else(|| SlrError::UndefinedAllocator {
-                name: allocator.clone(),
-            })?;
+        let alloc =
+            self.allocators
+                .get(&allocator)
+                .ok_or_else(|| SlrError::UndefinedAllocator {
+                    name: allocator.clone(),
+                })?;
 
         // Validate index bounds
         if idx >= alloc.capacity {
@@ -2879,19 +3009,52 @@ impl SlrCodegen {
             TypeExpr::Named(path) => {
                 let name = path.segments.join("::");
                 match name.as_str() {
-                    "u8" => SlrCType::Int { bits: 8, signed: false },
-                    "u16" => SlrCType::Int { bits: 16, signed: false },
-                    "u32" => SlrCType::Int { bits: 32, signed: false },
-                    "u64" => SlrCType::Int { bits: 64, signed: false },
-                    "usize" => SlrCType::Int { bits: 64, signed: false }, // Assume 64-bit
-                    "i8" => SlrCType::Int { bits: 8, signed: true },
-                    "i16" => SlrCType::Int { bits: 16, signed: true },
-                    "i32" => SlrCType::Int { bits: 32, signed: true },
-                    "i64" => SlrCType::Int { bits: 64, signed: true },
-                    "isize" => SlrCType::Int { bits: 64, signed: true },
+                    "u8" => SlrCType::Int {
+                        bits: 8,
+                        signed: false,
+                    },
+                    "u16" => SlrCType::Int {
+                        bits: 16,
+                        signed: false,
+                    },
+                    "u32" => SlrCType::Int {
+                        bits: 32,
+                        signed: false,
+                    },
+                    "u64" => SlrCType::Int {
+                        bits: 64,
+                        signed: false,
+                    },
+                    "usize" => SlrCType::Int {
+                        bits: 64,
+                        signed: false,
+                    }, // Assume 64-bit
+                    "i8" => SlrCType::Int {
+                        bits: 8,
+                        signed: true,
+                    },
+                    "i16" => SlrCType::Int {
+                        bits: 16,
+                        signed: true,
+                    },
+                    "i32" => SlrCType::Int {
+                        bits: 32,
+                        signed: true,
+                    },
+                    "i64" => SlrCType::Int {
+                        bits: 64,
+                        signed: true,
+                    },
+                    "isize" => SlrCType::Int {
+                        bits: 64,
+                        signed: true,
+                    },
                     "f32" => SlrCType::Float { bits: 32 },
                     "f64" => SlrCType::Float { bits: 64 },
-                    "bool" => SlrCType::Int { bits: 8, signed: false },
+                    "bool" => SlrCType::Int {
+                        bits: 8,
+                        signed: false,
+                    },
                     "unit" | "void" => SlrCType::Void,
                     _ => SlrCType::Opaque { name },
                 }
@@ -2949,32 +3112,35 @@ fn recognize_exact_radian_pattern(expr: &Expr) -> Option<f64> {
     if let Expr::Binary(binary) = expr {
         if binary.op == crate::ast::BinaryOp::Div
             && is_pi_reference(&binary.left)
-                && let Some(n) = extract_integer_value(&binary.right)
-                    && n > 0 {
-                        // pi / n radians = 1 / (2*n) turns
-                        return Some(1.0 / (2.0 * n as f64));
-                    }
+            && let Some(n) = extract_integer_value(&binary.right)
+            && n > 0
+        {
+            // pi / n radians = 1 / (2*n) turns
+            return Some(1.0 / (2.0 * n as f64));
+        }
 
         // Pattern: N * pi / M or (N * pi) / M
         if binary.op == crate::ast::BinaryOp::Div
-            && let Some((num, denom)) = extract_pi_fraction(&binary.left, &binary.right) {
-                // (num * pi) / denom radians = num / (2 * denom) turns
-                return Some(num as f64 / (2.0 * denom as f64));
-            }
+            && let Some((num, denom)) = extract_pi_fraction(&binary.left, &binary.right)
+        {
+            // (num * pi) / denom radians = num / (2 * denom) turns
+            return Some(num as f64 / (2.0 * denom as f64));
+        }
 
         // Pattern: pi * N / M (reordered)
         if binary.op == crate::ast::BinaryOp::Mul {
             // Check for pi * (N / M) - less common but possible
             if is_pi_reference(&binary.left)
                 && let Expr::Binary(inner) = &binary.right
-                    && inner.op == crate::ast::BinaryOp::Div
-                        && let (Some(num), Some(denom)) = (
-                            extract_integer_value(&inner.left),
-                            extract_integer_value(&inner.right),
-                        )
-                            && denom > 0 {
-                                return Some(num as f64 / (2.0 * denom as f64));
-                            }
+                && inner.op == crate::ast::BinaryOp::Div
+                && let (Some(num), Some(denom)) = (
+                    extract_integer_value(&inner.left),
+                    extract_integer_value(&inner.right),
+                )
+                && denom > 0
+            {
+                return Some(num as f64 / (2.0 * denom as f64));
+            }
         }
     }
 
@@ -3011,22 +3177,25 @@ fn extract_integer_value(expr: &Expr) -> Option<i64> {
 fn extract_pi_fraction(left: &Expr, right: &Expr) -> Option<(i64, i64)> {
     // Check if left is N * pi
     if let Expr::Binary(mul) = left
-        && mul.op == crate::ast::BinaryOp::Mul {
-            // N * pi
-            if let Some(n) = extract_integer_value(&mul.left)
-                && is_pi_reference(&mul.right)
-                    && let Some(m) = extract_integer_value(right)
-                        && m > 0 {
-                            return Some((n, m));
-                        }
-            // pi * N
-            if is_pi_reference(&mul.left)
-                && let Some(n) = extract_integer_value(&mul.right)
-                    && let Some(m) = extract_integer_value(right)
-                        && m > 0 {
-                            return Some((n, m));
-                        }
+        && mul.op == crate::ast::BinaryOp::Mul
+    {
+        // N * pi
+        if let Some(n) = extract_integer_value(&mul.left)
+            && is_pi_reference(&mul.right)
+            && let Some(m) = extract_integer_value(right)
+            && m > 0
+        {
+            return Some((n, m));
         }
+        // pi * N
+        if is_pi_reference(&mul.left)
+            && let Some(n) = extract_integer_value(&mul.right)
+            && let Some(m) = extract_integer_value(right)
+            && m > 0
+        {
+            return Some((n, m));
+        }
+    }
     None
 }
 
@@ -3072,7 +3241,7 @@ mod tests {
         assert_eq!(slr.body.len(), 1);
 
         if let SlrStatement::Gate(gate) = &slr.body[0] {
-            assert_eq!(gate.gate, "H");  // Output remains uppercase
+            assert_eq!(gate.gate, "H"); // Output remains uppercase
             assert_eq!(gate.targets.len(), 1);
             assert_eq!(gate.targets[0].allocator, "q");
             assert_eq!(gate.targets[0].index, 0);
@@ -3281,7 +3450,10 @@ mod tests {
         "#;
 
         let result = compile_to_slr(source);
-        assert!(matches!(result, Err(SlrError::QubitIndexOutOfBounds { .. })));
+        assert!(matches!(
+            result,
+            Err(SlrError::QubitIndexOutOfBounds { .. })
+        ));
     }
 
     #[test]
@@ -3425,8 +3597,13 @@ mod tests {
         if let SlrStatement::Tick(tick) = &slr.body[0] {
             assert_eq!(tick.label.as_ref().unwrap(), "syndrome_round");
             assert_eq!(tick.attrs.len(), 2);
-            assert!(matches!(tick.attrs.get("round"), Some(SlrAttributeValue::Int(0))));
-            assert!(matches!(tick.attrs.get("kind"), Some(SlrAttributeValue::String(s)) if s == "syndrome"));
+            assert!(matches!(
+                tick.attrs.get("round"),
+                Some(SlrAttributeValue::Int(0))
+            ));
+            assert!(
+                matches!(tick.attrs.get("kind"), Some(SlrAttributeValue::String(s)) if s == "syndrome")
+            );
         } else {
             panic!("Expected tick statement");
         }
@@ -3450,7 +3627,10 @@ mod tests {
         if let SlrStatement::Tick(tick) = &slr.body[0] {
             assert!(tick.label.is_none());
             assert_eq!(tick.attrs.len(), 1);
-            assert!(matches!(tick.attrs.get("noisy"), Some(SlrAttributeValue::Bool(true))));
+            assert!(matches!(
+                tick.attrs.get("noisy"),
+                Some(SlrAttributeValue::Bool(true))
+            ));
         } else {
             panic!("Expected tick statement");
         }
@@ -3473,7 +3653,10 @@ mod tests {
         if let SlrStatement::Tick(tick) = &slr.body[0] {
             assert_eq!(tick.label.as_ref().unwrap(), "layer");
             assert_eq!(tick.attrs.len(), 2);
-            assert!(matches!(tick.attrs.get("round"), Some(SlrAttributeValue::Int(5))));
+            assert!(matches!(
+                tick.attrs.get("round"),
+                Some(SlrAttributeValue::Int(5))
+            ));
             // Check float attribute
             if let Some(SlrAttributeValue::Float(f)) = tick.attrs.get("error_rate") {
                 assert!((*f - 0.001).abs() < 0.0001);
@@ -3526,7 +3709,9 @@ mod tests {
         if let SlrStatement::Gate(gate) = &slr.body[0] {
             assert_eq!(gate.gate, "CX");
             assert_eq!(gate.attrs.len(), 1);
-            assert!(matches!(gate.attrs.get("syndrome"), Some(SlrAttributeValue::String(s)) if s == "X"));
+            assert!(
+                matches!(gate.attrs.get("syndrome"), Some(SlrAttributeValue::String(s)) if s == "X")
+            );
         } else {
             panic!("Expected gate statement");
         }
@@ -3547,8 +3732,13 @@ mod tests {
         if let SlrStatement::Gate(gate) = &slr.body[0] {
             assert_eq!(gate.gate, "H");
             assert_eq!(gate.attrs.len(), 2);
-            assert!(matches!(gate.attrs.get("syndrome"), Some(SlrAttributeValue::String(s)) if s == "Z"));
-            assert!(matches!(gate.attrs.get("layer"), Some(SlrAttributeValue::Int(1))));
+            assert!(
+                matches!(gate.attrs.get("syndrome"), Some(SlrAttributeValue::String(s)) if s == "Z")
+            );
+            assert!(matches!(
+                gate.attrs.get("layer"),
+                Some(SlrAttributeValue::Int(1))
+            ));
         } else {
             panic!("Expected gate statement");
         }
@@ -3572,7 +3762,9 @@ mod tests {
             if let SlrStatement::Gate(gate) = stmt {
                 assert_eq!(gate.gate, "H");
                 assert_eq!(gate.attrs.len(), 1);
-                assert!(matches!(gate.attrs.get("syndrome"), Some(SlrAttributeValue::String(s)) if s == "X"));
+                assert!(
+                    matches!(gate.attrs.get("syndrome"), Some(SlrAttributeValue::String(s)) if s == "X")
+                );
             } else {
                 panic!("Expected gate statement");
             }

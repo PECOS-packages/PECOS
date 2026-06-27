@@ -172,7 +172,10 @@ fn format_line(line: &str) -> String {
                         result.push(' ');
                     }
                     result.push('=');
-                } else if prev_char == '!' || prev_char == '<' || prev_char == '>' || prev_char == '='
+                } else if prev_char == '!'
+                    || prev_char == '<'
+                    || prev_char == '>'
+                    || prev_char == '='
                 {
                     // Part of !=, <=, >=, ==
                     result.push('=');
@@ -313,7 +316,11 @@ mod tests {
         assert!(formatted.contains("tick {"));
         // Inner statements should be indented
         let lines: Vec<&str> = formatted.lines().collect();
-        assert!(lines.iter().any(|l| l.starts_with("    h") || l.starts_with("    cx")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("    h") || l.starts_with("    cx"))
+        );
     }
 
     #[test]

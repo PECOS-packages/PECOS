@@ -10,8 +10,8 @@
 //! The parser consumes tokens from the pest lexer and builds the AST.
 
 use crate::ast::*;
-use pest::iterators::{Pair, Pairs};
 use pest::Parser;
+use pest::iterators::{Pair, Pairs};
 use pest_derive::Parser;
 
 /// Pest parser generated from grammar.
@@ -76,8 +76,8 @@ impl<'a> ParserState<'a> {
             });
         }
 
-        let pairs = ZluppyParser::parse(Rule::program, self.source)
-            .map_err(|e| self.pest_error(e))?;
+        let pairs =
+            ZluppyParser::parse(Rule::program, self.source).map_err(|e| self.pest_error(e))?;
 
         self.parse_program(pairs)
     }
@@ -85,8 +85,12 @@ impl<'a> ParserState<'a> {
     /// Convert a pest error to our error type.
     fn pest_error(&self, e: pest::error::Error<Rule>) -> ParseError {
         let (line, column, end_line, end_column) = match e.line_col {
-            pest::error::LineColLocation::Pos((l, c)) => (l as u32, c as u32, l as u32, c as u32 + 1),
-            pest::error::LineColLocation::Span((l, c), (el, ec)) => (l as u32, c as u32, el as u32, ec as u32),
+            pest::error::LineColLocation::Pos((l, c)) => {
+                (l as u32, c as u32, l as u32, c as u32 + 1)
+            }
+            pest::error::LineColLocation::Span((l, c), (el, ec)) => {
+                (l as u32, c as u32, el as u32, ec as u32)
+            }
         };
         ParseError {
             message: e.to_string(),
@@ -134,9 +138,9 @@ impl<'a> ParserState<'a> {
     /// Returns an error if the pair has no inner elements.
     fn expect_inner(&self, pair: Pair<'a, Rule>, context: &str) -> ParseResult<Pair<'a, Rule>> {
         let location = self.location(&pair);
-        pair.into_inner()
-            .next()
-            .ok_or_else(|| self.error_at(location, format!("expected inner element in {}", context)))
+        pair.into_inner().next().ok_or_else(|| {
+            self.error_at(location, format!("expected inner element in {}", context))
+        })
     }
 
     /// Expect the next element from an iterator.
@@ -147,8 +151,12 @@ impl<'a> ParserState<'a> {
         location: &SourceLocation,
         context: &str,
     ) -> ParseResult<Pair<'a, Rule>> {
-        iter.next()
-            .ok_or_else(|| self.error_at(location.clone(), format!("expected {} but found end of input", context)))
+        iter.next().ok_or_else(|| {
+            self.error_at(
+                location.clone(),
+                format!("expected {} but found end of input", context),
+            )
+        })
     }
 
     // =========================================================================
@@ -197,7 +205,9 @@ impl<'a> ParserState<'a> {
             Rule::error_set_decl => Ok(TopLevelDecl::ErrorSet(self.parse_error_set_decl(inner)?)),
             Rule::fault_set_decl => Ok(TopLevelDecl::FaultSet(self.parse_fault_set_decl(inner)?)),
             Rule::test_decl => Ok(TopLevelDecl::Test(self.parse_test_decl(inner)?)),
-            Rule::declare_gate_decl => Ok(TopLevelDecl::DeclareGate(self.parse_declare_gate_decl(inner)?)),
+            Rule::declare_gate_decl => Ok(TopLevelDecl::DeclareGate(
+                self.parse_declare_gate_decl(inner)?,
+            )),
             Rule::gate_decl => Ok(TopLevelDecl::Gate(self.parse_gate_decl(inner)?)),
             _ => Err(self.error(&inner, format!("unexpected {:?}", inner.as_rule()))),
         }
@@ -458,7 +468,10 @@ impl<'a> ParserState<'a> {
             }
             other => {
                 return Err(ParseError {
-                    message: format!("unexpected rule {:?}, expected param (self_param or regular_param)", other),
+                    message: format!(
+                        "unexpected rule {:?}, expected param (self_param or regular_param)",
+                        other
+                    ),
                     location: location.unwrap_or_default(),
                 });
             }
@@ -466,7 +479,11 @@ impl<'a> ParserState<'a> {
     }
 
     /// Parse a regular (non-self) parameter.
-    fn parse_regular_param(&self, pair: Pair<Rule>, location: Option<SourceLocation>) -> ParseResult<Param> {
+    fn parse_regular_param(
+        &self,
+        pair: Pair<Rule>,
+        location: Option<SourceLocation>,
+    ) -> ParseResult<Param> {
         let inner = pair.into_inner();
 
         let mut is_comptime = false;
@@ -1113,7 +1130,10 @@ impl<'a> ParserState<'a> {
             Rule::errdefer_stmt => Ok(Stmt::Errdefer(self.parse_errdefer_stmt(inner)?)),
             Rule::block => Ok(Stmt::Block(self.parse_block(inner)?)),
             Rule::expr_stmt => Ok(Stmt::Expr(self.parse_expr_stmt(inner)?)),
-            _ => Err(self.error(&inner, format!("unexpected statement {:?}", inner.as_rule()))),
+            _ => Err(self.error(
+                &inner,
+                format!("unexpected statement {:?}", inner.as_rule()),
+            )),
         }
     }
 
@@ -1139,7 +1159,10 @@ impl<'a> ParserState<'a> {
         }
 
         let name = name.ok_or_else(|| {
-            self.error_at(location.clone().unwrap_or_default(), "alias requires a name")
+            self.error_at(
+                location.clone().unwrap_or_default(),
+                "alias requires a name",
+            )
         })?;
         let source = source.ok_or_else(|| {
             self.error_at(
@@ -1250,7 +1273,11 @@ impl<'a> ParserState<'a> {
                 for entry in item.into_inner() {
                     if entry.as_rule() == Rule::attrs_entry {
                         let mut entry_inner = entry.into_inner();
-                        let name = entry_inner.next().expect("attrs_entry must have key").as_str().to_string();
+                        let name = entry_inner
+                            .next()
+                            .expect("attrs_entry must have key")
+                            .as_str()
+                            .to_string();
                         let value_pair = entry_inner.next().expect("attrs_entry must have value");
                         let value = Some(self.parse_attr_value(value_pair)?);
                         attrs.push(Attribute {
@@ -1279,7 +1306,9 @@ impl<'a> ParserState<'a> {
                 // Parse the number text - handle floats vs integers
                 let s = inner.as_str().replace('_', "");
                 if s.contains('.') || s.contains('e') || s.contains('E') {
-                    let value: f64 = s.parse().map_err(|_| self.error(&inner, "invalid float literal"))?;
+                    let value: f64 = s
+                        .parse()
+                        .map_err(|_| self.error(&inner, "invalid float literal"))?;
                     Ok(AttributeValue::Float(value))
                 } else if s.starts_with("0x") || s.starts_with("0X") {
                     let value = i64::from_str_radix(&s[2..], 16)
@@ -1294,7 +1323,9 @@ impl<'a> ParserState<'a> {
                         .map_err(|_| self.error(&inner, "invalid octal literal"))?;
                     Ok(AttributeValue::Int(value))
                 } else {
-                    let value: i64 = s.parse().map_err(|_| self.error(&inner, "invalid integer literal"))?;
+                    let value: i64 = s
+                        .parse()
+                        .map_err(|_| self.error(&inner, "invalid integer literal"))?;
                     Ok(AttributeValue::Int(value))
                 }
             }
@@ -1497,8 +1528,15 @@ impl<'a> ParserState<'a> {
                 // if value := expr { ... } (Go-style unwrapping)
                 let first_loc = self.location(&first);
                 let mut clause_inner = first.into_inner();
-                let capture_name = self.expect_next(&mut clause_inner, &first_loc, "capture name")?.as_str().to_string();
-                let expr = self.parse_expr(self.expect_next(&mut clause_inner, &first_loc, "unwrap expression")?)?;
+                let capture_name = self
+                    .expect_next(&mut clause_inner, &first_loc, "capture name")?
+                    .as_str()
+                    .to_string();
+                let expr = self.parse_expr(self.expect_next(
+                    &mut clause_inner,
+                    &first_loc,
+                    "unwrap expression",
+                )?)?;
                 (expr, Some(capture_name))
             }
             Rule::if_condition => {
@@ -1508,7 +1546,10 @@ impl<'a> ParserState<'a> {
             }
             other => {
                 return Err(ParseError {
-                    message: format!("unexpected rule {:?}, expected if_unwrap_clause or if_condition", other),
+                    message: format!(
+                        "unexpected rule {:?}, expected if_unwrap_clause or if_condition",
+                        other
+                    ),
                     location: location.unwrap_or_default(),
                 });
             }
@@ -1674,7 +1715,10 @@ impl<'a> ParserState<'a> {
     /// Parse range bound term.
     /// range_bound_term = { number_literal | range_bound_field_access | identifier | "(" ~ ws ~ range_bound ~ ws ~ ")" }
     fn parse_range_bound_term(&self, pair: Pair<Rule>) -> ParseResult<Expr> {
-        let inner = pair.into_inner().next().expect("range_bound_term needs content");
+        let inner = pair
+            .into_inner()
+            .next()
+            .expect("range_bound_term needs content");
         match inner.as_rule() {
             Rule::number_literal | Rule::identifier => self.parse_primary_expr(inner),
             Rule::range_bound_field_access => self.parse_range_bound_field_access(inner),
@@ -1698,7 +1742,8 @@ impl<'a> ParserState<'a> {
 
         // Remaining member names are field accesses
         for field_pair in inner {
-            if field_pair.as_rule() == Rule::identifier || field_pair.as_rule() == Rule::member_name {
+            if field_pair.as_rule() == Rule::identifier || field_pair.as_rule() == Rule::member_name
+            {
                 result = Expr::Field(Box::new(FieldExpr {
                     object: result,
                     field: field_pair.as_str().to_string(),
@@ -1731,7 +1776,11 @@ impl<'a> ParserState<'a> {
             }
         }
 
-        Ok(Expr::Range(Box::new(RangeExpr { start, end, location })))
+        Ok(Expr::Range(Box::new(RangeExpr {
+            start,
+            end,
+            location,
+        })))
     }
 
     /// Parse capture list.
@@ -1815,7 +1864,11 @@ impl<'a> ParserState<'a> {
     /// Parse return statement.
     fn parse_return_stmt(&self, pair: Pair<Rule>) -> ParseResult<ReturnStmt> {
         let location = Some(self.location(&pair));
-        let value = pair.into_inner().next().map(|p| self.parse_expr(p)).transpose()?;
+        let value = pair
+            .into_inner()
+            .next()
+            .map(|p| self.parse_expr(p))
+            .transpose()?;
 
         Ok(ReturnStmt { value, location })
     }
@@ -1887,10 +1940,12 @@ impl<'a> ParserState<'a> {
             }
         }
 
-        let body = body.ok_or_else(|| self.error_at(
-            location.clone().unwrap_or_default(),
-            "errdefer requires a body"
-        ))?;
+        let body = body.ok_or_else(|| {
+            self.error_at(
+                location.clone().unwrap_or_default(),
+                "errdefer requires a body",
+            )
+        })?;
 
         Ok(ErrDeferStmt {
             body,
@@ -1983,7 +2038,8 @@ impl<'a> ParserState<'a> {
     fn parse_or_expr(&self, pair: Pair<'a, Rule>) -> ParseResult<Expr> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
-        let mut left = self.parse_catch_expr(self.expect_next(&mut inner, &loc, "or operand")?)?;
+        let mut left =
+            self.parse_catch_expr(self.expect_next(&mut inner, &loc, "or operand")?)?;
 
         while let Some(next_pair) = inner.next() {
             // Skip the or_kw operator rule
@@ -2010,7 +2066,8 @@ impl<'a> ParserState<'a> {
         let location = Some(self.location(&pair));
         let loc = location.clone().unwrap_or_default();
         let mut inner = pair.into_inner();
-        let mut left = self.parse_orelse_expr(self.expect_next(&mut inner, &loc, "catch operand")?)?;
+        let mut left =
+            self.parse_orelse_expr(self.expect_next(&mut inner, &loc, "catch operand")?)?;
 
         while let Some(next_pair) = inner.next() {
             // Skip the catch_kw operator rule if present
@@ -2024,7 +2081,11 @@ impl<'a> ParserState<'a> {
             if next_pair.as_rule() == Rule::identifier {
                 // This is the capture variable: catch |err| handler
                 let capture = Some(next_pair.as_str().to_string());
-                let handler = self.parse_orelse_expr(self.expect_next(&mut inner, &loc, "catch handler body")?)?;
+                let handler = self.parse_orelse_expr(self.expect_next(
+                    &mut inner,
+                    &loc,
+                    "catch handler body",
+                )?)?;
                 left = Expr::Catch(Box::new(CatchExpr {
                     operand: left,
                     capture,
@@ -2051,7 +2112,8 @@ impl<'a> ParserState<'a> {
     fn parse_orelse_expr(&self, pair: Pair<'a, Rule>) -> ParseResult<Expr> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
-        let mut left = self.parse_and_expr(self.expect_next(&mut inner, &loc, "orelse operand")?)?;
+        let mut left =
+            self.parse_and_expr(self.expect_next(&mut inner, &loc, "orelse operand")?)?;
 
         while let Some(next_pair) = inner.next() {
             // Skip the orelse_kw operator rule
@@ -2102,7 +2164,8 @@ impl<'a> ParserState<'a> {
     fn parse_binary_chain(&self, pair: Pair<'a, Rule>, op: BinaryOp) -> ParseResult<Expr> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
-        let mut left = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "binary operand")?)?;
+        let mut left =
+            self.parse_next_precedence(self.expect_next(&mut inner, &loc, "binary operand")?)?;
 
         while let Some(next_pair) = inner.next() {
             // Skip operator rules (symbol operators)
@@ -2151,11 +2214,16 @@ impl<'a> ParserState<'a> {
     fn parse_cmp_expr(&self, pair: Pair<'a, Rule>) -> ParseResult<Expr> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
-        let left = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "cmp operand")?)?;
+        let left =
+            self.parse_next_precedence(self.expect_next(&mut inner, &loc, "cmp operand")?)?;
 
         if let Some(op_pair) = inner.next() {
             let op = self.parse_cmp_op(op_pair)?;
-            let right = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "cmp right operand")?)?;
+            let right = self.parse_next_precedence(self.expect_next(
+                &mut inner,
+                &loc,
+                "cmp right operand",
+            )?)?;
             Ok(Expr::Binary(Box::new(BinaryExpr {
                 op,
                 left,
@@ -2194,7 +2262,8 @@ impl<'a> ParserState<'a> {
     fn parse_shift_expr(&self, pair: Pair<'a, Rule>) -> ParseResult<Expr> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
-        let mut left = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "shift operand")?)?;
+        let mut left =
+            self.parse_next_precedence(self.expect_next(&mut inner, &loc, "shift operand")?)?;
 
         while let Some(op_pair) = inner.next() {
             if op_pair.as_rule() != Rule::shift_op {
@@ -2205,7 +2274,11 @@ impl<'a> ParserState<'a> {
                 ">>" => BinaryOp::Shr,
                 _ => continue,
             };
-            let right = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "shift right operand")?)?;
+            let right = self.parse_next_precedence(self.expect_next(
+                &mut inner,
+                &loc,
+                "shift right operand",
+            )?)?;
             left = Expr::Binary(Box::new(BinaryExpr {
                 op,
                 left,
@@ -2221,7 +2294,8 @@ impl<'a> ParserState<'a> {
     fn parse_add_expr(&self, pair: Pair<'a, Rule>) -> ParseResult<Expr> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
-        let mut left = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "add operand")?)?;
+        let mut left =
+            self.parse_next_precedence(self.expect_next(&mut inner, &loc, "add operand")?)?;
 
         while let Some(op_pair) = inner.next() {
             if op_pair.as_rule() != Rule::add_op {
@@ -2232,7 +2306,11 @@ impl<'a> ParserState<'a> {
                 "-" => BinaryOp::Sub,
                 _ => continue,
             };
-            let right = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "add right operand")?)?;
+            let right = self.parse_next_precedence(self.expect_next(
+                &mut inner,
+                &loc,
+                "add right operand",
+            )?)?;
             left = Expr::Binary(Box::new(BinaryExpr {
                 op,
                 left,
@@ -2248,7 +2326,8 @@ impl<'a> ParserState<'a> {
     fn parse_mul_expr(&self, pair: Pair<'a, Rule>) -> ParseResult<Expr> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
-        let mut left = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "mul operand")?)?;
+        let mut left =
+            self.parse_next_precedence(self.expect_next(&mut inner, &loc, "mul operand")?)?;
 
         while let Some(op_pair) = inner.next() {
             if op_pair.as_rule() != Rule::mul_op {
@@ -2260,7 +2339,11 @@ impl<'a> ParserState<'a> {
                 "%" => BinaryOp::Mod,
                 _ => continue,
             };
-            let right = self.parse_next_precedence(self.expect_next(&mut inner, &loc, "mul right operand")?)?;
+            let right = self.parse_next_precedence(self.expect_next(
+                &mut inner,
+                &loc,
+                "mul right operand",
+            )?)?;
             left = Expr::Binary(Box::new(BinaryExpr {
                 op,
                 left,
@@ -2279,39 +2362,44 @@ impl<'a> ParserState<'a> {
         let mut inner = pair.into_inner();
 
         // Parse the expression part
-        let value = self.parse_next_precedence(self.expect_next(&mut inner, &location, "expression in suffixed expr")?)?;
+        let value = self.parse_next_precedence(self.expect_next(
+            &mut inner,
+            &location,
+            "expression in suffixed expr",
+        )?)?;
 
         // Check for optional suffix (angle unit or type)
         if let Some(suffix_pair) = inner.next()
-            && suffix_pair.as_rule() == Rule::expr_suffix {
-                // Get the inner rule (angle_unit or type_suffix)
-                let inner_suffix = self.expect_inner(suffix_pair, "expr_suffix")?;
-                match inner_suffix.as_rule() {
-                    Rule::angle_unit => {
-                        let unit = match inner_suffix.as_str() {
-                            "turns" => AngleUnit::Turns,
-                            "rad" => AngleUnit::Rad,
-                            _ => return Err(self.error(&inner_suffix, "unknown angle unit")),
-                        };
-                        return Ok(Expr::AngleLit(Box::new(AngleLit {
-                            value,
-                            unit,
-                            location: Some(location),
-                        })));
-                    }
-                    Rule::type_ascription_suffix => {
-                        // Get the actual type keyword
-                        let type_inner = self.expect_inner(inner_suffix, "type_ascription_suffix")?;
-                        let type_name = type_inner.as_str().to_string();
-                        return Ok(Expr::TypeAscription(Box::new(TypeAscription {
-                            value,
-                            type_name,
-                            location: Some(location),
-                        })));
-                    }
-                    _ => {}
+            && suffix_pair.as_rule() == Rule::expr_suffix
+        {
+            // Get the inner rule (angle_unit or type_suffix)
+            let inner_suffix = self.expect_inner(suffix_pair, "expr_suffix")?;
+            match inner_suffix.as_rule() {
+                Rule::angle_unit => {
+                    let unit = match inner_suffix.as_str() {
+                        "turns" => AngleUnit::Turns,
+                        "rad" => AngleUnit::Rad,
+                        _ => return Err(self.error(&inner_suffix, "unknown angle unit")),
+                    };
+                    return Ok(Expr::AngleLit(Box::new(AngleLit {
+                        value,
+                        unit,
+                        location: Some(location),
+                    })));
                 }
+                Rule::type_ascription_suffix => {
+                    // Get the actual type keyword
+                    let type_inner = self.expect_inner(inner_suffix, "type_ascription_suffix")?;
+                    let type_name = type_inner.as_str().to_string();
+                    return Ok(Expr::TypeAscription(Box::new(TypeAscription {
+                        value,
+                        type_name,
+                        location: Some(location),
+                    })));
+                }
+                _ => {}
             }
+        }
 
         // No suffix - return the value as-is
         Ok(value)
@@ -2425,7 +2513,10 @@ impl<'a> ParserState<'a> {
                     }));
                 }
                 Rule::field_access => {
-                    let field = self.expect_inner(actual_op, "field_access")?.as_str().to_string();
+                    let field = self
+                        .expect_inner(actual_op, "field_access")?
+                        .as_str()
+                        .to_string();
                     expr = Expr::Field(Box::new(FieldExpr {
                         object: expr,
                         field,
@@ -2820,34 +2911,51 @@ impl<'a> ParserState<'a> {
         let s = num_str.replace('_', "");
 
         // Check for float (must check before extracting suffix changes things)
-        let is_float = s.contains('.') ||
-            (s.contains('e') || s.contains('E')) && !s.starts_with("0x") && !s.starts_with("0X");
+        let is_float = s.contains('.')
+            || (s.contains('e') || s.contains('E')) && !s.starts_with("0x") && !s.starts_with("0X");
 
         if is_float {
-            let value: f64 = s.parse().map_err(|_| {
-                self.error_at(loc.clone(), "invalid float literal")
-            })?;
-            Ok(Expr::FloatLit(FloatLit { value, suffix, location: Some(loc) }))
+            let value: f64 = s
+                .parse()
+                .map_err(|_| self.error_at(loc.clone(), "invalid float literal"))?;
+            Ok(Expr::FloatLit(FloatLit {
+                value,
+                suffix,
+                location: Some(loc),
+            }))
         } else if s.starts_with("0x") || s.starts_with("0X") {
-            let value = i128::from_str_radix(&s[2..], 16).map_err(|_| {
-                self.error_at(loc.clone(), "invalid hex literal")
-            })?;
-            Ok(Expr::IntLit(IntLit { value, suffix, location: Some(loc) }))
+            let value = i128::from_str_radix(&s[2..], 16)
+                .map_err(|_| self.error_at(loc.clone(), "invalid hex literal"))?;
+            Ok(Expr::IntLit(IntLit {
+                value,
+                suffix,
+                location: Some(loc),
+            }))
         } else if s.starts_with("0b") || s.starts_with("0B") {
-            let value = i128::from_str_radix(&s[2..], 2).map_err(|_| {
-                self.error_at(loc.clone(), "invalid binary literal")
-            })?;
-            Ok(Expr::IntLit(IntLit { value, suffix, location: Some(loc) }))
+            let value = i128::from_str_radix(&s[2..], 2)
+                .map_err(|_| self.error_at(loc.clone(), "invalid binary literal"))?;
+            Ok(Expr::IntLit(IntLit {
+                value,
+                suffix,
+                location: Some(loc),
+            }))
         } else if s.starts_with("0o") || s.starts_with("0O") {
-            let value = i128::from_str_radix(&s[2..], 8).map_err(|_| {
-                self.error_at(loc.clone(), "invalid octal literal")
-            })?;
-            Ok(Expr::IntLit(IntLit { value, suffix, location: Some(loc) }))
+            let value = i128::from_str_radix(&s[2..], 8)
+                .map_err(|_| self.error_at(loc.clone(), "invalid octal literal"))?;
+            Ok(Expr::IntLit(IntLit {
+                value,
+                suffix,
+                location: Some(loc),
+            }))
         } else {
-            let value: i128 = s.parse().map_err(|_| {
-                self.error_at(loc.clone(), "invalid integer literal")
-            })?;
-            Ok(Expr::IntLit(IntLit { value, suffix, location: Some(loc) }))
+            let value: i128 = s
+                .parse()
+                .map_err(|_| self.error_at(loc.clone(), "invalid integer literal"))?;
+            Ok(Expr::IntLit(IntLit {
+                value,
+                suffix,
+                location: Some(loc),
+            }))
         }
     }
 
@@ -2856,8 +2964,8 @@ impl<'a> ParserState<'a> {
     fn extract_number_suffix<'b>(&self, s: &'b str) -> (&'b str, Option<String>) {
         // Integer suffixes (check longer ones first)
         const INT_SUFFIXES: &[&str] = &[
-            "u128", "i128", "usize", "isize",
-            "u64", "i64", "u32", "i32", "u16", "i16", "u8", "i8", "u1", "i1",
+            "u128", "i128", "usize", "isize", "u64", "i64", "u32", "i32", "u16", "i16", "u8", "i8",
+            "u1", "i1",
         ];
         // Float suffixes
         const FLOAT_SUFFIXES: &[&str] = &["f128", "f64", "f32", "f16", "a64"];
@@ -2867,12 +2975,17 @@ impl<'a> ParserState<'a> {
             // Check for _suffix pattern
             let with_underscore = format!("_{}", suffix);
             if s.ends_with(&with_underscore) {
-                return (&s[..s.len() - with_underscore.len()], Some(suffix.to_string()));
+                return (
+                    &s[..s.len() - with_underscore.len()],
+                    Some(suffix.to_string()),
+                );
             }
             // Check for direct suffix (no underscore)
             if let Some(prefix) = s.strip_suffix(suffix) {
                 // Make sure we're not matching part of a hex digit
-                if !prefix.is_empty() && (prefix.ends_with(|c: char| c.is_ascii_digit()) || prefix.ends_with('_')) {
+                if !prefix.is_empty()
+                    && (prefix.ends_with(|c: char| c.is_ascii_digit()) || prefix.ends_with('_'))
+                {
                     return (prefix, Some(suffix.to_string()));
                 }
             }
@@ -2957,7 +3070,9 @@ impl<'a> ParserState<'a> {
             }
         }
 
-        let expr = expr.ok_or_else(|| self.error_at(location, "expected expression in f-string interpolation"))?;
+        let expr = expr.ok_or_else(|| {
+            self.error_at(location, "expected expression in f-string interpolation")
+        })?;
         Ok((expr, format))
     }
 
@@ -3003,7 +3118,10 @@ impl<'a> ParserState<'a> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
 
-        let name = self.expect_next(&mut inner, &loc, "builtin name")?.as_str().to_string();
+        let name = self
+            .expect_next(&mut inner, &loc, "builtin name")?
+            .as_str()
+            .to_string();
         let location = Some(loc);
         let args = if let Some(arg_list) = inner.next() {
             self.parse_arg_list(arg_list)?
@@ -3029,7 +3147,10 @@ impl<'a> ParserState<'a> {
             Rule::anon_struct_init => self.parse_anon_struct_init(inner_pair, location),
             other => {
                 return Err(ParseError {
-                    message: format!("unexpected rule {:?}, expected typed_struct_init or anon_struct_init", other),
+                    message: format!(
+                        "unexpected rule {:?}, expected typed_struct_init or anon_struct_init",
+                        other
+                    ),
                     location: location.unwrap_or_default(),
                 });
             }
@@ -3103,7 +3224,10 @@ impl<'a> ParserState<'a> {
         let loc = self.location(&pair);
         let mut inner = pair.into_inner();
 
-        let name = self.expect_next(&mut inner, &loc, "field name")?.as_str().to_string();
+        let name = self
+            .expect_next(&mut inner, &loc, "field name")?
+            .as_str()
+            .to_string();
         let location = Some(loc);
 
         // Rust-style: `field: value` or shorthand `field` (when var name matches)
@@ -3238,10 +3362,15 @@ impl<'a> ParserState<'a> {
                     location: else_parsed.location,
                 }))
             }
-            _ => return Err(ParseError {
-                message: format!("Expected block or if_expr in else branch, got {:?}", else_item.as_rule()),
-                location: self.location(&else_item),
-            }),
+            _ => {
+                return Err(ParseError {
+                    message: format!(
+                        "Expected block or if_expr in else branch, got {:?}",
+                        else_item.as_rule()
+                    ),
+                    location: self.location(&else_item),
+                });
+            }
         };
 
         Ok(Expr::If(Box::new(IfExpr {
@@ -3304,16 +3433,17 @@ impl<'a> ParserState<'a> {
 
         // Check for type_suffix (error union: E!T where E is error, T is payload)
         if let Some(suffix_pair) = inner.next()
-            && suffix_pair.as_rule() == Rule::type_suffix {
-                // type_suffix = { "!" ~ type_prefix }
-                // In E!T syntax: base_type is E (error), suffix is T (payload)
-                let payload_type_pair = self.expect_inner(suffix_pair, "type_suffix")?;
-                let payload_type = self.parse_type_prefix(payload_type_pair)?;
-                return Ok(TypeExpr::ErrorUnion(Box::new(ErrorUnionType {
-                    error_type: base_type,
-                    payload_type,
-                })));
-            }
+            && suffix_pair.as_rule() == Rule::type_suffix
+        {
+            // type_suffix = { "!" ~ type_prefix }
+            // In E!T syntax: base_type is E (error), suffix is T (payload)
+            let payload_type_pair = self.expect_inner(suffix_pair, "type_suffix")?;
+            let payload_type = self.parse_type_prefix(payload_type_pair)?;
+            return Ok(TypeExpr::ErrorUnion(Box::new(ErrorUnionType {
+                error_type: base_type,
+                payload_type,
+            })));
+        }
 
         Ok(base_type)
     }
@@ -3325,7 +3455,8 @@ impl<'a> ParserState<'a> {
 
         match inner.as_rule() {
             Rule::optional_type => {
-                let inner_type = self.parse_type_prefix(self.expect_inner(inner, "optional_type")?)?;
+                let inner_type =
+                    self.parse_type_prefix(self.expect_inner(inner, "optional_type")?)?;
                 Ok(TypeExpr::Optional(Box::new(inner_type)))
             }
             Rule::pointer_type => self.parse_pointer_type(inner),
@@ -3521,7 +3652,10 @@ impl<'a> ParserState<'a> {
     /// Parse array size term.
     /// array_size_term = { number_literal | identifier | "(" ~ ws ~ array_size ~ ws ~ ")" }
     fn parse_array_size_term(&self, pair: Pair<Rule>) -> ParseResult<Expr> {
-        let inner = pair.into_inner().next().expect("array_size_term needs content");
+        let inner = pair
+            .into_inner()
+            .next()
+            .expect("array_size_term needs content");
         match inner.as_rule() {
             Rule::number_literal | Rule::identifier => self.parse_primary_expr(inner),
             Rule::array_size => self.parse_array_size_expr(inner),
@@ -3592,12 +3726,13 @@ impl<'a> ParserState<'a> {
         // Check for Self type first (has inner rule)
         let inner = pair.clone().into_inner().next();
         if let Some(inner_pair) = inner
-            && inner_pair.as_rule() == Rule::self_type {
-                return Ok(TypeExpr::Named(TypePath {
-                    segments: vec!["Self".to_string()],
-                    location: Some(self.location(&pair)),
-                }));
-            }
+            && inner_pair.as_rule() == Rule::self_type
+        {
+            return Ok(TypeExpr::Named(TypePath {
+                segments: vec!["Self".to_string()],
+                location: Some(self.location(&pair)),
+            }));
+        }
 
         let s = pair.as_str();
 
@@ -3644,14 +3779,16 @@ impl<'a> ParserState<'a> {
         // Valid bit widths are 1-128
         if let Some(bits_str) = s.strip_prefix('u') {
             if let Ok(bits) = bits_str.parse::<u16>()
-                && (1..=128).contains(&bits) {
-                    return Some(PrimitiveType::UInt { bits });
-                }
+                && (1..=128).contains(&bits)
+            {
+                return Some(PrimitiveType::UInt { bits });
+            }
         } else if let Some(bits_str) = s.strip_prefix('i')
             && let Ok(bits) = bits_str.parse::<u16>()
-                && (1..=128).contains(&bits) {
-                    return Some(PrimitiveType::IInt { bits });
-                }
+            && (1..=128).contains(&bits)
+        {
+            return Some(PrimitiveType::IInt { bits });
+        }
 
         None
     }
@@ -3692,7 +3829,10 @@ impl<'a> ParserState<'a> {
         let expr = value.expect("channel_arg requires expression");
 
         if let Some(n) = name {
-            Ok(ChannelArg::Named { name: n, value: expr })
+            Ok(ChannelArg::Named {
+                name: n,
+                value: expr,
+            })
         } else {
             Ok(ChannelArg::Positional(expr))
         }
@@ -3747,20 +3887,22 @@ impl<'a> ParserState<'a> {
                                 location: location.clone(),
                             }))
                         }
-                        Rule::paren_or_tuple => {
-                            self.parse_primary_expr(target_inner)?
-                        }
+                        Rule::paren_or_tuple => self.parse_primary_expr(target_inner)?,
                         Rule::bracket_array => self.parse_primary_expr(target_inner)?,
                         Rule::postfix_expr => self.parse_postfix_expr(target_inner)?,
                         Rule::gate_qubit_target => {
                             // gate_qubit_target = { !operator_keyword ~ postfix_expr }
                             // Just parse the inner postfix_expr
-                            let inner_expr = self.expect_inner(target_inner, "gate_qubit_target")?;
+                            let inner_expr =
+                                self.expect_inner(target_inner, "gate_qubit_target")?;
                             self.parse_postfix_expr(inner_expr)?
                         }
                         other => {
                             return Err(ParseError {
-                                message: format!("unexpected rule {:?}, expected gate_target", other),
+                                message: format!(
+                                    "unexpected rule {:?}, expected gate_target",
+                                    other
+                                ),
                                 location: location.clone().unwrap_or_default(),
                             });
                         }
@@ -3845,17 +3987,13 @@ impl<'a> ParserState<'a> {
 
 /// Known gate names for suggestions.
 const KNOWN_GATE_NAMES: &[&str] = &[
-    "x", "y", "z", "h", "t", "tdg", "sx", "sy", "sz", "sxdg", "sydg", "szdg",
-    "rx", "ry", "rz", "cx", "cy", "cz", "ch", "sxx", "syy", "szz",
-    "sxxdg", "syydg", "szzdg", "rzz", "crz", "swap", "iswap", "ccx",
-    "f", "fdg", "f4", "f4dg", "pz",
+    "x", "y", "z", "h", "t", "tdg", "sx", "sy", "sz", "sxdg", "sydg", "szdg", "rx", "ry", "rz",
+    "cx", "cy", "cz", "ch", "sxx", "syy", "szz", "sxxdg", "syydg", "szzdg", "rzz", "crz", "swap",
+    "iswap", "ccx", "f", "fdg", "f4", "f4dg", "pz",
 ];
 
 /// Deprecated gate name mappings.
-const DEPRECATED_GATES: &[(&str, &str)] = &[
-    ("s", "sz"),
-    ("sdg", "szdg"),
-];
+const DEPRECATED_GATES: &[(&str, &str)] = &[("s", "sz"), ("sdg", "szdg")];
 
 /// Suggest a gate name for a misspelled or deprecated gate keyword.
 pub fn suggest_gate_name(unknown: &str) -> Option<&'static str> {
@@ -3898,10 +4036,12 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
         let mut curr = vec![0usize; n + 1];
         curr[0] = i;
         for j in 1..=n {
-            let cost = if a_bytes[i - 1] == b_bytes[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + cost);
+            let cost = if a_bytes[i - 1] == b_bytes[j - 1] {
+                0
+            } else {
+                1
+            };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         prev = curr;
     }
@@ -3915,7 +4055,10 @@ pub fn parse(source: &str) -> ParseResult<Program> {
     let result = ParserState::new(source).parse();
     match &result {
         Ok(program) => {
-            log::debug!("Parsed {} top-level declarations", program.declarations.len());
+            log::debug!(
+                "Parsed {} top-level declarations",
+                program.declarations.len()
+            );
             log::trace!("AST: {:?}", program);
         }
         Err(e) => {
@@ -3932,7 +4075,11 @@ pub fn parse_file(source: &str, filename: impl Into<String>) -> ParseResult<Prog
     let result = ParserState::new(source).with_file(&filename).parse();
     match &result {
         Ok(program) => {
-            log::debug!("Parsed {} top-level declarations from '{}'", program.declarations.len(), filename);
+            log::debug!(
+                "Parsed {} top-level declarations from '{}'",
+                program.declarations.len(),
+                filename
+            );
         }
         Err(e) => {
             log::debug!("Parse error in '{}': {}", filename, e);
@@ -3991,7 +4138,10 @@ mod tests {
                 panic!("Value should be Call, got: {:?}", binding.value);
             }
         } else {
-            panic!("Should be a Binding declaration, got: {:?}", program.declarations[0]);
+            panic!(
+                "Should be a Binding declaration, got: {:?}",
+                program.declarations[0]
+            );
         }
     }
 
@@ -4049,6 +4199,10 @@ mod tests {
         let source = "fn main() -> unit { return unit; }";
         assert!(source.len() < MAX_SOURCE_SIZE);
         let result = parse(source);
-        assert!(result.is_ok(), "Expected normal source to parse: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Expected normal source to parse: {:?}",
+            result
+        );
     }
 }

@@ -23,15 +23,15 @@ use thiserror::Error;
 
 use std::io::Cursor;
 
+use tket::TketOp;
+use tket::extension::bool::bool_type;
 use tket::hugr::builder::{
     BuildError, DFGBuilder, Dataflow, DataflowHugr, DataflowSubContainer, SubContainer,
 };
 use tket::hugr::envelope::EnvelopeConfig;
 use tket::hugr::extension::prelude::qb_t;
-use tket::extension::bool::bool_type;
 use tket::hugr::types::Signature;
-use tket::hugr::{type_row, Hugr, Wire};
-use tket::TketOp;
+use tket::hugr::{Hugr, Wire, type_row};
 
 use crate::ast::{
     BinaryOp, Binding, Block, CallExpr, ElseBranch, Expr, FnDecl, IndexExpr, Program, Stmt,
@@ -195,11 +195,11 @@ fn gate_name_to_mapping(name: &str) -> Option<GateMapping> {
         "z" => Some(GateMapping::Direct(TketOp::Z)),
 
         // Square root gates (sx = sqrt(X), sy = sqrt(Y), sz = sqrt(Z))
-        "sx" => Some(GateMapping::Direct(TketOp::V)),    // V = sqrt(X)
+        "sx" => Some(GateMapping::Direct(TketOp::V)), // V = sqrt(X)
         "sxdg" => Some(GateMapping::Direct(TketOp::Vdg)),
-        "sy" => Some(GateMapping::SY),                   // sqrt(Y) = Ry(π/2)
-        "sydg" => Some(GateMapping::SYdg),               // sqrt(Y)† = Ry(-π/2)
-        "sz" => Some(GateMapping::Direct(TketOp::S)),    // S = sqrt(Z)
+        "sy" => Some(GateMapping::SY),     // sqrt(Y) = Ry(π/2)
+        "sydg" => Some(GateMapping::SYdg), // sqrt(Y)† = Ry(-π/2)
+        "sz" => Some(GateMapping::Direct(TketOp::S)), // S = sqrt(Z)
         "szdg" => Some(GateMapping::Direct(TketOp::Sdg)),
 
         // T gates (fourth root of Z)
@@ -215,9 +215,9 @@ fn gate_name_to_mapping(name: &str) -> Option<GateMapping> {
         "cx" => Some(GateMapping::Direct(TketOp::CX)),
         "cy" => Some(GateMapping::Direct(TketOp::CY)),
         "cz" => Some(GateMapping::Direct(TketOp::CZ)),
-        "ch" => Some(GateMapping::CH),                   // Controlled Hadamard (decomposed)
+        "ch" => Some(GateMapping::CH), // Controlled Hadamard (decomposed)
         "crz" => Some(GateMapping::Direct(TketOp::CRz)),
-        "rzz" => Some(GateMapping::RZZ),                 // ZZ rotation (decomposed)
+        "rzz" => Some(GateMapping::RZZ), // ZZ rotation (decomposed)
 
         // Two-qubit Ising gates (decomposed)
         "sxx" => Some(GateMapping::SXX),
@@ -506,9 +506,10 @@ impl HugrCodegen {
     /// Check if an expression is a measurement call.
     fn is_measurement_call(&self, expr: &Expr) -> bool {
         if let Expr::Call(call) = expr
-            && let Ok(name) = self.extract_call_name(&call.callee) {
-                return name.as_str() == "mz";
-            }
+            && let Ok(name) = self.extract_call_name(&call.callee)
+        {
+            return name.as_str() == "mz";
+        }
         false
     }
 
@@ -566,14 +567,15 @@ impl HugrCodegen {
             // Array of qubits: &[q[0], q[1]]
             Expr::Unary(unary) => {
                 if let crate::ast::UnaryOp::AddrOf = unary.op
-                    && let Expr::BracketArray(arr) = &unary.operand {
-                        let mut qubits = Vec::new();
-                        for elem in &arr.elements {
-                            let qubit = self.extract_qubit_ref(elem)?;
-                            qubits.push(qubit);
-                        }
-                        return Ok(qubits);
+                    && let Expr::BracketArray(arr) = &unary.operand
+                {
+                    let mut qubits = Vec::new();
+                    for elem in &arr.elements {
+                        let qubit = self.extract_qubit_ref(elem)?;
+                        qubits.push(qubit);
                     }
+                    return Ok(qubits);
+                }
                 Err(HugrError::UnsupportedExpression)
             }
             _ => Err(HugrError::UnsupportedExpression),
@@ -607,14 +609,15 @@ impl HugrCodegen {
             // Address-of array: &[q[0], q[1], q[2]]
             Expr::Unary(unary) => {
                 if let crate::ast::UnaryOp::AddrOf = unary.op
-                    && let Expr::BracketArray(arr) = &unary.operand {
-                        let mut qubits = Vec::new();
-                        for elem in &arr.elements {
-                            let qubit = self.extract_qubit_ref(elem)?;
-                            qubits.push(qubit);
-                        }
-                        return Ok(qubits);
+                    && let Expr::BracketArray(arr) = &unary.operand
+                {
+                    let mut qubits = Vec::new();
+                    for elem in &arr.elements {
+                        let qubit = self.extract_qubit_ref(elem)?;
+                        qubits.push(qubit);
                     }
+                    return Ok(qubits);
+                }
                 // Single qubit (not batch)
                 let qubit = self.extract_qubit_ref(expr)?;
                 Ok(vec![qubit])
@@ -642,14 +645,15 @@ impl HugrCodegen {
             // Address-of array: &[(q[0], q[1]), (q[2], q[3])]
             Expr::Unary(unary) => {
                 if let crate::ast::UnaryOp::AddrOf = unary.op
-                    && let Expr::BracketArray(arr) = &unary.operand {
-                        let mut pairs = Vec::new();
-                        for elem in &arr.elements {
-                            let pair = self.extract_qubit_pair(elem)?;
-                            pairs.push(pair);
-                        }
-                        return Ok(pairs);
+                    && let Expr::BracketArray(arr) = &unary.operand
+                {
+                    let mut pairs = Vec::new();
+                    for elem in &arr.elements {
+                        let pair = self.extract_qubit_pair(elem)?;
+                        pairs.push(pair);
                     }
+                    return Ok(pairs);
+                }
                 Err(HugrError::UnsupportedExpression)
             }
             // Single pair (not batch) - could be tuple or two separate args
@@ -696,7 +700,8 @@ impl HugrCodegen {
             }
             Stmt::If(if_stmt) => {
                 // Check if the condition is a classical variable (from measurement)
-                if let Some(condition_var) = self.try_extract_classical_condition(&if_stmt.condition)
+                if let Some(condition_var) =
+                    self.try_extract_classical_condition(&if_stmt.condition)
                 {
                     // Collect operations for both branches separately
                     let then_ops = self.collect_block_ops(&if_stmt.then_body)?;
@@ -732,9 +737,10 @@ impl HugrCodegen {
     /// Returns Some(var_name) if the condition is a simple reference to a classical variable.
     fn try_extract_classical_condition(&self, expr: &Expr) -> Option<String> {
         if let Expr::Ident(ident) = expr
-            && self.classical_vars.contains(&ident.name) {
-                return Some(ident.name.clone());
-            }
+            && self.classical_vars.contains(&ident.name)
+        {
+            return Some(ident.name.clone());
+        }
         None
     }
 
@@ -820,7 +826,10 @@ impl HugrCodegen {
                 let qubit_args = &call.args[qubit_start..];
 
                 // Single-qubit gate with batch: h([q[0], q[1]) or h(&[q[0], q[1]])
-                if qubit_count == 1 && qubit_args.len() == 1 && self.is_batch_literal(&qubit_args[0]) {
+                if qubit_count == 1
+                    && qubit_args.len() == 1
+                    && self.is_batch_literal(&qubit_args[0])
+                {
                     let targets = self.extract_batch_single_targets(&qubit_args[0])?;
                     for qubit in targets {
                         self.operations.push(GateOp::Direct {
@@ -833,7 +842,10 @@ impl HugrCodegen {
                 }
 
                 // Two-qubit gate with batch: cx({(q[0], q[1])}) or cx(&[(q[0], q[1])])
-                if qubit_count == 2 && qubit_args.len() == 1 && self.is_batch_literal(&qubit_args[0]) {
+                if qubit_count == 2
+                    && qubit_args.len() == 1
+                    && self.is_batch_literal(&qubit_args[0])
+                {
                     let pairs = self.extract_batch_pair_targets(&qubit_args[0])?;
                     for (qubit_a, qubit_b) in pairs {
                         self.operations.push(GateOp::Direct {
@@ -1373,13 +1385,15 @@ impl HugrCodegen {
                     let qubits = self.extract_measurement_targets(target_arg)?;
                     for qubit in qubits {
                         let result_var = format!("__measure_{}", self.operations.len());
-                        self.operations.push(GateOp::MidMeasure { qubit, result_var });
+                        self.operations
+                            .push(GateOp::MidMeasure { qubit, result_var });
                     }
                 } else if call.args.len() == 1 {
                     // Legacy syntax: mz(qubit)
                     let qubit = self.extract_qubit_ref(&call.args[0])?;
                     let result_var = format!("__measure_{}", self.operations.len());
-                    self.operations.push(GateOp::MidMeasure { qubit, result_var });
+                    self.operations
+                        .push(GateOp::MidMeasure { qubit, result_var });
                 } else {
                     return Err(HugrError::WrongArgumentCount {
                         gate: name,
@@ -1413,11 +1427,13 @@ impl HugrCodegen {
         if let Expr::Call(call) = expr {
             // Check for method call pattern: expr.child(n)
             if let Expr::Field(field) = &call.callee
-                && field.field == "child" && call.args.len() == 1 {
-                    let parent = self.extract_identifier(&field.object).ok()?;
-                    let size = self.extract_integer(&call.args[0]).ok()?;
-                    return Some((parent, size));
-                }
+                && field.field == "child"
+                && call.args.len() == 1
+            {
+                let parent = self.extract_identifier(&field.object).ok()?;
+                let size = self.extract_integer(&call.args[0]).ok()?;
+                return Some((parent, size));
+            }
         }
         None
     }
@@ -1453,12 +1469,12 @@ impl HugrCodegen {
         let idx = self.extract_integer(&index.index)?;
 
         // Validate the allocator exists
-        let alloc = self
-            .allocators
-            .get(&allocator)
-            .ok_or_else(|| HugrError::AllocatorNotFound {
-                name: allocator.clone(),
-            })?;
+        let alloc =
+            self.allocators
+                .get(&allocator)
+                .ok_or_else(|| HugrError::AllocatorNotFound {
+                    name: allocator.clone(),
+                })?;
 
         // Validate index is in bounds
         if idx >= alloc.capacity {
@@ -1522,8 +1538,8 @@ impl HugrCodegen {
         let signature = Signature::new(vec![], bool_row);
 
         // Create builder
-        let mut builder = DFGBuilder::new(signature)
-            .map_err(|e| HugrError::BuilderError(e.to_string()))?;
+        let mut builder =
+            DFGBuilder::new(signature).map_err(|e| HugrError::BuilderError(e.to_string()))?;
 
         // Allocate qubits using QAlloc
         let mut qubit_wires: BTreeMap<QubitRef, Wire> = BTreeMap::new();
@@ -1536,7 +1552,9 @@ impl HugrCodegen {
                     .map_err(|e| HugrError::BuilderError(e.to_string()))?
                     .outputs()
                     .next()
-                    .ok_or_else(|| HugrError::BuilderError("QAlloc produced no output".to_string()))?;
+                    .ok_or_else(|| {
+                        HugrError::BuilderError("QAlloc produced no output".to_string())
+                    })?;
                 qubit_wires.insert(qubit_ref, qalloc_wire);
             }
         }
@@ -1546,7 +1564,12 @@ impl HugrCodegen {
 
         // Apply operations
         for gate_op in &self.operations {
-            self.apply_gate(&mut builder, &mut qubit_wires, &mut classical_wires, gate_op)?;
+            self.apply_gate(
+                &mut builder,
+                &mut qubit_wires,
+                &mut classical_wires,
+                gate_op,
+            )?;
         }
 
         // Measure and free all qubits using MeasureFree, collect bool results
@@ -1630,9 +1653,27 @@ impl HugrCodegen {
 
             GateOp::ISwap { qubit_a, qubit_b } => {
                 // iSWAP decomposition: S(a) S(b) H(a) CX(a,b) CX(b,a) H(b)
-                self.apply_direct_gate(builder, qubit_wires, TketOp::S, std::slice::from_ref(qubit_a), None)?;
-                self.apply_direct_gate(builder, qubit_wires, TketOp::S, std::slice::from_ref(qubit_b), None)?;
-                self.apply_direct_gate(builder, qubit_wires, TketOp::H, std::slice::from_ref(qubit_a), None)?;
+                self.apply_direct_gate(
+                    builder,
+                    qubit_wires,
+                    TketOp::S,
+                    std::slice::from_ref(qubit_a),
+                    None,
+                )?;
+                self.apply_direct_gate(
+                    builder,
+                    qubit_wires,
+                    TketOp::S,
+                    std::slice::from_ref(qubit_b),
+                    None,
+                )?;
+                self.apply_direct_gate(
+                    builder,
+                    qubit_wires,
+                    TketOp::H,
+                    std::slice::from_ref(qubit_a),
+                    None,
+                )?;
                 self.apply_direct_gate(
                     builder,
                     qubit_wires,
@@ -1647,17 +1688,24 @@ impl HugrCodegen {
                     &[qubit_b.clone(), qubit_a.clone()],
                     None,
                 )?;
-                self.apply_direct_gate(builder, qubit_wires, TketOp::H, std::slice::from_ref(qubit_b), None)?;
+                self.apply_direct_gate(
+                    builder,
+                    qubit_wires,
+                    TketOp::H,
+                    std::slice::from_ref(qubit_b),
+                    None,
+                )?;
             }
 
             GateOp::MidMeasure { qubit, result_var } => {
                 // Mid-circuit measurement: Measure keeps the qubit alive
-                let wire = qubit_wires
-                    .get(qubit)
-                    .copied()
-                    .ok_or_else(|| HugrError::UndefinedQubit {
-                        name: format!("{}[{}]", qubit.allocator, qubit.index),
-                    })?;
+                let wire =
+                    qubit_wires
+                        .get(qubit)
+                        .copied()
+                        .ok_or_else(|| HugrError::UndefinedQubit {
+                            name: format!("{}[{}]", qubit.allocator, qubit.index),
+                        })?;
 
                 // Measure produces (qubit, bool)
                 let outputs: Vec<Wire> = builder
@@ -1683,13 +1731,13 @@ impl HugrCodegen {
                 else_ops,
             } => {
                 // Get the classical condition wire
-                let condition_wire = classical_wires
-                    .get(condition_var)
-                    .copied()
-                    .ok_or_else(|| HugrError::BuilderError(format!(
-                        "Classical variable '{}' not found for conditional",
-                        condition_var
-                    )))?;
+                let condition_wire =
+                    classical_wires.get(condition_var).copied().ok_or_else(|| {
+                        HugrError::BuilderError(format!(
+                            "Classical variable '{}' not found for conditional",
+                            condition_var
+                        ))
+                    })?;
 
                 // Collect all qubits used in both branches
                 let mut used_qubits: Vec<QubitRef> = Vec::new();
@@ -1748,14 +1796,17 @@ impl HugrCodegen {
 
                     // Apply else operations
                     for op in else_ops {
-                        self.apply_gate_in_case(&mut case0, &mut branch_qubit_wires, &mut branch_classical_wires, op)?;
+                        self.apply_gate_in_case(
+                            &mut case0,
+                            &mut branch_qubit_wires,
+                            &mut branch_classical_wires,
+                            op,
+                        )?;
                     }
 
                     // Collect output wires in the same order as used_qubits
-                    let output_wires: Vec<Wire> = used_qubits
-                        .iter()
-                        .map(|q| branch_qubit_wires[q])
-                        .collect();
+                    let output_wires: Vec<Wire> =
+                        used_qubits.iter().map(|q| branch_qubit_wires[q]).collect();
 
                     case0
                         .finish_with_outputs(output_wires)
@@ -1779,14 +1830,17 @@ impl HugrCodegen {
 
                     // Apply then operations
                     for op in then_ops {
-                        self.apply_gate_in_case(&mut case1, &mut branch_qubit_wires, &mut branch_classical_wires, op)?;
+                        self.apply_gate_in_case(
+                            &mut case1,
+                            &mut branch_qubit_wires,
+                            &mut branch_classical_wires,
+                            op,
+                        )?;
                     }
 
                     // Collect output wires in the same order as used_qubits
-                    let output_wires: Vec<Wire> = used_qubits
-                        .iter()
-                        .map(|q| branch_qubit_wires[q])
-                        .collect();
+                    let output_wires: Vec<Wire> =
+                        used_qubits.iter().map(|q| branch_qubit_wires[q]).collect();
 
                     case1
                         .finish_with_outputs(output_wires)
@@ -1824,9 +1878,7 @@ impl HugrCodegen {
                 }
                 GateOp::MidMeasure { qubit, .. } => qubits.push(qubit.clone()),
                 GateOp::Conditional {
-                    then_ops,
-                    else_ops,
-                    ..
+                    then_ops, else_ops, ..
                 } => {
                     self.collect_used_qubits(then_ops, qubits);
                     self.collect_used_qubits(else_ops, qubits);
@@ -1942,12 +1994,13 @@ impl HugrCodegen {
             }
 
             GateOp::MidMeasure { qubit, result_var } => {
-                let wire = qubit_wires
-                    .get(qubit)
-                    .copied()
-                    .ok_or_else(|| HugrError::UndefinedQubit {
-                        name: format!("{}[{}]", qubit.allocator, qubit.index),
-                    })?;
+                let wire =
+                    qubit_wires
+                        .get(qubit)
+                        .copied()
+                        .ok_or_else(|| HugrError::UndefinedQubit {
+                            name: format!("{}[{}]", qubit.allocator, qubit.index),
+                        })?;
 
                 let outputs: Vec<Wire> = builder
                     .add_dataflow_op(TketOp::Measure, vec![wire])
@@ -2188,8 +2241,16 @@ mod tests {
 
         assert!(result.is_err(), "Expected QubitIndexOutOfBounds error");
         assert!(
-            matches!(result, Err(crate::semantic::SemanticError::QubitIndexOutOfBounds { index: 5, capacity: 2, .. })),
-            "Expected QubitIndexOutOfBounds error, got: {:?}", result
+            matches!(
+                result,
+                Err(crate::semantic::SemanticError::QubitIndexOutOfBounds {
+                    index: 5,
+                    capacity: 2,
+                    ..
+                })
+            ),
+            "Expected QubitIndexOutOfBounds error, got: {:?}",
+            result
         );
     }
 

@@ -675,7 +675,10 @@ fn recursion_rejected_even_permissive() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new_permissive();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Recursion should be rejected even in permissive mode");
+    assert!(
+        result.is_err(),
+        "Recursion should be rejected even in permissive mode"
+    );
 }
 
 // =============================================================================
@@ -743,21 +746,25 @@ fn unclosed_paren_rejected() {
     ];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Unclosed paren should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Unclosed paren should be rejected: {}",
+            input
+        );
     }
 }
 
 /// Unclosed brackets should fail to parse.
 #[test]
 fn unclosed_bracket_rejected() {
-    let inputs = [
-        "x := [1, 2, 3;",
-        "x := a[0;",
-        "x: [4]u8 = [1, 2;",
-    ];
+    let inputs = ["x := [1, 2, 3;", "x := a[0;", "x: [4]u8 = [1, 2;"];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Unclosed bracket should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Unclosed bracket should be rejected: {}",
+            input
+        );
     }
 }
 
@@ -771,18 +778,28 @@ fn unclosed_brace_rejected() {
     ];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Unclosed brace should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Unclosed brace should be rejected: {}",
+            input
+        );
     }
 }
 
 /// Reserved keywords as identifiers should fail.
 #[test]
 fn keyword_as_identifier_rejected() {
-    let keywords = ["fn", "if", "else", "for", "return", "struct", "enum", "true", "false"];
+    let keywords = [
+        "fn", "if", "else", "for", "return", "struct", "enum", "true", "false",
+    ];
     for kw in keywords {
         let source = format!("{} := 42;", kw);
         let result = zlup::parse(&source);
-        assert!(result.is_err(), "Keyword '{}' as identifier should be rejected", kw);
+        assert!(
+            result.is_err(),
+            "Keyword '{}' as identifier should be rejected",
+            kw
+        );
     }
 }
 
@@ -790,14 +807,18 @@ fn keyword_as_identifier_rejected() {
 #[test]
 fn invalid_number_literal_rejected() {
     let inputs = [
-        "x := 0x;",      // hex with no digits
-        "x := 0b;",      // binary with no digits
-        "x := 0o;",      // octal with no digits
-        "x := 1.;",      // trailing dot with no fraction
+        "x := 0x;", // hex with no digits
+        "x := 0b;", // binary with no digits
+        "x := 0o;", // octal with no digits
+        "x := 1.;", // trailing dot with no fraction
     ];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Invalid number literal should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Invalid number literal should be rejected: {}",
+            input
+        );
     }
 }
 
@@ -814,19 +835,26 @@ fn deprecated_measurement_syntax_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Deprecated mz(type, target) syntax should be rejected");
+    assert!(
+        result.is_err(),
+        "Deprecated mz(type, target) syntax should be rejected"
+    );
 }
 
 /// Empty function body is valid but missing semicolon is not.
 #[test]
 fn missing_semicolon_rejected() {
     let inputs = [
-        "x := 42",           // missing semicolon on binding
-        "fn foo() -> u32 { return 42 }",  // missing semicolon on return
+        "x := 42",                       // missing semicolon on binding
+        "fn foo() -> u32 { return 42 }", // missing semicolon on return
     ];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Missing semicolon should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Missing semicolon should be rejected: {}",
+            input
+        );
     }
 }
 
@@ -848,7 +876,10 @@ fn batch_gate_wrong_element_arity_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "H gate with tuple elements should be rejected");
+    assert!(
+        result.is_err(),
+        "H gate with tuple elements should be rejected"
+    );
 }
 
 /// CX batch with single qubits instead of pairs should be rejected.
@@ -865,7 +896,10 @@ fn batch_cx_wrong_element_type_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "CX gate with single qubit elements should be rejected");
+    assert!(
+        result.is_err(),
+        "CX gate with single qubit elements should be rejected"
+    );
 }
 
 /// Using a non-qubit type where qubit is expected should be rejected.
@@ -947,7 +981,10 @@ fn duplicate_qubit_in_tick_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Same qubit used twice in tick should be rejected");
+    assert!(
+        result.is_err(),
+        "Same qubit used twice in tick should be rejected"
+    );
 }
 
 /// Catch on non-error type should be rejected.
@@ -962,7 +999,10 @@ fn catch_on_non_error_type_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Catch on non-error type should be rejected");
+    assert!(
+        result.is_err(),
+        "Catch on non-error type should be rejected"
+    );
 }
 
 /// Array index with non-integer should be rejected.
@@ -977,7 +1017,10 @@ fn array_index_non_integer_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Array index with boolean should be rejected");
+    assert!(
+        result.is_err(),
+        "Array index with boolean should be rejected"
+    );
 }
 
 /// Field access on non-struct should be rejected.
@@ -992,7 +1035,10 @@ fn field_access_on_non_struct_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Field access on integer should be rejected");
+    assert!(
+        result.is_err(),
+        "Field access on integer should be rejected"
+    );
 }
 
 /// Accessing undefined struct field should be rejected.
@@ -1011,7 +1057,10 @@ fn undefined_struct_field_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Accessing undefined field should be rejected");
+    assert!(
+        result.is_err(),
+        "Accessing undefined field should be rejected"
+    );
 }
 
 /// Duplicate struct field in initialization should be rejected.
@@ -1029,7 +1078,10 @@ fn duplicate_struct_field_init_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Duplicate field in struct init should be rejected");
+    assert!(
+        result.is_err(),
+        "Duplicate field in struct init should be rejected"
+    );
 }
 
 /// Binary operation with incompatible types should be rejected.
@@ -1075,7 +1127,10 @@ fn return_value_from_unit_function_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Returning value from unit function should be rejected");
+    assert!(
+        result.is_err(),
+        "Returning value from unit function should be rejected"
+    );
 }
 
 /// Wrong type in struct field initialization should be rejected.
@@ -1110,7 +1165,10 @@ fn qubit_already_prepared_rejected() {
     let mut analyzer = SemanticAnalyzer::new();
     analyzer.set_strict_mode(true);
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Double prepare should be rejected in strict mode");
+    assert!(
+        result.is_err(),
+        "Double prepare should be rejected in strict mode"
+    );
 }
 
 /// Duplicate qubit in measurement should be rejected.
@@ -1126,7 +1184,10 @@ fn duplicate_qubit_in_measurement_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Duplicate qubit in measurement should be rejected");
+    assert!(
+        result.is_err(),
+        "Duplicate qubit in measurement should be rejected"
+    );
 }
 
 /// Measurement size mismatch should be rejected.
@@ -1142,7 +1203,10 @@ fn measurement_size_mismatch_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Measurement size mismatch should be rejected");
+    assert!(
+        result.is_err(),
+        "Measurement size mismatch should be rejected"
+    );
 }
 
 /// Using orelse on non-optional should be rejected.
@@ -1171,7 +1235,10 @@ fn empty_array_no_type_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Empty array without type should be rejected");
+    assert!(
+        result.is_err(),
+        "Empty array without type should be rejected"
+    );
 }
 
 /// For loop with non-iterable should be rejected.
@@ -1201,7 +1268,10 @@ fn comparison_type_mismatch_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Comparing int to string should be rejected");
+    assert!(
+        result.is_err(),
+        "Comparing int to string should be rejected"
+    );
 }
 
 /// If condition must be boolean.
@@ -1217,7 +1287,10 @@ fn if_non_boolean_condition_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "If with integer condition should be rejected");
+    assert!(
+        result.is_err(),
+        "If with integer condition should be rejected"
+    );
 }
 
 // =============================================================================
@@ -1228,12 +1301,16 @@ fn if_non_boolean_condition_rejected() {
 #[test]
 fn invalid_string_escape_rejected() {
     let inputs = [
-        r#"x := "\q";"#,      // \q is not a valid escape
-        r#"x := "\u1234";"#,  // \u is not supported (use \x)
+        r#"x := "\q";"#,     // \q is not a valid escape
+        r#"x := "\u1234";"#, // \u is not supported (use \x)
     ];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Invalid escape should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Invalid escape should be rejected: {}",
+            input
+        );
     }
 }
 
@@ -1241,12 +1318,16 @@ fn invalid_string_escape_rejected() {
 #[test]
 fn missing_separator_rejected() {
     let inputs = [
-        "x := 1 y := 2;",     // missing semicolon between statements
-        "fn foo() {} bar",    // junk after function
+        "x := 1 y := 2;",  // missing semicolon between statements
+        "fn foo() {} bar", // junk after function
     ];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Missing separator should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Missing separator should be rejected: {}",
+            input
+        );
     }
 }
 
@@ -1254,13 +1335,17 @@ fn missing_separator_rejected() {
 #[test]
 fn invalid_type_syntax_rejected() {
     let inputs = [
-        "x: [;",              // incomplete array type
-        "x: *;",              // pointer to nothing
-        "x: ?;",              // optional of nothing
+        "x: [;", // incomplete array type
+        "x: *;", // pointer to nothing
+        "x: ?;", // optional of nothing
     ];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Invalid type should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Invalid type should be rejected: {}",
+            input
+        );
     }
 }
 
@@ -1268,13 +1353,17 @@ fn invalid_type_syntax_rejected() {
 #[test]
 fn invalid_param_syntax_rejected() {
     let inputs = [
-        "fn foo(,) {}",           // just a comma
-        "fn foo(x:) {}",          // missing type
-        "fn foo(: i32) {}",       // missing name
+        "fn foo(,) {}",     // just a comma
+        "fn foo(x:) {}",    // missing type
+        "fn foo(: i32) {}", // missing name
     ];
     for input in inputs {
         let result = zlup::parse(input);
-        assert!(result.is_err(), "Invalid param should be rejected: {}", input);
+        assert!(
+            result.is_err(),
+            "Invalid param should be rejected: {}",
+            input
+        );
     }
 }
 
@@ -1312,7 +1401,10 @@ fn zero_array_access_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Accessing element of zero-size array should be rejected");
+    assert!(
+        result.is_err(),
+        "Accessing element of zero-size array should be rejected"
+    );
 }
 
 /// Using undefined label with break should be rejected.
@@ -1328,7 +1420,10 @@ fn undefined_break_label_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Break with undefined label should be rejected");
+    assert!(
+        result.is_err(),
+        "Break with undefined label should be rejected"
+    );
 }
 
 /// Assigning to a constant/comptime value should be rejected.
@@ -1343,7 +1438,10 @@ fn assign_to_comptime_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Assigning to comptime value should be rejected");
+    assert!(
+        result.is_err(),
+        "Assigning to comptime value should be rejected"
+    );
 }
 
 /// Division by zero at comptime should be rejected.
@@ -1358,7 +1456,10 @@ fn comptime_division_by_zero_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Comptime division by zero should be rejected");
+    assert!(
+        result.is_err(),
+        "Comptime division by zero should be rejected"
+    );
 }
 
 /// Invalid unary operator application should be rejected.
@@ -1374,7 +1475,11 @@ fn invalid_unary_op_rejected() {
         let program = zlup::parse(&wrapped).expect("Should parse");
         let mut analyzer = SemanticAnalyzer::new();
         let result = analyzer.analyze(&program);
-        assert!(result.is_err(), "Invalid unary op {} should be rejected", desc);
+        assert!(
+            result.is_err(),
+            "Invalid unary op {} should be rejected",
+            desc
+        );
     }
 }
 
@@ -1390,7 +1495,10 @@ fn deref_non_pointer_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Dereferencing non-pointer should be rejected");
+    assert!(
+        result.is_err(),
+        "Dereferencing non-pointer should be rejected"
+    );
 }
 
 /// Taking address of a literal should be rejected.
@@ -1445,7 +1553,10 @@ fn gate_wrong_param_type_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Gate with string parameter should be rejected");
+    assert!(
+        result.is_err(),
+        "Gate with string parameter should be rejected"
+    );
 }
 
 /// Enum variant that doesn't exist should be rejected.
@@ -1474,7 +1585,10 @@ fn type_as_value_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Using type in arithmetic should be rejected");
+    assert!(
+        result.is_err(),
+        "Using type in arithmetic should be rejected"
+    );
 }
 
 /// Bitwise operations on floats should be rejected.
@@ -1530,7 +1644,10 @@ fn switch_duplicate_bool_case_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Duplicate bool switch case should be rejected");
+    assert!(
+        result.is_err(),
+        "Duplicate bool switch case should be rejected"
+    );
 }
 
 /// Switch with duplicate string cases should be rejected.
@@ -1550,7 +1667,10 @@ fn switch_duplicate_string_case_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Duplicate string switch case should be rejected");
+    assert!(
+        result.is_err(),
+        "Duplicate string switch case should be rejected"
+    );
 }
 
 /// Switch with unique cases should be allowed.
@@ -1571,7 +1691,11 @@ fn switch_unique_cases_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Switch with unique cases should be allowed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Switch with unique cases should be allowed: {:?}",
+        result
+    );
 }
 
 /// Missing struct fields in initialization should be rejected.
@@ -1610,7 +1734,11 @@ fn log_standard_levels_parse() {
         }
     "#;
     let result = zlup::parse(source);
-    assert!(result.is_ok(), "Standard log levels should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Standard log levels should parse: {:?}",
+        result.err()
+    );
 }
 
 /// Log with sub-namespace should parse correctly.
@@ -1624,7 +1752,11 @@ fn log_with_namespace_parses() {
         }
     "#;
     let result = zlup::parse(source);
-    assert!(result.is_ok(), "Log with namespace should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Log with namespace should parse: {:?}",
+        result.err()
+    );
 }
 
 /// Bare log.info without @emit prefix is parsed as method call (not channel).
@@ -1642,7 +1774,10 @@ fn bare_log_not_channel() {
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
     // Semantic analysis should fail because `log` is not defined
-    assert!(result.is_err(), "Undefined variable 'log' should cause semantic error");
+    assert!(
+        result.is_err(),
+        "Undefined variable 'log' should cause semantic error"
+    );
 }
 
 /// Log with data parameter should parse correctly.
@@ -1657,7 +1792,11 @@ fn log_with_data_parses() {
         }
     "#;
     let result = zlup::parse(source);
-    assert!(result.is_ok(), "Log with data should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Log with data should parse: {:?}",
+        result.err()
+    );
 }
 
 /// Custom log level with @emit.log.at should parse correctly.
@@ -1671,7 +1810,11 @@ fn log_custom_level_parses() {
         }
     "#;
     let result = zlup::parse(source);
-    assert!(result.is_ok(), "Custom log level should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Custom log level should parse: {:?}",
+        result.err()
+    );
 }
 
 /// Log expressions should pass semantic analysis.
@@ -1692,7 +1835,11 @@ fn log_passes_semantic_analysis() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Log expressions should pass semantic analysis: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Log expressions should pass semantic analysis: {:?}",
+        result.err()
+    );
 }
 
 /// Log with f-string interpolation should work.
@@ -1709,7 +1856,11 @@ fn log_fstring_interpolation_works() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Log with f-string interpolation should work: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Log with f-string interpolation should work: {:?}",
+        result.err()
+    );
 }
 
 /// Log SLR codegen should emit LogStmt nodes.
@@ -1728,9 +1879,18 @@ fn log_slr_codegen_emits_log_stmt() {
     let slr_program = codegen.compile(&program).expect("Should compile");
     let json = codegen.to_json(&slr_program).expect("Should serialize");
 
-    assert!(json.contains("LogStmt"), "SLR output should contain LogStmt");
-    assert!(json.contains("debug"), "SLR output should contain log level");
-    assert!(json.contains("test message"), "SLR output should contain message");
+    assert!(
+        json.contains("LogStmt"),
+        "SLR output should contain LogStmt"
+    );
+    assert!(
+        json.contains("debug"),
+        "SLR output should contain log level"
+    );
+    assert!(
+        json.contains("test message"),
+        "SLR output should contain message"
+    );
 }
 
 /// Log SLR codegen should handle namespaces.
@@ -1750,7 +1910,10 @@ fn log_slr_codegen_handles_namespace() {
     let slr_program = codegen.compile(&program).expect("Should compile");
     let json = codegen.to_json(&slr_program).expect("Should serialize");
 
-    assert!(json.contains("testmod::myns"), "SLR output should contain combined namespace");
+    assert!(
+        json.contains("testmod::myns"),
+        "SLR output should contain combined namespace"
+    );
 }
 
 /// Log elision in release mode should remove all logs.
@@ -1773,14 +1936,17 @@ fn log_elision_release_removes_all() {
     let slr_program = codegen.compile(&program).expect("Should compile");
     let json = codegen.to_json(&slr_program).expect("Should serialize");
 
-    assert!(!json.contains("LogStmt"), "Release mode should elide all logs");
+    assert!(
+        !json.contains("LogStmt"),
+        "Release mode should elide all logs"
+    );
 }
 
 /// Log elision with custom level should filter appropriately.
 #[test]
 fn log_elision_custom_level_filters() {
-    use zlup::codegen::slr::LogElisionLevel;
     use zlup::codegen::SlrCodegen;
+    use zlup::codegen::slr::LogElisionLevel;
 
     let source = r#"
         pub fn main() -> unit {
@@ -1958,9 +2124,21 @@ fn result_generates_slr() {
     let json = codegen.to_json(&slr).expect("Should serialize");
 
     // Verify SendStmt with channel "result" is in output
-    assert!(json.contains("SendStmt"), "Should contain SendStmt: {}", json);
-    assert!(json.contains("\"channel\": \"result\""), "Should have result channel: {}", json);
-    assert!(json.contains("\"key\": \"answer\""), "Should contain key: {}", json);
+    assert!(
+        json.contains("SendStmt"),
+        "Should contain SendStmt: {}",
+        json
+    );
+    assert!(
+        json.contains("\"channel\": \"result\""),
+        "Should have result channel: {}",
+        json
+    );
+    assert!(
+        json.contains("\"key\": \"answer\""),
+        "Should contain key: {}",
+        json
+    );
 }
 
 /// Sim commands should generate SendStmt with channel "sim" for simulator target.
@@ -1983,16 +2161,32 @@ fn sim_generates_slr_for_simulator() {
     let json = codegen.to_json(&slr).expect("Should serialize");
 
     // Verify SendStmt with channel "sim" is in output
-    assert!(json.contains("SendStmt"), "Should contain SendStmt: {}", json);
-    assert!(json.contains("\"channel\": \"sim\""), "Should have sim channel: {}", json);
-    assert!(json.contains("\"key\": \"noise_enable\""), "Should contain noise_enable: {}", json);
-    assert!(json.contains("\"key\": \"seed\""), "Should contain seed key: {}", json);
+    assert!(
+        json.contains("SendStmt"),
+        "Should contain SendStmt: {}",
+        json
+    );
+    assert!(
+        json.contains("\"channel\": \"sim\""),
+        "Should have sim channel: {}",
+        json
+    );
+    assert!(
+        json.contains("\"key\": \"noise_enable\""),
+        "Should contain noise_enable: {}",
+        json
+    );
+    assert!(
+        json.contains("\"key\": \"seed\""),
+        "Should contain seed key: {}",
+        json
+    );
 }
 
 /// Sim commands should emit barriers for hardware target (default).
 #[test]
 fn sim_emits_barrier_for_hardware() {
-    use zlup::codegen::slr::{SlrCodegen, SimMode};
+    use zlup::codegen::slr::{SimMode, SlrCodegen};
 
     let source = r#"
         pub fn main() -> unit {
@@ -2008,14 +2202,22 @@ fn sim_emits_barrier_for_hardware() {
     let json = codegen.to_json(&slr).expect("Should serialize");
 
     // Verify sim SendStmt is NOT in output, but BarrierOp IS
-    assert!(!json.contains("\"channel\": \"sim\""), "Should NOT contain sim channel for hardware: {}", json);
-    assert!(json.contains("BarrierOp"), "Should contain BarrierOp for ordering: {}", json);
+    assert!(
+        !json.contains("\"channel\": \"sim\""),
+        "Should NOT contain sim channel for hardware: {}",
+        json
+    );
+    assert!(
+        json.contains("BarrierOp"),
+        "Should contain BarrierOp for ordering: {}",
+        json
+    );
 }
 
 /// Sim commands can be completely elided with explicit opt-in.
 #[test]
 fn sim_fully_elided_when_requested() {
-    use zlup::codegen::slr::{SlrCodegen, SimMode};
+    use zlup::codegen::slr::{SimMode, SlrCodegen};
 
     let source = r#"
         pub fn main() -> unit {
@@ -2031,14 +2233,22 @@ fn sim_fully_elided_when_requested() {
     let json = codegen.to_json(&slr).expect("Should serialize");
 
     // Verify neither sim SendStmt nor BarrierOp in output
-    assert!(!json.contains("\"channel\": \"sim\""), "Should NOT contain sim channel: {}", json);
-    assert!(!json.contains("BarrierOp"), "Should NOT contain BarrierOp: {}", json);
+    assert!(
+        !json.contains("\"channel\": \"sim\""),
+        "Should NOT contain sim channel: {}",
+        json
+    );
+    assert!(
+        !json.contains("BarrierOp"),
+        "Should NOT contain BarrierOp: {}",
+        json
+    );
 }
 
 /// Sim barrier is scoped to allocators in current scope.
 #[test]
 fn sim_barrier_is_scoped_to_allocators() {
-    use zlup::codegen::slr::{SlrCodegen, SimMode};
+    use zlup::codegen::slr::{SimMode, SlrCodegen};
 
     let source = r#"
         pub fn main() -> unit {
@@ -2055,15 +2265,27 @@ fn sim_barrier_is_scoped_to_allocators() {
     let json = codegen.to_json(&slr).expect("Should serialize");
 
     // Verify BarrierOp includes the allocator "q"
-    assert!(json.contains("BarrierOp"), "Should contain BarrierOp: {}", json);
-    assert!(json.contains("\"allocators\""), "Should have allocators field: {}", json);
-    assert!(json.contains("\"q\""), "Should include allocator 'q': {}", json);
+    assert!(
+        json.contains("BarrierOp"),
+        "Should contain BarrierOp: {}",
+        json
+    );
+    assert!(
+        json.contains("\"allocators\""),
+        "Should have allocators field: {}",
+        json
+    );
+    assert!(
+        json.contains("\"q\""),
+        "Should include allocator 'q': {}",
+        json
+    );
 }
 
 /// Result is NEVER elided, even with full log elision in release mode.
 #[test]
 fn result_never_elided_in_release() {
-    use zlup::codegen::slr::{SlrCodegen, SimMode};
+    use zlup::codegen::slr::{SimMode, SlrCodegen};
 
     let source = r#"
         pub fn main() -> unit {
@@ -2085,11 +2307,27 @@ fn result_never_elided_in_release() {
     // Log should be elided
     assert!(!json.contains("LogStmt"), "Log should be elided: {}", json);
     // Sim should be elided
-    assert!(!json.contains("\"channel\": \"sim\""), "Sim should be elided: {}", json);
+    assert!(
+        !json.contains("\"channel\": \"sim\""),
+        "Sim should be elided: {}",
+        json
+    );
     // Result should ALWAYS be present
-    assert!(json.contains("SendStmt"), "Result should be present: {}", json);
-    assert!(json.contains("\"channel\": \"result\""), "Result channel should be present: {}", json);
-    assert!(json.contains("\"key\": \"answer\""), "Result key should be present: {}", json);
+    assert!(
+        json.contains("SendStmt"),
+        "Result should be present: {}",
+        json
+    );
+    assert!(
+        json.contains("\"channel\": \"result\""),
+        "Result channel should be present: {}",
+        json
+    );
+    assert!(
+        json.contains("\"key\": \"answer\""),
+        "Result key should be present: {}",
+        json
+    );
 }
 
 /// All three channels work together in a realistic program.
@@ -2122,16 +2360,30 @@ fn all_channels_together() {
     "#;
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new_permissive();
-    analyzer.analyze(&program).expect("Should pass semantic analysis");
+    analyzer
+        .analyze(&program)
+        .expect("Should pass semantic analysis");
 
     let mut codegen = SlrCodegen::new();
     let slr = codegen.compile(&program).expect("Should compile");
     let json = codegen.to_json(&slr).expect("Should serialize");
 
     // All three channel types should be present
-    assert!(json.contains("LogStmt"), "Should have log statements: {}", json);
-    assert!(json.contains("\"channel\": \"result\""), "Should have result channel: {}", json);
-    assert!(json.contains("\"channel\": \"sim\""), "Should have sim channel: {}", json);
+    assert!(
+        json.contains("LogStmt"),
+        "Should have log statements: {}",
+        json
+    );
+    assert!(
+        json.contains("\"channel\": \"result\""),
+        "Should have result channel: {}",
+        json
+    );
+    assert!(
+        json.contains("\"channel\": \"sim\""),
+        "Should have sim channel: {}",
+        json
+    );
 }
 
 // =============================================================================
@@ -2167,7 +2419,11 @@ fn swap_builtin_semantic_analysis() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new_permissive();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "@swap should pass semantic analysis: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "@swap should pass semantic analysis: {:?}",
+        result.err()
+    );
 }
 
 /// @swap with wrong number of arguments should fail.
@@ -2244,7 +2500,8 @@ fn return_reference_to_local_rejected() {
     let err = result.unwrap_err();
     assert!(
         format!("{}", err).contains("local variable"),
-        "Error should mention local variable: {}", err
+        "Error should mention local variable: {}",
+        err
     );
 }
 
@@ -2261,7 +2518,10 @@ fn return_reference_to_local_rejected_permissive() {
     let mut analyzer = SemanticAnalyzer::new_permissive();
     let result = analyzer.analyze(&program);
     // Safe-by-constraint: no escape hatch for returning dangling references
-    assert!(result.is_err(), "Returning reference to local should fail even in permissive mode");
+    assert!(
+        result.is_err(),
+        "Returning reference to local should fail even in permissive mode"
+    );
 }
 
 /// Returning a parameter reference should be allowed (caller owns the data).
@@ -2275,7 +2535,11 @@ fn return_reference_to_param_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new(); // strict mode
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Returning parameter reference should be allowed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Returning parameter reference should be allowed: {:?}",
+        result.err()
+    );
 }
 
 /// Returning a value (not reference) of a local is fine.
@@ -2290,7 +2554,11 @@ fn return_value_of_local_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new(); // strict mode
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Returning value of local should be allowed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Returning value of local should be allowed: {:?}",
+        result.err()
+    );
 }
 
 /// Returning a slice of a local array should be rejected.
@@ -2305,7 +2573,10 @@ fn return_slice_of_local_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Returning slice of local array should fail");
+    assert!(
+        result.is_err(),
+        "Returning slice of local array should fail"
+    );
 }
 
 /// Slice syntax with open-ended ranges should parse correctly.
@@ -2354,7 +2625,11 @@ fn slice_of_param_allowed() {
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
     // Slicing a parameter is safe - the caller owns the data
-    assert!(result.is_ok(), "Slicing parameter array should be allowed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Slicing parameter array should be allowed: {:?}",
+        result.err()
+    );
 }
 
 /// Returning a tuple containing a reference to local should be rejected.
@@ -2369,7 +2644,10 @@ fn return_tuple_with_local_reference_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Returning tuple with reference to local should fail");
+    assert!(
+        result.is_err(),
+        "Returning tuple with reference to local should fail"
+    );
 }
 
 /// Returning a struct containing a reference to local should be rejected.
@@ -2385,7 +2663,10 @@ fn return_struct_with_local_reference_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Returning struct with reference to local should fail");
+    assert!(
+        result.is_err(),
+        "Returning struct with reference to local should fail"
+    );
 }
 
 /// Returning an array containing references to locals should be rejected.
@@ -2401,7 +2682,10 @@ fn return_array_with_local_references_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Returning array with references to locals should fail");
+    assert!(
+        result.is_err(),
+        "Returning array with references to locals should fail"
+    );
 }
 
 /// Taking address of parameter and returning is allowed (caller owns it).
@@ -2417,7 +2701,11 @@ fn return_address_of_param_allowed() {
     let result = analyzer.analyze(&program);
     // Parameters are owned by caller, so this is safe
     // (the reference is valid for the caller's scope)
-    assert!(result.is_ok(), "Returning address of parameter should be allowed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Returning address of parameter should be allowed: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -2481,7 +2769,10 @@ fn duplicate_qubit_in_tick_measurement_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Duplicate qubit in tick should fail in strict mode");
+    assert!(
+        result.is_err(),
+        "Duplicate qubit in tick should fail in strict mode"
+    );
 }
 
 /// Using the same qubit twice in different gates within a tick should be rejected.
@@ -2502,7 +2793,10 @@ fn duplicate_qubit_in_tick_gates_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Using same qubit in multiple gates within tick should fail");
+    assert!(
+        result.is_err(),
+        "Using same qubit in multiple gates within tick should fail"
+    );
 }
 
 /// Gate on unprepared qubit should be rejected in strict mode.
@@ -2518,7 +2812,10 @@ fn gate_on_unprepared_qubit_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Gate on unprepared qubit should fail in strict mode");
+    assert!(
+        result.is_err(),
+        "Gate on unprepared qubit should fail in strict mode"
+    );
 }
 
 /// Gate after pz (prepare) should succeed.
@@ -2535,7 +2832,11 @@ fn gate_after_prepare_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Gate after prepare should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Gate after prepare should succeed: {:?}",
+        result.err()
+    );
 }
 
 /// Mixed gate and measurement on same qubit in tick should be rejected.
@@ -2556,7 +2857,10 @@ fn mixed_gate_measurement_same_qubit_in_tick_rejected() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Gate and measurement on same qubit in tick should fail");
+    assert!(
+        result.is_err(),
+        "Gate and measurement on same qubit in tick should fail"
+    );
 }
 
 /// Different qubits in tick operations should succeed.
@@ -2581,7 +2885,11 @@ fn different_qubits_in_tick_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Different qubits in tick should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Different qubits in tick should succeed: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -2598,7 +2906,10 @@ fn slice_with_variable_bounds_parses() {
             return unit;
         }
     "#;
-    assert!(zlup::parse(source).is_ok(), "Slice with variable bounds should parse");
+    assert!(
+        zlup::parse(source).is_ok(),
+        "Slice with variable bounds should parse"
+    );
 }
 
 /// Slice with expression bounds should parse.
@@ -2612,7 +2923,10 @@ fn slice_with_expression_bounds_parses() {
             return unit;
         }
     "#;
-    assert!(zlup::parse(source).is_ok(), "Slice with expression bounds should parse");
+    assert!(
+        zlup::parse(source).is_ok(),
+        "Slice with expression bounds should parse"
+    );
 }
 
 /// Slice used in assignment should parse.
@@ -2626,7 +2940,11 @@ fn slice_assignment_parses() {
         }
     "#;
     let result = zlup::parse(source);
-    assert!(result.is_ok(), "Slice assignment should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Slice assignment should parse: {:?}",
+        result.err()
+    );
 }
 
 /// Multiple slicing operations should parse.
@@ -2643,7 +2961,11 @@ fn multiple_slices_parse() {
         }
     "#;
     let result = zlup::parse(source);
-    assert!(result.is_ok(), "Multiple slices should parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Multiple slices should parse: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -2662,7 +2984,11 @@ fn reslice_returns_slice_type() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Re-slicing should return slice type: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Re-slicing should return slice type: {:?}",
+        result.err()
+    );
 }
 
 /// Indexing a slice with an integer should return the element type.
@@ -2677,7 +3003,11 @@ fn slice_index_returns_element_type() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Slice index should return element type: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Slice index should return element type: {:?}",
+        result.err()
+    );
 }
 
 /// Chained slicing: arr[1..5][0..2] should work.
@@ -2691,7 +3021,11 @@ fn chained_slicing_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Chained slicing should be allowed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Chained slicing should be allowed: {:?}",
+        result.err()
+    );
 }
 
 /// Array type [N]T is distinct from slice type []T.
@@ -2708,7 +3042,10 @@ fn array_type_distinct_from_slice() {
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
     // This should fail because [3]i32 is not []i32
-    assert!(result.is_err(), "Array should not be assignable to slice type");
+    assert!(
+        result.is_err(),
+        "Array should not be assignable to slice type"
+    );
 }
 
 /// Slicing an array produces a slice type.
@@ -2722,7 +3059,11 @@ fn slicing_array_produces_slice() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Slicing array should produce slice: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Slicing array should produce slice: {:?}",
+        result.err()
+    );
 }
 
 /// Nested slice types: [][]i32 should work.
@@ -2736,7 +3077,11 @@ fn nested_slice_type_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Nested slice types should be allowed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Nested slice types should be allowed: {:?}",
+        result.err()
+    );
 }
 
 /// Open-ended slice of parameter is allowed.
@@ -2750,7 +3095,11 @@ fn open_slice_of_param_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Full slice of param should be allowed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Full slice of param should be allowed: {:?}",
+        result.err()
+    );
 }
 
 /// Slice with start index only.
@@ -2764,7 +3113,11 @@ fn slice_from_start_index() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Slice from start index should work: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Slice from start index should work: {:?}",
+        result.err()
+    );
 }
 
 /// Slice with end index only.
@@ -2778,7 +3131,11 @@ fn slice_to_end_index() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Slice to end index should work: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Slice to end index should work: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -2848,7 +3205,11 @@ fn variable_named_s_allowed() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Variable 's' should be allowed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Variable 's' should be allowed: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -2873,7 +3234,11 @@ fn optimizer_sz_szdg_cancellation() {
     let mut optimizer = Optimizer::new();
     let _optimized = optimizer.optimize(ast);
 
-    assert_eq!(optimizer.stats().gates_cancelled, 2, "SZ and SZdg should cancel");
+    assert_eq!(
+        optimizer.stats().gates_cancelled,
+        2,
+        "SZ and SZdg should cancel"
+    );
 }
 
 /// SZdg followed by SZ should also cancel.
@@ -2894,7 +3259,11 @@ fn optimizer_szdg_sz_cancellation() {
     let mut optimizer = Optimizer::new();
     let _optimized = optimizer.optimize(ast);
 
-    assert_eq!(optimizer.stats().gates_cancelled, 2, "SZdg and SZ should cancel");
+    assert_eq!(
+        optimizer.stats().gates_cancelled,
+        2,
+        "SZdg and SZ should cancel"
+    );
 }
 
 // =============================================================================
@@ -2912,7 +3281,11 @@ fn triple_chained_slicing() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Triple-chained slicing should work: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Triple-chained slicing should work: {:?}",
+        result.err()
+    );
 }
 
 /// Deeply nested slice types should work.
@@ -2926,7 +3299,11 @@ fn deeply_nested_slice_types() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "3D nested slice types should work: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "3D nested slice types should work: {:?}",
+        result.err()
+    );
 }
 
 /// Indexing 3D nested slice returns 2D slice.
@@ -2940,7 +3317,11 @@ fn nested_slice_indexing_returns_correct_type() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Indexing 2D slice should return 1D slice: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Indexing 2D slice should return 1D slice: {:?}",
+        result.err()
+    );
 }
 
 /// Slicing then indexing should work.
@@ -2954,7 +3335,11 @@ fn slice_then_index() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Slice then index should work: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Slice then index should work: {:?}",
+        result.err()
+    );
 }
 
 /// Indexing then slicing should work on nested types.
@@ -2968,7 +3353,11 @@ fn index_then_slice_nested() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Index then slice on nested should work: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Index then slice on nested should work: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -2987,7 +3376,10 @@ fn array_not_coercible_to_slice() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Array should not be directly coercible to slice");
+    assert!(
+        result.is_err(),
+        "Array should not be directly coercible to slice"
+    );
 }
 
 /// Slicing an array parameter to get a slice should work.
@@ -3002,7 +3394,11 @@ fn array_sliced_to_slice() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Array param sliced with [..] should produce slice: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Array param sliced with [..] should produce slice: {:?}",
+        result.err()
+    );
 }
 
 /// Passing array where slice parameter expected should fail.
@@ -3022,7 +3418,10 @@ fn array_param_not_coercible_to_slice_param() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_err(), "Array should not be passable where slice expected");
+    assert!(
+        result.is_err(),
+        "Array should not be passable where slice expected"
+    );
 }
 
 /// Passing sliced array to slice parameter should work.
@@ -3042,7 +3441,11 @@ fn sliced_array_to_slice_param() {
     let program = zlup::parse(source).expect("Should parse");
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
-    assert!(result.is_ok(), "Sliced array should be passable as slice: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Sliced array should be passable as slice: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================
@@ -3068,7 +3471,8 @@ fn array_slice_mismatch_error_message() {
             // Error should mention the type mismatch
             assert!(
                 error_msg.contains("TypeMismatch") || error_msg.contains("mismatch"),
-                "Error should indicate type mismatch: {}", error_msg
+                "Error should indicate type mismatch: {}",
+                error_msg
             );
         }
         Ok(_) => panic!("Should have failed with type mismatch"),
@@ -3109,12 +3513,16 @@ fn slice_element_type_mismatch_error() {
     let mut analyzer = SemanticAnalyzer::new();
     let result = analyzer.analyze(&program);
 
-    assert!(result.is_err(), "Should fail: returning i32 where bool expected");
+    assert!(
+        result.is_err(),
+        "Should fail: returning i32 where bool expected"
+    );
     if let Err(e) = result {
         let error_msg = format!("{:?}", e);
         assert!(
             error_msg.contains("i32") || error_msg.contains("bool"),
-            "Error should mention the types involved: {}", error_msg
+            "Error should mention the types involved: {}",
+            error_msg
         );
     }
 }

@@ -47,9 +47,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{
-    Block, Expr, FnDecl, GateOp, MeasureOp, Program, Stmt, TopLevelDecl,
-};
+use crate::ast::{Block, Expr, FnDecl, GateOp, MeasureOp, Program, Stmt, TopLevelDecl};
 
 // =============================================================================
 // Resource Identifiers
@@ -197,11 +195,7 @@ impl AllocatorAnalysis {
                             name: binding.name.clone(),
                             size: Self::extract_qalloc_size(value),
                             scope_depth: depth,
-                            defined_at_line: binding
-                                .location
-                                .as_ref()
-                                .map(|l| l.line)
-                                .unwrap_or(0),
+                            defined_at_line: binding.location.as_ref().map(|l| l.line).unwrap_or(0),
                         },
                     );
                 }
@@ -306,7 +300,8 @@ pub struct TaggedOp {
 impl TaggedOp {
     /// Check if this operation touches any qubit allocators.
     pub fn touches_qubits(&self) -> bool {
-        self.reads.iter().any(|r| r.touches_qubits()) || self.writes.iter().any(|r| r.touches_qubits())
+        self.reads.iter().any(|r| r.touches_qubits())
+            || self.writes.iter().any(|r| r.touches_qubits())
     }
 
     /// Check if this operation is purely classical.
@@ -858,8 +853,16 @@ pub fn analyze_parallelism(program: &Program) -> Vec<ParallelismSummary> {
             let graph = DependencyGraph::build(tagger.operations);
             let layers = graph.parallel_layers();
 
-            let classical_ops = graph.operations.iter().filter(|op| op.is_classical()).count();
-            let quantum_ops = graph.operations.iter().filter(|op| op.touches_qubits()).count();
+            let classical_ops = graph
+                .operations
+                .iter()
+                .filter(|op| op.is_classical())
+                .count();
+            let quantum_ops = graph
+                .operations
+                .iter()
+                .filter(|op| op.touches_qubits())
+                .count();
 
             summaries.push(ParallelismSummary {
                 function_name: fn_decl.name.clone(),
@@ -943,8 +946,14 @@ mod tests {
         assert_eq!(graph.operations.len(), 4, "Expected 4 operations");
 
         // H and CX both touch allocator "q", so they're dependent
-        let h_op = graph.operations.iter().find(|op| op.description.contains("H"));
-        let cx_op = graph.operations.iter().find(|op| op.description.contains("CX"));
+        let h_op = graph
+            .operations
+            .iter()
+            .find(|op| op.description.contains("H"));
+        let cx_op = graph
+            .operations
+            .iter()
+            .find(|op| op.description.contains("CX"));
 
         assert!(h_op.is_some(), "Should have H gate");
         assert!(cx_op.is_some(), "Should have CX gate");
@@ -1063,7 +1072,10 @@ mod tests {
 
         // The measure is part of a binding (m := mz...), so it's recorded as "bind m"
         // but should still track that it reads from allocator q
-        let m_binding = graph.operations.iter().find(|op| op.description == "bind m");
+        let m_binding = graph
+            .operations
+            .iter()
+            .find(|op| op.description == "bind m");
         assert!(m_binding.is_some(), "Should have binding for m");
 
         // The binding should read from allocator "q" (via the measure expression)
@@ -1129,7 +1141,10 @@ mod tests {
 
         // Each binding should be in a different layer due to data dependencies
         // (x, return could be parallel with others if no dep, but y needs x, z needs y)
-        assert!(layers.len() >= 3, "Should have at least 3 layers for x->y->z chain");
+        assert!(
+            layers.len() >= 3,
+            "Should have at least 3 layers for x->y->z chain"
+        );
     }
 
     #[test]
@@ -1188,8 +1203,14 @@ mod tests {
         let summary = &summaries[0];
         assert_eq!(summary.function_name, "main");
         assert!(summary.total_ops > 0);
-        assert!(summary.quantum_ops >= 2, "Should have at least 2 quantum ops (H gates)");
-        assert!(summary.classical_ops >= 1, "Should have at least 1 classical op (x binding)");
+        assert!(
+            summary.quantum_ops >= 2,
+            "Should have at least 2 quantum ops (H gates)"
+        );
+        assert!(
+            summary.classical_ops >= 1,
+            "Should have at least 1 classical op (x binding)"
+        );
     }
 
     #[test]
@@ -1203,9 +1224,15 @@ mod tests {
         let graph = parse_and_analyze(source);
 
         // Should have just the return operation
-        assert!(graph.operations.len() <= 1, "Empty function should have minimal ops");
+        assert!(
+            graph.operations.len() <= 1,
+            "Empty function should have minimal ops"
+        );
         let layers = graph.parallel_layers();
-        assert!(layers.len() <= 1, "Empty function should have at most 1 layer");
+        assert!(
+            layers.len() <= 1,
+            "Empty function should have at most 1 layer"
+        );
     }
 
     #[test]

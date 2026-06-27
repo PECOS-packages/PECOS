@@ -40,9 +40,10 @@ impl NoqaDirectives {
 
         // Check line-level rule suppression
         if let Some(rules) = self.suppress_rules.get(&line)
-            && rules.contains(&rule_upper) {
-                return true;
-            }
+            && rules.contains(&rule_upper)
+        {
+            return true;
+        }
 
         false
     }

@@ -96,9 +96,7 @@ fn compile_to_slr(py: Python<'_>, source: &str, strict: bool) -> PyResult<Py<PyA
     let slr_program = codegen.compile(&program).map_err(codegen_error_to_py)?;
 
     // Convert to JSON then to Python dict
-    let json_str = codegen
-        .to_json(&slr_program)
-        .map_err(codegen_error_to_py)?;
+    let json_str = codegen.to_json(&slr_program).map_err(codegen_error_to_py)?;
 
     // Parse JSON into Python object
     let json_module = py.import("json")?;
@@ -207,7 +205,8 @@ fn version() -> &'static str {
 
 /// Read and return the contents of a Zluppy source file.
 fn read_file(path: &str) -> PyResult<String> {
-    std::fs::read_to_string(path).map_err(|e| PyIOError::new_err(format!("Failed to read {}: {}", path, e)))
+    std::fs::read_to_string(path)
+        .map_err(|e| PyIOError::new_err(format!("Failed to read {}: {}", path, e)))
 }
 
 /// Get the filename from a path for error reporting.
@@ -252,9 +251,7 @@ fn compile_file(py: Python<'_>, path: &str, strict: bool) -> PyResult<Py<PyAny>>
     let slr_program = codegen.compile(&program).map_err(codegen_error_to_py)?;
 
     // Convert to JSON then to Python dict
-    let json_str = codegen
-        .to_json(&slr_program)
-        .map_err(codegen_error_to_py)?;
+    let json_str = codegen.to_json(&slr_program).map_err(codegen_error_to_py)?;
 
     let json_module = py.import("json")?;
     let result = json_module.call_method1("loads", (json_str,))?;
@@ -350,7 +347,11 @@ fn check_file(path: &str, strict: bool) -> PyResult<()> {
 ///     ZluppyError: If parsing, semantic analysis, or codegen fails
 #[pyfunction]
 #[pyo3(signature = (source, strict = false))]
-fn compile_to_hugr(py: Python<'_>, source: &str, strict: bool) -> PyResult<Py<pyo3::types::PyBytes>> {
+fn compile_to_hugr(
+    py: Python<'_>,
+    source: &str,
+    strict: bool,
+) -> PyResult<Py<pyo3::types::PyBytes>> {
     let program = ::zlup::parse(source).map_err(parse_error_to_py)?;
 
     let mut analyzer = if strict {
@@ -383,7 +384,11 @@ fn compile_to_hugr(py: Python<'_>, source: &str, strict: bool) -> PyResult<Py<py
 ///     ZluppyError: If parsing, semantic analysis, or codegen fails
 #[pyfunction]
 #[pyo3(signature = (path, strict = false))]
-fn compile_file_hugr(py: Python<'_>, path: &str, strict: bool) -> PyResult<Py<pyo3::types::PyBytes>> {
+fn compile_file_hugr(
+    py: Python<'_>,
+    path: &str,
+    strict: bool,
+) -> PyResult<Py<pyo3::types::PyBytes>> {
     let source = read_file(path)?;
     let filename = filename_from_path(path);
 
@@ -773,8 +778,7 @@ impl ZlupProgram {
             location: None,
         };
 
-        self.statements
-            .push(::zlup::ast::Stmt::Prepare(prepare_op));
+        self.statements.push(::zlup::ast::Stmt::Prepare(prepare_op));
         self.clone()
     }
 
@@ -805,8 +809,7 @@ impl ZlupProgram {
             location: None,
         };
 
-        self.statements
-            .push(::zlup::ast::Stmt::Measure(measure_op));
+        self.statements.push(::zlup::ast::Stmt::Measure(measure_op));
         self.clone()
     }
 
@@ -891,9 +894,8 @@ impl ZlupProgram {
     ///     IOError: If the file cannot be written
     fn save(&self, path: &str) -> PyResult<()> {
         let source = self.to_source();
-        std::fs::write(path, source).map_err(|e| {
-            PyIOError::new_err(format!("Failed to write {}: {}", path, e))
-        })
+        std::fs::write(path, source)
+            .map_err(|e| PyIOError::new_err(format!("Failed to write {}: {}", path, e)))
     }
 
     /// Compile via source code generation and parsing.

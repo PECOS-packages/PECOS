@@ -5,5 +5,5 @@
 pub mod parser;
 pub mod transform;
 
-pub use parser::{parse_ir, ParseError};
-pub use transform::{transform, TransformError};
+pub use parser::{ParseError, parse_ir};
+pub use transform::{TransformError, transform};

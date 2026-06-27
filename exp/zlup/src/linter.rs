@@ -455,7 +455,8 @@ impl Linter {
         for param in &fn_decl.params {
             self.check_variable_name(&param.name, param.location.as_ref());
             if let Some(ref loc) = param.location {
-                self.defined_variables.insert(param.name.clone(), loc.clone());
+                self.defined_variables
+                    .insert(param.name.clone(), loc.clone());
             }
         }
 
@@ -488,7 +489,8 @@ impl Linter {
                 // Check variable naming
                 self.check_variable_name(&binding.name, binding.location.as_ref());
                 if let Some(ref loc) = binding.location {
-                    self.defined_variables.insert(binding.name.clone(), loc.clone());
+                    self.defined_variables
+                        .insert(binding.name.clone(), loc.clone());
                 }
                 if let Some(ref value) = binding.value {
                     self.analyze_expr(value);
@@ -532,14 +534,20 @@ impl Linter {
             Stmt::Gate(gate_op) => {
                 // Track allocator usage
                 for target in &gate_op.targets {
-                    *self.variable_uses.entry(target.allocator.clone()).or_insert(0) += 1;
+                    *self
+                        .variable_uses
+                        .entry(target.allocator.clone())
+                        .or_insert(0) += 1;
                     self.analyze_expr(&target.index);
                 }
             }
             Stmt::Measure(measure_op) => {
                 // Track allocator usage
                 for target in &measure_op.targets {
-                    *self.variable_uses.entry(target.allocator.clone()).or_insert(0) += 1;
+                    *self
+                        .variable_uses
+                        .entry(target.allocator.clone())
+                        .or_insert(0) += 1;
                     self.analyze_expr(&target.index);
                 }
             }
@@ -690,7 +698,10 @@ impl Linter {
         }
 
         // Common short names are allowed
-        if matches!(name, "i" | "j" | "k" | "n" | "x" | "y" | "z" | "q" | "r" | "c") {
+        if matches!(
+            name,
+            "i" | "j" | "k" | "n" | "x" | "y" | "z" | "q" | "r" | "c"
+        ) {
             return;
         }
 
@@ -865,128 +876,139 @@ impl Linter {
 
         // Check if using radians when exact turn fractions exist
         if self.config.prefer_turns_over_radians.enabled
-            && let AngleUnit::Rad = angle.unit {
-                // Try to evaluate the expression to see if it's a common angle
-                if let Some(suggestion) = self.suggest_turn_equivalent(angle) {
-                    self.diagnostics.push(
-                        LintDiagnostic::new(
-                            "prefer_turns_over_radians",
-                            "radians can lose precision; consider using turns for exact representation"
-                                .to_string(),
-                            self.config.prefer_turns_over_radians.severity,
-                        )
-                        .with_location_opt(angle.location.clone())
-                        .with_suggestion(&suggestion),
-                    );
-                }
+            && let AngleUnit::Rad = angle.unit
+        {
+            // Try to evaluate the expression to see if it's a common angle
+            if let Some(suggestion) = self.suggest_turn_equivalent(angle) {
+                self.diagnostics.push(
+                    LintDiagnostic::new(
+                        "prefer_turns_over_radians",
+                        "radians can lose precision; consider using turns for exact representation"
+                            .to_string(),
+                        self.config.prefer_turns_over_radians.severity,
+                    )
+                    .with_location_opt(angle.location.clone())
+                    .with_suggestion(&suggestion),
+                );
             }
+        }
 
         // Check if using decimal turns when fractions exist
         if self.config.prefer_fraction_turns.enabled
             && let AngleUnit::Turns = angle.unit
-                && let Expr::FloatLit(lit) = &angle.value
-                    && let Some(fraction_str) = suggest_fraction_for_decimal(lit.value) {
-                        let mut diag = LintDiagnostic::new(
-                            "prefer_fraction_turns",
-                            format!(
-                                "decimal `{}` can be expressed exactly as `{}`",
-                                lit.value, fraction_str
-                            ),
-                            self.config.prefer_fraction_turns.severity,
-                        )
-                        .with_location_opt(angle.location.clone())
-                        .with_suggestion(format!("use `{} turns` for exact representation", fraction_str));
+            && let Expr::FloatLit(lit) = &angle.value
+            && let Some(fraction_str) = suggest_fraction_for_decimal(lit.value)
+        {
+            let mut diag = LintDiagnostic::new(
+                "prefer_fraction_turns",
+                format!(
+                    "decimal `{}` can be expressed exactly as `{}`",
+                    lit.value, fraction_str
+                ),
+                self.config.prefer_fraction_turns.severity,
+            )
+            .with_location_opt(angle.location.clone())
+            .with_suggestion(format!(
+                "use `{} turns` for exact representation",
+                fraction_str
+            ));
 
-                        // Generate safe fix: replace the float literal with the fraction
-                        if let (Some(source), Some(lit_loc)) = (&self.source, &lit.location) {
-                            let start = location_to_offset(source, lit_loc.line, lit_loc.column);
-                            let end = location_to_offset(source, lit_loc.end_line, lit_loc.end_column);
-                            diag = diag.with_fix(LintFix {
-                                start,
-                                end,
-                                replacement: fraction_str.clone(),
-                                safety: FixSafety::Safe,
-                            });
-                        }
+            // Generate safe fix: replace the float literal with the fraction
+            if let (Some(source), Some(lit_loc)) = (&self.source, &lit.location) {
+                let start = location_to_offset(source, lit_loc.line, lit_loc.column);
+                let end = location_to_offset(source, lit_loc.end_line, lit_loc.end_column);
+                diag = diag.with_fix(LintFix {
+                    start,
+                    end,
+                    replacement: fraction_str.clone(),
+                    safety: FixSafety::Safe,
+                });
+            }
 
-                        self.diagnostics.push(diag);
-                    }
+            self.diagnostics.push(diag);
+        }
 
         // Check if using float literals that could be exact fractions or std constants
         if self.config.prefer_exact_angles.enabled
-            && let Expr::FloatLit(lit) = &angle.value {
-                let value = lit.value;
+            && let Expr::FloatLit(lit) = &angle.value
+        {
+            let value = lit.value;
 
-                // Check if this float could be a rational fraction
-                if let Some(r) = Rational::from_f64_common(value) {
-                    // Only suggest if it's a "nice" fraction (small denominator)
-                    if r.denominator() <= 16 && !r.is_integer() {
-                        let suggestion = if r.numerator() == 1 {
-                            format!("1/{}", r.denominator())
-                        } else {
-                            format!("{}/{}", r.numerator(), r.denominator())
-                        };
+            // Check if this float could be a rational fraction
+            if let Some(r) = Rational::from_f64_common(value) {
+                // Only suggest if it's a "nice" fraction (small denominator)
+                if r.denominator() <= 16 && !r.is_integer() {
+                    let suggestion = if r.numerator() == 1 {
+                        format!("1/{}", r.denominator())
+                    } else {
+                        format!("{}/{}", r.numerator(), r.denominator())
+                    };
 
-                        self.diagnostics.push(
-                            LintDiagnostic::new(
-                                "prefer_exact_angles",
-                                format!(
-                                    "float literal `{}` can be expressed exactly as fraction `{}`",
-                                    value, suggestion
-                                ),
-                                self.config.prefer_exact_angles.severity,
-                            )
-                            .with_location_opt(angle.location.clone())
-                            .with_suggestion(format!(
-                                "use `{} {}` for exact representation",
-                                suggestion,
-                                match angle.unit {
-                                    AngleUnit::Turns => "turns",
-                                    AngleUnit::Rad => "rad",
-                                }
-                            )),
-                        );
-                    }
+                    self.diagnostics.push(
+                        LintDiagnostic::new(
+                            "prefer_exact_angles",
+                            format!(
+                                "float literal `{}` can be expressed exactly as fraction `{}`",
+                                value, suggestion
+                            ),
+                            self.config.prefer_exact_angles.severity,
+                        )
+                        .with_location_opt(angle.location.clone())
+                        .with_suggestion(format!(
+                            "use `{} {}` for exact representation",
+                            suggestion,
+                            match angle.unit {
+                                AngleUnit::Turns => "turns",
+                                AngleUnit::Rad => "rad",
+                            }
+                        )),
+                    );
                 }
-
-                // For radians, also check if it's a pi multiple (like 3.14159...)
-                if let AngleUnit::Rad = angle.unit
-                    && let Some((n, d)) = Rational::from_f64_pi_multiple(value) {
-                        let pi_suggestion = if n == 1 && d == 1 {
-                            "std.f64.pi".to_string()
-                        } else if n == 1 {
-                            format!("std.f64.pi/{}", d)
-                        } else if d == 1 {
-                            format!("{}*std.f64.pi", n)
-                        } else {
-                            format!("{}*std.f64.pi/{}", n, d)
-                        };
-
-                        // Also suggest the turns equivalent
-                        let turns_fraction = Rational::new(n, 2 * d as i64);
-                        let turns_suggestion = if turns_fraction.numerator() == 1 {
-                            format!("1/{}", turns_fraction.denominator())
-                        } else {
-                            format!("{}/{}", turns_fraction.numerator(), turns_fraction.denominator())
-                        };
-
-                        self.diagnostics.push(
-                            LintDiagnostic::new(
-                                "prefer_exact_angles",
-                                format!(
-                                    "float `{}` appears to be {}*pi/{}; use exact form or turns",
-                                    value, n, d
-                                ),
-                                self.config.prefer_exact_angles.severity,
-                            )
-                            .with_location_opt(angle.location.clone())
-                            .with_suggestion(format!(
-                                "use `{} rad` or `{} turns` for exact representation",
-                                pi_suggestion, turns_suggestion
-                            )),
-                        );
-                    }
             }
+
+            // For radians, also check if it's a pi multiple (like 3.14159...)
+            if let AngleUnit::Rad = angle.unit
+                && let Some((n, d)) = Rational::from_f64_pi_multiple(value)
+            {
+                let pi_suggestion = if n == 1 && d == 1 {
+                    "std.f64.pi".to_string()
+                } else if n == 1 {
+                    format!("std.f64.pi/{}", d)
+                } else if d == 1 {
+                    format!("{}*std.f64.pi", n)
+                } else {
+                    format!("{}*std.f64.pi/{}", n, d)
+                };
+
+                // Also suggest the turns equivalent
+                let turns_fraction = Rational::new(n, 2 * d as i64);
+                let turns_suggestion = if turns_fraction.numerator() == 1 {
+                    format!("1/{}", turns_fraction.denominator())
+                } else {
+                    format!(
+                        "{}/{}",
+                        turns_fraction.numerator(),
+                        turns_fraction.denominator()
+                    )
+                };
+
+                self.diagnostics.push(
+                    LintDiagnostic::new(
+                        "prefer_exact_angles",
+                        format!(
+                            "float `{}` appears to be {}*pi/{}; use exact form or turns",
+                            value, n, d
+                        ),
+                        self.config.prefer_exact_angles.severity,
+                    )
+                    .with_location_opt(angle.location.clone())
+                    .with_suggestion(format!(
+                        "use `{} rad` or `{} turns` for exact representation",
+                        pi_suggestion, turns_suggestion
+                    )),
+                );
+            }
+        }
     }
 
     fn suggest_turn_equivalent(&self, angle: &ast::AngleLit) -> Option<String> {
@@ -1004,14 +1026,19 @@ impl Linter {
 
         // Use Rational to detect pi multiples and convert to turns
         if let Some(turns_rational) = Rational::radians_to_turns(radians)
-            && (!turns_rational.is_integer() || turns_rational.numerator() != 0) {
-                let suggestion = if turns_rational.numerator() == 1 {
-                    format!("1/{}", turns_rational.denominator())
-                } else {
-                    format!("{}/{}", turns_rational.numerator(), turns_rational.denominator())
-                };
-                return Some(format!("use `{} turns` instead", suggestion));
-            }
+            && (!turns_rational.is_integer() || turns_rational.numerator() != 0)
+        {
+            let suggestion = if turns_rational.numerator() == 1 {
+                format!("1/{}", turns_rational.denominator())
+            } else {
+                format!(
+                    "{}/{}",
+                    turns_rational.numerator(),
+                    turns_rational.denominator()
+                )
+            };
+            return Some(format!("use `{} turns` instead", suggestion));
+        }
 
         None
     }
@@ -1127,9 +1154,10 @@ fn to_pascal_case(s: &str) -> String {
 /// Count approximate lines in a block (for function length checking).
 fn count_block_lines(block: &ast::Block) -> usize {
     if let (Some(start), Some(end)) = (&block.location, block.statements.last())
-        && let Some(end_loc) = get_stmt_location(end) {
-            return (end_loc.line.saturating_sub(start.line) + 1) as usize;
-        }
+        && let Some(end_loc) = get_stmt_location(end)
+    {
+        return (end_loc.line.saturating_sub(start.line) + 1) as usize;
+    }
 
     // Fallback: count statements
     block.statements.len()
@@ -1191,7 +1219,11 @@ pub struct FixResult {
 ///
 /// # Returns
 /// The modified source code and statistics about fixes applied.
-pub fn apply_fixes(source: &str, diagnostics: &[LintDiagnostic], include_unsafe: bool) -> FixResult {
+pub fn apply_fixes(
+    source: &str,
+    diagnostics: &[LintDiagnostic],
+    include_unsafe: bool,
+) -> FixResult {
     // Collect all applicable fixes
     let mut fixes: Vec<&LintFix> = diagnostics
         .iter()
@@ -1475,7 +1507,9 @@ mod tests {
         );
 
         assert!(
-            diags.iter().any(|d| d.rule == "unused_function" && d.message.contains("helper")),
+            diags
+                .iter()
+                .any(|d| d.rule == "unused_function" && d.message.contains("helper")),
             "expected unused_function lint for helper"
         );
     }
@@ -1495,7 +1529,9 @@ mod tests {
         );
 
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_function" && d.message.contains("helper")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_function" && d.message.contains("helper")),
             "should not lint used function"
         );
     }
@@ -1511,7 +1547,9 @@ mod tests {
         );
 
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_function" && d.message.contains("exported")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_function" && d.message.contains("exported")),
             "pub functions should not be considered unused"
         );
     }
@@ -1527,7 +1565,9 @@ mod tests {
         );
 
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_function" && d.message.contains("main")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_function" && d.message.contains("main")),
             "main should never be considered unused"
         );
     }
@@ -1549,7 +1589,9 @@ mod tests {
         );
 
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("`x`")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("`x`")),
             "used variable should not be flagged"
         );
     }
@@ -1570,7 +1612,8 @@ mod tests {
         let unused_count = diags.iter().filter(|d| d.rule == "unused_variable").count();
         assert!(
             unused_count >= 3,
-            "expected at least 3 unused variable lints, got {}", unused_count
+            "expected at least 3 unused variable lints, got {}",
+            unused_count
         );
     }
 
@@ -1797,7 +1840,9 @@ mod tests {
 
         // q should be considered used because of gate operations
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("`q`")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("`q`")),
             "allocator used in gates should not be flagged as unused"
         );
     }
@@ -1854,7 +1899,9 @@ mod tests {
         );
 
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("result")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("result")),
             "variable used in return should not be flagged"
         );
     }
@@ -1874,7 +1921,9 @@ mod tests {
         );
 
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("flag")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("flag")),
             "variable used in condition should not be flagged"
         );
     }
@@ -1890,7 +1939,9 @@ mod tests {
         );
 
         assert!(
-            diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("x")),
+            diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("x")),
             "unused parameter should be flagged"
         );
     }
@@ -1906,7 +1957,9 @@ mod tests {
         );
 
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("_x")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("_x")),
             "underscore-prefixed parameter should not be flagged"
         );
     }
@@ -1943,7 +1996,9 @@ mod tests {
 
         // factorial calls itself, so it should be considered used
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_function" && d.message.contains("factorial")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_function" && d.message.contains("factorial")),
             "recursive function should not be flagged as unused"
         );
     }
@@ -1969,11 +2024,15 @@ mod tests {
 
         // Both functions are used via mutual recursion
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_function" && d.message.contains("is_even")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_function" && d.message.contains("is_even")),
             "mutually recursive function should not be flagged"
         );
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_function" && d.message.contains("is_odd")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_function" && d.message.contains("is_odd")),
             "mutually recursive function should not be flagged"
         );
     }
@@ -1992,7 +2051,9 @@ mod tests {
         );
 
         assert!(
-            diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("inner")),
+            diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("inner")),
             "variable unused in nested block should be flagged"
         );
     }
@@ -2014,7 +2075,9 @@ mod tests {
         );
 
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("q")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("q")),
             "allocator used in tick block should not be flagged"
         );
     }
@@ -2055,15 +2118,21 @@ mod tests {
 
         // a, b, c are all used in the expression
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("`a`")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("`a`")),
             "variable used in expression should not be flagged"
         );
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("`b`")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("`b`")),
             "variable used in expression should not be flagged"
         );
         assert!(
-            !diags.iter().any(|d| d.rule == "unused_variable" && d.message.contains("`c`")),
+            !diags
+                .iter()
+                .any(|d| d.rule == "unused_variable" && d.message.contains("`c`")),
             "variable used in expression should not be flagged"
         );
     }
@@ -2197,7 +2266,10 @@ mod tests {
         let result = apply_fixes(source, &diagnostics, false);
 
         assert_eq!(result.safe_fixes_applied, 1);
-        assert!(result.source.contains("_x := 5"), "Expected fix to prefix with underscore");
+        assert!(
+            result.source.contains("_x := 5"),
+            "Expected fix to prefix with underscore"
+        );
     }
 
     #[test]
@@ -2216,7 +2288,11 @@ mod tests {
         let result = apply_fixes(source, &diagnostics, false);
 
         // Should fix all unused variables
-        assert!(result.safe_fixes_applied >= 3, "Expected at least 3 fixes, got {}", result.safe_fixes_applied);
+        assert!(
+            result.safe_fixes_applied >= 3,
+            "Expected at least 3 fixes, got {}",
+            result.safe_fixes_applied
+        );
         assert!(result.source.contains("_a := 1"));
         assert!(result.source.contains("_b := 2"));
         assert!(result.source.contains("_c := 3"));
@@ -2235,8 +2311,13 @@ mod tests {
             .lint(&program);
 
         // Should have a prefer_fraction_turns diagnostic with a fix
-        let fraction_diag = diagnostics.iter().find(|d| d.rule == "prefer_fraction_turns");
-        assert!(fraction_diag.is_some(), "Expected prefer_fraction_turns diagnostic");
+        let fraction_diag = diagnostics
+            .iter()
+            .find(|d| d.rule == "prefer_fraction_turns");
+        assert!(
+            fraction_diag.is_some(),
+            "Expected prefer_fraction_turns diagnostic"
+        );
 
         let diag = fraction_diag.unwrap();
         assert!(diag.fix.is_some(), "Expected fix to be available");
@@ -2261,13 +2342,16 @@ mod tests {
         let result = apply_fixes(source, &diagnostics, false);
 
         assert!(result.safe_fixes_applied >= 1);
-        assert!(result.source.contains("1/4 turns"), "Expected 0.25 to be replaced with 1/4");
+        assert!(
+            result.source.contains("1/4 turns"),
+            "Expected 0.25 to be replaced with 1/4"
+        );
     }
 
     #[test]
     fn test_has_safe_fix() {
-        let diag_with_safe_fix = LintDiagnostic::new("test", "msg", Severity::Warning)
-            .with_fix(LintFix {
+        let diag_with_safe_fix =
+            LintDiagnostic::new("test", "msg", Severity::Warning).with_fix(LintFix {
                 start: 0,
                 end: 1,
                 replacement: "x".to_string(),
@@ -2276,8 +2360,8 @@ mod tests {
         assert!(diag_with_safe_fix.has_safe_fix());
         assert!(diag_with_safe_fix.has_fix());
 
-        let diag_with_unsafe_fix = LintDiagnostic::new("test", "msg", Severity::Warning)
-            .with_fix(LintFix {
+        let diag_with_unsafe_fix =
+            LintDiagnostic::new("test", "msg", Severity::Warning).with_fix(LintFix {
                 start: 0,
                 end: 1,
                 replacement: "x".to_string(),

@@ -214,9 +214,18 @@ pub fn format_results(results: &[TestResult]) -> String {
         }
     }
 
-    let pass_count = results.iter().filter(|r| r.outcome == TestOutcome::Pass).count();
-    let fail_count = results.iter().filter(|r| matches!(r.outcome, TestOutcome::Fail(_))).count();
-    let skip_count = results.iter().filter(|r| matches!(r.outcome, TestOutcome::Skip(_))).count();
+    let pass_count = results
+        .iter()
+        .filter(|r| r.outcome == TestOutcome::Pass)
+        .count();
+    let fail_count = results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Fail(_)))
+        .count();
+    let skip_count = results
+        .iter()
+        .filter(|r| matches!(r.outcome, TestOutcome::Skip(_)))
+        .count();
     let total = results.len();
 
     out.push_str(&format!(

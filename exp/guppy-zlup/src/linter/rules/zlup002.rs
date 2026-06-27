@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 
-use super::{make_location, LintRule};
 use super::super::diagnostic::{Diagnostic, Severity};
+use super::{LintRule, make_location};
 
 /// Detects recursive function calls (call graph cycles).
 pub struct ZLUP002Recursion;
@@ -293,7 +293,7 @@ fn find_cycle(start: &str, graph: &HashMap<String, HashSet<String>>) -> Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustpython_parser::{parse, Mode};
+    use rustpython_parser::{Mode, parse};
 
     fn check_source(source: &str) -> Vec<Diagnostic> {
         let parsed = parse(source, Mode::Module, "<test>").unwrap();

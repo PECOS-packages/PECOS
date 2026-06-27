@@ -219,3 +219,8 @@ python/selene-plugins/*/uv.lock
 # regenerates Cargo.lock on demand; tracking it just creates dependabot
 # noise for transitive bumps that don't affect anything we ship.
 python/quantum-pecos/tests/docs/rust_crate/Cargo.lock
+
+# Native simulator bench tool: its own (empty) workspace, publish = false,
+# path-deps into the workspace crates. Same rationale as above -- cargo
+# regenerates Cargo.lock on demand and tracking it only adds dependabot noise.
+scripts/native_bench/bench_pecos/Cargo.lock

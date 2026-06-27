@@ -20,14 +20,12 @@ from __future__ import annotations
 import cmath
 from typing import TYPE_CHECKING
 
-import cupy as cp
-
 if TYPE_CHECKING:
     from pecos.simulators.custatevec.state import CuStateVec
     from pecos.typing import SimulatorGateParams
 
 import pecos as pc
-from pecos.simulators.custatevec._cuquantum_compat import cusv
+from pecos.simulators.custatevec._cuquantum_compat import cp, cusv
 
 
 def _apply_one_qubit_matrix(state: CuStateVec, qubit: int, matrix: cp.ndarray) -> None:

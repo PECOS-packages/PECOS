@@ -300,9 +300,11 @@ echo ""
 if [ "$CUDA_VERSION" = "13" ]; then
     CUPY_PACKAGE="cupy-cuda13x"
     CUQUANTUM_PACKAGE="cuquantum-python-cu13"
+    CUQUANTUM_FLOOR="25.9.0" # lowest cu13 wheel (bindings era)
 elif [ "$CUDA_VERSION" = "12" ]; then
     CUPY_PACKAGE="cupy-cuda12x"
     CUQUANTUM_PACKAGE="cuquantum-python-cu12"
+    CUQUANTUM_FLOOR="25.3.0" # bindings era (V100/Volta: pin >=25.3,<25.9)
 fi
 
 PYTKET_PACKAGE="pytket-cutensornet"
@@ -331,8 +333,8 @@ if check_python_package "$CUQUANTUM_PACKAGE"; then
     CUQUANTUM_VERSION=$(uv pip list 2>/dev/null | grep "^$CUQUANTUM_PACKAGE " | awk '{print $2}')
     print_status "$CUQUANTUM_PACKAGE $CUQUANTUM_VERSION is already installed"
 else
-    print_info "Installing $CUQUANTUM_PACKAGE>=25.3.0..."
-    run_cmd uv pip install "$CUQUANTUM_PACKAGE>=25.3.0"
+    print_info "Installing $CUQUANTUM_PACKAGE>=$CUQUANTUM_FLOOR..."
+    run_cmd uv pip install "$CUQUANTUM_PACKAGE>=$CUQUANTUM_FLOOR"
     print_status "$CUQUANTUM_PACKAGE installed successfully"
 fi
 

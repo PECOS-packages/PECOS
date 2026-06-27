@@ -28,10 +28,14 @@ _CU12 = "cuquantum-python-cu12>=25.3.0 (V100/Volta: >=25.3,<25.9)"  # CUDA 12
 # These optional imports must NEVER break ``import pecos`` -- a broken/partial CUDA
 # install can raise OSError/RuntimeError (not just ImportError) at import time, so we
 # catch broadly and defer to a loud, actionable error at construction.
+cp = None
+_cupy_error: Exception | None = None
 try:
     import cupy as cp
-except Exception:  # noqa: BLE001 -- optional dependency; failures defer to construction
-    cp = None
+except ModuleNotFoundError:
+    pass  # CuPy genuinely not installed
+except Exception as exc:  # noqa: BLE001 -- present but broken; defer to construction
+    _cupy_error = exc
 
 cusv = None
 ComputeType = None
@@ -78,10 +82,20 @@ def _cuquantum_reason() -> str | None:
     return f"cuQuantum {_cuquantum_version} is installed but importing custatevec failed: {err}"
 
 
+def _cupy_reason() -> str | None:
+    """Why CuPy is unavailable (``None`` if it imported fine)."""
+    if cp is not None:
+        return None
+    if _cupy_error is None:
+        return "CuPy is not installed (install cupy-cuda13x for CUDA 13 or cupy-cuda12x for CUDA 12)"
+    return f"CuPy is installed but failed to import: {_cupy_error}"
+
+
 def _build_unavailable_reason() -> str | None:
     parts = []
-    if cp is None:
-        parts.append("CuPy is not installed (install cupy-cuda13x for CUDA 13 or cupy-cuda12x for CUDA 12)")
+    cupy_reason = _cupy_reason()
+    if cupy_reason is not None:
+        parts.append(cupy_reason)
     cuquantum_reason = _cuquantum_reason()
     if cuquantum_reason is not None:
         parts.append(cuquantum_reason)

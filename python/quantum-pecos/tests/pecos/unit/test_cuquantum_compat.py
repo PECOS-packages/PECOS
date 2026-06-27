@@ -153,6 +153,9 @@ def test_import_nonfatal_on_broken_dependency(monkeypatch) -> None:
     compat = _load_module()  # must not raise despite the RuntimeError
 
     assert not compat.custatevec_available()
+    reason = compat.custatevec_unavailable_reason()
+    assert "CuPy is not installed" not in reason
+    assert "synthetic broken cupy install" in reason
     with pytest.raises(RuntimeError):
         compat.require_custatevec()
 

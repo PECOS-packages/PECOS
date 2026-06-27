@@ -303,7 +303,21 @@ impl SimBuilder {
             builder.set_qubits_if_needed(num_qubits);
             builder.build_boxed()?
         } else {
-            // Default: sparse stabilizer
+            // Default: sparse stabilizer. It is fixed-size and does not grow, so
+            // an inferred-zero count (a dynamic classical engine that has not yet
+            // executed and reports 0) would build a 0-qubit engine that fails the
+            // moment the program allocates a qubit. Reject that at build time
+            // rather than silently constructing a non-growing 0-qubit default --
+            // the caller must supply an explicit count via `.qubits(n)` or a
+            // (growing) quantum engine via `.quantum(...)`.
+            if self.explicit_num_qubits.is_none() && num_qubits == 0 {
+                return Err(PecosError::Input(
+                    "Cannot infer a qubit count for the default quantum engine from a dynamic \
+                     classical engine that reports 0 qubits before execution. Specify .qubits(n) \
+                     or provide a quantum engine via .quantum()."
+                        .to_string(),
+                ));
+            }
             Box::new(SparseStabEngine::new(num_qubits))
         };
 

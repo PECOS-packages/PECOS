@@ -220,6 +220,18 @@ impl ObservableDecoder for PyMatchingDecoder {
             .decode_batch_with_config(shots, num_shots, num_detectors, config)
             .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
 
+        // This narrow batch API packs observables into a u64 (8 bit-packed
+        // bytes), so it caps at 64 observables; a wider decode would overflow the
+        // shift. Fail loud rather than truncate -- callers needing >64 observables
+        // use the wide per-shot `decode_obs` path.
+        if result.predictions.first().is_some_and(|p| p.len() > 8) {
+            return Err(DecoderError::InvalidConfiguration(
+                "decode_batch_to_observables packs observables into a u64 and supports at most \
+                 64 observables; use decode_obs for wider observable sets"
+                    .to_string(),
+            ));
+        }
+
         // Convert per-shot bit-packed predictions to u64 masks.
         let mut masks = Vec::with_capacity(num_shots);
         for pred in &result.predictions {

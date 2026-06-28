@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 
 HOST_ID_META_KEY = "host_id"
 LOCAL_ROLE_META_KEY = "local_role"
+HOSTED_PROVENANCE_META_KEYS = (
+    "source_kind",
+    "source_label",
+    "source_gate",
+    "szz_host_label",
+    "source_lowering_required",
+    "label",
+)
 
 
 @dataclass(frozen=True)
@@ -240,7 +248,7 @@ def _hosted_gate_records(
             tick_circuit,
             tick_index,
             gate_index,
-            keys=(host_id_key, local_role_key),
+            keys=(host_id_key, local_role_key, *HOSTED_PROVENANCE_META_KEYS),
         )
         host_id = _metadata_text(metadata, host_id_key)
         local_role = _metadata_text(metadata, local_role_key)

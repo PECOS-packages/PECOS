@@ -756,6 +756,10 @@ _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING: dict[tuple[int, int], tuple[OpType | None,
     (-3, 1): (None, OpType.SY),
     (2, 1): (None, OpType.F),
     (-2, 1): (OpType.Z, OpType.F),
+    (1, 2): (None, OpType.SXDG),
+    (-1, 2): (OpType.Z, OpType.SXDG),
+    (3, 2): (None, OpType.FDG),
+    (-3, 2): (OpType.Z, OpType.FDG),
 }
 
 

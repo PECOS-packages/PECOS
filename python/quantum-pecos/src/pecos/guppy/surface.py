@@ -252,8 +252,10 @@ def generate_guppy_source(
     )
     from pecos.qec.surface.circuit_builder import (
         _SZZ_FLOW_IDENTITY,
+        _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING,
         OpType,
         _resolve_szz_clifford_frame_for_builder,
+        _szz_flow_clifford_name,
         _szz_flow_compose_pending_gate,
         _szz_flow_is_virtual_z,
         _szz_memory_physical_axis_for_data,
@@ -334,7 +336,7 @@ def generate_guppy_source(
             "from guppylang import guppy",
             "from guppylang.std.angles import angle",
             "from guppylang.std.builtins import array, owned, result",
-            "from guppylang.std.qsystem.functional import zz_phase",
+            "from guppylang.std.qsystem.functional import phased_x, rz, zz_phase",
             "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, y, z",
         ]
     else:
@@ -597,6 +599,67 @@ def generate_guppy_source(
             )
         target.append(f"{indent}{op_name}({qubit_expr})")
 
+    def _append_szz_physical_prefix_gate(
+        target: list[str],
+        indent: str,
+        op_type: OpType,
+        qubit_expr: str,
+        *,
+        source_label: str,
+        host_label: str,
+    ) -> None:
+        """Append one hosted physical SZZ prefix pulse.
+
+        Guppy's public quantum stdlib does not expose PECOS ``F``/``SY``
+        names directly.  The hardware-level SZZ forward-flow table still has
+        a one-pulse interpretation: ``SY`` is a Y-axis sqrt pulse, and ``F``
+        is an X-axis sqrt pulse plus a virtual Z-frame update.  We attach the
+        hosted metadata only to the physical pulse so scheduling diagnostics
+        track the operation that must remain adjacent to its SZZ/SZZdg host.
+        """
+        _append_szz_gate_trace_metadata(
+            target,
+            indent,
+            source_kind="szz_data_prefix",
+            source_label=source_label,
+            qubit_expr=qubit_expr,
+            host_label=host_label,
+            local_role="basis_prefix",
+            gate=op_type,
+        )
+        if op_type == OpType.H:
+            target.append(f"{indent}h({qubit_expr})")
+        elif op_type == OpType.SX:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(0.5), angle(0.0))")
+        elif op_type == OpType.SXDG:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(-0.5), angle(0.0))")
+        elif op_type == OpType.SY:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(0.5), angle(0.5))")
+        elif op_type == OpType.SYDG:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(-0.5), angle(0.5))")
+        elif op_type == OpType.F:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(0.5), angle(0.0))")
+            target.append(f"{indent}{qubit_expr} = rz({qubit_expr}, angle(0.5))")
+        elif op_type == OpType.FDG:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(0.5), angle(-0.5))")
+            target.append(f"{indent}{qubit_expr} = rz({qubit_expr}, angle(-0.5))")
+        else:
+            msg = f"unsupported hosted SZZ physical prefix gate {op_type.name}"
+            raise ValueError(msg)
+
+    def _szz_guppy_physical_prefix_for_pending(
+        pending: tuple[int, int],
+    ) -> tuple[OpType | None, OpType]:
+        """Return the source-level physical-prefix lowering for ``pending``."""
+        try:
+            return _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING[pending]
+        except KeyError as exc:
+            msg = (
+                "SZZ Guppy hosted-prefix lowering cannot lower pending "
+                f"Clifford {_szz_flow_clifford_name(pending)}"
+            )
+            raise ValueError(msg) from exc
+
     _szz_guppy_prefix_cache: dict[tuple[int, int], tuple[OpType, ...]] = {_SZZ_FLOW_IDENTITY: ()}
     _szz_guppy_prefix_generators = (
         OpType.H,
@@ -742,16 +805,17 @@ def generate_guppy_source(
             pending = pending_by_data.setdefault(data_q, _SZZ_FLOW_IDENTITY)
             if pending == _SZZ_FLOW_IDENTITY or _szz_flow_is_virtual_z(pending):
                 return
-            prefix = _szz_guppy_prefix_gates_for_pending(pending)
-            for prefix_idx, gate in enumerate(prefix):
-                _append_szz_flow_gate(
-                    target,
-                    indent,
-                    gate,
-                    data_expr(data_q),
-                    source_label=f"{host_label}:prefix:{prefix_idx}:{gate.name}",
-                    host_label=host_label,
-                )
+            virtual_gate, physical_gate = _szz_guppy_physical_prefix_for_pending(pending)
+            if virtual_gate is not None:
+                _append_szz_flow_gate(target, indent, virtual_gate, data_expr(data_q))
+            _append_szz_physical_prefix_gate(
+                target,
+                indent,
+                physical_gate,
+                data_expr(data_q),
+                source_label=f"{host_label}:prefix:0:{physical_gate.name}",
+                host_label=host_label,
+            )
             pending_by_data[data_q] = _SZZ_FLOW_IDENTITY
 
         target.append("")

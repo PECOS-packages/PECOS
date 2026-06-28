@@ -18,7 +18,6 @@ from pecos.qec.surface._twirl_sites import (
 )
 from pecos.qec.surface.patch import SurfacePatch
 
-
 _SZZ_RUNTIME_BARRIER_HELPER = "pecos_qis_runtime_barrier_qubit_hugr("
 _SZZ_RUNTIME_BARRIER_CALL = "= pecos_qis_runtime_barrier_qubit_hugr("
 
@@ -32,7 +31,7 @@ def _assert_szz_prefix_barrier_host_order(src: str) -> None:
     """Assert a real SZZ data-prefix pulse is fenced before its host."""
     lines = src.splitlines()
     for index, line in enumerate(lines):
-        if "vdg(d1)" not in line:
+        if "phased_x(" not in line:
             continue
         prefix_meta = next(
             i
@@ -50,7 +49,7 @@ def _assert_szz_prefix_barrier_host_order(src: str) -> None:
         assert prefix_meta < index < barrier_index < host_meta < zz_phase_index
         return
 
-    msg = "expected an SZZ touch with a Vdg data-prefix pulse"
+    msg = "expected an SZZ touch with a hosted phased_x data-prefix pulse"
     raise AssertionError(msg)
 
 
@@ -69,7 +68,8 @@ def test_szz_source_uses_signed_zz_phase_template(patch: SurfacePatch) -> None:
     src = generate_guppy_source(patch, interaction_basis="szz")
 
     assert "from guppylang.std.angles import angle" in src
-    assert "from guppylang.std.qsystem.functional import zz_phase" in src
+    assert "from guppylang.std.qsystem.functional import phased_x, rz, zz_phase" in src
+    assert "phased_x(" in src
     assert "zz_phase(" in src
     assert "angle(0.5)" in src
     assert "angle(-0.5)" in src
@@ -138,8 +138,10 @@ def test_szz_basis_forks_guppy_module_cache_key(patch: SurfacePatch) -> None:
 def test_szz_source_keeps_reusable_memory_body_and_flushes_helper_frame(patch: SurfacePatch) -> None:
     src = generate_guppy_source(patch, interaction_basis="szz", num_rounds=2)
 
-    assert "for _t in range(comptime(num_rounds)):" in src
-    assert "surf, syn = syndrome_extraction(surf)" in src
+    assert "def syndrome_extraction_memory_r0" in src
+    assert "def syndrome_extraction_memory_r1" in src
+    assert "surf, syn = syndrome_extraction_memory_r0(surf)" in src
+    assert "surf, syn = syndrome_extraction_memory_r1(surf)" in src
     assert "# Flush SZZ data frame before syndrome return" in src
     assert "# Flush SZZ data frame before init_z_basis return" in src
     assert "# Flush SZZ data frame before init_x_basis return" in src

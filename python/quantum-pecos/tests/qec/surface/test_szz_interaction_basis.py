@@ -753,7 +753,13 @@ def test_szz_prefix_lowering_emits_dedicated_prefix_ticks(basis: str) -> None:
         else:
             saw_physical_prefix = True
             assert all(label.startswith("szz_physical_prefix:") for label in prefix_labels)
-            assert {gate.gate_type.name for gate in tick.gate_batches()} <= {"H", "F", "SY"}
+            assert {gate.gate_type.name for gate in tick.gate_batches()} <= {
+                "H",
+                "F",
+                "Fdg",
+                "SXdg",
+                "SY",
+            }
             for gate_index, _gate in enumerate(tick.gate_batches()):
                 assert tick_circuit.get_gate_meta(tick_index, gate_index, PHYSICAL_DURATION_META_KEY) is None
 

@@ -70,6 +70,47 @@ def test_validate_hosted_operations_binds_local_to_later_host() -> None:
     assert bindings[0].tick_separation == 2
 
 
+def test_validate_hosted_operations_preserves_source_provenance_metadata() -> None:
+    circuit = FakeTickCircuit(
+        [
+            [
+                FakeGate(
+                    "SXdg",
+                    [2],
+                    meta={
+                        "host_id": "host:a",
+                        "local_role": "basis_prefix",
+                        "source_kind": "szz_data_prefix",
+                        "source_label": "host:a:prefix:1:SXDG",
+                        "source_gate": "SXDG",
+                    },
+                ),
+            ],
+            [
+                FakeGate(
+                    "SZZ",
+                    [2, 5],
+                    meta={
+                        "host_id": "host:a",
+                        "source_kind": "szz_host",
+                        "source_label": "host:a",
+                        "source_gate": "SZZ",
+                    },
+                ),
+            ],
+        ],
+    )
+
+    binding = validate_hosted_operations(circuit)[0]
+
+    assert binding.local.metadata["source_kind"] == "szz_data_prefix"
+    assert binding.local.metadata["source_label"] == "host:a:prefix:1:SXDG"
+    assert binding.local.metadata["source_gate"] == "SXDG"
+    assert binding.host.metadata["source_kind"] == "szz_host"
+    assert binding.host.metadata["source_label"] == "host:a"
+    assert binding.host.metadata["source_gate"] == "SZZ"
+
+
 def test_validate_hosted_operations_selects_later_shared_host_record() -> None:
     circuit = FakeTickCircuit(
         [

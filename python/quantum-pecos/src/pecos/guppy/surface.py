@@ -174,6 +174,7 @@ def generate_guppy_source(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> str:
     """Generate Guppy source code for a surface code patch.
 
@@ -238,6 +239,10 @@ def generate_guppy_source(
             no ideal-unitary effect, but give runtimes a principled scheduling
             boundary between selected local data-frame pulses and their
             entangling host.
+        trace_metadata: Emit PECOS trace metadata helpers for SZZ/SZZdg
+            hosted-operation diagnostics and strict DEM construction. Disable
+            only for execution-only builds whose compiler/linker cannot resolve
+            PECOS trace metadata helper symbols.
 
     Returns:
         Python/Guppy source code as a string.
@@ -370,21 +375,28 @@ def generate_guppy_source(
         lines.extend(_render_inline_pcg32())
 
     if interaction_basis == "szz":
-        lines.extend(
+        helper_declarations: list[str] = []
+        if trace_metadata:
+            helper_declarations.extend(
+                [
+                    "@guppy.declare",
+                    (
+                        "def pecos_qis_trace_metadata_qubit_hugr("
+                        "q: qubit @ owned, key: str, value: str"
+                        ") -> qubit: ..."
+                    ),
+                    "",
+                ],
+            )
+        helper_declarations.extend(
             [
-                "@guppy.declare",
-                (
-                    "def pecos_qis_trace_metadata_qubit_hugr("
-                    "q: qubit @ owned, key: str, value: str"
-                    ") -> qubit: ..."
-                ),
-                "",
                 "@guppy.declare",
                 "def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...",
                 "",
                 "",
             ],
         )
+        lines.extend(helper_declarations)
 
     # Generate struct definitions.
     lines.extend(
@@ -531,6 +543,8 @@ def generate_guppy_source(
         value: str,
         qubit_expr: str,
     ) -> None:
+        if not trace_metadata:
+            return
         target.append(
             f'{indent}{qubit_expr} = pecos_qis_trace_metadata_qubit_hugr({qubit_expr}, "{key}", "{value}")',
         )
@@ -2272,6 +2286,7 @@ def _guppy_module_cache_key(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> str:
     """Filesystem-safe cache key spanning full patch identity + budget + twirl.
 
@@ -2309,9 +2324,11 @@ def _guppy_module_cache_key(
         if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_NONE
         else f"_szzrb-{szz_runtime_barrier_policy}"
     )
+    trace_metadata_part = "" if trace_metadata else "_trace-metadata-off"
     base = (
         f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}"
-        f"_b{effective_budget}{interaction_part}{check_plan_part}{frame_part}{runtime_barrier_part}"
+        f"_b{effective_budget}{interaction_part}{check_plan_part}{frame_part}"
+        f"{runtime_barrier_part}{trace_metadata_part}"
     )
     if twirl is None:
         if interaction_basis == "szz" and num_rounds is not None:
@@ -2340,6 +2357,7 @@ def _load_guppy_module(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> dict:
     """Load a Guppy module for a patch, using caching.
 
@@ -2363,6 +2381,10 @@ def _load_guppy_module(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
+        trace_metadata: Emit PECOS trace metadata helpers in generated SZZ
+            source. Keep enabled for traced-QIS/DEM paths; disable for
+            execution-only builds whose compiler/linker cannot resolve the
+            metadata helper symbols.
 
     Returns:
         Module dictionary with generated functions
@@ -2387,6 +2409,7 @@ def _load_guppy_module(
         check_plan=resolved_plan.plan_id if check_plan is not None else None,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
 
     if cache_key in _state.module_cache:
@@ -2402,6 +2425,7 @@ def _load_guppy_module(
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
 
     # Write to temp file (required for Guppy introspection).
@@ -2436,6 +2460,7 @@ def generate_memory_experiment(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> object:
     """Generate a memory experiment for a patch.
 
@@ -2452,6 +2477,10 @@ def generate_memory_experiment(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
+        trace_metadata: Emit PECOS trace metadata helpers in generated SZZ
+            source. Keep enabled for traced-QIS/DEM paths; disable for
+            execution-only builds whose compiler/linker cannot resolve the
+            metadata helper symbols.
 
     Returns:
         Guppy function for the experiment
@@ -2470,6 +2499,7 @@ def generate_memory_experiment(
         check_plan=resolved_plan.plan_id if check_plan is not None else None,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
 
     if basis.upper() == "Z":
@@ -2564,6 +2594,7 @@ def generate_surface_code_module(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> str:
     """Generate source code for a distance-d surface code module.
 
@@ -2577,6 +2608,8 @@ def generate_surface_code_module(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
+        trace_metadata: Emit PECOS trace metadata helpers in generated SZZ
+            source.
 
     Returns:
         Python/Guppy source code as a string
@@ -2593,6 +2626,7 @@ def generate_surface_code_module(
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
 
 
@@ -2604,6 +2638,7 @@ def _surface_code_module_for_patch(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> dict:
     """Load + cache a surface-code module for an arbitrary patch.
 
@@ -2634,6 +2669,7 @@ def _surface_code_module_for_patch(
         resolved_plan.plan_id,
         None if clifford_frame_policy is None else str(clifford_frame_policy).lower().replace("-", "_"),
         szz_runtime_barrier_policy,
+        trace_metadata,
     )
 
     if cache_key in _state.distance_module_cache:
@@ -2646,6 +2682,7 @@ def _surface_code_module_for_patch(
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barrier_policy,
+        trace_metadata=trace_metadata,
     )
 
     # Metadata derived from the actual patch geometry.
@@ -2658,6 +2695,7 @@ def _surface_code_module_for_patch(
     module["clifford_frame_policy"] = clifford_frame_policy
     module["szz_runtime_barriers"] = szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE
     module["szz_runtime_barrier_policy"] = szz_runtime_barrier_policy
+    module["trace_metadata"] = trace_metadata
     module["resolved_check_plan"] = resolved_plan.resolved_metadata
     module["resolved_check_plan_hash"] = resolved_plan.resolved_hash
 
@@ -2713,6 +2751,7 @@ def make_surface_code(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> object:
     """Create a surface code memory experiment.
 
@@ -2731,6 +2770,10 @@ def make_surface_code(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
+        trace_metadata: Emit PECOS trace metadata helpers in generated SZZ
+            source. Keep enabled for traced-QIS/DEM paths; disable for
+            execution-only builds whose compiler/linker cannot resolve the
+            metadata helper symbols.
 
     Returns:
         Compiled Guppy program
@@ -2752,4 +2795,5 @@ def make_surface_code(
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )

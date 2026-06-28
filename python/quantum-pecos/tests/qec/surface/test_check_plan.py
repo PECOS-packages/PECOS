@@ -314,6 +314,25 @@ def test_direct_surface_renderers_accept_check_plan_as_source_of_truth() -> None
     assert '"source_lowering_required", "true"' in guppy_source
 
 
+def test_szz_guppy_source_can_disable_trace_metadata_for_execution() -> None:
+    from pecos.guppy.surface import generate_guppy_source
+    from pecos.qec.surface import SurfacePatch
+
+    patch = SurfacePatch.create(distance=3)
+    guppy_source = generate_guppy_source(
+        patch,
+        num_rounds=1,
+        interaction_basis="szz",
+        check_plan="szz_current_v1",
+        trace_metadata=False,
+    )
+
+    assert "def pecos_qis_trace_metadata_qubit_hugr(" not in guppy_source
+    assert "pecos_qis_trace_metadata_qubit_hugr(" not in guppy_source
+    assert "zz_phase(" in guppy_source
+    assert "result(" in guppy_source
+
+
 def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:
     from pecos.guppy.surface import generate_guppy_source
     from pecos.qec.surface import SurfacePatch

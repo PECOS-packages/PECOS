@@ -18,8 +18,8 @@ from pecos.qec.surface._twirl_sites import (
 )
 from pecos.qec.surface.patch import SurfacePatch
 
-_SZZ_RUNTIME_BARRIER_HELPER = "pecos_qis_runtime_barrier_qubit_hugr("
-_SZZ_RUNTIME_BARRIER_CALL = "= pecos_qis_runtime_barrier_qubit_hugr("
+_SZZ_RUNTIME_BARRIER_HELPER = "pecos_qis_runtime_barrier_qubits2_hugr("
+_SZZ_RUNTIME_BARRIER_CALL = "= pecos_qis_runtime_barrier_qubits2_hugr("
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def patch() -> SurfacePatch:
 
 
 def _assert_szz_prefix_barrier_host_order(src: str) -> None:
-    """Assert a real SZZ data-prefix pulse is fenced before its host."""
+    """Assert a real SZZ data-prefix pulse is fenced with its host qubits."""
     lines = src.splitlines()
     for index, line in enumerate(lines):
         if "phased_x(" not in line:
@@ -38,15 +38,15 @@ def _assert_szz_prefix_barrier_host_order(src: str) -> None:
             for i in range(index - 1, -1, -1)
             if '"source_kind", "szz_data_prefix"' in lines[i]
         )
-        barrier_index = next(i for i in range(index + 1, len(lines)) if _SZZ_RUNTIME_BARRIER_CALL in lines[i])
+        barrier_index = next(i for i in range(prefix_meta - 1, -1, -1) if _SZZ_RUNTIME_BARRIER_CALL in lines[i])
         host_meta = next(
             i
-            for i in range(barrier_index + 1, len(lines))
+            for i in range(index + 1, len(lines))
             if '"source_kind", "szz_host"' in lines[i]
         )
         zz_phase_index = next(i for i in range(host_meta + 1, len(lines)) if "zz_phase(" in lines[i])
 
-        assert prefix_meta < index < barrier_index < host_meta < zz_phase_index
+        assert barrier_index < prefix_meta < index < host_meta < zz_phase_index
         return
 
     msg = "expected an SZZ touch with a hosted phased_x data-prefix pulse"

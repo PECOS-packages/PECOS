@@ -70,6 +70,7 @@ const HUGR_SYMBOL_PREFIX: &str = "__hugr__.";
 const TRACE_METADATA_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_hugr";
 const TRACE_METADATA_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_qubit_hugr";
 const RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubit_hugr";
+const RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubits2_hugr";
 
 // Extension registry is defined in the parent module
 
@@ -409,6 +410,7 @@ fn normalize_pecos_helper_symbols_in_llvm(llvm_ir: String) -> String {
         TRACE_METADATA_HUGR_SYMBOL,
         TRACE_METADATA_QUBIT_HUGR_SYMBOL,
         RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL,
+        RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL,
     ];
     let mut normalized = String::with_capacity(llvm_ir.len());
     let mut cursor = 0;
@@ -469,6 +471,8 @@ mod tests {
             "%q2 = call i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.21(i64 %0, i8* %1, i8* %2)\n",
             "%q3 = call i64 @__hugr__.pecos_qis_runtime_barrier_qubit_hugr.22(i64 %0)\n",
             "%q4 = call i64 @__hugr__.__main__.pecos_qis_runtime_barrier_qubit_hugr.23(i64 %0)\n",
+            "%q5 = call { i64, i64 } @__hugr__.pecos_qis_runtime_barrier_qubits2_hugr.24(i64 %0, i64 %1)\n",
+            "%q6 = call { i64, i64 } @__hugr__.__main__.pecos_qis_runtime_barrier_qubits2_hugr.25(i64 %0, i64 %1)\n",
             "call void @__hugr__.other_helper.16()\n",
         )
         .to_string();
@@ -490,6 +494,12 @@ mod tests {
         assert!(
             normalized.contains("%q4 = call i64 @pecos_qis_runtime_barrier_qubit_hugr(i64 %0)")
         );
+        assert!(normalized.contains(
+            "%q5 = call { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 %0, i64 %1)"
+        ));
+        assert!(normalized.contains(
+            "%q6 = call { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 %0, i64 %1)"
+        ));
         assert!(normalized.contains("@__hugr__.other_helper.16"));
     }
 }

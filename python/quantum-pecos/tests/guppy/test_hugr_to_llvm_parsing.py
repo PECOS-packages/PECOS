@@ -87,3 +87,34 @@ def test_trace_metadata_helper_uses_public_symbol() -> None:
 
     assert "@pecos_qis_trace_metadata_qubit_hugr" in llvm_ir
     assert "@__hugr__.pecos_qis_trace_metadata_qubit_hugr" not in llvm_ir
+
+
+def test_runtime_barrier_pair_helper_uses_public_symbol() -> None:
+    """Test that two-qubit runtime-barrier helpers compile to the public FFI symbol."""
+    try:
+        from guppylang import guppy
+        from guppylang.std.builtins import owned
+        from guppylang.std.quantum import cx, h, measure, qubit
+        from pecos_rslib import compile_hugr_to_qis
+    except ImportError as e:
+        pytest.skip(f"Required imports not available: {e}")
+
+    @guppy.declare
+    def pecos_qis_runtime_barrier_qubits2_hugr(
+        q0: qubit @ owned,
+        q1: qubit @ owned,
+    ) -> tuple[qubit, qubit]: ...
+
+    @guppy
+    def barrier_pair_probe() -> tuple[bool, bool]:
+        q0 = qubit()
+        q1 = qubit()
+        h(q0)
+        q0, q1 = pecos_qis_runtime_barrier_qubits2_hugr(q0, q1)
+        cx(q0, q1)
+        return measure(q0), measure(q1)
+
+    llvm_ir = compile_hugr_to_qis(barrier_pair_probe.compile().to_bytes())
+
+    assert "@pecos_qis_runtime_barrier_qubits2_hugr" in llvm_ir
+    assert "@__hugr__.pecos_qis_runtime_barrier_qubits2_hugr" not in llvm_ir

@@ -8,6 +8,14 @@ use crate::{Operation, QuantumOp, TraceMetadata, with_interface};
 use log::debug;
 use std::cell::Cell;
 
+/// C ABI return value for helpers that consume and return two qubits.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QubitPair {
+    pub first: i64,
+    pub second: i64,
+}
+
 // Thread-local counter to prevent infinite loops in collection mode.
 // After MAX_COLLECTION_READS, `___read_future_bool` returns true to break out of
 // loops like "repeat_until_one" (while not result: ... result = measure(q)).
@@ -550,6 +558,27 @@ pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64
         interface.queue_operation(Operation::Barrier);
     });
     qubit
+}
+
+/// Insert a runtime scheduling barrier after prior operations touching either qubit.
+///
+/// The returned qubit pair gives Guppy/HUGR data dependencies on both inputs. A
+/// caller can place this helper immediately before a hosted local pulse so that
+/// the local pulse cannot be scheduled before the host qubit is ready.
+///
+/// # Safety
+/// Called from C/LLVM code. Qubits must be valid non-negative IDs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubits2_hugr(
+    first: i64,
+    second: i64,
+) -> QubitPair {
+    let _ = i64_to_usize(first);
+    let _ = i64_to_usize(second);
+    with_interface(|interface| {
+        interface.queue_operation(Operation::Barrier);
+    });
+    QubitPair { first, second }
 }
 
 /// Attach source/runtime metadata to the next lowerable quantum operation.
@@ -1652,6 +1681,23 @@ mod tests {
         setup_test();
         let returned = unsafe { pecos_qis_runtime_barrier_qubit_hugr(17) };
         assert_eq!(returned, 17);
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations, vec![Operation::Barrier]);
+        });
+    }
+
+    #[test]
+    fn test_runtime_barrier_qubits2_hugr_returns_qubits_and_queues_barrier() {
+        setup_test();
+        let returned = unsafe { pecos_qis_runtime_barrier_qubits2_hugr(17, 23) };
+        assert_eq!(
+            returned,
+            QubitPair {
+                first: 17,
+                second: 23,
+            },
+        );
 
         with_interface(|iface| {
             assert_eq!(iface.operations, vec![Operation::Barrier]);

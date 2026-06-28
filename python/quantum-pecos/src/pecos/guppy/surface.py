@@ -393,6 +393,13 @@ def generate_guppy_source(
                 "@guppy.declare",
                 "def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...",
                 "",
+                "@guppy.declare",
+                (
+                    "def pecos_qis_runtime_barrier_qubits2_hugr("
+                    "q0: qubit @ owned, q1: qubit @ owned"
+                    ") -> tuple[qubit, qubit]: ..."
+                ),
+                "",
                 "",
             ],
         )
@@ -855,15 +862,16 @@ def generate_guppy_source(
                 if host_label_scope is None
                 else f"szz:{host_label_scope}:{host_label_core}"
             )
-            discharge_data_for_szz(data_q, host_label=host_label)
             if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_ALL or (
                 szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX
                 and has_data_prefix
             ):
                 target.append(
-                    f"{indent}{data_expr(data_q)} = "
-                    f"pecos_qis_runtime_barrier_qubit_hugr({data_expr(data_q)})",
+                    f"{indent}{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)} = "
+                    "pecos_qis_runtime_barrier_qubits2_hugr("
+                    f"{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)})",
                 )
+            discharge_data_for_szz(data_q, host_label=host_label)
             half_turns = "0.5" if sign > 0 else "-0.5"
             _append_szz_gate_trace_metadata(
                 target,

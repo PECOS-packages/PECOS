@@ -344,12 +344,12 @@ def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:
         szz_runtime_barriers="data-prefix",
     )
 
-    prefix_index = source.index('"source_kind", "szz_data_prefix"')
-    barrier_index = source.index("= pecos_qis_runtime_barrier_qubit_hugr(")
+    barrier_index = source.index("= pecos_qis_runtime_barrier_qubits2_hugr(")
+    prefix_index = source.index('"source_kind", "szz_data_prefix"', barrier_index)
     host_index = source.index('"source_kind", "szz_host"', prefix_index)
     zz_phase_index = source.index("zz_phase(", barrier_index)
 
-    assert prefix_index < barrier_index < host_index < zz_phase_index
+    assert barrier_index < prefix_index < host_index < zz_phase_index
 
 
 def test_szz_data_prefixes_emit_generic_hosted_metadata() -> None:

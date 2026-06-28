@@ -104,11 +104,16 @@ Current state:
 - A minimal Guppy public `barrier(...)` probe is currently optimized away before
   PECOS QIS operation collection. The captured raw operation trace contains
   allocations, gates, measurements, and releases, but no `Barrier` operation.
-- The generated surface SZZ/SZZdg path uses a PECOS-owned
-  `pecos_qis_runtime_barrier_qubit_hugr` helper for `szz_runtime_barriers`.
-  The helper returns its qubit argument to create a Guppy/HUGR data dependency
-  and queues a real `Operation::Barrier`, so Selene runtime lowering drains the
-  current batch before the following host operation.
+- PECOS-owned runtime-barrier helpers such as
+  `pecos_qis_runtime_barrier_qubit_hugr` return their qubit arguments to create
+  Guppy/HUGR data dependencies and queue a real `Operation::Barrier`, so Selene
+  runtime lowering drains the current batch before later dependent operations.
+- SZZ/SZZdg data-prefix barriers use the two-qubit
+  `pecos_qis_runtime_barrier_qubits2_hugr` helper. The helper consumes and
+  returns the host ancilla and data qubit, and the generated source places it
+  before the hosted data-prefix pulse. This is the dependency needed to prevent
+  the data-prefix pulse from being scheduled long before the host qubit is
+  ready.
 
 So barrier preservation requires a Guppy/HUGR/QIR/QIS bridge that lowers public
 barriers or qsystem `RuntimeBarrier` operations into `Operation::Barrier`

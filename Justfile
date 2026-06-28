@@ -163,19 +163,14 @@ dependency-integrity-check:
 [group('security')]
 security-check: dependency-integrity-check cargo-deny
 
-# Run cargo-deny against every Rust lockfile covered by CI
+# Run cargo-deny against the root Rust workspace (the only tracked lockfile)
 [group('security')]
-cargo-deny: cargo-deny-workspace cargo-deny-native-bench
+cargo-deny: cargo-deny-workspace
 
 # Check the root Rust workspace with cargo-deny
 [group('security')]
 cargo-deny-workspace:
     cargo deny --locked --all-features check advisories bans sources
-
-# Check the standalone native benchmark crate with cargo-deny
-[group('security')]
-cargo-deny-native-bench:
-    cargo deny --manifest-path scripts/native_bench/bench_pecos/Cargo.toml --locked --all-features check advisories bans sources
 
 # List installed and cached dependencies
 [group('setup')]

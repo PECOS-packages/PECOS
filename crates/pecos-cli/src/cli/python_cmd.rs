@@ -259,7 +259,11 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     pip_cmd.args(["pip", "install", "--no-deps", "-e"]);
 
     if cuda {
-        pip_cmd.arg("./python/quantum-pecos[all,cuda]");
+        // The CUDA Python extras are split by toolkit major (cuda12/cuda13);
+        // select the one matching the detected toolkit, the same choice
+        // `pecos cuda install` makes via cuda_python_group().
+        let group = super::cuda_cmd::cuda_python_group();
+        pip_cmd.arg(format!("./python/quantum-pecos[all,{group}]"));
     } else {
         pip_cmd.arg("./python/quantum-pecos[all]");
     }

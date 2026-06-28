@@ -162,15 +162,27 @@ def check_cuda_extra_group(root_data: dict[str, Any], errors: list[str]) -> None
     if not isinstance(optional, dict) or not isinstance(dependency_groups, dict):
         return
 
-    # The CUDA stack is split by toolkit major; each extra must stay identical to
-    # its matching dependency group so `pip install .[cuda13]` and
-    # `uv sync --group cuda13` resolve to the same packages.
+    # The CUDA stack is split by toolkit major; each major must be defined as BOTH a
+    # `[project.optional-dependencies]` extra AND a matching `[dependency-groups]`
+    # group, kept identical, so `pip install .[cuda13]` and `uv sync --group cuda13`
+    # resolve to the same packages. Both majors are required: the `pecos` CLI selects
+    # cuda12 or cuda13 by the detected toolkit (cuda_python_group), so deleting either
+    # the extra or the group breaks CUDA setup on the corresponding host -- a missing
+    # side is an error, not a silent skip.
     for cuda_name in ("cuda12", "cuda13"):
         cuda_extra = optional.get(cuda_name)
         cuda_group = dependency_groups.get(cuda_name)
-        if cuda_extra is None or cuda_group is None:
-            continue
-        if cuda_extra != cuda_group:
+        if cuda_extra is None:
+            fail(
+                errors,
+                f"pyproject.toml: missing required [project.optional-dependencies].{cuda_name}",
+            )
+        if cuda_group is None:
+            fail(
+                errors,
+                f"pyproject.toml: missing required [dependency-groups].{cuda_name}",
+            )
+        if cuda_extra is not None and cuda_group is not None and cuda_extra != cuda_group:
             fail(
                 errors,
                 f"pyproject.toml: [project.optional-dependencies].{cuda_name} and "

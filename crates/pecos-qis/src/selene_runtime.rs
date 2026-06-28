@@ -870,6 +870,47 @@ impl SeleneRuntime {
         Ok(())
     }
 
+    fn call_runtime_global_barrier(&self, sleep_time: u64) -> Result<bool> {
+        let lib = self
+            .library
+            .as_ref()
+            .ok_or_else(|| RuntimeError::FfiError("Selene runtime is not loaded".to_string()))?;
+        let instance = self.instance.ok_or_else(|| {
+            RuntimeError::FfiError("Selene runtime is not initialized".to_string())
+        })?;
+
+        unsafe {
+            let Ok(global_barrier_fn) = lib
+                .get::<unsafe extern "C" fn(RuntimeInstance, u64) -> i32>(
+                    b"selene_runtime_global_barrier",
+                )
+            else {
+                return Ok(false);
+            };
+            let errno = global_barrier_fn(instance, sleep_time);
+            if errno != 0 {
+                return Err(RuntimeError::FfiError(format!(
+                    "global_barrier failed with errno {errno}"
+                )));
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn lower_runtime_barrier(&mut self) -> Result<Vec<QuantumOp>> {
+        self.load_plugin()?;
+
+        // Runtime-native barriers keep scheduler-specific ordering decisions
+        // inside the plugin. Falling back to a drain preserves compatibility
+        // with older plugins that do not expose Selene barrier symbols.
+        if self.call_runtime_global_barrier(0)? {
+            return Ok(Vec::new());
+        }
+
+        self.drain_runtime_operations()
+    }
+
     fn submit_operation_to_runtime(
         &mut self,
         op: &Operation,
@@ -1710,7 +1751,7 @@ impl QisRuntime for SeleneRuntime {
 
         for op in operations {
             if matches!(op, Operation::Barrier) {
-                lowered_ops.extend(self.drain_runtime_operations()?);
+                lowered_ops.extend(self.lower_runtime_barrier()?);
             }
             self.submit_operation_to_runtime(op, &mut lowered_ops)?;
         }
@@ -1770,7 +1811,7 @@ impl QisRuntime for SeleneRuntime {
                     );
                 }
                 Operation::Barrier => {
-                    let emitted_ops = self.drain_runtime_operations()?;
+                    let emitted_ops = self.lower_runtime_barrier()?;
                     Self::push_lowered_ops_with_source_metadata(
                         &mut lowered_ops,
                         emitted_ops,

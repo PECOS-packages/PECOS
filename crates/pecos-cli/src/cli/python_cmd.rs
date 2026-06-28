@@ -26,7 +26,7 @@ pub fn run(command: &super::PythonCommands) -> Result<()> {
 /// Resolution order:
 /// - `--cuda`     -> always on (caller knows what they want)
 /// - `--no-cuda`  -> always off (caller opts out)
-/// - neither      -> auto-detect: include CUDA Python packages when both the
+/// - neither      -> auto-detect: build the CUDA (Rust) backend when both the
 ///   toolkit and an NVIDIA GPU are present, otherwise skip
 fn resolve_cuda_choice(cuda: bool, no_cuda: bool) -> bool {
     if cuda {
@@ -38,8 +38,10 @@ fn resolve_cuda_choice(cuda: bool, no_cuda: bool) -> bool {
     let detected = super::cuda_cmd::should_install_cuda_python();
     if detected {
         println!(
-            "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages \
-             (cupy, cuquantum, pytket-cutensornet). Pass --no-cuda to skip."
+            "CUDA toolkit + NVIDIA GPU detected -- building the CUDA (Rust) backend. \
+             CUDA Python packages (cupy, cuquantum, pytket-cutensornet) are installed \
+             separately via `uv sync --group cuda12|cuda13` (e.g. `pecos cuda setup-python`). \
+             Pass --no-cuda to skip."
         );
     }
     detected
@@ -258,15 +260,14 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     let mut pip_cmd = Command::new("uv");
     pip_cmd.args(["pip", "install", "--no-deps", "-e"]);
 
-    if cuda {
-        // The CUDA Python extras are split by toolkit major (cuda12/cuda13);
-        // select the one matching the detected toolkit, the same choice
-        // `pecos cuda install` makes via cuda_python_group().
-        let group = super::cuda_cmd::cuda_python_group();
-        pip_cmd.arg(format!("./python/quantum-pecos[all,{group}]"));
-    } else {
-        pip_cmd.arg("./python/quantum-pecos[all]");
-    }
+    // `--no-deps` (above) means this editable install pulls no dependencies, so
+    // naming a CUDA extra here would be inert: the CUDA Python stack
+    // (cupy/cuquantum/pytket-cutensornet) is installed separately via
+    // `uv sync --group cuda12|cuda13` (`just build`'s sync-deps, `pecos setup`, or
+    // `pecos cuda setup-python`), not by this command. Request the dependency-free
+    // `[all]` extra, which exists regardless of CUDA toolkit major and avoids an
+    // unknown-extra warning.
+    pip_cmd.arg("./python/quantum-pecos[all]");
 
     pip_cmd.current_dir(&repo_root);
     pip_cmd.env_remove("CONDA_PREFIX");

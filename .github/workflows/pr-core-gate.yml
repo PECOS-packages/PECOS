@@ -55,7 +55,19 @@ jobs:
 
       - name: Detect core-relevant changes
         id: detect
-        run: echo "run=$(bash scripts/ci/pr-core-changed.sh '${{ github.event.pull_request.base.sha }}')" >> "$GITHUB_OUTPUT"
+        # Assign on its own line so a git failure in the detect script aborts the
+        # step under `set -e` (fail closed) instead of writing an empty `run=`,
+        # which would let this required gate pass green having run no tests.
+        run: |
+          run="$(bash scripts/ci/pr-core-changed.sh '${{ github.event.pull_request.base.sha }}')"
+          case "$run" in
+            true|false) ;;
+            *)
+              echo "unexpected pr-core detect output: <$run>" >&2
+              exit 1
+              ;;
+          esac
+          printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
 
       - name: Free Disk Space (Ubuntu)
         if: steps.detect.outputs.run == 'true'
@@ -145,7 +157,19 @@ jobs:
 
       - name: Detect core-relevant changes
         id: detect
-        run: echo "run=$(bash scripts/ci/pr-core-changed.sh '${{ github.event.pull_request.base.sha }}')" >> "$GITHUB_OUTPUT"
+        # Assign on its own line so a git failure in the detect script aborts the
+        # step under `set -e` (fail closed) instead of writing an empty `run=`,
+        # which would let this required gate pass green having run no tests.
+        run: |
+          run="$(bash scripts/ci/pr-core-changed.sh '${{ github.event.pull_request.base.sha }}')"
+          case "$run" in
+            true|false) ;;
+            *)
+              echo "unexpected pr-core detect output: <$run>" >&2
+              exit 1
+              ;;
+          esac
+          printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
 
       - name: Free Disk Space (Ubuntu)
         if: steps.detect.outputs.run == 'true'

@@ -30,7 +30,7 @@ changed="$(git diff --name-only "$base"...HEAD)"
 # python/quantum-pecos/tests/docs/, both collected by the non-slow core
 # selection. Nested package READMEs (python/**/README.md) are also build inputs
 # and run. Anything not on the allowlist runs.
-ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|go-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE|CITATION)'
+ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|go-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE$|CITATION(\.cff)?$)'
 
 if printf '%s\n' "$changed" | grep -qvE "$ignore"; then
   echo "true"

@@ -159,16 +159,23 @@ def check_cuda_extra_group(root_data: dict[str, Any], errors: list[str]) -> None
     project = root_data.get("project", {})
     optional = project.get("optional-dependencies", {}) if isinstance(project, dict) else {}
     dependency_groups = root_data.get("dependency-groups", {})
-    cuda_extra = optional.get("cuda") if isinstance(optional, dict) else None
-    cuda_group = dependency_groups.get("cuda") if isinstance(dependency_groups, dict) else None
-
-    if cuda_extra is None or cuda_group is None:
+    if not isinstance(optional, dict) or not isinstance(dependency_groups, dict):
         return
-    if cuda_extra != cuda_group:
-        fail(
-            errors,
-            "pyproject.toml: [project.optional-dependencies].cuda and [dependency-groups].cuda must stay identical",
-        )
+
+    # The CUDA stack is split by toolkit major; each extra must stay identical to
+    # its matching dependency group so `pip install .[cuda13]` and
+    # `uv sync --group cuda13` resolve to the same packages.
+    for cuda_name in ("cuda12", "cuda13"):
+        cuda_extra = optional.get(cuda_name)
+        cuda_group = dependency_groups.get(cuda_name)
+        if cuda_extra is None or cuda_group is None:
+            continue
+        if cuda_extra != cuda_group:
+            fail(
+                errors,
+                f"pyproject.toml: [project.optional-dependencies].{cuda_name} and "
+                f"[dependency-groups].{cuda_name} must stay identical",
+            )
 
 
 def main() -> int:

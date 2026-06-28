@@ -12,6 +12,7 @@ schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 """
 
 import importlib.util
+import json
 import sys
 import tempfile
 from collections.abc import Callable
@@ -50,6 +51,7 @@ _SZZ_RUNTIME_BARRIER_POLICIES = frozenset(
         _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX,
     },
 )
+_PACKED_TRACE_METADATA_JSON_KEY = "__pecos_trace_metadata_json_v1__"
 
 
 def _normalize_szz_runtime_barrier_policy(value: bool | str) -> str:
@@ -543,17 +545,20 @@ def generate_guppy_source(
         msg = f"unsupported Pauli axis {axis!r}"
         raise ValueError(msg)
 
-    def _append_szz_trace_metadata(
+    def _append_szz_trace_metadata_payload(
         target: list[str],
         indent: str,
-        key: str,
-        value: str,
+        metadata: dict[str, str],
         qubit_expr: str,
     ) -> None:
-        if not trace_metadata:
+        if not trace_metadata or not metadata:
             return
+        payload = json.dumps(metadata, separators=(",", ":"), sort_keys=True)
         target.append(
-            f'{indent}{qubit_expr} = pecos_qis_trace_metadata_qubit_hugr({qubit_expr}, "{key}", "{value}")',
+            f"{indent}{qubit_expr} = pecos_qis_trace_metadata_qubit_hugr("
+            f"{qubit_expr}, "
+            f"{json.dumps(_PACKED_TRACE_METADATA_JSON_KEY)}, "
+            f"{json.dumps(payload)})",
         )
 
     def _append_szz_gate_trace_metadata(
@@ -568,23 +573,20 @@ def generate_guppy_source(
         gate: OpType | None = None,
         lowering_required: bool = False,
     ) -> None:
-        _append_szz_trace_metadata(target, indent, "source_kind", source_kind, qubit_expr)
-        _append_szz_trace_metadata(target, indent, "source_label", source_label, qubit_expr)
+        metadata = {
+            "source_kind": source_kind,
+            "source_label": source_label,
+        }
         if host_label is not None:
-            _append_szz_trace_metadata(target, indent, "szz_host_label", host_label, qubit_expr)
-            _append_szz_trace_metadata(target, indent, "host_id", host_label, qubit_expr)
+            metadata["szz_host_label"] = host_label
+            metadata["host_id"] = host_label
         if local_role is not None:
-            _append_szz_trace_metadata(target, indent, "local_role", local_role, qubit_expr)
+            metadata["local_role"] = local_role
         if gate is not None:
-            _append_szz_trace_metadata(target, indent, "source_gate", gate.name, qubit_expr)
+            metadata["source_gate"] = gate.name
         if lowering_required:
-            _append_szz_trace_metadata(
-                target,
-                indent,
-                "source_lowering_required",
-                "true",
-                qubit_expr,
-            )
+            metadata["source_lowering_required"] = "true"
+        _append_szz_trace_metadata_payload(target, indent, metadata, qubit_expr)
 
     def _append_szz_flow_gate(
         target: list[str],

@@ -5,10 +5,47 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import json
 from dataclasses import replace
 
 import pytest
+
+_PACKED_TRACE_METADATA_JSON_KEY = "__pecos_trace_metadata_json_v1__"
+
+
+def _packed_trace_metadata_records(source: str) -> list[tuple[int, dict[str, str]]]:
+    records: list[tuple[int, dict[str, str]]] = []
+    sentinel = f"{json.dumps(_PACKED_TRACE_METADATA_JSON_KEY)}, "
+    for line_index, line in enumerate(source.splitlines()):
+        if "pecos_qis_trace_metadata_qubit_hugr(" not in line or sentinel not in line:
+            continue
+        packed_literal = line.split(sentinel, 1)[1].rsplit(")", 1)[0]
+        records.append((line_index, json.loads(ast.literal_eval(packed_literal))))
+    return records
+
+
+def _first_metadata_line(
+    source: str,
+    *,
+    start_line: int = 0,
+    **expected: str,
+) -> tuple[int, dict[str, str]]:
+    for line_index, metadata in _packed_trace_metadata_records(source):
+        if line_index < start_line:
+            continue
+        if all(metadata.get(key) == value for key, value in expected.items()):
+            return line_index, metadata
+    msg = f"could not find packed trace metadata after line {start_line}: {expected!r}"
+    raise AssertionError(msg)
+
+
+def _has_metadata_prefix(source: str, key: str, prefix: str) -> bool:
+    return any(
+        isinstance(metadata.get(key), str) and metadata[key].startswith(prefix)
+        for _, metadata in _packed_trace_metadata_records(source)
+    )
 
 
 def test_check_plan_default_resolves_to_cx_metadata() -> None:
@@ -306,12 +343,14 @@ def test_direct_surface_renderers_accept_check_plan_as_source_of_truth() -> None
     assert "Check plan: szz_current_v1" in guppy_source
     assert "def pecos_qis_trace_metadata_qubit_hugr(" in guppy_source
     assert " = pecos_qis_trace_metadata_qubit_hugr(" in guppy_source
-    assert '"source_kind", "szz_host"' in guppy_source
-    assert '"source_kind", "szz_data_prefix"' in guppy_source
-    assert '"szz_host_label", "szz:' in guppy_source
-    assert '"host_id", "szz:' in guppy_source
-    assert '"local_role", "basis_prefix"' in guppy_source
-    assert '"source_lowering_required", "true"' in guppy_source
+    assert _PACKED_TRACE_METADATA_JSON_KEY in guppy_source
+    records = [metadata for _, metadata in _packed_trace_metadata_records(guppy_source)]
+    assert any(metadata.get("source_kind") == "szz_host" for metadata in records)
+    assert any(metadata.get("source_kind") == "szz_data_prefix" for metadata in records)
+    assert any(str(metadata.get("szz_host_label", "")).startswith("szz:") for metadata in records)
+    assert any(str(metadata.get("host_id", "")).startswith("szz:") for metadata in records)
+    assert any(metadata.get("local_role") == "basis_prefix" for metadata in records)
+    assert any(metadata.get("source_lowering_required") == "true" for metadata in records)
 
 
 def test_szz_guppy_source_can_disable_trace_metadata_for_execution() -> None:
@@ -344,10 +383,15 @@ def test_szz_runtime_barrier_fences_data_prefix_before_host() -> None:
         szz_runtime_barriers="data-prefix",
     )
 
-    barrier_index = source.index("= pecos_qis_runtime_barrier_qubits2_hugr(")
-    prefix_index = source.index('"source_kind", "szz_data_prefix"', barrier_index)
-    host_index = source.index('"source_kind", "szz_host"', prefix_index)
-    zz_phase_index = source.index("zz_phase(", barrier_index)
+    lines = source.splitlines()
+    barrier_index = next(i for i, line in enumerate(lines) if "= pecos_qis_runtime_barrier_qubits2_hugr(" in line)
+    prefix_index, _ = _first_metadata_line(
+        source,
+        start_line=barrier_index,
+        source_kind="szz_data_prefix",
+    )
+    host_index, _ = _first_metadata_line(source, start_line=prefix_index, source_kind="szz_host")
+    zz_phase_index = next(i for i in range(barrier_index, len(lines)) if "zz_phase(" in lines[i])
 
     assert barrier_index < prefix_index < host_index < zz_phase_index
 
@@ -361,13 +405,20 @@ def test_szz_data_prefixes_emit_generic_hosted_metadata() -> None:
         check_plan="szz_current_v1",
     )
 
-    prefix_index = source.index('"source_kind", "szz_data_prefix"')
-    role_index = source.index('"local_role", "basis_prefix"', prefix_index)
-    prefix_host_index = source.index('"host_id", "szz:', prefix_index)
-    host_index = source.index('"source_kind", "szz_host"', prefix_index)
-    host_id_index = source.index('"host_id", "szz:', host_index)
+    prefix_index, prefix_metadata = _first_metadata_line(
+        source,
+        source_kind="szz_data_prefix",
+    )
+    host_index, host_metadata = _first_metadata_line(
+        source,
+        start_line=prefix_index + 1,
+        source_kind="szz_host",
+    )
 
-    assert prefix_index < prefix_host_index < role_index < host_index < host_id_index
+    assert prefix_metadata["local_role"] == "basis_prefix"
+    assert prefix_metadata["host_id"].startswith("szz:")
+    assert host_metadata["host_id"].startswith("szz:")
+    assert prefix_index < host_index
 
 
 def test_szz_hosted_metadata_labels_include_helper_scope() -> None:
@@ -379,9 +430,9 @@ def test_szz_hosted_metadata_labels_include_helper_scope() -> None:
         check_plan="szz_current_v1",
     )
 
-    assert '"host_id", "szz:init_z_basis:' in source
-    assert '"host_id", "szz:init_x_basis:' in source
-    assert '"host_id", "szz:syndrome_extraction:' in source
+    assert _has_metadata_prefix(source, "host_id", "szz:init_z_basis:")
+    assert _has_metadata_prefix(source, "host_id", "szz:init_x_basis:")
+    assert _has_metadata_prefix(source, "host_id", "szz:syndrome_extraction:")
 
 
 def test_plain_szz_memory_source_unrolls_hosted_metadata_by_counted_round() -> None:
@@ -398,9 +449,9 @@ def test_plain_szz_memory_source_unrolls_hosted_metadata_by_counted_round() -> N
     assert "if num_rounds != 2:" in source
     assert "def syndrome_extraction_memory_r0" in source
     assert "def syndrome_extraction_memory_r1" in source
-    assert '"host_id", "szz:memory_r0:' in source
-    assert '"host_id", "szz:memory_r1:' in source
-    assert '"host_id", "szz:memory_r2:' not in source
+    assert _has_metadata_prefix(source, "host_id", "szz:memory_r0:")
+    assert _has_metadata_prefix(source, "host_id", "szz:memory_r1:")
+    assert not _has_metadata_prefix(source, "host_id", "szz:memory_r2:")
 
 
 def test_plain_szz_memory_cache_key_includes_counted_rounds() -> None:

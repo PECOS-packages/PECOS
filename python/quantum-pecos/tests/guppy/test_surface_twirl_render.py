@@ -22,6 +22,10 @@ _SZZ_RUNTIME_BARRIER_HELPER = "pecos_qis_runtime_barrier_qubits2_hugr("
 _SZZ_RUNTIME_BARRIER_CALL = "= pecos_qis_runtime_barrier_qubits2_hugr("
 
 
+def _line_has_trace_metadata(line: str, key: str, value: str) -> bool:
+    return f'"{key}", "{value}"' in line or f'\\"{key}\\":\\"{value}\\"' in line
+
+
 @pytest.fixture
 def patch() -> SurfacePatch:
     return SurfacePatch.create(distance=3)
@@ -36,13 +40,13 @@ def _assert_szz_prefix_barrier_host_order(src: str) -> None:
         prefix_meta = next(
             i
             for i in range(index - 1, -1, -1)
-            if '"source_kind", "szz_data_prefix"' in lines[i]
+            if _line_has_trace_metadata(lines[i], "source_kind", "szz_data_prefix")
         )
         barrier_index = next(i for i in range(prefix_meta - 1, -1, -1) if _SZZ_RUNTIME_BARRIER_CALL in lines[i])
         host_meta = next(
             i
             for i in range(index + 1, len(lines))
-            if '"source_kind", "szz_host"' in lines[i]
+            if _line_has_trace_metadata(lines[i], "source_kind", "szz_host")
         )
         zz_phase_index = next(i for i in range(host_meta + 1, len(lines)) if "zz_phase(" in lines[i])
 

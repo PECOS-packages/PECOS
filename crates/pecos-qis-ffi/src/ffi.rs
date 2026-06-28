@@ -34,6 +34,8 @@ fn i64_to_usize(value: i64) -> usize {
     usize::try_from(value).expect("Invalid ID: value must be non-negative and fit in usize")
 }
 
+const PACKED_TRACE_METADATA_JSON_KEY: &str = "__pecos_trace_metadata_json_v1__";
+
 unsafe fn read_tket_string_arg(
     func_name: &str,
     arg_name: &str,
@@ -414,9 +416,30 @@ pub unsafe extern "C" fn __quantum__rt__record(data: *const std::ffi::c_char) {
     }
 }
 
-fn queue_trace_metadata(key: String, value: String, qubit: Option<usize>) {
-    let mut metadata = TraceMetadata::new();
-    metadata.insert(key, value);
+fn trace_metadata_from_key_value(
+    func_name: &str,
+    key: String,
+    value: String,
+) -> Option<TraceMetadata> {
+    if key != PACKED_TRACE_METADATA_JSON_KEY {
+        let mut metadata = TraceMetadata::new();
+        metadata.insert(key, value);
+        return Some(metadata);
+    }
+
+    match serde_json::from_str::<TraceMetadata>(&value) {
+        Ok(metadata) => Some(metadata),
+        Err(err) => {
+            log::error!("{func_name}: invalid packed trace metadata JSON: {err}");
+            None
+        }
+    }
+}
+
+fn queue_trace_metadata(func_name: &str, key: String, value: String, qubit: Option<usize>) {
+    let Some(metadata) = trace_metadata_from_key_value(func_name, key, value) else {
+        return;
+    };
     with_interface(|interface| {
         interface.queue_operation(Operation::TraceMetadata { metadata, qubit });
     });
@@ -450,7 +473,7 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata(
     }) else {
         return;
     };
-    queue_trace_metadata(key, value, None);
+    queue_trace_metadata("pecos_qis_trace_metadata", key, value, None);
 }
 
 /// Attach source/runtime metadata to the next lowerable quantum operation.
@@ -490,7 +513,7 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_hugr(key_ptr: *const u8, value
     }) else {
         return;
     };
-    queue_trace_metadata(key, value, None);
+    queue_trace_metadata("pecos_qis_trace_metadata_hugr", key, value, None);
 }
 
 /// Attach source/runtime metadata to the next operation on a specific qubit.
@@ -538,7 +561,12 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_qubit_hugr(
     }) else {
         return qubit;
     };
-    queue_trace_metadata(key, value, Some(i64_to_usize(qubit)));
+    queue_trace_metadata(
+        "pecos_qis_trace_metadata_qubit_hugr",
+        key,
+        value,
+        Some(i64_to_usize(qubit)),
+    );
     qubit
 }
 
@@ -612,7 +640,7 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_direct(
     }) else {
         return;
     };
-    queue_trace_metadata(key, value, None);
+    queue_trace_metadata("pecos_qis_trace_metadata_direct", key, value, None);
 }
 
 // --- Selene-style FFI Functions ---
@@ -1673,6 +1701,39 @@ mod tests {
                 metadata.get("source_kind").map(String::as_str),
                 Some("szz_prefix")
             );
+        });
+    }
+
+    #[test]
+    fn test_trace_metadata_qubit_hugr_expands_packed_json_metadata() {
+        setup_test();
+        let mut key = Vec::with_capacity(PACKED_TRACE_METADATA_JSON_KEY.len() + 1);
+        key.push(PACKED_TRACE_METADATA_JSON_KEY.len() as u8);
+        key.extend_from_slice(PACKED_TRACE_METADATA_JSON_KEY.as_bytes());
+        let value = br#"{"host_id":"probe:host","source_kind":"szz_host"}"#;
+        let mut packed = Vec::with_capacity(value.len() + 1);
+        packed.push(value.len() as u8);
+        packed.extend_from_slice(value);
+
+        let returned =
+            unsafe { pecos_qis_trace_metadata_qubit_hugr(19, key.as_ptr(), packed.as_ptr()) };
+        assert_eq!(returned, 19);
+
+        with_interface(|iface| {
+            assert_eq!(iface.operations.len(), 1);
+            let Operation::TraceMetadata { metadata, qubit } = &iface.operations[0] else {
+                panic!("expected trace metadata operation");
+            };
+            assert_eq!(*qubit, Some(19));
+            assert_eq!(
+                metadata.get("source_kind").map(String::as_str),
+                Some("szz_host")
+            );
+            assert_eq!(
+                metadata.get("host_id").map(String::as_str),
+                Some("probe:host")
+            );
+            assert!(!metadata.contains_key(PACKED_TRACE_METADATA_JSON_KEY));
         });
     }
 

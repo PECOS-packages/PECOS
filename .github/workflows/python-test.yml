@@ -4,7 +4,6 @@ permissions:
   contents: read
 
 env:
-  TRIGGER_ON_PR_PUSH: true
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1

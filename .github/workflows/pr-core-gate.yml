@@ -1,13 +1,14 @@
 name: PR core gate
 
-# Required pre-merge sentinels: run the Linux core Python and Rust test suites
-# on pull requests, in parallel. Neither has a `paths:` filter, so each always
-# reports a status (a path-filtered required check would stuck-block PRs that
-# don't touch its paths). A shared detect script short-circuits to a pass when a
-# PR changes nothing the core suites depend on, so docs-only / unrelated PRs
-# stay fast.
+# Pre-merge test sentinels (intended to become the required contexts
+# pr-core-python / pr-core-rust once promoted in branch protection -- NOT yet
+# required): run the Linux core Python and Rust test suites on pull requests, in
+# parallel. Neither has a `paths:` filter, so each always reports a status (a
+# path-filtered required check would stuck-block PRs that don't touch its paths).
+# A shared detect script short-circuits to a pass when a PR changes nothing the
+# core suites depend on, so docs-only / unrelated PRs stay fast.
 #
-# Required contexts: pr-core-python, pr-core-rust.
+# Intended required contexts (not yet enforced): pr-core-python, pr-core-rust.
 #
 # The setup below mirrors the Linux legs of python-test.yml (python-core) and
 # rust-test.yml. Keep their action SHAs, uv/just/LLVM versions, and cache keys

@@ -50,5 +50,8 @@ jobs:
       - name: Check root Rust workspace
         run: cargo deny --locked --all-features check advisories bans sources
 
-      - name: Check native benchmark crate
-        run: cargo deny --manifest-path scripts/native_bench/bench_pecos/Cargo.toml --locked --all-features check advisories bans sources
+      # No separate check for scripts/native_bench/bench_pecos: that crate is a
+      # dev-only benchmark (publish = false) whose Cargo.lock is intentionally
+      # untracked (.gitignore), so it is neither pinned here nor watched by
+      # Dependabot. Re-add a tracked lock + a --locked check here if it ever
+      # gains shipped or CI-executed status.

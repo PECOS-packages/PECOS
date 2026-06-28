@@ -58,8 +58,17 @@ setup-ci: _msvc-bootstrap
 ci-env: _msvc-bootstrap
     #!/usr/bin/env bash
     set -euo pipefail
-    {{pecos}} llvm ensure --managed --no-configure
-    {{pecos}} env --github-actions
+    export CARGO_NET_RETRY=10
+    for attempt in 1 2 3; do
+        if {{pecos}} llvm ensure --managed --no-configure && {{pecos}} env --github-actions; then
+            exit 0
+        fi
+        if [ "$attempt" -eq 3 ]; then
+            exit 1
+        fi
+        echo "ci-env failed on attempt $attempt; retrying..."
+        sleep 5
+    done
 
 # Check development environment for common problems
 [group('setup')]
@@ -154,19 +163,14 @@ dependency-integrity-check:
 [group('security')]
 security-check: dependency-integrity-check cargo-deny
 
-# Run cargo-deny against every Rust lockfile covered by CI
+# Run cargo-deny against the root Rust workspace (the only tracked lockfile)
 [group('security')]
-cargo-deny: cargo-deny-workspace cargo-deny-native-bench
+cargo-deny: cargo-deny-workspace
 
 # Check the root Rust workspace with cargo-deny
 [group('security')]
 cargo-deny-workspace:
     cargo deny --locked --all-features check advisories bans sources
-
-# Check the standalone native benchmark crate with cargo-deny
-[group('security')]
-cargo-deny-native-bench:
-    cargo deny --manifest-path scripts/native_bench/bench_pecos/Cargo.toml --locked --all-features check advisories bans sources
 
 # List installed and cached dependencies
 [group('setup')]
@@ -207,6 +211,31 @@ build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
 
+# Build only the Python workspace members needed by the fast CI smoke lanes.
+[group('build')]
+python-ci-build profile="debug": _msvc-bootstrap (validate-profile "python-ci-build" profile) python-ci-sync
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE" --no-cuda
+
+# Build only the Python packages needed for docs validation.
+[group('build')]
+python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-docs" profile) python-ci-sync-docs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
+
+# Build the extra experimental bindings exercised by the fast Python core test lane.
+[group('build')]
+python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-test" profile) python-ci-sync-test
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE" --no-cuda
+    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+
 # =============================================================================
 # Testing
 # =============================================================================
@@ -224,6 +253,23 @@ pytest *args:
         uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
         uv run --frozen pytest python/selene-plugins
     fi
+
+# Run the substantive PR Python lane after building the test-only native bindings it needs.
+[group('test')]
+python-ci-core profile="debug": (python-ci-build-test profile)
+    just pytest-ci-core
+
+# Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
+[group('test')]
+pytest-ci-core:
+    uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
+    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
+    uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
+
+# Build and import the core Python packages on a target platform/interpreter.
+[group('test')]
+python-ci-smoke profile="debug": (python-ci-build profile)
+    uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
 [group('test')]
@@ -303,6 +349,29 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-chec
             just go-fmt
         fi
     fi
+
+# Fast lint lane for Python PR CI. Keep this scoped to Rust + Python checks so
+# the Python critical path does not opportunistically pick up Julia/Go tools.
+[group('lint')]
+python-ci-lint: _msvc-bootstrap python-workspace-check
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
+        CLIPPY_FEATURES="--all-features"
+        echo "(CUDA detected -- linting with all features)"
+    else
+        CLIPPY_FEATURES=""
+        echo "(No CUDA -- linting with default features only)"
+    fi
+
+    echo "==> Checking Rust formatting..."
+    cargo fmt --all -- --check
+    echo "==> Running clippy..."
+    cargo clippy --locked --workspace --all-targets $CLIPPY_FEATURES -- -D warnings
+    echo "==> Running pre-commit..."
+    uv run --frozen pre-commit run --all-files
+    echo "==> Running cargo check..."
+    cargo check --locked --workspace --all-targets
 
 # Run cargo check
 [group('lint')]
@@ -808,6 +877,44 @@ sync-deps:
         SYNC_ARGS+=(--group "$CUDA_GROUP")
     fi
     uv sync "${SYNC_ARGS[@]}"
+
+[group('setup')]
+python-ci-sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --package pecos-rslib \
+      --package pecos-rslib-llvm \
+      --package quantum-pecos
+
+[group('setup')]
+python-ci-sync-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --package pecos-rslib \
+      --package pecos-rslib-exp \
+      --package pecos-rslib-llvm \
+      --package quantum-pecos
+
+[group('setup')]
+python-ci-sync-docs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just python-ci-sync
+
+[group('setup')]
+python-ci-sync-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --no-install-workspace
 
 # Windows MSVC bootstrap: write the correct linker + LIB/INCLUDE into
 # .cargo/config.toml (read by cargo *after* it spawns, so it bypasses

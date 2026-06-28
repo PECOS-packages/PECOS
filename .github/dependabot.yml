@@ -19,21 +19,10 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
 
-  # Rust (Cargo) - native benchmark security updates only
-  - package-ecosystem: "cargo"
-    directory: "/scripts/native_bench/bench_pecos"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    groups:
-      native-bench-rust-security:
-        applies-to: security-updates
-        patterns: ["*"]
-    allow:
-      - dependency-type: "all"
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+  # Note: scripts/native_bench/bench_pecos is intentionally NOT watched here. It
+  # is a dev-only benchmark (publish = false) whose Cargo.lock is untracked
+  # (.gitignore), so it is not in the dependency graph. Tracking it would
+  # reintroduce per-directory security PRs that cannot be suppressed.
 
   # Python (pip) - security updates only
   - package-ecosystem: "pip"

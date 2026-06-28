@@ -300,9 +300,11 @@ echo ""
 if [ "$CUDA_VERSION" = "13" ]; then
     CUPY_PACKAGE="cupy-cuda13x"
     CUQUANTUM_PACKAGE="cuquantum-python-cu13"
+    CUQUANTUM_FLOOR="25.9.0" # lowest cu13 wheel (bindings era)
 elif [ "$CUDA_VERSION" = "12" ]; then
     CUPY_PACKAGE="cupy-cuda12x"
     CUQUANTUM_PACKAGE="cuquantum-python-cu12"
+    CUQUANTUM_FLOOR="25.3.0" # bindings era (V100/Volta: pin >=25.3,<25.9)
 fi
 
 PYTKET_PACKAGE="pytket-cutensornet"
@@ -331,8 +333,8 @@ if check_python_package "$CUQUANTUM_PACKAGE"; then
     CUQUANTUM_VERSION=$(uv pip list 2>/dev/null | grep "^$CUQUANTUM_PACKAGE " | awk '{print $2}')
     print_status "$CUQUANTUM_PACKAGE $CUQUANTUM_VERSION is already installed"
 else
-    print_info "Installing $CUQUANTUM_PACKAGE>=25.3.0..."
-    run_cmd uv pip install "$CUQUANTUM_PACKAGE>=25.3.0"
+    print_info "Installing $CUQUANTUM_PACKAGE>=$CUQUANTUM_FLOOR..."
+    run_cmd uv pip install "$CUQUANTUM_PACKAGE>=$CUQUANTUM_FLOOR"
     print_status "$CUQUANTUM_PACKAGE installed successfully"
 fi
 
@@ -363,7 +365,7 @@ QUANTUM_PECOS_DIR="$PECOS_ROOT/python/quantum-pecos"
 if [ -d "$QUANTUM_PECOS_DIR" ]; then
     print_info "Installing PECOS with CUDA extras..."
     cd "$QUANTUM_PECOS_DIR"
-    run_cmd uv pip install -e ".[cuda]"
+    run_cmd uv pip install -e ".[cuda${CUDA_VERSION}]"
     print_status "PECOS installed with CUDA support"
 else
     print_warning "quantum-pecos directory not found at $QUANTUM_PECOS_DIR"
@@ -440,7 +442,7 @@ print_info "Test 3: Testing cuQuantum..."
 CUQUANTUM_TEST=$(python3 -c "
 import sys
 try:
-    from cuquantum import custatevec
+    from cuquantum.bindings import custatevec
     print('cuStateVec imported successfully')
     sys.exit(0)
 except Exception as e:

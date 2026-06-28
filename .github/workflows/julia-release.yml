@@ -18,6 +18,9 @@ env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 on:
   push:
@@ -28,12 +31,26 @@ on:
       - master
     tags:
       - 'jl-*'  # Trigger on Julia-specific tags
+    paths:
+      - 'julia/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/julia-release.yml'
   pull_request:
     branches:
       - main
       - dev
       - development
       - master
+    paths:
+      - 'julia/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/julia-release.yml'
   workflow_dispatch:
     inputs:
       sha:
@@ -268,6 +285,7 @@ jobs:
         with:
           name: julia-binary-${{ matrix.os }}-${{ matrix.architecture }}
           path: pecos_julia-*.tar.gz
+          if-no-files-found: error
 
   test_binaries:
     needs: build_julia_binaries
@@ -504,6 +522,7 @@ jobs:
         with:
           name: pecos-julia-distribution
           path: dist/
+          if-no-files-found: error
 
   create_release_bundle:
     needs: [build_julia_binaries, test_binaries]
@@ -662,6 +681,7 @@ jobs:
         with:
           name: pecos-julia-release-bundle
           path: pecos-julia-release-bundle-*.tar.gz
+          if-no-files-found: error
           retention-days: 30  # Keep for 30 days
 
       - name: Determine if pre-release

@@ -62,10 +62,12 @@ For developers who want to contribute or modify PECOS:
    |---------------|-------------------------------------------------------------|-------------------------------|
    | `examples`    | Running notebooks under `examples/` or DataFrame benchmarks | `uv sync --group examples`    |
    | `numpy-compat`| Verifying older NumPy/SciPy minimums                        | `uv sync --group numpy-compat`|
-   | `cuda`        | Building/running GPU simulators (requires CUDA toolkit)     | `uv sync --group cuda`        |
+   | `cuda13`      | GPU simulators on CUDA 13 (Turing/CC 7.5+; requires CUDA toolkit) | `uv sync --group cuda13`  |
+   | `cuda12`      | GPU simulators on CUDA 12 (incl. V100/Volta)               | `uv sync --group cuda12`      |
 
    Combine groups with multiple `--group` flags
-   (e.g. `uv sync --group examples --group cuda`).
+   (e.g. `uv sync --group examples --group cuda13`). Pick one CUDA major --
+   `cuda12` and `cuda13` are mutually exclusive.
 
 6. **LLVM 21.1 Setup (Required for LLVM IR/QIS Support)**
 

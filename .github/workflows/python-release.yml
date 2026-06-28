@@ -8,6 +8,9 @@ env:
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
   MACOS_WHEEL_DEPLOYMENT_TARGET: "15.0"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
   # Must match pecos_build::cmake::CMAKE_VERSION. The MWPF decoder feature
   # uses highs-sys, which needs cmake; the wheel build installs this version
   # via `pecos install cmake` and points highs-sys's cmake-rs at it via $CMAKE.
@@ -22,12 +25,32 @@ on:
       - master
     tags:
       - 'py-*'
+    paths:
+      - 'python/pecos-rslib/**'
+      - 'python/pecos-rslib-llvm/**'
+      - 'python/quantum-pecos/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'uv.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/python-release.yml'
   pull_request:
     branches:
       - main
       - dev
       - development
       - master
+    paths:
+      - 'python/pecos-rslib/**'
+      - 'python/pecos-rslib-llvm/**'
+      - 'python/quantum-pecos/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'uv.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/python-release.yml'
   workflow_dispatch:
     inputs:
       sha:
@@ -47,45 +70,185 @@ defaults:
     shell: bash
 
 jobs:
-  check_pr_push:
+  resolve_release_mode:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'pull_request' && github.event.action != 'closed' ||
       github.event_name == 'push' && contains(fromJSON('["main", "master", "dev", "development"]'), github.ref_name) ||
-      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-')
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-') ||
+      github.event_name == 'workflow_dispatch'
     outputs:
-      run: ${{ steps.check.outputs.run }}
+      pr_smoke: ${{ steps.mode.outputs.pr_smoke }}
+      full_release: ${{ steps.mode.outputs.full_release }}
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
-      - name: Check if should run on PR push
-        id: check
+      - name: Resolve release mode
+        id: mode
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           TRIGGER_ON_PR_PUSH_VALUE: ${{ env.TRIGGER_ON_PR_PUSH }}
         run: |
-          # Always run on tag pushes (py-* tags trigger releases)
-          if [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
-            echo "run=true" >> $GITHUB_OUTPUT
-          # Always run on pushes to main branches
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+            echo "full_release=true" >> $GITHUB_OUTPUT
+          elif [ "$EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/py-* ]]; then
+            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+            echo "full_release=true" >> $GITHUB_OUTPUT
           elif [ "$EVENT_NAME" = "push" ] && [[ "$REF_NAME" =~ ^(main|master|dev|development)$ ]]; then
-            echo "run=true" >> $GITHUB_OUTPUT
-          # For PRs, check the TRIGGER_ON_PR_PUSH setting
+            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+            echo "full_release=true" >> $GITHUB_OUTPUT
           elif [ "$EVENT_NAME" = "pull_request" ] && [ "$TRIGGER_ON_PR_PUSH_VALUE" = "true" ]; then
-            echo "run=true" >> $GITHUB_OUTPUT
+            echo "pr_smoke=true" >> $GITHUB_OUTPUT
+            echo "full_release=false" >> $GITHUB_OUTPUT
           else
-            echo "run=false" >> $GITHUB_OUTPUT
+            echo "pr_smoke=false" >> $GITHUB_OUTPUT
+            echo "full_release=false" >> $GITHUB_OUTPUT
           fi
 
+  pr_smoke_build:
+    needs: resolve_release_mode
+    if: needs.resolve_release_mode.outputs.pr_smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.sha || github.sha }}
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.14"
+          enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+      - name: Set up Rust
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup show
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
+          save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+          workspaces: |
+            python/pecos-rslib
+            python/pecos-rslib-llvm
+
+      - name: Cache LLVM
+        id: cache-llvm
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: llvm-14.0.6-${{ runner.os }}-${{ runner.arch }}-v2
+
+      - name: Ensure LLVM
+        run: just ci-env
+
+      - name: Install Python build tooling
+        run: uv pip install --system build maturin
+
+      - name: Build pecos-rslib wheel
+        run: |
+          mkdir -p dist/pecos-rslib
+          maturin build --locked --manifest-path python/pecos-rslib/Cargo.toml --out dist/pecos-rslib
+
+      - name: Build pecos-rslib-llvm wheel
+        run: |
+          mkdir -p dist/pecos-rslib-llvm
+          maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
+
+      - name: Build quantum-pecos wheel
+        run: |
+          mkdir -p dist/quantum-pecos
+          cd python/quantum-pecos
+          python -m build --wheel --outdir ../../dist/quantum-pecos
+
+      - name: Upload PR smoke artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pr-smoke-python-artifacts
+          path: |
+            dist/pecos-rslib/*.whl
+            dist/pecos-rslib-llvm/*.whl
+            dist/quantum-pecos/*.whl
+          if-no-files-found: error
+
+  pr_smoke_test:
+    needs: [resolve_release_mode, pr_smoke_build]
+    if: needs.resolve_release_mode.outputs.pr_smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.14']
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.14"
+
+      - name: Download PR smoke artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: pr-smoke-python-artifacts
+          path: ./pr-smoke-artifacts
+
+      - name: Install PR smoke artifacts
+        run: |
+          uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl
+          uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl
+          uv pip install --system \
+            "phir>=0.3.3" \
+            "networkx>=2.1.0" \
+            "guppylang>=0.21.6" \
+            "tket<0.12.16" \
+            "hugr>=0.13.0" \
+            "selene-sim~=0.2.0"
+          uv pip install --system --force-reinstall --no-deps ./pr-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+
+      - name: Import PR smoke artifacts
+        run: |
+          python -c 'from importlib.metadata import version; import pecos; import pecos_rslib; import pecos_rslib_llvm; print({"pecos": pecos.__version__, "pecos_rslib": pecos_rslib.__version__, "pecos_rslib_llvm": version("pecos-rslib-llvm")})'
 
   build_wheelspecos_rslib:
-    needs: check_pr_push
-    if: needs.check_pr_push.result == 'success' && needs.check_pr_push.outputs.run == 'true'
+    needs: resolve_release_mode
+    if: needs.resolve_release_mode.outputs.full_release == 'true'
     runs-on: ${{ matrix.runner || matrix.os }}
     strategy:
       fail-fast: false
@@ -135,7 +298,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.inputs.sha || github.sha }}
           submodules: recursive
 
       # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
@@ -310,6 +473,7 @@ jobs:
         with:
           name: wheel-pecos-rslib-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse/*.whl
+          if-no-files-found: error
 
       # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build)
       - name: Build pecos-rslib-llvm wheels
@@ -394,6 +558,7 @@ jobs:
         with:
           name: wheel-pecos-rslib-llvm-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse-llvm/*.whl
+          if-no-files-found: error
 
   test_abi3_wheels:
     needs: build_wheelspecos_rslib
@@ -428,7 +593,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.inputs.sha || github.sha }}
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -496,7 +661,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.inputs.sha || github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -538,6 +703,7 @@ jobs:
         with:
           name: sdist-quantum-pecos
           path: python/quantum-pecos/dist/*.tar.gz
+          if-no-files-found: error
 
   build_wheels_quantum_pecos:
     needs: build_wheelspecos_rslib
@@ -555,7 +721,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ github.event.inputs.sha || github.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -597,6 +763,7 @@ jobs:
         with:
           name: wheel-quantum-pecos
           path: python/quantum-pecos/dist/*.whl
+          if-no-files-found: error
 
   collect_artifacts:
     needs: [build_wheelspecos_rslib, build_sdist_quantum_pecos, build_wheels_quantum_pecos, test_abi3_wheels]
@@ -615,6 +782,7 @@ jobs:
       - name: Create distribution directories
         run: |
           mkdir -p dist/pecos-rslib
+          mkdir -p dist/pecos-rslib-llvm
           mkdir -p dist/quantum-pecos
 
       # Download artifacts into temp directory first
@@ -625,33 +793,77 @@ jobs:
 
       - name: Organize distribution files
         run: |
+          shopt -s nullglob
+
           # Debug: Show what we downloaded
           echo "=== Downloaded artifacts structure ==="
           ls -la temp-artifacts/
 
           # Move pecos-rslib and pecos-rslib-llvm wheels to distribution directory
-          mkdir -p dist/pecos-rslib-llvm
+          llvm_dirs=(temp-artifacts/wheel-pecos-rslib-llvm-*/)
+          if [ "${#llvm_dirs[@]}" -eq 0 ]; then
+            echo "Expected pecos-rslib-llvm artifact directories, but none were found."
+            exit 1
+          fi
           for artifact in temp-artifacts/wheel-pecos-rslib-llvm-*/; do
             if [ -d "$artifact" ]; then
               echo "Processing $artifact"
-              mv "$artifact"*.whl dist/pecos-rslib-llvm/ 2>/dev/null || true
+              llvm_wheels=("$artifact"*.whl)
+              if [ "${#llvm_wheels[@]}" -eq 0 ]; then
+                echo "Expected pecos-rslib-llvm wheels in $artifact, but none were found."
+                exit 1
+              fi
+              mv "${llvm_wheels[@]}" dist/pecos-rslib-llvm/
             fi
           done
+          # Collect only base pecos-rslib dirs; exclude pecos-rslib-llvm-*,
+          # whose prefix overlaps the glob and whose wheels were moved above.
+          rslib_dirs=()
           for artifact in temp-artifacts/wheel-pecos-rslib-*/; do
+            case "$artifact" in
+              temp-artifacts/wheel-pecos-rslib-llvm-*/) continue ;;
+            esac
+            rslib_dirs+=("$artifact")
+          done
+          if [ "${#rslib_dirs[@]}" -eq 0 ]; then
+            echo "Expected pecos-rslib artifact directories, but none were found."
+            exit 1
+          fi
+          for artifact in "${rslib_dirs[@]}"; do
             if [ -d "$artifact" ]; then
               echo "Processing $artifact"
-              mv "$artifact"*.whl dist/pecos-rslib/ 2>/dev/null || true
+              rslib_wheels=("$artifact"*.whl)
+              if [ "${#rslib_wheels[@]}" -eq 0 ]; then
+                echo "Expected pecos-rslib wheels in $artifact, but none were found."
+                exit 1
+              fi
+              mv "${rslib_wheels[@]}" dist/pecos-rslib/
             fi
           done
 
           # Move quantum-pecos files to distribution directory
+          quantum_dirs=(temp-artifacts/*-quantum-pecos*/)
+          if [ "${#quantum_dirs[@]}" -eq 0 ]; then
+            echo "Expected quantum-pecos artifact directories, but none were found."
+            exit 1
+          fi
           for artifact in temp-artifacts/*-quantum-pecos*/; do
             if [ -d "$artifact" ]; then
               echo "Processing $artifact"
-              mv "$artifact"*.whl dist/quantum-pecos/ 2>/dev/null || true
-              mv "$artifact"*.tar.gz dist/quantum-pecos/ 2>/dev/null || true
+              quantum_dists=("$artifact"*.whl "$artifact"*.tar.gz)
+              if [ "${#quantum_dists[@]}" -eq 0 ]; then
+                echo "Expected quantum-pecos distributions in $artifact, but none were found."
+                exit 1
+              fi
+              mv "${quantum_dists[@]}" dist/quantum-pecos/
             fi
           done
+
+          llvm_wheels=(dist/pecos-rslib-llvm/*.whl)
+          if [ "${#llvm_wheels[@]}" -eq 0 ]; then
+            echo "Expected collected pecos-rslib-llvm wheels, but none were found."
+            exit 1
+          fi
 
           # Clean up
           rm -rf temp-artifacts
@@ -661,11 +873,15 @@ jobs:
           echo "=== pecos-rslib artifacts ==="
           ls -la dist/pecos-rslib/
           echo ""
+          echo "=== pecos-rslib-llvm artifacts ==="
+          ls -la dist/pecos-rslib-llvm/
+          echo ""
           echo "=== quantum-pecos artifacts ==="
           ls -la dist/quantum-pecos/
           echo ""
           echo "=== Summary ==="
           echo "pecos-rslib wheels: $(ls -1 dist/pecos-rslib/*.whl 2>/dev/null | wc -l)"
+          echo "pecos-rslib-llvm wheels: $(ls -1 dist/pecos-rslib-llvm/*.whl 2>/dev/null | wc -l)"
           echo "quantum-pecos distributions: $(ls -1 dist/quantum-pecos/* 2>/dev/null | wc -l)"
 
 
@@ -674,3 +890,4 @@ jobs:
         with:
           name: pecos-distribution
           path: dist/
+          if-no-files-found: error

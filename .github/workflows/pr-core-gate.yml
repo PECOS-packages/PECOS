@@ -1,0 +1,247 @@
+name: PR core gate
+
+# Pre-merge test sentinels (intended to become the required contexts
+# pr-core-python / pr-core-rust once promoted in branch protection -- NOT yet
+# required): run the Linux core Python and Rust test suites on pull requests, in
+# parallel. Neither has a `paths:` filter, so each always reports a status (a
+# path-filtered required check would stuck-block PRs that don't touch its paths).
+# A shared detect script short-circuits to a pass when a PR changes nothing the
+# core suites depend on, so docs-only / unrelated PRs stay fast.
+#
+# Intended required contexts (not yet enforced): pr-core-python, pr-core-rust.
+#
+# The setup below mirrors the Linux legs of python-test.yml (python-core) and
+# rust-test.yml. Keep their action SHAs, uv/just/LLVM versions, and cache keys
+# in sync when editing either side. The change-detection rule lives in
+# scripts/ci/pr-core-changed.sh (single source of truth for both jobs).
+
+permissions:
+  contents: read
+
+env:
+  LLVM_VERSION: "14.0.6"
+  RUSTFLAGS: -C debuginfo=0
+  RUST_BACKTRACE: 1
+  PYTHONUTF8: 1
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  pr-core-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect core-relevant changes
+        id: detect
+        # Assign on its own line so a git failure in the detect script aborts the
+        # step under `set -e` (fail closed) instead of writing an empty `run=`,
+        # which would let this gate pass green having run no tests.
+        run: |
+          run="$(bash scripts/ci/pr-core-changed.sh '${{ github.event.pull_request.base.sha }}')"
+          case "$run" in
+            true|false) ;;
+            *)
+              echo "unexpected pr-core detect output: <$run>" >&2
+              exit 1
+              ;;
+          esac
+          printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
+
+      - name: Free Disk Space (Ubuntu)
+        if: steps.detect.outputs.run == 'true'
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          tool-cache: false
+          swap-storage: true
+
+      - name: Set up Python
+        if: steps.detect.outputs.run == 'true'
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the latest version of uv
+        if: steps.detect.outputs.run == 'true'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.14"
+          enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+      - name: Set up Rust
+        if: steps.detect.outputs.run == 'true'
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup show
+
+      - name: Verify cmake is available (MWPF decoder build)
+        if: steps.detect.outputs.run == 'true'
+        run: cmake --version
+
+      - name: Install just
+        if: steps.detect.outputs.run == 'true'
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Cache Rust
+        if: steps.detect.outputs.run == 'true'
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
+          save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+          workspaces: |
+            python/pecos-rslib
+            python/pecos-rslib-llvm
+
+      - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        if: steps.detect.outputs.run == 'true'
+        id: cache-llvm
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        if: steps.detect.outputs.run == 'true'
+        run: just ci-env
+
+      - name: Run core Python tests
+        if: steps.detect.outputs.run == 'true'
+        run: just python-ci-core
+
+      - name: Core Python gate passed (no core-relevant changes)
+        if: steps.detect.outputs.run != 'true'
+        run: echo "No core-relevant paths changed; core Python suite skipped."
+
+  pr-core-rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect core-relevant changes
+        id: detect
+        # Assign on its own line so a git failure in the detect script aborts the
+        # step under `set -e` (fail closed) instead of writing an empty `run=`,
+        # which would let this gate pass green having run no tests.
+        run: |
+          run="$(bash scripts/ci/pr-core-changed.sh '${{ github.event.pull_request.base.sha }}')"
+          case "$run" in
+            true|false) ;;
+            *)
+              echo "unexpected pr-core detect output: <$run>" >&2
+              exit 1
+              ;;
+          esac
+          printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
+
+      - name: Free Disk Space (Ubuntu)
+        if: steps.detect.outputs.run == 'true'
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          tool-cache: false
+          swap-storage: true
+
+      - name: Set up Python
+        if: steps.detect.outputs.run == 'true'
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the latest version of uv
+        if: steps.detect.outputs.run == 'true'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.11.14"
+          enable-cache: true
+          save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+      - name: Set up Rust
+        if: steps.detect.outputs.run == 'true'
+        run: |
+          bash scripts/ci/ensure-rust.sh stable minimal
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup show
+
+      - name: Verify cmake is available (MWPF decoder build)
+        if: steps.detect.outputs.run == 'true'
+        run: cmake --version
+
+      - name: Install just
+        if: steps.detect.outputs.run == 'true'
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Cache Rust
+        if: steps.detect.outputs.run == 'true'
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust-no-bin
+          save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+          workspaces: |
+            python/pecos-rslib
+            python/pecos-rslib-llvm
+
+      - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        if: steps.detect.outputs.run == 'true'
+        id: cache-llvm
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.pecos/deps/llvm-14
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+
+      - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        if: steps.detect.outputs.run == 'true'
+        run: just ci-env
+
+      - name: Run core Rust tests
+        if: steps.detect.outputs.run == 'true'
+        # debug profile keeps this sentinel fast; the full release matrix runs
+        # post-merge on push via rust-test.yml.
+        run: just rstest debug
+
+      - name: Core Rust gate passed (no core-relevant changes)
+        if: steps.detect.outputs.run != 'true'
+        run: echo "No core-relevant paths changed; core Rust suite skipped."

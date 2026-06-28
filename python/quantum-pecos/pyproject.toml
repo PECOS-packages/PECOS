@@ -70,26 +70,37 @@ all = [
     "quantum-pecos[stim]",
 ]
 
-# CUDA dependencies. See docs/user-guide/cuda-setup.md for detailed installation instructions
-# Requires CUDA Toolkit 13 or 12 installed at system level first.
-# For Ubuntu/Pop!_OS: sudo apt install cuda-toolkit-13
-# These packages work with uv/pip once CUDA toolkit is installed.
-# Note: CUDA packages require Python 3.11+ due to cuquantum-python-cu13 requirements
-cuda = [
-    "pecos-rslib-cuda==0.8.0.dev8",
-    "cupy-cuda13x>=13.0.0; python_version >= '3.11'",  # Use cupy-cuda12x for CUDA 12
-    "cuquantum-python-cu13>=25.3.0; python_version >= '3.11'",  # Use cuquantum-python-cu12 for CUDA 12
+# CUDA dependencies for the Python cuStateVec / MPS backends. See
+# docs/user-guide/cuda-setup.md. Requires a system CUDA toolkit and a matching NVIDIA
+# driver. Pick the extra matching your CUDA major -- do NOT install both (mixing
+# cupy-cudaXXx wheels is unsupported). Python 3.11+ required.
+#   uv pip install -e .[cuda13]   # CUDA 13, Turing/CC 7.5+ GPUs (recommended)
+#   uv pip install -e .[cuda12]   # CUDA 12
+# V100/Volta (CC 7.0): cuStateVec dropped Volta at 25.09, so pin
+#   cuquantum-python-cu12>=25.3,<25.9 manually (see cuda-setup.md).
+# The Rust GPU backend (CudaStateVec/CudaStabilizer) is a separate install:
+#   pip install pecos-rslib-cuda
+cuda13 = [
+    "cupy-cuda13x>=13.0.0; python_version >= '3.11'",
+    "cuquantum-python-cu13>=25.9.0; python_version >= '3.11'",
     "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
 ]
-# Install with: uv pip install -e .[cuda]
+cuda12 = [
+    "cupy-cuda12x>=13.0.0; python_version >= '3.11'",
+    "cuquantum-python-cu12>=25.3.0; python_version >= '3.11'",
+    "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
+]
 
 # Dependency groups are defined at workspace root (pyproject.toml)
 # Package-specific groups can be added here if needed
 
+[tool.uv]
+# CUDA 12 and CUDA 13 use different, mutually exclusive cupy/cuquantum wheels.
+conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }]]
+
 [tool.uv.sources]
 pecos-rslib = { workspace = true }
 pecos-rslib-llvm = { workspace = true }
-pecos-rslib-cuda = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pecos"]

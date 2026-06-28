@@ -65,3 +65,10 @@ id = "RUSTSEC-2021-0139"
 # Chain: mwpf -> slp -> structopt 0.3 -> clap 2.34.
 # Upstream owner: https://github.com/yuewuo/mwpf.
 reason = "Transitive via mwpf -> slp -> clap2; unmaintained-crate warning, terminal-color path unused."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2022-0104"
+# structopt@0.3.26 -- maintenance mode.
+# Chain: pecos-mwpf -> mwpf -> slp -> structopt 0.3.
+# Upstream owner: https://github.com/yuewuo/mwpf.
+reason = "Transitive via mwpf -> slp -> structopt; maintenance-mode warning for upstream CLI parser, no direct PECOS use."

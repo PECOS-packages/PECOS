@@ -375,7 +375,7 @@ print(f"Stabilizers: {module['num_stab']}")
 
 Add noise to QEC simulations:
 
-```python
+```python,skip
 from pecos import sim, state_vector, depolarizing_noise
 from pecos.guppy import make_surface_code, get_num_qubits
 

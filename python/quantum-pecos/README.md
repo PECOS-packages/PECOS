@@ -178,7 +178,8 @@ Certain simulators from `pecos.simulators` require external packages that are no
 
 **Quick install** (after installing CUDA Toolkit):
 ```bash
-uv pip install quantum-pecos[cuda]
+# CUDA 13 (recommended); use [cuda12] for CUDA 12 / V100. Do not install both.
+uv pip install "quantum-pecos[cuda13]"
 
 # For development with CUDA support:
 make build-cuda  # Build with CUDA

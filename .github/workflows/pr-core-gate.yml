@@ -19,7 +19,8 @@ permissions:
   contents: read
 
 env:
-  LLVM_VERSION: "14.0.6"
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
@@ -127,8 +128,8 @@ jobs:
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         if: steps.detect.outputs.run == 'true'
@@ -229,8 +230,8 @@ jobs:
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         if: steps.detect.outputs.run == 'true'

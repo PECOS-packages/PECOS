@@ -163,8 +163,8 @@ jobs:
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
-          key: llvm-14.0.6-${{ runner.os }}-${{ runner.arch }}-v2
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM
         run: just ci-env

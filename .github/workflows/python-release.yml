@@ -193,6 +193,7 @@ jobs:
             dist/pecos-rslib/*.whl
             dist/pecos-rslib-llvm/*.whl
             dist/quantum-pecos/*.whl
+          if-no-files-found: error
 
   pr_smoke_test:
     needs: [resolve_release_mode, pr_smoke_build]
@@ -455,6 +456,7 @@ jobs:
         with:
           name: wheel-pecos-rslib-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse/*.whl
+          if-no-files-found: error
 
       # Build pecos-rslib-llvm wheel (reuses LLVM already installed by pecos-rslib build)
       - name: Build pecos-rslib-llvm wheels
@@ -519,6 +521,7 @@ jobs:
         with:
           name: wheel-pecos-rslib-llvm-${{ matrix.os }}-${{ matrix.architecture }}
           path: ./wheelhouse-llvm/*.whl
+          if-no-files-found: error
 
   test_abi3_wheels:
     needs: build_wheelspecos_rslib
@@ -663,6 +666,7 @@ jobs:
         with:
           name: sdist-quantum-pecos
           path: python/quantum-pecos/dist/*.tar.gz
+          if-no-files-found: error
 
   build_wheels_quantum_pecos:
     needs: build_wheelspecos_rslib
@@ -722,6 +726,7 @@ jobs:
         with:
           name: wheel-quantum-pecos
           path: python/quantum-pecos/dist/*.whl
+          if-no-files-found: error
 
   collect_artifacts:
     needs: [build_wheelspecos_rslib, build_sdist_quantum_pecos, build_wheels_quantum_pecos, test_abi3_wheels]

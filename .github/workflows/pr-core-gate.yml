@@ -58,7 +58,7 @@ jobs:
         id: detect
         # Assign on its own line so a git failure in the detect script aborts the
         # step under `set -e` (fail closed) instead of writing an empty `run=`,
-        # which would let this required gate pass green having run no tests.
+        # which would let this gate pass green having run no tests.
         run: |
           run="$(bash scripts/ci/pr-core-changed.sh '${{ github.event.pull_request.base.sha }}')"
           case "$run" in
@@ -160,7 +160,7 @@ jobs:
         id: detect
         # Assign on its own line so a git failure in the detect script aborts the
         # step under `set -e` (fail closed) instead of writing an empty `run=`,
-        # which would let this required gate pass green having run no tests.
+        # which would let this gate pass green having run no tests.
         run: |
           run="$(bash scripts/ci/pr-core-changed.sh '${{ github.event.pull_request.base.sha }}')"
           case "$run" in

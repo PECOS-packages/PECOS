@@ -1728,3 +1728,36 @@ fn test_engine_rz_rxy_module() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn test_dynamic_zero_engine_rejected_without_explicit_qubits() {
+    use super::phir_engine;
+    use pecos_engines::sim_builder;
+
+    // A PhirEngine reports 0 qubits before execution but allocates qubits
+    // dynamically at runtime. Building a sim with the default (fixed-size, non-
+    // growing) quantum engine and no explicit qubit count must FAIL LOUD rather
+    // than build a 0-qubit engine that would panic on the first allocation. This
+    // exercises the whole inferred-zero guard end-to-end: the guard keys on
+    // `ClassicalEngine::has_dynamic_qubit_count`, which must be forwarded through
+    // the `Box<dyn ClassicalControlEngine>` SimBuilder holds (a regression there
+    // silently makes the guard inert and this test fails).
+    let engine = phir_engine().program(create_test_module());
+    let result = sim_builder().classical(engine).build();
+    assert!(
+        result.is_err(),
+        "dynamic-zero engine + default quantum engine must be rejected"
+    );
+    let msg = result.err().unwrap().to_string();
+    assert!(
+        msg.contains("dynamic classical engine"),
+        "expected the inferred-zero guard error, got: {msg}"
+    );
+
+    // An explicit qubit count bypasses the guard and builds fine.
+    let engine = phir_engine().program(create_test_module());
+    assert!(
+        sim_builder().classical(engine).qubits(1).build().is_ok(),
+        "explicit .qubits(n) must bypass the inferred-zero guard"
+    );
+}

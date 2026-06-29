@@ -172,3 +172,40 @@ fn function_local_helper_lowers_to_public_symbol_in_text_and_bitcode() {
         "bitcode is missing the public helper symbol"
     );
 }
+
+#[test]
+fn duplicate_helper_declarations_merge_to_one_public_symbol() {
+    // A HUGR with two declarations of the same helper -- one module-level and one
+    // function-local wrapper -- both normalize to
+    // `pecos_qis_runtime_barrier_qubits2_hugr`. A blind rename would let LLVM uniquify
+    // the second declaration to `...hugr.1`, which pecos-qis-ffi does not export; the
+    // merge must collapse them into one unsuffixed public symbol. (Regression guard
+    // for the module-level rename collision.)
+    let hugr = include_bytes!("fixtures/szz_barrier_collision.hugr");
+
+    let text = compile_hugr_bytes_to_string(hugr).expect("text compilation should succeed");
+    assert!(
+        text.contains("@pecos_qis_runtime_barrier_qubits2_hugr("),
+        "text IR is missing the public helper symbol"
+    );
+    // The helper name is never followed by a dot: no `.1` collision suffix and no
+    // private `__hugr__...pecos_qis_runtime_barrier_qubits2_hugr.<id>` residue.
+    assert!(
+        !text.contains("pecos_qis_runtime_barrier_qubits2_hugr."),
+        "text IR has a suffixed or private helper symbol"
+    );
+
+    let bitcode = compile_hugr_bytes_to_bitcode(hugr).expect("bitcode compilation should succeed");
+    let suffixed_or_private = b"pecos_qis_runtime_barrier_qubits2_hugr.";
+    let public = b"pecos_qis_runtime_barrier_qubits2_hugr";
+    assert!(
+        !bitcode
+            .windows(suffixed_or_private.len())
+            .any(|w| w == suffixed_or_private),
+        "bitcode has a suffixed or private helper symbol"
+    );
+    assert!(
+        bitcode.windows(public.len()).any(|w| w == public),
+        "bitcode is missing the public helper symbol"
+    );
+}

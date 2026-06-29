@@ -467,15 +467,41 @@ fn pecos_helper_public_name<'a>(symbol: &str, helper_symbols: &[&'a str]) -> Opt
 /// (`__hugr__.<mod>.<fn>.<locals>.pecos_qis_..._hugr.<id>`) is unquoted here, so the
 /// same `pecos_helper_public_name` match applies. Renaming a function updates all of
 /// its call sites automatically (they reference the value, not the name).
+///
+/// The same helper can be declared in more than one scope within a single compiled
+/// HUGR (Guppy emits one private declaration per scope), so two declarations can
+/// normalize to the same public name. Renaming both would make LLVM uniquify the
+/// second to `<public>.1`, which `pecos-qis-ffi` does not export. To keep exactly one
+/// unsuffixed public symbol, merge duplicates: redirect a duplicate's uses to the
+/// function already holding the public name and erase the duplicate.
 fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) {
-    for func in module.get_functions() {
-        let public = func
+    // Collect first: we rename and (on collision) delete functions below, so we must
+    // not hold the module's function iterator while mutating the function list.
+    let funcs: Vec<_> = module.get_functions().collect();
+    for func in funcs {
+        let Some(public) = func
             .get_name()
             .to_str()
             .ok()
-            .and_then(|name| pecos_helper_public_name(name, PECOS_HELPER_SYMBOLS));
-        if let Some(public) = public {
-            func.as_global_value().set_name(public);
+            .and_then(|name| pecos_helper_public_name(name, PECOS_HELPER_SYMBOLS))
+        else {
+            continue;
+        };
+
+        match module.get_function(public) {
+            // The public ABI symbol is already owned by an equivalent declaration:
+            // fold this duplicate into it so the module keeps a single unsuffixed
+            // public symbol.
+            Some(canonical) if canonical != func => {
+                func.replace_all_uses_with(canonical);
+                // SAFETY: all uses were just redirected to `canonical`, so this
+                // declaration is now unreferenced and safe to remove.
+                unsafe { func.delete() };
+            }
+            // Already named with the public symbol (idempotent).
+            Some(_) => {}
+            // First occurrence: claim the public name.
+            None => func.as_global_value().set_name(public),
         }
     }
 }

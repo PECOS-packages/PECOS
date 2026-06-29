@@ -435,6 +435,24 @@ fn is_llvm_symbol_char(ch: char) -> bool {
 /// so they need stable external symbols for dynamic linking. Keep this rewrite
 /// deliberately narrow: only PECOS-owned QIS helper declarations receive this
 /// treatment.
+/// If `symbol` is a PECOS-owned helper lowered under the private `__hugr__.*`
+/// namespace, return its stable public name; otherwise `None`.
+///
+/// Guppy qualifies the symbol with the defining scope (module/function, plus a
+/// `<locals>` segment for function-local declarations) and tket appends a numeric
+/// node id, so the helper name sits second-from-last:
+/// `__hugr__.<scope...>.<helper>.<id>`.
+fn pecos_helper_public_name<'a>(symbol: &str, helper_symbols: &[&'a str]) -> Option<&'a str> {
+    let rest = symbol.strip_prefix(HUGR_SYMBOL_PREFIX)?;
+    let mut parts = rest.rsplit('.');
+    let _suffix = parts.next()?;
+    let helper_name = parts.next()?;
+    helper_symbols
+        .iter()
+        .copied()
+        .find(|helper| *helper == helper_name)
+}
+
 fn normalize_pecos_helper_symbols_in_llvm(llvm_ir: String) -> String {
     let helper_symbols = [
         TRACE_METADATA_HUGR_SYMBOL,
@@ -448,8 +466,39 @@ fn normalize_pecos_helper_symbols_in_llvm(llvm_ir: String) -> String {
     while let Some(relative_start) = llvm_ir[cursor..].find('@') {
         let start = cursor + relative_start;
         normalized.push_str(&llvm_ir[cursor..start]);
+        let after_at = start + 1;
 
-        let symbol_start = start + 1;
+        // Quoted LLVM symbol: `@"..."`. Guppy quotes the private symbol whenever
+        // the qualified name contains characters illegal in a bare LLVM identifier
+        // -- notably the `<locals>` segment of a function-local declaration. The
+        // bare-identifier scan below would skip these (a `"` is not a symbol char),
+        // leaving the `__hugr__.*` name unnormalized, so handle the quoted form
+        // explicitly. A literal `"` inside is LLVM-escaped as `\22`, so the next
+        // unescaped `"` always terminates the symbol.
+        if llvm_ir[after_at..].starts_with('"') {
+            let body_start = after_at + 1;
+            if let Some(rel_close) = llvm_ir[body_start..].find('"') {
+                let body_end = body_start + rel_close;
+                let symbol = &llvm_ir[body_start..body_end];
+                if let Some(public) = pecos_helper_public_name(symbol, &helper_symbols) {
+                    // The public name is a valid bare identifier, so drop the quotes.
+                    normalized.push('@');
+                    normalized.push_str(public);
+                } else {
+                    normalized.push_str("@\"");
+                    normalized.push_str(symbol);
+                    normalized.push('"');
+                }
+                cursor = body_end + 1;
+                continue;
+            }
+            // Unterminated quote (malformed IR): emit the `@` and keep scanning.
+            normalized.push('@');
+            cursor = after_at;
+            continue;
+        }
+
+        let symbol_start = after_at;
         let symbol_len = llvm_ir[symbol_start..]
             .chars()
             .take_while(|ch| is_llvm_symbol_char(*ch))
@@ -463,22 +512,13 @@ fn normalize_pecos_helper_symbols_in_llvm(llvm_ir: String) -> String {
 
         let symbol_end = symbol_start + symbol_len;
         let symbol = &llvm_ir[symbol_start..symbol_end];
-        if let Some(rest) = symbol.strip_prefix(HUGR_SYMBOL_PREFIX) {
-            let mut parts = rest.rsplit('.');
-            let suffix = parts.next();
-            let helper_name = parts.next();
-            if let (Some(_suffix), Some(helper_name)) = (suffix, helper_name) {
-                if helper_symbols.iter().any(|helper| helper == &helper_name) {
-                    normalized.push('@');
-                    normalized.push_str(helper_name);
-                    cursor = symbol_end;
-                    continue;
-                }
-            }
+        if let Some(public) = pecos_helper_public_name(symbol, &helper_symbols) {
+            normalized.push('@');
+            normalized.push_str(public);
+        } else {
+            normalized.push('@');
+            normalized.push_str(symbol);
         }
-
-        normalized.push('@');
-        normalized.push_str(symbol);
         cursor = symbol_end;
     }
 
@@ -531,6 +571,35 @@ mod tests {
             "%q6 = call { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 %0, i64 %1)"
         ));
         assert!(normalized.contains("@__hugr__.other_helper.16"));
+    }
+
+    #[test]
+    fn normalize_quoted_function_local_helper_symbol() {
+        // Function-local Guppy declarations qualify the symbol with a `<locals>`
+        // segment, whose angle brackets force LLVM to quote the whole symbol
+        // (`@"..."`). The normalizer must handle the quoted form, not skip it.
+        let llvm = concat!(
+            "declare { i64, i64 } @\"__hugr__.test_mod.test_fn.<locals>.pecos_qis_runtime_barrier_qubits2_hugr.23\"(i64, i64)\n",
+            "%1 = call { i64, i64 } @\"__hugr__.test_mod.test_fn.<locals>.pecos_qis_runtime_barrier_qubits2_hugr.23\"(i64 %0, i64 %2)\n",
+            "%q = call i64 @\"__hugr__.m.f.<locals>.pecos_qis_trace_metadata_qubit_hugr.7\"(i64 %0, i8* %1, i8* %2)\n",
+            "%x = call i64 @\"__hugr__.m.f.<locals>.other_helper.9\"(i64 %0)\n",
+        )
+        .to_string();
+        let normalized = normalize_pecos_helper_symbols_in_llvm(llvm);
+        assert!(
+            normalized
+                .contains("declare { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64, i64)")
+        );
+        assert!(normalized.contains(
+            "%1 = call { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 %0, i64 %2)"
+        ));
+        assert!(normalized.contains(
+            "%q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %0, i8* %1, i8* %2)"
+        ));
+        // PECOS helpers lose the private prefix entirely (no `<locals>` residue).
+        assert!(!normalized.contains("<locals>.pecos_qis_"));
+        // A non-PECOS quoted symbol is left untouched (still quoted).
+        assert!(normalized.contains("@\"__hugr__.m.f.<locals>.other_helper.9\""));
     }
 }
 

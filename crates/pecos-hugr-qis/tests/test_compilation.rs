@@ -212,27 +212,52 @@ fn duplicate_helper_declarations_merge_to_one_public_symbol() {
 
 #[test]
 fn conflicting_helper_signatures_fail_loud() {
-    // Two declarations that normalize to `pecos_qis_runtime_barrier_qubit_hugr` with
-    // DIFFERENT signatures (`i64 -> i64` vs `i64 -> { i64, i64 }`). Merging them would
-    // emit a call to the public ABI symbol that disagrees with the pecos-qis-ffi
-    // export's signature -- and LLVM 21 opaque pointers + `module.verify()` do not
-    // catch it -- so compilation must fail loud instead of shipping ABI-broken IR.
+    // Two declarations that normalize to `pecos_qis_runtime_barrier_qubit_hugr`, one
+    // with the wrong signature (`i64 -> { i64, i64 }` vs the ABI `i64 -> i64`). The
+    // wrong declaration must be rejected against the fixed pecos-qis-ffi ABI -- LLVM 21
+    // opaque pointers + `module.verify()` do not catch a call that disagrees with the
+    // export -- so compilation must fail loud instead of shipping ABI-broken IR.
     let hugr = include_bytes!("fixtures/szz_barrier_wrong_signature.hugr");
 
     let text = compile_hugr_bytes_to_string(hugr);
     assert!(
         text.is_err(),
-        "text compilation should fail on conflicting helper signatures"
+        "text compilation should fail on a wrong-ABI helper declaration"
     );
     let msg = text.unwrap_err().to_string();
     assert!(
-        msg.contains("conflicting signatures")
-            && msg.contains("pecos_qis_runtime_barrier_qubit_hugr"),
+        msg.contains("pecos-qis-ffi ABI") && msg.contains("pecos_qis_runtime_barrier_qubit_hugr"),
         "unexpected error message: {msg}"
     );
 
     assert!(
         compile_hugr_bytes_to_bitcode(hugr).is_err(),
-        "bitcode compilation should fail on conflicting helper signatures"
+        "bitcode compilation should fail on a wrong-ABI helper declaration"
+    );
+}
+
+#[test]
+fn single_wrong_helper_signature_fails_loud() {
+    // A SINGLE declaration of a recognized helper with a self-consistent but wrong ABI
+    // (`pecos_qis_runtime_barrier_qubits2_hugr` declared `i64 -> i64` instead of the
+    // exported `(i64, i64) -> { i64, i64 }`). There is no sibling to compare against,
+    // so this is caught only by validating the lone declaration against the fixed
+    // pecos-qis-ffi ABI. Both text IR and bitcode compilation must fail loud.
+    let hugr = include_bytes!("fixtures/szz_barrier_single_wrong_abi.hugr");
+
+    let text = compile_hugr_bytes_to_string(hugr);
+    assert!(
+        text.is_err(),
+        "text compilation should fail on a lone wrong-ABI helper declaration"
+    );
+    let msg = text.unwrap_err().to_string();
+    assert!(
+        msg.contains("pecos-qis-ffi ABI") && msg.contains("pecos_qis_runtime_barrier_qubits2_hugr"),
+        "unexpected error message: {msg}"
+    );
+
+    assert!(
+        compile_hugr_bytes_to_bitcode(hugr).is_err(),
+        "bitcode compilation should fail on a lone wrong-ABI helper declaration"
     );
 }

@@ -37,13 +37,15 @@ enum ExactlyOneError {
 }
 use tket::hugr::envelope::EnvelopeConfig;
 use tket::hugr::llvm::extension::int::IntCodegenExtension;
+use tket::hugr::llvm::inkwell::AddressSpace;
 use tket::hugr::llvm::inkwell::OptimizationLevel;
-use tket::hugr::llvm::inkwell::context::Context;
+use tket::hugr::llvm::inkwell::context::{Context, ContextRef};
 use tket::hugr::llvm::inkwell::module::Module;
 use tket::hugr::llvm::inkwell::passes::PassBuilderOptions;
 use tket::hugr::llvm::inkwell::targets::{
     CodeModel, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
+use tket::hugr::llvm::inkwell::types::FunctionType;
 use tket::hugr::llvm::utils::fat::FatExt as _;
 use tket::hugr::llvm::{
     CodegenExtsBuilder,
@@ -457,6 +459,38 @@ fn pecos_helper_public_name<'a>(symbol: &str, helper_symbols: &[&'a str]) -> Opt
         .find(|helper| *helper == helper_name)
 }
 
+/// The fixed LLVM signature each PECOS helper must have, matching the
+/// `pecos-qis-ffi` ABI export (`crates/pecos-qis-ffi/src/ffi.rs`):
+///
+/// - `pecos_qis_trace_metadata_hugr(*const u8, *const u8)`        -> `void (ptr, ptr)`
+/// - `pecos_qis_trace_metadata_qubit_hugr(i64, *const u8, *const u8) -> i64`
+///                                                                -> `i64 (i64, ptr, ptr)`
+/// - `pecos_qis_runtime_barrier_qubit_hugr(i64) -> i64`            -> `i64 (i64)`
+/// - `pecos_qis_runtime_barrier_qubits2_hugr(i64, i64) -> QubitPair{i64,i64}`
+///                                                                -> `{ i64, i64 } (i64, i64)`
+///
+/// Returns `None` only if `helper` is not a recognized PECOS helper (a programming
+/// error here, since callers pass a name already matched against `PECOS_HELPER_SYMBOLS`).
+fn expected_pecos_helper_type<'ctx>(
+    ctx: &ContextRef<'ctx>,
+    helper: &str,
+) -> Option<FunctionType<'ctx>> {
+    let i64t = ctx.i64_type();
+    let ptr = ctx.ptr_type(AddressSpace::default());
+    let ty = match helper {
+        TRACE_METADATA_HUGR_SYMBOL => ctx.void_type().fn_type(&[ptr.into(), ptr.into()], false),
+        TRACE_METADATA_QUBIT_HUGR_SYMBOL => {
+            i64t.fn_type(&[i64t.into(), ptr.into(), ptr.into()], false)
+        }
+        RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL => i64t.fn_type(&[i64t.into()], false),
+        RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL => ctx
+            .struct_type(&[i64t.into(), i64t.into()], false)
+            .fn_type(&[i64t.into(), i64t.into()], false),
+        _ => return None,
+    };
+    Some(ty)
+}
+
 /// Rewrite PECOS helper declarations from their private `__hugr__.*` symbol to the
 /// stable public `pecos_qis_*` name, in the LLVM module itself.
 ///
@@ -468,13 +502,17 @@ fn pecos_helper_public_name<'a>(symbol: &str, helper_symbols: &[&'a str]) -> Opt
 /// same `pecos_helper_public_name` match applies. Renaming a function updates all of
 /// its call sites automatically (they reference the value, not the name).
 ///
-/// The same helper can be declared in more than one scope within a single compiled
-/// HUGR (Guppy emits one private declaration per scope), so two declarations can
-/// normalize to the same public name. Renaming both would make LLVM uniquify the
-/// second to `<public>.1`, which `pecos-qis-ffi` does not export. To keep exactly one
-/// unsuffixed public symbol, merge duplicates: redirect a duplicate's uses to the
-/// function already holding the public name and erase the duplicate.
+/// Because this code claims the public ABI symbol, it also enforces the ABI: every
+/// recognized helper declaration is validated against its fixed `pecos-qis-ffi`
+/// signature. LLVM 21 opaque pointers let a call disagree with its callee declaration's
+/// type without failing `module.verify()`, so a helper declared with the wrong
+/// signature -- even a lone, self-consistent one -- would otherwise silently emit a
+/// call to the public symbol with the wrong ABI. We fail loud instead. This also makes
+/// duplicate declarations safe to merge: any two that pass the ABI check are identical,
+/// so the duplicate's uses can be redirected to the first (avoiding LLVM uniquifying a
+/// second declaration to `<public>.1`, which `pecos-qis-ffi` does not export).
 fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) -> Result<()> {
+    let ctx = module.get_context();
     // Collect first: we rename and (on collision) delete functions below, so we must
     // not hold the module's function iterator while mutating the function list.
     let funcs: Vec<_> = module.get_functions().collect();
@@ -488,24 +526,27 @@ fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) -> Result<()> {
             continue;
         };
 
+        // Enforce the fixed PECOS helper ABI on every recognized declaration before
+        // claiming the public symbol.
+        let Some(expected) = expected_pecos_helper_type(&ctx, public) else {
+            return Err(anyhow!(
+                "internal error: no ABI signature registered for PECOS helper `{public}`"
+            ));
+        };
+        if func.get_type() != expected {
+            return Err(anyhow!(
+                "PECOS helper `{public}` is declared as `{}`, but the pecos-qis-ffi ABI is \
+                 `{}`. Declare it with the exported signature.",
+                func.get_type(),
+                expected,
+            ));
+        }
+
         match module.get_function(public) {
-            // The public ABI symbol is already owned by another declaration: fold this
-            // duplicate into it so the module keeps a single unsuffixed public symbol.
+            // The public ABI symbol is already owned by another declaration. Both passed
+            // the ABI check above, so they are identical: fold this duplicate into it so
+            // the module keeps a single unsuffixed public symbol.
             Some(canonical) if canonical != func => {
-                // The two declarations must be ABI-identical before merging. LLVM 21
-                // opaque pointers let a call disagree with its callee declaration's
-                // type without failing `module.verify()`, so a mismatched redeclaration
-                // would silently emit a call to the public `pecos_qis_*` symbol with the
-                // wrong signature. Reject it here instead of shipping ABI-broken IR.
-                if func.get_type() != canonical.get_type() {
-                    return Err(anyhow!(
-                        "conflicting signatures for PECOS helper `{public}`: a HUGR \
-                         declares it as `{}` and also as `{}`. Declare the helper with a \
-                         single signature matching the pecos-qis-ffi ABI.",
-                        canonical.get_type(),
-                        func.get_type(),
-                    ));
-                }
                 func.replace_all_uses_with(canonical);
                 // SAFETY: all uses were just redirected to `canonical`, so this
                 // declaration is now unreferenced and safe to remove.

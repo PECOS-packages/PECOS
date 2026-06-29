@@ -98,9 +98,13 @@ def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch
 
 @pytest.mark.xfail(
     reason=(
-        "Guppy public barrier(...) is currently optimized away before PECOS "
-        "QIS operation collection; hosted SZZ prefix scheduling needs a "
-        "barrier-preserving or hosted-operation lowering path."
+        "Guppy's generic public barrier(...) is optimized away (tket DCE) before PECOS "
+        "collects QIS operations, so no Barrier survives this path. The supported "
+        "barrier-preserving path is the SZZ runtime-barrier helper "
+        "(szz_runtime_barriers=...), covered by "
+        "test_szz_runtime_barrier_survives_into_qis_operation_trace below. strict=True so "
+        "this XPASSes (and must be removed) if a future tket/Guppy lowering ever "
+        "preserves the generic barrier."
     ),
     strict=True,
 )

@@ -135,3 +135,40 @@ fn test_optimization_levels() {
         );
     }
 }
+
+#[test]
+fn function_local_helper_lowers_to_public_symbol_in_text_and_bitcode() {
+    // A Guppy program (captured from `barrier_pair_probe`) that declares and calls a
+    // function-local PECOS helper. guppylang qualifies the helper with a `<locals>`
+    // segment under the private `__hugr__.*` namespace; BOTH the text IR and the
+    // bitcode must expose the public `pecos_qis_runtime_barrier_qubits2_hugr` ABI
+    // symbol that pecos-qis-ffi exports, not the private name. (Regression guard for
+    // the bitcode path, which a text-only normalization would miss.)
+    let hugr = include_bytes!("fixtures/szz_barrier_probe.hugr");
+
+    let text = compile_hugr_bytes_to_string(hugr).expect("text compilation should succeed");
+    assert!(
+        text.contains("@pecos_qis_runtime_barrier_qubits2_hugr("),
+        "text IR is missing the public helper symbol"
+    );
+    assert!(
+        !text.contains("<locals>.pecos_qis_runtime_barrier_qubits2_hugr"),
+        "text IR still carries the private helper symbol"
+    );
+
+    let bitcode = compile_hugr_bytes_to_bitcode(hugr).expect("bitcode compilation should succeed");
+    // LLVM stores symbol names contiguously in the bitcode string table, so a byte
+    // scan is reliable. The private form embeds the helper under `<locals>.`; the
+    // entry function `barrier_pair_probe` is also function-local but does not match
+    // this needle, so it is a clean discriminator.
+    let private = b"<locals>.pecos_qis_runtime_barrier_qubits2_hugr";
+    let public = b"pecos_qis_runtime_barrier_qubits2_hugr";
+    assert!(
+        !bitcode.windows(private.len()).any(|w| w == private),
+        "bitcode still carries the private helper symbol"
+    );
+    assert!(
+        bitcode.windows(public.len()).any(|w| w == public),
+        "bitcode is missing the public helper symbol"
+    );
+}

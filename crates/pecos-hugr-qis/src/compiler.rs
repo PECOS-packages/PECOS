@@ -381,7 +381,7 @@ fn compile<'c, 'hugr: 'c>(
     // Rewrite PECOS helper declarations to their public ABI symbols in the module
     // itself, so both the text and bitcode outputs link against pecos-qis-ffi's
     // `pecos_qis_*` exports (a text-only rewrite would miss the bitcode path).
-    normalize_pecos_helper_symbols_in_module(&module);
+    normalize_pecos_helper_symbols_in_module(&module)?;
 
     // Get the target machine
     let target_machine = if let Some(ref triple) = args.target_triple {
@@ -474,7 +474,7 @@ fn pecos_helper_public_name<'a>(symbol: &str, helper_symbols: &[&'a str]) -> Opt
 /// second to `<public>.1`, which `pecos-qis-ffi` does not export. To keep exactly one
 /// unsuffixed public symbol, merge duplicates: redirect a duplicate's uses to the
 /// function already holding the public name and erase the duplicate.
-fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) {
+fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) -> Result<()> {
     // Collect first: we rename and (on collision) delete functions below, so we must
     // not hold the module's function iterator while mutating the function list.
     let funcs: Vec<_> = module.get_functions().collect();
@@ -489,10 +489,23 @@ fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) {
         };
 
         match module.get_function(public) {
-            // The public ABI symbol is already owned by an equivalent declaration:
-            // fold this duplicate into it so the module keeps a single unsuffixed
-            // public symbol.
+            // The public ABI symbol is already owned by another declaration: fold this
+            // duplicate into it so the module keeps a single unsuffixed public symbol.
             Some(canonical) if canonical != func => {
+                // The two declarations must be ABI-identical before merging. LLVM 21
+                // opaque pointers let a call disagree with its callee declaration's
+                // type without failing `module.verify()`, so a mismatched redeclaration
+                // would silently emit a call to the public `pecos_qis_*` symbol with the
+                // wrong signature. Reject it here instead of shipping ABI-broken IR.
+                if func.get_type() != canonical.get_type() {
+                    return Err(anyhow!(
+                        "conflicting signatures for PECOS helper `{public}`: a HUGR \
+                         declares it as `{}` and also as `{}`. Declare the helper with a \
+                         single signature matching the pecos-qis-ffi ABI.",
+                        canonical.get_type(),
+                        func.get_type(),
+                    ));
+                }
                 func.replace_all_uses_with(canonical);
                 // SAFETY: all uses were just redirected to `canonical`, so this
                 // declaration is now unreferenced and safe to remove.
@@ -504,6 +517,7 @@ fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) {
             None => func.as_global_value().set_name(public),
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -209,3 +209,30 @@ fn duplicate_helper_declarations_merge_to_one_public_symbol() {
         "bitcode is missing the public helper symbol"
     );
 }
+
+#[test]
+fn conflicting_helper_signatures_fail_loud() {
+    // Two declarations that normalize to `pecos_qis_runtime_barrier_qubit_hugr` with
+    // DIFFERENT signatures (`i64 -> i64` vs `i64 -> { i64, i64 }`). Merging them would
+    // emit a call to the public ABI symbol that disagrees with the pecos-qis-ffi
+    // export's signature -- and LLVM 21 opaque pointers + `module.verify()` do not
+    // catch it -- so compilation must fail loud instead of shipping ABI-broken IR.
+    let hugr = include_bytes!("fixtures/szz_barrier_wrong_signature.hugr");
+
+    let text = compile_hugr_bytes_to_string(hugr);
+    assert!(
+        text.is_err(),
+        "text compilation should fail on conflicting helper signatures"
+    );
+    let msg = text.unwrap_err().to_string();
+    assert!(
+        msg.contains("conflicting signatures")
+            && msg.contains("pecos_qis_runtime_barrier_qubit_hugr"),
+        "unexpected error message: {msg}"
+    );
+
+    assert!(
+        compile_hugr_bytes_to_bitcode(hugr).is_err(),
+        "bitcode compilation should fail on conflicting helper signatures"
+    );
+}

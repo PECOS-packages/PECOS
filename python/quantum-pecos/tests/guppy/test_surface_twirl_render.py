@@ -18,10 +18,43 @@ from pecos.qec.surface._twirl_sites import (
 )
 from pecos.qec.surface.patch import SurfacePatch
 
+_SZZ_RUNTIME_BARRIER_HELPER = "pecos_qis_runtime_barrier_qubits2_hugr("
+_SZZ_RUNTIME_BARRIER_CALL = "= pecos_qis_runtime_barrier_qubits2_hugr("
+
+
+def _line_has_trace_metadata(line: str, key: str, value: str) -> bool:
+    return f'"{key}", "{value}"' in line or f'\\"{key}\\":\\"{value}\\"' in line
+
 
 @pytest.fixture
 def patch() -> SurfacePatch:
     return SurfacePatch.create(distance=3)
+
+
+def _assert_szz_prefix_barrier_host_order(src: str) -> None:
+    """Assert a real SZZ data-prefix pulse is fenced with its host qubits."""
+    lines = src.splitlines()
+    for index, line in enumerate(lines):
+        if "phased_x(" not in line:
+            continue
+        prefix_meta = next(
+            i
+            for i in range(index - 1, -1, -1)
+            if _line_has_trace_metadata(lines[i], "source_kind", "szz_data_prefix")
+        )
+        barrier_index = next(i for i in range(prefix_meta - 1, -1, -1) if _SZZ_RUNTIME_BARRIER_CALL in lines[i])
+        host_meta = next(
+            i
+            for i in range(index + 1, len(lines))
+            if _line_has_trace_metadata(lines[i], "source_kind", "szz_host")
+        )
+        zz_phase_index = next(i for i in range(host_meta + 1, len(lines)) if "zz_phase(" in lines[i])
+
+        assert barrier_index < prefix_meta < index < host_meta < zz_phase_index
+        return
+
+    msg = "expected an SZZ touch with a hosted phased_x data-prefix pulse"
+    raise AssertionError(msg)
 
 
 def test_no_twirl_source_has_no_rng_or_mask_tags(patch: SurfacePatch) -> None:
@@ -39,7 +72,8 @@ def test_szz_source_uses_signed_zz_phase_template(patch: SurfacePatch) -> None:
     src = generate_guppy_source(patch, interaction_basis="szz")
 
     assert "from guppylang.std.angles import angle" in src
-    assert "from guppylang.std.qsystem.functional import zz_phase" in src
+    assert "from guppylang.std.qsystem.functional import phased_x, rz, zz_phase" in src
+    assert "phased_x(" in src
     assert "zz_phase(" in src
     assert "angle(0.5)" in src
     assert "angle(-0.5)" in src
@@ -108,8 +142,10 @@ def test_szz_basis_forks_guppy_module_cache_key(patch: SurfacePatch) -> None:
 def test_szz_source_keeps_reusable_memory_body_and_flushes_helper_frame(patch: SurfacePatch) -> None:
     src = generate_guppy_source(patch, interaction_basis="szz", num_rounds=2)
 
-    assert "for _t in range(comptime(num_rounds)):" in src
-    assert "surf, syn = syndrome_extraction(surf)" in src
+    assert "def syndrome_extraction_memory_r0" in src
+    assert "def syndrome_extraction_memory_r1" in src
+    assert "surf, syn = syndrome_extraction_memory_r0(surf)" in src
+    assert "surf, syn = syndrome_extraction_memory_r1(surf)" in src
     assert "# Flush SZZ data frame before syndrome return" in src
     assert "# Flush SZZ data frame before init_z_basis return" in src
     assert "# Flush SZZ data frame before init_x_basis return" in src
@@ -123,25 +159,14 @@ def test_szz_runtime_barriers_precede_data_prefix_and_host(patch: SurfacePatch) 
         szz_runtime_barriers=True,
     )
 
-    assert "from guppylang.std.builtins import array, barrier, owned, result" in src
-    assert "barrier(" in src
-    assert "barrier(" not in generate_guppy_source(
+    assert "from guppylang.std.builtins import array, owned, result" in src
+    assert _SZZ_RUNTIME_BARRIER_HELPER in src
+    assert _SZZ_RUNTIME_BARRIER_CALL not in generate_guppy_source(
         patch,
         interaction_basis="szz",
     )
 
-    lines = src.splitlines()
-    for index, line in enumerate(lines):
-        if "vdg(d1)" in line:
-            nearby = lines[index - 2 : index + 2]
-            assert "barrier(" in nearby[0]
-            assert "h(d1)" in nearby[1]
-            assert "vdg(d1)" in nearby[2]
-            assert "zz_phase(" in nearby[3]
-            break
-    else:
-        msg = "expected an SZZ touch with a Vdg data-prefix pulse"
-        raise AssertionError(msg)
+    _assert_szz_prefix_barrier_host_order(src)
 
 
 def test_szz_data_prefix_runtime_barriers_only_guard_real_prefixes(patch: SurfacePatch) -> None:
@@ -156,21 +181,10 @@ def test_szz_data_prefix_runtime_barriers_only_guard_real_prefixes(patch: Surfac
         szz_runtime_barriers="data-prefix",
     )
 
-    assert "barrier(" in prefix_src
-    assert prefix_src.count("barrier(") < all_src.count("barrier(")
+    assert _SZZ_RUNTIME_BARRIER_CALL in prefix_src
+    assert prefix_src.count(_SZZ_RUNTIME_BARRIER_CALL) < all_src.count(_SZZ_RUNTIME_BARRIER_CALL)
 
-    lines = prefix_src.splitlines()
-    for index, line in enumerate(lines):
-        if "vdg(d1)" in line:
-            nearby = lines[index - 2 : index + 2]
-            assert "barrier(" in nearby[0]
-            assert "h(d1)" in nearby[1]
-            assert "vdg(d1)" in nearby[2]
-            assert "zz_phase(" in nearby[3]
-            break
-    else:
-        msg = "expected an SZZ touch with a Vdg data-prefix pulse"
-        raise AssertionError(msg)
+    _assert_szz_prefix_barrier_host_order(prefix_src)
 
 
 def test_szz_runtime_barriers_reject_cx_source(patch: SurfacePatch) -> None:

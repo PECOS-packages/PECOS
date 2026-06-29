@@ -67,6 +67,11 @@ use crate::utils::read_hugr_envelope;
 
 const LLVM_MAIN: &str = "qmain";
 const METADATA: &[(&str, &[&str])] = &[("name", &["mainlib"])];
+const HUGR_SYMBOL_PREFIX: &str = "__hugr__.";
+const TRACE_METADATA_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_hugr";
+const TRACE_METADATA_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_qubit_hugr";
+const RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubit_hugr";
+const RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubits2_hugr";
 
 // Extension registry is defined in the parent module
 
@@ -419,6 +424,116 @@ fn compile<'c, 'hugr: 'c>(
     Ok(module)
 }
 
+fn is_llvm_symbol_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '$' | '-')
+}
+
+/// Normalize PECOS-owned helper declarations that Guppy/HUGR lowers under a
+/// private `__hugr__.*` symbol name.
+///
+/// These helpers are part of PECOS's runtime ABI, not ordinary user functions,
+/// so they need stable external symbols for dynamic linking. Keep this rewrite
+/// deliberately narrow: only PECOS-owned QIS helper declarations receive this
+/// treatment.
+fn normalize_pecos_helper_symbols_in_llvm(llvm_ir: String) -> String {
+    let helper_symbols = [
+        TRACE_METADATA_HUGR_SYMBOL,
+        TRACE_METADATA_QUBIT_HUGR_SYMBOL,
+        RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL,
+        RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL,
+    ];
+    let mut normalized = String::with_capacity(llvm_ir.len());
+    let mut cursor = 0;
+
+    while let Some(relative_start) = llvm_ir[cursor..].find('@') {
+        let start = cursor + relative_start;
+        normalized.push_str(&llvm_ir[cursor..start]);
+
+        let symbol_start = start + 1;
+        let symbol_len = llvm_ir[symbol_start..]
+            .chars()
+            .take_while(|ch| is_llvm_symbol_char(*ch))
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if symbol_len == 0 {
+            normalized.push('@');
+            cursor = symbol_start;
+            continue;
+        }
+
+        let symbol_end = symbol_start + symbol_len;
+        let symbol = &llvm_ir[symbol_start..symbol_end];
+        if let Some(rest) = symbol.strip_prefix(HUGR_SYMBOL_PREFIX) {
+            let mut parts = rest.rsplit('.');
+            let suffix = parts.next();
+            let helper_name = parts.next();
+            if let (Some(_suffix), Some(helper_name)) = (suffix, helper_name) {
+                if helper_symbols.iter().any(|helper| helper == &helper_name) {
+                    normalized.push('@');
+                    normalized.push_str(helper_name);
+                    cursor = symbol_end;
+                    continue;
+                }
+            }
+        }
+
+        normalized.push('@');
+        normalized.push_str(symbol);
+        cursor = symbol_end;
+    }
+
+    normalized.push_str(&llvm_ir[cursor..]);
+    normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_trace_metadata_helper_symbol() {
+        let llvm = concat!(
+            "declare void @__hugr__.pecos_qis_trace_metadata_hugr.16(i8*, i8*)\n",
+            "call void @__hugr__.pecos_qis_trace_metadata_hugr.16(i8* %0, i8* %1)\n",
+            "call void @__hugr__.__main__.pecos_qis_trace_metadata_hugr.18(i8* %0, i8* %1)\n",
+            "declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.19(i64, i8*, i8*)\n",
+            "%q = call i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.19(i64 %0, i8* %1, i8* %2)\n",
+            "%q2 = call i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.21(i64 %0, i8* %1, i8* %2)\n",
+            "%q3 = call i64 @__hugr__.pecos_qis_runtime_barrier_qubit_hugr.22(i64 %0)\n",
+            "%q4 = call i64 @__hugr__.__main__.pecos_qis_runtime_barrier_qubit_hugr.23(i64 %0)\n",
+            "%q5 = call { i64, i64 } @__hugr__.pecos_qis_runtime_barrier_qubits2_hugr.24(i64 %0, i64 %1)\n",
+            "%q6 = call { i64, i64 } @__hugr__.__main__.pecos_qis_runtime_barrier_qubits2_hugr.25(i64 %0, i64 %1)\n",
+            "call void @__hugr__.other_helper.16()\n",
+        )
+        .to_string();
+        let normalized = normalize_pecos_helper_symbols_in_llvm(llvm);
+        assert!(normalized.contains("declare void @pecos_qis_trace_metadata_hugr(i8*, i8*)"));
+        assert!(normalized.contains("call void @pecos_qis_trace_metadata_hugr(i8* %0, i8* %1)"));
+        assert!(
+            normalized.contains("declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, i8*, i8*)")
+        );
+        assert!(normalized.contains(
+            "%q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %0, i8* %1, i8* %2)"
+        ));
+        assert!(normalized.contains(
+            "%q2 = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %0, i8* %1, i8* %2)"
+        ));
+        assert!(
+            normalized.contains("%q3 = call i64 @pecos_qis_runtime_barrier_qubit_hugr(i64 %0)")
+        );
+        assert!(
+            normalized.contains("%q4 = call i64 @pecos_qis_runtime_barrier_qubit_hugr(i64 %0)")
+        );
+        assert!(normalized.contains(
+            "%q5 = call { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 %0, i64 %1)"
+        ));
+        assert!(normalized.contains(
+            "%q6 = call { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 %0, i64 %1)"
+        ));
+        assert!(normalized.contains("@__hugr__.other_helper.16"));
+    }
+}
+
 /// Compile HUGR bytes to LLVM IR string
 ///
 /// This is the main entry point for the compiler.
@@ -452,6 +567,7 @@ pub fn compile_hugr_bytes_to_string_with_options(
 
     // Get the module string
     let mut llvm_str = module.to_string();
+    llvm_str = normalize_pecos_helper_symbols_in_llvm(llvm_str);
 
     // Workaround: Manually add the EntryPoint attribute if it's missing
     // This is needed because inkwell sometimes doesn't properly serialize string attributes

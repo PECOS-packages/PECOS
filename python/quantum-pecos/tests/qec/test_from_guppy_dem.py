@@ -8,7 +8,7 @@ from typing import ClassVar
 
 import pytest
 from guppylang import guppy
-from guppylang.std.builtins import result
+from guppylang.std.builtins import barrier, owned, result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
@@ -55,11 +55,38 @@ def _measurement_feedback() -> None:
     result("b1", b1)
 
 
+@guppy.declare
+def pecos_qis_trace_metadata_qubit_hugr(q: qubit @ owned, key: str, value: str) -> qubit: ...
+
+
+@guppy
+def _metadata_before_h_gate() -> None:
+    q = qubit()
+    q = pecos_qis_trace_metadata_qubit_hugr(q, "source_kind", "szz_data_prefix")
+    q = pecos_qis_trace_metadata_qubit_hugr(q, "source_label", "probe:prefix")
+    q = pecos_qis_trace_metadata_qubit_hugr(q, "host_id", "probe:host")
+    q = pecos_qis_trace_metadata_qubit_hugr(q, "local_role", "basis_prefix")
+    h(q)
+    _ = measure(q)
+
+
+@guppy
+def _barrier_between_single_qubit_gates() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    h(q0)
+    barrier(q0, q1)
+    h(q1)
+    _ = measure(q0)
+    _ = measure(q1)
+
+
 def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     import pecos
 
     def forbidden_stabilizer():
-        raise AssertionError("trace capture should not validate operations with stabilizer evolution")
+        msg = "trace capture should not validate operations with stabilizer evolution"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(pecos, "stabilizer", forbidden_stabilizer)
 
@@ -67,6 +94,70 @@ def test_operation_trace_capture_uses_trace_friendly_quantum_backend(monkeypatch
     result_names = [trace.get("name") for trace in named_result_traces_from_operation_trace(chunks)]
 
     assert "m" in result_names
+
+
+@pytest.mark.xfail(
+    reason=(
+        "Guppy public barrier(...) is currently optimized away before PECOS "
+        "QIS operation collection; hosted SZZ prefix scheduling needs a "
+        "barrier-preserving or hosted-operation lowering path."
+    ),
+    strict=True,
+)
+def test_guppy_barrier_survives_into_qis_operation_trace() -> None:
+    chunks = capture_guppy_operation_trace(
+        _barrier_between_single_qubit_gates,
+        num_qubits=2,
+        seed=0,
+    )
+    operations = [
+        operation
+        for chunk in chunks
+        for operation in chunk.get("operations", [])
+    ]
+
+    assert any(operation == "Barrier" or "Barrier" in operation for operation in operations)
+
+
+def test_szz_runtime_barrier_survives_into_qis_operation_trace() -> None:
+    program = make_surface_code(
+        distance=3,
+        num_rounds=1,
+        basis="Z",
+        interaction_basis="szz",
+        szz_runtime_barriers="data-prefix",
+    )
+    chunks = capture_guppy_operation_trace(
+        program,
+        num_qubits=get_num_qubits(d=3, interaction_basis="szz"),
+        seed=0,
+    )
+    operations = [
+        operation
+        for chunk in chunks
+        for operation in chunk.get("operations", [])
+    ]
+
+    assert any(operation == "Barrier" or "Barrier" in str(operation) for operation in operations)
+
+
+def test_qubit_trace_metadata_stays_ordered_before_gate() -> None:
+    chunks = capture_guppy_operation_trace(_metadata_before_h_gate, num_qubits=1, seed=0)
+    lowered_ops = [
+        op
+        for chunk in chunks
+        for op in chunk.get("lowered_quantum_ops", [])
+    ]
+
+    assert lowered_ops[1]["gate_type"] == "R1XY"
+    assert lowered_ops[1]["metadata"] == {
+        "host_id": "probe:host",
+        "local_role": "basis_prefix",
+        "source_kind": "szz_data_prefix",
+        "source_label": "probe:prefix",
+    }
+    assert lowered_ops[-1]["gate_type"] == "MZ"
+    assert lowered_ops[-1]["metadata"] == {}
 
 
 def _dem_text(*, detectors_json: str = "[]", observables_json: str = "[]") -> str:
@@ -228,6 +319,31 @@ def test_lowered_replay_preserves_runtime_idles() -> None:
     tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
     assert _flat_idle_gates(tc) == [([0], 20.0)]
+
+
+def test_lowered_replay_preserves_gate_metadata() -> None:
+    chunks = [
+        {
+            "operations": [{"Quantum": {"H": 0}}],
+            "lowered_quantum_ops": [
+                {
+                    "gate_type": "H",
+                    "qubits": [0],
+                    "angles": [],
+                    "params": [],
+                    "metadata": {
+                        "source_label": "szz_physical_prefix:H:X0:q0",
+                        "source_kind": "szz_prefix",
+                    },
+                },
+            ],
+        },
+    ]
+
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+    assert tc.get_gate_meta(0, 0, "source_label") == "szz_physical_prefix:H:X0:q0"
+    assert tc.get_gate_meta(0, 0, "source_kind") == "szz_prefix"
 
 
 def test_lowered_replay_preserves_measurement_crosstalk_payloads() -> None:

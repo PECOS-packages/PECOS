@@ -3,6 +3,11 @@
 //! This module defines the quantum operations that can be collected by the interface
 //! and later executed by a runtime.
 
+use std::collections::BTreeMap;
+
+/// Structured metadata attached to QIS operations or lowered quantum operations.
+pub type TraceMetadata = BTreeMap<String, String>;
+
 /// Runtime provenance for a named `result(...)` output.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NamedResultTrace {
@@ -19,6 +24,22 @@ pub struct NamedResultTrace {
 pub enum Operation {
     /// Quantum gate operation
     Quantum(QuantumOp),
+
+    /// Source-level metadata intended to annotate subsequent lowered operations.
+    ///
+    /// Runtimes may preserve this metadata when lowering, scheduling, or expanding
+    /// operations. PECOS's direct lowering path attaches it to the next emitted
+    /// simulator gate and then clears it.
+    TraceMetadata {
+        metadata: TraceMetadata,
+        /// Optional source qubit that owns this metadata.
+        ///
+        /// Runtime lowering uses this to wait for the next compatible source
+        /// operation touching the same qubit, which is stricter than attaching
+        /// metadata to the next operation in global program order.
+        #[serde(default)]
+        qubit: Option<usize>,
+    },
 
     /// Allocate a qubit
     AllocateQubit { id: usize },
@@ -84,6 +105,32 @@ pub enum QuantumOp {
 
     // Reset
     Reset(usize),
+}
+
+/// A lowered quantum operation plus any provenance supplied by the lowering runtime.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LoweredQuantumOp {
+    /// Lowered operation to send to the quantum/noise engine.
+    pub op: QuantumOp,
+    /// Generic trace/source metadata associated with this lowered operation.
+    pub metadata: TraceMetadata,
+}
+
+impl LoweredQuantumOp {
+    /// Create a lowered operation with explicit metadata.
+    #[must_use]
+    pub fn new(op: QuantumOp, metadata: TraceMetadata) -> Self {
+        Self { op, metadata }
+    }
+}
+
+impl From<QuantumOp> for LoweredQuantumOp {
+    fn from(op: QuantumOp) -> Self {
+        Self {
+            op,
+            metadata: TraceMetadata::new(),
+        }
+    }
 }
 
 impl From<QuantumOp> for Operation {

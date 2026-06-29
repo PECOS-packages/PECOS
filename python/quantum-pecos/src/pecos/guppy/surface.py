@@ -12,6 +12,7 @@ schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 """
 
 import importlib.util
+import json
 import sys
 import tempfile
 from collections.abc import Callable
@@ -50,6 +51,7 @@ _SZZ_RUNTIME_BARRIER_POLICIES = frozenset(
         _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX,
     },
 )
+_PACKED_TRACE_METADATA_JSON_KEY = "__pecos_trace_metadata_json_v1__"
 
 
 def _normalize_szz_runtime_barrier_policy(value: bool | str) -> str:
@@ -174,6 +176,7 @@ def generate_guppy_source(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> str:
     """Generate Guppy source code for a surface code patch.
 
@@ -233,11 +236,15 @@ def generate_guppy_source(
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy. ``False``
             or ``"none"`` emits no barriers; ``True`` or ``"all"`` emits a
             public Guppy ``barrier`` before every SZZ/SZZdg host region;
-            ``"data-prefix"`` emits one only when a non-virtual local
-            data-frame pulse is about to be discharged into that host. Barriers
-            have no ideal-unitary effect, but give runtimes a principled
-            scheduling boundary before selected local data-frame pulses and
-            their entangling host.
+            ``"data-prefix"`` emits one only after a non-virtual local
+            data-frame pulse is discharged and before its host. Barriers have
+            no ideal-unitary effect, but give runtimes a principled scheduling
+            boundary between selected local data-frame pulses and their
+            entangling host.
+        trace_metadata: Emit PECOS trace metadata helpers for SZZ/SZZdg
+            hosted-operation diagnostics and strict DEM construction. Disable
+            only for execution-only builds whose compiler/linker cannot resolve
+            PECOS trace metadata helper symbols.
 
     Returns:
         Python/Guppy source code as a string.
@@ -252,8 +259,10 @@ def generate_guppy_source(
     )
     from pecos.qec.surface.circuit_builder import (
         _SZZ_FLOW_IDENTITY,
+        _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING,
         OpType,
         _resolve_szz_clifford_frame_for_builder,
+        _szz_flow_clifford_name,
         _szz_flow_compose_pending_gate,
         _szz_flow_is_virtual_z,
         _szz_memory_physical_axis_for_data,
@@ -333,8 +342,8 @@ def generate_guppy_source(
             "",
             "from guppylang import guppy",
             "from guppylang.std.angles import angle",
-            "from guppylang.std.builtins import array, barrier, owned, result",
-            "from guppylang.std.qsystem.functional import zz_phase",
+            "from guppylang.std.builtins import array, owned, result",
+            "from guppylang.std.qsystem.functional import phased_x, rz, zz_phase",
             "from guppylang.std.quantum import discard, h, measure, measure_array, qubit, s, sdg, v, vdg, x, y, z",
         ]
     else:
@@ -366,6 +375,37 @@ def generate_guppy_source(
 
     if twirl is not None:
         lines.extend(_render_inline_pcg32())
+
+    if interaction_basis == "szz":
+        helper_declarations: list[str] = []
+        if trace_metadata:
+            helper_declarations.extend(
+                [
+                    "@guppy.declare",
+                    (
+                        "def pecos_qis_trace_metadata_qubit_hugr("
+                        "q: qubit @ owned, key: str, value: str"
+                        ") -> qubit: ..."
+                    ),
+                    "",
+                ],
+            )
+        helper_declarations.extend(
+            [
+                "@guppy.declare",
+                "def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...",
+                "",
+                "@guppy.declare",
+                (
+                    "def pecos_qis_runtime_barrier_qubits2_hugr("
+                    "q0: qubit @ owned, q1: qubit @ owned"
+                    ") -> tuple[qubit, qubit]: ..."
+                ),
+                "",
+                "",
+            ],
+        )
+        lines.extend(helper_declarations)
 
     # Generate struct definitions.
     lines.extend(
@@ -505,7 +545,58 @@ def generate_guppy_source(
         msg = f"unsupported Pauli axis {axis!r}"
         raise ValueError(msg)
 
-    def _append_szz_flow_gate(target: list[str], indent: str, op_type: OpType, qubit_expr: str) -> None:
+    def _append_szz_trace_metadata_payload(
+        target: list[str],
+        indent: str,
+        metadata: dict[str, str],
+        qubit_expr: str,
+    ) -> None:
+        if not trace_metadata or not metadata:
+            return
+        payload = json.dumps(metadata, separators=(",", ":"), sort_keys=True)
+        target.append(
+            f"{indent}{qubit_expr} = pecos_qis_trace_metadata_qubit_hugr("
+            f"{qubit_expr}, "
+            f"{json.dumps(_PACKED_TRACE_METADATA_JSON_KEY)}, "
+            f"{json.dumps(payload)})",
+        )
+
+    def _append_szz_gate_trace_metadata(
+        target: list[str],
+        indent: str,
+        *,
+        source_kind: str,
+        source_label: str,
+        qubit_expr: str,
+        host_label: str | None = None,
+        local_role: str | None = None,
+        gate: OpType | None = None,
+        lowering_required: bool = False,
+    ) -> None:
+        metadata = {
+            "source_kind": source_kind,
+            "source_label": source_label,
+        }
+        if host_label is not None:
+            metadata["szz_host_label"] = host_label
+            metadata["host_id"] = host_label
+        if local_role is not None:
+            metadata["local_role"] = local_role
+        if gate is not None:
+            metadata["source_gate"] = gate.name
+        if lowering_required:
+            metadata["source_lowering_required"] = "true"
+        _append_szz_trace_metadata_payload(target, indent, metadata, qubit_expr)
+
+    def _append_szz_flow_gate(
+        target: list[str],
+        indent: str,
+        op_type: OpType,
+        qubit_expr: str,
+        *,
+        source_label: str | None = None,
+        host_label: str | None = None,
+    ) -> None:
         op_name = {
             OpType.H: "h",
             OpType.SX: "v",
@@ -518,7 +609,79 @@ def generate_guppy_source(
         if op_name is None:
             msg = f"unsupported Guppy SZZ forward-flow gate {op_type.name}"
             raise ValueError(msg)
+        if source_label is not None:
+            _append_szz_gate_trace_metadata(
+                target,
+                indent,
+                source_kind="szz_data_prefix",
+                source_label=source_label,
+                qubit_expr=qubit_expr,
+                host_label=host_label,
+                local_role="basis_prefix",
+                gate=op_type,
+            )
         target.append(f"{indent}{op_name}({qubit_expr})")
+
+    def _append_szz_physical_prefix_gate(
+        target: list[str],
+        indent: str,
+        op_type: OpType,
+        qubit_expr: str,
+        *,
+        source_label: str,
+        host_label: str,
+    ) -> None:
+        """Append one hosted physical SZZ prefix pulse.
+
+        Guppy's public quantum stdlib does not expose PECOS ``F``/``SY``
+        names directly.  The hardware-level SZZ forward-flow table still has
+        a one-pulse interpretation: ``SY`` is a Y-axis sqrt pulse, and ``F``
+        is an X-axis sqrt pulse plus a virtual Z-frame update.  We attach the
+        hosted metadata only to the physical pulse so scheduling diagnostics
+        track the operation that must remain adjacent to its SZZ/SZZdg host.
+        """
+        _append_szz_gate_trace_metadata(
+            target,
+            indent,
+            source_kind="szz_data_prefix",
+            source_label=source_label,
+            qubit_expr=qubit_expr,
+            host_label=host_label,
+            local_role="basis_prefix",
+            gate=op_type,
+        )
+        if op_type == OpType.H:
+            target.append(f"{indent}h({qubit_expr})")
+        elif op_type == OpType.SX:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(0.5), angle(0.0))")
+        elif op_type == OpType.SXDG:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(-0.5), angle(0.0))")
+        elif op_type == OpType.SY:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(0.5), angle(0.5))")
+        elif op_type == OpType.SYDG:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(-0.5), angle(0.5))")
+        elif op_type == OpType.F:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(0.5), angle(0.0))")
+            target.append(f"{indent}{qubit_expr} = rz({qubit_expr}, angle(0.5))")
+        elif op_type == OpType.FDG:
+            target.append(f"{indent}{qubit_expr} = phased_x({qubit_expr}, angle(0.5), angle(-0.5))")
+            target.append(f"{indent}{qubit_expr} = rz({qubit_expr}, angle(-0.5))")
+        else:
+            msg = f"unsupported hosted SZZ physical prefix gate {op_type.name}"
+            raise ValueError(msg)
+
+    def _szz_guppy_physical_prefix_for_pending(
+        pending: tuple[int, int],
+    ) -> tuple[OpType | None, OpType]:
+        """Return the source-level physical-prefix lowering for ``pending``."""
+        try:
+            return _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING[pending]
+        except KeyError as exc:
+            msg = (
+                "SZZ Guppy hosted-prefix lowering cannot lower pending "
+                f"Clifford {_szz_flow_clifford_name(pending)}"
+            )
+            raise ValueError(msg) from exc
 
     _szz_guppy_prefix_cache: dict[tuple[int, int], tuple[OpType, ...]] = {_SZZ_FLOW_IDENTITY: ()}
     _szz_guppy_prefix_generators = (
@@ -643,6 +806,7 @@ def generate_guppy_source(
         ancilla_expr: Callable[[str, int], str],
         data_expr: Callable[[int], str],
         pending_by_data: dict[int, tuple[int, int]] | None = None,
+        host_label_scope: str | None = None,
     ) -> None:
         def compose_data(data_q: int, gates: tuple[OpType, ...]) -> None:
             if pending_by_data is None:
@@ -654,15 +818,27 @@ def generate_guppy_source(
                 pending = _szz_flow_compose_pending_gate(pending, gate)
             pending_by_data[data_q] = pending
 
-        def discharge_data_for_szz(data_q: int) -> None:
+        def discharge_data_for_szz(
+            data_q: int,
+            *,
+            host_label: str,
+        ) -> None:
             if pending_by_data is None:
                 return
             pending = pending_by_data.setdefault(data_q, _SZZ_FLOW_IDENTITY)
             if pending == _SZZ_FLOW_IDENTITY or _szz_flow_is_virtual_z(pending):
                 return
-            prefix = _szz_guppy_prefix_gates_for_pending(pending)
-            for gate in prefix:
-                _append_szz_flow_gate(target, indent, gate, data_expr(data_q))
+            virtual_gate, physical_gate = _szz_guppy_physical_prefix_for_pending(pending)
+            if virtual_gate is not None:
+                _append_szz_flow_gate(target, indent, virtual_gate, data_expr(data_q))
+            _append_szz_physical_prefix_gate(
+                target,
+                indent,
+                physical_gate,
+                data_expr(data_q),
+                source_label=f"{host_label}:prefix:0:{physical_gate.name}",
+                host_label=host_label,
+            )
             pending_by_data[data_q] = _SZZ_FLOW_IDENTITY
 
         target.append("")
@@ -680,17 +856,35 @@ def generate_guppy_source(
             has_data_prefix = (
                 pending != _SZZ_FLOW_IDENTITY and not _szz_flow_is_virtual_z(pending)
             )
+            sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
+            host_gate = OpType.SZZ if sign > 0 else OpType.SZZDG
+            host_label_core = f"r{rnd_idx + 1}:{stab_type}{stab_idx}:d{data_q}:{host_gate.name}"
+            host_label = (
+                f"szz:{host_label_core}"
+                if host_label_scope is None
+                else f"szz:{host_label_scope}:{host_label_core}"
+            )
             if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_ALL or (
                 szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX
                 and has_data_prefix
             ):
                 target.append(
-                    f"{indent}barrier({ancilla_expr(stab_type, stab_idx)}, "
-                    f"{data_expr(data_q)})",
+                    f"{indent}{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)} = "
+                    "pecos_qis_runtime_barrier_qubits2_hugr("
+                    f"{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)})",
                 )
-            discharge_data_for_szz(data_q)
-            sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
+            discharge_data_for_szz(data_q, host_label=host_label)
             half_turns = "0.5" if sign > 0 else "-0.5"
+            _append_szz_gate_trace_metadata(
+                target,
+                indent,
+                source_kind="szz_host",
+                source_label=host_label,
+                qubit_expr=data_expr(data_q),
+                host_label=host_label,
+                gate=host_gate,
+                lowering_required=True,
+            )
             target.append(
                 f"{indent}{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)} = "
                 f"zz_phase({ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)}, angle({half_turns}))",
@@ -788,6 +982,7 @@ def generate_guppy_source(
                     _szz_ancilla_expr,
                     _szz_data_expr,
                     pending_by_data=szz_syndrome_pending_by_data,
+                    host_label_scope="syndrome_extraction",
                 )
 
             lines.append("")
@@ -899,6 +1094,7 @@ def generate_guppy_source(
                         ],
                         _szz_data_expr,
                         pending_by_data=szz_syndrome_pending_by_data,
+                        host_label_scope="syndrome_extraction",
                     )
 
             if interaction_basis == "cx":
@@ -1020,6 +1216,7 @@ def generate_guppy_source(
                         _szz_ancilla_expr,
                         _szz_data_expr,
                         pending_by_data=szz_init_pending_by_data,
+                        host_label_scope=function_name,
                     )
 
                 lines.append("")
@@ -1097,6 +1294,7 @@ def generate_guppy_source(
                         ],
                         _szz_data_expr,
                         pending_by_data=szz_init_pending_by_data,
+                        host_label_scope=function_name,
                     )
 
                 if interaction_basis == "cx":
@@ -1226,8 +1424,218 @@ def generate_guppy_source(
         ],
     )
 
-    # Generate memory experiment factories
-    lines.extend(_render_memory_experiments(patch, dx, dz, num_data, twirl, rng, num_rounds, interaction_basis))
+    def _append_inline_szz_syndrome_extraction(
+        target: list[str],
+        indent: str,
+        *,
+        host_label_scope: str,
+    ) -> None:
+        """Append one SZZ syndrome-extraction body with unique hosted ids."""
+        if interaction_basis != "szz":
+            msg = "inline SZZ syndrome extraction requires interaction_basis='szz'"
+            raise ValueError(msg)
+        target.append(f"{indent}# Inline SZZ syndrome extraction ({host_label_scope})")
+        target.append(f"{indent}# Unpack data qubits")
+        _append_szz_data_unpack(target, indent)
+        pending_by_data = dict.fromkeys(range(num_data), _SZZ_FLOW_IDENTITY)
+
+        if not constrained:
+            target.append(f"{indent}# Allocate ancilla qubits (one per stabilizer)")
+            target.extend(f"{indent}ax{stab.index} = qubit()" for stab in geom.x_stabilizers)
+            target.extend(f"{indent}az{stab.index} = qubit()" for stab in geom.z_stabilizers)
+
+            target.append("")
+            target.append(f"{indent}# Hadamard on SZZ ancillas")
+            target.extend(f"{indent}h(ax{stab.index})" for stab in geom.x_stabilizers)
+            target.extend(f"{indent}h(az{stab.index})" for stab in geom.z_stabilizers)
+
+            for rnd_idx, rnd_gates in enumerate(rounds):
+                _append_szz_layer(
+                    target,
+                    indent,
+                    rnd_idx,
+                    list(rnd_gates),
+                    _szz_ancilla_expr,
+                    _szz_data_expr,
+                    pending_by_data=pending_by_data,
+                    host_label_scope=host_label_scope,
+                )
+
+            target.append("")
+            target.append(f"{indent}# Hadamard on SZZ ancillas")
+            target.extend(f"{indent}h(ax{stab.index})" for stab in geom.x_stabilizers)
+            target.extend(f"{indent}h(az{stab.index})" for stab in geom.z_stabilizers)
+
+            target.append("")
+            target.append(f"{indent}# Measure ancillas")
+            idx = 0
+            for stab in geom.x_stabilizers:
+                target.append(f"{indent}sx{stab.index} = measure(ax{stab.index})")
+                target.append(f'{indent}result("sx{stab.index}:meas:{idx}", sx{stab.index})')
+                idx += 1
+            for stab in geom.z_stabilizers:
+                target.append(f"{indent}sz{stab.index} = measure(az{stab.index})")
+                target.append(f'{indent}result("sz{stab.index}:meas:{idx}", sz{stab.index})')
+                idx += 1
+        else:
+            batches = batched_stabilizers(
+                patch,
+                effective_budget,
+                ancilla_schedule=ancilla_schedule,
+            )
+            idx = 0
+            for batch_idx, batch in enumerate(batches):
+                target.append("")
+                target.append(f"{indent}# Batch {batch_idx + 1}/{len(batches)} of stabilizers")
+                batch_anc_var: dict[tuple[str, int], str] = {}
+                for pos, (stab_type, stab_idx) in enumerate(batch):
+                    var = f"_a_b{batch_idx}_p{pos}"
+                    batch_anc_var[(stab_type, stab_idx)] = var
+                    target.append(f"{indent}{var} = qubit()")
+
+                target.append(f"{indent}# Hadamard on SZZ ancillas in this batch")
+                for stab_type, stab_idx in batch:
+                    target.append(f"{indent}h({batch_anc_var[(stab_type, stab_idx)]})")
+
+                batch_keys = set(batch_anc_var.keys())
+                for rnd_idx, rnd_gates in enumerate(rounds):
+                    rnd_in_batch = [
+                        (stab_type, stab_idx, data_q)
+                        for stab_type, stab_idx, data_q in rnd_gates
+                        if (stab_type, stab_idx) in batch_keys
+                    ]
+                    if not rnd_in_batch:
+                        continue
+                    target.append("")
+                    target.append(f"{indent}# Batch {batch_idx + 1} round {rnd_idx + 1}")
+                    _append_szz_layer(
+                        target,
+                        indent,
+                        rnd_idx,
+                        rnd_in_batch,
+                        lambda stab_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
+                            (stab_type, stab_idx)
+                        ],
+                        _szz_data_expr,
+                        pending_by_data=pending_by_data,
+                        host_label_scope=host_label_scope,
+                    )
+
+                target.append("")
+                target.append(f"{indent}# Hadamard on SZZ ancillas in this batch")
+                for stab_type, stab_idx in batch:
+                    target.append(f"{indent}h({batch_anc_var[(stab_type, stab_idx)]})")
+
+                target.append("")
+                target.append(f"{indent}# Measure batch {batch_idx + 1} ancillas")
+                for stab_type, stab_idx in batch:
+                    anc = batch_anc_var[(stab_type, stab_idx)]
+                    syn_var = f"sx{stab_idx}" if stab_type == "X" else f"sz{stab_idx}"
+                    target.append(f"{indent}{syn_var} = measure({anc})")
+                    target.append(f'{indent}result("{syn_var}:meas:{idx}", {syn_var})')
+                    idx += 1
+
+        x_calls = ", ".join(f"sx{s.index}" for s in geom.x_stabilizers)
+        z_calls = ", ".join(f"sz{s.index}" for s in geom.z_stabilizers)
+        target.extend(["", f"{indent}synx = array({x_calls})", f"{indent}synz = array({z_calls})", ""])
+        _append_szz_flush_data_frame(
+            target,
+            indent,
+            pending_by_data,
+            reason=f"{host_label_scope} inline syndrome",
+        )
+        target.append(f"{indent}surf = SurfaceCode_{dx}x{dz}({szz_data_args})")
+
+    def _render_plain_szz_round_helper(round_idx: int) -> list[str]:
+        helper_name = f"syndrome_extraction_memory_r{round_idx}"
+        body = [
+            "",
+            "",
+            "@guppy",
+            (
+                f"def {helper_name}(surf: SurfaceCode_{dx}x{dz} @ owned) "
+                f"-> tuple[SurfaceCode_{dx}x{dz}, Syndrome_{dx}x{dz}]:"
+            ),
+            (
+                f'    """Extract counted SZZ syndrome round {round_idx} '
+                'with round-scoped hosted metadata."""'
+            ),
+        ]
+        _append_inline_szz_syndrome_extraction(
+            body,
+            "    ",
+            host_label_scope=f"memory_r{round_idx}",
+        )
+        body.append(f"    return surf, Syndrome_{dx}x{dz}(synx, synz)")
+        return body
+
+    def _render_plain_szz_memory_block(
+        basis: str,
+        basis_upper: str,
+        rendered_num_rounds: int,
+    ) -> list[str]:
+        init_func = "init_z_basis" if basis == "z" else "init_x_basis"
+        init_tag = "init_synx" if basis == "z" else "init_synz"
+        body: list[str] = [
+            (
+                f'        """{basis_upper}-basis SZZ memory experiment for '
+                f"dx={dx}, dz={dz}, num_rounds={rendered_num_rounds}."
+                '"""'
+            ),
+            f"        surf = prep_{basis}_basis()",
+            f"        surf, init_syn = {init_func}(surf)",
+            f'        result("{init_tag}", init_syn)',
+            "",
+        ]
+        for round_idx in range(rendered_num_rounds):
+            body.append(f"        # === Counted syndrome round {round_idx} ===")
+            body.append(f"        surf, syn = syndrome_extraction_memory_r{round_idx}(surf)")
+            body.append('        result("synx", syn.synx)')
+            body.append('        result("synz", syn.synz)')
+            body.append("")
+
+        body.extend(
+            [
+                f"        final = measure_{basis}_basis(surf)",
+                '        result("final", final)',
+            ],
+        )
+        return [
+            f"def make_memory_{basis}(num_rounds: int):",
+            f'    """Create {basis_upper}-basis SZZ memory experiment.',
+            "",
+            f"    num_rounds must equal {rendered_num_rounds} -- the body was unrolled at",
+            "    source-generation time so hosted-operation metadata is unique per",
+            "    counted syndrome round. Mismatched values raise ValueError.",
+            '    """',
+            f"    if num_rounds != {rendered_num_rounds}:",
+            (
+                f'        msg = f"this generated module was unrolled for '
+                f'num_rounds={rendered_num_rounds}, got {{num_rounds!r}}"'
+            ),
+            "        raise ValueError(msg)",
+            "",
+            "    @guppy",
+            f"    def memory_{basis}() -> None:",
+            *body,
+            "",
+            f"    return memory_{basis}",
+            "",
+            "",
+        ]
+
+    # Generate memory experiment factories.  Plain SZZ memory programs are
+    # unrolled when the round count is available so hosted metadata identifies
+    # the concrete counted syndrome round instead of the reusable helper body.
+    if twirl is None and interaction_basis == "szz" and num_rounds is not None:
+        lines.extend(["# === Counted SZZ Syndrome Helpers ==="])
+        for round_idx in range(num_rounds):
+            lines.extend(_render_plain_szz_round_helper(round_idx))
+        lines.extend(["# === Memory Experiments ===", ""])
+        for basis, basis_upper in (("z", "Z"), ("x", "X")):
+            lines.extend(_render_plain_szz_memory_block(basis, basis_upper, num_rounds))
+    else:
+        lines.extend(_render_memory_experiments(patch, dx, dz, num_data, twirl, rng, num_rounds, interaction_basis))
 
     return "\n".join(lines)
 
@@ -1888,6 +2296,7 @@ def _guppy_module_cache_key(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> str:
     """Filesystem-safe cache key spanning full patch identity + budget + twirl.
 
@@ -1899,7 +2308,9 @@ def _guppy_module_cache_key(
     Twirled source is Python-time unrolled, so the cache key includes
     ``num_rounds`` in addition to the structural twirl fields, runtime
     frame-output mode, RNG seed, activation-probability threshold, and
-    the SZZ runtime-barrier policy.
+    the SZZ runtime-barrier policy. Plain SZZ source is also unrolled when
+    ``num_rounds`` is supplied so hosted-operation metadata can identify the
+    concrete counted syndrome round.
     """
     geom = patch.geometry
     rotated = "rot" if geom.rotated else "unrot"
@@ -1923,11 +2334,15 @@ def _guppy_module_cache_key(
         if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_NONE
         else f"_szzrb-{szz_runtime_barrier_policy}"
     )
+    trace_metadata_part = "" if trace_metadata else "_trace-metadata-off"
     base = (
         f"{patch.dx}x{patch.dz}_{geom.orientation.name}_{rotated}"
-        f"_b{effective_budget}{interaction_part}{check_plan_part}{frame_part}{runtime_barrier_part}"
+        f"_b{effective_budget}{interaction_part}{check_plan_part}{frame_part}"
+        f"{runtime_barrier_part}{trace_metadata_part}"
     )
     if twirl is None:
+        if interaction_basis == "szz" and num_rounds is not None:
+            return f"{base}_r{int(num_rounds)}"
         return base
     if rng is None or num_rounds is None:
         msg = "twirled Guppy module cache keys require both rng and num_rounds"
@@ -1952,6 +2367,7 @@ def _load_guppy_module(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> dict:
     """Load a Guppy module for a patch, using caching.
 
@@ -1975,6 +2391,10 @@ def _load_guppy_module(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
+        trace_metadata: Emit PECOS trace metadata helpers in generated SZZ
+            source. Keep enabled for traced-QIS/DEM paths; disable for
+            execution-only builds whose compiler/linker cannot resolve the
+            metadata helper symbols.
 
     Returns:
         Module dictionary with generated functions
@@ -1999,6 +2419,7 @@ def _load_guppy_module(
         check_plan=resolved_plan.plan_id if check_plan is not None else None,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
 
     if cache_key in _state.module_cache:
@@ -2014,6 +2435,7 @@ def _load_guppy_module(
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
 
     # Write to temp file (required for Guppy introspection).
@@ -2048,6 +2470,7 @@ def generate_memory_experiment(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> object:
     """Generate a memory experiment for a patch.
 
@@ -2064,20 +2487,29 @@ def generate_memory_experiment(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
+        trace_metadata: Emit PECOS trace metadata helpers in generated SZZ
+            source. Keep enabled for traced-QIS/DEM paths; disable for
+            execution-only builds whose compiler/linker cannot resolve the
+            metadata helper symbols.
 
     Returns:
         Guppy function for the experiment
     """
+    resolved_plan = _resolve_surface_check_plan(
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+    )
     module = _load_guppy_module(
         patch,
         ancilla_budget=ancilla_budget,
         twirl=twirl,
         rng=rng,
-        num_rounds=num_rounds if twirl is not None else None,
-        interaction_basis=interaction_basis,
-        check_plan=check_plan,
+        num_rounds=num_rounds if twirl is not None or resolved_plan.interaction_basis == "szz" else None,
+        interaction_basis=resolved_plan.interaction_basis,
+        check_plan=resolved_plan.plan_id if check_plan is not None else None,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
 
     if basis.upper() == "Z":
@@ -2172,6 +2604,7 @@ def generate_surface_code_module(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> str:
     """Generate source code for a distance-d surface code module.
 
@@ -2185,6 +2618,8 @@ def generate_surface_code_module(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
+        trace_metadata: Emit PECOS trace metadata helpers in generated SZZ
+            source.
 
     Returns:
         Python/Guppy source code as a string
@@ -2201,6 +2636,7 @@ def generate_surface_code_module(
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
 
 
@@ -2212,6 +2648,7 @@ def _surface_code_module_for_patch(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> dict:
     """Load + cache a surface-code module for an arbitrary patch.
 
@@ -2242,6 +2679,7 @@ def _surface_code_module_for_patch(
         resolved_plan.plan_id,
         None if clifford_frame_policy is None else str(clifford_frame_policy).lower().replace("-", "_"),
         szz_runtime_barrier_policy,
+        trace_metadata,
     )
 
     if cache_key in _state.distance_module_cache:
@@ -2254,6 +2692,7 @@ def _surface_code_module_for_patch(
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barrier_policy,
+        trace_metadata=trace_metadata,
     )
 
     # Metadata derived from the actual patch geometry.
@@ -2266,6 +2705,7 @@ def _surface_code_module_for_patch(
     module["clifford_frame_policy"] = clifford_frame_policy
     module["szz_runtime_barriers"] = szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE
     module["szz_runtime_barrier_policy"] = szz_runtime_barrier_policy
+    module["trace_metadata"] = trace_metadata
     module["resolved_check_plan"] = resolved_plan.resolved_metadata
     module["resolved_check_plan_hash"] = resolved_plan.resolved_hash
 
@@ -2321,6 +2761,7 @@ def make_surface_code(
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
     szz_runtime_barriers: bool | str = False,
+    trace_metadata: bool = True,
 ) -> object:
     """Create a surface code memory experiment.
 
@@ -2339,6 +2780,10 @@ def make_surface_code(
         clifford_frame_policy: Optional source-level Clifford-deformation
             policy for SZZ/SZZdg surface-code generation.
         szz_runtime_barriers: SZZ/SZZdg scheduling-barrier policy.
+        trace_metadata: Emit PECOS trace metadata helpers in generated SZZ
+            source. Keep enabled for traced-QIS/DEM paths; disable for
+            execution-only builds whose compiler/linker cannot resolve the
+            metadata helper symbols.
 
     Returns:
         Compiled Guppy program
@@ -2347,15 +2792,18 @@ def make_surface_code(
         msg = f"basis must be 'Z' or 'X', got {basis!r}"
         raise ValueError(msg)
 
-    module = get_surface_code_module(
-        distance,
+    from pecos.qec.surface import SurfacePatch
+
+    _validate_surface_memory_distance(distance)
+    patch = SurfacePatch.create(distance=distance)
+    return generate_memory_experiment(
+        patch,
+        num_rounds,
+        basis,
         ancilla_budget=ancilla_budget,
         interaction_basis=interaction_basis,
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
         szz_runtime_barriers=szz_runtime_barriers,
+        trace_metadata=trace_metadata,
     )
-
-    factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
-
-    return factory(num_rounds)

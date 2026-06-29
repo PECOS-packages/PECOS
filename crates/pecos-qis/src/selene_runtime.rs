@@ -5,8 +5,10 @@
 
 use crate::runtime::{ClassicalState, QisRuntime, Result, RuntimeError, Shot};
 use log::{debug, trace};
-use pecos_qis_ffi_types::{Operation, OperationCollector, QuantumOp};
-use std::collections::{BTreeMap, BTreeSet};
+use pecos_qis_ffi_types::{
+    LoweredQuantumOp, Operation, OperationCollector, QuantumOp, TraceMetadata,
+};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{CString, c_void};
 use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
@@ -57,6 +59,12 @@ impl RuntimeOperationBatch {
     fn end_time_nanos(&self) -> u64 {
         self.start_time_nanos.saturating_add(self.duration_nanos)
     }
+}
+
+#[derive(Debug, Clone)]
+struct SourceTraceMetadata {
+    op: QuantumOp,
+    metadata: TraceMetadata,
 }
 
 #[repr(C)]
@@ -603,6 +611,10 @@ impl SeleneRuntime {
                     // The actual result mapping is handled by the runtime's results collection
                     self.current_op_index += 1;
                 }
+                Operation::TraceMetadata { .. } => {
+                    trace!("Trace metadata encountered");
+                    self.current_op_index += 1;
+                }
                 Operation::Barrier => {
                     trace!("Barrier encountered");
                     // Barriers don't produce quantum ops but can break batches
@@ -862,6 +874,47 @@ impl SeleneRuntime {
         Ok(())
     }
 
+    fn call_runtime_global_barrier(&self, sleep_time: u64) -> Result<bool> {
+        let lib = self
+            .library
+            .as_ref()
+            .ok_or_else(|| RuntimeError::FfiError("Selene runtime is not loaded".to_string()))?;
+        let instance = self.instance.ok_or_else(|| {
+            RuntimeError::FfiError("Selene runtime is not initialized".to_string())
+        })?;
+
+        unsafe {
+            let Ok(global_barrier_fn) = lib
+                .get::<unsafe extern "C" fn(RuntimeInstance, u64) -> i32>(
+                    b"selene_runtime_global_barrier",
+                )
+            else {
+                return Ok(false);
+            };
+            let errno = global_barrier_fn(instance, sleep_time);
+            if errno != 0 {
+                return Err(RuntimeError::FfiError(format!(
+                    "global_barrier failed with errno {errno}"
+                )));
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn lower_runtime_barrier(&mut self) -> Result<Vec<QuantumOp>> {
+        self.load_plugin()?;
+
+        // Runtime-native barriers keep scheduler-specific ordering decisions
+        // inside the plugin. Falling back to a drain preserves compatibility
+        // with older plugins that do not expose Selene barrier symbols.
+        if self.call_runtime_global_barrier(0)? {
+            return Ok(Vec::new());
+        }
+
+        self.drain_runtime_operations()
+    }
+
     fn submit_operation_to_runtime(
         &mut self,
         op: &Operation,
@@ -879,11 +932,56 @@ impl SeleneRuntime {
                     self.runtime_qfree(runtime_qubit)?;
                 }
             }
-            Operation::RecordOutput { .. } | Operation::Barrier => {}
+            Operation::RecordOutput { .. }
+            | Operation::TraceMetadata { .. }
+            | Operation::Barrier => {}
             Operation::Quantum(qop) => self.submit_quantum_op_to_runtime(qop, lowered_ops)?,
         }
 
         Ok(())
+    }
+
+    fn map_quantum_op_to_runtime_qubits(&mut self, qop: &QuantumOp) -> Result<QuantumOp> {
+        let mut map = |qubit: usize| -> Result<usize> {
+            let runtime_qubit = self.runtime_qubit_for_program(qubit)?;
+            usize::try_from(runtime_qubit).map_err(|_| {
+                RuntimeError::ExecutionError(format!(
+                    "Runtime qubit id {runtime_qubit} does not fit in usize"
+                ))
+            })
+        };
+
+        Ok(match qop {
+            QuantumOp::H(qubit) => QuantumOp::H(map(*qubit)?),
+            QuantumOp::X(qubit) => QuantumOp::X(map(*qubit)?),
+            QuantumOp::Y(qubit) => QuantumOp::Y(map(*qubit)?),
+            QuantumOp::Z(qubit) => QuantumOp::Z(map(*qubit)?),
+            QuantumOp::S(qubit) => QuantumOp::S(map(*qubit)?),
+            QuantumOp::Sdg(qubit) => QuantumOp::Sdg(map(*qubit)?),
+            QuantumOp::T(qubit) => QuantumOp::T(map(*qubit)?),
+            QuantumOp::Tdg(qubit) => QuantumOp::Tdg(map(*qubit)?),
+            QuantumOp::RX(theta, qubit) => QuantumOp::RX(*theta, map(*qubit)?),
+            QuantumOp::RY(theta, qubit) => QuantumOp::RY(*theta, map(*qubit)?),
+            QuantumOp::RZ(theta, qubit) => QuantumOp::RZ(*theta, map(*qubit)?),
+            QuantumOp::RXY(theta, phi, qubit) => QuantumOp::RXY(*theta, *phi, map(*qubit)?),
+            QuantumOp::Idle(duration, qubit) => QuantumOp::Idle(*duration, map(*qubit)?),
+            QuantumOp::CX(control, target) => QuantumOp::CX(map(*control)?, map(*target)?),
+            QuantumOp::CY(control, target) => QuantumOp::CY(map(*control)?, map(*target)?),
+            QuantumOp::CZ(control, target) => QuantumOp::CZ(map(*control)?, map(*target)?),
+            QuantumOp::CH(control, target) => QuantumOp::CH(map(*control)?, map(*target)?),
+            QuantumOp::CRZ(theta, control, target) => {
+                QuantumOp::CRZ(*theta, map(*control)?, map(*target)?)
+            }
+            QuantumOp::CCX(control_1, control_2, target) => {
+                QuantumOp::CCX(map(*control_1)?, map(*control_2)?, map(*target)?)
+            }
+            QuantumOp::ZZ(qubit_1, qubit_2) => QuantumOp::ZZ(map(*qubit_1)?, map(*qubit_2)?),
+            QuantumOp::RZZ(theta, qubit_1, qubit_2) => {
+                QuantumOp::RZZ(*theta, map(*qubit_1)?, map(*qubit_2)?)
+            }
+            QuantumOp::Measure(qubit, result_id) => QuantumOp::Measure(map(*qubit)?, *result_id),
+            QuantumOp::Reset(qubit) => QuantumOp::Reset(map(*qubit)?),
+        })
     }
 
     fn submit_quantum_op_to_runtime(
@@ -917,52 +1015,11 @@ impl SeleneRuntime {
             }
             _ => {
                 lowered_ops.extend(self.drain_runtime_operations()?);
-                lowered_ops.push(self.map_passthrough_op_to_runtime_qubits(qop)?);
+                lowered_ops.push(self.map_quantum_op_to_runtime_qubits(qop)?);
             }
         }
 
         Ok(())
-    }
-
-    fn map_passthrough_op_to_runtime_qubits(&mut self, qop: &QuantumOp) -> Result<QuantumOp> {
-        let mut map = |qubit: usize| -> Result<usize> {
-            let runtime_qubit = self.runtime_qubit_for_program(qubit)?;
-            usize::try_from(runtime_qubit).map_err(|_| {
-                RuntimeError::ExecutionError(format!(
-                    "Runtime qubit id {runtime_qubit} does not fit in usize"
-                ))
-            })
-        };
-
-        Ok(match qop {
-            QuantumOp::H(qubit) => QuantumOp::H(map(*qubit)?),
-            QuantumOp::X(qubit) => QuantumOp::X(map(*qubit)?),
-            QuantumOp::Y(qubit) => QuantumOp::Y(map(*qubit)?),
-            QuantumOp::Z(qubit) => QuantumOp::Z(map(*qubit)?),
-            QuantumOp::S(qubit) => QuantumOp::S(map(*qubit)?),
-            QuantumOp::Sdg(qubit) => QuantumOp::Sdg(map(*qubit)?),
-            QuantumOp::T(qubit) => QuantumOp::T(map(*qubit)?),
-            QuantumOp::Tdg(qubit) => QuantumOp::Tdg(map(*qubit)?),
-            QuantumOp::RX(theta, qubit) => QuantumOp::RX(*theta, map(*qubit)?),
-            QuantumOp::RY(theta, qubit) => QuantumOp::RY(*theta, map(*qubit)?),
-            QuantumOp::CX(control, target) => QuantumOp::CX(map(*control)?, map(*target)?),
-            QuantumOp::CY(control, target) => QuantumOp::CY(map(*control)?, map(*target)?),
-            QuantumOp::CZ(control, target) => QuantumOp::CZ(map(*control)?, map(*target)?),
-            QuantumOp::CH(control, target) => QuantumOp::CH(map(*control)?, map(*target)?),
-            QuantumOp::CRZ(theta, control, target) => {
-                QuantumOp::CRZ(*theta, map(*control)?, map(*target)?)
-            }
-            QuantumOp::CCX(control_1, control_2, target) => {
-                QuantumOp::CCX(map(*control_1)?, map(*control_2)?, map(*target)?)
-            }
-            QuantumOp::ZZ(qubit_1, qubit_2) => QuantumOp::ZZ(map(*qubit_1)?, map(*qubit_2)?),
-            QuantumOp::Idle(duration, qubit) => QuantumOp::Idle(*duration, map(*qubit)?),
-            QuantumOp::RXY(..)
-            | QuantumOp::RZ(..)
-            | QuantumOp::RZZ(..)
-            | QuantumOp::Measure(..)
-            | QuantumOp::Reset(..) => qop.clone(),
-        })
     }
 
     fn drain_runtime_operations(&mut self) -> Result<Vec<QuantumOp>> {
@@ -1013,6 +1070,363 @@ impl SeleneRuntime {
         }
 
         Ok(lowered_ops)
+    }
+
+    fn push_lowered_ops_with_source_metadata(
+        lowered_ops: &mut Vec<LoweredQuantumOp>,
+        ops: Vec<QuantumOp>,
+        source_metadata: &mut VecDeque<SourceTraceMetadata>,
+    ) {
+        for op in ops {
+            let metadata = if let Some(source_index) = source_metadata
+                .iter()
+                .position(|source| Self::source_trace_metadata_matches_lowered_op(source, &op))
+            {
+                source_metadata
+                    .remove(source_index)
+                    .map(|source| source.metadata)
+                    .unwrap_or_default()
+            } else {
+                TraceMetadata::new()
+            };
+            lowered_ops.push(LoweredQuantumOp::new(op, metadata));
+        }
+    }
+
+    fn merge_trace_metadata(target: &mut TraceMetadata, metadata: TraceMetadata) -> Result<()> {
+        for (key, value) in metadata {
+            if let Some(existing) = target.get(&key)
+                && existing != &value
+            {
+                return Err(RuntimeError::ExecutionError(format!(
+                    "conflicting trace metadata for key {key:?}: {existing:?} != {value:?}"
+                )));
+            }
+            target.insert(key, value);
+        }
+        Ok(())
+    }
+
+    fn take_pending_trace_metadata_for_source_op(
+        qop: &QuantumOp,
+        pending_global_metadata: &mut TraceMetadata,
+        pending_qubit_metadata: &mut BTreeMap<usize, TraceMetadata>,
+    ) -> Result<TraceMetadata> {
+        let mut metadata = std::mem::take(pending_global_metadata);
+        let mut consumed_qubits = Vec::new();
+
+        for qubit in Self::quantum_op_qubits(qop) {
+            let Some(pending) = pending_qubit_metadata.get(&qubit) else {
+                continue;
+            };
+            if !Self::trace_metadata_can_annotate_source_op(pending, qop) {
+                continue;
+            }
+            Self::merge_trace_metadata(&mut metadata, pending.clone())?;
+            consumed_qubits.push(qubit);
+        }
+
+        for qubit in consumed_qubits {
+            pending_qubit_metadata.remove(&qubit);
+        }
+
+        Ok(metadata)
+    }
+
+    fn trace_metadata_can_annotate_source_op(metadata: &TraceMetadata, qop: &QuantumOp) -> bool {
+        let Some(source_gate) = metadata.get("source_gate").map(String::as_str) else {
+            return true;
+        };
+        match source_gate {
+            "SZZ" | "SZZDG" => Self::two_qubit_gate_qubits(qop).is_some(),
+            _ => Self::single_qubit_gate_qubit(qop).is_some(),
+        }
+    }
+
+    fn source_trace_metadata_matches_lowered_op(
+        source: &SourceTraceMetadata,
+        lowered: &QuantumOp,
+    ) -> bool {
+        if source.metadata.contains_key("source_gate") {
+            return Self::source_gate_metadata_matches_lowered_op(source, lowered);
+        }
+        Self::source_op_matches_lowered_op(&source.op, lowered)
+    }
+
+    fn source_gate_metadata_matches_lowered_op(
+        source: &SourceTraceMetadata,
+        lowered: &QuantumOp,
+    ) -> bool {
+        let Some(source_gate) = source.metadata.get("source_gate").map(String::as_str) else {
+            return false;
+        };
+        if matches!(source_gate, "SZZ" | "SZZDG") {
+            let Some((source_qubit_1, source_qubit_2)) = Self::two_qubit_gate_qubits(&source.op)
+            else {
+                return false;
+            };
+            let Some((lowered_qubit_1, lowered_qubit_2)) = Self::two_qubit_gate_qubits(lowered)
+            else {
+                return false;
+            };
+            return Self::same_unordered_pair(
+                source_qubit_1,
+                source_qubit_2,
+                lowered_qubit_1,
+                lowered_qubit_2,
+            );
+        }
+        let Some(source_qubit) = Self::single_qubit_gate_qubit(&source.op) else {
+            return false;
+        };
+        let Some(lowered_qubit) = Self::single_qubit_gate_qubit(lowered) else {
+            return false;
+        };
+        source_qubit == lowered_qubit
+    }
+
+    fn source_op_matches_lowered_op(source: &QuantumOp, lowered: &QuantumOp) -> bool {
+        match (source, lowered) {
+            (QuantumOp::H(source_qubit), QuantumOp::H(lowered_qubit))
+            | (QuantumOp::X(source_qubit), QuantumOp::X(lowered_qubit))
+            | (QuantumOp::Y(source_qubit), QuantumOp::Y(lowered_qubit))
+            | (QuantumOp::Z(source_qubit), QuantumOp::Z(lowered_qubit))
+            | (QuantumOp::S(source_qubit), QuantumOp::S(lowered_qubit))
+            | (QuantumOp::Sdg(source_qubit), QuantumOp::Sdg(lowered_qubit))
+            | (QuantumOp::T(source_qubit), QuantumOp::T(lowered_qubit))
+            | (QuantumOp::Tdg(source_qubit), QuantumOp::Tdg(lowered_qubit))
+            | (QuantumOp::Reset(source_qubit), QuantumOp::Reset(lowered_qubit)) => {
+                source_qubit == lowered_qubit
+            }
+            (
+                QuantumOp::RX(source_theta, source_qubit),
+                QuantumOp::RX(lowered_theta, lowered_qubit),
+            )
+            | (
+                QuantumOp::RY(source_theta, source_qubit),
+                QuantumOp::RY(lowered_theta, lowered_qubit),
+            )
+            | (
+                QuantumOp::RZ(source_theta, source_qubit),
+                QuantumOp::RZ(lowered_theta, lowered_qubit),
+            )
+            | (
+                QuantumOp::Idle(source_theta, source_qubit),
+                QuantumOp::Idle(lowered_theta, lowered_qubit),
+            ) => source_qubit == lowered_qubit && Self::same_float(*source_theta, *lowered_theta),
+            (
+                QuantumOp::RXY(source_theta, source_phi, source_qubit),
+                QuantumOp::RXY(lowered_theta, lowered_phi, lowered_qubit),
+            ) => {
+                source_qubit == lowered_qubit
+                    && Self::same_float(*source_theta, *lowered_theta)
+                    && Self::same_float(*source_phi, *lowered_phi)
+            }
+            (
+                QuantumOp::CX(source_control, source_target),
+                QuantumOp::CX(lowered_control, lowered_target),
+            )
+            | (
+                QuantumOp::CY(source_control, source_target),
+                QuantumOp::CY(lowered_control, lowered_target),
+            )
+            | (
+                QuantumOp::CZ(source_control, source_target),
+                QuantumOp::CZ(lowered_control, lowered_target),
+            )
+            | (
+                QuantumOp::CH(source_control, source_target),
+                QuantumOp::CH(lowered_control, lowered_target),
+            ) => Self::same_pair(
+                *source_control,
+                *source_target,
+                *lowered_control,
+                *lowered_target,
+            ),
+            (
+                QuantumOp::CRZ(source_theta, source_control, source_target),
+                QuantumOp::CRZ(lowered_theta, lowered_control, lowered_target),
+            ) => {
+                Self::same_float(*source_theta, *lowered_theta)
+                    && Self::same_pair(
+                        *source_control,
+                        *source_target,
+                        *lowered_control,
+                        *lowered_target,
+                    )
+            }
+            (
+                QuantumOp::CCX(source_control_1, source_control_2, source_target),
+                QuantumOp::CCX(lowered_control_1, lowered_control_2, lowered_target),
+            ) => {
+                (source_control_1, source_control_2, source_target)
+                    == (lowered_control_1, lowered_control_2, lowered_target)
+            }
+            (
+                QuantumOp::ZZ(source_qubit_1, source_qubit_2),
+                QuantumOp::ZZ(lowered_qubit_1, lowered_qubit_2),
+            ) => Self::same_unordered_pair(
+                *source_qubit_1,
+                *source_qubit_2,
+                *lowered_qubit_1,
+                *lowered_qubit_2,
+            ),
+            (
+                QuantumOp::RZZ(source_theta, source_qubit_1, source_qubit_2),
+                QuantumOp::RZZ(lowered_theta, lowered_qubit_1, lowered_qubit_2),
+            ) => {
+                Self::same_float(*source_theta, *lowered_theta)
+                    && Self::same_unordered_pair(
+                        *source_qubit_1,
+                        *source_qubit_2,
+                        *lowered_qubit_1,
+                        *lowered_qubit_2,
+                    )
+            }
+            (
+                QuantumOp::ZZ(source_qubit_1, source_qubit_2),
+                QuantumOp::RZZ(_, lowered_qubit_1, lowered_qubit_2),
+            ) => Self::same_unordered_pair(
+                *source_qubit_1,
+                *source_qubit_2,
+                *lowered_qubit_1,
+                *lowered_qubit_2,
+            ),
+            (
+                QuantumOp::Measure(source_qubit, source_result),
+                QuantumOp::Measure(lowered_qubit, lowered_result),
+            ) => source_qubit == lowered_qubit && source_result == lowered_result,
+            _ => false,
+        }
+    }
+
+    fn same_float(left: f64, right: f64) -> bool {
+        (left - right).abs() <= 1e-12
+    }
+
+    fn same_pair(left_a: usize, left_b: usize, right_a: usize, right_b: usize) -> bool {
+        (left_a, left_b) == (right_a, right_b)
+    }
+
+    fn same_unordered_pair(left_a: usize, left_b: usize, right_a: usize, right_b: usize) -> bool {
+        Self::same_pair(left_a, left_b, right_a, right_b)
+            || Self::same_pair(left_a, left_b, right_b, right_a)
+    }
+
+    fn quantum_op_qubits(qop: &QuantumOp) -> BTreeSet<usize> {
+        let mut qubits = BTreeSet::new();
+        match qop {
+            QuantumOp::H(qubit)
+            | QuantumOp::X(qubit)
+            | QuantumOp::Y(qubit)
+            | QuantumOp::Z(qubit)
+            | QuantumOp::S(qubit)
+            | QuantumOp::Sdg(qubit)
+            | QuantumOp::T(qubit)
+            | QuantumOp::Tdg(qubit)
+            | QuantumOp::RX(_, qubit)
+            | QuantumOp::RY(_, qubit)
+            | QuantumOp::RZ(_, qubit)
+            | QuantumOp::RXY(_, _, qubit)
+            | QuantumOp::Idle(_, qubit)
+            | QuantumOp::Measure(qubit, _)
+            | QuantumOp::Reset(qubit) => {
+                qubits.insert(*qubit);
+            }
+            QuantumOp::CX(qubit_1, qubit_2)
+            | QuantumOp::CY(qubit_1, qubit_2)
+            | QuantumOp::CZ(qubit_1, qubit_2)
+            | QuantumOp::CH(qubit_1, qubit_2)
+            | QuantumOp::CRZ(_, qubit_1, qubit_2)
+            | QuantumOp::ZZ(qubit_1, qubit_2)
+            | QuantumOp::RZZ(_, qubit_1, qubit_2) => {
+                qubits.insert(*qubit_1);
+                qubits.insert(*qubit_2);
+            }
+            QuantumOp::CCX(qubit_1, qubit_2, qubit_3) => {
+                qubits.insert(*qubit_1);
+                qubits.insert(*qubit_2);
+                qubits.insert(*qubit_3);
+            }
+        }
+        qubits
+    }
+
+    fn single_qubit_gate_qubit(qop: &QuantumOp) -> Option<usize> {
+        match qop {
+            QuantumOp::H(qubit)
+            | QuantumOp::X(qubit)
+            | QuantumOp::Y(qubit)
+            | QuantumOp::Z(qubit)
+            | QuantumOp::S(qubit)
+            | QuantumOp::Sdg(qubit)
+            | QuantumOp::T(qubit)
+            | QuantumOp::Tdg(qubit)
+            | QuantumOp::RX(_, qubit)
+            | QuantumOp::RY(_, qubit)
+            | QuantumOp::RZ(_, qubit)
+            | QuantumOp::RXY(_, _, qubit) => Some(*qubit),
+            _ => None,
+        }
+    }
+
+    fn two_qubit_gate_qubits(qop: &QuantumOp) -> Option<(usize, usize)> {
+        match qop {
+            QuantumOp::CX(qubit_1, qubit_2)
+            | QuantumOp::CY(qubit_1, qubit_2)
+            | QuantumOp::CZ(qubit_1, qubit_2)
+            | QuantumOp::CH(qubit_1, qubit_2)
+            | QuantumOp::CRZ(_, qubit_1, qubit_2)
+            | QuantumOp::ZZ(qubit_1, qubit_2)
+            | QuantumOp::RZZ(_, qubit_1, qubit_2) => Some((*qubit_1, *qubit_2)),
+            _ => None,
+        }
+    }
+
+    fn fail_if_metadata_was_not_lowered(
+        source_metadata: &VecDeque<SourceTraceMetadata>,
+    ) -> Result<()> {
+        let leftover_metadata = source_metadata
+            .iter()
+            .filter(|source| Self::trace_metadata_requires_lowering(&source.metadata))
+            .collect::<Vec<_>>();
+        if leftover_metadata.is_empty() {
+            return Ok(());
+        }
+        let examples = leftover_metadata
+            .iter()
+            .take(3)
+            .map(|source| format!("{:?} for {:?}", source.metadata, source.op))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(RuntimeError::ExecutionError(format!(
+            "runtime lowering did not emit non-idle operations for {} metadata-bearing source operation(s); examples: {examples}",
+            leftover_metadata.len()
+        )))
+    }
+
+    fn trace_metadata_requires_lowering(metadata: &TraceMetadata) -> bool {
+        metadata
+            .get("source_lowering_required")
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+    }
+
+    fn fail_if_qubit_metadata_was_not_consumed(
+        pending_qubit_metadata: &BTreeMap<usize, TraceMetadata>,
+    ) -> Result<()> {
+        if pending_qubit_metadata.is_empty() {
+            return Ok(());
+        }
+        let examples = pending_qubit_metadata
+            .iter()
+            .take(3)
+            .map(|(qubit, metadata)| format!("qubit {qubit}: {metadata:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(RuntimeError::ExecutionError(format!(
+            "qubit-scoped trace metadata was not followed by a compatible quantum operation for {} qubit(s); examples: {examples}",
+            pending_qubit_metadata.len()
+        )))
     }
 
     fn convert_runtime_batch(&mut self, batch: RuntimeOperationBatch) -> Result<Vec<QuantumOp>> {
@@ -1222,6 +1636,7 @@ fn operation_capacity_with_mode(
             Operation::RecordOutput { result_id, .. } => {
                 include_result(&mut num_results, *result_id);
             }
+            Operation::TraceMetadata { .. } => {}
             Operation::Barrier => {}
         }
     }
@@ -1339,10 +1754,101 @@ impl QisRuntime for SeleneRuntime {
         let mut lowered_ops = Vec::new();
 
         for op in operations {
+            if matches!(op, Operation::Barrier) {
+                lowered_ops.extend(self.lower_runtime_barrier()?);
+            }
             self.submit_operation_to_runtime(op, &mut lowered_ops)?;
         }
 
         lowered_ops.extend(self.drain_runtime_operations()?);
+        Ok(lowered_ops)
+    }
+
+    fn lower_operations_with_metadata(
+        &mut self,
+        operations: &[Operation],
+    ) -> Result<Vec<LoweredQuantumOp>> {
+        if has_explicit_qubit_allocations(operations) {
+            self.uses_explicit_qubit_allocation = true;
+        }
+        let (num_qubits, num_results) =
+            operation_capacity_with_mode(operations, self.uses_explicit_qubit_allocation);
+        self.num_qubits = self.num_qubits.max(num_qubits);
+        self.num_results = self.num_results.max(num_results);
+        self.ensure_plugin_capacity()?;
+        self.load_plugin()?;
+
+        let mut lowered_ops = Vec::new();
+        let mut source_metadata = VecDeque::new();
+        let mut pending_global_metadata = TraceMetadata::new();
+        let mut pending_qubit_metadata: BTreeMap<usize, TraceMetadata> = BTreeMap::new();
+
+        for op in operations {
+            match op {
+                Operation::TraceMetadata { metadata, qubit } => {
+                    if let Some(qubit) = qubit {
+                        let pending = pending_qubit_metadata.entry(*qubit).or_default();
+                        Self::merge_trace_metadata(pending, metadata.clone())?;
+                    } else {
+                        Self::merge_trace_metadata(&mut pending_global_metadata, metadata.clone())?;
+                    }
+                }
+                Operation::Quantum(qop) => {
+                    let metadata = Self::take_pending_trace_metadata_for_source_op(
+                        qop,
+                        &mut pending_global_metadata,
+                        &mut pending_qubit_metadata,
+                    )?;
+                    if !metadata.is_empty() {
+                        let source_op = self.map_quantum_op_to_runtime_qubits(qop)?;
+                        source_metadata.push_back(SourceTraceMetadata {
+                            op: source_op,
+                            metadata,
+                        });
+                    }
+                    let mut emitted_ops = Vec::new();
+                    self.submit_operation_to_runtime(op, &mut emitted_ops)?;
+                    Self::push_lowered_ops_with_source_metadata(
+                        &mut lowered_ops,
+                        emitted_ops,
+                        &mut source_metadata,
+                    );
+                }
+                Operation::Barrier => {
+                    let emitted_ops = self.lower_runtime_barrier()?;
+                    Self::push_lowered_ops_with_source_metadata(
+                        &mut lowered_ops,
+                        emitted_ops,
+                        &mut source_metadata,
+                    );
+                }
+                _ => {
+                    let mut emitted_ops = Vec::new();
+                    self.submit_operation_to_runtime(op, &mut emitted_ops)?;
+                    Self::push_lowered_ops_with_source_metadata(
+                        &mut lowered_ops,
+                        emitted_ops,
+                        &mut source_metadata,
+                    );
+                }
+            }
+        }
+
+        let emitted_ops = self.drain_runtime_operations()?;
+        Self::push_lowered_ops_with_source_metadata(
+            &mut lowered_ops,
+            emitted_ops,
+            &mut source_metadata,
+        );
+
+        if !pending_global_metadata.is_empty() {
+            return Err(RuntimeError::ExecutionError(format!(
+                "trace metadata was not followed by a quantum operation: {pending_global_metadata:?}"
+            )));
+        }
+        Self::fail_if_qubit_metadata_was_not_consumed(&pending_qubit_metadata)?;
+        Self::fail_if_metadata_was_not_lowered(&source_metadata)?;
+
         Ok(lowered_ops)
     }
 
@@ -1574,6 +2080,259 @@ mod tests {
             ops,
             vec![QuantumOp::Idle(20e-9, 0), QuantumOp::RXY(1.0, 0.5, 0)]
         );
+    }
+
+    #[test]
+    fn test_source_metadata_attaches_to_first_non_idle_lowered_op() {
+        let mut metadata = TraceMetadata::new();
+        metadata.insert("source_label".to_string(), "probe:szz-host".to_string());
+        let mut source_metadata = VecDeque::from([SourceTraceMetadata {
+            op: QuantumOp::RZZ(0.5, 0, 1),
+            metadata,
+        }]);
+        let mut lowered_ops = Vec::new();
+
+        SeleneRuntime::push_lowered_ops_with_source_metadata(
+            &mut lowered_ops,
+            vec![QuantumOp::Idle(20e-9, 0), QuantumOp::RZZ(0.5, 0, 1)],
+            &mut source_metadata,
+        );
+
+        assert!(lowered_ops[0].metadata.is_empty());
+        assert_eq!(
+            lowered_ops[1]
+                .metadata
+                .get("source_label")
+                .map(String::as_str),
+            Some("probe:szz-host")
+        );
+        assert!(source_metadata.is_empty());
+    }
+
+    #[test]
+    fn test_source_idle_metadata_can_attach_to_idle_op() {
+        let mut metadata = TraceMetadata::new();
+        metadata.insert("source_label".to_string(), "probe:idle".to_string());
+        let mut source_metadata = VecDeque::from([SourceTraceMetadata {
+            op: QuantumOp::Idle(20e-9, 0),
+            metadata,
+        }]);
+        let mut lowered_ops = Vec::new();
+
+        SeleneRuntime::push_lowered_ops_with_source_metadata(
+            &mut lowered_ops,
+            vec![QuantumOp::Idle(20e-9, 0)],
+            &mut source_metadata,
+        );
+
+        assert_eq!(
+            lowered_ops[0]
+                .metadata
+                .get("source_label")
+                .map(String::as_str),
+            Some("probe:idle")
+        );
+        assert!(source_metadata.is_empty());
+    }
+
+    #[test]
+    fn test_unmatched_metadata_does_not_block_later_compatible_metadata() {
+        let mut rz_metadata = TraceMetadata::new();
+        rz_metadata.insert("source_label".to_string(), "probe:virtual-rz".to_string());
+        let mut rzz_metadata = TraceMetadata::new();
+        rzz_metadata.insert("source_label".to_string(), "probe:szz-host".to_string());
+        let mut source_metadata = VecDeque::from([
+            SourceTraceMetadata {
+                op: QuantumOp::RZ(0.25, 0),
+                metadata: rz_metadata,
+            },
+            SourceTraceMetadata {
+                op: QuantumOp::RZZ(0.5, 0, 1),
+                metadata: rzz_metadata,
+            },
+        ]);
+        let mut lowered_ops = Vec::new();
+
+        SeleneRuntime::push_lowered_ops_with_source_metadata(
+            &mut lowered_ops,
+            vec![QuantumOp::RZZ(0.5, 0, 1)],
+            &mut source_metadata,
+        );
+
+        assert_eq!(
+            lowered_ops[0]
+                .metadata
+                .get("source_label")
+                .map(String::as_str),
+            Some("probe:szz-host")
+        );
+        assert_eq!(source_metadata.len(), 1);
+        assert_eq!(
+            source_metadata[0]
+                .metadata
+                .get("source_label")
+                .map(String::as_str),
+            Some("probe:virtual-rz")
+        );
+    }
+
+    #[test]
+    fn test_source_metadata_can_attach_after_runtime_reordering() {
+        let mut first_metadata = TraceMetadata::new();
+        first_metadata.insert("source_label".to_string(), "probe:first".to_string());
+        let mut second_metadata = TraceMetadata::new();
+        second_metadata.insert("source_label".to_string(), "probe:second".to_string());
+        let mut source_metadata = VecDeque::from([
+            SourceTraceMetadata {
+                op: QuantumOp::RZZ(0.5, 0, 1),
+                metadata: first_metadata,
+            },
+            SourceTraceMetadata {
+                op: QuantumOp::RZZ(-0.5, 2, 3),
+                metadata: second_metadata,
+            },
+        ]);
+        let mut lowered_ops = Vec::new();
+
+        SeleneRuntime::push_lowered_ops_with_source_metadata(
+            &mut lowered_ops,
+            vec![QuantumOp::RZZ(-0.5, 2, 3), QuantumOp::RZZ(0.5, 0, 1)],
+            &mut source_metadata,
+        );
+
+        assert_eq!(
+            lowered_ops[0]
+                .metadata
+                .get("source_label")
+                .map(String::as_str),
+            Some("probe:second")
+        );
+        assert_eq!(
+            lowered_ops[1]
+                .metadata
+                .get("source_label")
+                .map(String::as_str),
+            Some("probe:first")
+        );
+        assert!(source_metadata.is_empty());
+    }
+
+    #[test]
+    fn test_source_gate_metadata_matches_runtime_normalized_single_qubit_pulse() {
+        let mut metadata = TraceMetadata::new();
+        metadata.insert("source_gate".to_string(), "H".to_string());
+        metadata.insert("source_label".to_string(), "probe:h-prefix".to_string());
+        let mut source_metadata = VecDeque::from([SourceTraceMetadata {
+            op: QuantumOp::RXY(std::f64::consts::FRAC_PI_2, -std::f64::consts::FRAC_PI_2, 2),
+            metadata,
+        }]);
+        let mut lowered_ops = Vec::new();
+
+        SeleneRuntime::push_lowered_ops_with_source_metadata(
+            &mut lowered_ops,
+            vec![QuantumOp::RXY(std::f64::consts::FRAC_PI_2, 0.0, 2)],
+            &mut source_metadata,
+        );
+
+        assert_eq!(
+            lowered_ops[0]
+                .metadata
+                .get("source_label")
+                .map(String::as_str),
+            Some("probe:h-prefix")
+        );
+        assert!(source_metadata.is_empty());
+    }
+
+    #[test]
+    fn test_qubit_scoped_metadata_waits_for_compatible_source_op() {
+        let mut h_metadata = TraceMetadata::new();
+        h_metadata.insert("source_gate".to_string(), "H".to_string());
+        h_metadata.insert("source_label".to_string(), "probe:h-prefix".to_string());
+        let mut szz_metadata = TraceMetadata::new();
+        szz_metadata.insert("source_gate".to_string(), "SZZ".to_string());
+        szz_metadata.insert("source_label".to_string(), "probe:szz-host".to_string());
+
+        let mut pending_global_metadata = TraceMetadata::new();
+        let mut pending_qubit_metadata = BTreeMap::from([(1, szz_metadata), (8, h_metadata)]);
+
+        let rxy_metadata = SeleneRuntime::take_pending_trace_metadata_for_source_op(
+            &QuantumOp::RXY(std::f64::consts::FRAC_PI_2, 0.0, 8),
+            &mut pending_global_metadata,
+            &mut pending_qubit_metadata,
+        )
+        .expect("take metadata for RXY");
+        assert_eq!(
+            rxy_metadata.get("source_label").map(String::as_str),
+            Some("probe:h-prefix")
+        );
+        assert!(pending_qubit_metadata.contains_key(&1));
+        assert!(!pending_qubit_metadata.contains_key(&8));
+
+        let rzz_metadata = SeleneRuntime::take_pending_trace_metadata_for_source_op(
+            &QuantumOp::RZZ(-std::f64::consts::FRAC_PI_2, 9, 1),
+            &mut pending_global_metadata,
+            &mut pending_qubit_metadata,
+        )
+        .expect("take metadata for RZZ");
+        assert_eq!(
+            rzz_metadata.get("source_label").map(String::as_str),
+            Some("probe:szz-host")
+        );
+        assert!(pending_qubit_metadata.is_empty());
+    }
+
+    #[test]
+    fn test_conflicting_trace_metadata_fails_loudly() {
+        let mut left_metadata = TraceMetadata::new();
+        left_metadata.insert("source_label".to_string(), "probe:left".to_string());
+        let mut right_metadata = TraceMetadata::new();
+        right_metadata.insert("source_label".to_string(), "probe:right".to_string());
+
+        let mut pending_global_metadata = TraceMetadata::new();
+        let mut pending_qubit_metadata = BTreeMap::from([(0, left_metadata), (1, right_metadata)]);
+
+        let error = SeleneRuntime::take_pending_trace_metadata_for_source_op(
+            &QuantumOp::RZZ(std::f64::consts::FRAC_PI_2, 0, 1),
+            &mut pending_global_metadata,
+            &mut pending_qubit_metadata,
+        )
+        .expect_err("conflicting source labels should fail");
+        assert!(error.to_string().contains("conflicting trace metadata"));
+    }
+
+    #[test]
+    fn test_optional_unlowered_trace_metadata_is_allowed() {
+        let mut metadata = TraceMetadata::new();
+        metadata.insert(
+            "source_label".to_string(),
+            "probe:optimized-away-prefix".to_string(),
+        );
+        let source_metadata = VecDeque::from([SourceTraceMetadata {
+            op: QuantumOp::RXY(std::f64::consts::FRAC_PI_2, 0.0, 4),
+            metadata,
+        }]);
+
+        SeleneRuntime::fail_if_metadata_was_not_lowered(&source_metadata)
+            .expect("optional metadata may be optimized away by the runtime");
+    }
+
+    #[test]
+    fn test_required_unlowered_trace_metadata_fails_loudly() {
+        let mut metadata = TraceMetadata::new();
+        metadata.insert(
+            "source_label".to_string(),
+            "probe:required-host".to_string(),
+        );
+        metadata.insert("source_lowering_required".to_string(), "true".to_string());
+        let source_metadata = VecDeque::from([SourceTraceMetadata {
+            op: QuantumOp::RZZ(std::f64::consts::FRAC_PI_2, 0, 1),
+            metadata,
+        }]);
+
+        let error = SeleneRuntime::fail_if_metadata_was_not_lowered(&source_metadata)
+            .expect_err("required metadata should fail when it is not lowered");
+        assert!(error.to_string().contains("required-host"));
     }
 
     #[test]

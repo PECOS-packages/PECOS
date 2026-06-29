@@ -24,7 +24,8 @@ use pecos_engines::{
     ByteMessage, ByteMessageBuilder, ClassicalEngine, ControlEngine, Engine, EngineStage,
 };
 use pecos_qis_ffi_types::{
-    NamedResultTrace, Operation, OperationCollector as OperationList, QuantumOp,
+    LoweredQuantumOp, NamedResultTrace, Operation, OperationCollector as OperationList, QuantumOp,
+    TraceMetadata,
 };
 use pecos_random::PecosRng;
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,6 +46,7 @@ pub struct LoweredQuantumGateTrace {
     pub params: Vec<f64>,
     pub qubits: Vec<usize>,
     pub measurement_result_ids: Vec<usize>,
+    pub metadata: TraceMetadata,
 }
 
 /// One traced batch of QIS operations and their lowered simulator commands.
@@ -69,6 +71,12 @@ pub type OperationTraceStore = Arc<Mutex<Vec<OperationTraceChunk>>>;
 
 /// Result from worker thread - returns both the operations and the interface
 type WorkerResult = Result<(OperationList, BoxedInterface), String>;
+
+/// Simulator commands plus one metadata record per lowered quantum gate.
+struct LoweredCommandBatch {
+    commands: ByteMessage,
+    gate_metadata: Vec<TraceMetadata>,
+}
 
 /// State for dynamic circuit execution
 ///
@@ -546,17 +554,33 @@ impl QisEngine {
     /// by `sim()` operate on a fixed physical qubit pool, so we must honor
     /// `AllocateQubit`/`ReleaseQubit` and remap program handles back onto reusable
     /// physical slots before sending the quantum ops downstream.
-    fn operations_to_bytemessage(&mut self, ops: &[Operation]) -> Result<ByteMessage, PecosError> {
+    fn push_gate_metadata(
+        gate_metadata: &mut Vec<TraceMetadata>,
+        pending_metadata: &mut TraceMetadata,
+    ) {
+        gate_metadata.push(std::mem::take(pending_metadata));
+    }
+
+    fn operations_to_lowered_commands(
+        &mut self,
+        ops: &[Operation],
+    ) -> Result<LoweredCommandBatch, PecosError> {
         let mut builder = std::mem::take(&mut self.command_builder);
         builder.reset();
         self.measurement_mapping.clear();
+        let mut gate_metadata = Vec::new();
+        let mut pending_metadata = TraceMetadata::new();
 
         let result = (|| -> Result<(), PecosError> {
             for op in ops {
                 match op {
+                    Operation::TraceMetadata { metadata, .. } => {
+                        pending_metadata.extend(metadata.clone());
+                    }
                     Operation::AllocateQubit { id } => {
                         let slot = self.allocate_qubit_slot(*id)?;
                         builder.pz(&[slot]);
+                        Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                     }
                     Operation::ReleaseQubit { id } => {
                         self.release_qubit_slot(*id);
@@ -567,45 +591,56 @@ impl QisEngine {
                     Operation::Quantum(qop) => match qop {
                         QuantumOp::H(qubit) => {
                             builder.h(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::X(qubit) => {
                             builder.x(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::Y(qubit) => {
                             builder.y(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::Z(qubit) => {
                             builder.z(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::S(qubit) => {
                             builder.sz(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::Sdg(qubit) => {
                             builder.szdg(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::T(qubit) => {
                             builder.t(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::Tdg(qubit) => {
                             builder.tdg(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RX(angle, qubit) => {
                             builder.rx(
                                 Angle64::from_radians(*angle),
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RY(angle, qubit) => {
                             builder.ry(
                                 Angle64::from_radians(*angle),
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RZ(angle, qubit) => {
                             builder.rz(
                                 Angle64::from_radians(*angle),
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RXY(theta, phi, qubit) => {
                             builder.r1xy(
@@ -613,25 +648,30 @@ impl QisEngine {
                                 Angle64::from_radians(*phi),
                                 &[self.mapped_qubit(*qubit, qop)?],
                             );
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::Idle(duration, qubit) => {
                             builder.idle(*duration, &[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::CX(control, target) => {
                             builder.cx(&[(
                                 self.mapped_qubit(*control, qop)?,
                                 self.mapped_qubit(*target, qop)?,
                             )]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::Measure(qubit, result_id) => {
                             self.measurement_mapping.push(*result_id);
                             builder.mz(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::ZZ(qubit1, qubit2) => {
                             builder.szz(&[(
                                 self.mapped_qubit(*qubit1, qop)?,
                                 self.mapped_qubit(*qubit2, qop)?,
                             )]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::RZZ(angle, qubit1, qubit2) => {
                             builder.rzz(
@@ -641,9 +681,11 @@ impl QisEngine {
                                     self.mapped_qubit(*qubit2, qop)?,
                                 )],
                             );
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         QuantumOp::Reset(qubit) => {
                             builder.pz(&[self.mapped_qubit(*qubit, qop)?]);
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
                         _ => {
                             return Err(PecosError::Generic(format!(
@@ -654,10 +696,18 @@ impl QisEngine {
                 }
             }
 
+            if !pending_metadata.is_empty() {
+                warn!(
+                    "QIS operation trace metadata was not followed by a lowerable quantum operation"
+                );
+            }
             Ok(())
         })();
 
-        let message = result.map(|()| builder.build());
+        let message = result.map(|()| LoweredCommandBatch {
+            commands: builder.build(),
+            gate_metadata,
+        });
         self.command_builder = builder;
         message
     }
@@ -667,68 +717,80 @@ impl QisEngine {
     /// Selene runtime plugins can opt in to lowering so their scheduler sees
     /// the same operation stream that Selene would receive. Other runtimes keep
     /// using PECOS's direct QIS lowering path.
-    fn lower_operations_to_bytemessage(
+    fn lower_operations_to_commands(
         &mut self,
         ops: &[Operation],
-    ) -> Result<ByteMessage, PecosError> {
+    ) -> Result<LoweredCommandBatch, PecosError> {
         if self.runtime.supports_operation_lowering() {
             let lowered_ops = self
                 .runtime
-                .lower_operations(ops)
+                .lower_operations_with_metadata(ops)
                 .map_err(|e| PecosError::Generic(format!("Runtime lowering error: {e}")))?;
-            return self.quantum_ops_to_bytemessage(lowered_ops);
+            return self.quantum_ops_to_lowered_commands(lowered_ops);
         }
 
-        self.operations_to_bytemessage(ops)
+        self.operations_to_lowered_commands(ops)
     }
 
     /// Convert already-materialized quantum ops into a `ByteMessage`.
     ///
     /// This path is used by runtimes that already present qubit ids in the fixed
     /// simulator space, so no allocate/release remapping is needed.
-    fn quantum_ops_to_bytemessage(
+    fn quantum_ops_to_lowered_commands(
         &mut self,
-        ops: Vec<QuantumOp>,
-    ) -> Result<ByteMessage, PecosError> {
+        ops: Vec<LoweredQuantumOp>,
+    ) -> Result<LoweredCommandBatch, PecosError> {
         let mut builder = std::mem::take(&mut self.command_builder);
         builder.reset();
         self.measurement_mapping.clear();
+        let mut gate_metadata = Vec::new();
 
         let result = (|| -> Result<(), PecosError> {
-            for op in ops {
+            for LoweredQuantumOp { op, metadata } in ops {
                 match op {
                     QuantumOp::H(qubit) => {
                         builder.h(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::X(qubit) => {
                         builder.x(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::Y(qubit) => {
                         builder.y(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::Z(qubit) => {
                         builder.z(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::S(qubit) => {
                         builder.sz(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::Sdg(qubit) => {
                         builder.szdg(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::T(qubit) => {
                         builder.t(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::Tdg(qubit) => {
                         builder.tdg(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::RX(angle, qubit) => {
                         builder.rx(Angle64::from_radians(angle), &[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::RY(angle, qubit) => {
                         builder.ry(Angle64::from_radians(angle), &[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::RZ(angle, qubit) => {
                         builder.rz(Angle64::from_radians(angle), &[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::RXY(theta, phi, qubit) => {
                         builder.r1xy(
@@ -736,25 +798,32 @@ impl QisEngine {
                             Angle64::from_radians(phi),
                             &[qubit],
                         );
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::Idle(duration, qubit) => {
                         builder.idle(duration, &[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::CX(control, target) => {
                         builder.cx(&[(control, target)]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::Measure(qubit, result_id) => {
                         self.measurement_mapping.push(result_id);
                         builder.mz(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::ZZ(qubit1, qubit2) => {
                         builder.szz(&[(qubit1, qubit2)]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::RZZ(angle, qubit1, qubit2) => {
                         builder.rzz(Angle64::from_radians(angle), &[(qubit1, qubit2)]);
+                        gate_metadata.push(metadata);
                     }
                     QuantumOp::Reset(qubit) => {
                         builder.pz(&[qubit]);
+                        gate_metadata.push(metadata);
                     }
                     _ => {
                         return Err(PecosError::Generic(format!(
@@ -767,9 +836,20 @@ impl QisEngine {
             Ok(())
         })();
 
-        let message = result.map(|()| builder.build());
+        let message = result.map(|()| LoweredCommandBatch {
+            commands: builder.build(),
+            gate_metadata,
+        });
         self.command_builder = builder;
         message
+    }
+
+    fn quantum_ops_to_bytemessage(
+        &mut self,
+        ops: Vec<QuantumOp>,
+    ) -> Result<ByteMessage, PecosError> {
+        self.quantum_ops_to_lowered_commands(ops.into_iter().map(LoweredQuantumOp::from).collect())
+            .map(|lowered| lowered.commands)
     }
 }
 
@@ -845,12 +925,20 @@ impl QisEngine {
     fn lowered_quantum_ops_trace(
         commands: &ByteMessage,
         measurement_mapping: &[usize],
+        gate_metadata: &[TraceMetadata],
     ) -> Vec<LoweredQuantumGateTrace> {
         match commands.quantum_ops() {
             Ok(gates) => {
                 let mut measurement_cursor = 0usize;
                 let mut traces = Vec::with_capacity(gates.len());
-                for gate in gates {
+                if gate_metadata.len() != gates.len() {
+                    warn!(
+                        "Lowered operation trace has {} metadata record(s) for {} gate(s)",
+                        gate_metadata.len(),
+                        gates.len()
+                    );
+                }
+                for (gate_index, gate) in gates.iter().enumerate() {
                     let gate_type = gate.gate_type.to_string();
                     let qubits = gate
                         .qubits
@@ -882,6 +970,7 @@ impl QisEngine {
                         params: gate.params.iter().copied().collect::<Vec<_>>(),
                         qubits,
                         measurement_result_ids,
+                        metadata: gate_metadata.get(gate_index).cloned().unwrap_or_default(),
                     });
                 }
                 if measurement_cursor != measurement_mapping.len() {
@@ -905,14 +994,20 @@ impl QisEngine {
         stage: &str,
         ops: &[Operation],
         waiting_for_result_id: Option<u64>,
-        lowered_quantum_ops: Option<&ByteMessage>,
+        lowered_quantum_ops: Option<&LoweredCommandBatch>,
     ) {
         if self.operation_trace_dir.is_none() && self.operation_trace_collector.is_none() {
             return;
         }
 
         let lowered_trace = lowered_quantum_ops
-            .map(|commands| Self::lowered_quantum_ops_trace(commands, &self.measurement_mapping))
+            .map(|lowered| {
+                Self::lowered_quantum_ops_trace(
+                    &lowered.commands,
+                    &self.measurement_mapping,
+                    &lowered.gate_metadata,
+                )
+            })
             .unwrap_or_default();
         let file_name = format!(
             "engine_{:04}_shot_{:06}_chunk_{:04}_{}.json",
@@ -1523,14 +1618,14 @@ impl ControlEngine for QisEngine {
                 // Track how many operations we're sending for simulation
                 self.simulated_op_count = ops.len();
                 if !ops.is_empty() {
-                    let commands = self.lower_operations_to_bytemessage(&ops)?;
+                    let lowered = self.lower_operations_to_commands(&ops)?;
                     self.trace_operations_chunk(
                         "pending_start",
                         &ops,
                         Some(result_id),
-                        Some(&commands),
+                        Some(&lowered),
                     );
-                    return Ok(EngineStage::NeedsProcessing(commands));
+                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
         }
@@ -1542,9 +1637,9 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let commands = self.lower_operations_to_bytemessage(&final_ops)?;
-                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
-                    return Ok(EngineStage::NeedsProcessing(commands));
+                    let lowered = self.lower_operations_to_commands(&final_ops)?;
+                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
+                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
             self.trace_named_result_traces_from_dynamic_handle();
@@ -1589,9 +1684,9 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let commands = self.lower_operations_to_bytemessage(&final_ops)?;
-                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
-                    return Ok(EngineStage::NeedsProcessing(commands));
+                    let lowered = self.lower_operations_to_commands(&final_ops)?;
+                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
+                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
             self.trace_named_result_traces_from_dynamic_handle();
@@ -1634,14 +1729,14 @@ impl ControlEngine for QisEngine {
                 if let Some(ops) = self.get_dynamic_operations() {
                     self.simulated_op_count += ops.len();
                     if !ops.is_empty() {
-                        let commands = self.lower_operations_to_bytemessage(&ops)?;
+                        let lowered = self.lower_operations_to_commands(&ops)?;
                         self.trace_operations_chunk(
                             "pending_continue",
                             &ops,
                             Some(result_id),
-                            Some(&commands),
+                            Some(&lowered),
                         );
-                        return Ok(EngineStage::NeedsProcessing(commands));
+                        return Ok(EngineStage::NeedsProcessing(lowered.commands));
                     }
                 }
             }
@@ -1654,9 +1749,9 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let commands = self.lower_operations_to_bytemessage(&final_ops)?;
-                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&commands));
-                    return Ok(EngineStage::NeedsProcessing(commands));
+                    let lowered = self.lower_operations_to_commands(&final_ops)?;
+                    self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
+                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
             self.trace_named_result_traces_from_dynamic_handle();
@@ -1739,10 +1834,10 @@ mod tests {
             QuantumOp::Idle(20e-9, 0).into(),
             QuantumOp::Measure(0, 7).into(),
         ];
-        let commands = engine
-            .operations_to_bytemessage(&ops)
-            .expect("convert ops to bytemessage");
-        engine.trace_operations_chunk("unit_test", &ops, Some(7), Some(&commands));
+        let lowered = engine
+            .operations_to_lowered_commands(&ops)
+            .expect("convert ops to lowered commands");
+        engine.trace_operations_chunk("unit_test", &ops, Some(7), Some(&lowered));
 
         let mut trace_files = std::fs::read_dir(temp_dir.path())
             .expect("read trace dir")
@@ -1764,6 +1859,10 @@ mod tests {
         assert_eq!(value["operations"][1]["Quantum"]["H"], 0);
         assert_eq!(value["operations"][2]["Quantum"]["Idle"][0], 20e-9);
         assert_eq!(value["lowered_quantum_ops"][0]["gate_type"], "PZ");
+        assert_eq!(
+            value["lowered_quantum_ops"][0]["metadata"],
+            serde_json::json!({})
+        );
         assert_eq!(value["lowered_quantum_ops"][1]["gate_type"], "H");
         assert_eq!(value["lowered_quantum_ops"][2]["gate_type"], "Idle");
         assert_eq!(value["lowered_quantum_ops"][2]["params"][0], 20e-9);
@@ -1783,6 +1882,46 @@ mod tests {
             in_memory[0].lowered_quantum_ops[3].measurement_result_ids,
             vec![7]
         );
+    }
+
+    #[test]
+    fn test_direct_lowering_attaches_trace_metadata_to_next_gate() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let collector: OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
+        engine.set_operation_trace_collector(collector.clone());
+        engine.begin_trace_shot();
+
+        let mut metadata = TraceMetadata::new();
+        metadata.insert(
+            "source_label".to_string(),
+            "szz_physical_prefix:H:X0:q0".to_string(),
+        );
+        metadata.insert("source_kind".to_string(), "szz_prefix".to_string());
+        let ops = vec![
+            Operation::TraceMetadata {
+                metadata,
+                qubit: None,
+            },
+            QuantumOp::H(0).into(),
+            QuantumOp::Measure(0, 7).into(),
+        ];
+
+        let lowered = engine
+            .operations_to_lowered_commands(&ops)
+            .expect("convert ops to lowered commands");
+        engine.trace_operations_chunk("unit_test", &ops, None, Some(&lowered));
+
+        let in_memory = collector.lock().expect("collector lock");
+        assert_eq!(in_memory.len(), 1);
+        assert_eq!(in_memory[0].lowered_quantum_ops[0].gate_type, "H");
+        assert_eq!(
+            in_memory[0].lowered_quantum_ops[0]
+                .metadata
+                .get("source_label"),
+            Some(&"szz_physical_prefix:H:X0:q0".to_string())
+        );
+        assert_eq!(in_memory[0].lowered_quantum_ops[1].gate_type, "MZ");
+        assert!(in_memory[0].lowered_quantum_ops[1].metadata.is_empty());
     }
 
     #[derive(Clone, Default)]
@@ -1833,6 +1972,19 @@ mod tests {
                 QuantumOp::Measure(0, 17),
             ])
         }
+
+        fn lower_operations_with_metadata(
+            &mut self,
+            _operations: &[Operation],
+        ) -> RuntimeResult<Vec<LoweredQuantumOp>> {
+            let mut idle_metadata = TraceMetadata::new();
+            idle_metadata.insert("runtime_stage".to_string(), "scheduled_idle".to_string());
+            Ok(vec![
+                LoweredQuantumOp::new(QuantumOp::Idle(20e-9, 0), idle_metadata),
+                QuantumOp::H(0).into(),
+                QuantumOp::Measure(0, 17).into(),
+            ])
+        }
     }
 
     #[test]
@@ -1843,16 +1995,22 @@ mod tests {
         engine.begin_trace_shot();
 
         let ops = vec![QuantumOp::H(0).into()];
-        let commands = engine
-            .lower_operations_to_bytemessage(&ops)
-            .expect("runtime lower ops to bytemessage");
-        engine.trace_operations_chunk("unit_test", &ops, None, Some(&commands));
+        let lowered = engine
+            .lower_operations_to_commands(&ops)
+            .expect("runtime lower ops to commands");
+        engine.trace_operations_chunk("unit_test", &ops, None, Some(&lowered));
 
         let in_memory = collector.lock().expect("collector lock");
         assert_eq!(in_memory.len(), 1);
         assert_eq!(in_memory[0].lowered_quantum_ops[0].gate_type, "Idle");
         assert_eq!(in_memory[0].lowered_quantum_ops[0].params, vec![20e-9]);
         assert_eq!(in_memory[0].lowered_quantum_ops[0].qubits, vec![0]);
+        assert_eq!(
+            in_memory[0].lowered_quantum_ops[0]
+                .metadata
+                .get("runtime_stage"),
+            Some(&"scheduled_idle".to_string())
+        );
         assert_eq!(in_memory[0].lowered_quantum_ops[1].gate_type, "H");
         assert_eq!(in_memory[0].lowered_quantum_ops[2].gate_type, "MZ");
         assert_eq!(
@@ -1866,11 +2024,14 @@ mod tests {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
         let ops = vec![QuantumOp::H(0).into(), QuantumOp::Measure(0, 7).into()];
 
-        let commands = engine
-            .operations_to_bytemessage(&ops)
+        let lowered_commands = engine
+            .operations_to_lowered_commands(&ops)
             .expect("convert ops with implicit static handles");
 
-        let lowered = commands.quantum_ops().expect("parse lowered commands");
+        let lowered = lowered_commands
+            .commands
+            .quantum_ops()
+            .expect("parse lowered commands");
         assert_eq!(lowered.len(), 2);
         assert_eq!(lowered[0].gate_type.to_string(), "H");
         assert_eq!(lowered[0].qubits.as_slice(), &[pecos_core::QubitId(0)]);
@@ -1888,7 +2049,7 @@ mod tests {
             QuantumOp::X(0).into(),
         ];
 
-        let Err(err) = engine.operations_to_bytemessage(&ops) else {
+        let Err(err) = engine.operations_to_lowered_commands(&ops) else {
             panic!("released qubit reuse should error");
         };
 
@@ -1908,11 +2069,14 @@ mod tests {
             QuantumOp::CX(81, 105).into(),
         ];
 
-        let commands = engine
-            .operations_to_bytemessage(&ops)
+        let lowered_commands = engine
+            .operations_to_lowered_commands(&ops)
             .expect("sparse handles should map onto live physical slots");
 
-        let lowered = commands.quantum_ops().expect("parse lowered commands");
+        let lowered = lowered_commands
+            .commands
+            .quantum_ops()
+            .expect("parse lowered commands");
         assert_eq!(lowered[0].qubits.as_slice(), &[pecos_core::QubitId(0)]);
         assert_eq!(lowered[1].qubits.as_slice(), &[pecos_core::QubitId(1)]);
         assert_eq!(
@@ -1932,7 +2096,7 @@ mod tests {
             Operation::AllocateQubit { id: 105 },
         ];
 
-        let Err(err) = engine.operations_to_bytemessage(&ops) else {
+        let Err(err) = engine.operations_to_lowered_commands(&ops) else {
             panic!("allocating beyond the physical qubit hint should error");
         };
 

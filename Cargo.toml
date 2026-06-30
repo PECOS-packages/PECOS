@@ -109,7 +109,6 @@ bitflags = "2"
 bitvec = { version = "1", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 dyn-clone = "1"
-itertools = "0.14"
 smallvec = "1"
 
 # --- Concurrency ---

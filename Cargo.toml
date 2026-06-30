@@ -123,7 +123,7 @@ pollster = "0.4"
 
 # --- Graph algorithms ---
 petgraph = "0.8"
-rustworkx-core = "0.17"
+rustworkx-core = "0.18"
 
 # --- Networking & archive handling ---
 reqwest = { version = "0.13", default-features = false, features = [

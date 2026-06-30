@@ -522,6 +522,53 @@ def test_szz_noiseless_detector_record_equivalence(distance: int, basis: str) ->
     _assert_noiseless_record_metadata_is_zero(szz_text, szz_tick)
 
 
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_round_order_szz_noiseless_detector_record_equivalence(basis: str) -> None:
+    patch = SurfacePatch.create(distance=3)
+    baseline_plan = "szz_balanced_data_v1"
+    round_order_plan = "szz_balanced_data_round_order_3102_v1"
+
+    baseline_text = generate_stim_from_patch(
+        patch,
+        num_rounds=3,
+        basis=basis,
+        ancilla_budget=2,
+        check_plan=baseline_plan,
+    )
+    round_order_text = generate_stim_from_patch(
+        patch,
+        num_rounds=3,
+        basis=basis,
+        ancilla_budget=2,
+        check_plan=round_order_plan,
+    )
+    baseline_tick = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=3,
+        basis=basis,
+        ancilla_budget=2,
+        check_plan=baseline_plan,
+    )
+    round_order_tick = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=3,
+        basis=basis,
+        ancilla_budget=2,
+        check_plan=round_order_plan,
+    )
+
+    baseline_circuit = stim.Circuit(baseline_text)
+    round_order_circuit = stim.Circuit(round_order_text)
+    assert round_order_text != baseline_text
+    assert round_order_circuit.num_measurements == baseline_circuit.num_measurements
+    assert round_order_circuit.num_detectors == baseline_circuit.num_detectors
+    assert round_order_circuit.num_observables == baseline_circuit.num_observables
+    assert round_order_tick.get_meta("detectors") == baseline_tick.get_meta("detectors")
+    assert round_order_tick.get_meta("observables") == baseline_tick.get_meta("observables")
+
+    _assert_noiseless_record_metadata_is_zero(round_order_text, round_order_tick)
+
+
 def test_szz_native_dem_path_uses_interaction_basis() -> None:
     patch = SurfacePatch.create(distance=3)
     noise = NoiseModel(p1=0.0, p2=0.01, p2_weights={"ZI": 1.0}, p_meas=0.001, p_prep=0.001)

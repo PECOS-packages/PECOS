@@ -565,6 +565,82 @@ def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> No
     assert "Check plan: szz_boundary_first_v1" in source
 
 
+def test_round_order_szz_check_plan_changes_host_order_not_metadata() -> None:
+    from pecos.guppy.surface import generate_guppy_source
+    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface.circuit_builder import (
+        OpType,
+        build_surface_code_circuit,
+        generate_tick_circuit_from_patch,
+    )
+
+    patch = SurfacePatch.create(distance=3)
+    baseline_plan = "szz_balanced_data_v1"
+    round_order_plan = "szz_balanced_data_round_order_3102_v1"
+
+    def szz_gate_signature(plan_id: str) -> list[tuple[str, tuple[int, ...], str]]:
+        ops, _ = build_surface_code_circuit(
+            patch,
+            num_rounds=1,
+            ancilla_budget=2,
+            check_plan=plan_id,
+        )
+        return [
+            (op.label, tuple(op.qubits), op.op_type.name)
+            for op in ops
+            if op.op_type in {OpType.SZZ, OpType.SZZDG}
+        ]
+
+    baseline_signature = szz_gate_signature(baseline_plan)
+    round_order_signature = szz_gate_signature(round_order_plan)
+    assert round_order_signature != baseline_signature
+    assert round_order_signature[:4] == [
+        ("X0", (9, 0), "SZZ"),
+        ("X0", (9, 1), "SZZDG"),
+        ("X3", (9, 7), "SZZ"),
+        ("X3", (9, 8), "SZZDG"),
+    ]
+
+    baseline_tick = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        ancilla_budget=2,
+        check_plan=baseline_plan,
+    )
+    round_order_tick = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        ancilla_budget=2,
+        check_plan=round_order_plan,
+    )
+    assert round_order_tick.get_meta("detectors") == baseline_tick.get_meta("detectors")
+    assert round_order_tick.get_meta("observables") == baseline_tick.get_meta("observables")
+
+    def guppy_syndrome_host_ids(plan_id: str) -> list[str]:
+        source = generate_guppy_source(
+            patch,
+            num_rounds=1,
+            ancilla_budget=2,
+            check_plan=plan_id,
+        )
+        return [
+            str(metadata["host_id"])
+            for _, metadata in _packed_trace_metadata_records(source)
+            if metadata.get("source_kind") == "szz_host"
+            and str(metadata.get("host_id", "")).startswith("szz:syndrome_extraction:")
+        ]
+
+    baseline_hosts = guppy_syndrome_host_ids(baseline_plan)
+    round_order_hosts = guppy_syndrome_host_ids(round_order_plan)
+    assert round_order_hosts != baseline_hosts
+    assert round_order_hosts[:4] == [
+        "szz:syndrome_extraction:r1:X0:d0:SZZ",
+        "szz:syndrome_extraction:r1:Z3:d5:SZZDG",
+        "szz:syndrome_extraction:r4:X0:d1:SZZDG",
+        "szz:syndrome_extraction:r4:Z3:d2:SZZ",
+    ]
+
+
 def test_direct_surface_renderers_reject_plan_basis_mismatch() -> None:
     from pecos.qec.surface import SurfacePatch
     from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch

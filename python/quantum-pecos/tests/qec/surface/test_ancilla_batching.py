@@ -26,7 +26,11 @@ from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_budget,
     normalize_ancilla_schedule,
 )
-from pecos.qec.surface.schedule import compute_cnot_schedule
+from pecos.qec.surface.schedule import (
+    CNOT_ROUND_ORDER_3102,
+    compute_cnot_schedule,
+    normalize_cnot_round_order,
+)
 
 StabilizerKey = tuple[str, int]
 TouchGapMetrics = tuple[int, int]
@@ -261,6 +265,25 @@ def test_balanced_data_schedule_spreads_d9_a17_batches() -> None:
     assert min(len(batch_indices) for batch_indices in touches_by_data.values()) > 1
 
 
+def test_cnot_round_order_3102_permuted_layers() -> None:
+    """The named round-order candidate preserves layer contents exactly."""
+    patch = SurfacePatch.create(distance=5)
+    default_rounds = compute_cnot_schedule(patch)
+
+    assert normalize_cnot_round_order(None) == (0, 1, 2, 3)
+    assert normalize_cnot_round_order("default") == (0, 1, 2, 3)
+    assert normalize_cnot_round_order(CNOT_ROUND_ORDER_3102) == (3, 1, 0, 2)
+    assert normalize_cnot_round_order((3, 1, 0, 2)) == (3, 1, 0, 2)
+    assert compute_cnot_schedule(patch, round_order=CNOT_ROUND_ORDER_3102) == [
+        default_rounds[3],
+        default_rounds[1],
+        default_rounds[0],
+        default_rounds[2],
+    ]
+    with pytest.raises(ValueError, match=r"round_order"):
+        normalize_cnot_round_order((0, 1, 3, 2))
+
+
 def test_balanced_data_d9_a17_batch_order_is_touch_gap_optimal() -> None:
     """Batch reordering alone does not improve the d=9/a17 touch-gap proxy.
 
@@ -316,7 +339,7 @@ def test_balanced_data_d9_a17_round_order_touch_gap_tradeoff() -> None:
     )
 
     assert baseline_metrics == (14, 11292)
-    assert best_max_gap == ((13, 11464), (3, 1, 0, 2))
+    assert best_max_gap == ((13, 11464), normalize_cnot_round_order(CNOT_ROUND_ORDER_3102))
     assert best_sumsq_with_baseline_max_gap == ((14, 11220), (1, 0, 3, 2))
 
 

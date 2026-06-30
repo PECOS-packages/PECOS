@@ -255,6 +255,7 @@ def generate_guppy_source(
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
     from pecos.qec.surface._check_plan import (
         ancilla_schedule_for_check_plan,
+        cnot_round_order_for_check_plan,
         require_current_surface_check_plan_renderer,
     )
     from pecos.qec.surface.circuit_builder import (
@@ -278,6 +279,7 @@ def generate_guppy_source(
         context="Guppy surface-code source generation",
     )
     ancilla_schedule = ancilla_schedule_for_check_plan(resolved_plan)
+    cnot_round_order = cnot_round_order_for_check_plan(resolved_plan)
     interaction_basis = resolved_plan.interaction_basis
     szz_runtime_barrier_policy = _normalize_szz_runtime_barrier_policy(szz_runtime_barriers)
     if (
@@ -786,7 +788,7 @@ def generate_guppy_source(
     lines.extend(["", ""])
 
     # Generate syndrome extraction with the selected parallel interaction schedule.
-    rounds = compute_cnot_schedule(patch)
+    rounds = compute_cnot_schedule(patch, round_order=cnot_round_order)
     szz_sign_by_touch: dict[tuple[str, int, int], int] = {}
     if interaction_basis == "szz":
         residual_plan = _szz_residual_plan_for_check_plan(patch, resolved_plan)

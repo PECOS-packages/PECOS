@@ -28,7 +28,44 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pecos.qec.surface.patch import SurfacePatch
+
+DEFAULT_CNOT_ROUND_ORDER = "default"
+CNOT_ROUND_ORDER_3102 = "round-order-3102-v1"
+SUPPORTED_CNOT_ROUND_ORDERS = frozenset(
+    {
+        DEFAULT_CNOT_ROUND_ORDER,
+        CNOT_ROUND_ORDER_3102,
+    },
+)
+
+
+def normalize_cnot_round_order(
+    round_order: str | Sequence[int] | None = None,
+) -> tuple[int, int, int, int]:
+    """Return a validated 4-layer windmill round order."""
+    if round_order is None:
+        return (0, 1, 2, 3)
+    if isinstance(round_order, str):
+        normalized = round_order.lower().replace("_", "-")
+        if normalized == DEFAULT_CNOT_ROUND_ORDER:
+            return (0, 1, 2, 3)
+        if normalized == CNOT_ROUND_ORDER_3102:
+            return (3, 1, 0, 2)
+        msg = (
+            f"round_order must be one of {sorted(SUPPORTED_CNOT_ROUND_ORDERS)} "
+            f"or a permutation of (0, 1, 2, 3), got {round_order!r}"
+        )
+        raise ValueError(msg)
+    if tuple(round_order) not in {
+        (0, 1, 2, 3),
+        (3, 1, 0, 2),
+    }:
+        msg = f"round_order must be a supported permutation of (0, 1, 2, 3), got {round_order!r}"
+        raise ValueError(msg)
+    return tuple(round_order)
 
 
 def _classify_boundary(stab_type: str, data_qubits: tuple[int, ...], dx: int, dz: int) -> str:
@@ -107,11 +144,18 @@ def get_stab_schedule(
     raise ValueError(msg)
 
 
-def compute_cnot_schedule(patch: SurfacePatch) -> list[list[tuple[str, int, int]]]:
+def compute_cnot_schedule(
+    patch: SurfacePatch,
+    *,
+    round_order: str | Sequence[int] | None = None,
+) -> list[list[tuple[str, int, int]]]:
     """Compute the 4-round parallel CNOT schedule for a surface code patch.
 
     Args:
         patch: A SurfacePatch instance.
+        round_order: Optional named or explicit permutation of the four windmill
+            touch layers. ``None`` and ``"default"`` preserve the historical
+            order ``(0, 1, 2, 3)``.
 
     Returns:
         List of 4 rounds, each a list of (stab_type, stab_index, data_qubit)
@@ -136,4 +180,4 @@ def compute_cnot_schedule(patch: SurfacePatch) -> list[list[tuple[str, int, int]
     for rnd in rounds:
         rnd.sort(key=lambda g: (g[1], 0 if g[0] == "X" else 1))
 
-    return rounds
+    return [rounds[index] for index in normalize_cnot_round_order(round_order)]

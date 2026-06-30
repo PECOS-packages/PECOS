@@ -766,7 +766,7 @@ def test_from_guppy_redundant_records_and_meas_ids_are_accepted() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise):
+def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise, check_plan: str | None = None):
     """Build the constrained-surface DEM through `from_guppy`."""
     patch = SurfacePatch.create(distance=d)
     ref = _build_surface_tick_circuit_for_native_model(
@@ -775,13 +775,20 @@ def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise):
         basis=basis,
         ancilla_budget=budget,
         circuit_source="traced_qis",
+        check_plan=check_plan,
     )
     normalize_traced_qis_tick_circuit(ref, context="from_guppy constrained surface reference")
     ref_dem = DetectorErrorModel.from_circuit(ref, **noise).to_string()
 
     got = DetectorErrorModel.from_guppy(
-        make_surface_code(distance=d, num_rounds=rounds, basis=basis, ancilla_budget=budget),
-        num_qubits=get_num_qubits(d, ancilla_budget=budget),
+        make_surface_code(
+            distance=d,
+            num_rounds=rounds,
+            basis=basis,
+            ancilla_budget=budget,
+            check_plan=check_plan,
+        ),
+        num_qubits=get_num_qubits(d, ancilla_budget=budget, check_plan=check_plan),
         detectors_json=ref.get_meta("detectors"),
         observables_json=ref.get_meta("observables"),
         num_measurements=int(ref.get_meta("num_measurements")),
@@ -822,7 +829,23 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
     )
 
 
-def test_constrained_surface_traced_metadata_matches_abstract() -> None:
+def test_from_guppy_round_order_szz_surface_dem_byte_identical() -> None:
+    """Round-order SZZ check plans must stay byte-identical through from_guppy."""
+    noise = {"p1": 0.0, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    ref_dem, got, _ = _constrained_surface_via_guppy(
+        d=3,
+        basis="X",
+        rounds=2,
+        budget=2,
+        noise=noise,
+        check_plan="szz_balanced_data_round_order_3102_v1",
+    )
+
+    assert got == ref_dem
+
+
+@pytest.mark.parametrize("check_plan", [None, "szz_balanced_data_round_order_3102_v1"])
+def test_constrained_surface_traced_metadata_matches_abstract(check_plan: str | None) -> None:
     """Traced surface metadata preserves structure but binds via MeasIds.
 
     Runtime traces may reorder measurements, so detector/observable metadata
@@ -837,6 +860,7 @@ def test_constrained_surface_traced_metadata_matches_abstract() -> None:
         basis="Z",
         ancilla_budget=2,
         circuit_source="abstract",
+        check_plan=check_plan,
     )
     traced_tc = _build_surface_tick_circuit_for_native_model(
         patch,
@@ -844,6 +868,7 @@ def test_constrained_surface_traced_metadata_matches_abstract() -> None:
         basis="Z",
         ancilla_budget=2,
         circuit_source="traced_qis",
+        check_plan=check_plan,
     )
     for key in (
         "basis",

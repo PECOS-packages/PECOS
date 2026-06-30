@@ -852,6 +852,57 @@ def test_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
         )
 
 
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_round_order_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
+    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
+    from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
+
+    patch = SurfacePatch.create(distance=3)
+    tick_circuit = _build_surface_tick_circuit_for_native_model(
+        patch,
+        num_rounds=1,
+        basis=basis,
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+        check_plan="szz_balanced_data_round_order_3102_v1",
+    )
+    normalize_traced_qis_tick_circuit(tick_circuit, context="round-order SZZ traced-QIS p1 test")
+    noise_args = {
+        "p1": 0.001,
+        "p2": 0.0,
+        "p_meas": 0.0,
+        "p_prep": 0.0,
+    }
+
+    native_errors = _raw_dem_errors(
+        generate_dem_from_tick_circuit(
+            tick_circuit,
+            decompose_errors=False,
+            **noise_args,
+        ),
+    )
+    stim_errors = _raw_dem_errors(
+        generate_dem_from_tick_circuit_via_stim(
+            tick_circuit,
+            decompose_errors=False,
+            **noise_args,
+        ),
+    )
+
+    assert set(native_errors) == set(stim_errors)
+    for target, native_probability in native_errors.items():
+        stim_probability = stim_errors[target]
+        rel_diff = abs(native_probability - stim_probability) / max(
+            native_probability,
+            stim_probability,
+            1e-12,
+        )
+        assert rel_diff < 0.005, (
+            f"{basis} round-order traced-QIS SZZ p1 DEM mismatch for {target}: "
+            f"PECOS={native_probability:.8f}, Stim={stim_probability:.8f}"
+        )
+
+
 def test_szz_public_native_dem_accepts_traced_qis_p1() -> None:
     patch = SurfacePatch.create(distance=3)
     dem = generate_circuit_level_dem_from_builder(

@@ -80,9 +80,12 @@ def test_check_plan_default_resolves_to_cx_metadata() -> None:
     assert plan.resolved_metadata["hash_algorithm"] == "sha256"
     assert plan.resolved_metadata["hash_serialization"] == "canonical-json-v1"
     assert "metadata_version" not in plan.semantic_content
-    assert plan.resolved_hash == hashlib.sha256(
-        canonical_check_plan_json(plan.semantic_content).encode("utf-8"),
-    ).hexdigest()
+    assert (
+        plan.resolved_hash
+        == hashlib.sha256(
+            canonical_check_plan_json(plan.semantic_content).encode("utf-8"),
+        ).hexdigest()
+    )
 
 
 def test_check_plan_is_source_of_truth_for_basis() -> None:
@@ -507,11 +510,7 @@ def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> No
     )
 
     def szz_gate_signature(ops: object) -> list[tuple[str, tuple[int, ...], str]]:
-        return [
-            (op.op_type.name, tuple(op.qubits), op.label)
-            for op in ops
-            if op.op_type in {OpType.SZZ, OpType.SZZDG}
-        ]
+        return [(op.op_type.name, tuple(op.qubits), op.label) for op in ops if op.op_type in {OpType.SZZ, OpType.SZZDG}]
 
     assert szz_gate_signature(boundary_first_ops) != szz_gate_signature(current_ops)
     assert sum(op.op_type == OpType.SZZDG for op in boundary_first_ops) == sum(

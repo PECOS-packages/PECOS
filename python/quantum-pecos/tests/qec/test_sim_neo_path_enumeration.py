@@ -69,13 +69,7 @@ def test_deterministic_circuit_dedupes_to_one_path() -> None:
 
 
 def test_monte_carlo_results_have_no_weights() -> None:
-    result = (
-        sim_neo(deterministic_circuit())
-        .quantum(stabilizer())
-        .sampling(monte_carlo(3))
-        .seed(1)
-        .run()
-    )
+    result = sim_neo(deterministic_circuit()).quantum(stabilizer()).sampling(monte_carlo(3)).seed(1).run()
     assert result.weights is None
 
 

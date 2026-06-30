@@ -55,7 +55,8 @@ while condition:
 
 # ❌ NOT Zlup-compatible
 while True:
-    if done: break
+    if done:
+        break
 
 # ✅ Zlup-compatible
 for i in range(100):
@@ -63,7 +64,8 @@ for i in range(100):
 
 # ✅ Zlup-compatible (with early exit)
 for i in range(100):
-    if done: break
+    if done:
+        break
 ```
 
 **Lint message:**
@@ -85,8 +87,10 @@ help: replace with bounded loop
 ```python
 # ❌ NOT Zlup-compatible
 def factorial(n):
-    if n <= 1: return 1
+    if n <= 1:
+        return 1
     return n * factorial(n - 1)
+
 
 # ✅ Zlup-compatible
 def factorial(n):
@@ -117,7 +121,7 @@ for round in range(100):
 # ✅ Zlup-compatible (fixed allocation)
 qubits = allocate(MAX_SIZE)
 for round in range(100):
-    use_qubits(qubits[:needed_size(round)])
+    use_qubits(qubits[: needed_size(round)])
 ```
 
 ### 4. No Dynamic Python Features

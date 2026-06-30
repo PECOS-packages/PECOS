@@ -51,14 +51,7 @@ def test_auto_selects_stabilizer_backend() -> None:
 
 
 def test_explicit_quantum_overrides_auto() -> None:
-    result = (
-        sim_neo(one_qubit_circuit())
-        .auto()
-        .quantum(stabilizer())
-        .sampling(monte_carlo(2))
-        .seed(7)
-        .run()
-    )
+    result = sim_neo(one_qubit_circuit()).auto().quantum(stabilizer()).sampling(monte_carlo(2)).seed(7).run()
     assert result.num_shots == 2
 
 

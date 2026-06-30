@@ -11,10 +11,10 @@ A Bell state is a maximally entangled two-qubit state. Here's the Guppy code:
 # bell.py
 def bell() -> None:
     """Prepare and measure a Bell state |Φ+⟩ = (|00⟩ + |11⟩) / √2"""
-    q = qubit[2]          # Allocate 2 qubits
-    h(q[0])               # Hadamard on first qubit
-    cx(q[0], q[1])        # CNOT: control=q[0], target=q[1]
-    m = measure(q)        # Measure both qubits
+    q = qubit[2]  # Allocate 2 qubits
+    h(q[0])  # Hadamard on first qubit
+    cx(q[0], q[1])  # CNOT: control=q[0], target=q[1]
+    m = measure(q)  # Measure both qubits
     result("measurements", m)  # Emit results to runtime
 ```
 

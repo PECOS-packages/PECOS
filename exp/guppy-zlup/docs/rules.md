@@ -43,10 +43,12 @@ def bad():
     while True:  # ZLUP001: unbounded loop
         do_something()
 
+
 # BAD: Effectively unbounded
 def also_bad():
     while some_condition():  # ZLUP001: cannot prove termination
         do_something()
+
 
 # GOOD: Bounded by break with finite iterations
 def acceptable():
@@ -54,6 +56,7 @@ def acceptable():
         if done():
             break
         do_something()
+
 
 # GOOD: Clear termination condition
 def good():
@@ -89,14 +92,17 @@ def factorial(n: int) -> int:
         return 1
     return n * factorial(n - 1)  # ZLUP002: recursive call
 
+
 # BAD: Indirect recursion
 def ping(n: int) -> int:
     if n <= 0:
         return 0
     return pong(n - 1)  # ZLUP002: mutual recursion
 
+
 def pong(n: int) -> int:
     return ping(n - 1)  # ZLUP002: mutual recursion
+
 
 # GOOD: Iterative version
 def factorial(n: int) -> int:
@@ -136,17 +142,20 @@ def bad():
         q = qubit[2]  # ZLUP003: allocation in loop
         h(q[0])
 
+
 # BAD: List growth in loop
 def also_bad():
     results = []
     for i in range(n):
         results.append(measure(q))  # ZLUP003: dynamic growth
 
+
 # GOOD: Pre-allocate outside loop
 def good():
     q = qubit[20]  # Allocate once
     for i in range(10):
         h(q[i * 2])
+
 
 # GOOD: Fixed-size collection
 def also_good(n: int):
@@ -184,17 +193,21 @@ def bad(obj, method_name: str):
     func = getattr(obj, method_name)  # ZLUP004: dynamic dispatch
     func()
 
+
 # BAD: eval
 def also_bad(code: str):
     eval(code)  # ZLUP004: eval
+
 
 # BAD: Subscript dispatch
 def dispatch(funcs, i: int):
     funcs[i]()  # ZLUP004: dynamic dispatch
 
+
 # GOOD: Static dispatch
 def good(obj):
     obj.known_method()  # Static, known at compile time
+
 
 # GOOD: Match/if for dispatch
 def also_good(choice: int):
@@ -230,9 +243,11 @@ error handling to prevent unexpected crashes.
 def bad(a: int, b: int) -> int:
     return a / b  # ZLUP005: possible division by zero
 
+
 # OK: Division by literal
 def ok(a: int) -> int:
     return a / 2  # Literal cannot be zero
+
 
 # GOOD: Wrapped in try/except
 def good(a: int, b: int) -> int:
@@ -240,6 +255,7 @@ def good(a: int, b: int) -> int:
         return a / b
     except ZeroDivisionError:
         return 0
+
 
 # GOOD: Explicit check
 def also_good(a: int, b: int) -> int:
@@ -275,13 +291,16 @@ programs where runtime debugging is difficult.
 def bad(x: int):  # ZLUP006: missing return type
     return x + 1
 
+
 # WARNING: Missing parameter type
 def also_bad(x) -> int:  # ZLUP006: missing parameter type
     return x + 1
 
+
 # GOOD: Fully annotated
 def good(x: int) -> int:
     return x + 1
+
 
 # OK: self doesn't need annotation
 class Foo:
@@ -341,14 +360,17 @@ def bad(x: int, y: int, z: int) -> int:
     # ... continues with more nesting
     # ZLUP007: complexity > 10
 
+
 # GOOD: Refactored into smaller functions
 def handle_positive_z(x: int, y: int) -> int:
     return 2 if x > y else 3
+
 
 def handle_positive_y(x: int, y: int, z: int) -> int:
     if z > 0:
         return 1
     return handle_positive_z(x, y)
+
 
 def good(x: int, y: int, z: int) -> int:
     if x <= 0:
@@ -383,6 +405,7 @@ assertions and expressions simple and verifiable.
 # WARNING: Call depth exceeds 4
 def bad():
     result = a(b(c(d(e()))))  # ZLUP008: too deep
+
 
 # GOOD: Intermediate variables
 def good():
@@ -425,6 +448,7 @@ def process(data):
     b = y + z
     return a + b  # ZLUP009: no assertions
 
+
 # GOOD: Has assertion for precondition
 def process(data):
     assert data is not None, "data must not be None"
@@ -464,13 +488,16 @@ in concurrent execution (relevant for quantum-classical hybrid programs).
 # WARNING: Mutable global state
 counter = 0  # ZLUP010: lowercase module-level variable
 
+
 def increment():
     global counter  # ZLUP010: global keyword
     counter += 1
 
+
 # GOOD: Constants allowed
 MAX_SIZE = 100
 DEFAULT_VALUE = 42
+
 
 # GOOD: Pass state explicitly
 def increment(counter: int) -> int:

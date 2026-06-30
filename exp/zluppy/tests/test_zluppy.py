@@ -6,7 +6,6 @@ import pytest
 
 import zluppy
 
-
 # =============================================================================
 # Version Tests
 # =============================================================================
@@ -228,8 +227,6 @@ def test_parse_debug():
 
 def test_parse_debug_error():
     """Test that parse_debug raises on parse error."""
-    source = "fn main() -> void { }"  # Actually valid, use invalid syntax
-
     with pytest.raises(zluppy.ZluppyError):
         zluppy.parse_debug("fn main( void { }")
 
@@ -342,7 +339,7 @@ def test_slr_program_unknown_gate():
     prog = zluppy.SlrProgram("test")
     prog.add_allocator("q", 1)
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError, match="Unknown gate") as exc_info:
         prog.add_gate("UnknownGate", [("q", 0)])
 
     assert "Unknown gate" in str(exc_info.value)
@@ -532,7 +529,7 @@ def test_zluppy_engine_no_source_error():
     """Test that to_hugr_bytes raises without source."""
     engine = zluppy.ZluppyEngine()
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError, match="No source compiled") as exc_info:
         engine.to_hugr_bytes()
 
     assert "No source compiled" in str(exc_info.value)
@@ -593,7 +590,7 @@ def test_zluppy_engine_repr():
 
 def test_zluppy_engine_file_not_found():
     """Test ZluppyEngine raises on missing file."""
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="Failed to read"):
         zluppy.ZluppyEngine().file("/nonexistent/path/to/file.zlp")
 
 
@@ -815,10 +812,7 @@ def test_zlup_program_compile_to_hugr():
 def test_zlup_program_method_chaining():
     """Test that ZlupProgram methods support chaining."""
     prog = (
-        zluppy.ZlupProgram("main")
-        .add_allocator("q", 2)
-        .add_gate("h", [("q", 0)])
-        .add_gate("cx", [("q", 0), ("q", 1)])
+        zluppy.ZlupProgram("main").add_allocator("q", 2).add_gate("h", [("q", 0)]).add_gate("cx", [("q", 0), ("q", 1)])
     )
 
     source = prog.to_source()
@@ -895,7 +889,7 @@ def test_zlup_program_unknown_gate_error():
     prog = zluppy.ZlupProgram("main")
     prog.add_allocator("q", 1)
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ValueError, match="Unknown gate") as exc_info:
         prog.add_gate("unknown_gate", [("q", 0)])
 
     assert "Unknown gate" in str(exc_info.value)

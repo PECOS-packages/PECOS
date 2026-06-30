@@ -7,13 +7,19 @@ Example:
     >>> from pecos import hugr_engine
     >>>
     >>> # Compile and run a Bell state program
-    >>> hugr_bytes = zluppy.ZluppyEngine().source('''
+    >>> hugr_bytes = (
+    ...     zluppy.ZluppyEngine()
+    ...     .source(
+    ...         '''
     ...     fn main() -> void {
     ...         var q = qalloc(2);
     ...         H(q[0]);
     ...         CX(q[0], q[1]);
     ...     }
-    ... ''').to_hugr_bytes()
+    ... '''
+    ...     )
+    ...     .to_hugr_bytes()
+    ... )
     >>>
     >>> result = hugr_engine().hugr_bytes(hugr_bytes).to_sim().run(shots=100)
 """
@@ -75,13 +81,19 @@ class ZluppyEngine:
     through PECOS's hugr_engine.
 
     Example:
-        >>> result = zluppy.ZluppyEngine().source('''
+        >>> result = (
+        ...     zluppy.ZluppyEngine()
+        ...     .source(
+        ...         '''
         ...     fn main() -> void {
         ...         var q = qalloc(2);
         ...         H(q[0]);
         ...         CX(q[0], q[1]);
         ...     }
-        ... ''').run(shots=100)
+        ... '''
+        ...     )
+        ...     .run(shots=100)
+        ... )
         >>> print(result.to_dict())
 
     Or with explicit steps:

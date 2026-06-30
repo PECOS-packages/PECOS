@@ -224,9 +224,7 @@ def test_normalize_traced_qis_tick_circuit_lowers_clifford_rzz():
     normalize_traced_qis_tick_circuit(tc, context="test Clifford RZZ normalization")
 
     gate_names = [
-        gate.gate_type.name
-        for tick_index in range(tc.num_ticks())
-        for gate in tc.get_tick(tick_index).gate_batches()
+        gate.gate_type.name for tick_index in range(tc.num_ticks()) for gate in tc.get_tick(tick_index).gate_batches()
     ]
     assert "RZZ" not in gate_names
     assert "SZZ" in gate_names
@@ -242,9 +240,7 @@ def test_normalize_traced_qis_tick_circuit_rejects_raw_rzz_after_lowering():
 
 def _gate_names(tc):
     return [
-        gate.gate_type.name
-        for tick_index in range(tc.num_ticks())
-        for gate in tc.get_tick(tick_index).gate_batches()
+        gate.gate_type.name for tick_index in range(tc.num_ticks()) for gate in tc.get_tick(tick_index).gate_batches()
     ]
 
 

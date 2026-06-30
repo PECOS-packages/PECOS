@@ -76,9 +76,7 @@ def test_subset_certain_event() -> None:
         sim_neo(x_circuit())
         .auto()
         .sampling(
-            subset_simulation(200)
-            .score(lambda bits: float(sum(bits)))
-            .failure(lambda bits: bits[0] == 1),
+            subset_simulation(200).score(lambda bits: float(sum(bits))).failure(lambda bits: bits[0] == 1),
         )
         .seed(7)
         .run()
@@ -112,9 +110,7 @@ def test_subset_requires_score_and_failure() -> None:
 def test_subset_rejects_statevec_backend() -> None:
     with pytest.raises(ValueError, match="only the stabilizer"):
         sim_neo(three_h_circuit()).quantum(statevec()).sampling(
-            subset_simulation(100)
-            .score(lambda bits: float(sum(bits)))
-            .failure(lambda bits: all(b == 1 for b in bits)),
+            subset_simulation(100).score(lambda bits: float(sum(bits))).failure(lambda bits: all(b == 1 for b in bits)),
         ).run()
 
 
@@ -151,11 +147,7 @@ def test_subset_multilevel_runs_with_opt_in() -> None:
         sim_neo(three_h_circuit())
         .auto()
         .sampling(
-            subset_simulation(500)
-            .score(_ones_score)
-            .failure(_all_ones)
-            .max_levels(5)
-            .allow_biased_multilevel(),
+            subset_simulation(500).score(_ones_score).failure(_all_ones).max_levels(5).allow_biased_multilevel(),
         )
         .seed(42)
         .run()

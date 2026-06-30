@@ -99,10 +99,7 @@ class TwirlConfig:
         encoding-incompatible behavior.
         """
         if self.scheme not in _SUPPORTED_SCHEMES:
-            msg = (
-                f"TwirlConfig.scheme={self.scheme!r} is not supported; "
-                f"expected one of {_SUPPORTED_SCHEMES!r}"
-            )
+            msg = f"TwirlConfig.scheme={self.scheme!r} is not supported; expected one of {_SUPPORTED_SCHEMES!r}"
             raise ValueError(msg)
         if self.site_schedule not in _SUPPORTED_SITE_SCHEDULES:
             msg = (

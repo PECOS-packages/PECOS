@@ -13,11 +13,11 @@ Usage:
 """
 
 import argparse
-import glob
 import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Config
@@ -27,34 +27,45 @@ ZLUP_TAGS = {"zlup", "zlup_fragment", "zlup_nocheck"}
 
 # Heuristic: lines starting with these indicate a complete (top-level) program
 _TOPLEVEL_PREFIXES = (
-    "fn ", "pub ", "inline fn ", "@attr", "gate ", "declare gate",
-    "test ", "extern fn",
+    "fn ",
+    "pub ",
+    "inline fn ",
+    "@attr",
+    "gate ",
+    "declare gate",
+    "test ",
+    "extern fn",
 )
 
 _TOPLEVEL_CONTAINS = (
-    ":= struct", ":= enum", ":= error", ":= fault",
-    ":= union", ":= @import",
+    ":= struct",
+    ":= enum",
+    ":= error",
+    ":= fault",
+    ":= union",
+    ":= @import",
 )
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def find_zlup_binary() -> str:
     """Locate the zlup binary (workspace target/debug or release)."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    zlup_dir = os.path.dirname(script_dir)  # exp/zlup
+    script_dir = Path(__file__).resolve().parent
+    zlup_dir = script_dir.parent  # exp/zlup
 
     # Walk up to find workspace root (contains target/)
     candidate = zlup_dir
     for _ in range(5):
-        target = os.path.join(candidate, "target", "debug", "zlup")
-        if os.path.isfile(target):
-            return target
-        target_rel = os.path.join(candidate, "target", "release", "zlup")
-        if os.path.isfile(target_rel):
-            return target_rel
-        candidate = os.path.dirname(candidate)
+        target = candidate / "target" / "debug" / "zlup"
+        if target.is_file():
+            return str(target)
+        target_rel = candidate / "target" / "release" / "zlup"
+        if target_rel.is_file():
+            return str(target_rel)
+        candidate = candidate.parent
 
     # Fallback: hope it's on PATH
     return "zlup"
@@ -64,25 +75,22 @@ def is_complete_program(source: str) -> bool:
     """Heuristic: does this snippet look like a complete top-level program?"""
     for line in source.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("//") or stripped.startswith("///"):
+        if not stripped or stripped.startswith(("//", "///")):
             continue
         # First non-comment line
         for prefix in _TOPLEVEL_PREFIXES:
             if stripped.startswith(prefix):
                 return True
-        for pattern in _TOPLEVEL_CONTAINS:
-            if pattern in stripped:
-                return True
-        return False
+        return any(pattern in stripped for pattern in _TOPLEVEL_CONTAINS)
     return False
 
 
 def wrap_fragment(source: str) -> str:
     """Wrap a code fragment in a function body for parsing."""
     # Replace `{ ... }` placeholder bodies with `{ }` so they parse
-    wrapped = re.sub(r'\{\s*\.\.\.\s*\}', '{ }', source)
+    wrapped = re.sub(r"\{\s*\.\.\.\s*\}", "{ }", source)
     # Also replace bare `// ...` comment-only placeholders
-    wrapped = re.sub(r'//\s*\.\.\.', '// placeholder', wrapped)
+    wrapped = re.sub(r"//\s*\.\.\.", "// placeholder", wrapped)
     return f"fn __snippet__() -> unit {{\n{wrapped}\nreturn;\n}}"
 
 
@@ -90,13 +98,13 @@ def wrap_fragment(source: str) -> str:
 # Extraction
 # ---------------------------------------------------------------------------
 
-FENCE_RE = re.compile(r'^```(\w+)?\s*$')
+FENCE_RE = re.compile(r"^```(\w+)?\s*$")
 
 
 def extract_blocks(filepath: str) -> list[dict]:
     """Extract fenced code blocks from a markdown file."""
     blocks = []
-    with open(filepath, "r") as f:
+    with Path(filepath).open() as f:
         lines = f.readlines()
 
     in_block = False
@@ -114,12 +122,14 @@ def extract_blocks(filepath: str) -> list[dict]:
                 block_lines = []
         else:
             if line.rstrip() == "```":
-                blocks.append({
-                    "file": filepath,
-                    "line": start_line,
-                    "tag": tag,
-                    "source": "".join(block_lines),
-                })
+                blocks.append(
+                    {
+                        "file": filepath,
+                        "line": start_line,
+                        "tag": tag,
+                        "source": "".join(block_lines),
+                    },
+                )
                 in_block = False
             else:
                 block_lines.append(line)
@@ -131,6 +141,7 @@ def extract_blocks(filepath: str) -> list[dict]:
 # Checking
 # ---------------------------------------------------------------------------
 
+
 def run_zlup(binary: str, cmd: str, source: str) -> tuple[bool, str]:
     """Run zlup check/parse on source via stdin. Returns (ok, output)."""
     try:
@@ -140,13 +151,15 @@ def run_zlup(binary: str, cmd: str, source: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
-        output = (result.stdout + result.stderr).strip()
-        return result.returncode == 0, output
     except subprocess.TimeoutExpired:
         return False, "TIMEOUT"
     except FileNotFoundError:
         return False, f"zlup binary not found: {binary}"
+    else:
+        output = (result.stdout + result.stderr).strip()
+        return result.returncode == 0, output
 
 
 def check_block(binary: str, block: dict) -> tuple[str, str]:
@@ -184,17 +197,17 @@ def check_block(binary: str, block: dict) -> tuple[str, str]:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Show result for each snippet")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show result for each snippet")
     args = parser.parse_args()
 
     # Find docs directory relative to this script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    docs_dir = os.path.join(os.path.dirname(script_dir), "docs")
+    script_dir = Path(__file__).resolve().parent
+    docs_dir = script_dir.parent / "docs"
 
-    if not os.path.isdir(docs_dir):
+    if not docs_dir.is_dir():
         print(f"Error: docs directory not found at {docs_dir}", file=sys.stderr)
         sys.exit(1)
 
@@ -208,7 +221,7 @@ def main():
         sys.exit(1)
 
     # Collect all markdown files
-    md_files = sorted(glob.glob(os.path.join(docs_dir, "**", "*.md"), recursive=True))
+    md_files = sorted(str(p) for p in docs_dir.rglob("*.md"))
     if not md_files:
         print("No markdown files found in docs/", file=sys.stderr)
         sys.exit(1)
@@ -223,7 +236,7 @@ def main():
             status, detail = check_block(binary, block)
             counts[status] += 1
 
-            rel = os.path.relpath(block["file"], os.path.dirname(docs_dir))
+            rel = os.path.relpath(block["file"], docs_dir.parent)
 
             if args.verbose:
                 tag_info = f"[{block['tag']}]"
@@ -238,18 +251,19 @@ def main():
                     print(f"  OK    {rel}:{block['line']}  {tag_info}")
 
             if status == "FAIL":
-                failures.append({
-                    "file": rel,
-                    "line": block["line"],
-                    "tag": block["tag"],
-                    "detail": detail,
-                })
+                failures.append(
+                    {
+                        "file": rel,
+                        "line": block["line"],
+                        "tag": block["tag"],
+                        "detail": detail,
+                    },
+                )
 
     # Summary
     total = counts["OK"] + counts["FAIL"] + counts["SKIP"]
     print()
-    print(f"check-docs: {total} snippets — "
-          f"{counts['OK']} ok, {counts['FAIL']} failed, {counts['SKIP']} skipped")
+    print(f"check-docs: {total} snippets — {counts['OK']} ok, {counts['FAIL']} failed, {counts['SKIP']} skipped")
 
     if failures:
         print()

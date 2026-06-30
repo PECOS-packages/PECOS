@@ -13,9 +13,9 @@ Exit codes:
     2 - File not found or other IO error
 """
 
-import sys
-import json
 import importlib.util
+import json
+import sys
 from pathlib import Path
 
 
@@ -41,7 +41,7 @@ def validate_guppy_file(filepath: str) -> tuple[bool, list[dict]]:
         compiled = []
         for name in dir(module):
             obj = getattr(module, name)
-            if hasattr(obj, 'compile') and hasattr(obj, 'check'):
+            if hasattr(obj, "compile") and hasattr(obj, "check"):
                 # This is a GuppyFunctionDefinition
                 obj.compile()
                 compiled.append(name)
@@ -49,8 +49,6 @@ def validate_guppy_file(filepath: str) -> tuple[bool, list[dict]]:
         if not compiled:
             # No guppy functions found - just syntax checking passed
             return True, []
-
-        return True, []
 
     except Exception as e:
         error_type = type(e).__name__
@@ -65,11 +63,14 @@ def validate_guppy_file(filepath: str) -> tuple[bool, list[dict]]:
         # Parse guppy error details if available
         if "var=" in error_msg:
             import re
+
             match = re.search(r"var='(\w+)'", error_msg)
             if match:
                 error_info["variable"] = match.group(1)
 
         return False, [error_info]
+    else:
+        return True, []
 
 
 def main():

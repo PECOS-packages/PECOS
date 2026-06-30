@@ -50,10 +50,7 @@ def normalize_ancilla_schedule(ancilla_schedule: str | None = None) -> str:
         return DEFAULT_ANCILLA_SCHEDULE
     normalized = str(ancilla_schedule).lower().replace("_", "-")
     if normalized not in SUPPORTED_ANCILLA_SCHEDULES:
-        msg = (
-            f"ancilla_schedule must be one of {sorted(SUPPORTED_ANCILLA_SCHEDULES)}, "
-            f"got {ancilla_schedule!r}"
-        )
+        msg = f"ancilla_schedule must be one of {sorted(SUPPORTED_ANCILLA_SCHEDULES)}, got {ancilla_schedule!r}"
         raise ValueError(msg)
     return normalized
 

@@ -114,11 +114,7 @@ def test_guppy_barrier_survives_into_qis_operation_trace() -> None:
         num_qubits=2,
         seed=0,
     )
-    operations = [
-        operation
-        for chunk in chunks
-        for operation in chunk.get("operations", [])
-    ]
+    operations = [operation for chunk in chunks for operation in chunk.get("operations", [])]
 
     assert any(operation == "Barrier" or "Barrier" in operation for operation in operations)
 
@@ -136,22 +132,14 @@ def test_szz_runtime_barrier_survives_into_qis_operation_trace() -> None:
         num_qubits=get_num_qubits(d=3, interaction_basis="szz"),
         seed=0,
     )
-    operations = [
-        operation
-        for chunk in chunks
-        for operation in chunk.get("operations", [])
-    ]
+    operations = [operation for chunk in chunks for operation in chunk.get("operations", [])]
 
     assert any(operation == "Barrier" or "Barrier" in str(operation) for operation in operations)
 
 
 def test_qubit_trace_metadata_stays_ordered_before_gate() -> None:
     chunks = capture_guppy_operation_trace(_metadata_before_h_gate, num_qubits=1, seed=0)
-    lowered_ops = [
-        op
-        for chunk in chunks
-        for op in chunk.get("lowered_quantum_ops", [])
-    ]
+    lowered_ops = [op for chunk in chunks for op in chunk.get("lowered_quantum_ops", [])]
 
     assert lowered_ops[1]["gate_type"] == "R1XY"
     assert lowered_ops[1]["metadata"] == {
@@ -821,9 +809,9 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
         budget=budget,
         noise=noise,
     )
-    assert got == ref_dem, (
-        f"constrained surface from_guppy not byte-identical for d={d}, budget={budget}, basis={basis}, rounds={rounds}"
-    )
+    assert (
+        got == ref_dem
+    ), f"constrained surface from_guppy not byte-identical for d={d}, budget={budget}, basis={basis}, rounds={rounds}"
 
 
 def test_constrained_surface_traced_metadata_matches_abstract() -> None:

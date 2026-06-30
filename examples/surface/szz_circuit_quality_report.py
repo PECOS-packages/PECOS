@@ -432,8 +432,7 @@ def build_case(
             and comparison["max_rel_probability_diff"] > 0
         ):
             print(
-                "raw structures match; max_rel is a probability-combination/"
-                "rounding delta.",
+                "raw structures match; max_rel is a probability-combination/rounding delta.",
                 flush=True,
             )
 

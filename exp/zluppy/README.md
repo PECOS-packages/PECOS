@@ -18,13 +18,15 @@ pip install zluppy
 import zluppy
 
 # Compile Zluppy source to SLR-AST (returns dict)
-ast = zluppy.compile_to_slr("""
+ast = zluppy.compile_to_slr(
+    """
     fn main() -> void {
         var q = qalloc(2);
         h(q[0]);
         cx(q[0], q[1]);
     }
-""")
+"""
+)
 
 # Compile to SLR-AST JSON string
 json_str = zluppy.compile_to_slr_json(source)

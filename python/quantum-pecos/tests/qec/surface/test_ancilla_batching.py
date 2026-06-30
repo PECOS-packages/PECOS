@@ -26,6 +26,42 @@ from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_budget,
     normalize_ancilla_schedule,
 )
+from pecos.qec.surface.schedule import compute_cnot_schedule
+
+StabilizerKey = tuple[str, int]
+TouchGapMetrics = tuple[int, int]
+
+
+def _touch_gap_metrics_for_batches(
+    patch: SurfacePatch,
+    batches: list[list[StabilizerKey]],
+    *,
+    round_order: tuple[int, int, int, int] = (0, 1, 2, 3),
+) -> TouchGapMetrics:
+    cnot_rounds = compute_cnot_schedule(patch)
+    ordered_rounds = [cnot_rounds[index] for index in round_order]
+    events_by_data: dict[int, list[int]] = {}
+    time = 0
+    for batch in batches:
+        batch_keys = set(batch)
+        for round_gates in ordered_rounds:
+            for stab_type, stab_idx, data_qubit in round_gates:
+                if (stab_type, stab_idx) in batch_keys:
+                    events_by_data.setdefault(data_qubit, []).append(time)
+            time += 1
+    period = time
+    worst_gap = 0
+    squared_gap_sum = 0
+    for touch_times in events_by_data.values():
+        touch_times.sort()
+        gaps = [
+            touch_times[index + 1] - touch_times[index]
+            for index in range(len(touch_times) - 1)
+        ]
+        gaps.append(period + touch_times[0] - touch_times[-1])
+        worst_gap = max(worst_gap, *gaps)
+        squared_gap_sum += sum(gap * gap for gap in gaps)
+    return worst_gap, squared_gap_sum
 
 # --- normalize_ancilla_budget -----------------------------------------------
 
@@ -232,8 +268,6 @@ def test_balanced_data_d9_a17_batch_order_is_touch_gap_optimal() -> None:
     candidate should target lower-level touch/layer placement, not just
     permuting the already-balanced ancilla batches.
     """
-    from pecos.qec.surface.schedule import compute_cnot_schedule
-
     patch = SurfacePatch.create(distance=9)
     balanced_batches = batched_stabilizers(
         patch,
@@ -242,37 +276,48 @@ def test_balanced_data_d9_a17_batch_order_is_touch_gap_optimal() -> None:
     )
     assert [len(batch) for batch in balanced_batches] == [16, 16, 16, 16, 16]
 
-    def touch_gap_metrics(batches: list[list[tuple[str, int]]]) -> tuple[int, int]:
-        events_by_data: dict[int, list[int]] = {}
-        time = 0
-        for batch in batches:
-            batch_keys = set(batch)
-            for round_gates in compute_cnot_schedule(patch):
-                for stab_type, stab_idx, data_qubit in round_gates:
-                    if (stab_type, stab_idx) in batch_keys:
-                        events_by_data.setdefault(data_qubit, []).append(time)
-                time += 1
-        period = time
-        worst_gap = 0
-        squared_gap_sum = 0
-        for touch_times in events_by_data.values():
-            touch_times.sort()
-            gaps = [
-                touch_times[index + 1] - touch_times[index]
-                for index in range(len(touch_times) - 1)
-            ]
-            gaps.append(period + touch_times[0] - touch_times[-1])
-            worst_gap = max(worst_gap, *gaps)
-            squared_gap_sum += sum(gap * gap for gap in gaps)
-        return worst_gap, squared_gap_sum
-
-    baseline_metrics = touch_gap_metrics(balanced_batches)
+    baseline_metrics = _touch_gap_metrics_for_batches(patch, balanced_batches)
     best_permutation_metrics = min(
-        touch_gap_metrics([balanced_batches[index] for index in permutation])
+        _touch_gap_metrics_for_batches(
+            patch,
+            [balanced_batches[index] for index in permutation],
+        )
         for permutation in permutations(range(len(balanced_batches)))
     )
 
     assert baseline_metrics == best_permutation_metrics
+
+
+def test_balanced_data_d9_a17_round_order_touch_gap_tradeoff() -> None:
+    """Round-order changes expose a real but correctness-gated tradeoff.
+
+    The best max-gap round permutation improves the repeated-round data-touch
+    gap proxy, but increases the squared-gap proxy. Promoting such a candidate
+    needs a named check-plan schedule and hook/residual correctness checks, not
+    an ad hoc source-order edit.
+    """
+    patch = SurfacePatch.create(distance=9)
+    balanced_batches = batched_stabilizers(
+        patch,
+        17,
+        ancilla_schedule=BALANCED_DATA_ANCILLA_SCHEDULE,
+    )
+    baseline_metrics = _touch_gap_metrics_for_batches(patch, balanced_batches)
+
+    round_candidates = [
+        (_touch_gap_metrics_for_batches(patch, balanced_batches, round_order=round_order), round_order)
+        for round_order in permutations(range(4))
+    ]
+    best_max_gap = min(round_candidates)
+    best_sumsq_with_baseline_max_gap = min(
+        candidate
+        for candidate in round_candidates
+        if candidate[0][0] == baseline_metrics[0]
+    )
+
+    assert baseline_metrics == (14, 11292)
+    assert best_max_gap == ((13, 11464), (3, 1, 0, 2))
+    assert best_sumsq_with_baseline_max_gap == ((14, 11220), (1, 0, 3, 2))
 
 
 # --- D1: pin emitted CX sequences for the constrained Guppy codegen --------

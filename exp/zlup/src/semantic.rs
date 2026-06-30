@@ -311,15 +311,14 @@ pub enum SemanticError {
     ContinueInInlineFor { location: SourceLocation },
 
     #[error(
-        "alias '{new_alias}' overlaps with existing alias '{existing_alias}' on source '{source_var}'"
+        "alias '{}' overlaps with existing alias '{}' on source '{}'",
+        .0.new_alias, .0.existing_alias, .0.source_var
     )]
-    OverlappingAlias {
-        new_alias: String,
-        existing_alias: String,
-        source_var: String,
-        overlap_range: String,
-        location: SourceLocation,
-    },
+    // Boxed because this is the only variant whose inline payload (four `String`s
+    // plus a `SourceLocation`) pushes `SemanticError` over clippy's 128-byte
+    // `result_large_err` threshold; boxing keeps the enum (and every
+    // `SemanticResult`) small.
+    OverlappingAlias(Box<OverlappingAliasError>),
 
     #[error("alias source must be a slice expression (e.g., arr[0..4]), found '{found}'")]
     AliasSourceNotSlice {
@@ -410,6 +409,20 @@ pub enum SemanticError {
     },
 }
 
+/// Boxed payload for [`SemanticError::OverlappingAlias`].
+///
+/// Kept behind a `Box` so the large set of fields does not inflate
+/// `SemanticError` (and therefore every `SemanticResult`) past clippy's
+/// `result_large_err` size threshold.
+#[derive(Debug, Clone)]
+pub struct OverlappingAliasError {
+    pub new_alias: String,
+    pub existing_alias: String,
+    pub source_var: String,
+    pub overlap_range: String,
+    pub location: SourceLocation,
+}
+
 impl SemanticError {
     /// Get the source location of the error, if available.
     pub fn location(&self) -> Option<&SourceLocation> {
@@ -455,7 +468,7 @@ impl SemanticError {
             Self::InlineForRangeNotComptime { location, .. } => Some(location),
             Self::BreakInInlineFor { location } => Some(location),
             Self::ContinueInInlineFor { location } => Some(location),
-            Self::OverlappingAlias { location, .. } => Some(location),
+            Self::OverlappingAlias(e) => Some(&e.location),
             Self::AliasSourceNotSlice { location, .. } => Some(location),
             Self::AliasRangeNotComptime { location, .. } => Some(location),
             Self::MissingReturn { location, .. } => Some(location),
@@ -1835,14 +1848,13 @@ impl SemanticAnalyzer {
         let mut rec_stack = BTreeSet::new();
 
         for func in &self.user_functions {
-            if !visited.contains(func) {
-                if let Some(cycle_func) = self.dfs_detect_cycle(func, &mut visited, &mut rec_stack)
-                {
-                    return Err(SemanticError::RecursionDetected {
-                        name: cycle_func,
-                        location: SourceLocation::default(),
-                    });
-                }
+            if !visited.contains(func)
+                && let Some(cycle_func) = self.dfs_detect_cycle(func, &mut visited, &mut rec_stack)
+            {
+                return Err(SemanticError::RecursionDetected {
+                    name: cycle_func,
+                    location: SourceLocation::default(),
+                });
             }
         }
         Ok(())
@@ -1865,10 +1877,10 @@ impl SemanticAnalyzer {
                     return Some(callee.clone());
                 }
                 // If not visited, recurse
-                if !visited.contains(callee) {
-                    if let Some(cycle) = self.dfs_detect_cycle(callee, visited, rec_stack) {
-                        return Some(cycle);
-                    }
+                if !visited.contains(callee)
+                    && let Some(cycle) = self.dfs_detect_cycle(callee, visited, rec_stack)
+                {
+                    return Some(cycle);
                 }
             }
         }
@@ -2374,10 +2386,10 @@ impl SemanticAnalyzer {
         }
         // Also check trailing expression - if it always returns, block returns
         // (e.g., `if (cond) { return 1; } else { return 2; }` as trailing expr)
-        if let Some(trailing) = &block.trailing_expr {
-            if self.expr_always_returns(trailing) {
-                return true;
-            }
+        if let Some(trailing) = &block.trailing_expr
+            && self.expr_always_returns(trailing)
+        {
+            return true;
         }
         false
     }
@@ -2745,13 +2757,13 @@ impl SemanticAnalyzer {
                         // Try to get a string representation for duplicate detection
                         // For literals and simple expressions, use their string form
                         let case_key = self.case_value_key(&case.value);
-                        if let Some(key) = case_key {
-                            if !seen_cases.insert(key.clone()) {
-                                return Err(SemanticError::DuplicateSwitchCase {
-                                    value: key,
-                                    location: case.location.clone().unwrap_or_default(),
-                                });
-                            }
+                        if let Some(key) = case_key
+                            && !seen_cases.insert(key.clone())
+                        {
+                            return Err(SemanticError::DuplicateSwitchCase {
+                                value: key,
+                                location: case.location.clone().unwrap_or_default(),
+                            });
                         }
                     }
                     self.analyze_expr(&prong.body)?;
@@ -2769,13 +2781,13 @@ impl SemanticAnalyzer {
                 } else {
                     // `return;` without a value is only allowed for unit functions
                     // (equivalent to `return unit;`)
-                    if let Some(expected) = &self.current_return_type {
-                        if !matches!(expected, Type::Unit) {
-                            return Err(SemanticError::ReturnWithoutValue {
-                                expected: expected.display_name(),
-                                location: ret.location.clone().unwrap_or_default(),
-                            });
-                        }
+                    if let Some(expected) = &self.current_return_type
+                        && !matches!(expected, Type::Unit)
+                    {
+                        return Err(SemanticError::ReturnWithoutValue {
+                            expected: expected.display_name(),
+                            location: ret.location.clone().unwrap_or_default(),
+                        });
                     }
                     // If no return type specified, unit is implied - return; is valid
                 }
@@ -3190,13 +3202,13 @@ impl SemanticAnalyzer {
                     }
 
                     // Record call in call graph for mutual recursion detection
-                    if let Some(ref caller) = self.current_function {
-                        if self.user_functions.contains(&ident.name) {
-                            self.call_graph
-                                .entry(caller.clone())
-                                .or_default()
-                                .insert(ident.name.clone());
-                        }
+                    if let Some(ref caller) = self.current_function
+                        && self.user_functions.contains(&ident.name)
+                    {
+                        self.call_graph
+                            .entry(caller.clone())
+                            .or_default()
+                            .insert(ident.name.clone());
                     }
 
                     // Check if this is a generic function that needs instantiation
@@ -3208,16 +3220,14 @@ impl SemanticAnalyzer {
                             return_type: fn_return_type,
                             ..
                         } = &symbol.kind
+                            && !comptime_param_indices.is_empty()
+                            && let Some(original) = original_decl
                         {
-                            if !comptime_param_indices.is_empty() {
-                                if let Some(original) = original_decl {
-                                    return Some((
-                                        comptime_param_indices.clone(),
-                                        *original.clone(),
-                                        fn_return_type.clone(),
-                                    ));
-                                }
-                            }
+                            return Some((
+                                comptime_param_indices.clone(),
+                                *original.clone(),
+                                fn_return_type.clone(),
+                            ));
                         }
                         None
                     });
@@ -3649,16 +3659,15 @@ impl SemanticAnalyzer {
                             Ok(Type::Slice { element })
                         } else {
                             // Bounds check: if both size and index are known at compile time
-                            if let Some(n) = size {
-                                if let Some(idx) = self.try_extract_constant_usize(&index.index) {
-                                    if idx >= n as usize {
-                                        return Err(SemanticError::ArrayIndexOutOfBounds {
-                                            index: idx,
-                                            size: n,
-                                            location: index.location.clone().unwrap_or_default(),
-                                        });
-                                    }
-                                }
+                            if let Some(n) = size
+                                && let Some(idx) = self.try_extract_constant_usize(&index.index)
+                                && idx >= n as usize
+                            {
+                                return Err(SemanticError::ArrayIndexOutOfBounds {
+                                    index: idx,
+                                    size: n,
+                                    location: index.location.clone().unwrap_or_default(),
+                                });
                             }
                             // arr[0] returns an element
                             Ok(*element)
@@ -4333,30 +4342,29 @@ impl SemanticAnalyzer {
         }
 
         // Allow fault value to be assigned to T!F (returning fault from fault union function)
-        if let Type::ErrorUnion { error, .. } = target {
-            if let Type::FaultSet {
+        if let Type::ErrorUnion { error, .. } = target
+            && let Type::FaultSet {
                 name: value_name,
                 faults: value_faults,
             } = value
+        {
+            if let Type::FaultSet {
+                name: expected_name,
+                faults: expected_faults,
+            } = error.as_ref()
             {
-                if let Type::FaultSet {
-                    name: expected_name,
-                    faults: expected_faults,
-                } = error.as_ref()
-                {
-                    // Exact match
-                    if value_name == expected_name {
-                        return Ok(());
-                    }
-                    // Value's faults are a subset of expected's faults (union compatibility)
-                    if value_faults.iter().all(|f| expected_faults.contains(f)) {
-                        return Ok(());
-                    }
-                }
-                // Also allow if expected is AnyFault
-                if *error.as_ref() == Type::AnyFault {
+                // Exact match
+                if value_name == expected_name {
                     return Ok(());
                 }
+                // Value's faults are a subset of expected's faults (union compatibility)
+                if value_faults.iter().all(|f| expected_faults.contains(f)) {
+                    return Ok(());
+                }
+            }
+            // Also allow if expected is AnyFault
+            if *error.as_ref() == Type::AnyFault {
+                return Ok(());
             }
         }
 
@@ -4466,10 +4474,10 @@ impl SemanticAnalyzer {
             // Index with range: arr[0..n]
             Expr::Index(index) => {
                 // Check if this is a slice (index is a range) of a local array
-                if matches!(index.index, Expr::Range(_)) {
-                    if let Some(name) = self.get_local_var_name(&index.object) {
-                        return Err(SemanticError::ReturnSliceOfLocal { name, location });
-                    }
+                if matches!(index.index, Expr::Range(_))
+                    && let Some(name) = self.get_local_var_name(&index.object)
+                {
+                    return Err(SemanticError::ReturnSliceOfLocal { name, location });
                 }
             }
             // Tuple/struct with references inside - check each element
@@ -4953,10 +4961,10 @@ impl SemanticAnalyzer {
         }
 
         // Also handle the case where the target is a bare allocator (pz q; prepares all)
-        if let Expr::Ident(ident) = target {
-            if let Some(alloc) = self.qubit_states.get_allocator_mut(&ident.name) {
-                alloc.prepare_all();
-            }
+        if let Expr::Ident(ident) = target
+            && let Some(alloc) = self.qubit_states.get_allocator_mut(&ident.name)
+        {
+            alloc.prepare_all();
         }
     }
 
@@ -5592,21 +5600,22 @@ impl SemanticAnalyzer {
 
         // Check for overlaps with existing aliases on the same source
         for (existing_name, existing_info) in &self.aliases {
-            if existing_info.source == source_name {
-                if let (Some(new_range), Some(existing_range)) = (range, existing_info.range) {
-                    if Self::ranges_overlap(new_range, existing_range) {
-                        return Err(SemanticError::OverlappingAlias {
-                            new_alias: alias.name.clone(),
-                            existing_alias: existing_name.clone(),
-                            source_var: source_name.clone(),
-                            overlap_range: format!(
-                                "{}..{} overlaps with {}..{}",
-                                new_range.0, new_range.1, existing_range.0, existing_range.1
-                            ),
-                            location,
-                        });
-                    }
-                }
+            if existing_info.source == source_name
+                && let (Some(new_range), Some(existing_range)) = (range, existing_info.range)
+                && Self::ranges_overlap(new_range, existing_range)
+            {
+                return Err(SemanticError::OverlappingAlias(Box::new(
+                    OverlappingAliasError {
+                        new_alias: alias.name.clone(),
+                        existing_alias: existing_name.clone(),
+                        source_var: source_name.clone(),
+                        overlap_range: format!(
+                            "{}..{} overlaps with {}..{}",
+                            new_range.0, new_range.1, existing_range.0, existing_range.1
+                        ),
+                        location,
+                    },
+                )));
             }
         }
 
@@ -8848,28 +8857,32 @@ mod tests {
 
     #[test]
     fn test_max_scope_depth_constant() {
-        // Verify the constant is reasonable
-        assert!(
-            MAX_SCOPE_DEPTH >= 64,
-            "MAX_SCOPE_DEPTH should be at least 64"
-        );
-        assert!(
-            MAX_SCOPE_DEPTH <= 1024,
-            "MAX_SCOPE_DEPTH should not be excessive"
-        );
+        // Verify the constant is reasonable (checked at compile time).
+        const {
+            assert!(
+                MAX_SCOPE_DEPTH >= 64,
+                "MAX_SCOPE_DEPTH should be at least 64"
+            );
+            assert!(
+                MAX_SCOPE_DEPTH <= 1024,
+                "MAX_SCOPE_DEPTH should not be excessive"
+            );
+        }
     }
 
     #[test]
     fn test_max_symbol_count_constant() {
-        // Verify the constant is reasonable
-        assert!(
-            MAX_SYMBOL_COUNT >= 10_000,
-            "MAX_SYMBOL_COUNT should be at least 10000"
-        );
-        assert!(
-            MAX_SYMBOL_COUNT <= 10_000_000,
-            "MAX_SYMBOL_COUNT should not be excessive"
-        );
+        // Verify the constant is reasonable (checked at compile time).
+        const {
+            assert!(
+                MAX_SYMBOL_COUNT >= 10_000,
+                "MAX_SYMBOL_COUNT should be at least 10000"
+            );
+            assert!(
+                MAX_SYMBOL_COUNT <= 10_000_000,
+                "MAX_SYMBOL_COUNT should not be excessive"
+            );
+        }
     }
 
     // =========================================================================
@@ -9266,22 +9279,21 @@ mod tests {
         let mut analyzer = SemanticAnalyzer::new();
         let _ = analyzer.analyze(&program);
 
-        if let Some(symbol) = analyzer.symbols.lookup("add") {
-            if let SymbolKind::Function {
+        if let Some(symbol) = analyzer.symbols.lookup("add")
+            && let SymbolKind::Function {
                 comptime_param_indices,
                 original_decl,
                 ..
             } = &symbol.kind
-            {
-                assert!(
-                    comptime_param_indices.is_empty(),
-                    "Should have no comptime params"
-                );
-                assert!(
-                    original_decl.is_none(),
-                    "Should not store original decl for non-generic"
-                );
-            }
+        {
+            assert!(
+                comptime_param_indices.is_empty(),
+                "Should have no comptime params"
+            );
+            assert!(
+                original_decl.is_none(),
+                "Should not store original decl for non-generic"
+            );
         }
     }
 
@@ -9341,7 +9353,7 @@ mod tests {
         let mut analyzer = SemanticAnalyzer::new();
         let result = analyzer.analyze(&program);
         assert!(
-            matches!(result, Err(SemanticError::OverlappingAlias { .. })),
+            matches!(result, Err(SemanticError::OverlappingAlias(_))),
             "Overlapping aliases should error: {:?}",
             result
         );

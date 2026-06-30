@@ -1233,7 +1233,7 @@ pub fn apply_fixes(
 
     // Sort by start position (descending) so we can apply from end to start
     // This prevents offset shifts from affecting earlier fixes
-    fixes.sort_by(|a, b| b.start.cmp(&a.start));
+    fixes.sort_by_key(|f| std::cmp::Reverse(f.start));
 
     // Check for overlapping fixes and remove conflicts
     let mut result = source.to_string();

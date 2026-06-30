@@ -247,10 +247,6 @@ impl<'a> DirectSourceComponents<'a> {
             components: components.iter().collect(),
         }
     }
-
-    fn as_slice(&self) -> &[&'a FaultMechanism] {
-        &self.components
-    }
 }
 
 impl FaultContribution {
@@ -349,6 +345,9 @@ impl FaultContribution {
         debug_assert_eq!(source.location_indices.len(), source.paulis.len());
         debug_assert_eq!(source.location_indices.len(), source.gate_types.len());
         debug_assert_eq!(source.location_indices.len(), source.before_flags.len());
+        // This constructor takes ownership of its inputs (like `effect`/`source`);
+        // unpack the component view into the underlying slice of references.
+        let DirectSourceComponents { components } = components;
         let component_refs = components.as_slice();
         let non_empty_components: SmallVec<[&FaultMechanism; 4]> = component_refs
             .iter()
@@ -1141,7 +1140,6 @@ impl GraphlikeDecompositionIndex {
                 continue;
             }
             match candidate.detectors.as_slice() {
-                [] => {}
                 [det] => {
                     Self::add_path_edge(
                         &mut path_adjacency,
@@ -1178,7 +1176,7 @@ impl GraphlikeDecompositionIndex {
             });
         }
         Self {
-            graphlike_set: graphlike_set.clone(),
+            graphlike_set,
             primitive_graphlike_set,
             derived_origins,
             candidates_by_detector,
@@ -1488,7 +1486,7 @@ impl GraphlikeDecompositionIndex {
                     .entry(outputs.clone())
                     .and_modify(|existing| {
                         if prefer_graph_path_parts(&parts, existing) {
-                            *existing = parts.clone();
+                            existing.clone_from(&parts);
                         }
                     })
                     .or_insert_with(|| parts.clone());
@@ -4080,6 +4078,10 @@ pub type MechanismTuple = (f64, Vec<u32>, Vec<u32>);
 /// Detector-coordinate tuple: `(detector_id, coordinates)`.
 pub type DetectorCoordinateTuple = (u32, Vec<f64>);
 
+/// A coordinate-distance matching solution:
+/// `(total_cost, paired_terminals, unpaired_singletons)`.
+type CoordinateMatchSolution = (f64, Vec<(u32, u32)>, Vec<u32>);
+
 impl DetectorErrorModel {
     /// Creates a new empty DEM.
     #[must_use]
@@ -5160,16 +5162,12 @@ impl DetectorErrorModel {
         detectors: &[u32],
         detector_coords: &BTreeMap<u32, [f64; 3]>,
     ) -> (Vec<(u32, u32)>, Vec<u32>) {
-        if detectors.len() > 20 {
-            return Self::greedy_coordinate_terminal_pairs(detectors, detector_coords);
-        }
-
         fn solve(
             mask: u64,
             detectors: &[u32],
             detector_coords: &BTreeMap<u32, [f64; 3]>,
-            memo: &mut BTreeMap<u64, (f64, Vec<(u32, u32)>, Vec<u32>)>,
-        ) -> (f64, Vec<(u32, u32)>, Vec<u32>) {
+            memo: &mut BTreeMap<u64, CoordinateMatchSolution>,
+        ) -> CoordinateMatchSolution {
             if let Some(cached) = memo.get(&mask) {
                 return cached.clone();
             }
@@ -5181,7 +5179,7 @@ impl DetectorErrorModel {
                 let index = mask.trailing_zeros() as usize;
                 (0.0, Vec::new(), vec![detectors[index]])
             } else if count % 2 == 1 {
-                let mut best: Option<(f64, Vec<(u32, u32)>, Vec<u32>)> = None;
+                let mut best: Option<CoordinateMatchSolution> = None;
                 for index in 0..detectors.len() {
                     if mask & (1_u64 << index) == 0 {
                         continue;
@@ -5200,7 +5198,7 @@ impl DetectorErrorModel {
             } else {
                 let first = mask.trailing_zeros() as usize;
                 let rest_without_first = mask & !(1_u64 << first);
-                let mut best: Option<(f64, Vec<(u32, u32)>, Vec<u32>)> = None;
+                let mut best: Option<CoordinateMatchSolution> = None;
                 for second in first + 1..detectors.len() {
                     if rest_without_first & (1_u64 << second) == 0 {
                         continue;
@@ -5228,6 +5226,10 @@ impl DetectorErrorModel {
 
             memo.insert(mask, result.clone());
             result
+        }
+
+        if detectors.len() > 20 {
+            return Self::greedy_coordinate_terminal_pairs(detectors, detector_coords);
         }
 
         let mut memo = BTreeMap::new();
@@ -5319,7 +5321,7 @@ impl DetectorErrorModel {
             let last = parts
                 .last_mut()
                 .expect("non-empty parts checked before attaching observables");
-            last.dem_outputs = effect.dem_outputs.clone();
+            last.dem_outputs.clone_from(&effect.dem_outputs);
         }
 
         parts
@@ -5436,16 +5438,16 @@ impl DetectorErrorModel {
             return Self::maybe_maximally_decompose_parts(vec![effect.clone()], singleton_set);
         }
 
-        if let Some(index) = source_graphlike_index {
-            if let Some(parts) = index.find_hyperedge_decomposition_with_remnants_for_origin_cached(
+        if let Some(index) = source_graphlike_index
+            && let Some(parts) = index.find_hyperedge_decomposition_with_remnants_for_origin_cached(
                 effect,
                 Some(effect),
                 source_graphlike_path_cache,
-            ) {
-                let parts = Self::maybe_maximally_decompose_parts(parts, singleton_set);
-                if parts_are_detectable_graphlike(&parts) {
-                    return parts;
-                }
+            )
+        {
+            let parts = Self::maybe_maximally_decompose_parts(parts, singleton_set);
+            if parts_are_detectable_graphlike(&parts) {
+                return parts;
             }
         }
 
@@ -5639,6 +5641,11 @@ impl DetectorErrorModel {
             .join(" ^ ")
     }
 
+    // Irreducible rendering inputs: the contribution plus several read-only
+    // decomposition indices/policies and two distinct `&mut` caches (path-search
+    // and render). A params struct would only relocate the same set behind a
+    // lifetime-laden wrapper without making any call site clearer.
+    #[allow(clippy::too_many_arguments)]
     fn contribution_render_details(
         contrib: &FaultContribution,
         graphlike_index: &GraphlikeDecompositionIndex,
@@ -5905,6 +5912,9 @@ impl DetectorErrorModel {
         (targets, strategy, recorded_component_targets)
     }
 
+    // Thin forwarder to `contribution_render_details`; carries the same
+    // irreducible parameter set (see that method's note).
+    #[allow(clippy::too_many_arguments)]
     fn contribution_targets(
         contrib: &FaultContribution,
         graphlike_index: &GraphlikeDecompositionIndex,
@@ -6063,7 +6073,7 @@ impl DetectorErrorModel {
                     .and_modify(|p| *p = combine_independent_probs(*p, contrib.probability))
                     .or_insert(contrib.probability);
             }
-            if profile_enabled && rendered_contribs % 5000 == 0 {
+            if profile_enabled && rendered_contribs.is_multiple_of(5000) {
                 let now = std::time::Instant::now();
                 eprintln!(
                     "[pecos-dem-render] rendered_contributions={} render_cache={} path_cache={} target_buckets={} total={:.3}s",

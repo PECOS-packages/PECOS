@@ -452,29 +452,21 @@ impl IrValidator {
         match stmt.kind {
             StmtKind::Qalloc => {
                 // Schema: requires name
-                if stmt.name.is_none() {
+                if let Some(name) = &stmt.name {
+                    self.allocators.insert(name.clone());
+                    self.variables.insert(name.clone());
+                } else {
                     self.result.add_error(ValidationError::MissingField {
                         kind: stmt.kind.clone(),
                         field: "name",
                         location: stmt.location.clone(),
                     });
-                } else {
-                    let name = stmt.name.as_ref().unwrap();
-                    self.allocators.insert(name.clone());
-                    self.variables.insert(name.clone());
                 }
             }
 
             StmtKind::Gate => {
                 // Schema: requires gate
-                if stmt.gate.is_none() {
-                    self.result.add_error(ValidationError::MissingField {
-                        kind: stmt.kind.clone(),
-                        field: "gate",
-                        location: stmt.location.clone(),
-                    });
-                } else {
-                    let gate = stmt.gate.as_ref().unwrap();
+                if let Some(gate) = &stmt.gate {
                     // Check arity
                     if stmt.targets.len() != gate.arity() {
                         self.result.add_error(ValidationError::InvalidGateArity {
@@ -484,6 +476,12 @@ impl IrValidator {
                             location: stmt.location.clone(),
                         });
                     }
+                } else {
+                    self.result.add_error(ValidationError::MissingField {
+                        kind: stmt.kind.clone(),
+                        field: "gate",
+                        location: stmt.location.clone(),
+                    });
                 }
                 // Validate targets reference known allocators
                 for target in &stmt.targets {
@@ -533,14 +531,14 @@ impl IrValidator {
 
             StmtKind::While => {
                 // Schema: requires condition
-                if stmt.condition.is_none() {
+                if let Some(condition) = &stmt.condition {
+                    self.validate_expr(condition);
+                } else {
                     self.result.add_error(ValidationError::MissingField {
                         kind: stmt.kind.clone(),
                         field: "condition",
                         location: stmt.location.clone(),
                     });
-                } else {
-                    self.validate_expr(stmt.condition.as_ref().unwrap());
                 }
                 for s in &stmt.body {
                     self.validate_stmt(s);
@@ -549,14 +547,14 @@ impl IrValidator {
 
             StmtKind::If => {
                 // Schema: requires condition
-                if stmt.condition.is_none() {
+                if let Some(condition) = &stmt.condition {
+                    self.validate_expr(condition);
+                } else {
                     self.result.add_error(ValidationError::MissingField {
                         kind: stmt.kind.clone(),
                         field: "condition",
                         location: stmt.location.clone(),
                     });
-                } else {
-                    self.validate_expr(stmt.condition.as_ref().unwrap());
                 }
                 for s in &stmt.then_body {
                     self.validate_stmt(s);

@@ -158,8 +158,10 @@ mod tests {
 
     #[test]
     fn test_rule_enabled() {
-        let mut config = Config::default();
-        config.enabled_rules = vec!["ZLUP001".to_string(), "ZLUP002".to_string()];
+        let config = Config {
+            enabled_rules: vec!["ZLUP001".to_string(), "ZLUP002".to_string()],
+            ..Default::default()
+        };
 
         assert!(config.is_rule_enabled("ZLUP001"));
         assert!(config.is_rule_enabled("ZLUP002"));

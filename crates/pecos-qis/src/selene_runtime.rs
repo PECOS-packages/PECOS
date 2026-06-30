@@ -67,6 +67,10 @@ struct SourceTraceMetadata {
     metadata: TraceMetadata,
 }
 
+// `_fn` postfix is intentional: this is a `#[repr(C)]` vtable of Selene runtime
+// callback function pointers, where the suffix marks each field as a function
+// pointer. Bare names like `reset`/`custom`/`measure` would be ambiguous here.
+#[allow(clippy::struct_field_names)]
 #[repr(C)]
 struct SeleneRuntimeGetOperationInterface {
     rzz_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64, f64),
@@ -414,7 +418,7 @@ impl SeleneRuntime {
                 &raw mut instance,
                 plugin_num_qubits as u64,
                 0, // start time
-                arg_ptrs.len() as u32,
+                u32::try_from(arg_ptrs.len()).expect("plugin argument count fits in u32"),
                 argv,
             );
 
@@ -444,8 +448,7 @@ impl SeleneRuntime {
         }
 
         debug!(
-            "Reinitializing Selene plugin capacity from {} to {} qubits",
-            initialized_num_qubits, plugin_num_qubits
+            "Reinitializing Selene plugin capacity from {initialized_num_qubits} to {plugin_num_qubits} qubits"
         );
         self.reset_plugin_instance()?;
         self.load_plugin()
@@ -1264,7 +1267,8 @@ impl SeleneRuntime {
             }
             (
                 QuantumOp::ZZ(source_qubit_1, source_qubit_2),
-                QuantumOp::ZZ(lowered_qubit_1, lowered_qubit_2),
+                QuantumOp::ZZ(lowered_qubit_1, lowered_qubit_2)
+                | QuantumOp::RZZ(_, lowered_qubit_1, lowered_qubit_2),
             ) => Self::same_unordered_pair(
                 *source_qubit_1,
                 *source_qubit_2,
@@ -1283,15 +1287,6 @@ impl SeleneRuntime {
                         *lowered_qubit_2,
                     )
             }
-            (
-                QuantumOp::ZZ(source_qubit_1, source_qubit_2),
-                QuantumOp::RZZ(_, lowered_qubit_1, lowered_qubit_2),
-            ) => Self::same_unordered_pair(
-                *source_qubit_1,
-                *source_qubit_2,
-                *lowered_qubit_1,
-                *lowered_qubit_2,
-            ),
             (
                 QuantumOp::Measure(source_qubit, source_result),
                 QuantumOp::Measure(lowered_qubit, lowered_result),
@@ -1620,7 +1615,7 @@ fn operation_capacity_with_mode(
     for op in operations {
         match op {
             Operation::Quantum(qop) if !uses_explicit_allocations => {
-                include_quantum_op_capacity(qop, &mut num_qubits, &mut num_results)
+                include_quantum_op_capacity(qop, &mut num_qubits, &mut num_results);
             }
             Operation::Quantum(qop) => {
                 include_quantum_result_capacity(qop, &mut num_results);
@@ -1636,8 +1631,7 @@ fn operation_capacity_with_mode(
             Operation::RecordOutput { result_id, .. } => {
                 include_result(&mut num_results, *result_id);
             }
-            Operation::TraceMetadata { .. } => {}
-            Operation::Barrier => {}
+            Operation::TraceMetadata { .. } | Operation::Barrier => {}
         }
     }
     if uses_explicit_allocations {

@@ -751,6 +751,12 @@ impl<'a> DemBuilder<'a> {
     ///
     /// This does **not** validate metadata refs; callers ingesting
     /// circuit-derived metadata must use [`Self::try_build`] instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configured replacement-branch approximation or measurement
+    /// crosstalk DEM mode is invalid. Use [`Self::try_build`] to receive those as
+    /// errors instead of panicking.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
         self.validate_replacement_branch_approximation()
@@ -828,7 +834,7 @@ impl<'a> DemBuilder<'a> {
             .noise
             .p2_weights
             .as_ref()
-            .is_some_and(|weights| weights.has_replacement_entries());
+            .is_some_and(super::types::PauliWeights::has_replacement_entries);
         if self.noise.p2_replacement_approximation
             == ReplacementBranchApproximation::ExactBranchReplay
             && has_replacement_branches
@@ -942,7 +948,7 @@ impl<'a> DemBuilder<'a> {
             {
                 continue;
             }
-            let result = self.hidden_mz_result_before_crosstalk_payload(context, loc)?;
+            let result = Self::hidden_mz_result_before_crosstalk_payload(context, loc)?;
             if !result.is_deterministic || !result.outcome.is_empty() {
                 return Err(DemBuilderError::ConfigurationError(format!(
                     "exact deterministic measurement crosstalk DEM replay requires a state-independent hidden MZ result at location {loc_idx} (node {}, qubit {:?}); got deterministic={}, dependencies={:?}",
@@ -958,7 +964,6 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn hidden_mz_result_before_crosstalk_payload(
-        &self,
         context: ExactBranchReplayContext<'_>,
         loc: &DagSpacetimeLocation,
     ) -> Result<SymbolicMeasurementResult, DemBuilderError> {
@@ -1135,7 +1140,7 @@ impl<'a> DemBuilder<'a> {
         };
         let pairs = || -> Result<Vec<(usize, usize)>, DemBuilderError> {
             require(2)?;
-            if qubits.len() % 2 != 0 {
+            if !qubits.len().is_multiple_of(2) {
                 return Err(DemBuilderError::ConfigurationError(format!(
                     "measurement crosstalk replay expected gate {:?} at node {} to have an even number of qubits, got {}",
                     gate_type,
@@ -1248,8 +1253,7 @@ impl<'a> DemBuilder<'a> {
             | GateType::TrackedPauliMeta => {}
             _ => {
                 return Err(DemBuilderError::ConfigurationError(format!(
-                    "measurement crosstalk exact deterministic replay does not support gate {:?} before payload node {}",
-                    gate_type, node
+                    "measurement crosstalk exact deterministic replay does not support gate {gate_type:?} before payload node {node}"
                 )));
             }
         }
@@ -1609,7 +1613,7 @@ impl<'a> DemBuilder<'a> {
                 continue;
             };
             let prob = self.noise.p2 * impact.relative_probability;
-            self.add_two_qubit_pauli_contribution(
+            Self::add_two_qubit_pauli_contribution(
                 loc1,
                 loc2,
                 p1,
@@ -1734,8 +1738,7 @@ impl<'a> DemBuilder<'a> {
                         "measurement crosstalk exact deterministic mode was validated with context",
                     );
                     let loc = &self.influence_map.locations[loc_idx];
-                    let hidden = self
-                        .hidden_mz_result_before_crosstalk_payload(context, loc)
+                    let hidden = Self::hidden_mz_result_before_crosstalk_payload(context, loc)
                         .expect(
                             "measurement crosstalk exact deterministic hidden result was validated",
                         );
@@ -1954,7 +1957,7 @@ impl<'a> DemBuilder<'a> {
                 if prob == 0.0 {
                     continue;
                 }
-                self.add_two_qubit_pauli_contribution(
+                Self::add_two_qubit_pauli_contribution(
                     loc1, loc2, p1, p2, prob, &effects, loc1_meta, loc2_meta, dem, None,
                 );
             }
@@ -2053,7 +2056,6 @@ impl<'a> DemBuilder<'a> {
 
     #[allow(clippy::too_many_arguments)]
     fn add_two_qubit_pauli_contribution(
-        &self,
         loc1: usize,
         loc2: usize,
         p1: u8,
@@ -3106,7 +3108,7 @@ fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[us
 
 impl ExactBranchReplayContext<'_> {
     fn replacement_branch_requests(
-        &self,
+        self,
         locations: &[DagSpacetimeLocation],
     ) -> Result<Vec<ExactBranchReplayRequest>, DemBuilderError> {
         let mut requests = Vec::new();
@@ -3153,7 +3155,7 @@ impl ExactBranchReplayContext<'_> {
 
     #[cfg(test)]
     fn omitted_branch_location_pair(
-        &self,
+        self,
         request: ExactBranchReplayRequest,
         original_locations: &[DagSpacetimeLocation],
     ) -> Result<[usize; 2], DemBuilderError> {
@@ -3192,8 +3194,7 @@ fn measurement_parity_differs_from_histories(
     let branch = measurement_parity_expression(branch_history, measurement_indices, "branch")?;
     if ideal.dependencies != branch.dependencies {
         return Err(DemBuilderError::ConfigurationError(format!(
-            "{context} changes measurement dependencies for parity {:?}; this branch is not representable as a single deterministic DEM event",
-            measurement_indices
+            "{context} changes measurement dependencies for parity {measurement_indices:?}; this branch is not representable as a single deterministic DEM event"
         )));
     }
     Ok(ideal.flip ^ branch.flip)

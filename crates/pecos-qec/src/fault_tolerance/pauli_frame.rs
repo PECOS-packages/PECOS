@@ -29,6 +29,10 @@ use thiserror::Error;
 
 type MeasurementRecordMap = BTreeMap<usize, Vec<(usize, usize)>>;
 
+/// Per-shot detector and observable XOR patterns: `(det_xor, obs_xor)`, where
+/// row `i` of each is the mask-induced frame flip for shot `i`.
+type DetectorObservableXor = (Vec<Vec<bool>>, Vec<Vec<bool>>);
+
 /// Errors returned while building or applying a Pauli-frame lookup.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PauliFrameLookupError {
@@ -151,7 +155,7 @@ impl PauliFrameLookup {
         }
         let tracked: Vec<(&pecos_quantum::PauliAnnotation, usize)> =
             tracked_annotations.into_iter().zip(meta_nodes).collect();
-        if tracked.len() % 3 != 0 {
+        if !tracked.len().is_multiple_of(3) {
             return Err(PauliFrameLookupError::NonTripletTrackedPaulis {
                 num_tracked_paulis: tracked.len(),
             });
@@ -173,9 +177,9 @@ impl PauliFrameLookup {
         let mut observable_rows = Vec::with_capacity(tracked.len());
 
         for (ann, meta_node) in &tracked {
-            if !dag
+            if dag
                 .gate(*meta_node)
-                .is_some_and(|gate| gate.gate_type == GateType::TrackedPauliMeta)
+                .is_none_or(|gate| gate.gate_type != GateType::TrackedPauliMeta)
             {
                 return Err(PauliFrameLookupError::MetaNodeNotTrackedPauliMeta {
                     meta_node: *meta_node,
@@ -284,7 +288,7 @@ impl PauliFrameLookup {
         masks: &[u8],
         rows: usize,
         cols: usize,
-    ) -> Result<(Vec<Vec<bool>>, Vec<Vec<bool>>), PauliFrameLookupError> {
+    ) -> Result<DetectorObservableXor, PauliFrameLookupError> {
         let mut det_xor = vec![vec![false; self.num_detectors]; rows];
         let mut obs_xor = vec![vec![false; self.num_observables]; rows];
         self.apply_mask_values(masks, rows, cols, &mut det_xor, &mut obs_xor)?;

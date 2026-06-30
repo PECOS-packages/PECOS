@@ -682,13 +682,6 @@ impl FusionBlossomDecoder {
         Ok(decoder)
     }
 
-    /// Add an edge to the graph
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FusionBlossomError::InvalidGraph`] if:
-    /// - Either node index is out of bounds
-    /// - The weight is negative
     /// Fail loud if any observable index is `>= 64`: this decoder packs
     /// observable flips into a `u64` (`1 << index`) in `build_obs_masks`, so a
     /// wider index would overflow-panic. Reject it where observables enter the
@@ -703,6 +696,14 @@ impl FusionBlossomDecoder {
         Ok(())
     }
 
+    /// Add an edge to the graph
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FusionBlossomError::InvalidGraph`] if:
+    /// - Either node index is out of bounds
+    /// - The weight is negative
+    /// - Any observable index is `>= 64`
     pub fn add_edge(
         &mut self,
         node1: usize,

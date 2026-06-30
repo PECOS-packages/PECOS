@@ -804,7 +804,7 @@ fn cmd_build(
 
     // Compute effective settings
     let (default_strict, _) = effective_settings(target, mode);
-    let strict = strict_override.unwrap_or_else(|| config.build.strict || default_strict);
+    let strict = strict_override.unwrap_or(config.build.strict || default_strict);
 
     eprintln!(
         "Building {} ({}) [{:?} -> {:?}, {}]",
@@ -816,17 +816,17 @@ fn cmd_build(
     );
 
     // Compile
-    cmd_compile(
-        entry_path,
-        Some(output_path.clone()),
+    cmd_compile(CompileOptions {
+        input: entry_path,
+        output: Some(output_path.clone()),
         target,
         format,
         mode,
         compact,
-        Some(strict),
-        None,
-        false,
-    )?;
+        strict_override: Some(strict),
+        log_level_override: None,
+        elide_sim: false,
+    })?;
 
     eprintln!(
         "Built {} -> {}",
@@ -837,8 +837,8 @@ fn cmd_build(
     Ok(())
 }
 
-/// Execute the compile command.
-fn cmd_compile(
+/// Options for the compile command.
+struct CompileOptions {
     input: PathBuf,
     output: Option<PathBuf>,
     target: Target,
@@ -848,7 +848,22 @@ fn cmd_compile(
     strict_override: Option<bool>,
     log_level_override: Option<u32>,
     elide_sim: bool,
-) -> Result<(), CliError> {
+}
+
+/// Execute the compile command.
+fn cmd_compile(opts: CompileOptions) -> Result<(), CliError> {
+    let CompileOptions {
+        input,
+        output,
+        target,
+        format,
+        mode,
+        compact,
+        strict_override,
+        log_level_override,
+        elide_sim,
+    } = opts;
+
     // Resolve settings from target + mode with overrides
     let (default_strict, default_log_level) = effective_settings(target, mode);
     let strict = strict_override.unwrap_or(default_strict);
@@ -1843,10 +1858,8 @@ fn cmd_eval(expr: String, verbose: bool) -> Result<(), CliError> {
                     }
                 }
             }
-            zlup::ast::TopLevelDecl::Fn(func) => {
-                if verbose {
-                    println!("fn {} defined", func.name);
-                }
+            zlup::ast::TopLevelDecl::Fn(func) if verbose => {
+                println!("fn {} defined", func.name);
             }
             _ => {}
         }
@@ -1969,9 +1982,17 @@ fn main() -> ExitCode {
             strict,
             log_level,
             elide_sim,
-        } => cmd_compile(
-            input, output, target, format, mode, compact, strict, log_level, elide_sim,
-        ),
+        } => cmd_compile(CompileOptions {
+            input,
+            output,
+            target,
+            format,
+            mode,
+            compact,
+            strict_override: strict,
+            log_level_override: log_level,
+            elide_sim,
+        }),
 
         Commands::Check { input, strict } => cmd_check(input, strict),
 

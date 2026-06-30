@@ -76,6 +76,8 @@ use std::str::FromStr;
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
+/// Per-shot detector rows paired with per-shot observable/DEM-output rows.
+type PyDetectorObservableRows = (Vec<Vec<bool>>, Vec<Vec<bool>>);
 
 fn parse_p1_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
     use pecos_core::pauli::{X, Y, Z};
@@ -123,8 +125,7 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
         let replacement_identity = replacement && label == "II";
         if !replacement_identity && !PAULI_2Q_ORDER.contains(&label.as_str()) {
             let msg = format!(
-                "p2_weights keys must be one of {:?} or prefixed with '*' for replacement branches, got {label:?}",
-                PAULI_2Q_ORDER
+                "p2_weights keys must be one of {PAULI_2Q_ORDER:?} or prefixed with '*' for replacement branches, got {label:?}"
             );
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
@@ -1139,7 +1140,7 @@ impl PyPauliFrameLookup {
     fn compute_mask_xor(
         &self,
         pauli_masks: &Bound<'_, pyo3::PyAny>,
-    ) -> PyResult<(Vec<Vec<bool>>, Vec<Vec<bool>>)> {
+    ) -> PyResult<PyDetectorObservableRows> {
         let (values, rows, cols) = extract_pauli_mask_values(pauli_masks)?;
         self.inner
             .compute_mask_xor(&values, rows, cols)
@@ -4379,7 +4380,7 @@ impl PyDemSampler {
         lookup: &PyPauliFrameLookup,
         pauli_masks: &Bound<'_, pyo3::PyAny>,
         seed: Option<u64>,
-    ) -> PyResult<(Vec<Vec<bool>>, Vec<Vec<bool>>)> {
+    ) -> PyResult<PyDetectorObservableRows> {
         use pecos_random::PecosRng;
         use rand::RngExt;
 

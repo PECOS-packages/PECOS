@@ -269,17 +269,18 @@ impl Optimizer {
 
             Stmt::For(for_stmt) => {
                 // Try to unroll inline for loops
-                if self.config.inline_for_unrolling && for_stmt.is_inline {
-                    if let Some(unrolled) = self.try_unroll_inline_for(&for_stmt) {
-                        // Return the unrolled statements as a block
-                        return Some(Stmt::Block(Block {
-                            label: for_stmt.label.clone(),
-                            attrs: vec![],
-                            statements: unrolled,
-                            trailing_expr: None,
-                            location: for_stmt.location.clone(),
-                        }));
-                    }
+                if self.config.inline_for_unrolling
+                    && for_stmt.is_inline
+                    && let Some(unrolled) = self.try_unroll_inline_for(&for_stmt)
+                {
+                    // Return the unrolled statements as a block
+                    return Some(Stmt::Block(Block {
+                        label: for_stmt.label.clone(),
+                        attrs: vec![],
+                        statements: unrolled,
+                        trailing_expr: None,
+                        location: for_stmt.location.clone(),
+                    }));
                 }
                 Some(Stmt::For(self.optimize_for(for_stmt)))
             }
@@ -2204,10 +2205,10 @@ pub fn main() -> unit {
                 .statements
                 .iter()
                 .filter(|s| {
-                    if let Stmt::Expr(expr_stmt) = s {
-                        if let Expr::Gate(gate) = &expr_stmt.expr {
-                            return gate.kind == GateKind::H;
-                        }
+                    if let Stmt::Expr(expr_stmt) = s
+                        && let Expr::Gate(gate) = &expr_stmt.expr
+                    {
+                        return gate.kind == GateKind::H;
                     }
                     false
                 })
@@ -2515,10 +2516,10 @@ pub fn main() -> unit {
         // Note: Gates are represented as Stmt::Expr containing Expr::Gate
         if let TopLevelDecl::Fn(fn_decl) = &optimized.declarations[0] {
             let has_rz = fn_decl.body.statements.iter().any(|s| {
-                if let Stmt::Expr(expr_stmt) = s {
-                    if let Expr::Gate(gate) = &expr_stmt.expr {
-                        return gate.kind == GateKind::RZ;
-                    }
+                if let Stmt::Expr(expr_stmt) = s
+                    && let Expr::Gate(gate) = &expr_stmt.expr
+                {
+                    return gate.kind == GateKind::RZ;
                 }
                 false
             });
@@ -2579,10 +2580,10 @@ pub fn main() -> unit {
                 .statements
                 .iter()
                 .filter(|s| {
-                    if let Stmt::Expr(expr_stmt) = s {
-                        if let Expr::Gate(gate) = &expr_stmt.expr {
-                            return gate.kind == GateKind::H;
-                        }
+                    if let Stmt::Expr(expr_stmt) = s
+                        && let Expr::Gate(gate) = &expr_stmt.expr
+                    {
+                        return gate.kind == GateKind::H;
                     }
                     false
                 })

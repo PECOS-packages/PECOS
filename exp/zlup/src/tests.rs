@@ -1698,7 +1698,7 @@ fn test_edit_distance() {
     use crate::parser::edit_distance;
     assert_eq!(edit_distance("", ""), 0);
     assert_eq!(edit_distance("abc", "abc"), 0);
-    assert_eq!(edit_distance("abc", "abd"), 1);
+    assert_eq!(edit_distance("abc", "abx"), 1);
     assert_eq!(edit_distance("abc", "ab"), 1);
     assert_eq!(edit_distance("abc", "abcd"), 1);
     assert_eq!(edit_distance("kitten", "sitting"), 3);

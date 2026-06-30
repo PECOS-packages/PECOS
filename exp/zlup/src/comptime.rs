@@ -498,7 +498,11 @@ impl ComptimeEvaluator {
                     let field_strs: Vec<_> = fields
                         .iter()
                         .map(|(k, v)| {
-                            format!("{}:{}", k, Self::serialize_args_for_cache(&[v.clone()]))
+                            format!(
+                                "{}:{}",
+                                k,
+                                Self::serialize_args_for_cache(std::slice::from_ref(v))
+                            )
                         })
                         .collect();
                     format!("st{}[{}]", name, field_strs.join(";"))
@@ -552,7 +556,7 @@ impl ComptimeEvaluator {
             Type::Tuple { elements } => {
                 let elem_strs: Vec<_> = elements
                     .iter()
-                    .map(|e| Self::serialize_type_for_cache(e))
+                    .map(Self::serialize_type_for_cache)
                     .collect();
                 format!("({})", elem_strs.join(","))
             }
@@ -2108,10 +2112,10 @@ impl ComptimeEvaluator {
         match expr {
             Expr::Ident(ident) => {
                 // Check if it's a type in the context
-                if let Some(val) = self.context.lookup(&ident.name) {
-                    if let ComptimeValue::Type(ty) = val {
-                        return Ok(ty.clone());
-                    }
+                if let Some(val) = self.context.lookup(&ident.name)
+                    && let ComptimeValue::Type(ty) = val
+                {
+                    return Ok(ty.clone());
                 }
                 // Try to resolve primitive types
                 match ident.name.as_str() {

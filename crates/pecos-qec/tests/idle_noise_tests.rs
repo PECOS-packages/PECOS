@@ -221,6 +221,10 @@ fn linear_memory_z_noise_uses_idle_duration_in_dem() {
     );
 }
 
+// px and py must be *exactly* zero for these Z-only memory models: the X/Y idle
+// rates are 0, so the composed channel introduces no X/Y probability. An epsilon
+// check would weaken that invariant, so compare against the exact 0.0 constant.
+#[allow(clippy::float_cmp)]
 #[test]
 fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
     let linear = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
@@ -246,6 +250,10 @@ fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
     assert!((pauli.pz - 0.06).abs() < 1e-15);
 }
 
+// px and py must be *exactly* zero for this Z-only sine model: the X/Y idle rates
+// are 0, so no X/Y probability is introduced. An epsilon check would weaken that
+// invariant, so compare against the exact 0.0 constant.
+#[allow(clippy::float_cmp)]
 #[test]
 fn idle_memory_pauli_probabilities_support_quadratic_sine_model() {
     let z_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)

@@ -9,7 +9,7 @@ use crate::ast::{Program, TestDecl, TopLevelDecl};
 use crate::semantic::SemanticAnalyzer;
 
 /// Configuration for the test runner.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TestRunConfig {
     /// Only run tests matching this pattern (substring match)
     pub filter: Option<String>,
@@ -17,16 +17,6 @@ pub struct TestRunConfig {
     pub strict: bool,
     /// Print verbose output
     pub verbose: bool,
-}
-
-impl Default for TestRunConfig {
-    fn default() -> Self {
-        Self {
-            filter: None,
-            strict: false,
-            verbose: false,
-        }
-    }
 }
 
 /// Outcome of a single test.
@@ -61,10 +51,10 @@ impl TestRunner {
         let mut tests = Vec::new();
         for decl in &program.declarations {
             if let TopLevelDecl::Test(test) = decl {
-                if let Some(ref filter) = self.config.filter {
-                    if !test.name.contains(filter.as_str()) {
-                        continue;
-                    }
+                if let Some(ref filter) = self.config.filter
+                    && !test.name.contains(filter.as_str())
+                {
+                    continue;
                 }
                 tests.push(test);
             }
@@ -135,10 +125,8 @@ fn contains_quantum_ops(block: &crate::ast::Block) -> bool {
             Stmt::Gate(_) | Stmt::Prepare(_) | Stmt::Measure(_) | Stmt::Barrier(_) => {
                 return true;
             }
-            Stmt::Expr(expr_stmt) => {
-                if expr_contains_quantum(&expr_stmt.expr) {
-                    return true;
-                }
+            Stmt::Expr(expr_stmt) if expr_contains_quantum(&expr_stmt.expr) => {
+                return true;
             }
             Stmt::If(if_stmt) => {
                 if contains_quantum_ops(&if_stmt.then_body) {
@@ -159,15 +147,11 @@ fn contains_quantum_ops(block: &crate::ast::Block) -> bool {
                     }
                 }
             }
-            Stmt::For(for_stmt) => {
-                if contains_quantum_ops(&for_stmt.body) {
-                    return true;
-                }
+            Stmt::For(for_stmt) if contains_quantum_ops(&for_stmt.body) => {
+                return true;
             }
-            Stmt::Block(block) => {
-                if contains_quantum_ops(block) {
-                    return true;
-                }
+            Stmt::Block(block) if contains_quantum_ops(block) => {
+                return true;
             }
             Stmt::Tick(tick) => {
                 // Tick blocks always contain quantum ops

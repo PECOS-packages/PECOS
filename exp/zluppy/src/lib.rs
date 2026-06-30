@@ -1,4 +1,4 @@
-//! Python bindings for Zluppy via PyO3.
+//! Python bindings for Zluppy via `PyO3`.
 //!
 //! This module provides Python access to Zluppy's compiler functionality:
 //!
@@ -40,6 +40,9 @@ use ::zlup::semantic::SemanticAnalyzer;
 pyo3::create_exception!(_zluppy, ZluppyError, pyo3::exceptions::PyException);
 
 /// Convert a parse error to a Python exception.
+// By-value error adapter used directly as `Result::map_err(parse_error_to_py)`,
+// which requires `FnOnce(E) -> PyErr`; `&E` would force a closure at every call site.
+#[allow(clippy::needless_pass_by_value)]
 fn parse_error_to_py(e: ::zlup::parser::ParseError) -> PyErr {
     ZluppyError::new_err(format!(
         "Parse error at {}:{}: {}",
@@ -48,18 +51,27 @@ fn parse_error_to_py(e: ::zlup::parser::ParseError) -> PyErr {
 }
 
 /// Convert a semantic error to a Python exception.
+// By-value error adapter used directly as `Result::map_err(semantic_error_to_py)`,
+// which requires `FnOnce(E) -> PyErr`; `&E` would force a closure at every call site.
+#[allow(clippy::needless_pass_by_value)]
 fn semantic_error_to_py(e: ::zlup::semantic::SemanticError) -> PyErr {
-    ZluppyError::new_err(format!("Semantic error: {}", e))
+    ZluppyError::new_err(format!("Semantic error: {e}"))
 }
 
 /// Convert a codegen error to a Python exception.
+// By-value error adapter used directly as `Result::map_err(codegen_error_to_py)`,
+// which requires `FnOnce(E) -> PyErr`; `&E` would force a closure at every call site.
+#[allow(clippy::needless_pass_by_value)]
 fn codegen_error_to_py(e: ::zlup::codegen::slr::SlrError) -> PyErr {
-    ZluppyError::new_err(format!("Codegen error: {}", e))
+    ZluppyError::new_err(format!("Codegen error: {e}"))
 }
 
 /// Convert a HUGR codegen error to a Python exception.
+// By-value error adapter used directly as `Result::map_err(hugr_error_to_py)`,
+// which requires `FnOnce(E) -> PyErr`; `&E` would force a closure at every call site.
+#[allow(clippy::needless_pass_by_value)]
 fn hugr_error_to_py(e: ::zlup::codegen::hugr::HugrError) -> PyErr {
-    ZluppyError::new_err(format!("HUGR error: {}", e))
+    ZluppyError::new_err(format!("HUGR error: {e}"))
 }
 
 // =============================================================================
@@ -76,7 +88,7 @@ fn hugr_error_to_py(e: ::zlup::codegen::hugr::HugrError) -> PyErr {
 ///     dict: SLR-AST as a Python dictionary
 ///
 /// Raises:
-///     ZluppyError: If parsing, semantic analysis, or codegen fails
+///     `ZluppyError`: If parsing, semantic analysis, or codegen fails
 #[pyfunction]
 #[pyo3(signature = (source, strict = false))]
 fn compile_to_slr(py: Python<'_>, source: &str, strict: bool) -> PyResult<Py<PyAny>> {
@@ -115,7 +127,7 @@ fn compile_to_slr(py: Python<'_>, source: &str, strict: bool) -> PyResult<Py<PyA
 ///     str: SLR-AST as a JSON string
 ///
 /// Raises:
-///     ZluppyError: If parsing, semantic analysis, or codegen fails
+///     `ZluppyError`: If parsing, semantic analysis, or codegen fails
 #[pyfunction]
 #[pyo3(signature = (source, strict = false, compact = false))]
 fn compile_to_slr_json(source: &str, strict: bool, compact: bool) -> PyResult<String> {
@@ -154,7 +166,7 @@ fn compile_to_slr_json(source: &str, strict: bool, compact: bool) -> PyResult<St
 ///     None: If the source is valid
 ///
 /// Raises:
-///     ZluppyError: If parsing or semantic analysis fails
+///     `ZluppyError`: If parsing or semantic analysis fails
 #[pyfunction]
 #[pyo3(signature = (source, strict = false))]
 fn check(source: &str, strict: bool) -> PyResult<()> {
@@ -183,11 +195,11 @@ fn check(source: &str, strict: bool) -> PyResult<()> {
 ///     str: AST in Rust Debug format
 ///
 /// Raises:
-///     ZluppyError: If parsing fails
+///     `ZluppyError`: If parsing fails
 #[pyfunction]
 fn parse_debug(source: &str) -> PyResult<String> {
     let program = ::zlup::parse(source).map_err(parse_error_to_py)?;
-    Ok(format!("{:#?}", program))
+    Ok(format!("{program:#?}"))
 }
 
 /// Get the Zluppy version.
@@ -206,15 +218,14 @@ fn version() -> &'static str {
 /// Read and return the contents of a Zluppy source file.
 fn read_file(path: &str) -> PyResult<String> {
     std::fs::read_to_string(path)
-        .map_err(|e| PyIOError::new_err(format!("Failed to read {}: {}", path, e)))
+        .map_err(|e| PyIOError::new_err(format!("Failed to read {path}: {e}")))
 }
 
 /// Get the filename from a path for error reporting.
 fn filename_from_path(path: &str) -> String {
     Path::new(path)
         .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string())
+        .map_or_else(|| path.to_string(), |s| s.to_string_lossy().to_string())
 }
 
 /// Compile a Zluppy source file to SLR-AST and return as a Python dict.
@@ -227,8 +238,8 @@ fn filename_from_path(path: &str) -> String {
 ///     dict: SLR-AST as a Python dictionary
 ///
 /// Raises:
-///     IOError: If the file cannot be read
-///     ZluppyError: If parsing, semantic analysis, or codegen fails
+///     `IOError`: If the file cannot be read
+///     `ZluppyError`: If parsing, semantic analysis, or codegen fails
 #[pyfunction]
 #[pyo3(signature = (path, strict = false))]
 fn compile_file(py: Python<'_>, path: &str, strict: bool) -> PyResult<Py<PyAny>> {
@@ -269,8 +280,8 @@ fn compile_file(py: Python<'_>, path: &str, strict: bool) -> PyResult<Py<PyAny>>
 ///     str: SLR-AST as a JSON string
 ///
 /// Raises:
-///     IOError: If the file cannot be read
-///     ZluppyError: If parsing, semantic analysis, or codegen fails
+///     `IOError`: If the file cannot be read
+///     `ZluppyError`: If parsing, semantic analysis, or codegen fails
 #[pyfunction]
 #[pyo3(signature = (path, strict = false, compact = false))]
 fn compile_file_json(path: &str, strict: bool, compact: bool) -> PyResult<String> {
@@ -308,8 +319,8 @@ fn compile_file_json(path: &str, strict: bool, compact: bool) -> PyResult<String
 ///     None: If the source is valid
 ///
 /// Raises:
-///     IOError: If the file cannot be read
-///     ZluppyError: If parsing or semantic analysis fails
+///     `IOError`: If the file cannot be read
+///     `ZluppyError`: If parsing or semantic analysis fails
 #[pyfunction]
 #[pyo3(signature = (path, strict = false))]
 fn check_file(path: &str, strict: bool) -> PyResult<()> {
@@ -334,7 +345,7 @@ fn check_file(path: &str, strict: bool) -> PyResult<()> {
 
 /// Compile Zluppy source to HUGR bytes.
 ///
-/// The returned bytes can be passed directly to hugr_engine() or sim().
+/// The returned bytes can be passed directly to `hugr_engine()` or `sim()`.
 ///
 /// Args:
 ///     source: Zluppy source code as a string
@@ -344,7 +355,7 @@ fn check_file(path: &str, strict: bool) -> PyResult<()> {
 ///     bytes: HUGR in binary envelope format
 ///
 /// Raises:
-///     ZluppyError: If parsing, semantic analysis, or codegen fails
+///     `ZluppyError`: If parsing, semantic analysis, or codegen fails
 #[pyfunction]
 #[pyo3(signature = (source, strict = false))]
 fn compile_to_hugr(
@@ -370,7 +381,7 @@ fn compile_to_hugr(
 
 /// Compile a Zluppy source file to HUGR bytes.
 ///
-/// The returned bytes can be passed directly to hugr_engine() or sim().
+/// The returned bytes can be passed directly to `hugr_engine()` or `sim()`.
 ///
 /// Args:
 ///     path: Path to a .zlp file
@@ -380,8 +391,8 @@ fn compile_to_hugr(
 ///     bytes: HUGR in binary envelope format
 ///
 /// Raises:
-///     IOError: If the file cannot be read
-///     ZluppyError: If parsing, semantic analysis, or codegen fails
+///     `IOError`: If the file cannot be read
+///     `ZluppyError`: If parsing, semantic analysis, or codegen fails
 #[pyfunction]
 #[pyo3(signature = (path, strict = false))]
 fn compile_file_hugr(
@@ -453,7 +464,7 @@ impl SlrProgram {
     ///
     /// Args:
     ///     gate: Gate name (e.g., "H", "CX", "RZ")
-    ///     targets: List of (allocator_name, index) tuples
+    ///     targets: List of (`allocator_name`, index) tuples
     ///     params: Optional list of parameter values (for parameterized gates)
     #[pyo3(signature = (gate, targets, params = None))]
     fn add_gate(
@@ -508,7 +519,7 @@ impl SlrProgram {
             // Three-qubit gates
             "CCX" | "ccx" => "CCX",
             _ => {
-                return Err(PyValueError::new_err(format!("Unknown gate: {}", gate)));
+                return Err(PyValueError::new_err(format!("Unknown gate: {gate}")));
             }
         };
 
@@ -557,10 +568,10 @@ impl SlrProgram {
     fn to_json(&self, compact: bool) -> PyResult<String> {
         if compact {
             serde_json::to_string(&self.inner)
-                .map_err(|e| PyValueError::new_err(format!("JSON error: {}", e)))
+                .map_err(|e| PyValueError::new_err(format!("JSON error: {e}")))
         } else {
             serde_json::to_string_pretty(&self.inner)
-                .map_err(|e| PyValueError::new_err(format!("JSON error: {}", e)))
+                .map_err(|e| PyValueError::new_err(format!("JSON error: {e}")))
         }
     }
 
@@ -668,7 +679,7 @@ impl ZlupProgram {
     ///
     /// Args:
     ///     gate: Gate name (e.g., "h", "cx", "rz")
-    ///     targets: List of (allocator_name, index) tuples
+    ///     targets: List of (`allocator_name`, index) tuples
     ///     params: Optional list of parameter values (for rotation gates)
     ///
     /// Returns:
@@ -686,18 +697,16 @@ impl ZlupProgram {
             "y" => ::zlup::ast::GateKind::Y,
             "z" => ::zlup::ast::GateKind::Z,
             "h" => ::zlup::ast::GateKind::H,
-            // Phase gates
-            "s" => ::zlup::ast::GateKind::SZ,
-            "sdg" => ::zlup::ast::GateKind::SZdg,
+            // Phase gates ("s"/"sz" and "sdg"/"szdg" are aliases for the same gate)
+            "s" | "sz" => ::zlup::ast::GateKind::SZ,
+            "sdg" | "szdg" => ::zlup::ast::GateKind::SZdg,
             "t" => ::zlup::ast::GateKind::T,
             "tdg" => ::zlup::ast::GateKind::Tdg,
             // Square root gates
             "sx" => ::zlup::ast::GateKind::SX,
             "sy" => ::zlup::ast::GateKind::SY,
-            "sz" => ::zlup::ast::GateKind::SZ,
             "sxdg" => ::zlup::ast::GateKind::SXdg,
             "sydg" => ::zlup::ast::GateKind::SYdg,
-            "szdg" => ::zlup::ast::GateKind::SZdg,
             // Rotation gates
             "rx" => ::zlup::ast::GateKind::RX,
             "ry" => ::zlup::ast::GateKind::RY,
@@ -720,7 +729,7 @@ impl ZlupProgram {
             "fdg" => ::zlup::ast::GateKind::Fdg,
             "f4" => ::zlup::ast::GateKind::F4,
             "f4dg" => ::zlup::ast::GateKind::F4dg,
-            _ => return Err(PyValueError::new_err(format!("Unknown gate: {}", gate))),
+            _ => return Err(PyValueError::new_err(format!("Unknown gate: {gate}"))),
         };
 
         // Build slot references
@@ -785,7 +794,7 @@ impl ZlupProgram {
     /// Add a measure operation.
     ///
     /// Args:
-    ///     targets: List of (allocator_name, index) tuples to measure
+    ///     targets: List of (`allocator_name`, index) tuples to measure
     ///
     /// Returns:
     ///     self: For method chaining
@@ -891,11 +900,11 @@ impl ZlupProgram {
     ///     path: Path to write the .zlp file
     ///
     /// Raises:
-    ///     IOError: If the file cannot be written
+    ///     `IOError`: If the file cannot be written
     fn save(&self, path: &str) -> PyResult<()> {
         let source = self.to_source();
         std::fs::write(path, source)
-            .map_err(|e| PyIOError::new_err(format!("Failed to write {}: {}", path, e)))
+            .map_err(|e| PyIOError::new_err(format!("Failed to write {path}: {e}")))
     }
 
     /// Compile via source code generation and parsing.
@@ -1035,7 +1044,7 @@ struct ZluppyEngine {
 
 #[pymethods]
 impl ZluppyEngine {
-    /// Create a new ZluppyEngine.
+    /// Create a new `ZluppyEngine`.
     ///
     /// Args:
     ///     strict: Enable strict mode (NASA Power of 10 checks). Default: False

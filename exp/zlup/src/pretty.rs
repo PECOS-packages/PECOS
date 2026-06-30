@@ -709,11 +709,11 @@ impl PrettyPrinter {
     fn print_return_stmt(&mut self, r: &ReturnStmt) {
         self.write("return");
         // Simplify `return unit;` to `return;` for cleaner output
-        if let Some(val) = &r.value {
-            if !matches!(val, Expr::Unit(_)) {
-                self.write(" ");
-                self.print_expr(val);
-            }
+        if let Some(val) = &r.value
+            && !matches!(val, Expr::Unit(_))
+        {
+            self.write(" ");
+            self.print_expr(val);
         }
         self.write(";");
         self.newline();

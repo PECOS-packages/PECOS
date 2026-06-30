@@ -2020,10 +2020,9 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                         cb = cb.ryy(&pairs, Angle64::from_radians(angle));
                     }
                 }
-                "I" | "Idle" => {
-                    // Identity/Idle gates: skip (no-op for simulation)
+                "I" | "Idle" | "TrackedPauli" | "TrackedPauliMeta" => {
+                    // Identity/Idle and tracked-Pauli metadata gates: skip (no-op for simulation)
                 }
-                "TrackedPauli" | "TrackedPauliMeta" => {}
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                         "Unsupported gate type '{name}' in extract_commands. \

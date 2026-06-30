@@ -1436,10 +1436,8 @@ impl SlrCodegen {
 
     fn collect_decl(&mut self, decl: &TopLevelDecl) -> SlrResult<()> {
         match decl {
-            TopLevelDecl::Fn(fn_decl) => {
-                if fn_decl.name == "main" {
-                    self.collect_block(&fn_decl.body)?;
-                }
+            TopLevelDecl::Fn(fn_decl) if fn_decl.name == "main" => {
+                self.collect_block(&fn_decl.body)?;
             }
             TopLevelDecl::Binding(binding) => self.collect_binding(binding)?,
             _ => {}

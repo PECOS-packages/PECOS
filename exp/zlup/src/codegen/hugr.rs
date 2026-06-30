@@ -446,12 +446,11 @@ impl HugrCodegen {
 
     fn collect_top_level(&mut self, decl: &TopLevelDecl) -> HugrResult<()> {
         match decl {
-            TopLevelDecl::Fn(fn_decl) => {
+            TopLevelDecl::Fn(fn_decl)
                 // Only collect from main function for now
-                if fn_decl.name == "main" {
+                if fn_decl.name == "main" => {
                     self.collect_block(&fn_decl.body)?;
                 }
-            }
             TopLevelDecl::Binding(binding) => {
                 self.collect_binding(binding)?;
             }
@@ -2212,14 +2211,11 @@ mod tests {
             }
         "#;
 
-        // This should compile (same qubit used twice is a logic issue, not arity issue)
-        // The arity check happens at the gate expression level, not here
-        let result = compile_to_hugr(source);
-        // Accept either ok or specific error
-        match &result {
-            Ok(_) => {}  // Valid syntax, even if logically odd
-            Err(_) => {} // Some backends may reject
-        }
+        // A repeated qubit (`cx q[0], q[0]`) is a logic issue, not a syntax/arity
+        // error (arity is checked at the gate expression level, not here), so
+        // either an Ok or an Err result is acceptable: this only requires that
+        // codegen does not panic on such input.
+        let _ = compile_to_hugr(source);
     }
 
     #[test]

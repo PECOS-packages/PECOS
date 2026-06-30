@@ -464,15 +464,15 @@ fn pecos_helper_public_name<'a>(symbol: &str, helper_symbols: &[&'a str]) -> Opt
 ///
 /// - `pecos_qis_trace_metadata_hugr(*const u8, *const u8)`        -> `void (ptr, ptr)`
 /// - `pecos_qis_trace_metadata_qubit_hugr(i64, *const u8, *const u8) -> i64`
-///                                                                -> `i64 (i64, ptr, ptr)`
+///   -> `i64 (i64, ptr, ptr)`
 /// - `pecos_qis_runtime_barrier_qubit_hugr(i64) -> i64`            -> `i64 (i64)`
 /// - `pecos_qis_runtime_barrier_qubits2_hugr(i64, i64) -> QubitPair{i64,i64}`
-///                                                                -> `{ i64, i64 } (i64, i64)`
+///   -> `{ i64, i64 } (i64, i64)`
 ///
 /// Returns `None` only if `helper` is not a recognized PECOS helper (a programming
 /// error here, since callers pass a name already matched against `PECOS_HELPER_SYMBOLS`).
 fn expected_pecos_helper_type<'ctx>(
-    ctx: &ContextRef<'ctx>,
+    ctx: ContextRef<'ctx>,
     helper: &str,
 ) -> Option<FunctionType<'ctx>> {
     let i64t = ctx.i64_type();
@@ -528,7 +528,7 @@ fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) -> Result<()> {
 
         // Enforce the fixed PECOS helper ABI on every recognized declaration before
         // claiming the public symbol.
-        let Some(expected) = expected_pecos_helper_type(&ctx, public) else {
+        let Some(expected) = expected_pecos_helper_type(ctx, public) else {
             return Err(anyhow!(
                 "internal error: no ABI signature registered for PECOS helper `{public}`"
             ));
@@ -559,67 +559,6 @@ fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pecos_helper_public_name_matches_private_helper_symbols() {
-        // Bare, module-level declaration.
-        assert_eq!(
-            pecos_helper_public_name(
-                "__hugr__.pecos_qis_trace_metadata_hugr.16",
-                PECOS_HELPER_SYMBOLS,
-            ),
-            Some("pecos_qis_trace_metadata_hugr"),
-        );
-        // Module-qualified (e.g. `__main__`) declaration.
-        assert_eq!(
-            pecos_helper_public_name(
-                "__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.21",
-                PECOS_HELPER_SYMBOLS,
-            ),
-            Some("pecos_qis_trace_metadata_qubit_hugr"),
-        );
-        // Function-local declaration: the raw module symbol carries a `<locals>`
-        // segment (this is the case guppylang 0.21.11 produces; in LLVM text it is
-        // additionally quoted, but the module symbol seen here is unquoted).
-        assert_eq!(
-            pecos_helper_public_name(
-                "__hugr__.test_mod.test_fn.<locals>.pecos_qis_runtime_barrier_qubits2_hugr.23",
-                PECOS_HELPER_SYMBOLS,
-            ),
-            Some("pecos_qis_runtime_barrier_qubits2_hugr"),
-        );
-        assert_eq!(
-            pecos_helper_public_name(
-                "__hugr__.m.f.<locals>.pecos_qis_runtime_barrier_qubit_hugr.7",
-                PECOS_HELPER_SYMBOLS,
-            ),
-            Some("pecos_qis_runtime_barrier_qubit_hugr"),
-        );
-    }
-
-    #[test]
-    fn pecos_helper_public_name_ignores_non_helpers() {
-        // A non-PECOS helper under the private prefix is left alone.
-        assert_eq!(
-            pecos_helper_public_name("__hugr__.m.f.<locals>.other_helper.9", PECOS_HELPER_SYMBOLS),
-            None,
-        );
-        // A symbol that is not under the private prefix is not a candidate.
-        assert_eq!(
-            pecos_helper_public_name("pecos_qis_trace_metadata_hugr", PECOS_HELPER_SYMBOLS),
-            None,
-        );
-        // Too few components to carry a `<helper>.<id>` tail.
-        assert_eq!(
-            pecos_helper_public_name("__hugr__.foo", PECOS_HELPER_SYMBOLS),
-            None,
-        );
-    }
 }
 
 /// Compile HUGR bytes to LLVM IR string
@@ -733,4 +672,65 @@ pub fn compile_hugr_bytes_to_bitcode_with_options(
     let buffer = module.write_bitcode_to_memory();
     let bitcode = buffer.as_slice();
     Ok(bitcode[..bitcode.len().saturating_sub(1)].to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pecos_helper_public_name_matches_private_helper_symbols() {
+        // Bare, module-level declaration.
+        assert_eq!(
+            pecos_helper_public_name(
+                "__hugr__.pecos_qis_trace_metadata_hugr.16",
+                PECOS_HELPER_SYMBOLS,
+            ),
+            Some("pecos_qis_trace_metadata_hugr"),
+        );
+        // Module-qualified (e.g. `__main__`) declaration.
+        assert_eq!(
+            pecos_helper_public_name(
+                "__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.21",
+                PECOS_HELPER_SYMBOLS,
+            ),
+            Some("pecos_qis_trace_metadata_qubit_hugr"),
+        );
+        // Function-local declaration: the raw module symbol carries a `<locals>`
+        // segment (this is the case guppylang 0.21.11 produces; in LLVM text it is
+        // additionally quoted, but the module symbol seen here is unquoted).
+        assert_eq!(
+            pecos_helper_public_name(
+                "__hugr__.test_mod.test_fn.<locals>.pecos_qis_runtime_barrier_qubits2_hugr.23",
+                PECOS_HELPER_SYMBOLS,
+            ),
+            Some("pecos_qis_runtime_barrier_qubits2_hugr"),
+        );
+        assert_eq!(
+            pecos_helper_public_name(
+                "__hugr__.m.f.<locals>.pecos_qis_runtime_barrier_qubit_hugr.7",
+                PECOS_HELPER_SYMBOLS,
+            ),
+            Some("pecos_qis_runtime_barrier_qubit_hugr"),
+        );
+    }
+
+    #[test]
+    fn pecos_helper_public_name_ignores_non_helpers() {
+        // A non-PECOS helper under the private prefix is left alone.
+        assert_eq!(
+            pecos_helper_public_name("__hugr__.m.f.<locals>.other_helper.9", PECOS_HELPER_SYMBOLS),
+            None,
+        );
+        // A symbol that is not under the private prefix is not a candidate.
+        assert_eq!(
+            pecos_helper_public_name("pecos_qis_trace_metadata_hugr", PECOS_HELPER_SYMBOLS),
+            None,
+        );
+        // Too few components to carry a `<helper>.<id>` tail.
+        assert_eq!(
+            pecos_helper_public_name("__hugr__.foo", PECOS_HELPER_SYMBOLS),
+            None,
+        );
+    }
 }

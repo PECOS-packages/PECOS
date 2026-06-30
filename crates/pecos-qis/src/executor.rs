@@ -982,7 +982,7 @@ impl QisHeliosInterface {
                     Err(e) => Err(e.to_string()),
                 }
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e.clone()),
         });
 
         result

@@ -55,12 +55,11 @@ unsafe fn read_tket_string_arg(
     // The pointer references the length byte, so skip it to read the payload.
     let data_ptr = unsafe { ptr.add(1) };
     let bytes = unsafe { std::slice::from_raw_parts(data_ptr, len) };
-    match std::str::from_utf8(bytes) {
-        Ok(value) => Some(value.to_string()),
-        Err(_) => {
-            log::error!("{func_name}: invalid UTF-8 in {arg_name}");
-            None
-        }
+    if let Ok(value) = std::str::from_utf8(bytes) {
+        Some(value.to_string())
+    } else {
+        log::error!("{func_name}: invalid UTF-8 in {arg_name}");
+        None
     }
 }
 
@@ -80,12 +79,11 @@ unsafe fn read_direct_string_arg(
     }
 
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-    match std::str::from_utf8(bytes) {
-        Ok(value) => Some(value.to_string()),
-        Err(_) => {
-            log::error!("{func_name}: invalid UTF-8 in {arg_name}");
-            None
-        }
+    if let Ok(value) = std::str::from_utf8(bytes) {
+        Some(value.to_string())
+    } else {
+        log::error!("{func_name}: invalid UTF-8 in {arg_name}");
+        None
     }
 }
 
@@ -1607,9 +1605,9 @@ mod tests {
         unsafe {
             pecos_qis_trace_metadata_direct(
                 key.as_ptr(),
-                key.len() as i64,
+                i64::try_from(key.len()).expect("test key length fits in i64"),
                 value.as_ptr(),
-                value.len() as i64,
+                i64::try_from(value.len()).expect("test value length fits in i64"),
             );
         }
 
@@ -1708,11 +1706,16 @@ mod tests {
     fn test_trace_metadata_qubit_hugr_expands_packed_json_metadata() {
         setup_test();
         let mut key = Vec::with_capacity(PACKED_TRACE_METADATA_JSON_KEY.len() + 1);
-        key.push(PACKED_TRACE_METADATA_JSON_KEY.len() as u8);
+        // tket "pascal string" layout: a single-byte length prefix, so the key
+        // length must fit in u8 (< 256).
+        key.push(
+            u8::try_from(PACKED_TRACE_METADATA_JSON_KEY.len()).expect("key length fits in u8"),
+        );
         key.extend_from_slice(PACKED_TRACE_METADATA_JSON_KEY.as_bytes());
         let value = br#"{"host_id":"probe:host","source_kind":"szz_host"}"#;
         let mut packed = Vec::with_capacity(value.len() + 1);
-        packed.push(value.len() as u8);
+        // Single-byte length prefix (tket pascal-string layout): value length < 256.
+        packed.push(u8::try_from(value.len()).expect("value length fits in u8"));
         packed.extend_from_slice(value);
 
         let returned =

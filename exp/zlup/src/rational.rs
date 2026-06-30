@@ -746,8 +746,10 @@ mod tests {
 
     #[test]
     fn test_from_f64_exact_roundtrip() {
-        // Any float should round-trip through exact conversion
-        let values = [0.1, 0.2, 0.3, 0.7, 1.1, 3.14159, 0.123456789];
+        // Any float should round-trip through exact conversion. The values are
+        // deliberately arbitrary (not math constants) - the point is exact
+        // dyadic round-tripping, not the specific numbers.
+        let values = [0.1, 0.2, 0.3, 0.7, 1.1, 3.65432, 0.123456789];
         for &v in &values {
             let r = Rational::from_f64_exact(v).unwrap();
             assert_eq!(r.to_f64(), v, "Round-trip failed for {}", v);

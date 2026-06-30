@@ -248,10 +248,8 @@ impl<'a> ParserState<'a> {
                 Rule::mut_keyword => {
                     is_mutable = true;
                 }
-                Rule::identifier => {
-                    if name.is_empty() {
-                        name = item.as_str().to_string();
-                    }
+                Rule::identifier if name.is_empty() => {
+                    name = item.as_str().to_string();
                 }
                 Rule::type_expr => {
                     ty = Some(self.parse_type_expr(item)?);
@@ -373,10 +371,8 @@ impl<'a> ParserState<'a> {
                     // Remove quotes
                     calling_convention = s[1..s.len() - 1].to_string();
                 }
-                Rule::identifier => {
-                    if name.is_empty() {
-                        name = item.as_str().to_string();
-                    }
+                Rule::identifier if name.is_empty() => {
+                    name = item.as_str().to_string();
                 }
                 Rule::param_list => {
                     params = self.parse_param_list(item)?;
@@ -423,7 +419,8 @@ impl<'a> ParserState<'a> {
 
     /// Parse a single parameter.
     fn parse_param(&self, pair: Pair<'a, Rule>) -> ParseResult<Param> {
-        let location = Some(self.location(&pair));
+        let loc = self.location(&pair);
+        let location = Some(loc.clone());
         let inner_pair = self.expect_inner(pair, "param")?;
 
         match inner_pair.as_rule() {
@@ -466,15 +463,13 @@ impl<'a> ParserState<'a> {
                 // Regular parameter: comptime? name: type
                 self.parse_regular_param(inner_pair, location)
             }
-            other => {
-                return Err(ParseError {
-                    message: format!(
-                        "unexpected rule {:?}, expected param (self_param or regular_param)",
-                        other
-                    ),
-                    location: location.unwrap_or_default(),
-                });
-            }
+            other => Err(ParseError {
+                message: format!(
+                    "unexpected rule {:?}, expected param (self_param or regular_param)",
+                    other
+                ),
+                location: loc,
+            }),
         }
     }
 
@@ -830,10 +825,8 @@ impl<'a> ParserState<'a> {
                 Rule::doc_comment => {
                     doc_comment = Some(item.as_str().trim_start_matches("///").trim().to_string());
                 }
-                Rule::identifier => {
-                    if name.is_empty() {
-                        name = item.as_str().to_string();
-                    }
+                Rule::identifier if name.is_empty() => {
+                    name = item.as_str().to_string();
                 }
                 Rule::error_set_body => {
                     variants = self.parse_error_set_body(item)?;
@@ -870,10 +863,8 @@ impl<'a> ParserState<'a> {
                 Rule::doc_comment => {
                     doc_comment = Some(item.as_str().trim_start_matches("///").trim().to_string());
                 }
-                Rule::identifier => {
-                    if name.is_empty() {
-                        name = item.as_str().to_string();
-                    }
+                Rule::identifier if name.is_empty() => {
+                    name = item.as_str().to_string();
                 }
                 Rule::error_set_body => {
                     // Reuse error_set_body parsing for fault variants
@@ -981,10 +972,8 @@ impl<'a> ParserState<'a> {
                 Rule::pub_keyword => {
                     is_pub = true;
                 }
-                Rule::identifier => {
-                    if name.is_empty() {
-                        name = item.as_str().to_string();
-                    }
+                Rule::identifier if name.is_empty() => {
+                    name = item.as_str().to_string();
                 }
                 Rule::gate_param_list => {
                     params = self.parse_gate_param_list(item)?;
@@ -1029,10 +1018,8 @@ impl<'a> ParserState<'a> {
                 Rule::pub_keyword => {
                     is_pub = true;
                 }
-                Rule::identifier => {
-                    if name.is_empty() {
-                        name = item.as_str().to_string();
-                    }
+                Rule::identifier if name.is_empty() => {
+                    name = item.as_str().to_string();
                 }
                 Rule::gate_param_list => {
                     params = self.parse_gate_param_list(item)?;
@@ -1068,10 +1055,8 @@ impl<'a> ParserState<'a> {
                 let mut ty = None;
                 for inner in item.into_inner() {
                     match inner.as_rule() {
-                        Rule::identifier => {
-                            if name.is_empty() {
-                                name = inner.as_str().to_string();
-                            }
+                        Rule::identifier if name.is_empty() => {
+                            name = inner.as_str().to_string();
                         }
                         Rule::type_expr => {
                             ty = Some(self.parse_type_expr(inner)?);
@@ -1517,8 +1502,8 @@ impl<'a> ParserState<'a> {
 
     /// Parse if statement.
     fn parse_if_stmt(&self, pair: Pair<'a, Rule>) -> ParseResult<IfStmt> {
-        let location = Some(self.location(&pair));
-        let loc = location.clone().unwrap_or_default();
+        let loc = self.location(&pair);
+        let location = Some(loc.clone());
         let mut inner = pair.into_inner();
 
         // First is either if_unwrap_clause or if_condition
@@ -1550,7 +1535,7 @@ impl<'a> ParserState<'a> {
                         "unexpected rule {:?}, expected if_unwrap_clause or if_condition",
                         other
                     ),
-                    location: location.unwrap_or_default(),
+                    location: loc,
                 });
             }
         };
@@ -1763,16 +1748,13 @@ impl<'a> ParserState<'a> {
         let mut end = None;
 
         for item in pair.into_inner() {
-            match item.as_rule() {
-                Rule::expr => {
-                    // First expr is start, second is end
-                    if start.is_none() {
-                        start = Some(self.parse_expr(item)?);
-                    } else {
-                        end = Some(self.parse_expr(item)?);
-                    }
+            if item.as_rule() == Rule::expr {
+                // First expr is start, second is end
+                if start.is_none() {
+                    start = Some(self.parse_expr(item)?);
+                } else {
+                    end = Some(self.parse_expr(item)?);
                 }
-                _ => {}
             }
         }
 
@@ -3138,22 +3120,21 @@ impl<'a> ParserState<'a> {
 
     /// Parse struct initialization.
     fn parse_struct_init(&self, pair: Pair<'a, Rule>) -> ParseResult<Expr> {
-        let location = Some(self.location(&pair));
+        let loc = self.location(&pair);
+        let location = Some(loc.clone());
         let inner_pair = self.expect_inner(pair, "struct_init")?;
 
         // struct_init contains either typed_struct_init or anon_struct_init
         match inner_pair.as_rule() {
             Rule::typed_struct_init => self.parse_typed_struct_init(inner_pair, location),
             Rule::anon_struct_init => self.parse_anon_struct_init(inner_pair, location),
-            other => {
-                return Err(ParseError {
-                    message: format!(
-                        "unexpected rule {:?}, expected typed_struct_init or anon_struct_init",
-                        other
-                    ),
-                    location: location.unwrap_or_default(),
-                });
-            }
+            other => Err(ParseError {
+                message: format!(
+                    "unexpected rule {:?}, expected typed_struct_init or anon_struct_init",
+                    other
+                ),
+                location: loc,
+            }),
         }
     }
 
@@ -4028,8 +4009,8 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
 
     // Use single-row optimization
     let mut prev = vec![0usize; n + 1];
-    for j in 0..=n {
-        prev[j] = j;
+    for (j, slot) in prev.iter_mut().enumerate() {
+        *slot = j;
     }
 
     for i in 1..=m {

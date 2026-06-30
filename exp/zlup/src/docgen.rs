@@ -5,21 +5,12 @@
 use crate::ast::*;
 
 /// Configuration for documentation generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DocConfig {
     /// Include private (non-pub) items
     pub include_private: bool,
     /// Show source locations in output
     pub show_locations: bool,
-}
-
-impl Default for DocConfig {
-    fn default() -> Self {
-        Self {
-            include_private: false,
-            show_locations: false,
-        }
-    }
 }
 
 /// Kind of documented item.
@@ -257,10 +248,7 @@ fn extract_union_doc(u: &UnionDecl) -> DocItem {
         .fields
         .iter()
         .map(|f| {
-            let desc =
-                f.ty.as_ref()
-                    .map(|t| format_type_expr(t))
-                    .unwrap_or_default();
+            let desc = f.ty.as_ref().map(format_type_expr).unwrap_or_default();
             DocChild {
                 name: f.name.clone(),
                 description: desc,

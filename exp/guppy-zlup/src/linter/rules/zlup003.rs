@@ -124,20 +124,14 @@ fn check_stmt(
                 check_stmt(s, filename, source, loop_depth, diagnostics);
             }
         }
-        Stmt::Expr(expr_stmt) => {
-            if loop_depth > 0 {
-                check_expr(&expr_stmt.value, filename, source, diagnostics);
-            }
+        Stmt::Expr(expr_stmt) if loop_depth > 0 => {
+            check_expr(&expr_stmt.value, filename, source, diagnostics);
         }
-        Stmt::Assign(assign) => {
-            if loop_depth > 0 {
-                check_expr(&assign.value, filename, source, diagnostics);
-            }
+        Stmt::Assign(assign) if loop_depth > 0 => {
+            check_expr(&assign.value, filename, source, diagnostics);
         }
-        Stmt::AugAssign(aug) => {
-            if loop_depth > 0 {
-                check_expr(&aug.value, filename, source, diagnostics);
-            }
+        Stmt::AugAssign(aug) if loop_depth > 0 => {
+            check_expr(&aug.value, filename, source, diagnostics);
         }
         Stmt::AnnAssign(ann) => {
             if loop_depth > 0

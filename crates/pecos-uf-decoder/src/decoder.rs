@@ -230,6 +230,12 @@ impl UfDecoder {
 
     /// Build from a `DemMatchingGraph`.
     ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if the matching graph carries more than 64
+    /// observables: this decoder packs observable flips into a `u64`, so wider
+    /// observable sets are rejected rather than silently truncated.
+    ///
     /// # Panics
     ///
     /// Panics if any edge weight is negative or NaN: the predecoder's
@@ -237,7 +243,6 @@ impl UfDecoder {
     /// premise must fail loudly rather than silently mis-decode. Callers
     /// holding untrusted DEM input should pre-validate with
     /// [`Self::check_non_negative_weights`] to get an error instead.
-    #[must_use]
     pub fn from_matching_graph(
         graph: &DemMatchingGraph,
         config: UfDecoderConfig,

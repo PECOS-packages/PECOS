@@ -16,6 +16,8 @@ expected-output pins below catch that case directly.
 
 from __future__ import annotations
 
+from itertools import permutations
+
 import pytest
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface._ancilla_batching import (
@@ -221,6 +223,56 @@ def test_balanced_data_schedule_spreads_d9_a17_batches() -> None:
             touches_by_data.setdefault(data_qubit, set()).add(batch_of[("Z", stab.index)])
 
     assert min(len(batch_indices) for batch_indices in touches_by_data.values()) > 1
+
+
+def test_balanced_data_d9_a17_batch_order_is_touch_gap_optimal() -> None:
+    """Batch reordering alone does not improve the d=9/a17 touch-gap proxy.
+
+    This pins the result of the first idle-hotspot scheduler probe: the next
+    candidate should target lower-level touch/layer placement, not just
+    permuting the already-balanced ancilla batches.
+    """
+    from pecos.qec.surface.schedule import compute_cnot_schedule
+
+    patch = SurfacePatch.create(distance=9)
+    balanced_batches = batched_stabilizers(
+        patch,
+        17,
+        ancilla_schedule=BALANCED_DATA_ANCILLA_SCHEDULE,
+    )
+    assert [len(batch) for batch in balanced_batches] == [16, 16, 16, 16, 16]
+
+    def touch_gap_metrics(batches: list[list[tuple[str, int]]]) -> tuple[int, int]:
+        events_by_data: dict[int, list[int]] = {}
+        time = 0
+        for batch in batches:
+            batch_keys = set(batch)
+            for round_gates in compute_cnot_schedule(patch):
+                for stab_type, stab_idx, data_qubit in round_gates:
+                    if (stab_type, stab_idx) in batch_keys:
+                        events_by_data.setdefault(data_qubit, []).append(time)
+                time += 1
+        period = time
+        worst_gap = 0
+        squared_gap_sum = 0
+        for touch_times in events_by_data.values():
+            touch_times.sort()
+            gaps = [
+                touch_times[index + 1] - touch_times[index]
+                for index in range(len(touch_times) - 1)
+            ]
+            gaps.append(period + touch_times[0] - touch_times[-1])
+            worst_gap = max(worst_gap, *gaps)
+            squared_gap_sum += sum(gap * gap for gap in gaps)
+        return worst_gap, squared_gap_sum
+
+    baseline_metrics = touch_gap_metrics(balanced_batches)
+    best_permutation_metrics = min(
+        touch_gap_metrics([balanced_batches[index] for index in permutation])
+        for permutation in permutations(range(len(balanced_batches)))
+    )
+
+    assert baseline_metrics == best_permutation_metrics
 
 
 # --- D1: pin emitted CX sequences for the constrained Guppy codegen --------

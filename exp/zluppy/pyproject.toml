@@ -50,7 +50,7 @@ test = [
 
 [tool.uv.sources]
 zluppy = { workspace = true }
-quantum-pecos = { path = "../python/quantum-pecos", editable = true }
+quantum-pecos = { path = "../../python/quantum-pecos", editable = true }
 
 [tool.pytest.ini_options]
 markers = [

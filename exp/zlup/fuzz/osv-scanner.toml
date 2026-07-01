@@ -1,0 +1,11 @@
+# OSV-Scanner configuration for the zlup fuzz harness (config discovery is
+# per-directory: the root osv-scanner.toml does not apply to this Cargo.lock).
+# Same ignore-list policy as the root osv-scanner.toml: only entries we cannot
+# fix from this repo, each documenting crate@version, chain, and upstream owner.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0173"
+# proc-macro-error2@2.0.1 -- unmaintained proc-macro (fork of proc-macro-error).
+# Chain: zlup-fuzz -> env_logger -> jiff -> defmt -> defmt-macros -> proc-macro-error2.
+# Upstream owners: https://github.com/BurntSushi/jiff and https://github.com/knurling-rs/defmt.
+reason = "Transitive via the fuzz harness's env_logger -> jiff -> defmt chain; compile-time proc-macro only, no runtime impact."

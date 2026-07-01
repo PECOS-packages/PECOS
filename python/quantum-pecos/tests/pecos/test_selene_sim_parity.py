@@ -25,6 +25,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, result
 from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
+from pecos.guppy import variant_scoped
 
 
 @guppy
@@ -42,20 +43,18 @@ def tagged_bits_named_array() -> None:
 def make_repeated_single_bit_results(num_rounds: int) -> object:
     """Create a tiny program that records the same named result repeatedly."""
 
-    @guppy
     def repeated_single_bit_results() -> None:
         for _ in range(comptime(num_rounds)):
             q = qubit()
             bit = measure(q)
             result("synx", array(bit))
 
-    return repeated_single_bit_results
+    return guppy(variant_scoped(repeated_single_bit_results, num_rounds))
 
 
 def make_tiny_x_syndrome_memory(num_rounds: int) -> object:
     """Create a tiny memory-style circuit with fresh ancilla allocation each round."""
 
-    @guppy
     def tiny_x_syndrome_memory() -> None:
         data = qubit()
         h(data)
@@ -72,7 +71,7 @@ def make_tiny_x_syndrome_memory(num_rounds: int) -> object:
         final = measure_array(array(data))
         result("final", final)
 
-    return tiny_x_syndrome_memory
+    return guppy(variant_scoped(tiny_x_syndrome_memory, num_rounds))
 
 
 def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
@@ -82,7 +81,6 @@ def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
     "named result collection is wrong".
     """
 
-    @guppy
     def tiny_x_syndrome_memory_raw() -> None:
         data = qubit()
         h(data)
@@ -97,7 +95,7 @@ def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
         h(data)
         _ = measure(data)
 
-    return tiny_x_syndrome_memory_raw
+    return guppy(variant_scoped(tiny_x_syndrome_memory_raw, num_rounds))
 
 
 @guppy

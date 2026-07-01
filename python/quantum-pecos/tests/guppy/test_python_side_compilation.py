@@ -112,28 +112,14 @@ class TestPythonSideCompilation:
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
         assert isinstance(hugr_bytes, bytes), "HUGR should be bytes"
 
-        # Check for HUGR markers
-        hugr_str = hugr_bytes.decode("utf-8")
-        is_hugr_envelope = hugr_str.startswith("HUGRiHJv")
-        is_json = hugr_str.startswith("{") or "{" in hugr_str[:100]
+        # Binary HUGR Model envelope; load via Package to verify structure.
+        from hugr.package import Package
 
-        assert is_hugr_envelope or is_json, "HUGR should be in envelope format or JSON"
+        pkg = Package.from_bytes(hugr_bytes)
+        assert len(pkg.modules) >= 1, "HUGR should contain at least one module"
 
-        # If JSON, verify it can be parsed
-        if is_json or (is_hugr_envelope and "{" in hugr_str):
-            import json
-
-            json_start = hugr_str.find("{") if is_hugr_envelope else 0
-            if json_start != -1:
-                try:
-                    json_data = json.loads(hugr_str[json_start:])
-                    assert isinstance(
-                        json_data,
-                        dict,
-                    ), "HUGR JSON should be a dictionary"
-                    assert len(json_data) > 0, "HUGR JSON should not be empty"
-                except json.JSONDecodeError as e:
-                    pytest.fail(f"HUGR JSON is invalid: {e}")
+        total_nodes = sum(1 for module in pkg.modules for _ in module.nodes())
+        assert total_nodes > 0, "HUGR should contain at least one node"
 
 
 class TestCompilationErrorHandling:

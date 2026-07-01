@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from guppylang import GuppyModule, guppy
+from hugr.package import Package
 from pecos_rslib import compile_hugr_to_qis as rust_compile
 from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
 
@@ -20,40 +21,24 @@ except ImportError:
     from guppylang.std.quantum import cx, h, measure, qubit
 
 
-def count_modules_in_hugr(hugr_str: str) -> tuple[int, list[str]]:
-    """Count modules and extract their function names from HUGR string.
+def count_modules_in_hugr(pkg: Package) -> tuple[int, list[str]]:
+    """Count modules and extract their function names from a HUGR package.
 
     Args:
-        hugr_str: HUGR in string format (may be JSON or binary-prefixed)
+        pkg: Compiled HUGR as a hugr.package.Package
 
     Returns:
         (module_count, list_of_function_names)
     """
-    try:
-        # HUGR string format seems to have a binary prefix, try to extract JSON
-        if hugr_str.startswith("HUGRi"):
-            # Find the JSON part after the binary prefix
-            json_start = hugr_str.find('{"modules"')
-            if json_start == -1:
-                return 0, []
-            hugr_str = hugr_str[json_start:]
+    function_names: list[str] = []
+    for module in pkg.modules:
+        for node in module.nodes():
+            n = node[0] if isinstance(node, tuple) else node
+            op = module[n].op
+            if type(op).__name__ == "FuncDefn" and op.f_name != "__main__":
+                function_names.append(op.f_name)
 
-        data = json.loads(hugr_str)
-        modules = data.get("modules", [])
-
-        # Extract function names from all modules
-        function_names = [
-            node["name"]
-            for module in modules
-            for node in module.get("nodes", [])
-            if node.get("op") == "FuncDefn" and "name" in node and node["name"] != "__main__"
-        ]
-
-        return len(modules), function_names
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        print(f"Failed to parse HUGR: {e}")
-        print(f"First 200 chars: {hugr_str[:200]}")
-        return 0, []
+    return len(pkg.modules), function_names
 
 
 def extract_function_calls_from_llvm(llvm_ir: str) -> set[str]:
@@ -92,11 +77,10 @@ def test_single_module_baseline() -> None:
         h(q)
         return measure(q)
 
-    hugr = single_hadamard.compile()
-    hugr_json = hugr.to_str() if hasattr(hugr, "to_str") else str(hugr)
+    pkg = single_hadamard.compile()
 
     # Analyze the HUGR structure
-    module_count, function_names = count_modules_in_hugr(hugr_json)
+    module_count, function_names = count_modules_in_hugr(pkg)
 
     print(f"Single module test - Modules: {module_count}, Functions: {function_names}")
     assert module_count >= 1, "Should have at least one module"
@@ -126,15 +110,12 @@ def test_multiple_functions_compilation() -> None:
         return measure(q)
 
     # Compile each function separately
-    bell_hugr = create_bell_pair.compile()
-    single_hugr = single_qubit_test.compile()
+    bell_pkg = create_bell_pair.compile()
+    single_pkg = single_qubit_test.compile()
 
     # Analyze each HUGR structure
-    bell_hugr_str = bell_hugr.to_str() if hasattr(bell_hugr, "to_str") else str(bell_hugr)
-    single_hugr_str = single_hugr.to_str() if hasattr(single_hugr, "to_str") else str(single_hugr)
-
-    bell_modules, bell_functions = count_modules_in_hugr(bell_hugr_str)
-    single_modules, single_functions = count_modules_in_hugr(single_hugr_str)
+    bell_modules, bell_functions = count_modules_in_hugr(bell_pkg)
+    single_modules, single_functions = count_modules_in_hugr(single_pkg)
 
     print(f"Bell pair - Modules: {bell_modules}, Functions: {bell_functions}")
     print(f"Single qubit - Modules: {single_modules}, Functions: {single_functions}")
@@ -170,7 +151,7 @@ def test_compiler_comparison_simple() -> None:
     hugr_str = hugr.to_str() if hasattr(hugr, "to_str") else str(hugr)
 
     # Analyze HUGR structure
-    module_count, function_names = count_modules_in_hugr(hugr_str)
+    module_count, function_names = count_modules_in_hugr(hugr)
     print(f"HUGR Analysis - Modules: {module_count}, Functions: {function_names}")
 
     # Compile with both compilers

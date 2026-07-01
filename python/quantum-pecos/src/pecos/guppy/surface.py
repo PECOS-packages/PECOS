@@ -2287,12 +2287,12 @@ def _guppy_module_cache_key(
     rotated flag. Keying on distance/dx-dz alone would collide a rotated and
     a non-rotated patch of the same shape onto one generated module.
 
-    Twirled source is Python-time unrolled, so the cache key includes
-    ``num_rounds`` in addition to the structural twirl fields, runtime
-    frame-output mode, RNG seed, activation-probability threshold, and
-    the SZZ runtime-barrier policy. Plain SZZ source is also unrolled when
-    ``num_rounds`` is supplied so hosted-operation metadata can identify the
-    concrete counted syndrome round.
+    Memory factories close over ``num_rounds`` as a Guppy comptime value, so
+    the cache key includes it whenever a memory program is requested. This
+    keeps Guppy's module-qualified function names round-specific instead of
+    reusing a stale compiled body from an earlier factory call. Twirled source
+    and plain SZZ source also Python-time unroll the round body, so they require
+    this keying for source identity as well.
     """
     geom = patch.geometry
     rotated = "rot" if geom.rotated else "unrot"
@@ -2318,7 +2318,7 @@ def _guppy_module_cache_key(
         f"{runtime_barrier_part}{trace_metadata_part}"
     )
     if twirl is None:
-        if interaction_basis == "szz" and num_rounds is not None:
+        if num_rounds is not None:
             return f"{base}_r{int(num_rounds)}"
         return base
     if rng is None or num_rounds is None:
@@ -2481,7 +2481,7 @@ def generate_memory_experiment(
         ancilla_budget=ancilla_budget,
         twirl=twirl,
         rng=rng,
-        num_rounds=num_rounds if twirl is not None or resolved_plan.interaction_basis == "szz" else None,
+        num_rounds=num_rounds,
         interaction_basis=resolved_plan.interaction_basis,
         check_plan=resolved_plan.plan_id if check_plan is not None else None,
         clifford_frame_policy=clifford_frame_policy,
@@ -2617,10 +2617,45 @@ def generate_surface_code_module(
     )
 
 
+def _round_scoped_surface_memory_factory(
+    patch: "SurfacePatch",
+    basis: str,
+    *,
+    ancilla_budget: int | None,
+    interaction_basis: str | None,
+    check_plan: str | None,
+    clifford_frame_policy: str | None,
+    szz_runtime_barriers: bool | str,
+) -> Callable[[int], object]:
+    """Memory factory that scopes each call to a round-specific Guppy module.
+
+    Backs :func:`get_surface_code_module`: each ``factory(n)`` re-enters
+    :func:`_surface_code_module_for_patch` with the concrete ``num_rounds`` so it
+    lands in a distinct ``pecos._generated.patch_..._r{n}`` module. Without this,
+    a caller building memory experiments at more than one round count on one
+    round-agnostic module would collide on a single guppy module-qualified name.
+    """
+
+    def factory(num_rounds: int) -> object:
+        scoped = _surface_code_module_for_patch(
+            patch,
+            ancilla_budget=ancilla_budget,
+            num_rounds=int(num_rounds),
+            interaction_basis=interaction_basis,
+            check_plan=check_plan,
+            clifford_frame_policy=clifford_frame_policy,
+            szz_runtime_barriers=szz_runtime_barriers,
+        )
+        return scoped[f"make_memory_{basis}"](num_rounds)
+
+    return factory
+
+
 def _surface_code_module_for_patch(
     patch: "SurfacePatch",
     *,
     ancilla_budget: int | None = None,
+    num_rounds: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
@@ -2634,9 +2669,21 @@ def _surface_code_module_for_patch(
     unconstrained-via-``None`` / unconstrained-via-large-int cases share one
     entry. Module metadata is derived from the patch geometry (faithful for
     asymmetric / non-rotated patches), not from a scalar distance.
+
+    ``num_rounds`` is threaded into both the cache key and the generated module
+    identity so that callers building memory experiments at different round
+    counts in one process get distinct Guppy modules (see
+    :func:`_guppy_module_cache_key`). When ``num_rounds`` is ``None`` the
+    returned ``make_memory_*`` factories are replaced with round-scoping
+    wrappers that re-enter this function with the concrete count, so the
+    round-agnostic getter path stays isolated across round counts too.
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
+    # Preserve the caller's original interaction-basis selector for the
+    # round-scoped factory wrappers below (the local is reassigned to the
+    # resolved basis just after).
+    original_interaction_basis = interaction_basis
     resolved_plan = _resolve_surface_check_plan(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
@@ -2657,6 +2704,7 @@ def _surface_code_module_for_patch(
         None if clifford_frame_policy is None else str(clifford_frame_policy).lower().replace("-", "_"),
         szz_runtime_barrier_policy,
         trace_metadata,
+        None if num_rounds is None else int(num_rounds),
     )
 
     if cache_key in _state.distance_module_cache:
@@ -2665,6 +2713,7 @@ def _surface_code_module_for_patch(
     module = _load_guppy_module(
         patch,
         ancilla_budget=ancilla_budget,
+        num_rounds=num_rounds,
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
@@ -2686,6 +2735,28 @@ def _surface_code_module_for_patch(
     module["resolved_check_plan"] = resolved_plan.resolved_metadata
     module["resolved_check_plan_hash"] = resolved_plan.resolved_hash
 
+    if num_rounds is None:
+        # Round-agnostic getter path: hand back memory factories that scope each
+        # call to a round-specific module. Calling e.g. make_memory_z(2) then
+        # make_memory_z(6) on a single round-agnostic module would define both
+        # factory-local @guppy bodies under the same module-qualified name, so
+        # guppylang would reuse the first compiled body (see
+        # _guppy_module_cache_key). Copy first so the shared _load_guppy_module
+        # namespace keeps its real factories for the round-scoped re-entry.
+        module = dict(module)
+        for basis in ("z", "x"):
+            key = f"make_memory_{basis}"
+            if key in module:
+                module[key] = _round_scoped_surface_memory_factory(
+                    patch,
+                    basis,
+                    ancilla_budget=ancilla_budget,
+                    interaction_basis=original_interaction_basis,
+                    check_plan=check_plan,
+                    clifford_frame_policy=clifford_frame_policy,
+                    szz_runtime_barriers=szz_runtime_barriers,
+                )
+
     _state.distance_module_cache[cache_key] = module
     return module
 
@@ -2700,6 +2771,14 @@ def get_surface_code_module(
     szz_runtime_barriers: bool | str = False,
 ) -> dict:
     """Get a loaded surface code module for distance d.
+
+    The returned ``make_memory_z``/``make_memory_x`` factories scope each call to
+    a round-specific module: ``factory(n)`` always produces (and caches) the
+    experiment in a distinct ``pecos._generated.patch_..._r{n}`` module. The
+    round count is therefore taken solely from the factory argument -- there is
+    no separate module-level round count to keep in sync -- so building
+    experiments at several round counts in one process stays isolated (guppylang
+    caches compiled functions by module-qualified name).
 
     Args:
         d: Code distance (must be odd >= 3)

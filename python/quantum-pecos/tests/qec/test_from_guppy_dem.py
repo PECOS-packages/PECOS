@@ -829,7 +829,14 @@ def test_from_guppy_constrained_surface_dem_byte_identical(
     )
 
 
-def test_from_guppy_round_order_szz_surface_dem_byte_identical() -> None:
+@pytest.mark.parametrize(
+    "check_plan",
+    [
+        "szz_balanced_data_round_order_1032_v1",
+        "szz_balanced_data_round_order_3102_v1",
+    ],
+)
+def test_from_guppy_round_order_szz_surface_dem_byte_identical(check_plan: str) -> None:
     """Round-order SZZ check plans must stay byte-identical through from_guppy."""
     noise = {"p1": 0.0, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
     ref_dem, got, _ = _constrained_surface_via_guppy(
@@ -838,13 +845,20 @@ def test_from_guppy_round_order_szz_surface_dem_byte_identical() -> None:
         rounds=2,
         budget=2,
         noise=noise,
-        check_plan="szz_balanced_data_round_order_3102_v1",
+        check_plan=check_plan,
     )
 
     assert got == ref_dem
 
 
-@pytest.mark.parametrize("check_plan", [None, "szz_balanced_data_round_order_3102_v1"])
+@pytest.mark.parametrize(
+    "check_plan",
+    [
+        None,
+        "szz_balanced_data_round_order_1032_v1",
+        "szz_balanced_data_round_order_3102_v1",
+    ],
+)
 def test_constrained_surface_traced_metadata_matches_abstract(check_plan: str | None) -> None:
     """Traced surface metadata preserves structure but binds via MeasIds.
 

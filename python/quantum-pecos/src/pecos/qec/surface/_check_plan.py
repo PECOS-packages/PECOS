@@ -16,6 +16,7 @@ from pecos.qec.surface._ancilla_batching import (
     normalize_ancilla_schedule,
 )
 from pecos.qec.surface.schedule import (
+    CNOT_ROUND_ORDER_1032,
     CNOT_ROUND_ORDER_3102,
     DEFAULT_CNOT_ROUND_ORDER,
     normalize_cnot_round_order,
@@ -199,6 +200,36 @@ _PLAN_SEMANTICS: dict[str, dict[str, Any]] = {
             "edge_order": "current_surface_cnot_schedule_v1",
             "ancilla_batch_policy": "balanced-data-v1",
             "round_order": CNOT_ROUND_ORDER_3102,
+        },
+        "x_check": {
+            "template": "current_szz_x_check_v1",
+            "sign_policy": "default_szz_sign_vector_v1",
+            "residual_policy": "per_touch_compensated",
+            "measurement_sign_policy": "explicit_template_metadata",
+        },
+        "z_check": {
+            "template": "current_szz_z_check_v1",
+            "sign_policy": "default_szz_sign_vector_v1",
+            "residual_policy": "per_touch_compensated",
+            "measurement_sign_policy": "explicit_template_metadata",
+        },
+        "prefix_policy": "forward_flow_virtual_z_v1",
+    },
+    "szz_balanced_data_round_order_1032_v1": {
+        "plan_id": "szz_balanced_data_round_order_1032_v1",
+        "interaction_basis": "szz",
+        "synthesis_identity": {
+            "family": "szz",
+            "szz_phase_pattern": "standard",
+            "interaction_order": "pecos-default",
+            "ancilla_schedule": "balanced-data-v1",
+        },
+        "schedule": {
+            "round_policy": "constant",
+            "site_policy": "global",
+            "edge_order": "current_surface_cnot_schedule_v1",
+            "ancilla_batch_policy": "balanced-data-v1",
+            "round_order": CNOT_ROUND_ORDER_1032,
         },
         "x_check": {
             "template": "current_szz_x_check_v1",
@@ -399,7 +430,7 @@ def require_current_surface_check_plan_renderer(
     if ancilla_schedule != DEFAULT_ANCILLA_SCHEDULE:
         expected_schedule["ancilla_batch_policy"] = ancilla_schedule
     if round_order != DEFAULT_CNOT_ROUND_ORDER:
-        expected_schedule["round_order"] = CNOT_ROUND_ORDER_3102
+        expected_schedule["round_order"] = round_order
     if synthesis != expected_synthesis or schedule != expected_schedule:
         msg = (
             f"{context} cannot realize check_plan={resolved_plan.plan_id!r} "

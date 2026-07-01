@@ -522,11 +522,20 @@ def test_szz_noiseless_detector_record_equivalence(distance: int, basis: str) ->
     _assert_noiseless_record_metadata_is_zero(szz_text, szz_tick)
 
 
+@pytest.mark.parametrize(
+    "check_plan",
+    [
+        "szz_balanced_data_round_order_1032_v1",
+        "szz_balanced_data_round_order_3102_v1",
+    ],
+)
 @pytest.mark.parametrize("basis", ["Z", "X"])
-def test_round_order_szz_noiseless_detector_record_equivalence(basis: str) -> None:
+def test_round_order_szz_noiseless_detector_record_equivalence(
+    basis: str,
+    check_plan: str,
+) -> None:
     patch = SurfacePatch.create(distance=3)
     baseline_plan = "szz_balanced_data_v1"
-    round_order_plan = "szz_balanced_data_round_order_3102_v1"
 
     baseline_text = generate_stim_from_patch(
         patch,
@@ -540,7 +549,7 @@ def test_round_order_szz_noiseless_detector_record_equivalence(basis: str) -> No
         num_rounds=3,
         basis=basis,
         ancilla_budget=2,
-        check_plan=round_order_plan,
+        check_plan=check_plan,
     )
     baseline_tick = generate_tick_circuit_from_patch(
         patch,
@@ -554,7 +563,7 @@ def test_round_order_szz_noiseless_detector_record_equivalence(basis: str) -> No
         num_rounds=3,
         basis=basis,
         ancilla_budget=2,
-        check_plan=round_order_plan,
+        check_plan=check_plan,
     )
 
     baseline_circuit = stim.Circuit(baseline_text)
@@ -899,8 +908,18 @@ def test_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "check_plan",
+    [
+        "szz_balanced_data_round_order_1032_v1",
+        "szz_balanced_data_round_order_3102_v1",
+    ],
+)
 @pytest.mark.parametrize("basis", ["Z", "X"])
-def test_round_order_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
+def test_round_order_szz_traced_qis_native_dem_matches_stim_for_p1(
+    basis: str,
+    check_plan: str,
+) -> None:
     from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
@@ -911,7 +930,7 @@ def test_round_order_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -
         basis=basis,
         ancilla_budget=2,
         circuit_source="traced_qis",
-        check_plan="szz_balanced_data_round_order_3102_v1",
+        check_plan=check_plan,
     )
     normalize_traced_qis_tick_circuit(tick_circuit, context="round-order SZZ traced-QIS p1 test")
     noise_args = {

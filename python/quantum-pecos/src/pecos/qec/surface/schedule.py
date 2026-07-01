@@ -34,10 +34,12 @@ if TYPE_CHECKING:
 
 DEFAULT_CNOT_ROUND_ORDER = "default"
 CNOT_ROUND_ORDER_3102 = "round-order-3102-v1"
+CNOT_ROUND_ORDER_1032 = "round-order-1032-v1"
 SUPPORTED_CNOT_ROUND_ORDERS = frozenset(
     {
         DEFAULT_CNOT_ROUND_ORDER,
         CNOT_ROUND_ORDER_3102,
+        CNOT_ROUND_ORDER_1032,
     },
 )
 
@@ -54,6 +56,8 @@ def normalize_cnot_round_order(
             return (0, 1, 2, 3)
         if normalized == CNOT_ROUND_ORDER_3102:
             return (3, 1, 0, 2)
+        if normalized == CNOT_ROUND_ORDER_1032:
+            return (1, 0, 3, 2)
         msg = (
             f"round_order must be one of {sorted(SUPPORTED_CNOT_ROUND_ORDERS)} "
             f"or a permutation of (0, 1, 2, 3), got {round_order!r}"
@@ -62,6 +66,7 @@ def normalize_cnot_round_order(
     if tuple(round_order) not in {
         (0, 1, 2, 3),
         (3, 1, 0, 2),
+        (1, 0, 3, 2),
     }:
         msg = f"round_order must be a supported permutation of (0, 1, 2, 3), got {round_order!r}"
         raise ValueError(msg)

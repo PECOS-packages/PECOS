@@ -83,17 +83,25 @@ from .audit_runner import _curated_cases  # noqa: TID252
 _SHOTS = 8
 _SEED = 42
 _BESPOKE = re.compile(r"create_creg|get_creg_bit|set_creg_bit|get_int_from_creg|set_creg_to_int|mz_to_creg_bit")
-# Ordered mz/read_result events (slot in g1 for mz, g2 for read_result) so
+# Ordered mz/read_result events (slot arg in g1 for mz, g2 for read_result) so
 # we can pin per-measurement slot correspondence, not just set membership.
+# QIR uses LLVM opaque pointers: a result-slot constant is
+# `ptr inttoptr (i64 N to ptr)`, except slot 0 which is `ptr null`.
 _MZ_RR_EVENT = re.compile(
-    r"@__quantum__qis__mz__body\(%Qubit\* [^,]+, "
-    r"%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)"
-    r"|@__quantum__rt__read_result\(%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)",
+    r"@__quantum__qis__mz__body\(ptr [^,]+, "
+    r"ptr (null|inttoptr \(i64 \d+ to ptr\))\)"
+    r"|@__quantum__rt__read_result\(ptr (null|inttoptr \(i64 \d+ to ptr\))\)",
 )
 
 
+def _slot(arg: str) -> int:
+    """Decode a `ptr` result-slot constant (`null` is slot 0)."""
+    m = re.search(r"i64 (\d+)", arg)
+    return int(m.group(1)) if m else 0
+
+
 def _assert_mz_rr_pairing(label: str, ir: str) -> None:
-    """Per-measurement slot correspondence: mz `%Result*` slots are
+    """Per-measurement slot correspondence: mz result slots are
     monotonic 0..n-1, and EVERY `read_result` is immediately preceded
     (in emission order) by the `mz__body` of the SAME slot -- i.e. a
     read_result reuses *its own* measurement's static slot, not merely
@@ -101,11 +109,16 @@ def _assert_mz_rr_pairing(label: str, ir: str) -> None:
     events: list[tuple[str, int]] = []
     for m in _MZ_RR_EVENT.finditer(ir):
         if m.group(1) is not None:
-            events.append(("mz", int(m.group(1))))
+            events.append(("mz", _slot(m.group(1))))
         else:
-            events.append(("rr", int(m.group(2))))
+            events.append(("rr", _slot(m.group(2))))
+    # Tripwire: if the emitted pointer syntax ever drifts away from the
+    # event regex again, fail loud instead of vacuously passing. (Match
+    # call sites only -- the `declare` preamble is always present.)
+    if "call void @__quantum__qis__mz__body" in ir:
+        assert events, f"{label}: mz calls present but _MZ_RR_EVENT matched none; pattern out of sync with emitted IR"
     mz_slots = [s for kind, s in events if kind == "mz"]
-    assert mz_slots == list(range(len(mz_slots))), f"{label}: mz %Result* slots not monotonic 0..n-1: {mz_slots}"
+    assert mz_slots == list(range(len(mz_slots))), f"{label}: mz result slots not monotonic 0..n-1: {mz_slots}"
     for i, (kind, slot) in enumerate(events):
         if kind != "rr":
             continue

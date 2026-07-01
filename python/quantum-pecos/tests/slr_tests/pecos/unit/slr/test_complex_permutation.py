@@ -126,6 +126,16 @@ def test_permutation_with_conditional_qasm() -> None:
 # tracker's `.permute()`; QIR/Selene have no runtime permute
 # intrinsic). These pin the realized targeting from the actual
 # emitted QIR (qubit indices deterministic in declaration order).
+#
+# QIR uses LLVM opaque pointers: a qubit constant is
+# `ptr inttoptr (i64 N to ptr)`, except index 0 which is `ptr null`.
+
+_QARG = r"ptr (?:null|inttoptr \(i64 (\d+) to ptr\))"
+
+
+def _q(name: str, qir: str) -> list[int]:
+    """All qubit indices a single-qubit `name` gate is applied to."""
+    return [int(m) if m else 0 for m in re.findall(rf"call void @__quantum__qis__{name}__body\({_QARG}\)", qir)]
 
 
 @pytest.mark.optional_dependency
@@ -149,10 +159,8 @@ def test_multiple_permutations_qir() -> None:
     assert "; Permutation: a[0] -> a[1], a[1] -> a[0]" in qir, qir
     assert "; Permutation: a[1] -> b[0], b[0] -> a[1]" in qir, qir
     # Qubits: a=0,1,2 b=3,4,5. Both H(a[0]) -> q1; X(a[1]) -> b[0]=q3.
-    h = re.findall(r"call void @__quantum__qis__h__body\(%Qubit\* inttoptr \(i64 (\d+) ", qir)
-    x = re.findall(r"call void @__quantum__qis__x__body\(%Qubit\* inttoptr \(i64 (\d+) ", qir)
-    assert h == ["1", "1"], qir
-    assert x == ["3"], qir
+    assert _q("h", qir) == [1, 1], qir
+    assert _q("x", qir) == [3], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
@@ -183,6 +191,6 @@ def test_permutation_with_conditional_qir() -> None:
         qir,
     ), qir
     # X(a[0]) after the permute -> a[1] = q1.
-    assert re.findall(r"call void @__quantum__qis__x__body\(%Qubit\* inttoptr \(i64 (\d+) ", qir) == ["1"], qir
+    assert _q("x", qir) == [1], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"

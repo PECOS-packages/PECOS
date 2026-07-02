@@ -25,7 +25,7 @@
 use log::debug;
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
-use tket::hugr::ops::OpType;
+use tket::hugr::ops::{OpType, Value};
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
@@ -329,12 +329,9 @@ impl HugrEngine {
     /// extracts the value from the Const node and returns it as a `ClassicalValue`.
     ///
     /// Supports integer constants (`ConstInt`), float constants (`ConstF64`),
-    /// and boolean constants (`ConstBool`).
+    /// boolean constants (`ConstBool`), and tuple constants of those (e.g.
+    /// guppy's `pi` angle constant lowers to `Const(Tuple(FloatVal))`).
     pub(crate) fn try_load_constant(hugr: &Hugr, node: Node) -> Option<ClassicalValue> {
-        use tket::extension::bool::ConstBool;
-        use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
-        use tket::hugr::std_extensions::arithmetic::int_types::ConstInt;
-
         // LoadConstant has a static edge from a Const node
         for pred_node in hugr.input_neighbours(node) {
             let pred_op = hugr.get_optype(pred_node);
@@ -346,29 +343,68 @@ impl HugrEngine {
                     value.get_type()
                 );
 
-                // Try to extract as ConstInt
-                if let Some(const_int) = value.get_custom_value::<ConstInt>() {
-                    // ConstInt can be signed or unsigned
-                    let int_value = const_int.value_s();
-                    debug!("try_load_constant: found ConstInt with value {int_value}");
-                    return Some(ClassicalValue::Int(int_value));
-                }
-
-                // Try to extract as ConstF64
-                if let Some(const_f64) = value.get_custom_value::<ConstF64>() {
-                    let float_value = const_f64.value();
-                    debug!("try_load_constant: found ConstF64 with value {float_value}");
-                    return Some(ClassicalValue::Float(float_value));
-                }
-
-                // Try to extract as ConstBool
-                if let Some(const_bool) = value.get_custom_value::<ConstBool>() {
-                    let bool_value = const_bool.value();
-                    debug!("try_load_constant: found ConstBool with value {bool_value}");
-                    return Some(ClassicalValue::Bool(bool_value));
+                if let Some(classical) = Self::const_value_to_classical(value) {
+                    return Some(classical);
                 }
 
                 debug!("try_load_constant: unrecognized const type");
+            }
+        }
+
+        None
+    }
+
+    /// Convert a HUGR constant `Value` to a runtime `ClassicalValue`.
+    ///
+    /// Tuple constants convert element-wise so a downstream `UnpackTuple`
+    /// can unpack them at runtime exactly like a `MakeTuple`-built tuple.
+    fn const_value_to_classical(value: &Value) -> Option<ClassicalValue> {
+        use tket::extension::bool::ConstBool;
+        use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
+        use tket::hugr::std_extensions::arithmetic::int_types::ConstInt;
+
+        // ConstInt can be signed or unsigned
+        if let Some(const_int) = value.get_custom_value::<ConstInt>() {
+            let int_value = const_int.value_s();
+            debug!("const_value_to_classical: found ConstInt with value {int_value}");
+            return Some(ClassicalValue::Int(int_value));
+        }
+
+        if let Some(const_f64) = value.get_custom_value::<ConstF64>() {
+            let float_value = const_f64.value();
+            debug!("const_value_to_classical: found ConstF64 with value {float_value}");
+            return Some(ClassicalValue::Float(float_value));
+        }
+
+        if let Some(const_bool) = value.get_custom_value::<ConstBool>() {
+            let bool_value = const_bool.value();
+            debug!("const_value_to_classical: found ConstBool with value {bool_value}");
+            return Some(ClassicalValue::Bool(bool_value));
+        }
+
+        // Tuple constants are single-variant sums with tag 0; a two-variant
+        // sum with no payload is a plain HUGR bool (False=0/True=1).
+        if let Value::Sum(sum) = value {
+            let num_variants = sum.sum_type.num_variants();
+            if num_variants == 2 && sum.values.is_empty() {
+                debug!(
+                    "const_value_to_classical: found unit-sum bool with tag {}",
+                    sum.tag
+                );
+                return Some(ClassicalValue::Bool(sum.tag == 1));
+            }
+            if num_variants == 1 && sum.tag == 0 {
+                let elements: Option<Vec<ClassicalValue>> = sum
+                    .values
+                    .iter()
+                    .map(Self::const_value_to_classical)
+                    .collect();
+                let elements = elements?;
+                debug!(
+                    "const_value_to_classical: found tuple const with {} elements",
+                    elements.len()
+                );
+                return Some(ClassicalValue::Tuple(elements));
             }
         }
 

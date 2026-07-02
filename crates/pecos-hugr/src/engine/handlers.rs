@@ -94,7 +94,9 @@ impl HugrEngine {
     ///
     /// # Returns
     ///
-    /// Returns `true` if the operation was handled, `false` otherwise.
+    /// Returns `true` if the operation was handled, `false` otherwise
+    /// (including when a handler's inputs are not ready yet -- the caller
+    /// defers such nodes for retry).
     pub(crate) fn handle_extension_op(&mut self, hugr: &Hugr, node: Node) -> bool {
         let op = hugr.get_optype(node);
         let Some(ext_op) = op.as_extension_op() else {

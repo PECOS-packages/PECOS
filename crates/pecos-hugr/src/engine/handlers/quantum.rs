@@ -24,6 +24,7 @@
 //! not through these extension handlers.
 
 use log::debug;
+use pecos_quantum::hugr_convert::try_extract_rotation_angle;
 use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
@@ -133,17 +134,33 @@ impl HugrEngine {
     }
 
     /// Handle `tket.rotation` operations.
+    ///
+    /// Missing inputs DEFER the node (return `false` so the engine's
+    /// pending/retry mechanism picks it up) instead of fabricating a
+    /// silent 0.0 rotation. `from_halfturns` additionally falls back to
+    /// the static angle tracer: some angle chains are only evaluable
+    /// statically (e.g. guppy expression angles like `pi / 4` lower to
+    /// Call nodes the runtime does not execute). If neither source can
+    /// produce the value, the node stays deferred and the gate consumer
+    /// (`resolve_rotation_angle`) fails loud if the statically extracted
+    /// gate angle is also missing.
     pub(crate) fn handle_rotation_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
         debug!("Processing tket.rotation operation: {op_name} at {node:?}");
 
         match op_name {
             "from_halfturns" | "from_halfturns_unchecked" => {
                 // from_halfturns: float64 -> Rotation
-                // Convert a float (in half-turns) to a Rotation type
-                let halfturns = self
+                // Convert a float (in half-turns) to a Rotation type.
+                // try_extract_rotation_angle traces this node's input 0 (0
+                // qubit inputs) and returns full turns; halfturns = 2 * turns.
+                let Some(halfturns) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                    .unwrap_or(0.0);
+                    .or_else(|| try_extract_rotation_angle(hugr, node, 0).map(|turns| turns * 2.0))
+                else {
+                    debug!("tket.rotation.{op_name} at {node:?}: input not ready, deferring");
+                    return false;
+                };
 
                 self.wire_state
                     .classical_values
@@ -155,10 +172,13 @@ impl HugrEngine {
             "to_halfturns" => {
                 // to_halfturns: Rotation -> float64
                 // Convert a Rotation to a float (in half-turns)
-                let halfturns = self
+                let Some(halfturns) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_rotation())
-                    .unwrap_or(0.0);
+                else {
+                    debug!("tket.rotation.to_halfturns at {node:?}: input not ready, deferring");
+                    return false;
+                };
 
                 self.wire_state
                     .classical_values
@@ -172,12 +192,14 @@ impl HugrEngine {
                 // Add two rotations
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_rotation())
-                    .unwrap_or(0.0);
+                    .and_then(|v| v.as_rotation());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_rotation())
-                    .unwrap_or(0.0);
+                    .and_then(|v| v.as_rotation());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.rotation.radd at {node:?}: inputs not ready, deferring");
+                    return false;
+                };
 
                 // Rotation addition, normalized to [0, 2) half-turns
                 let sum = (a + b).rem_euclid(2.0);

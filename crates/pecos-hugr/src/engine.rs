@@ -1195,7 +1195,7 @@ impl HugrEngine {
             let qubits = self.resolve_qubits(&hugr, current_node, &op);
 
             // Emit the gate operation
-            if self.emit_quantum_gate(&hugr, current_node, &op, &qubits) {
+            if self.emit_quantum_gate(&hugr, current_node, &op, &qubits)? {
                 hit_measurement = true;
             }
 
@@ -1243,7 +1243,7 @@ impl HugrEngine {
         node: Node,
         op: &QuantumOp,
         qubits: &[QubitId],
-    ) -> bool {
+    ) -> Result<bool, PecosError> {
         let mut hit_measurement = false;
 
         match op.gate_type {
@@ -1293,17 +1293,17 @@ impl HugrEngine {
                 );
             }
             GateType::RX => {
-                let angle = self.resolve_rotation_angle(hugr, node, op);
+                let angle = self.resolve_rotation_angle(hugr, node, op)?;
                 self.message_builder
                     .rx(Angle64::from_radians(angle), &[qubits[0].0]);
             }
             GateType::RY => {
-                let angle = self.resolve_rotation_angle(hugr, node, op);
+                let angle = self.resolve_rotation_angle(hugr, node, op)?;
                 self.message_builder
                     .ry(Angle64::from_radians(angle), &[qubits[0].0]);
             }
             GateType::RZ => {
-                let angle = self.resolve_rotation_angle(hugr, node, op);
+                let angle = self.resolve_rotation_angle(hugr, node, op)?;
                 self.message_builder
                     .rz(Angle64::from_radians(angle), &[qubits[0].0]);
             }
@@ -1356,7 +1356,7 @@ impl HugrEngine {
                 );
             }
             GateType::CRZ => {
-                let angle = self.resolve_rotation_angle(hugr, node, op);
+                let angle = self.resolve_rotation_angle(hugr, node, op)?;
                 let half_angle = angle / 2.0;
                 self.message_builder
                     .rz(Angle64::from_radians(half_angle), &[qubits[1].0]);
@@ -1424,7 +1424,7 @@ impl HugrEngine {
             }
         }
 
-        hit_measurement
+        Ok(hit_measurement)
     }
 
     /// Resolve a rotation angle for a quantum gate.
@@ -1434,10 +1434,15 @@ impl HugrEngine {
     /// which is needed when angles are computed dynamically (e.g., guppylang's CH
     /// decomposition passes rotation values through MakeTuple/UnpackTuple chains
     /// that can't be statically traced).
-    fn resolve_rotation_angle(&self, hugr: &Hugr, node: Node, op: &QuantumOp) -> f64 {
+    fn resolve_rotation_angle(
+        &self,
+        hugr: &Hugr,
+        node: Node,
+        op: &QuantumOp,
+    ) -> Result<f64, PecosError> {
         // Try statically extracted params first (already in radians)
         if let Some(&angle) = op.params.first() {
-            return angle;
+            return Ok(angle);
         }
         // Fall back to runtime classical value at the angle input port.
         // The angle port is after all qubit inputs.
@@ -1445,9 +1450,14 @@ impl HugrEngine {
             && let Some(halfturns) = value.as_rotation()
         {
             // Convert half-turns to radians: halfturns * pi
-            return halfturns * std::f64::consts::PI;
+            return Ok(halfturns * std::f64::consts::PI);
         }
-        0.0
+        // No silent default: a zero angle would turn the gate into a no-op and
+        // corrupt the simulated physics without any visible failure.
+        Err(PecosError::Input(format!(
+            "{:?} at {node:?}: rotation angle unavailable (no static extraction, no runtime value); refusing to default to 0",
+            op.gate_type
+        )))
     }
 
     /// Queue ready successor nodes after processing a node.
@@ -1850,6 +1860,39 @@ mod tests {
     }
 
     #[test]
+    fn test_ry_angle_tuple_runtime_execution() {
+        // End-to-end guard for the RUNTIME classical value chain of guppy's
+        // tuple-wrapped rotation angle (Const -> LoadConstant -> MakeTuple ->
+        // UnpackTuple -> from_halfturns_unchecked -> Ry). The tuple prelude
+        // ops execute as classical ops whose num_inputs must come from the
+        // dataflow signature -- the portgraph count includes the order port,
+        // which used to starve the chain and (before the fail-loud hardening)
+        // silently zero the angle. With the hardening, a starved chain makes
+        // this generate_commands call error instead of passing.
+        let hugr_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pecos/tests/test_data/hugr/ry_angle_tuple.hugr"
+        );
+        let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+
+        let msg = engine
+            .generate_commands()
+            .expect("Failed to generate commands");
+        let ops = msg.quantum_ops().expect("Failed to parse quantum ops");
+
+        let ry_cmd = ops
+            .iter()
+            .find(|g| g.gate_type == GateType::RY)
+            .expect("Expected an RY command");
+        assert_eq!(ry_cmd.angles.len(), 1, "RY command should carry its angle");
+        let radians = ry_cmd.angles[0].to_radians();
+        assert!(
+            (radians - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
+            "RY command should have angle pi/2, got {radians}",
+        );
+    }
+
+    #[test]
     fn test_ry_angle_through_tuple_wrap() {
         // Guppy lowers `ry(q, angle(0.5))` with the angle constant wrapped in
         // a 1-tuple (Const -> LoadConstant -> MakeTuple -> UnpackTuple ->
@@ -1881,6 +1924,37 @@ mod tests {
         assert!(
             (angle - std::f64::consts::FRAC_PI_2).abs() < 1e-12,
             "RY angle should be pi/2 radians, got {angle}"
+        );
+    }
+
+    #[test]
+    fn test_rx_pi_tuple_const_runtime_execution() {
+        // Like test_ry_angle_tuple_runtime_execution, but for guppy's `pi`
+        // constant, which lowers the angle as a TUPLE-VALUED Const
+        // (Const(Tuple(FloatVal)) -> LoadConstant -> UnpackTuple ->
+        // from_halfturns_unchecked -> Rx) with no MakeTuple node. The runtime
+        // constant loader must convert tuple constants element-wise or the
+        // chain starves and (with the fail-loud hardening) this errors.
+        let hugr_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pecos/tests/test_data/hugr/rx_pi_tuple_const.hugr"
+        );
+        let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+
+        let msg = engine
+            .generate_commands()
+            .expect("Failed to generate commands");
+        let ops = msg.quantum_ops().expect("Failed to parse quantum ops");
+
+        let rx_cmd = ops
+            .iter()
+            .find(|g| g.gate_type == GateType::RX)
+            .expect("Expected an RX command");
+        assert_eq!(rx_cmd.angles.len(), 1, "RX command should carry its angle");
+        let radians = rx_cmd.angles[0].to_radians();
+        assert!(
+            (radians - std::f64::consts::PI).abs() < 1e-9,
+            "RX command should have angle pi, got {radians}",
         );
     }
 

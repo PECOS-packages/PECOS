@@ -35,7 +35,7 @@ use pecos_core::gate_type::GateType;
 use pecos_quantum::hugr_convert::{
     hugr_op_to_gate_type, is_rotation_gate, try_extract_rotation_angle,
 };
-use tket::hugr::ops::OpType;
+use tket::hugr::ops::{OpTrait, OpType};
 use tket::hugr::{Hugr, HugrView, Node};
 
 use super::types::{
@@ -654,8 +654,16 @@ pub fn extract_classical_ops(hugr: &Hugr) -> BTreeMap<Node, ClassicalOp> {
             },
             // Prelude extension (tuples, etc.)
             "prelude" => {
-                let num_inputs = hugr.num_inputs(node);
-                let num_outputs = hugr.num_outputs(node);
+                // Use the dataflow-signature port counts, NOT hugr.num_inputs/
+                // num_outputs: the portgraph counts include the order port, and
+                // an inflated num_inputs makes handle_classical_op wait forever
+                // on an order-port "value" that never arrives (starving every
+                // consumer downstream of the tuple).
+                let Some(sig) = op.dataflow_signature() else {
+                    continue;
+                };
+                let num_inputs = sig.input_count();
+                let num_outputs = sig.output_count();
                 match op_name.as_str() {
                     "MakeTuple" => (ClassicalOpType::MakeTuple, num_inputs, 1, None),
                     "UnpackTuple" => (ClassicalOpType::UnpackTuple, 1, num_outputs, None),

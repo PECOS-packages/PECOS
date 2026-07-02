@@ -47,76 +47,35 @@ class GuppyPipelineTest:
             result_obj = builder.run(shots)
             result_dict = result_obj.to_dict()
 
-            # Format results to match expected structure
-            measurements = []
-            if "measurements" in result_dict:
-                # measurements is a list of lists like [[1], [0, 1], ...]
-                # For functions returning single bool, extract the last measurement per shot
-                raw_measurements = result_dict["measurements"]
-                if raw_measurements and isinstance(raw_measurements[0], list):
-                    # Check if function returns single bool or tuple
-                    import inspect
+            # Format results to match expected structure.
+            # "measurements" holds one row per shot like [[1], [0, 1], ...];
+            # a missing key is a hard failure (reported via the except below).
+            raw_measurements = result_dict["measurements"]
+            if raw_measurements and isinstance(raw_measurements[0], list):
+                # Check if function returns single bool or tuple
+                import inspect
 
-                    actual_func = func
-                    if hasattr(func, "wrapped") and hasattr(
-                        func.wrapped,
-                        "python_func",
-                    ):
-                        actual_func = func.wrapped.python_func
-                    try:
-                        sig = inspect.signature(actual_func)
-                        return_type = sig.return_annotation
-                        is_tuple_return = hasattr(return_type, "__origin__") and return_type.__origin__ is tuple
-                    except (ValueError, TypeError):
-                        is_tuple_return = False
-
-                    if is_tuple_return:
-                        # Return full measurement tuples
-                        measurements = [tuple(m) for m in raw_measurements]
-                    else:
-                        # For single bool return, take the last measurement from each shot
-                        measurements = [m[-1] if m else 0 for m in raw_measurements]
-                else:
-                    measurements = raw_measurements
-            elif "measurement_0" in result_dict:
-                # Handle multiple measurements
-                num_shots = len(result_dict["measurement_0"])
-                measurement_keys = sorted(
-                    [k for k in result_dict if k.startswith("measurement_")],
-                )
-                num_measurements = len(measurement_keys)
-
-                for i in range(num_shots):
-                    result_tuple = [bool(result_dict[key][i]) for key in measurement_keys]
-
-                    # Check function signature to determine if it returns a tuple
-                    # For now, if there's more than one measurement but function returns single bool,
-                    # take the last measurement as the return value
-                    import inspect
-
-                    # For Guppy functions, we need to check the wrapped function
-                    actual_func = func
-                    if hasattr(func, "wrapped") and hasattr(
-                        func.wrapped,
-                        "python_func",
-                    ):
-                        actual_func = func.wrapped.python_func
-
+                actual_func = func
+                if hasattr(func, "wrapped") and hasattr(
+                    func.wrapped,
+                    "python_func",
+                ):
+                    actual_func = func.wrapped.python_func
+                try:
                     sig = inspect.signature(actual_func)
                     return_type = sig.return_annotation
-
-                    # Check if return type is a tuple
                     is_tuple_return = hasattr(return_type, "__origin__") and return_type.__origin__ is tuple
-                    if is_tuple_return or num_measurements == 1:
-                        # For tuple returns or single measurement, use all measurements
-                        measurements.append(
-                            (tuple(result_tuple) if len(result_tuple) > 1 else result_tuple[0]),
-                        )
-                    else:
-                        # For single bool return with multiple measurements, take the last one
-                        measurements.append(result_tuple[-1])
-            elif "result" in result_dict:
-                measurements = result_dict["result"]
+                except (ValueError, TypeError):
+                    is_tuple_return = False
+
+                if is_tuple_return:
+                    # Return full measurement tuples
+                    measurements = [tuple(m) for m in raw_measurements]
+                else:
+                    # For single bool return, take the last measurement from each shot
+                    measurements = [m[-1] if m else 0 for m in raw_measurements]
+            else:
+                measurements = raw_measurements
 
             func_name = getattr(
                 func,

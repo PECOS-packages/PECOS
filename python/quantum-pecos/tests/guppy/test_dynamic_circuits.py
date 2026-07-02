@@ -80,8 +80,7 @@ class TestDynamicCircuitExecution:
 
         # Extract measurements
         measurements = results["measurements"]
-        if not measurements and "measurement_0" in results:
-            measurements = results["measurement_0"]
+        assert len(measurements) == 100, "should have one measurement row per shot"
 
         # All results should be True since q1 is |1>, so X is always applied to q2
         ones_count = sum(1 for m in measurements if m)
@@ -116,15 +115,9 @@ class TestDynamicCircuitExecution:
         # Run the circuit
         results = sim(Guppy(measurement_feedback)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
-        # Extract measurements - should have two measurements per shot
-        # Need to decode the results
-        measurements = []
-        if "measurement_0" in results and "measurement_1" in results:
-            m0 = results["measurement_0"]
-            m1 = results["measurement_1"]
-            measurements = list(zip(m0, m1, strict=False))
-        elif "measurements" in results:
-            measurements = results["measurements"]
+        # Extract measurements - one (m0, m1) row per shot
+        measurements = results["measurements"]
+        assert len(measurements) == 100, "should have one measurement row per shot"
 
         # Both measurements should always match
         mismatches = sum(1 for (a, b) in measurements if a != b)

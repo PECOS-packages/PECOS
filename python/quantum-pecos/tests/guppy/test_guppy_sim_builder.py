@@ -86,10 +86,7 @@ class TestGuppySimBuilder:
         sim_obj = builder.build()
         results = sim_obj.run(100)
 
-        measurements = results.get(
-            "measurements",
-            results.get("measurement_0", results.get("result", [])),
-        )
+        measurements = results["measurements"]
         assert measurements is not None
         assert len(measurements) > 0
         assert len(measurements) == 100  # 100 shots, each with integer-encoded 2 qubits
@@ -99,14 +96,9 @@ class TestGuppySimBuilder:
         # Run with same seed twice
         results1 = sim(self.single_qubit).qubits(10).quantum(state_vector()).seed(12345).run(100)
         results2 = sim(self.single_qubit).qubits(10).quantum(state_vector()).seed(12345).run(100)
-        measurements1 = results1.get(
-            "measurements",
-            results1.get("measurement_0", results1.get("result", [])),
-        )
-        measurements2 = results2.get(
-            "measurements",
-            results2.get("measurement_0", results2.get("result", [])),
-        )
+        measurements1 = results1["measurements"]
+        measurements2 = results2["measurements"]
+        assert len(measurements1) == 100, "seeded run should produce one row per shot"
         assert measurements1 == measurements2
 
     def test_config_dict(self) -> None:

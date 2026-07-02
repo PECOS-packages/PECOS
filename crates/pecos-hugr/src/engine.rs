@@ -1850,6 +1850,41 @@ mod tests {
     }
 
     #[test]
+    fn test_ry_angle_through_tuple_wrap() {
+        // Guppy lowers `ry(q, angle(0.5))` with the angle constant wrapped in
+        // a 1-tuple (Const -> LoadConstant -> MakeTuple -> UnpackTuple ->
+        // from_halfturns_unchecked -> Ry). The static angle extraction must
+        // trace through the tuple wrap/unwrap; a miss used to silently become
+        // RY(0) (issue observed as all-|0> Bell statistics in
+        // test_real_quantum_circuits.py::test_rotation_gates).
+        let hugr_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pecos/tests/test_data/hugr/ry_angle_tuple.hugr"
+        );
+        let engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
+
+        let ry_ops: Vec<_> = engine
+            .quantum_ops
+            .values()
+            .filter(|op| op.gate_type == GateType::RY)
+            .collect();
+        assert_eq!(ry_ops.len(), 1, "Expected exactly one RY op");
+
+        // angle(0.5) = 0.5 half-turns = pi/2 radians.
+        let params = &ry_ops[0].params;
+        assert_eq!(
+            params.len(),
+            1,
+            "RY angle was not statically extracted (tuple wrap/unwrap not traced)"
+        );
+        let angle = params[0];
+        assert!(
+            (angle - std::f64::consts::FRAC_PI_2).abs() < 1e-12,
+            "RY angle should be pi/2 radians, got {angle}"
+        );
+    }
+
+    #[test]
     fn test_load_single_hadamard() {
         // Load the single_hadamard.hugr test file
         let hugr_path = concat!(

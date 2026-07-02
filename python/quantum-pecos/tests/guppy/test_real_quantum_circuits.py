@@ -33,23 +33,13 @@ def test_bell_state_preparation() -> None:
     # Use seed for reproducibility
     shot_vec = sim(Guppy(prepare_bell_state)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    results = shot_vec.to_dict()
-    # Count outcomes
-    both_zero = 0
-    both_one = 0
-    anti_correlated = 0
+    # "measurements" holds one row per shot, ordered like the returned tuple.
+    shots = shot_vec.to_dict()["measurements"]
+    assert len(shots) == 1000, "Should have one measurement row per shot"
 
-    # Results come as a dict with measurement keys
-    m1_list = results.get("measurement_0", [])
-    m2_list = results.get("measurement_1", [])
-
-    for m1, m2 in zip(m1_list, m2_list, strict=False):
-        if m1 == 0 and m2 == 0:
-            both_zero += 1
-        elif m1 == 1 and m2 == 1:
-            both_one += 1
-        else:
-            anti_correlated += 1
+    both_zero = sum(1 for m1, m2 in shots if (m1, m2) == (0, 0))
+    both_one = sum(1 for m1, m2 in shots if (m1, m2) == (1, 1))
+    anti_correlated = len(shots) - both_zero - both_one
 
     # Bell state should only produce correlated outcomes
     assert anti_correlated == 0, f"Bell state should not produce anti-correlated outcomes, got {anti_correlated}"
@@ -87,24 +77,14 @@ def test_ghz_state() -> None:
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(prepare_ghz_state)).qubits(3).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    results = shot_vec.to_dict()
+    # "measurements" holds one row per shot, ordered like the returned tuple.
+    shots = shot_vec.to_dict()["measurements"]
+    assert len(shots) == 1000, "Should have one measurement row per shot"
 
     # GHZ state should give either all 0s or all 1s
-    all_zero = 0
-    all_one = 0
-    other = 0
-
-    m1_list = results.get("measurement_0", [])
-    m2_list = results.get("measurement_1", [])
-    m3_list = results.get("measurement_2", [])
-
-    for m1, m2, m3 in zip(m1_list, m2_list, m3_list, strict=False):
-        if m1 == 0 and m2 == 0 and m3 == 0:
-            all_zero += 1
-        elif m1 == 1 and m2 == 1 and m3 == 1:
-            all_one += 1
-        else:
-            other += 1
+    all_zero = sum(1 for m1, m2, m3 in shots if (m1, m2, m3) == (0, 0, 0))
+    all_one = sum(1 for m1, m2, m3 in shots if (m1, m2, m3) == (1, 1, 1))
+    other = len(shots) - all_zero - all_one
 
     # GHZ state should only produce |000⟩ or |111⟩
     assert other == 0, f"GHZ state should not produce mixed outcomes, got {other}"
@@ -143,25 +123,17 @@ def test_quantum_phase_kickback() -> None:
         return (m1, m2)
 
     # Run simulation with state_vector backend
-    results = sim(Guppy(phase_kickback_circuit)).qubits(2).quantum(state_vector()).seed(42).run(1000)
-    assert results is not None, "Should get results"
+    shot_vec = sim(Guppy(phase_kickback_circuit)).qubits(2).quantum(state_vector()).seed(42).run(1000)
+    assert shot_vec is not None, "Should get results"
+    # "measurements" holds one row per shot, ordered like the returned tuple.
+    shots = shot_vec.to_dict()["measurements"]
+    assert len(shots) == 1000, "Should have one measurement row per shot"
 
     # The control qubit should measure |1⟩ in X basis (due to phase kickback)
     # The target should remain in |1⟩
-    control_one_count = 0
-    target_one_count = 0
-    total = 0
-
-    if hasattr(results, "__getitem__"):
-        m1_list = results.get("measurement_0", [])
-        m2_list = results.get("measurement_1", [])
-
-        for m1, m2 in zip(m1_list, m2_list, strict=False):
-            total += 1
-            if m1 == 1:
-                control_one_count += 1
-            if m2 == 1:
-                target_one_count += 1
+    control_one_count = sum(1 for m1, _ in shots if m1 == 1)
+    target_one_count = sum(1 for _, m2 in shots if m2 == 1)
+    total = len(shots)
 
     # Control should be predominantly |1⟩ due to phase kickback
     assert (
@@ -192,19 +164,15 @@ def test_quantum_interference() -> None:
         return measure(q)
 
     # Run simulation with state_vector backend
-    results = sim(Guppy(quantum_interferometer)).qubits(1).quantum(state_vector()).seed(42).run(1000)
-    assert results is not None, "Should get results"
+    shot_vec = sim(Guppy(quantum_interferometer)).qubits(1).quantum(state_vector()).seed(42).run(1000)
+    assert shot_vec is not None, "Should get results"
+    # "measurements" holds one single-element row per shot.
+    shots = shot_vec.to_dict()["measurements"]
+    assert len(shots) == 1000, "Should have one measurement row per shot"
 
     # Due to interference, should measure |1⟩ ~100% of the time
-    one_count = 0
-    total = 0
-
-    if hasattr(results, "__getitem__"):
-        measurements = results.get("measurement_0", [])
-        for m in measurements:
-            total += 1
-            if m == 1:
-                one_count += 1
+    one_count = sum(1 for (m,) in shots if m == 1)
+    total = len(shots)
 
     assert one_count / total > 0.95, f"Should measure |1⟩ due to interference, got {one_count / total}"
 
@@ -229,24 +197,19 @@ def test_rotation_gates() -> None:
         return measure(q)
 
     # Run simulation with state_vector backend
-    results = sim(Guppy(rotation_circuit)).qubits(1).quantum(state_vector()).seed(42).run(1000)
+    shot_vec = sim(Guppy(rotation_circuit)).qubits(1).quantum(state_vector()).seed(42).run(1000)
 
-    assert results is not None, "Should get results"
+    assert shot_vec is not None, "Should get results"
+    # "measurements" holds one single-element row per shot.
+    shots = shot_vec.to_dict()["measurements"]
+    assert len(shots) == 1000, "Should have one measurement row per shot"
 
     # After Ry(π/2), should be in equal superposition
     # Rz just adds phase, doesn't change measurement probabilities
-    zero_count = 0
-    one_count = 0
+    zero_count = sum(1 for (m,) in shots if m == 0)
+    one_count = len(shots) - zero_count
 
-    if hasattr(results, "__getitem__"):
-        measurements = results.get("measurement_0", [])
-        for m in measurements:
-            if m == 0:
-                zero_count += 1
-            else:
-                one_count += 1
-
-    total = zero_count + one_count
+    total = len(shots)
     # Should be roughly 50/50 after Ry(π/2)
     assert 0.4 < zero_count / total < 0.6, f"Should be ~50% |0⟩ after Ry(π/2), got {zero_count / total}"
     assert 0.4 < one_count / total < 0.6, f"Should be ~50% |1⟩ after Ry(π/2), got {one_count / total}"

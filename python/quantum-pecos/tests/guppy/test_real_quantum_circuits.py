@@ -53,6 +53,34 @@ def test_bell_state_preparation() -> None:
     assert 0.4 < both_one / total < 0.6, f"Should be ~50% |11⟩, got {both_one / total}"
 
 
+def test_measurements_rows_are_qubit_id_ordered() -> None:
+    """Pin the raw-results contract: "measurements" rows are in QUBIT-ID order.
+
+    HugrEngine::get_results assembles the rows from the per-qubit measurement
+    map sorted by qubit id, NOT from the guppy return-tuple order. A program
+    returning its measurements reversed must still yield qubit-id-ordered
+    rows; if tuple-order capture is ever implemented, this test documents the
+    intentional behavior change.
+    """
+
+    @guppy
+    def reversed_return() -> tuple[bool, bool]:
+        q1 = qubit()  # qubit id 0
+        q2 = qubit()  # qubit id 1
+        x(q1)  # deterministically flip qubit 0 to |1>
+        m1 = measure(q1)
+        m2 = measure(q2)
+        return (m2, m1)  # reversed relative to qubit-id order
+
+    shot_vec = sim(Guppy(reversed_return)).qubits(2).quantum(state_vector()).seed(42).run(20)
+    shots = shot_vec.to_dict()["measurements"]
+    assert len(shots) == 20, "Should have one measurement row per shot"
+
+    # Qubit-id order puts the X-flipped qubit 0 first even though the guppy
+    # function returns (m2, m1); tuple order would read (0, 1) instead.
+    assert all(tuple(row) == (1, 0) for row in shots), shots
+
+
 def test_ghz_state() -> None:
     """Test 3-qubit GHZ state preparation."""
 

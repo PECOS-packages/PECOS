@@ -112,11 +112,21 @@ def _assert_mz_rr_pairing(label: str, ir: str) -> None:
             events.append(("mz", _slot(m.group(1))))
         else:
             events.append(("rr", _slot(m.group(2))))
-    # Tripwire: if the emitted pointer syntax ever drifts away from the
-    # event regex again, fail loud instead of vacuously passing. (Match
-    # call sites only -- the `declare` preamble is always present.)
-    if "call void @__quantum__qis__mz__body" in ir:
-        assert events, f"{label}: mz calls present but _MZ_RR_EVENT matched none; pattern out of sync with emitted IR"
+    # Tripwire: if the emitted pointer syntax ever drifts away from EITHER
+    # half of the event regex, fail loud instead of vacuously passing.
+    # Count raw call sites (the `declare` preamble lines do not contain
+    # "call") and require the regex to have matched every one of them.
+    mz_calls = ir.count("call void @__quantum__qis__mz__body")
+    rr_calls = ir.count("call i1 @__quantum__rt__read_result")
+    mz_events = sum(1 for kind, _ in events if kind == "mz")
+    rr_events = sum(1 for kind, _ in events if kind == "rr")
+    assert (
+        mz_events == mz_calls
+    ), f"{label}: _MZ_RR_EVENT matched {mz_events} of {mz_calls} mz calls; pattern out of sync with emitted IR"
+    assert rr_events == rr_calls, (
+        f"{label}: _MZ_RR_EVENT matched {rr_events} of {rr_calls} read_result calls; "
+        f"pattern out of sync with emitted IR"
+    )
     mz_slots = [s for kind, s in events if kind == "mz"]
     assert mz_slots == list(range(len(mz_slots))), f"{label}: mz result slots not monotonic 0..n-1: {mz_slots}"
     for i, (kind, slot) in enumerate(events):

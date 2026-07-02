@@ -33,7 +33,8 @@ def test_bell_state_preparation() -> None:
     # Use seed for reproducibility
     shot_vec = sim(Guppy(prepare_bell_state)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    # "measurements" holds one row per shot, ordered like the returned tuple.
+    # "measurements" holds one row per shot in qubit-id order (each qubit is
+    # measured once here, so this matches the returned tuple's order).
     shots = shot_vec.to_dict()["measurements"]
     assert len(shots) == 1000, "Should have one measurement row per shot"
 
@@ -77,7 +78,8 @@ def test_ghz_state() -> None:
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(prepare_ghz_state)).qubits(3).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    # "measurements" holds one row per shot, ordered like the returned tuple.
+    # "measurements" holds one row per shot in qubit-id order (each qubit is
+    # measured once here, so this matches the returned tuple's order).
     shots = shot_vec.to_dict()["measurements"]
     assert len(shots) == 1000, "Should have one measurement row per shot"
 
@@ -125,7 +127,8 @@ def test_quantum_phase_kickback() -> None:
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(phase_kickback_circuit)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    # "measurements" holds one row per shot, ordered like the returned tuple.
+    # "measurements" holds one row per shot in qubit-id order (each qubit is
+    # measured once here, so this matches the returned tuple's order).
     shots = shot_vec.to_dict()["measurements"]
     assert len(shots) == 1000, "Should have one measurement row per shot"
 

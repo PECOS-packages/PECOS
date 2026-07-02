@@ -56,8 +56,8 @@ class TestGuppySimBuilder:
             assert len(results2["measurement_0"]) == 10
         else:
             # Fallback to old format
-            measurements1 = results1.get("measurements", results1.get("result", []))
-            measurements2 = results2.get("measurements", results2.get("result", []))
+            measurements1 = results1["measurements"]
+            measurements2 = results2["measurements"]
             assert len(measurements1) == 10
             assert len(measurements2) == 10
 
@@ -66,7 +66,7 @@ class TestGuppySimBuilder:
         results = sim(self.single_qubit).qubits(10).quantum(state_vector()).run(10).to_dict()
 
         # Check that we have measurement results
-        raw_measurements = results.get("measurements", [])
+        raw_measurements = results["measurements"]
         measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
         assert len(measurements) == 10
         assert all(r in [0, 1] for r in measurements)
@@ -117,7 +117,7 @@ class TestGuppySimBuilder:
             assert len(results["measurement_0"]) == 50
             assert len(results["measurement_1"]) == 50
         else:
-            measurements = results.get("measurements", results.get("result", []))
+            measurements = results["measurements"]
             assert len(measurements) == 50
 
     def test_bell_state_correlation(self) -> None:
@@ -125,7 +125,7 @@ class TestGuppySimBuilder:
         results = sim(self.bell_state).qubits(10).quantum(state_vector()).seed(42).run(1000).to_dict()
 
         # Measurements format is [[m0, m1], [m0, m1], ...]
-        raw_measurements = results.get("measurements", [])
+        raw_measurements = results["measurements"]
         correlated = sum(1 for m in raw_measurements if m[0] == m[1])
         assert correlated == len(
             raw_measurements,
@@ -149,7 +149,7 @@ class TestGuppySimBuilder:
 
         # Run simulation
         results = sim_obj.run(10).to_dict()
-        raw_measurements = results.get("measurements", [])
+        raw_measurements = results["measurements"]
         measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
         assert len(measurements) == 10
 
@@ -261,7 +261,7 @@ def test_reset_returns_to_zero_state() -> None:
 
     # First run - all measurements should be 0 since qubit starts in |0⟩
     results1 = sim_obj.run(100)
-    measurements1 = results1.to_dict().get("measurements", [])
+    measurements1 = results1.to_dict()["measurements"]
     assert all(
         m == 0 or m == [0] or m == (0,) or m is False for m in measurements1
     ), f"Expected all measurements to be 0, got: {measurements1[:5]}..."
@@ -271,7 +271,7 @@ def test_reset_returns_to_zero_state() -> None:
 
     # After reset, qubit should be back in |0⟩, so all measurements should still be 0
     results2 = sim_obj.run(100)
-    measurements2 = results2.to_dict().get("measurements", [])
+    measurements2 = results2.to_dict()["measurements"]
     assert all(
         m == 0 or m == [0] or m == (0,) or m is False for m in measurements2
     ), f"After reset, expected all measurements to be 0, got: {measurements2[:5]}..."

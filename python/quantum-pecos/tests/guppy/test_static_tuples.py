@@ -91,7 +91,7 @@ def circuit_5_tuple() -> tuple[bool, bool, bool, bool, bool]:
 def test_1_tuple_return() -> None:
     """Test that 1-tuple (bool) returns work correctly."""
     results = sim(Guppy(circuit_1_tuple)).qubits(1).quantum(state_vector()).run(5).to_dict()
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     # For single bool return, measurements is [[1], [1], ...]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert len(measurements) == 5
@@ -101,7 +101,7 @@ def test_1_tuple_return() -> None:
 def test_2_tuple_return() -> None:
     """Test that 2-tuple returns work correctly."""
     results = sim(Guppy(circuit_2_tuple)).qubits(2).quantum(state_vector()).run(5).to_dict()
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     # For tuple return, measurements is [[1, 0], [1, 0], ...]
     # First qubit has X, second doesn't
     assert all(raw_measurements[i][0] == 1 for i in range(5))
@@ -111,7 +111,7 @@ def test_2_tuple_return() -> None:
 def test_3_tuple_return() -> None:
     """Test that 3-tuple returns work correctly."""
     results = sim(Guppy(circuit_3_tuple)).qubits(3).quantum(state_vector()).run(5).to_dict()
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     # For tuple return, measurements is [[1, 0, 1], [1, 0, 1], ...]
     # Pattern: X, no X, X
     assert all(raw_measurements[i][0] == 1 for i in range(5))
@@ -122,7 +122,7 @@ def test_3_tuple_return() -> None:
 def test_4_tuple_return() -> None:
     """Test that 4-tuple returns work correctly."""
     results = sim(Guppy(circuit_4_tuple)).qubits(4).quantum(state_vector()).run(5).to_dict()
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     # For tuple return, measurements is [[1, 0, 1, 0], [1, 0, 1, 0], ...]
     # Pattern: X, no X, X, no X
     assert all(raw_measurements[i][0] == 1 for i in range(5))
@@ -134,7 +134,7 @@ def test_4_tuple_return() -> None:
 def test_5_tuple_return() -> None:
     """Test that 5-tuple returns work correctly."""
     results = sim(Guppy(circuit_5_tuple)).qubits(5).quantum(state_vector()).run(5).to_dict()
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     # For tuple return, measurements is [[1, 0, 1, 0, 1], [1, 0, 1, 0, 1], ...]
     # Pattern: X, no X, X, no X, X
     assert all(raw_measurements[i][0] == 1 for i in range(5))

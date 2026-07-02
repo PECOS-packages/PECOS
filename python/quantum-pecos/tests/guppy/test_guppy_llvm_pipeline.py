@@ -139,7 +139,7 @@ class TestGuppyLLVMPipeline:
         assert result is not None, "Should get execution results"
 
         # Measurements format is [[m0, m1], [m0, m1], ...]
-        measurements = result.get("measurements", [])
+        measurements = result["measurements"]
         assert len(measurements) == 100, "Should have 100 measurements"
 
         # Check correlation (Bell state should be perfectly correlated)
@@ -242,7 +242,7 @@ def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
     # Calculate average number of 1s
     # Measurements format is [[m0], [m0], ...] for single qubit
     # or [[m0, m1], [m0, m1], ...] for multiple qubits
-    measurements = result.get("measurements", [])
+    measurements = result["measurements"]
 
     if n_qubits == 1:
         ones_count = sum(m[-1] for m in measurements)

@@ -70,7 +70,7 @@ class ExtendedGuppyTester:
             result_dict = builder.run(shots).to_dict()
 
             # Format results - measurements is [[m0], [m0], ...] or [[m0, m1], ...]
-            raw_measurements = result_dict.get("measurements", [])
+            raw_measurements = result_dict["measurements"]
             if raw_measurements and isinstance(raw_measurements[0], list):
                 if len(raw_measurements[0]) == 1:
                     # Single measurement - [[1], [0], ...] -> [1, 0, ...]

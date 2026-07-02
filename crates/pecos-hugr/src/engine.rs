@@ -1220,6 +1220,17 @@ impl HugrEngine {
             }
         }
 
+        // NOTE: a node that stays deferred forever inside EXECUTED control
+        // flow can stall its container and silently truncate downstream
+        // effects. Detecting that here (queue drained, no measurement pause)
+        // requires the active_cases/active_cfgs/active_calls/active_tailloops
+        // bookkeeping to be reliably empty after healthy completion, which it
+        // currently is not (several passing fixtures finish with leftover
+        // active entries). Completion-time stall detection is deferred until
+        // those lifecycle invariants are fixed; the rotation-angle consumers
+        // fail loud regardless (resolve_rotation_angle), and the Python
+        // guppy tests assert result presence and shot counts.
+
         if operation_count == 0 {
             debug!("No operations processed");
             return Ok(None);
@@ -1890,6 +1901,41 @@ mod tests {
             (radians - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
             "RY command should have angle pi/2, got {radians}",
         );
+
+        // Pin the RUNTIME chain directly: the gate command above can also be
+        // satisfied by the STATIC extraction (op.params wins in
+        // resolve_rotation_angle), so assert the classical values the runtime
+        // tuple ops must have produced during execution.
+        let hugr = engine.hugr.clone().expect("hugr present");
+        let (unpack, from_halfturns) = ry_runtime_chain_nodes(&hugr);
+        assert_eq!(
+            engine.wire_state.classical_values.get(&(unpack, 0)),
+            Some(&ClassicalValue::Float(0.5)),
+            "UnpackTuple should have unpacked the angle float at runtime"
+        );
+        assert_eq!(
+            engine.wire_state.classical_values.get(&(from_halfturns, 0)),
+            Some(&ClassicalValue::Rotation(0.5)),
+            "from_halfturns should have produced the runtime rotation value"
+        );
+    }
+
+    /// Walk back from `from_halfturns_unchecked` to its feeding `UnpackTuple`
+    /// in the guppy tuple-wrapped-angle fixtures.
+    fn ry_runtime_chain_nodes(hugr: &Hugr) -> (Node, Node) {
+        let mut from_halfturns = None;
+        for node in hugr.nodes() {
+            if let Some(ext) = hugr.get_optype(node).as_extension_op()
+                && ext.unqualified_id() == "from_halfturns_unchecked"
+            {
+                from_halfturns = Some(node);
+            }
+        }
+        let fh = from_halfturns.expect("fixture should contain from_halfturns_unchecked");
+        let (unpack, _) = hugr
+            .single_linked_output(fh, IncomingPort::from(0))
+            .expect("from_halfturns input should be wired");
+        (unpack, fh)
     }
 
     #[test]

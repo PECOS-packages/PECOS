@@ -67,7 +67,7 @@ def get_measurements(results: dict, _expected_count: int = 1) -> list:
         List of measurements (either single values or tuples)
     """
     # Get measurements from new format - [[m0], [m1], ...] or [[m0, m1], [m0, m1], ...]
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     if not raw_measurements:
         return []
 
@@ -218,6 +218,12 @@ class TestArrayOperations:
 
             # b0 and b2 are probabilistic (from H gates)
 
+    @pytest.mark.xfail(
+        reason="engine returns no measurements for array+loop guppy programs (silent "
+        "result truncation, pre-existing); the test passed vacuously until result "
+        "presence was asserted -- see the deferred-node/stalled-control-flow follow-up",
+        strict=True,
+    )
     def test_discard_array(self) -> None:
         """Test discarding an array of qubits."""
         # First check if discard_array is available
@@ -244,6 +250,12 @@ class TestArrayOperations:
         results = sim(Guppy(discard_array_test)).qubits(10).quantum(state_vector()).seed(42).run(10).to_dict()
         assert all(r == 1 for r in get_measurements(results)), "Final qubit should be |1⟩"
 
+    @pytest.mark.xfail(
+        reason="engine returns no measurements for array+loop guppy programs (silent "
+        "result truncation, pre-existing); the test passed vacuously until result "
+        "presence was asserted -- see the deferred-node/stalled-control-flow follow-up",
+        strict=True,
+    )
     def test_array_indexing_and_loops(self) -> None:
         """Test array indexing within loops."""
         if measure_array is None:

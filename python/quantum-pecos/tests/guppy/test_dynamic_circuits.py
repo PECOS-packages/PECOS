@@ -47,7 +47,7 @@ class TestDynamicCircuitExecution:
 
         # Extract the return value (last measurement in each shot)
         # Results format: [[m1, m2], [m1, m2], ...] where m2 is the return value
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         return_values = [shot[-1] for shot in measurements]
 
         # All results should be False since q1 is |0>, so X is never applied to q2
@@ -79,7 +79,7 @@ class TestDynamicCircuitExecution:
         results = sim(Guppy(conditional_x_from_one)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
         # Extract measurements
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         if not measurements and "measurement_0" in results:
             measurements = results["measurement_0"]
 
@@ -177,7 +177,7 @@ class TestDynamicCircuitExecution:
 
         # Extract the return value (last measurement in each shot)
         # Results format: [[m0, m1, m2], ...] where m2 is the return value
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         return_values = [shot[-1] for shot in measurements]
 
         # The teleported state should be |1>, so we expect all True

@@ -45,7 +45,7 @@ def test_quantum_function() -> None:
         result = sim(Guppy(quantum_coin)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
         # Should have measurement results
-        raw_measurements = result.get("measurements", [])
+        raw_measurements = result["measurements"]
         values = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
         assert len(values) == 10
         # Hadamard should give mix of 0s and 1s

@@ -37,7 +37,7 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
 
 def get_single_measurements(results: dict) -> list[int]:
     """Extract single-value measurements from results dict."""
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     if not raw_measurements:
         return []
     # Format is [[1], [0], ...] for single bool return
@@ -50,7 +50,7 @@ def get_measurement_tuples(results: dict, n_bits: int) -> list[tuple[bool, ...]]
     """Extract measurement tuples from results, handling nested list format."""
     # Get measurements - format is [[m0, m1, ...], [m0, m1, ...], ...] for tuple returns
     # or [[m], [m], ...] for single bool returns
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
 
     if not raw_measurements:
         return []
@@ -390,7 +390,7 @@ class TestControlFlow:
 
         results = sim(Guppy(loop_test)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
         # For int returns, measurements contains the return values
-        raw_measurements = results.get("measurements", [])
+        raw_measurements = results["measurements"]
         # Handle nested list format [[2], [1], ...] for int returns
         if raw_measurements and isinstance(raw_measurements[0], list):
             measurements = [m[-1] if m else 0 for m in raw_measurements]

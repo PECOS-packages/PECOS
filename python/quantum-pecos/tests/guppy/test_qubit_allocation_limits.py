@@ -25,7 +25,7 @@ class TestQubitAllocationLimits:
         results = sim(Guppy(static_test)).qubits(5).quantum(state_vector()).run(10).to_dict()
 
         # Check we got results - format is [[m0, m1, m2], [m0, m1, m2], ...]
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         assert len(measurements) == 10, "Should have 10 measurements"
         for m in measurements:
             assert len(m) == 3, f"Each shot should have 3 measurements, got {len(m)}"
@@ -51,7 +51,7 @@ class TestQubitAllocationLimits:
         results = sim(Guppy(dynamic_loop_test)).qubits(10).quantum(state_vector()).seed(42).run(100)
 
         # Extract measurements
-        measurements = results.get("measurement_0", results.get("measurements", []))
+        measurements = results.get("measurement_0", results["measurements"])
         assert len(measurements) == 100, "Should have 100 measurements"
 
         # Due to Guppy limitation, only returns 0 or 1 (last measurement)
@@ -175,7 +175,7 @@ class TestQubitAllocationLimits:
         # Need sufficient qubits for nested allocation
         results = sim(Guppy(nested_loop_test)).qubits(10).quantum(state_vector()).seed(42).run(50)
 
-        measurements = results.get("measurement_0", results.get("measurements", []))
+        measurements = results.get("measurement_0", results["measurements"])
         assert len(measurements) == 50, "Should have 50 measurements"
 
         # Count should be 0-6 (depends on measurements)
@@ -200,7 +200,7 @@ class TestQubitAllocationLimits:
         for max_qubits in [5, 10]:
             results = sim(measurement_reuse_test).qubits(max_qubits).quantum(state_vector()).seed(42).run(50)
 
-            measurements = results.get("measurement_0", results.get("measurements", []))
+            measurements = results.get("measurement_0", results["measurements"])
             assert len(measurements) == 50, f"Should have 50 measurements with max_qubits={max_qubits}"
 
             # Due to Guppy limitation, only returns 0 or 1 (last measurement)
@@ -224,7 +224,7 @@ class TestQubitAllocationLimits:
         for max_q in [1, 5, 10, 20]:
             results = sim(single_qubit_test).qubits(max_q).quantum(state_vector()).seed(42).run(10).to_dict()
 
-            raw_measurements = results.get("measurements", [])
+            raw_measurements = results["measurements"]
             measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
             assert len(measurements) == 10, f"Should have 10 measurements with max_qubits={max_q}"
 
@@ -264,7 +264,7 @@ class TestQubitAllocationLimits:
 
         # The result should be an array of 3 booleans for each shot
         # Results format is [[m0, m1, m2], [m0, m1, m2], ...]
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         assert len(measurements) == 50, "Should have 50 measurement sets"
 
         # Each measurement should be an array/tuple of 3 booleans

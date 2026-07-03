@@ -260,8 +260,14 @@ impl HugrEngine {
                 let mut wire_key = (src_node, src_port.index());
                 let src_op = hugr.get_optype(src_node);
 
-                // Check if the source is an Input node - if so, trace through it
-                if matches!(src_op, OpType::Input(_)) {
+                // Check if the source is an Input node - if so, trace through
+                // it -- UNLESS the Input port itself already carries a qubit
+                // mapping (e.g. a case Input holding a Sum-payload QubitRef):
+                // tracing past it would land on an outer wire with no
+                // mapping and misresolve the gate.
+                if matches!(src_op, OpType::Input(_))
+                    && !self.wire_state.wire_to_qubit.contains_key(&wire_key)
+                {
                     debug!(
                         "Input node detected: {:?}:{}, attempting trace",
                         src_node,

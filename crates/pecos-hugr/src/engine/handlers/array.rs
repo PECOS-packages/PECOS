@@ -14,10 +14,21 @@
 
 //! Array operations (`collections.array`).
 //!
-//! This module handles array collection operations:
-//! - Creation: `new_array`, `repeat`
-//! - Access: `get`, `set`, `len`
-//! - Modification: `push`, `pop`, `swap`
+//! Implements the HUGR std array ops with their spec signatures
+//! (`hugr-core` `std_extensions/collections/array/array_op.rs`):
+//! - `new_array<n, T>`: `[T; n] -> [array]`
+//! - `unpack<n, T>`: `[array] -> [T; n]`
+//! - `get<n, T>`: `[array, usize] -> [option<T>, array]`
+//! - `set<n, T>`: `[array, usize, T] -> [either([T, array], [T, array])]`
+//!   (tag 1 = success carrying the displaced element; tag 0 = out-of-bounds
+//!   carrying the given element back so linear values are not lost)
+//! - `swap<n, T>`: `[array, usize, usize] -> [either([array], [array])]`
+//! - `pop_left`/`pop_right<n, T>`: `[array] -> [option<(T, array<n-1>)>]`
+//! - `discard_empty<T>`: `[array<0, T>] -> []`
+//!
+//! Handlers defer (return false) on missing inputs so consumers never see
+//! fabricated arrays or elements; unknown ops also defer so they surface in
+//! the completion-time stall report instead of silently passing through.
 
 use log::debug;
 use tket::hugr::ops::OpTrait;
@@ -37,13 +48,11 @@ impl HugrEngine {
 
         match op_name {
             "new_array" | "NewArray" => {
-                // new_array: (T, ...) -> Array<T>
-                // Collect all inputs into an array
+                // [T; n] -> [array]. A missing element defers the whole
+                // construction: silently skipping it would shorten the array
+                // and shift every index. Qubit elements ride as QubitRef.
                 let op = hugr.get_optype(node);
                 let num_inputs = op.dataflow_signature().map_or(0, |sig| sig.input_count());
-
-                // A missing element defers the whole construction: silently
-                // skipping it would shorten the array and shift every index.
                 let mut elements = Vec::with_capacity(num_inputs);
                 for port in 0..num_inputs {
                     if let Some(value) = self.get_input_value(hugr, node, port) {
@@ -62,15 +71,32 @@ impl HugrEngine {
                     .insert((node, 0), ClassicalValue::Array(elements));
                 true
             }
+            "unpack" => {
+                // [array] -> [T; n]: each element on its own output port.
+                let Some(ClassicalValue::Array(elements)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("array.unpack at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                for (port, value) in elements.into_iter().enumerate() {
+                    if let ClassicalValue::QubitRef(qubit_id) = &value {
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((node, port), *qubit_id);
+                    }
+                    self.wire_state.classical_values.insert((node, port), value);
+                }
+                debug!("array.unpack at {node:?}: unpacked");
+                true
+            }
             "get" | "Get" | "index" | "Index" => {
-                // get: (Array<T>, int) -> T
-                // Get element at index
+                // [array, usize] -> [option<T>, array]: option on port 0
+                // (None = tag 0 for out-of-bounds), the array back on port 1.
                 let Some(ClassicalValue::Array(elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("array.get at {node:?}: array not ready, deferring");
                     return false;
                 };
-                #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
                 let Some(index) = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint())
@@ -80,31 +106,33 @@ impl HugrEngine {
                     return false;
                 };
 
-                let Some(element) = elements.get(index) else {
-                    debug!(
-                        "array.get at {node:?}: index {index} out of bounds (len={}), deferring",
-                        elements.len()
-                    );
-                    return false;
+                let result = match elements.get(index) {
+                    Some(element) => ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![element.clone()],
+                    },
+                    None => ClassicalValue::Sum {
+                        tag: 0,
+                        values: vec![],
+                    },
                 };
-                if let ClassicalValue::QubitRef(qubit_id) = element {
-                    self.wire_state.wire_to_qubit.insert((node, 0), *qubit_id);
-                }
+                debug!("array.get[{index}]: {result:?}");
+                self.wire_state.classical_values.insert((node, 0), result);
                 self.wire_state
                     .classical_values
-                    .insert((node, 0), element.clone());
-                debug!("array.get[{index}]: retrieved element");
+                    .insert((node, 1), ClassicalValue::Array(elements));
                 true
             }
             "set" | "Set" => {
-                // set: (Array<T>, int, T) -> Array<T>
-                // Set element at index
+                // [array, usize, T] -> [either([T, array], [T, array])]:
+                // tag 1 = success carrying the DISPLACED element and the
+                // updated array; tag 0 = out-of-bounds carrying the given
+                // element and the unchanged array (linear values survive).
                 let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("array.set at {node:?}: array not ready, deferring");
                     return false;
                 };
-                #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
                 let Some(index) = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint())
@@ -113,117 +141,130 @@ impl HugrEngine {
                     debug!("array.set at {node:?}: index not ready, deferring");
                     return false;
                 };
-                let Some(new_value) = self.get_input_value(hugr, node, 2) else {
+                let new_value = if let Some(qubit_id) = self.get_input_qubit(hugr, node, 2) {
+                    ClassicalValue::QubitRef(qubit_id)
+                } else if let Some(value) = self.get_input_value(hugr, node, 2) {
+                    value
+                } else {
                     debug!("array.set at {node:?}: value not ready, deferring");
                     return false;
                 };
-                let Some(slot) = elements.get_mut(index) else {
-                    debug!(
-                        "array.set at {node:?}: index {index} out of bounds (len={}), deferring",
-                        elements.len()
-                    );
-                    return false;
+
+                let result = if let Some(slot) = elements.get_mut(index) {
+                    let displaced = std::mem::replace(slot, new_value);
+                    debug!("array.set[{index}]: element replaced");
+                    ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![displaced, ClassicalValue::Array(elements)],
+                    }
+                } else {
+                    debug!("array.set[{index}]: out of bounds (len={})", elements.len());
+                    ClassicalValue::Sum {
+                        tag: 0,
+                        values: vec![new_value, ClassicalValue::Array(elements)],
+                    }
                 };
-                *slot = new_value;
-                self.wire_state
-                    .classical_values
-                    .insert((node, 0), ClassicalValue::Array(elements));
-                debug!("array.set[{index}]: updated element");
-                true
-            }
-            "len" | "Len" | "length" | "Length" => {
-                // len: Array<T> -> int
-                // Get array length
-                let array = self.get_input_value(hugr, node, 0);
-
-                if let Some(ClassicalValue::Array(elements)) = array {
-                    let len = elements.len() as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(len));
-                    debug!("array.len: {len}");
-                }
-                true
-            }
-            "pop" | "Pop" => {
-                // pop: Array<T> -> (Array<T>, T)
-                // Remove and return the last element
-                let array = self.get_input_value(hugr, node, 0);
-
-                if let Some(ClassicalValue::Array(mut elements)) = array
-                    && let Some(last) = elements.pop()
-                {
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Array(elements));
-                    self.wire_state.classical_values.insert((node, 1), last);
-                    debug!("array.pop: removed last element");
-                }
-                true
-            }
-            "push" | "Push" => {
-                // push: (Array<T>, T) -> Array<T>
-                // Append element to array
-                let array = self.get_input_value(hugr, node, 0);
-                let value = self.get_input_value(hugr, node, 1);
-
-                if let (Some(ClassicalValue::Array(mut elements)), Some(new_value)) = (array, value)
-                {
-                    elements.push(new_value);
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Array(elements));
-                    debug!("array.push: appended element");
-                }
-                true
-            }
-            "repeat" | "Repeat" => {
-                // repeat: (T, int) -> Array<T>
-                // Create array with n copies of value
-                let value = self.get_input_value(hugr, node, 0);
-                let count = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint())
-                    .unwrap_or(0) as usize;
-
-                if let Some(val) = value {
-                    let elements = vec![val; count];
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Array(elements));
-                    debug!("array.repeat: created array with {count} copies");
-                }
+                self.wire_state.classical_values.insert((node, 0), result);
                 true
             }
             "swap" | "Swap" => {
-                // swap: (Array<T>, int, int) -> Array<T>
-                // Swap elements at two indices
-                let array = self.get_input_value(hugr, node, 0);
-                let i = self
+                // [array, usize, usize] -> [either([array], [array])]:
+                // tag 1 = success with the swapped array; tag 0 =
+                // out-of-bounds with the unchanged array.
+                let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("array.swap at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                let Some(i) = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint())
-                    .unwrap_or(0) as usize;
-                let j = self
+                    .map(|v| v as usize)
+                else {
+                    debug!("array.swap at {node:?}: first index not ready, deferring");
+                    return false;
+                };
+                let Some(j) = self
                     .get_input_value(hugr, node, 2)
                     .and_then(|v| v.as_uint())
-                    .unwrap_or(0) as usize;
+                    .map(|v| v as usize)
+                else {
+                    debug!("array.swap at {node:?}: second index not ready, deferring");
+                    return false;
+                };
 
-                if let Some(ClassicalValue::Array(mut elements)) = array {
-                    if i < elements.len() && j < elements.len() {
-                        elements.swap(i, j);
+                let result = if i < elements.len() && j < elements.len() {
+                    elements.swap(i, j);
+                    debug!("array.swap[{i},{j}]: swapped");
+                    ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![ClassicalValue::Array(elements)],
                     }
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Array(elements));
-                    debug!("array.swap[{i}, {j}]");
+                } else {
+                    debug!(
+                        "array.swap[{i},{j}]: out of bounds (len={})",
+                        elements.len()
+                    );
+                    ClassicalValue::Sum {
+                        tag: 0,
+                        values: vec![ClassicalValue::Array(elements)],
+                    }
+                };
+                self.wire_state.classical_values.insert((node, 0), result);
+                true
+            }
+            "pop_left" | "pop_right" => {
+                // [array<n, T>] -> [option<(T, array<n-1, T>)>]: the empty
+                // variant (tag 0) when nothing is left, else (element, rest)
+                // in the value variant (tag 1).
+                let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("array.{op_name} at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                let result = if elements.is_empty() {
+                    debug!("array.{op_name} at {node:?}: empty array -> None variant");
+                    ClassicalValue::Sum {
+                        tag: 0,
+                        values: vec![],
+                    }
+                } else {
+                    let element = if op_name == "pop_left" {
+                        elements.remove(0)
+                    } else {
+                        elements.pop().expect("non-empty checked above")
+                    };
+                    debug!(
+                        "array.{op_name} at {node:?}: popped element, {} remain",
+                        elements.len()
+                    );
+                    ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![element, ClassicalValue::Array(elements)],
+                    }
+                };
+                self.wire_state.classical_values.insert((node, 0), result);
+                true
+            }
+            "discard_empty" => {
+                // [array<0, T>] -> []: consume an empty array. Defer until
+                // the value exists so the op is not marked done while its
+                // producer is pending.
+                if self.get_input_value(hugr, node, 0).is_none() {
+                    debug!("array.discard_empty at {node:?}: array not ready, deferring");
+                    return false;
                 }
+                debug!("array.discard_empty: array consumed");
                 true
             }
             _ => {
-                // For unknown array operations, try pass-through
-                debug!("Unknown collections.array operation: {op_name} - attempting pass-through");
-                self.propagate_all_inputs(hugr, node);
-                true
+                // Unknown/unimplemented array op (e.g. `repeat`, whose real
+                // signature takes a function value the engine cannot
+                // execute): defer so it surfaces in the completion-time
+                // stall report instead of silently passing values through
+                // as if the op were an identity wire.
+                debug!("Unknown collections.array operation: {op_name} at {node:?}, deferring");
+                false
             }
         }
     }

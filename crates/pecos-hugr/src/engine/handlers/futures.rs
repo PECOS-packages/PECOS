@@ -33,51 +33,57 @@ impl HugrEngine {
 
         match op_name {
             "Read" => {
-                // Read: Future<T> -> T
-                // Resolve the Future to its value
-                if let Some(value) = self.get_input_value(hugr, node, 0)
-                    && let ClassicalValue::Future(future_id) = value
-                    && let Some(state) = self.extension_state.futures.get(&future_id)
-                {
-                    match state {
-                        FutureState::Resolved(outcome) => {
-                            // Future is resolved, output the value
+                // Read: Future<T> -> T. Every unresolved shape defers: a
+                // missing input, a non-Future value, an unknown future id,
+                // or a pending measurement all mean the value does not exist
+                // yet -- returning handled would mark the node processed
+                // with no output and strand every consumer.
+                let Some(ClassicalValue::Future(future_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("futures.Read at {node:?}: future not ready, deferring");
+                    return false;
+                };
+                let Some(state) = self.extension_state.futures.get(&future_id) else {
+                    debug!("futures.Read at {node:?}: unknown future {future_id}, deferring");
+                    return false;
+                };
+                match state {
+                    FutureState::Resolved(outcome) => {
+                        self.wire_state
+                            .classical_values
+                            .insert((node, 0), ClassicalValue::Bool(*outcome != 0));
+                        debug!("Read future {future_id} -> {outcome}");
+                        true
+                    }
+                    FutureState::Pending {
+                        measurement_index, ..
+                    } => {
+                        if let Some((_, qubit)) =
+                            self.measurement_state.mappings.get(*measurement_index)
+                            && let Some(&result) = self.measurement_state.results.get(qubit)
+                        {
                             self.wire_state
                                 .classical_values
-                                .insert((node, 0), ClassicalValue::Bool(*outcome != 0));
-                            debug!("Read future {future_id} -> {outcome}");
-                        }
-                        FutureState::Pending {
-                            measurement_index, ..
-                        } => {
-                            // Check if measurement result is available
-                            if let Some((_, qubit)) =
-                                self.measurement_state.mappings.get(*measurement_index)
-                            {
-                                if let Some(&result) = self.measurement_state.results.get(qubit) {
-                                    self.wire_state
-                                        .classical_values
-                                        .insert((node, 0), ClassicalValue::Bool(result != 0));
-                                    debug!("Read future {future_id} from measurement -> {result}");
-                                } else {
-                                    // Result not yet available: defer -- a
-                                    // fabricated `false` commits a wrong
-                                    // measurement value downstream. Retried
-                                    // when measurement results arrive.
-                                    debug!("Read future {future_id} pending, deferring");
-                                    return false;
-                                }
-                            }
+                                .insert((node, 0), ClassicalValue::Bool(result != 0));
+                            debug!("Read future {future_id} from measurement -> {result}");
+                            true
+                        } else {
+                            // Result not yet available: defer -- retried
+                            // when measurement results arrive.
+                            debug!("Read future {future_id} pending, deferring");
+                            false
                         }
                     }
                 }
-                true
             }
             "Dup" => {
                 // Dup: Future<T> -> (Future<T>, Future<T>)
                 // Create two new Futures pointing to the same result
-                if let Some(value) = self.get_input_value(hugr, node, 0)
-                    && let ClassicalValue::Future(original_id) = value
+                let Some(ClassicalValue::Future(original_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("futures.Dup at {node:?}: future not ready, deferring");
+                    return false;
+                };
                 {
                     // Create two new Future IDs that share the same state
                     let new_id1 = self.extension_state.next_future_id;

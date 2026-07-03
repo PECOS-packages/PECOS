@@ -176,11 +176,17 @@ impl HugrEngine {
                 }
             }
 
-            _ => {
-                debug!("Unknown prelude operation: {op_name}");
-                // For unknown ops, try to propagate inputs as a pass-through
+            "Noop" | "Lift" | "Barrier" => {
+                // Genuine identity/annotation ops: pass values through.
                 self.propagate_all_inputs(hugr, node);
                 true
+            }
+            _ => {
+                // Unknown op: defer so it surfaces in the completion-time
+                // stall report -- treating an op the engine knows nothing
+                // about as an identity wire fabricates semantics.
+                debug!("Unknown prelude operation: {op_name} at {node:?}, deferring");
+                false
             }
         }
     }

@@ -3084,18 +3084,24 @@ mod tests {
 
         let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
-        // Drive to completion, feeding one outcome per measurement each
-        // round (all zeros). This fixture builds borrow arrays in nested
-        // TailLoops, reads them back with pop_left (option-Sum results),
-        // and branches on a measurement -- for most of its life it stalled
-        // mid-flight while the test "passed" on silently truncated output.
-        // It now pins clean end-to-end execution of the whole combination.
+        // Drive with one outcome per measurement (all zeros). The quantum
+        // part of this fixture executes correctly (asserted below), but its
+        // result-reporting tail maps a function over the measured array via
+        // collections.borrow_arr.scan -- a higher-order op the engine does
+        // not execute (function-valued arguments). The engine must report
+        // that as a loud stall rather than pass the scan through as an
+        // identity wire and hand result_array_bool garbage, which is
+        // exactly how this test "passed" for most of its life. Flip the
+        // stall expectation to clean completion when scan support lands.
         let mut stage = engine.start(()).expect("Failed to start engine");
         let mut gate_counts: BTreeMap<GateType, usize> = BTreeMap::new();
         let mut rounds = 0;
         loop {
             rounds += 1;
-            assert!(rounds <= 20, "conditional_x should complete quickly");
+            assert!(
+                rounds <= 20,
+                "conditional_x should stall or complete quickly"
+            );
             match stage {
                 pecos_engines::EngineStage::NeedsProcessing(msg) => {
                     let ops = msg.quantum_ops().expect("parse quantum ops");
@@ -3114,28 +3120,33 @@ mod tests {
                     let mut builder = ByteMessageBuilder::new();
                     let _ = builder.for_outcomes();
                     builder.add_outcomes(&vec![0usize; n_meas]);
-                    stage = engine
-                        .continue_processing(builder.build())
-                        .expect("Failed to continue");
+                    match engine.continue_processing(builder.build()) {
+                        Ok(next) => stage = next,
+                        Err(e) => {
+                            let msg = e.to_string();
+                            assert!(
+                                msg.contains("stalled before completion"),
+                                "expected the unsupported-scan stall, got: {msg}"
+                            );
+                            break;
+                        }
+                    }
                 }
-                pecos_engines::EngineStage::Complete(_) => break,
+                pecos_engines::EngineStage::Complete(_) => {
+                    panic!(
+                        "conditional_x unexpectedly completed: borrow_arr.scan support                          has landed -- flip this test to assert clean completion"
+                    );
+                }
             }
         }
 
-        // Non-vacuous: the fixture's gates must actually have been emitted
-        // (a zero-op run can also reach Complete). With all-zero outcomes
-        // the measurement selects the else branch: H on the control, two
-        // measurements, and NO conditional X.
+        // Non-vacuous: the quantum part must have executed before the
+        // reporting tail stalled. With all-zero outcomes the measurement
+        // selects the else branch: H on the control, two measurements, and
+        // NO conditional X.
         assert_eq!(gate_counts.get(&GateType::H), Some(&1), "{gate_counts:?}");
         assert_eq!(gate_counts.get(&GateType::MZ), Some(&2), "{gate_counts:?}");
         assert_eq!(gate_counts.get(&GateType::X), None, "{gate_counts:?}");
-
-        // Clean completion: no stalled control flow, no starved nodes.
-        assert!(engine.active_cfgs.is_empty());
-        assert!(engine.active_cases.is_empty());
-        assert!(engine.active_calls.is_empty());
-        assert!(engine.active_tailloops.is_empty());
-        assert!(engine.pending_bool_reads.is_empty());
     }
 
     // --- Integration Tests with Quantum Simulator ---

@@ -300,6 +300,32 @@ impl HugrEngine {
                 debug!("discard_empty: array consumed");
                 true
             }
+            "clone" => {
+                // [array] -> [array, array] (copyable elements): duplicate.
+                let Some(value @ ClassicalValue::Array(_)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("borrow_arr.clone at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), value.clone());
+                self.wire_state.classical_values.insert((node, 1), value);
+                debug!("borrow_arr.clone at {node:?}: duplicated");
+                true
+            }
+            "to_array" | "from_array" => {
+                // borrow_array <-> array conversions: identity on the
+                // engine's shared Array representation.
+                let Some(value @ ClassicalValue::Array(_)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("borrow_arr.{op_name} at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                self.wire_state.classical_values.insert((node, 0), value);
+                debug!("borrow_arr.{op_name} at {node:?}: converted");
+                true
+            }
             "discard_all_borrowed" => {
                 // [array] -> []: consumes the (all-borrowed) array; nothing
                 // to produce. Defer until the array value exists so the op
@@ -312,12 +338,12 @@ impl HugrEngine {
                 true
             }
             _ => {
-                // For unknown borrow_arr operations, try pass-through
+                // Unknown op: defer so it surfaces in the stall report
+                // instead of silently passing values through.
                 debug!(
-                    "Unknown collections.borrow_arr operation: {op_name} - attempting pass-through"
+                    "Unknown collections.borrow_arr operation: {op_name} at {node:?}, deferring"
                 );
-                self.propagate_all_inputs(hugr, node);
-                true
+                false
             }
         }
     }

@@ -39,111 +39,119 @@ impl HugrEngine {
             "LazyMeasure" => {
                 // LazyMeasure: Qubit -> Future<bool>
                 // Queue the measurement and create a Future handle
-                if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
-                    // Queue measurement
-                    self.message_builder.mz(&[qubit_id.0]);
-                    let measurement_index = self.measurement_state.mappings.len();
-                    self.measurement_state.mappings.push((node, qubit_id));
+                let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) else {
+                    debug!("LazyMeasure at {node:?}: qubit not resolved, deferring");
+                    return false;
+                };
+                // Queue measurement
+                self.message_builder.mz(&[qubit_id.0]);
+                let measurement_index = self.measurement_state.mappings.len();
+                self.measurement_state.mappings.push((node, qubit_id));
 
-                    // Create a Future
-                    let future_id = self.extension_state.next_future_id;
-                    self.extension_state.next_future_id += 1;
-                    self.extension_state.futures.insert(
-                        future_id,
-                        FutureState::Pending {
-                            measurement_node: node,
-                            qubit: qubit_id,
-                            measurement_index,
-                        },
-                    );
+                // Create a Future
+                let future_id = self.extension_state.next_future_id;
+                self.extension_state.next_future_id += 1;
+                self.extension_state.futures.insert(
+                    future_id,
+                    FutureState::Pending {
+                        measurement_node: node,
+                        qubit: qubit_id,
+                        measurement_index,
+                    },
+                );
 
-                    // Store Future value on output port 0
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Future(future_id));
+                // Store Future value on output port 0
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Future(future_id));
 
-                    debug!("LazyMeasure on qubit {qubit_id:?}, created future {future_id}");
-                }
+                debug!("LazyMeasure on qubit {qubit_id:?}, created future {future_id}");
                 true
             }
             "LazyMeasureReset" => {
                 // LazyMeasureReset: Qubit -> (Qubit, Future<bool>)
-                if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
-                    // Queue measurement
-                    self.message_builder.mz(&[qubit_id.0]);
-                    let measurement_index = self.measurement_state.mappings.len();
-                    self.measurement_state.mappings.push((node, qubit_id));
+                let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) else {
+                    debug!("LazyMeasureReset at {node:?}: qubit not resolved, deferring");
+                    return false;
+                };
+                // Queue measurement
+                self.message_builder.mz(&[qubit_id.0]);
+                let measurement_index = self.measurement_state.mappings.len();
+                self.measurement_state.mappings.push((node, qubit_id));
 
-                    // Queue reset
-                    self.message_builder.pz(&[qubit_id.0]);
+                // Queue reset
+                self.message_builder.pz(&[qubit_id.0]);
 
-                    // Create a Future
-                    let future_id = self.extension_state.next_future_id;
-                    self.extension_state.next_future_id += 1;
-                    self.extension_state.futures.insert(
-                        future_id,
-                        FutureState::Pending {
-                            measurement_node: node,
-                            qubit: qubit_id,
-                            measurement_index,
-                        },
-                    );
+                // Create a Future
+                let future_id = self.extension_state.next_future_id;
+                self.extension_state.next_future_id += 1;
+                self.extension_state.futures.insert(
+                    future_id,
+                    FutureState::Pending {
+                        measurement_node: node,
+                        qubit: qubit_id,
+                        measurement_index,
+                    },
+                );
 
-                    // Output port 0: qubit, Output port 1: Future
-                    self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 1), ClassicalValue::Future(future_id));
+                // Output port 0: qubit, Output port 1: Future
+                self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
+                self.wire_state
+                    .classical_values
+                    .insert((node, 1), ClassicalValue::Future(future_id));
 
-                    debug!("LazyMeasureReset on qubit {qubit_id:?}, created future {future_id}");
-                }
+                debug!("LazyMeasureReset on qubit {qubit_id:?}, created future {future_id}");
                 true
             }
             "LazyMeasureLeaked" => {
                 // LazyMeasureLeaked: Qubit -> Future<int[6]>
                 // Same as LazyMeasure but result can be 0, 1, or 2 (leaked)
-                if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
-                    self.message_builder.mz(&[qubit_id.0]);
-                    let measurement_index = self.measurement_state.mappings.len();
-                    self.measurement_state.mappings.push((node, qubit_id));
+                let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) else {
+                    debug!("LazyMeasureLeaked at {node:?}: qubit not resolved, deferring");
+                    return false;
+                };
+                self.message_builder.mz(&[qubit_id.0]);
+                let measurement_index = self.measurement_state.mappings.len();
+                self.measurement_state.mappings.push((node, qubit_id));
 
-                    let future_id = self.extension_state.next_future_id;
-                    self.extension_state.next_future_id += 1;
-                    self.extension_state.futures.insert(
-                        future_id,
-                        FutureState::Pending {
-                            measurement_node: node,
-                            qubit: qubit_id,
-                            measurement_index,
-                        },
-                    );
+                let future_id = self.extension_state.next_future_id;
+                self.extension_state.next_future_id += 1;
+                self.extension_state.futures.insert(
+                    future_id,
+                    FutureState::Pending {
+                        measurement_node: node,
+                        qubit: qubit_id,
+                        measurement_index,
+                    },
+                );
 
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Future(future_id));
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Future(future_id));
 
-                    debug!("LazyMeasureLeaked on qubit {qubit_id:?}, created future {future_id}");
-                }
+                debug!("LazyMeasureLeaked on qubit {qubit_id:?}, created future {future_id}");
                 true
             }
             "MeasureReset" => {
                 // MeasureReset: Qubit -> (Qubit, bool)
                 // Atomic measure + reset (not lazy)
-                if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
-                    self.message_builder.mz(&[qubit_id.0]);
-                    self.measurement_state.mappings.push((node, qubit_id));
+                let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) else {
+                    debug!("MeasureReset at {node:?}: qubit not resolved, deferring");
+                    return false;
+                };
+                self.message_builder.mz(&[qubit_id.0]);
+                self.measurement_state.mappings.push((node, qubit_id));
 
-                    // Queue reset
-                    self.message_builder.pz(&[qubit_id.0]);
+                // Queue reset
+                self.message_builder.pz(&[qubit_id.0]);
 
-                    // Track measurement output wire
-                    self.measurement_state.output_wires.insert(node, (node, 1));
+                // Track measurement output wire
+                self.measurement_state.output_wires.insert(node, (node, 1));
 
-                    // Output port 0: qubit
-                    self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
+                // Output port 0: qubit
+                self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
 
-                    debug!("MeasureReset on qubit {qubit_id:?}");
-                }
+                debug!("MeasureReset on qubit {qubit_id:?}");
                 true
             }
             "RuntimeBarrier" | "StateResult" => {
@@ -191,10 +199,13 @@ impl HugrEngine {
             "NewRNGContext" => {
                 // NewRNGContext: int<64> -> RNGContext
                 // Create a new RNG context with the given seed
-                let seed = self
+                let Some(seed) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_uint())
-                    .unwrap_or(0);
+                else {
+                    debug!("NewRNGContext at {node:?}: seed not ready, deferring");
+                    return false;
+                };
 
                 let ctx_id = self.extension_state.next_rng_context_id;
                 self.extension_state.next_rng_context_id += 1;
@@ -213,86 +224,92 @@ impl HugrEngine {
             "DeleteRNGContext" => {
                 // DeleteRNGContext: RNGContext -> ()
                 // Clean up an RNG context
-                if let Some(value) = self.get_input_value(hugr, node, 0)
-                    && let ClassicalValue::RngContext(ctx_id) = value
-                {
-                    self.extension_state.rng_contexts.remove(&ctx_id);
-                    debug!("DeleteRNGContext: removed context {ctx_id}");
-                }
+                let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("DeleteRNGContext at {node:?}: context not ready, deferring");
+                    return false;
+                };
+                self.extension_state.rng_contexts.remove(&ctx_id);
+                debug!("DeleteRNGContext: removed context {ctx_id}");
                 true
             }
             "RandomFloat" => {
                 // RandomFloat: RNGContext -> (RNGContext, float64)
                 // Generate a random float in [0, 1)
-                if let Some(value) = self.get_input_value(hugr, node, 0)
-                    && let ClassicalValue::RngContext(ctx_id) = value
-                {
-                    let random_float = self.generate_random_float(ctx_id);
+                let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("RandomFloat at {node:?}: context not ready, deferring");
+                    return false;
+                };
+                let random_float = self.generate_random_float(ctx_id);
 
-                    // Output port 0: RNGContext (pass through)
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::RngContext(ctx_id));
-                    // Output port 1: random float
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 1), ClassicalValue::Float(random_float));
+                // Output port 0: RNGContext (pass through)
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::RngContext(ctx_id));
+                // Output port 1: random float
+                self.wire_state
+                    .classical_values
+                    .insert((node, 1), ClassicalValue::Float(random_float));
 
-                    debug!("RandomFloat: generated {random_float}");
-                }
+                debug!("RandomFloat: generated {random_float}");
                 true
             }
             "RandomInt" => {
                 // RandomInt: RNGContext -> (RNGContext, int<32>)
                 // Generate a random 32-bit integer
-                if let Some(value) = self.get_input_value(hugr, node, 0)
-                    && let ClassicalValue::RngContext(ctx_id) = value
-                {
-                    let random_int = self.generate_random_u64(ctx_id) as i64;
+                let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("RandomInt at {node:?}: context not ready, deferring");
+                    return false;
+                };
+                let random_int = self.generate_random_u64(ctx_id) as i64;
 
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::RngContext(ctx_id));
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 1), ClassicalValue::Int(random_int));
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::RngContext(ctx_id));
+                self.wire_state
+                    .classical_values
+                    .insert((node, 1), ClassicalValue::Int(random_int));
 
-                    debug!("RandomInt: generated {random_int}");
-                }
+                debug!("RandomInt: generated {random_int}");
                 true
             }
             "RandomIntBounded" => {
                 // RandomIntBounded: (RNGContext, int<32>) -> (RNGContext, int<32>)
                 // Generate a random integer in [0, bound)
-                let ctx_value = self.get_input_value(hugr, node, 0);
-                let bound = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_int())
-                    .unwrap_or(1)
-                    .max(1) as u64;
+                let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("RandomIntBounded at {node:?}: context not ready, deferring");
+                    return false;
+                };
+                let Some(bound) = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int())
+                else {
+                    debug!("RandomIntBounded at {node:?}: bound not ready, deferring");
+                    return false;
+                };
+                let bound = bound.max(1) as u64;
+                let random_val = self.generate_random_u64(ctx_id) % bound;
 
-                if let Some(ClassicalValue::RngContext(ctx_id)) = ctx_value {
-                    let random_val = self.generate_random_u64(ctx_id) % bound;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::RngContext(ctx_id));
+                self.wire_state
+                    .classical_values
+                    .insert((node, 1), ClassicalValue::Int(random_val as i64));
 
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::RngContext(ctx_id));
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 1), ClassicalValue::Int(random_val as i64));
-
-                    debug!("RandomIntBounded({bound}): generated {random_val}");
-                }
+                debug!("RandomIntBounded({bound}): generated {random_val}");
                 true
             }
             "RandomAdvance" => {
                 // RandomAdvance: (RNGContext, int<64>) -> RNGContext
                 // Advance the RNG state by delta steps (can be negative for backtracking)
                 let ctx_value = self.get_input_value(hugr, node, 0);
-                let delta = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_int())
-                    .unwrap_or(0);
+                let Some(delta) = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int())
+                else {
+                    debug!("RandomAdvance at {node:?}: delta not ready, deferring");
+                    return false;
+                };
 
                 if let Some(ClassicalValue::RngContext(ctx_id)) = ctx_value {
                     // Advance the RNG state by |delta| steps

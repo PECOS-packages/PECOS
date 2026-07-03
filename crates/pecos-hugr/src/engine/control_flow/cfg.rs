@@ -670,138 +670,21 @@ impl HugrEngine {
                     // No successors - exit block
                     self.complete_cfg_execution(hugr, cfg_node, to_block);
                 } else if successors.len() == 1 {
-                    // Single successor - transition immediately
+                    // Single successor - transition immediately. Recurse into
+                    // the canonical transition path (same as the resolved
+                    // multi-successor case below) so the successor gets the
+                    // full two-phase activation: a hand-rolled copy here used
+                    // to skip the stale-value clearing and check Call
+                    // readiness against uncleared producer flags, reviving
+                    // the loop-iteration freeze through empty blocks.
                     let next_block = successors[0];
-                    // Check if successor is exit block
                     if next_block == cfg_info.exit_block {
                         self.complete_cfg_execution(hugr, cfg_node, to_block);
                     } else {
                         debug!(
                             "[TRACE] Empty block {to_block:?} transitioning to single successor {next_block:?}"
                         );
-                        self.propagate_block_outputs_to_successor(hugr, to_block, next_block);
-
-                        // Update current block
-                        if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
-                            active_cfg.current_block = next_block;
-                        }
-
-                        // Recursively activate the next block - add all ops to work queue
-                        let next_block_info = cfg_info.blocks.get(&next_block).cloned();
-                        if let Some(next_info) = next_block_info {
-                            // Quantum ops
-                            for &op_node in &next_info.quantum_ops {
-                                self.nodes_inside_cfg_blocks.remove(&op_node);
-                                if !self.work_queue.contains(&op_node)
-                                    && !self.processed.contains(&op_node)
-                                {
-                                    self.work_queue.push_back(op_node);
-                                }
-                            }
-                            // Bool ops
-                            for &op_node in &next_info.bool_ops {
-                                self.processed.remove(&op_node);
-                                self.nodes_inside_cfg_blocks.remove(&op_node);
-                                if !self.work_queue.contains(&op_node)
-                                    && !self.processed.contains(&op_node)
-                                {
-                                    self.work_queue.push_back(op_node);
-                                }
-                            }
-                            // Conditional nodes
-                            for &cond_node in &next_info.conditional_nodes {
-                                self.processed.remove(&cond_node);
-                                self.nodes_inside_cfg_blocks.remove(&cond_node);
-                                if !self.work_queue.contains(&cond_node)
-                                    && !self.processed.contains(&cond_node)
-                                {
-                                    self.work_queue.push_back(cond_node);
-                                }
-                            }
-                            // TailLoop nodes
-                            for &tl_node in &next_info.tailloop_nodes {
-                                self.processed.remove(&tl_node);
-                                self.nodes_inside_cfg_blocks.remove(&tl_node);
-                                if !self.work_queue.contains(&tl_node)
-                                    && !self.processed.contains(&tl_node)
-                                {
-                                    self.work_queue.push_back(tl_node);
-                                }
-                            }
-                            // Call nodes
-                            for &call_node in &next_info.call_nodes {
-                                self.processed.remove(&call_node);
-                                self.nodes_inside_cfg_blocks.remove(&call_node);
-                                if !self.work_queue.contains(&call_node)
-                                    && !self.processed.contains(&call_node)
-                                    && all_predecessors_ready(
-                                        hugr,
-                                        call_node,
-                                        &self.quantum_ops,
-                                        &self.conditionals,
-                                        &self.cfgs,
-                                        &self.processed,
-                                    )
-                                {
-                                    self.work_queue.push_back(call_node);
-                                }
-                            }
-                            // Also find and add classical ops and extension ops
-                            for child in hugr.children(next_block) {
-                                let op = hugr.get_optype(child);
-                                if matches!(op, OpType::LoadConstant(_))
-                                    || self.classical_ops.contains_key(&child)
-                                    || op.as_extension_op().is_some()
-                                {
-                                    self.processed.remove(&child);
-                                    self.nodes_inside_cfg_blocks.remove(&child);
-                                    if !self.work_queue.contains(&child)
-                                        && !self.processed.contains(&child)
-                                    {
-                                        self.work_queue.push_back(child);
-                                    }
-                                }
-                            }
-                            debug!(
-                                "[TRACE] Activated next block {:?} with {} quantum ops, {} bool_ops",
-                                next_block,
-                                next_info.quantum_ops.len(),
-                                next_info.bool_ops.len()
-                            );
-
-                            // Check if the next block is also empty - if so, we need to handle it recursively
-                            // Find extension ops in this block
-                            let next_extension_ops: Vec<Node> =
-                                find_extension_ops_in_block(hugr, next_block);
-                            let next_has_extension_ops = !next_extension_ops.is_empty();
-                            let next_has_classical_ops = !next_info.classical_ops.is_empty();
-
-                            if next_info.quantum_ops.is_empty()
-                                && next_info.call_nodes.is_empty()
-                                && next_info.conditional_nodes.is_empty()
-                                && next_info.bool_ops.is_empty()
-                                && !next_has_extension_ops
-                                && !next_has_classical_ops
-                                && next_info.tailloop_nodes.is_empty()
-                            {
-                                // Next block is also empty - need to continue transitioning
-                                let next_successors = next_info.successors.clone();
-                                if next_successors.len() == 1 {
-                                    let next_next_block = next_successors[0];
-                                    if next_next_block == cfg_info.exit_block {
-                                        self.complete_cfg_execution(hugr, cfg_node, next_block);
-                                    } else {
-                                        // Recursively transition
-                                        self.transition_to_cfg_successor(
-                                            hugr,
-                                            cfg_node,
-                                            next_block,
-                                            next_next_block,
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                        self.transition_to_cfg_successor(hugr, cfg_node, to_block, next_block);
                     }
                 } else {
                     // Multiple successors - need to resolve branch

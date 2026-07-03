@@ -311,7 +311,6 @@ impl HugrEngine {
         // Extract TailLoop control flow structures
         self.tailloops = extract_tailloops(&hugr);
         debug!("Extracted {} TailLoop nodes", self.tailloops.len());
-        eprintln!("[DEBUG] Extracted {} TailLoop nodes", self.tailloops.len());
 
         // Track nodes inside TailLoop bodies (should not be processed until loop is active)
         self.nodes_inside_tailloops = find_nodes_inside_tailloops(&hugr, &self.tailloops);
@@ -323,8 +322,8 @@ impl HugrEngine {
         // Extract quantum operations (but we'll skip case/CFG-internal ones in work queue)
         self.quantum_ops = extract_quantum_ops(&hugr);
         debug!("Extracted {} quantum operations", self.quantum_ops.len());
-        eprintln!(
-            "[DEBUG] Extracted {} quantum ops, {} cfgs, {} func_defns, {} call_targets",
+        debug!(
+            "Extracted {} quantum ops, {} cfgs, {} func_defns, {} call_targets",
             self.quantum_ops.len(),
             self.cfgs.len(),
             self.func_defns.len(),
@@ -619,7 +618,6 @@ impl HugrEngine {
 
         if self.work_queue.is_empty() && self.quantum_ops.is_empty() {
             debug!("Empty HUGR, no commands to generate");
-            eprintln!("[DEBUG] Empty HUGR, no commands to generate");
             return Ok(None);
         }
 
@@ -629,10 +627,9 @@ impl HugrEngine {
             // is a stall, not a finished program.
             self.ensure_no_stalled_execution()?;
             debug!("Work queue empty, processing complete");
-            eprintln!("[DEBUG] Work queue empty, processing complete");
             return Ok(None);
         }
-        eprintln!("[DEBUG] Work queue has {} items", self.work_queue.len());
+        debug!("Work queue has {} items", self.work_queue.len());
 
         let mut operation_count = 0;
         let mut hit_measurement = false;
@@ -642,7 +639,7 @@ impl HugrEngine {
                 continue;
             }
             let node_op = hugr.get_optype(current_node);
-            eprintln!("[DEBUG] Processing node {current_node:?}: {node_op:?}");
+            debug!("Processing node {current_node:?}: {node_op:?}");
 
             // Check batch size
             if operation_count >= Self::MAX_BATCH_SIZE {
@@ -684,10 +681,6 @@ impl HugrEngine {
             if let Some(cfg_info) = self.cfgs.get(&current_node).cloned() {
                 debug!("Starting CFG {current_node:?} execution");
                 debug!("[TRACE] Starting CFG {current_node:?}");
-                eprintln!(
-                    "[DEBUG] Starting CFG {current_node:?}, entry_block={:?}",
-                    cfg_info.entry_block
-                );
 
                 // Start CFG execution by activating the entry block's operations
                 let entry_block = cfg_info.entry_block;
@@ -993,9 +986,6 @@ impl HugrEngine {
                 }
 
                 debug!("Processing Call {current_node:?} to FuncDefn {func_defn_node:?}");
-                eprintln!(
-                    "[DEBUG] Processing Call {current_node:?} to FuncDefn {func_defn_node:?}"
-                );
 
                 // Check if there's already an active call to this FuncDefn
                 // If so, queue this call to wait

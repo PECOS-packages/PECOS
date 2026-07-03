@@ -2,7 +2,7 @@
 
 import pytest
 from guppylang import guppy
-from guppylang.std.quantum import h, measure, qubit
+from guppylang.std.quantum import h, measure, qubit, x
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
@@ -153,3 +153,35 @@ def test_arithmetic_with_measurements() -> None:
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert len(measurements) == 20
     # Should have mix unless both m1 and m2 are 0 (25% chance)
+
+
+def test_euclidean_division_semantics() -> None:
+    """Negative-operand division follows the HUGR spec (Euclidean).
+
+    idivmod_s is defined as q*m+r=n with 0<=r<m, so -3 % 2 == 1 and
+    -3 // 2 == -2 (matching Python). The engine used Rust truncating
+    division until this was pinned; the X gate fires only if the engine
+    computes the spec'd value, so a wrong result measures 0.
+    """
+
+    @guppy
+    def euclid_mod() -> bool:
+        q = qubit()
+        a = -3
+        if a % 2 == 1:
+            x(q)
+        return measure(q)
+
+    @guppy
+    def euclid_div() -> bool:
+        q = qubit()
+        a = -3
+        if a // 2 == -2:
+            x(q)
+        return measure(q)
+
+    for prog in (euclid_mod, euclid_div):
+        results = sim(Guppy(prog)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
+        raw_measurements = results["measurements"]
+        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+        assert measurements == [1, 1, 1], f"Euclidean semantics violated: {measurements}"

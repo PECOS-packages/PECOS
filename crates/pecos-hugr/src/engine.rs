@@ -624,6 +624,10 @@ impl HugrEngine {
         }
 
         if self.work_queue.is_empty() {
+            // Same completion claim as the post-drain return below: an
+            // already-empty queue with active control flow or starved nodes
+            // is a stall, not a finished program.
+            self.ensure_no_stalled_execution()?;
             debug!("Work queue empty, processing complete");
             eprintln!("[DEBUG] Work queue empty, processing complete");
             return Ok(None);
@@ -1338,6 +1342,12 @@ impl HugrEngine {
             stalled.push(format!(
                 "unresolved CFG branches: {:?}",
                 self.pending_cfg_branches.keys().collect::<Vec<_>>()
+            ));
+        }
+        if !self.pending_tailloop_control.is_empty() {
+            stalled.push(format!(
+                "unresolved TailLoop controls: {:?}",
+                self.pending_tailloop_control
             ));
         }
         if !self.pending_func_calls.is_empty() {

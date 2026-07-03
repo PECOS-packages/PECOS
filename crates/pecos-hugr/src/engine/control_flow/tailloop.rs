@@ -130,6 +130,26 @@ impl HugrEngine {
 
         debug!("Expanding TailLoop {tailloop_node:?} for iteration 0");
 
+        // Body nodes may carry OUTER container gates too (a TailLoop inside
+        // a CFG block leaves its internals in nodes_inside_cfg_blocks; the
+        // block's activation never enumerates them). Clear every gate for
+        // the tracked body ops: entry pushes below bypass the gates, but the
+        // retry path (queue_ready_successors) checks all of them, so a
+        // still-gated node whose inputs become ready later is never queued
+        // and starves the loop.
+        for &op_node in tailloop_info
+            .quantum_ops
+            .iter()
+            .chain(&tailloop_info.call_nodes)
+            .chain(&tailloop_info.extension_ops)
+            .chain(&tailloop_info.classical_ops)
+            .chain(&tailloop_info.bool_ops)
+            .chain(&tailloop_info.conditional_nodes)
+        {
+            self.nodes_inside_cfg_blocks.remove(&op_node);
+            self.nodes_inside_cases.remove(&op_node);
+        }
+
         // Propagate input wires from TailLoop inputs to body Input node outputs
         self.propagate_tailloop_inputs(hugr, tailloop_node, &tailloop_info, 0);
 

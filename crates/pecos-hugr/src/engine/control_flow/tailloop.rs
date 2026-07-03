@@ -226,6 +226,17 @@ impl HugrEngine {
             entry_nodes.push(cond_node);
         }
 
+        // Also activate body LoadConstants: they are gated behind
+        // nodes_inside_tailloops (no other path queues them) while
+        // readiness gates their consumers on the processed flag, so
+        // skipping them starves the body's classical dataflow.
+        for child in hugr.children(tailloop_node) {
+            if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
+                self.nodes_inside_tailloops.remove(&child);
+                entry_nodes.push(child);
+            }
+        }
+
         debug!(
             "TailLoop {tailloop_node:?}: activated body with {} entry nodes",
             entry_nodes.len()
@@ -306,9 +317,34 @@ impl HugrEngine {
         for &cond_node in &tailloop_info.conditional_nodes {
             self.processed.remove(&cond_node);
         }
+        // Body LoadConstants must re-run too: readiness gates consumers on
+        // their processed flag, and no other path queues them once the body
+        // is gated behind nodes_inside_tailloops.
+        for child in hugr.children(tailloop_node) {
+            if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
+                self.processed.remove(&child);
+            }
+        }
 
-        // Propagate iteration values from Output to Input
+        // Propagate iteration values from Output to Input. This reads the
+        // PREVIOUS iteration's body-output wires, so it must happen before
+        // the stale-value clearing below.
         self.propagate_continue_values(hugr, tailloop_node, &tailloop_info);
+
+        // Clear stale classical values for body nodes (mirrors CFG block
+        // re-activation): without this, re-executed nodes read the previous
+        // iteration's values and e.g. a control read selects a stale branch.
+        // The Input node is skipped -- it holds the fresh continue values.
+        let input_node = tailloop_info.input_node;
+        for child in hugr.children(tailloop_node) {
+            if child == input_node {
+                continue;
+            }
+            let num_outputs = hugr.num_outputs(child);
+            for port_idx in 0..num_outputs {
+                self.wire_state.classical_values.remove(&(child, port_idx));
+            }
+        }
 
         // Update iteration counter
         if let Some(active_info) = self.active_tailloops.get_mut(&tailloop_node) {
@@ -317,6 +353,14 @@ impl HugrEngine {
         }
 
         // Re-activate body operations
+        for child in hugr.children(tailloop_node) {
+            if matches!(hugr.get_optype(child), OpType::LoadConstant(_))
+                && !self.work_queue.contains(&child)
+                && !self.processed.contains(&child)
+            {
+                self.work_queue.push_back(child);
+            }
+        }
         for &op_node in &tailloop_info.quantum_ops {
             if all_predecessors_ready(
                 hugr,

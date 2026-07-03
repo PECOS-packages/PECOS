@@ -417,6 +417,14 @@ impl HugrEngine {
                 ops_in_case.insert(child);
             }
         }
+        // Quantum ops queued as entries bypass the container gates, but any
+        // re-queue goes through queue_ready_successors which checks all of
+        // them -- clear the gates so retried case ops are reachable.
+        for &node in &ops_in_case {
+            self.nodes_inside_cases.remove(&node);
+            self.nodes_inside_cfg_blocks.remove(&node);
+            self.nodes_inside_tailloops.remove(&node);
+        }
 
         // The Case's classical, bool, and extension ops must also execute
         // before its outputs propagate (propagating early copies missing
@@ -477,7 +485,14 @@ impl HugrEngine {
             .chain(case_load_consts.iter())
             .chain(case_calls.iter())
         {
+            // Clear ALL container gates, not just the case gate: a case
+            // nested in a TailLoop nested in a CFG block leaves its ops in
+            // the outer gate sets too, and the retry path
+            // (queue_ready_successors) checks every gate -- an op that is
+            // not ready at expansion would otherwise never be queued.
             self.nodes_inside_cases.remove(&op_node);
+            self.nodes_inside_cfg_blocks.remove(&op_node);
+            self.nodes_inside_tailloops.remove(&op_node);
             ops_in_case.insert(op_node);
             if !self.work_queue.contains(&op_node)
                 && crate::engine::analysis::all_predecessors_ready(
@@ -496,6 +511,8 @@ impl HugrEngine {
         // control resolves, so they queue without a readiness check.
         for &op_node in &case_containers {
             self.nodes_inside_cases.remove(&op_node);
+            self.nodes_inside_cfg_blocks.remove(&op_node);
+            self.nodes_inside_tailloops.remove(&op_node);
             ops_in_case.insert(op_node);
             if !self.work_queue.contains(&op_node) {
                 self.work_queue.push_back(op_node);

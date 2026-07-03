@@ -627,8 +627,38 @@ impl HugrEngine {
             }
         }
 
-        // Extract just_outputs from BREAK Sum variant (tag 1)
+        // Extract just_outputs from BREAK Sum variant (tag 1). If the
+        // control wire carries an executed Sum VALUE (e.g. routed through a
+        // Conditional's output rather than a direct Tag node), its payload
+        // elements ARE the just_outputs.
         let control_port = IncomingPort::from(0);
+        if let Some((ctrl_src, ctrl_port)) = hugr.single_linked_output(output_node, control_port)
+            && let Some(crate::engine::types::ClassicalValue::Sum { tag: 1, values }) = self
+                .wire_state
+                .classical_values
+                .get(&(ctrl_src, ctrl_port.index()))
+                .cloned()
+        {
+            for (port_idx, value) in values.into_iter().enumerate() {
+                if port_idx >= just_outputs_count {
+                    break;
+                }
+                debug!(
+                    "TailLoop {tailloop_node:?} output {port_idx}: mapped just_output payload {value:?}"
+                );
+                if let crate::engine::types::ClassicalValue::QubitRef(qubit_id) = &value {
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((tailloop_node, port_idx), *qubit_id);
+                }
+                self.wire_state
+                    .classical_values
+                    .insert((tailloop_node, port_idx), value);
+            }
+            return;
+        }
+
+        // Otherwise trace the BREAK Tag structurally
         if let Some((tag_node, _)) = hugr.single_linked_output(output_node, control_port)
             && let OpType::Tag(tag_op) = hugr.get_optype(tag_node)
             && tag_op.tag == 1

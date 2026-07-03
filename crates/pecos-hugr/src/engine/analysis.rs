@@ -783,8 +783,12 @@ fn collect_call_nodes_recursive(hugr: &Hugr, node: Node, calls: &mut BTreeSet<No
         if matches!(op, OpType::Call(_)) {
             calls.insert(child);
         }
-        // Recurse into nested containers (but not into FuncDefns)
-        if !matches!(op, OpType::FuncDefn(_)) {
+        // Recurse into nested containers, but not into FuncDefns or
+        // Conditionals: case-contained Calls belong to the case's own
+        // activation (expand_conditional tracks and queues them) --
+        // collecting them here lets the outer container queue or wait on
+        // unselected-branch work.
+        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
             collect_call_nodes_recursive(hugr, child, calls);
         }
     }
@@ -852,8 +856,10 @@ fn collect_bool_ops_recursive(hugr: &Hugr, node: Node, bool_ops: &mut BTreeSet<N
                 bool_ops.insert(child);
             }
         }
-        // Recurse into nested containers (but not into FuncDefns)
-        if !matches!(op, OpType::FuncDefn(_)) {
+        // Recurse into nested containers, but not into FuncDefns or
+        // Conditionals (case bools belong to the case's own activation --
+        // see collect_call_nodes_recursive).
+        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
             collect_bool_ops_recursive(hugr, child, bool_ops);
         }
     }

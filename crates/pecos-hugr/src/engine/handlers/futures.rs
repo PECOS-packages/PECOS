@@ -60,11 +60,12 @@ impl HugrEngine {
                                         .insert((node, 0), ClassicalValue::Bool(result != 0));
                                     debug!("Read future {future_id} from measurement -> {result}");
                                 } else {
-                                    // Result not yet available - use default
-                                    self.wire_state
-                                        .classical_values
-                                        .insert((node, 0), ClassicalValue::Bool(false));
-                                    debug!("Read future {future_id} pending, using default");
+                                    // Result not yet available: defer -- a
+                                    // fabricated `false` commits a wrong
+                                    // measurement value downstream. Retried
+                                    // when measurement results arrive.
+                                    debug!("Read future {future_id} pending, deferring");
+                                    return false;
                                 }
                             }
                         }

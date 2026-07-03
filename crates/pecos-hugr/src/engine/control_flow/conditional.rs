@@ -448,6 +448,21 @@ impl HugrEngine {
 
         if let Some(input_node) = input_node {
             debug!("Case {selected_case:?} has Input node {input_node:?}");
+            // Clear the Case Input's previous values first:
+            // propagate_case_inputs only overwrites ports whose source value
+            // currently exists, so a data input that is missing at expansion
+            // time (e.g. a measurement landing later) would otherwise leave
+            // the PREVIOUS iteration's value for consumers to read before
+            // the re-propagation repairs it.
+            let num_outputs = hugr.num_outputs(input_node);
+            for port_idx in 0..num_outputs {
+                self.wire_state
+                    .classical_values
+                    .remove(&(input_node, port_idx));
+                self.wire_state
+                    .wire_to_qubit
+                    .remove(&(input_node, port_idx));
+            }
             self.propagate_case_inputs(hugr, cond_node, input_node);
         } else {
             debug!("No Input node found in Case {selected_case:?}");

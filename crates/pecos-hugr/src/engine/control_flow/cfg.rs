@@ -1004,10 +1004,11 @@ impl HugrEngine {
         let mut payload_len = 0;
         if let Some((sum_src, sum_src_port)) =
             hugr.single_linked_output(output_node, IncomingPort::from(0))
-            && let OpType::Tag(_) = hugr.get_optype(sum_src)
         {
-            // Prefer the executed Tag's Sum VALUE: its payload elements are
-            // the CFG outputs (a called function's return value rides here).
+            // Prefer the executed Sum VALUE regardless of what built it (a
+            // direct Tag, or a Sum routed through a Conditional's output):
+            // its payload elements are the CFG outputs (a called function's
+            // return value rides here).
             let sum_wire = (sum_src, sum_src_port.index());
             if let Some(ClassicalValue::Sum { values, .. }) =
                 self.wire_state.classical_values.get(&sum_wire).cloned()
@@ -1024,7 +1025,7 @@ impl HugrEngine {
                         .classical_values
                         .insert((cfg_node, i), value);
                 }
-            } else {
+            } else if matches!(hugr.get_optype(sum_src), OpType::Tag(_)) {
                 // Structural fallback (e.g. linear payloads: Tags over qubits
                 // do not execute as classical ops).
                 let num_payload = hugr

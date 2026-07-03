@@ -42,61 +42,93 @@ impl HugrEngine {
                 let op = hugr.get_optype(node);
                 let num_inputs = op.dataflow_signature().map_or(0, |sig| sig.input_count());
 
+                // A missing element defers the whole construction: silently
+                // skipping it would shorten the array and shift every index.
                 let mut elements = Vec::with_capacity(num_inputs);
                 for port in 0..num_inputs {
                     if let Some(value) = self.get_input_value(hugr, node, port) {
                         elements.push(value);
+                    } else if let Some(qubit_id) = self.get_input_qubit(hugr, node, port) {
+                        elements.push(ClassicalValue::QubitRef(qubit_id));
+                    } else {
+                        debug!("new_array at {node:?}: element {port} not ready, deferring");
+                        return false;
                     }
                 }
 
+                debug!("new_array: created array with {} elements", elements.len());
                 self.wire_state
                     .classical_values
-                    .insert((node, 0), ClassicalValue::Array(elements.clone()));
-
-                debug!("new_array: created array with {} elements", elements.len());
+                    .insert((node, 0), ClassicalValue::Array(elements));
                 true
             }
             "get" | "Get" | "index" | "Index" => {
                 // get: (Array<T>, int) -> T
                 // Get element at index
-                let array = self.get_input_value(hugr, node, 0);
-                let index = self
+                let Some(ClassicalValue::Array(elements)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("array.get at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
+                let Some(index) = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint())
-                    .unwrap_or(0) as usize;
+                    .map(|v| v as usize)
+                else {
+                    debug!("array.get at {node:?}: index not ready, deferring");
+                    return false;
+                };
 
-                if let Some(ClassicalValue::Array(elements)) = array {
-                    if let Some(element) = elements.get(index) {
-                        self.wire_state
-                            .classical_values
-                            .insert((node, 0), element.clone());
-                        debug!("array.get[{index}]: retrieved element");
-                    } else {
-                        debug!("array.get[{index}]: index out of bounds");
-                    }
+                let Some(element) = elements.get(index) else {
+                    debug!(
+                        "array.get at {node:?}: index {index} out of bounds (len={}), deferring",
+                        elements.len()
+                    );
+                    return false;
+                };
+                if let ClassicalValue::QubitRef(qubit_id) = element {
+                    self.wire_state.wire_to_qubit.insert((node, 0), *qubit_id);
                 }
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), element.clone());
+                debug!("array.get[{index}]: retrieved element");
                 true
             }
             "set" | "Set" => {
                 // set: (Array<T>, int, T) -> Array<T>
                 // Set element at index
-                let array = self.get_input_value(hugr, node, 0);
-                let index = self
+                let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("array.set at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
+                let Some(index) = self
                     .get_input_value(hugr, node, 1)
                     .and_then(|v| v.as_uint())
-                    .unwrap_or(0) as usize;
-                let value = self.get_input_value(hugr, node, 2);
-
-                if let (Some(ClassicalValue::Array(mut elements)), Some(new_value)) = (array, value)
-                {
-                    if index < elements.len() {
-                        elements[index] = new_value;
-                    }
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Array(elements));
-                    debug!("array.set[{index}]: updated element");
-                }
+                    .map(|v| v as usize)
+                else {
+                    debug!("array.set at {node:?}: index not ready, deferring");
+                    return false;
+                };
+                let Some(new_value) = self.get_input_value(hugr, node, 2) else {
+                    debug!("array.set at {node:?}: value not ready, deferring");
+                    return false;
+                };
+                let Some(slot) = elements.get_mut(index) else {
+                    debug!(
+                        "array.set at {node:?}: index {index} out of bounds (len={}), deferring",
+                        elements.len()
+                    );
+                    return false;
+                };
+                *slot = new_value;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Array(elements));
+                debug!("array.set[{index}]: updated element");
                 true
             }
             "len" | "Len" | "length" | "Length" => {

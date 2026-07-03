@@ -111,12 +111,22 @@ impl HugrEngine {
             None => return,
         };
 
-        // Collect conditionals that can now be resolved
+        // Collect conditionals that can now be resolved. A pending entry
+        // whose node is already processed was expanded through the queue
+        // path in the meantime -- expanding it again would re-run its case.
         let mut to_resolve = Vec::new();
+        let mut already_expanded = Vec::new();
         for &cond_node in self.pending_conditionals.keys() {
-            if let Some(branch_index) = self.try_resolve_conditional_control(&hugr, cond_node) {
+            if self.processed.contains(&cond_node) {
+                already_expanded.push(cond_node);
+            } else if let Some(branch_index) =
+                self.try_resolve_conditional_control(&hugr, cond_node)
+            {
                 to_resolve.push((cond_node, branch_index));
             }
+        }
+        for cond_node in already_expanded {
+            self.pending_conditionals.remove(&cond_node);
         }
 
         // Resolve them
@@ -424,6 +434,14 @@ impl HugrEngine {
             "Expanding Conditional {cond_node:?} branch {branch_index} -> Case {selected_case:?}"
         );
 
+        // This conditional may ALSO be parked in pending_conditionals (it
+        // deferred once, then a loop iteration re-queued it and the queue
+        // path expanded it). Drop the pending entry, or a later retry wave
+        // expands it a second time -- with case quantum ops reset per
+        // expansion that re-allocates and re-measures qubits (observed as
+        // gates and measurements landing on disjoint qubit generations).
+        self.pending_conditionals.remove(&cond_node);
+
         // Find the Input node inside the selected Case
         // Operations inside the Case connect to this Input node, not to the Case node itself
         let input_node = find_input_node(hugr, selected_case);
@@ -461,6 +479,15 @@ impl HugrEngine {
             self.nodes_inside_cases.remove(&node);
             self.nodes_inside_cfg_blocks.remove(&node);
             self.nodes_inside_tailloops.remove(&node);
+            // Clear stale OUTPUT wires from the previous expansion: a
+            // consumer popping before this op re-runs would otherwise read
+            // last iteration's value/qubit (e.g. a gate resolving the
+            // previous iteration's borrowed qubit).
+            let num_outputs = hugr.num_outputs(node);
+            for port_idx in 0..num_outputs {
+                self.wire_state.classical_values.remove(&(node, port_idx));
+                self.wire_state.wire_to_qubit.remove(&(node, port_idx));
+            }
         }
 
         // The Case's classical, bool, and extension ops must also execute

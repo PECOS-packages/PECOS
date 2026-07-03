@@ -363,6 +363,7 @@ impl HugrEngine {
             let num_outputs = hugr.num_outputs(child);
             for port_idx in 0..num_outputs {
                 self.wire_state.classical_values.remove(&(child, port_idx));
+                self.wire_state.wire_to_qubit.remove(&(child, port_idx));
             }
         }
 

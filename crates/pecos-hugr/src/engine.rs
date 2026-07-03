@@ -1106,6 +1106,7 @@ impl HugrEngine {
                             let num_outputs = hugr.num_outputs(*node);
                             for port in 0..num_outputs {
                                 self.wire_state.classical_values.remove(&(*node, port));
+                                self.wire_state.wire_to_qubit.remove(&(*node, port));
                             }
                         }
 
@@ -1264,8 +1265,14 @@ impl HugrEngine {
                 continue;
             };
 
-            // Resolve qubit IDs for this operation
-            let qubits = self.resolve_qubits(&hugr, current_node, &op);
+            // Resolve qubit IDs for this operation; defer the gate if a
+            // qubit wire has no mapping yet (its producer has not run --
+            // completion of that producer re-queues this node).
+            let Some(qubits) = self.resolve_qubits(&hugr, current_node, &op) else {
+                self.pending_bool_reads.insert(current_node);
+                continue;
+            };
+            self.pending_bool_reads.remove(&current_node);
 
             // Emit the gate operation
             if self.emit_quantum_gate(&hugr, current_node, &op, &qubits)? {

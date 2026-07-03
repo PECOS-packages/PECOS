@@ -242,13 +242,13 @@ impl HugrEngine {
         hugr: &Hugr,
         node: Node,
         op: &QuantumOp,
-    ) -> Vec<QubitId> {
+    ) -> Option<Vec<QubitId>> {
         if op.gate_type == GateType::QAlloc {
             // QAlloc creates a new qubit
             let qubit_id = QubitId::from(self.wire_state.next_qubit_id);
             self.wire_state.next_qubit_id += 1;
             self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
-            return vec![qubit_id];
+            return Some(vec![qubit_id]);
         }
 
         let mut qubits = Vec::with_capacity(op.num_qubit_inputs);
@@ -295,32 +295,42 @@ impl HugrEngine {
                             .wire_to_qubit
                             .insert((node, port_idx), qubit_id);
                     }
+                } else if !self.processed.contains(&wire_key.0)
+                    && !matches!(hugr.get_optype(wire_key.0), OpType::Input(_))
+                {
+                    // No mapping and the producer has NOT run yet (e.g. a
+                    // borrow op or case payload still pending): defer the
+                    // gate -- fabricating here applies it to a phantom qubit
+                    // (observed as gates and measurements landing on
+                    // disjoint qubit sets). The producer's completion
+                    // re-queues this node.
+                    debug!("resolve_qubits at {node:?}: producer {wire_key:?} pending, deferring");
+                    return None;
                 } else {
-                    // Fallback: create a new qubit ID
+                    // The source already ran (or is a structural Input wire)
+                    // and no mapping will ever appear: this is an implicit
+                    // top-level qubit. Allocate it ONCE, keyed to the source
+                    // wire so every consumer of this wire sees the same id.
                     let fallback = QubitId::from(self.wire_state.next_qubit_id);
                     self.wire_state.next_qubit_id += 1;
+                    self.wire_state.wire_to_qubit.insert(wire_key, fallback);
                     qubits.push(fallback);
                     if port_idx < op.num_qubit_outputs {
                         self.wire_state
                             .wire_to_qubit
                             .insert((node, port_idx), fallback);
                     }
-                    debug!(
-                        "Warning: No wire mapping for {wire_key:?}, using fallback {fallback:?}"
-                    );
+                    debug!("resolve_qubits: implicit qubit {fallback:?} for wire {wire_key:?}");
                 }
             } else {
-                // No linked output - create fallback
-                let fallback = QubitId::from(self.wire_state.next_qubit_id);
-                self.wire_state.next_qubit_id += 1;
-                qubits.push(fallback);
                 debug!(
-                    "Warning: No linked output for node {node:?} port {port_idx}, using fallback {fallback:?}"
+                    "resolve_qubits at {node:?}: no linked output for port {port_idx}, deferring"
                 );
+                return None;
             }
         }
 
-        qubits
+        Some(qubits)
     }
 
     /// Try to load a constant value from a `LoadConstant` node.

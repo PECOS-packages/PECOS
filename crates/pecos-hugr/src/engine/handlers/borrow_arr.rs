@@ -46,17 +46,25 @@ impl HugrEngine {
         match op_name {
             "new_all_borrowed" => {
                 // [] -> [array]: n slots, all borrowed-out (holes). The size
-                // comes from the op's first BoundedNat type arg.
+                // comes from the op's first type arg: a concrete BoundedNat,
+                // or (inside a generic function) a type variable resolved
+                // through the active call chain. Defer if unresolvable -- a
+                // fabricated 0-slot array makes every later return/borrow
+                // out of bounds.
                 let op = hugr.get_optype(node);
-                let size = op
-                    .as_extension_op()
-                    .and_then(|ext| {
-                        ext.args().iter().find_map(|arg| match arg {
-                            tket::hugr::types::TypeArg::BoundedNat(n) => Some(*n),
-                            _ => None,
-                        })
+                let size = op.as_extension_op().and_then(|ext| {
+                    ext.args().iter().find_map(|arg| match arg {
+                        tket::hugr::types::TypeArg::BoundedNat(n) => Some(*n),
+                        tket::hugr::types::TypeArg::Variable(var) => {
+                            self.resolve_call_type_arg(hugr, node, var.index())
+                        }
+                        _ => None,
                     })
-                    .unwrap_or(0);
+                });
+                let Some(size) = size else {
+                    debug!("new_all_borrowed at {node:?}: size unresolved, deferring");
+                    return false;
+                };
                 #[allow(clippy::cast_possible_truncation)] // Array sizes fit in usize
                 let elements = vec![ClassicalValue::Borrowed; size as usize];
                 debug!("new_all_borrowed: created {size}-slot all-borrowed array");

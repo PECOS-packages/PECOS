@@ -584,19 +584,14 @@ pub type ClassicalOpClassification = (ClassicalOpType, usize, usize, Option<(u8,
 #[allow(clippy::too_many_lines)]
 pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
     // HUGR `Tag` nodes build tagged sum values (variants, options, branch
-    // selectors). Over copyable payloads they are classical computation;
-    // over linear (qubit) payloads they are wire routing and stay with the
-    // structural machinery, like linear tuples below.
+    // selectors). They execute as classical ops over linear payloads too:
+    // qubit inputs become ClassicalValue::QubitRef payload elements (the
+    // executor falls back to the qubit wire map for missing inputs). This
+    // matters because a Sum value that never materializes starves every
+    // value-based consumer -- e.g. an iterator's Option result built by a
+    // Tag over (qubit, state) would leave the caller's match unresolvable.
     if let OpType::Tag(_) = op {
         let sig = op.dataflow_signature()?;
-        if sig
-            .input()
-            .iter()
-            .chain(sig.output().iter())
-            .any(|t| !t.copyable())
-        {
-            return None;
-        }
         return Some((ClassicalOpType::TagSum, sig.input_count(), 1, None));
     }
 

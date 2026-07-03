@@ -458,7 +458,14 @@ impl HugrEngine {
         self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
 
         // Record this propagation for re-propagation after measurement results
-        // are available (measurement results may not be stored yet when we transition)
+        // are available (measurement results may not be stored yet when we
+        // transition). Only the LATEST transition per CFG may stay recorded:
+        // replaying a superseded edge (e.g. the previous loop iteration's)
+        // re-reads source wires that have since been cleared or partially
+        // rewritten and clobbers the successor's fresh inputs with stale
+        // values (observed as a loop re-borrowing the same array slot).
+        self.pending_measurement_propagations
+            .retain(|(cfg, _, _)| *cfg != cfg_node);
         self.pending_measurement_propagations
             .push((cfg_node, from_block, to_block));
 
@@ -831,6 +838,11 @@ impl HugrEngine {
                     debug!(
                         "[TRACE] Block transition: propagated branch payload {value:?} to {to_input:?}:{i}"
                     );
+                    if let ClassicalValue::QubitRef(qubit_id) = &value {
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((to_input, i), *qubit_id);
+                    }
                     self.wire_state
                         .classical_values
                         .insert((to_input, i), value);
@@ -960,8 +972,17 @@ impl HugrEngine {
         // Take ownership of the pending list to avoid borrow issues
         let pending: Vec<_> = std::mem::take(&mut self.pending_measurement_propagations);
 
-        for (_cfg_node, from_block, to_block) in pending {
-            self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
+        for (cfg_node, from_block, to_block) in pending {
+            // Replay only while the successor is still the CFG's current
+            // block; a transition the CFG has since moved past would write
+            // stale values into a block that already has fresh inputs.
+            if self
+                .active_cfgs
+                .get(&cfg_node)
+                .is_some_and(|active| active.current_block == to_block)
+            {
+                self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
+            }
         }
     }
 
@@ -993,6 +1014,11 @@ impl HugrEngine {
                 payload_len = values.len();
                 for (i, value) in values.into_iter().enumerate() {
                     debug!("CFG {cfg_node:?} output {i}: mapped payload value {value:?}");
+                    if let ClassicalValue::QubitRef(qubit_id) = &value {
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((cfg_node, i), *qubit_id);
+                    }
                     self.wire_state
                         .classical_values
                         .insert((cfg_node, i), value);

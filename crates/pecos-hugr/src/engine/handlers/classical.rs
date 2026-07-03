@@ -58,6 +58,15 @@ impl HugrEngine {
                 let wire_key = (src_node, src_port.index());
                 if let Some(value) = self.wire_state.classical_values.get(&wire_key) {
                     inputs.push(value.clone());
+                } else if matches!(op.op_type, ClassicalOpType::TagSum)
+                    && let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&wire_key)
+                {
+                    // A Tag may carry linear payload elements (e.g. an
+                    // iterator's Option over (qubit, state)): represent the
+                    // qubit as a QubitRef so the Sum value materializes.
+                    // Scoped to TagSum only -- a qubit input to an
+                    // arithmetic op is a semantic error, not a value.
+                    inputs.push(ClassicalValue::QubitRef(qubit_id));
                 } else {
                     debug!(
                         "Classical op {node:?}: missing input value for port {port_idx} from {wire_key:?}"

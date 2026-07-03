@@ -193,6 +193,12 @@ impl HugrEngine {
             // on the case being done) and wake its consumers.
             self.check_cfg_block_completion(hugr, cond_node);
             self.check_tailloop_body_completion(hugr, cond_node);
+            // A TailLoop whose control Sum rides through this Conditional's
+            // output may have parked in pending_tailloop_control before the
+            // value existed -- re-attempt it here (measurement rounds are
+            // the only other retry point, and a purely classical case
+            // completion may never be followed by one).
+            self.try_resolve_pending_tailloops();
             self.queue_ready_successors(hugr, cond_node);
             self.retry_pending_bool_reads();
         }
@@ -329,6 +335,11 @@ impl HugrEngine {
             payload_len = values.len();
             for (i, value) in values.into_iter().enumerate() {
                 debug!("Propagated control payload {value:?} to Case Input ({input_node:?}, {i})");
+                if let ClassicalValue::QubitRef(qubit_id) = &value {
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((input_node, i), *qubit_id);
+                }
                 self.wire_state
                     .classical_values
                     .insert((input_node, i), value);

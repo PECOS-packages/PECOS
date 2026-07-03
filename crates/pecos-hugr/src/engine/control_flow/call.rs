@@ -52,24 +52,40 @@ impl HugrEngine {
         node: Node,
         var_idx: usize,
     ) -> Option<u64> {
-        // Find the enclosing FuncDefn of this node.
-        let mut cur = hugr.get_parent(node);
-        let func_defn = loop {
-            let n = cur?;
-            if matches!(hugr.get_optype(n), OpType::FuncDefn(_)) {
-                break n;
+        let mut node = node;
+        let mut var_idx = var_idx;
+        // A generic function may be called from another generic function
+        // with the type arg forwarded as a variable (`f<$0>` inside `g<n>`),
+        // so resolution walks the active call chain until a concrete
+        // BoundedNat appears. Bounded by the active-call count: each hop
+        // consumes one distinct call frame.
+        for _ in 0..=self.active_calls.len() {
+            // Find the enclosing FuncDefn of this node.
+            let mut cur = hugr.get_parent(node);
+            let func_defn = loop {
+                let n = cur?;
+                if matches!(hugr.get_optype(n), OpType::FuncDefn(_)) {
+                    break n;
+                }
+                cur = hugr.get_parent(n);
+            };
+            // Find the active call executing this FuncDefn and read its arg.
+            let info = self
+                .active_calls
+                .values()
+                .find(|info| info.func_defn_node == func_defn)?;
+            match info.type_args.get(var_idx)? {
+                TypeArg::BoundedNat(n) => return Some(*n),
+                TypeArg::Variable(var) => {
+                    // Forwarded generic: continue resolution in the CALLER's
+                    // frame, at the caller's variable index.
+                    node = info.call_node;
+                    var_idx = var.index();
+                }
+                _ => return None,
             }
-            cur = hugr.get_parent(n);
-        };
-        // Find the active call executing this FuncDefn and read its arg.
-        self.active_calls
-            .values()
-            .find(|info| info.func_defn_node == func_defn)
-            .and_then(|info| info.type_args.get(var_idx))
-            .and_then(|arg| match arg {
-                TypeArg::BoundedNat(n) => Some(*n),
-                _ => None,
-            })
+        }
+        None
     }
 
     /// Complete a function call if the completed CFG belongs to an active Call's `FuncDefn`.

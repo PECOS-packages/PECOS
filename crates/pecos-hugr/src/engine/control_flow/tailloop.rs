@@ -496,9 +496,38 @@ impl HugrEngine {
             }
         }
 
-        // The just_inputs values come from unpacking the Sum (CONTINUE variant)
-        // Trace through the Tag node that created the Sum
+        // The just_inputs values come from unpacking the Sum (CONTINUE variant).
+        // If the control wire carries an executed Sum VALUE (e.g. built by a
+        // Tag inside a Conditional case and routed through the Conditional's
+        // output), its payload elements ARE the next iteration's just_inputs.
         let control_port = IncomingPort::from(0);
+        if let Some((ctrl_src, ctrl_port)) = hugr.single_linked_output(output_node, control_port)
+            && let Some(crate::engine::types::ClassicalValue::Sum { tag: 0, values }) = self
+                .wire_state
+                .classical_values
+                .get(&(ctrl_src, ctrl_port.index()))
+                .cloned()
+        {
+            for (port_idx, value) in values.into_iter().enumerate() {
+                if port_idx >= just_inputs_count {
+                    break;
+                }
+                debug!(
+                    "TailLoop continue: propagated just_input value {value:?} to Input:{port_idx}"
+                );
+                if let crate::engine::types::ClassicalValue::QubitRef(qubit_id) = &value {
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((input_node, port_idx), *qubit_id);
+                }
+                self.wire_state
+                    .classical_values
+                    .insert((input_node, port_idx), value);
+            }
+            return;
+        }
+
+        // Otherwise trace through the Tag node that created the Sum structurally
         if let Some((tag_node, _)) = hugr.single_linked_output(output_node, control_port)
             && let OpType::Tag(tag_op) = hugr.get_optype(tag_node)
             && tag_op.tag == 0
@@ -518,6 +547,9 @@ impl HugrEngine {
                         );
                     }
                     if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                        debug!(
+                            "TailLoop continue: propagated just_input value {value:?} to Input:{port_idx}"
+                        );
                         self.wire_state
                             .classical_values
                             .insert((input_node, port_idx), value);

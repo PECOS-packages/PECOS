@@ -1045,8 +1045,8 @@ impl HugrEngine {
                                     .classical_values
                                     .insert(func_input_wire, value.clone());
                                 debug!(
-                                    "Call {:?}: mapped input {} classical value to FuncDefn Input {:?}",
-                                    current_node, in_port, func_info.input_node
+                                    "Call {:?}: mapped input {} classical value {:?} to FuncDefn Input {:?}",
+                                    current_node, in_port, value, func_info.input_node
                                 );
                             }
                         }
@@ -3012,14 +3012,15 @@ mod tests {
 
         let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
-        // This fixture nests TailLoops inside CFG blocks (repeat-until-
-        // success shape); executing that combination is not supported yet
-        // (case completion does not track nested TailLoops), so the program
-        // stalls mid-flight. The engine's completion-time stall detection
-        // must report that loudly instead of returning silently truncated
+        // This fixture builds borrow arrays and reads them back with
+        // collections.borrow_arr.pop_left, which the engine does not
+        // implement yet (its option-Sum result never materializes, so the
+        // pop guard conditionals stay unresolved). The program stalls
+        // mid-flight and the engine's completion-time stall detection must
+        // report that loudly instead of returning silently truncated
         // results -- the historical version of this test fed one outcome,
         // asserted nothing, and "passed" on the truncation. Flip this to a
-        // drive-to-completion test when nested-TailLoop execution lands.
+        // drive-to-completion test when pop_left support lands.
         let mut stage = engine.start(()).expect("Failed to start engine");
         let mut rounds = 0;
         loop {
@@ -3052,8 +3053,8 @@ mod tests {
                                 "expected a stall report, got: {msg}"
                             );
                             assert!(
-                                msg.contains("TailLoops"),
-                                "stall report should name the stuck TailLoops: {msg}"
+                                msg.contains("Conditionals"),
+                                "stall report should name the unresolved pop guards: {msg}"
                             );
                             return;
                         }

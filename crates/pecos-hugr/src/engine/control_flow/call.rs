@@ -33,12 +33,45 @@
 //! 6. Call's successors are added to work queue
 
 use log::debug;
-use tket::hugr::{Hugr, HugrView, IncomingPort, PortIndex};
+use tket::hugr::ops::OpType;
+use tket::hugr::types::TypeArg;
+use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
-use crate::engine::analysis::all_predecessors_ready;
 
 impl HugrEngine {
+    /// Resolve a type variable used inside a called function body to the
+    /// concrete `BoundedNat` from the calling `Call`'s instantiation args.
+    ///
+    /// Generic function bodies reference their type parameters as variables
+    /// (e.g. `prelude.load_nat` of a generic loop bound); only the calling
+    /// `Call` op knows the concrete instantiation.
+    pub(crate) fn resolve_call_type_arg(
+        &self,
+        hugr: &Hugr,
+        node: Node,
+        var_idx: usize,
+    ) -> Option<u64> {
+        // Find the enclosing FuncDefn of this node.
+        let mut cur = hugr.get_parent(node);
+        let func_defn = loop {
+            let n = cur?;
+            if matches!(hugr.get_optype(n), OpType::FuncDefn(_)) {
+                break n;
+            }
+            cur = hugr.get_parent(n);
+        };
+        // Find the active call executing this FuncDefn and read its arg.
+        self.active_calls
+            .values()
+            .find(|info| info.func_defn_node == func_defn)
+            .and_then(|info| info.type_args.get(var_idx))
+            .and_then(|arg| match arg {
+                TypeArg::BoundedNat(n) => Some(*n),
+                _ => None,
+            })
+    }
+
     /// Complete a function call if the completed CFG belongs to an active Call's `FuncDefn`.
     ///
     /// This method is called when a CFG completes. It checks if that CFG belongs
@@ -115,27 +148,12 @@ impl HugrEngine {
                 // This is critical for function calls inside TailLoop bodies
                 self.check_tailloop_body_completion(hugr, call_node);
 
-                // Add Call's successors to work queue
-                for succ_node in hugr.output_neighbours(call_node) {
-                    if (self.quantum_ops.contains_key(&succ_node)
-                        || self.call_targets.contains_key(&succ_node)
-                        || self.conditionals.contains_key(&succ_node)
-                        || self.cfgs.contains_key(&succ_node))
-                        && !self.processed.contains(&succ_node)
-                        && !self.work_queue.contains(&succ_node)
-                        && all_predecessors_ready(
-                            hugr,
-                            succ_node,
-                            &self.quantum_ops,
-                            &self.conditionals,
-                            &self.cfgs,
-                            &self.processed,
-                        )
-                    {
-                        debug!("Call {call_node:?}: adding successor {succ_node:?} to work queue");
-                        self.work_queue.push_back(succ_node);
-                    }
-                }
+                // Add Call's successors to the work queue via the canonical
+                // readiness check. (A hand-rolled subset here used to omit
+                // classical and extension ops, so e.g. a MakeTuple consuming
+                // the Call's result never ran and the enclosing CFG block
+                // never completed.)
+                self.queue_ready_successors(hugr, call_node);
 
                 // Check if there are pending calls to this FuncDefn
                 if let Some(pending) = self.pending_func_calls.get_mut(&func_defn_node)

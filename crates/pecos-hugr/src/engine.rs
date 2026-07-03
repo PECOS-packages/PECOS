@@ -855,16 +855,25 @@ impl HugrEngine {
                     let num_conditionals = block_info.conditional_nodes.len();
                     let num_bool_ops = block_info.bool_ops.len();
                     let num_tailloops = block_info.tailloop_nodes.len();
+                    let num_classical = block_info.classical_ops.len();
+                    let num_extension = block_info.extension_ops.len();
                     debug!(
-                        "CFG {current_node:?}: activated entry block {entry_block:?} with {num_ops} ops, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops"
+                        "CFG {current_node:?}: activated entry block {entry_block:?} with {num_ops} ops, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops, {num_classical} classical, {num_extension} extension"
                     );
 
-                    // If entry block has no operations, immediately transition to successor
+                    // If entry block has no operations AT ALL, immediately
+                    // transition to the successor. Classical and extension ops
+                    // count: transitioning before they run would propagate
+                    // missing block outputs (e.g. a loop-bounds tuple built
+                    // from LoadConstant + MakeTuple) and starve everything
+                    // downstream.
                     if num_ops == 0
                         && num_calls == 0
                         && num_conditionals == 0
                         && num_bool_ops == 0
                         && num_tailloops == 0
+                        && num_classical == 0
+                        && num_extension == 0
                     {
                         debug!(
                             "[TRACE] Entry block {:?} has 0 ops and 0 calls, successors: {:?}",
@@ -1027,12 +1036,23 @@ impl HugrEngine {
                     if let Some(cfg_node) = func_info.cfg_node {
                         debug!("Call {current_node:?}: starting FuncDefn CFG {cfg_node:?}");
 
+                        // Capture the Call's instantiation type args so type
+                        // variables inside the body (e.g. a generic loop
+                        // bound read by prelude.load_nat) can be resolved.
+                        let type_args = if let OpType::Call(call_op) = hugr.get_optype(current_node)
+                        {
+                            call_op.type_args.clone()
+                        } else {
+                            Vec::new()
+                        };
+
                         // Register as active call
                         self.active_calls.insert(
                             current_node,
                             ActiveCallInfo {
                                 call_node: current_node,
                                 func_defn_node,
+                                type_args,
                             },
                         );
 
@@ -1093,6 +1113,12 @@ impl HugrEngine {
                 // Retry any pending ops that might now have their inputs ready
                 self.retry_pending_bool_reads();
 
+                // A Case/block may consist of just constants feeding its
+                // Output (e.g. a loop's continue-flag bool) -- check
+                // completion so outputs propagate only with values present.
+                self.check_case_completion(&hugr, current_node);
+                self.check_cfg_block_completion(&hugr, current_node);
+
                 self.queue_ready_successors(&hugr, current_node);
                 continue;
             }
@@ -1140,6 +1166,11 @@ impl HugrEngine {
                 // Check if any pending conditionals can now be resolved
                 self.try_resolve_pending_conditionals();
 
+                // Check if this classical op completion allows a Case to
+                // complete (cases may contain only classical ops, e.g. sum
+                // construction for an iterator's continue/break value)
+                self.check_case_completion(&hugr, current_node);
+
                 // Check if this classical op completion allows a CFG block to complete
                 // This is especially important for loop control (iadd for incrementing counters)
                 self.check_cfg_block_completion(&hugr, current_node);
@@ -1165,6 +1196,10 @@ impl HugrEngine {
 
                 // Check if any pending conditionals can now be resolved
                 self.try_resolve_pending_conditionals();
+
+                // Check if this extension op completion allows a Case to
+                // complete (cases may contain only classical/extension ops)
+                self.check_case_completion(&hugr, current_node);
 
                 // Check if this extension op completion allows a CFG block to complete
                 // This is especially important for tket.bool ops in loop control
@@ -1936,6 +1971,79 @@ mod tests {
             .single_linked_output(fh, IncomingPort::from(0))
             .expect("from_halfturns input should be wired");
         (unpack, fh)
+    }
+
+    #[test]
+    fn test_ch_gate_full_execution_completes_cleanly() {
+        // End-to-end guard for classical value flow through nested function
+        // calls: guppy's ch() decomposes via a called function whose angle
+        // (pi/4) is computed by further calls over a tuple constant. The
+        // engine must (a) not fire a Call before its argument values exist,
+        // (b) run every Case/block classical op before propagating outputs,
+        // and (c) finish with NO active control flow left (leftover active
+        // entries mean a stall silently truncated the program).
+        use pecos_engines::{ByteMessageBuilder, ControlEngine, EngineStage};
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pecos/tests/test_data/hugr/ch_gate.hugr"
+        );
+        let mut engine = HugrEngine::from_file(path).expect("Failed to load HUGR");
+        let mut stage = engine.start(()).expect("Failed to start engine");
+        let mut gate_counts: BTreeMap<GateType, usize> = BTreeMap::new();
+        let mut rounds = 0;
+        loop {
+            rounds += 1;
+            assert!(rounds <= 10, "ch execution should complete in a few rounds");
+            match stage {
+                EngineStage::NeedsProcessing(msg) => {
+                    let ops = msg.quantum_ops().expect("parse quantum ops");
+                    for g in &ops {
+                        *gate_counts.entry(g.gate_type).or_insert(0) += 1;
+                    }
+                    let n_meas = ops
+                        .iter()
+                        .filter(|g| {
+                            matches!(
+                                g.gate_type,
+                                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                            )
+                        })
+                        .count();
+                    let mut builder = ByteMessageBuilder::new();
+                    let _ = builder.for_outcomes();
+                    builder.add_outcomes(&vec![0usize; n_meas]);
+                    stage = engine
+                        .continue_processing(builder.build())
+                        .expect("continue");
+                }
+                EngineStage::Complete(_) => break,
+            }
+        }
+
+        // The CH decomposition: RY(pi/4), CZ, RY(-pi/4), then 2 measurements.
+        assert_eq!(gate_counts.get(&GateType::RY), Some(&2), "{gate_counts:?}");
+        assert_eq!(gate_counts.get(&GateType::CZ), Some(&1), "{gate_counts:?}");
+        assert_eq!(gate_counts.get(&GateType::MZ), Some(&2), "{gate_counts:?}");
+
+        // No stalled control flow and no starved nodes may remain.
+        assert!(engine.active_cases.is_empty(), "{:?}", engine.active_cases);
+        assert!(
+            engine.active_cfgs.is_empty(),
+            "cfgs: {:?}",
+            engine.active_cfgs.keys()
+        );
+        assert!(
+            engine.active_calls.is_empty(),
+            "calls: {:?}",
+            engine.active_calls.keys()
+        );
+        assert!(engine.active_tailloops.is_empty());
+        assert!(
+            engine.pending_bool_reads.is_empty(),
+            "starved nodes: {:?}",
+            engine.pending_bool_reads
+        );
     }
 
     #[test]

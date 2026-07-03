@@ -45,7 +45,7 @@ use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
 use crate::engine::analysis::find_input_node;
-use crate::engine::types::{ActiveCaseInfo, QuantumOp};
+use crate::engine::types::{ActiveCaseInfo, ClassicalValue, QuantumOp};
 
 impl HugrEngine {
     /// Try to resolve the control value for a Conditional node.
@@ -162,6 +162,14 @@ impl HugrEngine {
             debug!("Case {case_node:?} complete, propagating outputs to Conditional {cond_node:?}");
             self.propagate_conditional_outputs(hugr, cond_node, case_node);
             self.active_cases.remove(&case_node);
+
+            // The Conditional's outputs exist only now: re-run the checks
+            // that treat the Conditional as complete (block completion gates
+            // on the case being done) and wake its consumers.
+            self.check_cfg_block_completion(hugr, cond_node);
+            self.check_tailloop_body_completion(hugr, cond_node);
+            self.queue_ready_successors(hugr, cond_node);
+            self.retry_pending_bool_reads();
         }
     }
 
@@ -208,19 +216,28 @@ impl HugrEngine {
                     );
                 }
 
-                // Check if we have a classical value for this wire
-                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                // Check if we have a classical value for this wire. When the
+                // source Tag executed as a classical op this is the real Sum
+                // value -- the structural fallback below must NOT overwrite
+                // it with just the tag number.
+                let has_value = if let Some(value) =
+                    self.wire_state.classical_values.get(&src_wire).cloned()
+                {
                     self.wire_state
                         .classical_values
                         .insert((cond_node, port_idx), value.clone());
                     debug!(
                         "Mapped Conditional {cond_node:?} output {port_idx} to classical value {value:?} (from {src_wire:?})"
                     );
-                }
+                    true
+                } else {
+                    false
+                };
 
-                // Check if the source is a Tag node - store its tag value and payload
+                // Structural fallback: if the source is an unexecuted Tag
+                // node, store its tag value and payload
                 let src_op = hugr.get_optype(src_node);
-                if let OpType::Tag(tag_op) = src_op {
+                if !has_value && let OpType::Tag(tag_op) = src_op {
                     let tag_value = tag_op.tag;
                     #[allow(clippy::cast_possible_wrap)] // Tag indices are small
                     self.wire_state
@@ -297,9 +314,34 @@ impl HugrEngine {
         if let Some(input_node) = input_node {
             debug!("Case {selected_case:?} has Input node {input_node:?}");
 
+            // The Case's Input row is [selected variant's PAYLOAD] ++
+            // [other inputs]. Unpack the control Sum's payload values into
+            // the first Case Input ports (e.g. an iterator's
+            // Continue(item, state) payload); empty-payload variants (plain
+            // bools) contribute nothing and leave the offset at 0.
+            let mut payload_len = 0;
+            if let Some((ctrl_src, ctrl_port)) =
+                hugr.single_linked_output(cond_node, IncomingPort::from(0))
+                && let Some(ClassicalValue::Sum { values, .. }) = self
+                    .wire_state
+                    .classical_values
+                    .get(&(ctrl_src, ctrl_port.index()))
+                    .cloned()
+            {
+                payload_len = values.len();
+                for (i, value) in values.into_iter().enumerate() {
+                    debug!(
+                        "Propagated control payload {value:?} to Case Input ({input_node:?}, {i})"
+                    );
+                    self.wire_state
+                        .classical_values
+                        .insert((input_node, i), value);
+                }
+            }
+
             // Propagate ALL wires (qubit and classical) from Conditional inputs to the Case's Input node
             // Port 0 is the control (Sum type), ports 1+ are data inputs
-            // The Case's Input node outputs correspond to the Conditional's non-control inputs
+            // following the payload values unpacked above.
             let num_cond_inputs = hugr.num_inputs(cond_node);
 
             // Start from port 1 (skip control), propagate all inputs
@@ -309,7 +351,7 @@ impl HugrEngine {
                     hugr.single_linked_output(cond_node, cond_in_port)
                 {
                     let src_wire = (src_node, src_port.index());
-                    let input_output_idx = port_idx - 1;
+                    let input_output_idx = payload_len + port_idx - 1;
 
                     // Propagate qubit mappings
                     if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
@@ -351,10 +393,65 @@ impl HugrEngine {
             }
         }
 
+        // The Case's classical, bool, and extension ops must also execute
+        // before its outputs propagate (propagating early copies missing
+        // values downstream). Unblock them from the inside-cases guard,
+        // queue the ready ones, and track them all for completion.
+        let case_classical =
+            crate::engine::analysis::find_classical_ops_in_block(hugr, selected_case);
+        let case_bools = crate::engine::analysis::find_bool_ops_in_block(hugr, selected_case);
+        let case_extension: Vec<Node> =
+            crate::engine::analysis::find_extension_ops_in_block(hugr, selected_case)
+                .into_iter()
+                .filter(|n| {
+                    !self.quantum_ops.contains_key(n)
+                        && !case_classical.contains(n)
+                        && !case_bools.contains(n)
+                })
+                .collect();
+        // LoadConstants feeding the Case's Output (e.g. a loop's
+        // continue-flag bool) also count: queue and track them like blocks
+        // do at activation.
+        let case_load_consts: Vec<Node> = hugr
+            .children(selected_case)
+            .filter(|&child| matches!(hugr.get_optype(child), OpType::LoadConstant(_)))
+            .collect();
+        // Clear processed state first so the case body re-executes when the
+        // conditional runs again (e.g. once per loop iteration), then queue.
+        for &op_node in case_classical
+            .iter()
+            .chain(case_bools.iter())
+            .chain(case_extension.iter())
+            .chain(case_load_consts.iter())
+        {
+            self.processed.remove(&op_node);
+        }
+        for &op_node in case_classical
+            .iter()
+            .chain(case_bools.iter())
+            .chain(case_extension.iter())
+            .chain(case_load_consts.iter())
+        {
+            self.nodes_inside_cases.remove(&op_node);
+            ops_in_case.insert(op_node);
+            if !self.work_queue.contains(&op_node)
+                && crate::engine::analysis::all_predecessors_ready(
+                    hugr,
+                    op_node,
+                    &self.quantum_ops,
+                    &self.conditionals,
+                    &self.cfgs,
+                    &self.processed,
+                )
+            {
+                self.work_queue.push_back(op_node);
+            }
+        }
+
         // Register this Case as active so we can propagate outputs when complete
         if ops_in_case.is_empty() {
             // No ops in this Case - propagate outputs immediately
-            debug!("Case {selected_case:?} has no quantum ops, propagating outputs immediately");
+            debug!("Case {selected_case:?} has no ops, propagating outputs immediately");
             self.propagate_conditional_outputs(hugr, cond_node, selected_case);
         } else {
             self.active_cases.insert(

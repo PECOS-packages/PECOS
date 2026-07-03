@@ -27,6 +27,7 @@
 //! Also handles `tket.bool` extension operations.
 
 use log::debug;
+use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
@@ -409,16 +410,41 @@ impl HugrEngine {
                 return vec![(0, ClassicalValue::Tuple(inputs))];
             }
             ClassicalOpType::UnpackTuple => {
-                // UnpackTuple takes a single tuple input and produces multiple outputs
+                // UnpackTuple takes a single tuple input and produces multiple
+                // outputs. A tuple is a 1-variant sum, so accept a Sum payload
+                // the same way (e.g. a tuple that crossed a CFG/Call boundary
+                // as a tagged value).
                 let tuple_value = inputs.into_iter().next();
-                if let Some(ClassicalValue::Tuple(elements)) = tuple_value {
-                    // Return each element on its respective output port
-                    return elements.into_iter().enumerate().collect();
-                } else if let Some(value) = tuple_value {
-                    // If it's a single non-tuple value, just pass it through on port 0
-                    return vec![(0, value)];
+                match tuple_value {
+                    Some(
+                        ClassicalValue::Tuple(elements)
+                        | ClassicalValue::Sum {
+                            values: elements, ..
+                        },
+                    ) => {
+                        // Return each element on its respective output port
+                        return elements.into_iter().enumerate().collect();
+                    }
+                    Some(value) => {
+                        // If it's a single non-tuple value, just pass it through on port 0
+                        return vec![(0, value)];
+                    }
+                    None => return vec![],
                 }
-                return vec![];
+            }
+            ClassicalOpType::TagSum => {
+                // Tag wraps its inputs into the given variant of a sum.
+                let OpType::Tag(tag_op) = hugr.get_optype(node) else {
+                    debug!("TagSum at {node:?}: node is not a Tag op");
+                    return vec![];
+                };
+                return vec![(
+                    0,
+                    ClassicalValue::Sum {
+                        tag: tag_op.tag,
+                        values: inputs,
+                    },
+                )];
             }
         };
 

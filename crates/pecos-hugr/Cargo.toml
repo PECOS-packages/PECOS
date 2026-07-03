@@ -37,6 +37,7 @@ pecos-quantum = { workspace = true, features = ["hugr"] }
 pecos-wasm = { workspace = true, optional = true }
 
 [dev-dependencies]
+env_logger.workspace = true
 tempfile.workspace = true
 # For creating test HUGRs from DagCircuit
 pecos-quantum = { workspace = true, features = ["hugr"] }

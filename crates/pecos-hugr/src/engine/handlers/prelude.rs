@@ -35,31 +35,46 @@ impl HugrEngine {
 
         match op_name {
             "load_nat" => {
-                // load_nat loads a bounded nat parameter into a usize runtime value.
-                // The value comes from the type arguments of the polymorphic instantiation.
-                // For now, we try to extract it from the extension op's args.
+                // load_nat loads a bounded nat parameter into a usize runtime
+                // value. In a monomorphic context the value is a concrete
+                // BoundedNat type arg on the op itself; inside a generic
+                // function body it is a type VARIABLE that must be resolved
+                // through the calling Call's instantiation type args.
                 let op = hugr.get_optype(node);
                 if let Some(ext_op) = op.as_extension_op() {
-                    let args = ext_op.args();
-                    for arg in args {
-                        // Look for BoundedNat type arg
-                        if let tket::hugr::types::TypeArg::BoundedNat(n) = arg {
-                            debug!("load_nat: found bounded nat value {n}");
-                            self.wire_state
-                                .classical_values
-                                .insert((node, 0), ClassicalValue::UInt(*n));
-                            return true;
+                    for arg in ext_op.args() {
+                        match arg {
+                            tket::hugr::types::TypeArg::BoundedNat(n) => {
+                                debug!("load_nat: found bounded nat value {n}");
+                                self.wire_state
+                                    .classical_values
+                                    .insert((node, 0), ClassicalValue::UInt(*n));
+                                return true;
+                            }
+                            tket::hugr::types::TypeArg::Variable(var) => {
+                                if let Some(n) = self.resolve_call_type_arg(hugr, node, var.index())
+                                {
+                                    debug!(
+                                        "load_nat: resolved type variable {} to {n} via active call",
+                                        var.index()
+                                    );
+                                    self.wire_state
+                                        .classical_values
+                                        .insert((node, 0), ClassicalValue::UInt(n));
+                                    return true;
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    // If we can't find the value, log and return false
                     debug!("load_nat: couldn't extract bounded nat value from args");
                 }
-                // Fallback: set a default value of 0
-                debug!("load_nat: using default value 0");
-                self.wire_state
-                    .classical_values
-                    .insert((node, 0), ClassicalValue::UInt(0));
-                true
+                // No fabricated default: a wrong nat here silently corrupts
+                // whatever consumes it (e.g. a loop bound). Defer so the
+                // engine's pending/retry mechanism (or, at completion, the
+                // stall accounting) surfaces the problem instead.
+                debug!("load_nat at {node:?}: value unresolved, deferring");
+                false
             }
 
             "panic" => {
@@ -84,13 +99,21 @@ impl HugrEngine {
                 let op = hugr.get_optype(node);
                 let num_inputs = op.dataflow_signature().map_or(0, |sig| sig.input_count());
 
+                // A missing input means the value is not ready yet (or is a
+                // linear qubit handled structurally): defer instead of
+                // fabricating a default element, which would mark this node
+                // processed and let consumers (calls, blocks) fire with a
+                // garbage tuple.
                 let mut elements = Vec::with_capacity(num_inputs);
                 for port in 0..num_inputs {
                     if let Some(value) = self.get_input_value(hugr, node, port) {
                         elements.push(value);
+                    } else if let Some(qubit_id) = self.get_input_qubit(hugr, node, port) {
+                        // Linear payload: qubit flow is resolved structurally.
+                        elements.push(ClassicalValue::QubitRef(qubit_id));
                     } else {
-                        // Missing input - use a default
-                        elements.push(ClassicalValue::Int(0));
+                        debug!("MakeTuple at {node:?}: input {port} not ready, deferring");
+                        return false;
                     }
                 }
 
@@ -109,19 +132,43 @@ impl HugrEngine {
                 let op = hugr.get_optype(node);
                 let num_outputs = op.dataflow_signature().map_or(0, |sig| sig.output_count());
 
-                if let Some(ClassicalValue::Tuple(elements)) = self.get_input_value(hugr, node, 0) {
-                    for (port, value) in elements.into_iter().enumerate() {
-                        if port < num_outputs {
-                            self.wire_state.classical_values.insert((node, port), value);
+                // A tuple is a 1-variant sum, so accept a Sum payload the
+                // same way (e.g. a tuple that crossed a CFG/Call boundary as
+                // a tagged value). A missing input defers (marking the node
+                // processed without output would let consumers fire early).
+                match self.get_input_value(hugr, node, 0) {
+                    Some(
+                        ClassicalValue::Tuple(elements)
+                        | ClassicalValue::Sum {
+                            values: elements, ..
+                        },
+                    ) => {
+                        for (port, value) in elements.into_iter().enumerate() {
+                            if port < num_outputs {
+                                self.wire_state.classical_values.insert((node, port), value);
+                            }
                         }
+                        debug!("UnpackTuple at {node:?}: unpacked to {num_outputs} outputs");
+                        true
                     }
-                    debug!("UnpackTuple at {node:?}: unpacked to {num_outputs} outputs");
-                } else {
-                    // Input not a tuple or not available - try pass-through as fallback
-                    debug!("UnpackTuple at {node:?}: input not a tuple, attempting pass-through");
-                    self.propagate_all_inputs(hugr, node);
+                    Some(_) => {
+                        // Single non-tuple value - pass through
+                        debug!(
+                            "UnpackTuple at {node:?}: input not a tuple, attempting pass-through"
+                        );
+                        self.propagate_all_inputs(hugr, node);
+                        true
+                    }
+                    None if self.get_input_qubit(hugr, node, 0).is_some() => {
+                        // Linear (qubit) tuple: flow is resolved structurally.
+                        self.propagate_all_inputs(hugr, node);
+                        true
+                    }
+                    None => {
+                        debug!("UnpackTuple at {node:?}: input not ready, deferring");
+                        false
+                    }
                 }
-                true
             }
 
             _ => {

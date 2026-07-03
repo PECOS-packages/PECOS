@@ -229,6 +229,8 @@ pub enum ClassicalOpType {
     // Tuple operations
     MakeTuple,
     UnpackTuple,
+    // Sum construction (HUGR `Tag` nodes: variants, options, branch selectors)
+    TagSum,
 }
 
 /// Classical operation extracted from HUGR.
@@ -280,6 +282,16 @@ pub enum ClassicalValue {
     Float(f64),
     /// Tuple of values
     Tuple(Vec<ClassicalValue>),
+    /// Tagged sum value (HUGR variants: options, loop continue/break,
+    /// branch selectors). A tuple is the 1-variant special case and a
+    /// bool the 2-variant empty-payload special case; this carries the
+    /// general form.
+    Sum {
+        /// The variant tag.
+        tag: usize,
+        /// The payload values of the active variant.
+        values: Vec<ClassicalValue>,
+    },
     /// Array of values
     Array(Vec<ClassicalValue>),
     /// Future handle (for lazy measurements)
@@ -300,6 +312,8 @@ impl ClassicalValue {
             Self::Bool(b) => Some(u32::from(*b)),
             Self::Int(i) => u32::try_from(*i).ok(),
             Self::UInt(u) => u32::try_from(*u).ok(),
+            // A sum's control-flow decision value is its variant tag.
+            Self::Sum { tag, .. } => u32::try_from(*tag).ok(),
             Self::Float(_)
             | Self::Tuple(_)
             | Self::Array(_)
@@ -320,7 +334,10 @@ impl ClassicalValue {
             Self::Int(i) => Some(*i != 0),
             Self::UInt(u) => Some(*u != 0),
             Self::Float(f) => Some(*f != 0.0),
-            Self::Tuple(_)
+            // HUGR bools are 2-variant sums with empty payloads.
+            Self::Sum { tag, values } if values.is_empty() => Some(*tag != 0),
+            Self::Sum { .. }
+            | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
@@ -340,7 +357,8 @@ impl ClassicalValue {
             Self::Int(i) => Some(*i),
             Self::UInt(u) => i64::try_from(*u).ok(),
             Self::Float(f) => Some(*f as i64),
-            Self::Tuple(_)
+            Self::Sum { .. }
+            | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
@@ -360,7 +378,8 @@ impl ClassicalValue {
             Self::Int(i) => u64::try_from(*i).ok(),
             Self::UInt(u) => Some(*u),
             Self::Float(f) => Some(*f as u64),
-            Self::Tuple(_)
+            Self::Sum { .. }
+            | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
@@ -381,7 +400,8 @@ impl ClassicalValue {
             Self::UInt(u) => Some(*u as f64),
             Self::Float(f) => Some(*f),
             Self::Rotation(r) => Some(*r), // Rotation can be interpreted as float (half-turns)
-            Self::Tuple(_)
+            Self::Sum { .. }
+            | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::RngContext(_)
@@ -716,6 +736,10 @@ pub struct ActiveCallInfo {
     pub call_node: Node,
     /// The `FuncDefn` being called.
     pub func_defn_node: Node,
+    /// The Call's instantiation type arguments, used to resolve type
+    /// variables inside the called body (e.g. `prelude.load_nat` of a
+    /// generic bounded-nat parameter such as a loop bound).
+    pub type_args: Vec<tket::hugr::types::TypeArg>,
 }
 
 // --- TailLoop Control Flow Types ---

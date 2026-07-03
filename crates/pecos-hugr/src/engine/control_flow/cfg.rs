@@ -320,71 +320,41 @@ impl HugrEngine {
 
             // Check the current block
             if let Some(block_info) = cfg_info.blocks.get(&active_cfg.current_block) {
-                // Check if this block has operations that drive completion.
-                // Quantum, calls, conditionals, bool, extension, and tailloops
-                // complete explicitly. Classical_ops complete when their inputs are ready.
-                let has_completion_driving_ops = !block_info.quantum_ops.is_empty()
-                    || !block_info.call_nodes.is_empty()
-                    || !block_info.conditional_nodes.is_empty()
-                    || !block_info.bool_ops.is_empty()
-                    || !block_info.extension_ops.is_empty()
-                    || !block_info.tailloop_nodes.is_empty();
-
-                // Check if the processed node is in this block
-                let is_in_block = if has_completion_driving_ops {
-                    block_info.quantum_ops.contains(&processed_node)
-                        || block_info.call_nodes.contains(&processed_node)
-                        || block_info.conditional_nodes.contains(&processed_node)
-                        || block_info.bool_ops.contains(&processed_node)
-                        || block_info.extension_ops.contains(&processed_node)
-                        || block_info.tailloop_nodes.contains(&processed_node)
-                } else {
-                    // Block has only classical ops - track those for completion
-                    block_info.classical_ops.contains(&processed_node)
-                };
+                // A block is complete only when EVERY tracked op set in it has
+                // been processed -- including classical ops. Transitioning
+                // while a classical op is still pending would propagate
+                // missing block outputs (e.g. a partially-built loop-state
+                // tuple) and silently starve everything downstream.
+                let is_in_block = block_info.quantum_ops.contains(&processed_node)
+                    || block_info.call_nodes.contains(&processed_node)
+                    || block_info.conditional_nodes.contains(&processed_node)
+                    || block_info.bool_ops.contains(&processed_node)
+                    || block_info.extension_ops.contains(&processed_node)
+                    || block_info.tailloop_nodes.contains(&processed_node)
+                    || block_info.classical_ops.contains(&processed_node);
 
                 if is_in_block {
-                    // Check completion based on block type
-                    let block_complete = if has_completion_driving_ops {
-                        // Block with completion-driving ops: wait for all such op types.
-                        let all_quantum_done = block_info
-                            .quantum_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op));
-                        let all_calls_done = block_info
-                            .call_nodes
-                            .iter()
-                            .all(|call| self.processed.contains(call));
-                        let all_conditionals_done = block_info
-                            .conditional_nodes
-                            .iter()
-                            .all(|cond| self.processed.contains(cond));
-                        let all_bools_done = block_info
-                            .bool_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op));
-                        let all_extensions_done = block_info
-                            .extension_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op));
-                        let all_tailloops_done = block_info
-                            .tailloop_nodes
-                            .iter()
-                            .all(|tl| self.processed.contains(tl));
-
-                        all_quantum_done
-                            && all_calls_done
-                            && all_conditionals_done
-                            && all_bools_done
-                            && all_extensions_done
-                            && all_tailloops_done
-                    } else {
-                        // Classical-only block: wait for classical ops
-                        block_info
-                            .classical_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op))
+                    let all_done = |set: &std::collections::BTreeSet<Node>| {
+                        set.iter().all(|op| self.processed.contains(op))
                     };
+                    // A conditional is only DONE once its selected Case has
+                    // completed and propagated outputs -- expansion alone
+                    // marks it processed, but its output values do not exist
+                    // yet (transitioning then would copy missing values).
+                    let conditionals_done = block_info.conditional_nodes.iter().all(|cond| {
+                        self.processed.contains(cond)
+                            && !self
+                                .active_cases
+                                .values()
+                                .any(|case| case.conditional_node == *cond)
+                    });
+                    let block_complete = all_done(&block_info.quantum_ops)
+                        && all_done(&block_info.call_nodes)
+                        && conditionals_done
+                        && all_done(&block_info.bool_ops)
+                        && all_done(&block_info.extension_ops)
+                        && all_done(&block_info.tailloop_nodes)
+                        && all_done(&block_info.classical_ops);
 
                     if block_complete {
                         block_completions.push((
@@ -532,6 +502,11 @@ impl HugrEngine {
                 }
             }
             // Also activate Call nodes in this block
+            // Clear processed state first so they can be re-executed in loops
+            // (each loop iteration must call the function again)
+            for &call_node in &block_info.call_nodes {
+                self.processed.remove(&call_node);
+            }
             for &call_node in &block_info.call_nodes {
                 self.nodes_inside_cfg_blocks.remove(&call_node);
                 // Skip Call nodes inside TailLoops
@@ -948,11 +923,29 @@ impl HugrEngine {
         let sum_port = IncomingPort::from(0);
         let mut payload_len = 0;
 
-        if let Some((sum_src_node, _)) = hugr.single_linked_output(from_output, sum_port) {
+        if let Some((sum_src_node, sum_src_port)) = hugr.single_linked_output(from_output, sum_port)
+        {
             let sum_src_op = hugr.get_optype(sum_src_node);
+            let sum_wire = (sum_src_node, sum_src_port.index());
 
+            // If the branch Sum has an executed VALUE (e.g. built by a Tag
+            // over classical values, like a loop's carried state), its
+            // payload elements are the successor's first inputs.
+            if let Some(ClassicalValue::Sum { values, .. }) =
+                self.wire_state.classical_values.get(&sum_wire).cloned()
+            {
+                payload_len = values.len();
+                for (i, value) in values.into_iter().enumerate() {
+                    debug!(
+                        "[TRACE] Block transition: propagated branch payload {value:?} to {to_input:?}:{i}"
+                    );
+                    self.wire_state
+                        .classical_values
+                        .insert((to_input, i), value);
+                }
+            }
             // Check if it's a Conditional - extract payload from virtual output ports
-            if matches!(sum_src_op, OpType::Conditional(_)) {
+            else if matches!(sum_src_op, OpType::Conditional(_)) {
                 // Look for payload values at virtual output ports (1, 2, ...)
                 let mut idx = 1;
                 while let Some(value) = self
@@ -1082,17 +1075,76 @@ impl HugrEngine {
 
     /// Propagate wire mappings from final block to CFG outputs.
     pub(crate) fn propagate_cfg_outputs(&mut self, hugr: &Hugr, cfg_node: Node, final_block: Node) {
+        use tket::hugr::ops::OpTrait;
+
         let Some(output_node) = find_output_node(hugr, final_block) else {
             debug!("No Output node found in final block {final_block:?}");
             return;
         };
 
-        // Block Output: port 0 = Sum (control), ports 1+ = data
-        // CFG outputs correspond to data ports (skip the Sum)
+        // Block Output: port 0 = Sum (control), ports 1+ = data.
+        // When the Sum is built by a Tag, its inputs are the PAYLOAD carried
+        // into the exit variant -- these become the first CFG outputs (e.g. a
+        // called function's return value rides in the Tag payload, not on the
+        // data ports).
+        let mut payload_len = 0;
+        if let Some((sum_src, sum_src_port)) =
+            hugr.single_linked_output(output_node, IncomingPort::from(0))
+            && let OpType::Tag(_) = hugr.get_optype(sum_src)
+        {
+            // Prefer the executed Tag's Sum VALUE: its payload elements are
+            // the CFG outputs (a called function's return value rides here).
+            let sum_wire = (sum_src, sum_src_port.index());
+            if let Some(ClassicalValue::Sum { values, .. }) =
+                self.wire_state.classical_values.get(&sum_wire).cloned()
+            {
+                payload_len = values.len();
+                for (i, value) in values.into_iter().enumerate() {
+                    debug!("CFG {cfg_node:?} output {i}: mapped payload value {value:?}");
+                    self.wire_state
+                        .classical_values
+                        .insert((cfg_node, i), value);
+                }
+            } else {
+                // Structural fallback (e.g. linear payloads: Tags over qubits
+                // do not execute as classical ops).
+                let num_payload = hugr
+                    .get_optype(sum_src)
+                    .dataflow_signature()
+                    .map_or(0, |sig| sig.input_count());
+                for i in 0..num_payload {
+                    if let Some((vsrc, vport)) =
+                        hugr.single_linked_output(sum_src, IncomingPort::from(i))
+                    {
+                        let src_wire = (vsrc, vport.index());
+                        if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
+                            self.wire_state
+                                .wire_to_qubit
+                                .insert((cfg_node, i), qubit_id);
+                            debug!(
+                                "CFG {cfg_node:?} output {i}: mapped payload qubit {qubit_id:?}"
+                            );
+                        }
+                        if let Some(value) =
+                            self.wire_state.classical_values.get(&src_wire).cloned()
+                        {
+                            debug!("CFG {cfg_node:?} output {i}: mapped payload value {value:?}");
+                            self.wire_state
+                                .classical_values
+                                .insert((cfg_node, i), value);
+                        }
+                    }
+                }
+                payload_len = num_payload;
+            }
+        }
+
+        // CFG outputs after the payload correspond to the data ports.
         let num_data_outputs = hugr.num_inputs(output_node).saturating_sub(1);
 
         for port_idx in 0..num_data_outputs {
             let block_port = IncomingPort::from(port_idx + 1); // Skip Sum port
+            let cfg_out_idx = payload_len + port_idx;
 
             if let Some((src_node, src_port)) = hugr.single_linked_output(output_node, block_port) {
                 let src_wire = (src_node, src_port.index());
@@ -1100,8 +1152,14 @@ impl HugrEngine {
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
                     self.wire_state
                         .wire_to_qubit
-                        .insert((cfg_node, port_idx), qubit_id);
-                    debug!("CFG {cfg_node:?} output {port_idx}: mapped qubit {qubit_id:?}");
+                        .insert((cfg_node, cfg_out_idx), qubit_id);
+                    debug!("CFG {cfg_node:?} output {cfg_out_idx}: mapped qubit {qubit_id:?}");
+                }
+                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                    debug!("CFG {cfg_node:?} output {cfg_out_idx}: mapped value {value:?}");
+                    self.wire_state
+                        .classical_values
+                        .insert((cfg_node, cfg_out_idx), value);
                 }
             }
         }

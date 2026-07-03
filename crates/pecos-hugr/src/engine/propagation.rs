@@ -382,8 +382,9 @@ impl HugrEngine {
             return Some(ClassicalValue::Bool(bool_value));
         }
 
-        // Tuple constants are single-variant sums with tag 0; a two-variant
-        // sum with no payload is a plain HUGR bool (False=0/True=1).
+        // Sum constants: a two-variant sum with no payload is a plain HUGR
+        // bool (False=0/True=1); a single-variant tag-0 sum is a tuple; any
+        // other variant shape is a general tagged sum.
         if let Value::Sum(sum) = value {
             let num_variants = sum.sum_type.num_variants();
             if num_variants == 2 && sum.values.is_empty() {
@@ -393,19 +394,28 @@ impl HugrEngine {
                 );
                 return Some(ClassicalValue::Bool(sum.tag == 1));
             }
+            let elements: Option<Vec<ClassicalValue>> = sum
+                .values
+                .iter()
+                .map(Self::const_value_to_classical)
+                .collect();
+            let elements = elements?;
             if num_variants == 1 && sum.tag == 0 {
-                let elements: Option<Vec<ClassicalValue>> = sum
-                    .values
-                    .iter()
-                    .map(Self::const_value_to_classical)
-                    .collect();
-                let elements = elements?;
                 debug!(
                     "const_value_to_classical: found tuple const with {} elements",
                     elements.len()
                 );
                 return Some(ClassicalValue::Tuple(elements));
             }
+            debug!(
+                "const_value_to_classical: found sum const with tag {} and {} elements",
+                sum.tag,
+                elements.len()
+            );
+            return Some(ClassicalValue::Sum {
+                tag: sum.tag,
+                values: elements,
+            });
         }
 
         None

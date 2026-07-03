@@ -320,135 +320,187 @@ impl HugrEngine {
             // Integer to float conversions
             "convert_s" | "itof_s" => {
                 // Signed integer to float
-                if let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int()) {
-                    let result = value as f64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Float(result));
-                    debug!("convert_s: {value} -> {result}");
-                }
+                let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int())
+                else {
+                    debug!("convert_s at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let result = value as f64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Float(result));
+                debug!("convert_s: {value} -> {result}");
             }
             "convert_u" | "itof_u" => {
                 // Unsigned integer to float
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_uint())
-                {
-                    let result = value as f64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Float(result));
-                    debug!("convert_u: {value} -> {result}");
-                }
+                else {
+                    debug!("convert_u at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let result = value as f64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Float(result));
+                debug!("convert_u: {value} -> {result}");
+            }
+
+            // usize <-> int conversions (e.g. guppy loop bounds built from
+            // prelude.load_nat's usize output)
+            "ifromusize" => {
+                let Some(value) = self
+                    .get_input_value(hugr, node, 0)
+                    .and_then(|v| v.as_uint())
+                else {
+                    debug!("ifromusize at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                #[allow(clippy::cast_possible_wrap)]
+                let result = value as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("ifromusize: {value} -> {result}");
+            }
+            "itousize" => {
+                let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int())
+                else {
+                    debug!("itousize at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                #[allow(clippy::cast_sign_loss)]
+                let result = value as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("itousize: {value} -> {result}");
             }
 
             // Float to integer conversions (truncate toward zero)
             "trunc_s" | "ftoi_s" => {
                 // Float to signed integer (truncate)
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let result = value.trunc() as i64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Int(result));
-                    debug!("trunc_s: {value} -> {result}");
-                }
+                else {
+                    debug!("trunc_s at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let result = value.trunc() as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("trunc_s: {value} -> {result}");
             }
             "trunc_u" | "ftoi_u" => {
                 // Float to unsigned integer (truncate)
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    // Clamp to non-negative before converting
-                    let clamped = value.max(0.0).trunc();
-                    let result = clamped as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(result));
-                    debug!("trunc_u: {value} -> {result}");
-                }
+                else {
+                    debug!("trunc_u at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                // Clamp to non-negative before converting
+                let clamped = value.max(0.0).trunc();
+                let result = clamped as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("trunc_u: {value} -> {result}");
             }
 
             // Ceiling/floor variants
             "ceil_s" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let result = value.ceil() as i64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Int(result));
-                    debug!("ceil_s: {value} -> {result}");
-                }
+                else {
+                    debug!("ceil_s at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let result = value.ceil() as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("ceil_s: {value} -> {result}");
             }
             "ceil_u" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let clamped = value.max(0.0).ceil();
-                    let result = clamped as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(result));
-                    debug!("ceil_u: {value} -> {result}");
-                }
+                else {
+                    debug!("ceil_u at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let clamped = value.max(0.0).ceil();
+                let result = clamped as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("ceil_u: {value} -> {result}");
             }
             "floor_s" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let result = value.floor() as i64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Int(result));
-                    debug!("floor_s: {value} -> {result}");
-                }
+                else {
+                    debug!("floor_s at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let result = value.floor() as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("floor_s: {value} -> {result}");
             }
             "floor_u" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let clamped = value.max(0.0).floor();
-                    let result = clamped as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(result));
-                    debug!("floor_u: {value} -> {result}");
-                }
+                else {
+                    debug!("floor_u at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let clamped = value.max(0.0).floor();
+                let result = clamped as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("floor_u: {value} -> {result}");
             }
 
             // Rounding
             "round_s" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let result = value.round() as i64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Int(result));
-                    debug!("round_s: {value} -> {result}");
-                }
+                else {
+                    debug!("round_s at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let result = value.round() as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("round_s: {value} -> {result}");
             }
             "round_u" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let clamped = value.max(0.0).round();
-                    let result = clamped as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(result));
-                    debug!("round_u: {value} -> {result}");
-                }
+                else {
+                    debug!("round_u at {node:?}: input not ready, deferring");
+                    return false;
+                };
+                let clamped = value.max(0.0).round();
+                let result = clamped as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("round_u: {value} -> {result}");
             }
 
             _ => {

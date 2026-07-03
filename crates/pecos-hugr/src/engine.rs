@@ -1787,6 +1787,10 @@ impl ClassicalEngine for HugrEngine {
                 // results are available
                 if let Some(hugr) = self.hugr.clone() {
                     self.repropagate_measurement_values(&hugr);
+                    // Likewise for expanded cases: a case can expand on its
+                    // own control before OTHER data inputs (later
+                    // measurements) exist; refresh its Input ports now.
+                    self.repropagate_active_case_inputs(&hugr);
                 }
 
                 // Retry any bool.read nodes that were waiting for measurement results

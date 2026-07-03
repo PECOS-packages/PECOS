@@ -304,6 +304,87 @@ impl HugrEngine {
         }
     }
 
+    /// Copy the Conditional's control payload and data inputs into the
+    /// selected Case's Input node ports.
+    ///
+    /// Called at expansion and again when measurement results arrive: a case
+    /// can expand as soon as its own control resolves while other data
+    /// inputs (e.g. a later measurement) do not exist yet, and the one-shot
+    /// copy would leave those Case Input ports empty forever.
+    pub(crate) fn propagate_case_inputs(&mut self, hugr: &Hugr, cond_node: Node, input_node: Node) {
+        // The Case's Input row is [selected variant's PAYLOAD] ++
+        // [other inputs]. Unpack the control Sum's payload values into
+        // the first Case Input ports (e.g. an iterator's
+        // Continue(item, state) payload); empty-payload variants (plain
+        // bools) contribute nothing and leave the offset at 0.
+        let mut payload_len = 0;
+        if let Some((ctrl_src, ctrl_port)) =
+            hugr.single_linked_output(cond_node, IncomingPort::from(0))
+            && let Some(ClassicalValue::Sum { values, .. }) = self
+                .wire_state
+                .classical_values
+                .get(&(ctrl_src, ctrl_port.index()))
+                .cloned()
+        {
+            payload_len = values.len();
+            for (i, value) in values.into_iter().enumerate() {
+                debug!("Propagated control payload {value:?} to Case Input ({input_node:?}, {i})");
+                self.wire_state
+                    .classical_values
+                    .insert((input_node, i), value);
+            }
+        }
+
+        // Propagate ALL wires (qubit and classical) from Conditional inputs to the Case's Input node
+        // Port 0 is the control (Sum type), ports 1+ are data inputs
+        // following the payload values unpacked above.
+        let num_cond_inputs = hugr.num_inputs(cond_node);
+
+        // Start from port 1 (skip control), propagate all inputs
+        for port_idx in 1..num_cond_inputs {
+            let cond_in_port = IncomingPort::from(port_idx);
+            if let Some((src_node, src_port)) = hugr.single_linked_output(cond_node, cond_in_port) {
+                let src_wire = (src_node, src_port.index());
+                let input_output_idx = payload_len + port_idx - 1;
+
+                // Propagate qubit mappings
+                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((input_node, input_output_idx), qubit_id);
+                    debug!(
+                        "Propagated qubit {qubit_id:?} to Input node {input_node:?} port {input_output_idx}"
+                    );
+                }
+
+                // Also propagate classical values (integers, bools, etc.)
+                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                    debug!(
+                        "Propagated classical value {value:?} from {src_wire:?} to Case Input ({input_node:?}, {input_output_idx})"
+                    );
+                    self.wire_state
+                        .classical_values
+                        .insert((input_node, input_output_idx), value);
+                }
+            }
+        }
+    }
+
+    /// Re-run case-input propagation for every active case (measurement
+    /// results may have landed after the case expanded).
+    pub(crate) fn repropagate_active_case_inputs(&mut self, hugr: &Hugr) {
+        let targets: Vec<(Node, Node)> = self
+            .active_cases
+            .iter()
+            .filter_map(|(&case_node, info)| {
+                find_input_node(hugr, case_node).map(|input| (info.conditional_node, input))
+            })
+            .collect();
+        for (cond_node, input_node) in targets {
+            self.propagate_case_inputs(hugr, cond_node, input_node);
+        }
+    }
+
     /// Expand a Conditional by selecting the appropriate Case branch.
     /// Returns the entry nodes of the selected Case that should be added to the work queue.
     pub(crate) fn expand_conditional(
@@ -338,67 +419,7 @@ impl HugrEngine {
 
         if let Some(input_node) = input_node {
             debug!("Case {selected_case:?} has Input node {input_node:?}");
-
-            // The Case's Input row is [selected variant's PAYLOAD] ++
-            // [other inputs]. Unpack the control Sum's payload values into
-            // the first Case Input ports (e.g. an iterator's
-            // Continue(item, state) payload); empty-payload variants (plain
-            // bools) contribute nothing and leave the offset at 0.
-            let mut payload_len = 0;
-            if let Some((ctrl_src, ctrl_port)) =
-                hugr.single_linked_output(cond_node, IncomingPort::from(0))
-                && let Some(ClassicalValue::Sum { values, .. }) = self
-                    .wire_state
-                    .classical_values
-                    .get(&(ctrl_src, ctrl_port.index()))
-                    .cloned()
-            {
-                payload_len = values.len();
-                for (i, value) in values.into_iter().enumerate() {
-                    debug!(
-                        "Propagated control payload {value:?} to Case Input ({input_node:?}, {i})"
-                    );
-                    self.wire_state
-                        .classical_values
-                        .insert((input_node, i), value);
-                }
-            }
-
-            // Propagate ALL wires (qubit and classical) from Conditional inputs to the Case's Input node
-            // Port 0 is the control (Sum type), ports 1+ are data inputs
-            // following the payload values unpacked above.
-            let num_cond_inputs = hugr.num_inputs(cond_node);
-
-            // Start from port 1 (skip control), propagate all inputs
-            for port_idx in 1..num_cond_inputs {
-                let cond_in_port = IncomingPort::from(port_idx);
-                if let Some((src_node, src_port)) =
-                    hugr.single_linked_output(cond_node, cond_in_port)
-                {
-                    let src_wire = (src_node, src_port.index());
-                    let input_output_idx = payload_len + port_idx - 1;
-
-                    // Propagate qubit mappings
-                    if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                        self.wire_state
-                            .wire_to_qubit
-                            .insert((input_node, input_output_idx), qubit_id);
-                        debug!(
-                            "Propagated qubit {qubit_id:?} to Input node {input_node:?} port {input_output_idx}"
-                        );
-                    }
-
-                    // Also propagate classical values (integers, bools, etc.)
-                    if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                        debug!(
-                            "Propagated classical value {value:?} from {src_wire:?} to Case Input ({input_node:?}, {input_output_idx})"
-                        );
-                        self.wire_state
-                            .classical_values
-                            .insert((input_node, input_output_idx), value);
-                    }
-                }
-            }
+            self.propagate_case_inputs(hugr, cond_node, input_node);
         } else {
             debug!("No Input node found in Case {selected_case:?}");
         }

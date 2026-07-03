@@ -302,6 +302,9 @@ pub enum ClassicalValue {
     RngContext(RngContextId),
     /// Qubit reference (for storing qubits in arrays)
     QubitRef(QubitId),
+    /// Borrowed-out slot in a borrow array (a hole left by
+    /// `collections.borrow_arr.borrow`; filled by `return`)
+    Borrowed,
 }
 
 impl ClassicalValue {
@@ -320,7 +323,8 @@ impl ClassicalValue {
             | Self::Future(_)
             | Self::Rotation(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::Borrowed => None,
         }
     }
 
@@ -342,7 +346,8 @@ impl ClassicalValue {
             | Self::Future(_)
             | Self::Rotation(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::Borrowed => None,
         }
     }
 
@@ -363,7 +368,8 @@ impl ClassicalValue {
             | Self::Future(_)
             | Self::Rotation(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::Borrowed => None,
         }
     }
 
@@ -384,7 +390,8 @@ impl ClassicalValue {
             | Self::Future(_)
             | Self::Rotation(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::Borrowed => None,
         }
     }
 
@@ -405,7 +412,8 @@ impl ClassicalValue {
             | Self::Array(_)
             | Self::Future(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::Borrowed => None,
         }
     }
 

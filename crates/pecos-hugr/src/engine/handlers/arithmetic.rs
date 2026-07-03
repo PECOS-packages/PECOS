@@ -228,6 +228,13 @@ impl HugrEngine {
                 au.zip(bu).map(|(x, y)| x.max(y) as i64)
             }
 
+            // Signedness reinterpretation - value-preserving for the in-range
+            // values guppy emits (usize indices/counters)
+            #[allow(clippy::match_same_arms)]
+            "iu_to_s" => a, // as_int already converts stored UInt values
+            #[allow(clippy::match_same_arms)]
+            "is_to_u" => a,
+
             // Sign extension / truncation - all no-ops for i64 unified storage
             #[allow(clippy::match_same_arms)] // Intentionally separate for clarity
             "iwiden_s" | "widen_s" => a, // Sign-extend (no-op for i64)

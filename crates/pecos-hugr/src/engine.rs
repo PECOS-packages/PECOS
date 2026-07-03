@@ -953,7 +953,23 @@ impl HugrEngine {
                         self.pending_tailloop_control.insert(current_node);
                     }
                 } else {
-                    // Not active - start first iteration
+                    // Not active - start first iteration, but only once the
+                    // loop's input producers have run: expansion propagates
+                    // the TailLoop's input wires into the body exactly once,
+                    // so expanding early starves the body forever. When a
+                    // producer completes, queue_ready_successors re-queues
+                    // this node.
+                    if !all_predecessors_ready(
+                        &hugr,
+                        current_node,
+                        &self.quantum_ops,
+                        &self.conditionals,
+                        &self.cfgs,
+                        &self.processed,
+                    ) {
+                        debug!("TailLoop {current_node:?}: inputs not ready, deferring expansion");
+                        continue;
+                    }
                     debug!("TailLoop {current_node:?}: starting first iteration");
                     let entry_nodes = self.expand_tailloop(&hugr, current_node);
                     for entry_node in entry_nodes {

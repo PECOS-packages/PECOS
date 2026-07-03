@@ -539,6 +539,17 @@ impl HugrEngine {
             .chain(case_containers.iter())
         {
             self.processed.remove(&op_node);
+            // Clear stale OUTPUT wires too: a consumer queued in this same
+            // expansion (e.g. a measurement whose qubit rides an
+            // UnpackTuple output) would otherwise resolve against the
+            // previous iteration's value before this op re-runs.
+            let num_outputs = hugr.num_outputs(op_node);
+            for port_idx in 0..num_outputs {
+                self.wire_state
+                    .classical_values
+                    .remove(&(op_node, port_idx));
+                self.wire_state.wire_to_qubit.remove(&(op_node, port_idx));
+            }
         }
         // PHASE 2: queue ready ops; ops that are not ready are queued later
         // by queue_ready_successors when their producers complete.

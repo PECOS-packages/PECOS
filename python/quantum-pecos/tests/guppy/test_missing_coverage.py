@@ -244,13 +244,6 @@ class TestArrayOperations:
         results = sim(Guppy(discard_array_test)).qubits(10).quantum(state_vector()).seed(42).run(10).to_dict()
         assert all(r == 1 for r in get_measurements(results)), "Final qubit should be |1⟩"
 
-    @pytest.mark.xfail(
-        reason="measure_array's internal measurement loop stalls (starved deferred "
-        "node inside a TailLoop nested in the measure_array helper); plain array "
-        "indexing with borrow ops now works (see test_discard_array) -- the engine "
-        "reports the stall loudly instead of truncating",
-        strict=True,
-    )
     def test_array_indexing_and_loops(self) -> None:
         """Test array indexing within loops."""
         if measure_array is None:

@@ -704,10 +704,16 @@ impl HugrEngine {
                     .bool_ops
                     .iter()
                     .all(|op| self.processed.contains(op));
-                let all_conditionals_done = tailloop_info
-                    .conditional_nodes
-                    .iter()
-                    .all(|cond| self.processed.contains(cond));
+                // A Conditional is marked processed at EXPANSION; its
+                // outputs exist only once its selected case completes, so
+                // an active case must also block body completion.
+                let all_conditionals_done = tailloop_info.conditional_nodes.iter().all(|cond| {
+                    self.processed.contains(cond)
+                        && !self
+                            .active_cases
+                            .values()
+                            .any(|case| case.conditional_node == *cond)
+                });
 
                 if all_quantum_done
                     && all_calls_done

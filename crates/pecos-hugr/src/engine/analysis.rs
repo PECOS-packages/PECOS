@@ -732,10 +732,26 @@ pub fn find_quantum_ops_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
     ops
 }
 
-/// Recursively collect quantum operations in a subtree.
+/// Recursively collect quantum operations in a subtree, stopping at nested
+/// control-flow containers.
+///
+/// Ops inside a nested Conditional/TailLoop/CFG/FuncDefn belong to THAT
+/// container's activation: collecting them here queues them when the outer
+/// block activates -- before the case is selected or the loop iterates --
+/// which executes unselected-branch gates (observed as phantom extra
+/// allocations and measurements). Completion tracking covers the nested
+/// work through the container node itself (conditionals gate on
+/// no-active-case; Calls/TailLoops are marked processed only at completion).
 fn collect_quantum_ops_recursive(hugr: &Hugr, node: Node, ops: &mut BTreeSet<Node>) {
     for child in hugr.children(node) {
         let op = hugr.get_optype(child);
+
+        if matches!(
+            op,
+            OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_) | OpType::FuncDefn(_)
+        ) {
+            continue;
+        }
 
         // Check if this is a quantum extension operation
         if let Some(ext_op) = op.as_extension_op() {
@@ -747,7 +763,8 @@ fn collect_quantum_ops_recursive(hugr: &Hugr, node: Node, ops: &mut BTreeSet<Nod
                 }
             }
         }
-        // Recurse into nested containers
+        // Recurse into nested dataflow structure (blocks, cases reached via
+        // their own container's collection; plain dataflow wrappers here)
         collect_quantum_ops_recursive(hugr, child, ops);
     }
 }

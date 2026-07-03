@@ -1091,6 +1091,24 @@ impl HugrEngine {
                         }
                         self.processed.remove(&cfg_node);
 
+                        // Also clear the descendants' stale wire VALUES: with
+                        // only the processed flags cleared, a Conditional
+                        // inside the body can resolve from the PREVIOUS
+                        // call's control wire and expand with stale case
+                        // inputs before its producers re-run (observed as an
+                        // array iterator re-yielding index 0 forever). The
+                        // FuncDefn Input node is skipped -- fresh call
+                        // arguments were just copied onto it above.
+                        for node in &descendants {
+                            if *node == func_info.input_node {
+                                continue;
+                            }
+                            let num_outputs = hugr.num_outputs(*node);
+                            for port in 0..num_outputs {
+                                self.wire_state.classical_values.remove(&(*node, port));
+                            }
+                        }
+
                         // Add the CFG to the work queue to be processed
                         if !self.work_queue.contains(&cfg_node) {
                             self.work_queue.push_front(cfg_node);

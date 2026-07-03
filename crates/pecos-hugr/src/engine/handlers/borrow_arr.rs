@@ -188,6 +188,45 @@ impl HugrEngine {
                     .insert((node, 1), ClassicalValue::Bool(borrowed));
                 true
             }
+            "get" => {
+                // [array, usize] -> [Sum([[], [T]]), array]: copy the element
+                // at the index (copyable element types only -- no hole is
+                // left). Out-of-bounds or borrowed slots yield the None
+                // variant, matching the std extension's option result.
+                let Some(ClassicalValue::Array(elements)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("get at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
+                let Some(index) = self
+                    .get_input_value(hugr, node, 1)
+                    .and_then(|v| v.as_uint())
+                    .map(|v| v as usize)
+                else {
+                    debug!("get at {node:?}: index not ready, deferring");
+                    return false;
+                };
+
+                let result = match elements.get(index) {
+                    Some(slot) if !matches!(slot, ClassicalValue::Borrowed) => {
+                        ClassicalValue::Sum {
+                            tag: 1,
+                            values: vec![slot.clone()],
+                        }
+                    }
+                    _ => ClassicalValue::Sum {
+                        tag: 0,
+                        values: vec![],
+                    },
+                };
+                debug!("get[{index}]: {result:?}");
+                self.wire_state.classical_values.insert((node, 0), result);
+                self.wire_state
+                    .classical_values
+                    .insert((node, 1), ClassicalValue::Array(elements));
+                true
+            }
             "discard_all_borrowed" => {
                 // [array] -> []: consumes the (all-borrowed) array; nothing
                 // to produce. Defer until the array value exists so the op

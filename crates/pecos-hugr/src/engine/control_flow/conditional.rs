@@ -451,8 +451,13 @@ impl HugrEngine {
         }
         // Quantum ops queued as entries bypass the container gates, but any
         // re-queue goes through queue_ready_successors which checks all of
-        // them -- clear the gates so retried case ops are reachable.
+        // them -- clear the gates so retried case ops are reachable. Also
+        // clear their processed flags: a case re-expanded on a later loop
+        // iteration must re-emit its gates (nothing else resets
+        // case-internal quantum ops now that container op-collection stops
+        // at case boundaries).
         for &node in &ops_in_case {
+            self.processed.remove(&node);
             self.nodes_inside_cases.remove(&node);
             self.nodes_inside_cfg_blocks.remove(&node);
             self.nodes_inside_tailloops.remove(&node);

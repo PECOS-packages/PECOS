@@ -192,6 +192,50 @@ impl HugrEngine {
                         ClassicalValue::Int(a.checked_rem(b).unwrap_or(0) as i64)
                     }
                 }
+                // Checked variants return sum_with_error(int): tag 1 wraps
+                // the value, tag 0 is the error variant. The error payload
+                // (a prelude error value) is not modeled -- correct programs
+                // never take that branch, and one that does stalls loudly on
+                // the missing payload instead of computing on a fabricated
+                // value.
+                ClassicalOpType::IdivChecked => {
+                    let ok = if signed {
+                        let (a, b) = (int(0)?, int(1)?);
+                        (b != 0).then(|| a.wrapping_div(b))
+                    } else {
+                        let (a, b) = (uint(0)?, uint(1)?);
+                        a.checked_div(b).map(|q| q as i64)
+                    };
+                    match ok {
+                        Some(q) => ClassicalValue::Sum {
+                            tag: 1,
+                            values: vec![ClassicalValue::Int(q)],
+                        },
+                        None => ClassicalValue::Sum {
+                            tag: 0,
+                            values: vec![],
+                        },
+                    }
+                }
+                ClassicalOpType::ImodChecked => {
+                    let ok = if signed {
+                        let (a, b) = (int(0)?, int(1)?);
+                        (b != 0).then(|| a.wrapping_rem(b))
+                    } else {
+                        let (a, b) = (uint(0)?, uint(1)?);
+                        a.checked_rem(b).map(|r| r as i64)
+                    };
+                    match ok {
+                        Some(r) => ClassicalValue::Sum {
+                            tag: 1,
+                            values: vec![ClassicalValue::Int(r)],
+                        },
+                        None => ClassicalValue::Sum {
+                            tag: 0,
+                            values: vec![],
+                        },
+                    }
+                }
                 ClassicalOpType::Ineg => ClassicalValue::Int(int(0)?.wrapping_neg()),
                 ClassicalOpType::Iabs => ClassicalValue::Int(int(0)?.wrapping_abs()),
 
@@ -264,6 +308,30 @@ impl HugrEngine {
                 ClassicalOpType::ConvertFloatToInt => {
                     // Truncate toward zero, matching standard float-to-int semantics
                     ClassicalValue::Int(float(0)?.trunc() as i64)
+                }
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                ClassicalOpType::ConvertFloatToIntChecked => {
+                    // trunc_s/trunc_u: sum_with_error(int) -- error (tag 0)
+                    // for NaN/infinite/out-of-range, value (tag 1) otherwise.
+                    let f = float(0)?;
+                    let t = f.trunc();
+                    let in_range = if signed {
+                        t.is_finite() && t >= i64::MIN as f64 && t <= i64::MAX as f64
+                    } else {
+                        t.is_finite() && t >= 0.0 && t <= u64::MAX as f64
+                    };
+                    if in_range {
+                        let bits = if signed { t as i64 } else { (t as u64) as i64 };
+                        ClassicalValue::Sum {
+                            tag: 1,
+                            values: vec![ClassicalValue::Int(bits)],
+                        }
+                    } else {
+                        ClassicalValue::Sum {
+                            tag: 0,
+                            values: vec![],
+                        }
+                    }
                 }
 
                 // Handled by the early match above

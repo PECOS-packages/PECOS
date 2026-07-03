@@ -621,8 +621,10 @@ pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
                 "iadd" => (ClassicalOpType::Iadd, 2, 1, Some((6, is_signed))), // default 64-bit
                 "isub" => (ClassicalOpType::Isub, 2, 1, Some((6, is_signed))),
                 "imul" => (ClassicalOpType::Imul, 2, 1, Some((6, is_signed))),
-                "idiv" | "idiv_checked" => (ClassicalOpType::Idiv, 2, 1, Some((6, is_signed))),
+                "idiv" => (ClassicalOpType::Idiv, 2, 1, Some((6, is_signed))),
+                "idiv_checked" => (ClassicalOpType::IdivChecked, 2, 1, Some((6, is_signed))),
                 "imod" => (ClassicalOpType::Imod, 2, 1, Some((6, is_signed))),
+                "imod_checked" => (ClassicalOpType::ImodChecked, 2, 1, Some((6, is_signed))),
                 "ineg" => (ClassicalOpType::Ineg, 1, 1, Some((6, true))),
                 "iabs" => (ClassicalOpType::Iabs, 1, 1, Some((6, is_signed))),
                 "ieq" => (ClassicalOpType::Ieq, 2, 1, Some((6, is_signed))),
@@ -661,7 +663,19 @@ pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
         // Conversion extension
         "arithmetic.conversions" => match op_name.as_str() {
             "convert_s" | "convert_u" => (ClassicalOpType::ConvertIntToFloat, 1, 1, None),
-            "trunc_s" | "trunc_u" => (ClassicalOpType::ConvertFloatToInt, 1, 1, None),
+            // trunc_s/trunc_u return sum_with_error(int), not a raw int
+            "trunc_s" => (
+                ClassicalOpType::ConvertFloatToIntChecked,
+                1,
+                1,
+                Some((6, true)),
+            ),
+            "trunc_u" => (
+                ClassicalOpType::ConvertFloatToIntChecked,
+                1,
+                1,
+                Some((6, false)),
+            ),
             _ => return None,
         },
         // Prelude extension (tuples, etc.)

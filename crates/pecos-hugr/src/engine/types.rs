@@ -187,6 +187,11 @@ pub enum ClassicalOpType {
     Imul,
     Idiv,
     Imod,
+    /// Checked division: `sum_with_error(int)` -- error variant (tag 0) on
+    /// division by zero, value variant (tag 1) otherwise
+    IdivChecked,
+    /// Checked modulo: `sum_with_error(int)` like [`Self::IdivChecked`]
+    ImodChecked,
     Ineg,
     Iabs,
     // Integer comparisons
@@ -231,6 +236,9 @@ pub enum ClassicalOpType {
     UnpackTuple,
     // Sum construction (HUGR `Tag` nodes: variants, options, branch selectors)
     TagSum,
+    /// Checked float->int truncation: `sum_with_error(int)` -- error variant
+    /// (tag 0) for NaN/infinite/out-of-range inputs
+    ConvertFloatToIntChecked,
 }
 
 /// Classical operation extracted from HUGR.

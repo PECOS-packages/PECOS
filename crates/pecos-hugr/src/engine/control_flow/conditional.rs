@@ -131,6 +131,22 @@ impl HugrEngine {
                 }
             }
 
+            // A zero-op case propagates outputs and marks the Conditional
+            // processed inside expand_conditional with no later completion
+            // event to observe it -- run the same completion hooks the
+            // direct expansion path runs, or the enclosing block/loop
+            // strands with no queued work.
+            if !self
+                .active_cases
+                .values()
+                .any(|c| c.conditional_node == cond_node)
+            {
+                self.check_cfg_block_completion(&hugr, cond_node);
+                self.check_tailloop_body_completion(&hugr, cond_node);
+                self.queue_ready_successors(&hugr, cond_node);
+                self.retry_pending_bool_reads();
+            }
+
             debug!(
                 "Resolved pending Conditional {cond_node:?}, branch {branch_index} selected, added {num_entry_nodes} entry nodes"
             );
@@ -145,11 +161,20 @@ impl HugrEngine {
 
         for (case_node, case_info) in &self.active_cases {
             if case_info.ops_in_case.contains(&processed_node) {
-                // Check if all ops in this Case are now processed
-                let all_done = case_info
-                    .ops_in_case
-                    .iter()
-                    .all(|op| self.processed.contains(op));
+                // A case is complete only when every tracked op is processed
+                // AND no tracked nested container is still mid-flight: a
+                // nested Conditional is marked processed at EXPANSION (its
+                // outputs exist only once its own case completes), and
+                // active TailLoops/Calls are still producing values.
+                let all_done = case_info.ops_in_case.iter().all(|op| {
+                    self.processed.contains(op)
+                        && !self
+                            .active_cases
+                            .values()
+                            .any(|c| c.conditional_node == *op)
+                        && !self.active_tailloops.contains_key(op)
+                        && !self.active_calls.contains_key(op)
+                });
 
                 if all_done {
                     completed_cases.push((*case_node, case_info.conditional_node));
@@ -416,21 +441,41 @@ impl HugrEngine {
             .children(selected_case)
             .filter(|&child| matches!(hugr.get_optype(child), OpType::LoadConstant(_)))
             .collect();
-        // Clear processed state first so the case body re-executes when the
-        // conditional runs again (e.g. once per loop iteration), then queue.
+        // Nested control-flow containers (Call/TailLoop/Conditional children
+        // of the case) must be tracked too: a case whose only content is a
+        // Call or loop would otherwise register with an empty/completed op
+        // set and propagate outputs before the nested work even starts.
+        let mut case_calls: Vec<Node> = Vec::new();
+        let mut case_containers: Vec<Node> = Vec::new();
+        for child in hugr.children(selected_case) {
+            match hugr.get_optype(child) {
+                OpType::Call(_) => case_calls.push(child),
+                OpType::TailLoop(_) | OpType::Conditional(_) => case_containers.push(child),
+                _ => {}
+            }
+        }
+        // PHASE 1: clear processed state for everything in the case before
+        // ANY readiness check, so consumers cannot pass readiness against
+        // the previous execution's flags of a not-yet-cleared producer
+        // (same discipline as CFG block re-activation).
         for &op_node in case_classical
             .iter()
             .chain(case_bools.iter())
             .chain(case_extension.iter())
             .chain(case_load_consts.iter())
+            .chain(case_calls.iter())
+            .chain(case_containers.iter())
         {
             self.processed.remove(&op_node);
         }
+        // PHASE 2: queue ready ops; ops that are not ready are queued later
+        // by queue_ready_successors when their producers complete.
         for &op_node in case_classical
             .iter()
             .chain(case_bools.iter())
             .chain(case_extension.iter())
             .chain(case_load_consts.iter())
+            .chain(case_calls.iter())
         {
             self.nodes_inside_cases.remove(&op_node);
             ops_in_case.insert(op_node);
@@ -444,6 +489,15 @@ impl HugrEngine {
                     &self.processed,
                 )
             {
+                self.work_queue.push_back(op_node);
+            }
+        }
+        // TailLoops and nested Conditionals defer internally until their
+        // control resolves, so they queue without a readiness check.
+        for &op_node in &case_containers {
+            self.nodes_inside_cases.remove(&op_node);
+            ops_in_case.insert(op_node);
+            if !self.work_queue.contains(&op_node) {
                 self.work_queue.push_back(op_node);
             }
         }

@@ -64,8 +64,13 @@ impl HugrEngine {
                         value: ResultValue::Int(i),
                     });
                     debug!("Captured result_int: {i}");
+                    true
+                } else {
+                    // Marking the node processed without capturing would
+                    // silently drop the result; defer until the value arrives.
+                    debug!("result_int at {node:?}: deferring - input not ready");
+                    false
                 }
-                true
             }
             "result_uint" => {
                 if let Some(value) = self.get_input_value(hugr, node, 0)
@@ -76,8 +81,11 @@ impl HugrEngine {
                         value: ResultValue::UInt(u),
                     });
                     debug!("Captured result_uint: {u}");
+                    true
+                } else {
+                    debug!("result_uint at {node:?}: deferring - input not ready");
+                    false
                 }
-                true
             }
             "result_f64" => {
                 if let Some(value) = self.get_input_value(hugr, node, 0)
@@ -88,57 +96,86 @@ impl HugrEngine {
                         value: ResultValue::Float(f),
                     });
                     debug!("Captured result_f64: {f}");
+                    true
+                } else {
+                    debug!("result_f64 at {node:?}: deferring - input not ready");
+                    false
                 }
-                true
             }
             "result_array_bool" => {
+                // Elements are converted with map (not filter_map): a single
+                // unconvertible element defers the whole capture instead of
+                // silently shortening the array.
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
+                    && let Some(bools) = arr
+                        .iter()
+                        .map(ClassicalValue::as_bool)
+                        .collect::<Option<Vec<bool>>>()
                 {
-                    let bools: Vec<bool> = arr.iter().filter_map(ClassicalValue::as_bool).collect();
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::ArrayBool(bools),
                     });
+                    true
+                } else {
+                    debug!("result_array_bool at {node:?}: deferring - input not ready");
+                    false
                 }
-                true
             }
             "result_array_int" => {
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
+                    && let Some(ints) = arr
+                        .iter()
+                        .map(ClassicalValue::as_int)
+                        .collect::<Option<Vec<i64>>>()
                 {
-                    let ints: Vec<i64> = arr.iter().filter_map(ClassicalValue::as_int).collect();
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::ArrayInt(ints),
                     });
+                    true
+                } else {
+                    debug!("result_array_int at {node:?}: deferring - input not ready");
+                    false
                 }
-                true
             }
             "result_array_uint" => {
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
+                    && let Some(uints) = arr
+                        .iter()
+                        .map(ClassicalValue::as_uint)
+                        .collect::<Option<Vec<u64>>>()
                 {
-                    let uints: Vec<u64> = arr.iter().filter_map(ClassicalValue::as_uint).collect();
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::ArrayUInt(uints),
                     });
+                    true
+                } else {
+                    debug!("result_array_uint at {node:?}: deferring - input not ready");
+                    false
                 }
-                true
             }
             "result_array_f64" => {
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
+                    && let Some(floats) = arr
+                        .iter()
+                        .map(ClassicalValue::as_float)
+                        .collect::<Option<Vec<f64>>>()
                 {
-                    let floats: Vec<f64> =
-                        arr.iter().filter_map(ClassicalValue::as_float).collect();
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::ArrayFloat(floats),
                     });
+                    true
+                } else {
+                    debug!("result_array_f64 at {node:?}: deferring - input not ready");
+                    false
                 }
-                true
             }
             _ => {
                 debug!("Unknown tket.result operation: {op_name}");

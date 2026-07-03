@@ -458,15 +458,22 @@ impl HugrEngine {
         debug!("Processing tket.bool operation: {op_name} at {node:?}");
 
         match op_name {
+            // Binary/unary bool ops defer on missing or non-bool inputs
+            // instead of fabricating `false`: a fabricated operand commits a
+            // wrong branch value downstream (silent misexecution).
             "and" => {
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.bool.and at {node:?}: deferring - input not ready");
+                    self.pending_bool_reads.insert(node);
+                    return false;
+                };
+                self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a && b));
@@ -476,12 +483,16 @@ impl HugrEngine {
             "or" => {
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.bool.or at {node:?}: deferring - input not ready");
+                    self.pending_bool_reads.insert(node);
+                    return false;
+                };
+                self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a || b));
@@ -491,12 +502,16 @@ impl HugrEngine {
             "xor" => {
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.bool.xor at {node:?}: deferring - input not ready");
+                    self.pending_bool_reads.insert(node);
+                    return false;
+                };
+                self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a ^ b));
@@ -504,10 +519,15 @@ impl HugrEngine {
                 true
             }
             "not" => {
-                let a = self
+                let Some(a) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                else {
+                    debug!("tket.bool.not at {node:?}: deferring - input not ready");
+                    self.pending_bool_reads.insert(node);
+                    return false;
+                };
+                self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(!a));
@@ -517,12 +537,16 @@ impl HugrEngine {
             "eq" => {
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.bool.eq at {node:?}: deferring - input not ready");
+                    self.pending_bool_reads.insert(node);
+                    return false;
+                };
+                self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a == b));
@@ -543,10 +567,16 @@ impl HugrEngine {
                     return false;
                 };
 
+                // A present but non-bool value is the same hazard as a
+                // missing one: fabricating `false` commits a wrong value.
+                let Some(value) = input_val.as_bool() else {
+                    debug!("tket.bool.make_opaque at {node:?}: deferring - input not a bool");
+                    self.pending_bool_reads.insert(node);
+                    return false;
+                };
+
                 // Successfully resolved - remove from pending if it was there
                 self.pending_bool_reads.remove(&node);
-
-                let value = input_val.as_bool().unwrap_or(false);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
@@ -569,10 +599,14 @@ impl HugrEngine {
                     return false;
                 };
 
+                let Some(value) = input_val.as_bool() else {
+                    debug!("tket.bool.read at {node:?}: deferring - input not a bool");
+                    self.pending_bool_reads.insert(node);
+                    return false;
+                };
+
                 // Successfully resolved - remove from pending if it was there
                 self.pending_bool_reads.remove(&node);
-
-                let value = input_val.as_bool().unwrap_or(false);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));

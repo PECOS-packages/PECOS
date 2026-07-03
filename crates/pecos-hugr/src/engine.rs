@@ -1255,18 +1255,12 @@ impl HugrEngine {
             }
         }
 
-        // NOTE: a node that stays deferred forever inside EXECUTED control
-        // flow can stall its container and silently truncate downstream
-        // effects. Detecting that here (queue drained, no measurement pause)
-        // requires the active_cases/active_cfgs/active_calls/active_tailloops
-        // bookkeeping to be reliably empty after healthy completion, which it
-        // currently is not (several passing fixtures finish with leftover
-        // active entries). Completion-time stall detection is deferred until
-        // those lifecycle invariants are fixed; the rotation-angle consumers
-        // fail loud regardless (resolve_rotation_angle), and the Python
-        // guppy tests assert result presence and shot counts.
-
         if operation_count == 0 {
+            // Queue drained with no measurement pause: this is the engine's
+            // completion claim. Any still-active control flow or starved
+            // deferred node at this point means execution stalled mid-program
+            // -- fail loud instead of returning silently truncated results.
+            self.ensure_no_stalled_execution()?;
             debug!("No operations processed");
             return Ok(None);
         }
@@ -1277,6 +1271,78 @@ impl HugrEngine {
     }
 
     // === Helper Methods for process_hugr_impl ===
+
+    /// Error if the work queue drained while control flow is still active or
+    /// deferred nodes are still starved.
+    ///
+    /// Called at the point where the engine is about to claim completion
+    /// (queue empty, no measurement pause, nothing emitted). Healthy programs
+    /// finish with every container completed and no pending reads; anything
+    /// left over here is a stall that would otherwise surface only as
+    /// silently missing results.
+    fn ensure_no_stalled_execution(&self) -> Result<(), PecosError> {
+        let mut stalled: Vec<String> = Vec::new();
+        if !self.active_cfgs.is_empty() {
+            stalled.push(format!(
+                "active CFGs: {:?}",
+                self.active_cfgs.keys().collect::<Vec<_>>()
+            ));
+        }
+        if !self.active_cases.is_empty() {
+            stalled.push(format!(
+                "active Conditional cases: {:?}",
+                self.active_cases.keys().collect::<Vec<_>>()
+            ));
+        }
+        if !self.active_calls.is_empty() {
+            stalled.push(format!(
+                "active Calls: {:?}",
+                self.active_calls.keys().collect::<Vec<_>>()
+            ));
+        }
+        if !self.active_tailloops.is_empty() {
+            stalled.push(format!(
+                "active TailLoops: {:?}",
+                self.active_tailloops.keys().collect::<Vec<_>>()
+            ));
+        }
+        if !self.pending_bool_reads.is_empty() {
+            stalled.push(format!(
+                "starved deferred nodes: {:?}",
+                self.pending_bool_reads
+            ));
+        }
+        if !self.pending_conditionals.is_empty() {
+            stalled.push(format!(
+                "unresolved Conditionals: {:?}",
+                self.pending_conditionals.keys().collect::<Vec<_>>()
+            ));
+        }
+        if !self.pending_cfg_branches.is_empty() {
+            stalled.push(format!(
+                "unresolved CFG branches: {:?}",
+                self.pending_cfg_branches.keys().collect::<Vec<_>>()
+            ));
+        }
+        if !self.pending_func_calls.is_empty() {
+            stalled.push(format!(
+                "parked function calls: {:?}",
+                self.pending_func_calls
+                    .values()
+                    .flatten()
+                    .collect::<Vec<_>>()
+            ));
+        }
+        if stalled.is_empty() {
+            Ok(())
+        } else {
+            Err(PecosError::Generic(format!(
+                "HUGR execution stalled before completion; results would be silently \
+                 truncated ({})",
+                stalled.join("; ")
+            )))
+        }
+    }
 
     /// Emit a quantum gate operation to the message builder.
     ///
@@ -2920,55 +2986,61 @@ mod tests {
 
         let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
-        // Start execution
-        let stage = engine.start(()).expect("Failed to start engine");
-
-        match stage {
-            pecos_engines::EngineStage::NeedsProcessing(msg) => {
-                println!("Stage 1: NeedsProcessing");
-                if let Ok(ops) = msg.quantum_ops() {
-                    println!(
-                        "  Operations: {:?}",
-                        ops.iter().map(|o| o.gate_type).collect::<Vec<_>>()
-                    );
-                }
-
-                // Simulate measurement result (0 = else branch, 1 = if branch)
-                // Create a mock measurement result
-                let mut builder = ByteMessageBuilder::new();
-                let _ = builder.for_outcomes();
-                builder.add_outcomes(&[0]); // Measure 0, take else branch
-                let measurement_msg = builder.build();
-
-                // Continue processing with the measurement result
-                let stage2 = engine
-                    .continue_processing(measurement_msg)
-                    .expect("Failed to continue");
-
-                match stage2 {
-                    pecos_engines::EngineStage::NeedsProcessing(msg2) => {
-                        println!("Stage 2: NeedsProcessing (more ops after conditional)");
-                        if let Ok(ops) = msg2.quantum_ops() {
-                            println!(
-                                "  Operations: {:?}",
-                                ops.iter().map(|o| o.gate_type).collect::<Vec<_>>()
+        // This fixture nests TailLoops inside CFG blocks (repeat-until-
+        // success shape); executing that combination is not supported yet
+        // (case completion does not track nested TailLoops), so the program
+        // stalls mid-flight. The engine's completion-time stall detection
+        // must report that loudly instead of returning silently truncated
+        // results -- the historical version of this test fed one outcome,
+        // asserted nothing, and "passed" on the truncation. Flip this to a
+        // drive-to-completion test when nested-TailLoop execution lands.
+        let mut stage = engine.start(()).expect("Failed to start engine");
+        let mut rounds = 0;
+        loop {
+            rounds += 1;
+            assert!(
+                rounds <= 20,
+                "conditional_x should stall or complete quickly"
+            );
+            match stage {
+                pecos_engines::EngineStage::NeedsProcessing(msg) => {
+                    let ops = msg.quantum_ops().expect("parse quantum ops");
+                    let n_meas = ops
+                        .iter()
+                        .filter(|g| {
+                            matches!(
+                                g.gate_type,
+                                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                            )
+                        })
+                        .count();
+                    let mut builder = ByteMessageBuilder::new();
+                    let _ = builder.for_outcomes();
+                    builder.add_outcomes(&vec![0usize; n_meas]);
+                    match engine.continue_processing(builder.build()) {
+                        Ok(next) => stage = next,
+                        Err(e) => {
+                            let msg = e.to_string();
+                            assert!(
+                                msg.contains("stalled before completion"),
+                                "expected a stall report, got: {msg}"
                             );
+                            assert!(
+                                msg.contains("TailLoops"),
+                                "stall report should name the stuck TailLoops: {msg}"
+                            );
+                            return;
                         }
                     }
-                    pecos_engines::EngineStage::Complete(result) => {
-                        println!("Stage 2: Complete");
-                        println!("  Result: {result:?}");
-                    }
+                }
+                pecos_engines::EngineStage::Complete(_) => {
+                    panic!(
+                        "conditional_x unexpectedly completed: nested-TailLoop support \
+                         has landed -- flip this test to assert clean completion"
+                    );
                 }
             }
-            pecos_engines::EngineStage::Complete(result) => {
-                println!("Stage 1: Complete (no quantum ops needed)");
-                println!("  Result: {result:?}");
-            }
         }
-
-        // The test passes if we get here without panicking
-        // Full correctness requires integration with a quantum simulator
     }
 
     // --- Integration Tests with Quantum Simulator ---

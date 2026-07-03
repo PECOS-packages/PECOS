@@ -3101,6 +3101,7 @@ mod tests {
         // mid-flight while the test "passed" on silently truncated output.
         // It now pins clean end-to-end execution of the whole combination.
         let mut stage = engine.start(()).expect("Failed to start engine");
+        let mut gate_counts: BTreeMap<GateType, usize> = BTreeMap::new();
         let mut rounds = 0;
         loop {
             rounds += 1;
@@ -3108,6 +3109,9 @@ mod tests {
             match stage {
                 pecos_engines::EngineStage::NeedsProcessing(msg) => {
                     let ops = msg.quantum_ops().expect("parse quantum ops");
+                    for g in &ops {
+                        *gate_counts.entry(g.gate_type).or_insert(0) += 1;
+                    }
                     let n_meas = ops
                         .iter()
                         .filter(|g| {
@@ -3127,6 +3131,14 @@ mod tests {
                 pecos_engines::EngineStage::Complete(_) => break,
             }
         }
+
+        // Non-vacuous: the fixture's gates must actually have been emitted
+        // (a zero-op run can also reach Complete). With all-zero outcomes
+        // the measurement selects the else branch: H on the control, two
+        // measurements, and NO conditional X.
+        assert_eq!(gate_counts.get(&GateType::H), Some(&1), "{gate_counts:?}");
+        assert_eq!(gate_counts.get(&GateType::MZ), Some(&2), "{gate_counts:?}");
+        assert_eq!(gate_counts.get(&GateType::X), None, "{gate_counts:?}");
 
         // Clean completion: no stalled control flow, no starved nodes.
         assert!(engine.active_cfgs.is_empty());

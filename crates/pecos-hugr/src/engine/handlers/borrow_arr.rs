@@ -269,6 +269,13 @@ impl HugrEngine {
                         values: vec![],
                     }
                 } else {
+                    if matches!(elements[0], ClassicalValue::Borrowed) {
+                        // The front slot is borrowed out: popping the hole
+                        // would silently drop the element when it returns.
+                        // Defer, matching `borrow` on a borrowed slot.
+                        debug!("pop_left at {node:?}: front slot borrowed, deferring");
+                        return false;
+                    }
                     let element = elements.remove(0);
                     debug!(
                         "pop_left at {node:?}: popped element, {} remain",

@@ -136,78 +136,12 @@ impl HugrEngine {
                 }
             }
 
-            // Check if the source is a Conditional node (inside the block)
-            // The Conditional's output is a Sum type - we need to trace its control input
-            if matches!(src_op, OpType::Conditional(_)) {
-                debug!(
-                    "[TRACE] Block {block_node:?} output from Conditional {src_node:?}, tracing control input"
-                );
-                // Conditional's control input is port 0
-                let control_port = IncomingPort::from(0);
-                if let Some((ctrl_src_node, ctrl_src_port)) =
-                    hugr.single_linked_output(src_node, control_port)
-                {
-                    // The control input might be from tket.bool.read
-                    let ctrl_op = hugr.get_optype(ctrl_src_node);
-                    if let Some(ext_op) = ctrl_op.as_extension_op() {
-                        let ext_id = ext_op.extension_id();
-                        let op_name = ext_op.unqualified_id();
-                        if ext_id.as_ref() as &str == "tket.bool" && op_name == "read" {
-                            // Trace the bool input to tket.bool.read
-                            let bool_input_port = IncomingPort::from(0);
-                            if let Some((bool_src_node, bool_src_port)) =
-                                hugr.single_linked_output(ctrl_src_node, bool_input_port)
-                            {
-                                let bool_wire = (bool_src_node, bool_src_port.index());
-                                debug!(
-                                    "[TRACE] tket.bool.read input comes from {bool_wire:?}, checking classical_values"
-                                );
-
-                                // First check if we have a classical value for this wire
-                                if let Some(bool_value) =
-                                    self.wire_state.classical_values.get(&bool_wire)
-                                    && let Some(v) = bool_value.to_u32()
-                                {
-                                    debug!(
-                                        "[TRACE] Found classical value {v} for Conditional control"
-                                    );
-                                    // The bool value (0 or 1) determines which Case
-                                    // Case 0 = false, Case 1 = true
-                                    // Each Case outputs a Tag that determines the successor
-                                    // For while loop: false -> Case 0 -> Tag 0 -> continue
-                                    //                 true -> Case 1 -> Tag 1 -> exit
-                                    return Some(v as usize);
-                                }
-
-                                // Try to resolve constant bool
-                                if let Some(const_value) =
-                                    Self::try_resolve_const_bool(hugr, bool_src_node)
-                                {
-                                    debug!(
-                                        "CFG block {block_node:?} Conditional control resolved from const: {const_value}"
-                                    );
-                                    return Some(usize::from(const_value));
-                                }
-
-                                debug!(
-                                    "[TRACE] Could not resolve bool value for wire {bool_wire:?}"
-                                );
-                            }
-                        }
-                    }
-
-                    // Check classical_values for the control wire
-                    let ctrl_wire = (ctrl_src_node, ctrl_src_port.index());
-                    if let Some(ctrl_value) = self.wire_state.classical_values.get(&ctrl_wire)
-                        && let Some(v) = ctrl_value.to_u32()
-                    {
-                        debug!(
-                            "CFG block {block_node:?} Conditional control from classical value: {v}"
-                        );
-                        return Some(v as usize);
-                    }
-                }
-            }
+            // A branch Sum produced by a Conditional resolves through the
+            // VALUE path above once the selected case completes and
+            // propagates its outputs -- the case's branch Tag need not equal
+            // the condition, so shortcutting to the Conditional's CONTROL
+            // value here routed to the wrong successor. Wait for the real
+            // Sum instead.
         }
 
         None

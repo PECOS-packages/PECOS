@@ -144,11 +144,9 @@ impl HugrEngine {
         // arithmetic stores results through Int, so as_uint (which rejects
         // negatives) would spuriously defer on e.g. u64::MAX.
         #[allow(clippy::cast_sign_loss)]
-        let uint = |i: usize| {
-            inputs
-                .get(i)
-                .and_then(ClassicalValue::as_int)
-                .map(|v| v as u64)
+        let uint = |i: usize| match inputs.get(i) {
+            Some(ClassicalValue::UInt(u)) => Some(*u),
+            other => other.and_then(ClassicalValue::as_int).map(|v| v as u64),
         };
         let boolean = |i: usize| inputs.get(i).and_then(ClassicalValue::as_bool);
         let float = |i: usize| inputs.get(i).and_then(ClassicalValue::as_float);
@@ -172,21 +170,25 @@ impl HugrEngine {
                 ClassicalOpType::Isub => ClassicalValue::Int(int(0)?.wrapping_sub(int(1)?)),
                 ClassicalOpType::Imul => ClassicalValue::Int(int(0)?.wrapping_mul(int(1)?)),
                 ClassicalOpType::Idiv => {
-                    // Division by zero yields 0 (the unchecked op's legacy
-                    // behavior; proper error-Sum modeling for the _checked
-                    // variants is tracked separately).
+                    // Division by zero yields 0 (the spec says the unchecked
+                    // op panics; the engine's panic handling is log-and-
+                    // continue, so 0 is the documented legacy stand-in).
+                    // Signed division is EUCLIDEAN per the HUGR spec
+                    // (idivmod_s: q*m+r=n with 0<=r<m, unsigned divisor) --
+                    // computed in i128 so a divisor above i64::MAX is exact.
                     if signed {
-                        let (a, b) = (int(0)?, int(1)?);
-                        ClassicalValue::Int(if b == 0 { 0 } else { a.wrapping_div(b) })
+                        let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
+                        ClassicalValue::Int(if m == 0 { 0 } else { n.div_euclid(m) as i64 })
                     } else {
                         let (a, b) = (uint(0)?, uint(1)?);
                         ClassicalValue::Int(a.checked_div(b).unwrap_or(0) as i64)
                     }
                 }
                 ClassicalOpType::Imod => {
+                    // Euclidean remainder for signed (0 <= r < m), see Idiv.
                     if signed {
-                        let (a, b) = (int(0)?, int(1)?);
-                        ClassicalValue::Int(if b == 0 { 0 } else { a.wrapping_rem(b) })
+                        let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
+                        ClassicalValue::Int(if m == 0 { 0 } else { n.rem_euclid(m) as i64 })
                     } else {
                         let (a, b) = (uint(0)?, uint(1)?);
                         ClassicalValue::Int(a.checked_rem(b).unwrap_or(0) as i64)
@@ -199,9 +201,10 @@ impl HugrEngine {
                 // the missing payload instead of computing on a fabricated
                 // value.
                 ClassicalOpType::IdivChecked => {
+                    // Signed checked division is Euclidean, like Idiv.
                     let ok = if signed {
-                        let (a, b) = (int(0)?, int(1)?);
-                        (b != 0).then(|| a.wrapping_div(b))
+                        let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
+                        (m != 0).then(|| n.div_euclid(m) as i64)
                     } else {
                         let (a, b) = (uint(0)?, uint(1)?);
                         a.checked_div(b).map(|q| q as i64)
@@ -218,9 +221,10 @@ impl HugrEngine {
                     }
                 }
                 ClassicalOpType::ImodChecked => {
+                    // Euclidean remainder (0 <= r < m), like Imod.
                     let ok = if signed {
-                        let (a, b) = (int(0)?, int(1)?);
-                        (b != 0).then(|| a.wrapping_rem(b))
+                        let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
+                        (m != 0).then(|| n.rem_euclid(m) as i64)
                     } else {
                         let (a, b) = (uint(0)?, uint(1)?);
                         a.checked_rem(b).map(|r| r as i64)
@@ -303,7 +307,11 @@ impl HugrEngine {
                 ClassicalOpType::Fge => ClassicalValue::Bool(float(0)? >= float(1)?),
 
                 #[allow(clippy::cast_precision_loss)]
-                ClassicalOpType::ConvertIntToFloat => ClassicalValue::Float(int(0)? as f64),
+                ClassicalOpType::ConvertIntToFloat => ClassicalValue::Float(if signed {
+                    int(0)? as f64
+                } else {
+                    uint(0)? as f64
+                }),
                 #[allow(clippy::cast_possible_truncation)]
                 ClassicalOpType::ConvertFloatToInt => {
                     // Truncate toward zero, matching standard float-to-int semantics
@@ -315,10 +323,17 @@ impl HugrEngine {
                     // for NaN/infinite/out-of-range, value (tag 1) otherwise.
                     let f = float(0)?;
                     let t = f.trunc();
+                    // Strict upper bounds: i64::MAX as f64 rounds UP to
+                    // 2^63 (and u64::MAX to 2^64), so `<= MAX as f64` would
+                    // accept one out-of-range value and saturate instead of
+                    // taking the error branch. i64::MIN (-2^63) is exactly
+                    // representable, so >= is correct there.
                     let in_range = if signed {
-                        t.is_finite() && t >= i64::MIN as f64 && t <= i64::MAX as f64
+                        t.is_finite()
+                            && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0)
+                                .contains(&t)
                     } else {
-                        t.is_finite() && t >= 0.0 && t <= u64::MAX as f64
+                        t.is_finite() && (0.0..18_446_744_073_709_551_616.0).contains(&t)
                     };
                     if in_range {
                         let bits = if signed { t as i64 } else { (t as u64) as i64 };

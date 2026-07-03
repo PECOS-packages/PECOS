@@ -662,7 +662,8 @@ pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
         },
         // Conversion extension
         "arithmetic.conversions" => match op_name.as_str() {
-            "convert_s" | "convert_u" => (ClassicalOpType::ConvertIntToFloat, 1, 1, None),
+            "convert_s" => (ClassicalOpType::ConvertIntToFloat, 1, 1, Some((6, true))),
+            "convert_u" => (ClassicalOpType::ConvertIntToFloat, 1, 1, Some((6, false))),
             // trunc_s/trunc_u return sum_with_error(int), not a raw int
             "trunc_s" => (
                 ClassicalOpType::ConvertFloatToIntChecked,

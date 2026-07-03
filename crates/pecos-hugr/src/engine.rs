@@ -3094,23 +3094,17 @@ mod tests {
 
         let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
-        // This fixture builds borrow arrays and reads them back with
-        // collections.borrow_arr.pop_left, which the engine does not
-        // implement yet (its option-Sum result never materializes, so the
-        // pop guard conditionals stay unresolved). The program stalls
-        // mid-flight and the engine's completion-time stall detection must
-        // report that loudly instead of returning silently truncated
-        // results -- the historical version of this test fed one outcome,
-        // asserted nothing, and "passed" on the truncation. Flip this to a
-        // drive-to-completion test when pop_left support lands.
+        // Drive to completion, feeding one outcome per measurement each
+        // round (all zeros). This fixture builds borrow arrays in nested
+        // TailLoops, reads them back with pop_left (option-Sum results),
+        // and branches on a measurement -- for most of its life it stalled
+        // mid-flight while the test "passed" on silently truncated output.
+        // It now pins clean end-to-end execution of the whole combination.
         let mut stage = engine.start(()).expect("Failed to start engine");
         let mut rounds = 0;
         loop {
             rounds += 1;
-            assert!(
-                rounds <= 20,
-                "conditional_x should stall or complete quickly"
-            );
+            assert!(rounds <= 20, "conditional_x should complete quickly");
             match stage {
                 pecos_engines::EngineStage::NeedsProcessing(msg) => {
                     let ops = msg.quantum_ops().expect("parse quantum ops");
@@ -3126,30 +3120,20 @@ mod tests {
                     let mut builder = ByteMessageBuilder::new();
                     let _ = builder.for_outcomes();
                     builder.add_outcomes(&vec![0usize; n_meas]);
-                    match engine.continue_processing(builder.build()) {
-                        Ok(next) => stage = next,
-                        Err(e) => {
-                            let msg = e.to_string();
-                            assert!(
-                                msg.contains("stalled before completion"),
-                                "expected a stall report, got: {msg}"
-                            );
-                            assert!(
-                                msg.contains("Conditionals"),
-                                "stall report should name the unresolved pop guards: {msg}"
-                            );
-                            return;
-                        }
-                    }
+                    stage = engine
+                        .continue_processing(builder.build())
+                        .expect("Failed to continue");
                 }
-                pecos_engines::EngineStage::Complete(_) => {
-                    panic!(
-                        "conditional_x unexpectedly completed: nested-TailLoop support \
-                         has landed -- flip this test to assert clean completion"
-                    );
-                }
+                pecos_engines::EngineStage::Complete(_) => break,
             }
         }
+
+        // Clean completion: no stalled control flow, no starved nodes.
+        assert!(engine.active_cfgs.is_empty());
+        assert!(engine.active_cases.is_empty());
+        assert!(engine.active_calls.is_empty());
+        assert!(engine.active_tailloops.is_empty());
+        assert!(engine.pending_bool_reads.is_empty());
     }
 
     // --- Integration Tests with Quantum Simulator ---

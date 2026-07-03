@@ -227,6 +227,72 @@ impl HugrEngine {
                     .insert((node, 1), ClassicalValue::Array(elements));
                 true
             }
+            "new_array" => {
+                // [T; n] -> [array]: construct from elements. A missing
+                // element defers (skipping would shorten the array and shift
+                // every index); qubit elements ride as QubitRef.
+                use tket::hugr::ops::OpTrait;
+                let op = hugr.get_optype(node);
+                let num_inputs = op.dataflow_signature().map_or(0, |sig| sig.input_count());
+                let mut elements = Vec::with_capacity(num_inputs);
+                for port in 0..num_inputs {
+                    if let Some(qubit_id) = self.get_input_qubit(hugr, node, port) {
+                        elements.push(ClassicalValue::QubitRef(qubit_id));
+                    } else if let Some(value) = self.get_input_value(hugr, node, port) {
+                        elements.push(value);
+                    } else {
+                        debug!(
+                            "borrow_arr.new_array at {node:?}: element {port} not ready, deferring"
+                        );
+                        return false;
+                    }
+                }
+                debug!("borrow_arr.new_array: created {} elements", elements.len());
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Array(elements));
+                true
+            }
+            "pop_left" => {
+                // [array<n,T>] -> [Sum([[], [T, array<n-1,T>]])]: take the
+                // first element; the empty variant (tag 0) when nothing is
+                // left, else (element, rest) in the value variant (tag 1).
+                let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("pop_left at {node:?}: array not ready, deferring");
+                    return false;
+                };
+                let result = if elements.is_empty() {
+                    debug!("pop_left at {node:?}: empty array -> None variant");
+                    ClassicalValue::Sum {
+                        tag: 0,
+                        values: vec![],
+                    }
+                } else {
+                    let element = elements.remove(0);
+                    debug!(
+                        "pop_left at {node:?}: popped element, {} remain",
+                        elements.len()
+                    );
+                    ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![element, ClassicalValue::Array(elements)],
+                    }
+                };
+                self.wire_state.classical_values.insert((node, 0), result);
+                true
+            }
+            "discard_empty" => {
+                // [array<0,T>] -> []: consume an empty array. Defer until
+                // the value exists so the op is not marked done while its
+                // producer is pending.
+                if self.get_input_value(hugr, node, 0).is_none() {
+                    debug!("discard_empty at {node:?}: array not ready, deferring");
+                    return false;
+                }
+                debug!("discard_empty: array consumed");
+                true
+            }
             "discard_all_borrowed" => {
                 // [array] -> []: consumes the (all-borrowed) array; nothing
                 // to produce. Defer until the array value exists so the op

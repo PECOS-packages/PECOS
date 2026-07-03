@@ -1603,6 +1603,10 @@ impl HugrEngine {
     /// Adds successor nodes to the work queue if they are relevant node types,
     /// not yet processed, not already queued, and have all predecessors ready.
     fn queue_ready_successors(&mut self, hugr: &Hugr, node: Node) {
+        debug!(
+            "queue_ready_successors({node:?}): neighbours={:?}",
+            hugr.output_neighbours(node).collect::<Vec<_>>()
+        );
         for succ_node in hugr.output_neighbours(node) {
             let is_relevant = self.quantum_ops.contains_key(&succ_node)
                 || self.classical_ops.contains_key(&succ_node)
@@ -1637,6 +1641,20 @@ impl HugrEngine {
                 )
             {
                 self.work_queue.push_back(succ_node);
+            } else if is_relevant || is_extension {
+                debug!(
+                    "queue_ready_successors({node:?}): skipped {succ_node:?} gated={inside_control_flow} processed={} queued={} ready={}",
+                    self.processed.contains(&succ_node),
+                    self.work_queue.contains(&succ_node),
+                    all_predecessors_ready(
+                        hugr,
+                        succ_node,
+                        &self.quantum_ops,
+                        &self.conditionals,
+                        &self.cfgs,
+                        &self.processed
+                    )
+                );
             }
         }
     }

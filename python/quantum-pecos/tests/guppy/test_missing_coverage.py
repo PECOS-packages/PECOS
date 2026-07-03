@@ -219,9 +219,10 @@ class TestArrayOperations:
             # b0 and b2 are probabilistic (from H gates)
 
     @pytest.mark.xfail(
-        reason="engine returns no measurements for array+loop guppy programs (silent "
-        "result truncation, pre-existing); the test passed vacuously until result "
-        "presence was asserted -- see the deferred-node/stalled-control-flow follow-up",
+        reason="engine returns no measurements for guppy programs indexing arrays "
+        "(collections.borrow_arr ops are unsupported, so the program stalls before "
+        "the final measure); the loop-iteration freeze itself is fixed and covered "
+        "by test_forloop_executes_each_iteration_and_terminates in pecos-hugr",
         strict=True,
     )
     def test_discard_array(self) -> None:
@@ -251,9 +252,10 @@ class TestArrayOperations:
         assert all(r == 1 for r in get_measurements(results)), "Final qubit should be |1⟩"
 
     @pytest.mark.xfail(
-        reason="engine returns no measurements for array+loop guppy programs (silent "
-        "result truncation, pre-existing); the test passed vacuously until result "
-        "presence was asserted -- see the deferred-node/stalled-control-flow follow-up",
+        reason="engine returns no measurements for guppy programs indexing arrays "
+        "(collections.borrow_arr ops are unsupported, so the program stalls before "
+        "the final measure); the loop-iteration freeze itself is fixed and covered "
+        "by test_forloop_executes_each_iteration_and_terminates in pecos-hugr",
         strict=True,
     )
     def test_array_indexing_and_loops(self) -> None:

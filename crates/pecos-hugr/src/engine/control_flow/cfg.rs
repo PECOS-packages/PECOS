@@ -487,10 +487,37 @@ impl HugrEngine {
                 }
             }
 
-            // Clear processed state for quantum ops first so they can be re-executed in loops
-            for &op_node in &block_info.quantum_ops {
+            // PHASE 1: clear processed state for EVERY op category in the
+            // block before ANY readiness check or queueing below. Readiness
+            // (all_predecessors_ready) consults `processed`; interleaving
+            // clear-and-queue per category let a Call pass its readiness
+            // check against the PREVIOUS iteration's flags of a
+            // not-yet-cleared producer, fire before that producer re-ran,
+            // and re-propagate stale (or cleared) argument values -- the
+            // loop then re-executed the same iteration forever.
+            let extension_ops: Vec<Node> = find_extension_ops_in_block(hugr, to_block);
+            for &op_node in block_info
+                .quantum_ops
+                .iter()
+                .chain(&block_info.call_nodes)
+                .chain(&block_info.conditional_nodes)
+                .chain(&block_info.bool_ops)
+                .chain(&block_info.tailloop_nodes)
+                .chain(&extension_ops)
+            {
                 self.processed.remove(&op_node);
             }
+            for child in hugr.children(to_block) {
+                if matches!(hugr.get_optype(child), OpType::LoadConstant(_))
+                    || self.classical_ops.contains_key(&child)
+                {
+                    self.processed.remove(&child);
+                }
+            }
+
+            // PHASE 2: queue ops whose predecessors are ready. Ops that are
+            // not ready yet (their producers were just reset) are queued
+            // later by queue_ready_successors when the producer completes.
             for &op_node in &block_info.quantum_ops {
                 self.nodes_inside_cfg_blocks.remove(&op_node);
                 // Skip ops inside TailLoops - they'll be added when the loop expands
@@ -502,11 +529,7 @@ impl HugrEngine {
                 }
             }
             // Also activate Call nodes in this block
-            // Clear processed state first so they can be re-executed in loops
             // (each loop iteration must call the function again)
-            for &call_node in &block_info.call_nodes {
-                self.processed.remove(&call_node);
-            }
             for &call_node in &block_info.call_nodes {
                 self.nodes_inside_cfg_blocks.remove(&call_node);
                 // Skip Call nodes inside TailLoops
@@ -529,10 +552,6 @@ impl HugrEngine {
             }
 
             // Also activate Conditional nodes in this block
-            // Clear processed state first so they can be re-executed in loops
-            for &cond_node in &block_info.conditional_nodes {
-                self.processed.remove(&cond_node);
-            }
             for &cond_node in &block_info.conditional_nodes {
                 self.nodes_inside_cfg_blocks.remove(&cond_node);
                 // Skip Conditional nodes inside TailLoops
@@ -546,10 +565,7 @@ impl HugrEngine {
 
             // Also activate other extension ops in this block (like tket.result)
             // IMPORTANT: Process extension/classical ops FIRST so their results are available for bool_ops
-            // Find all extension ops that are children of this block
-            let extension_ops: Vec<Node> = find_extension_ops_in_block(hugr, to_block);
             for &op_node in &extension_ops {
-                self.processed.remove(&op_node);
                 self.nodes_inside_cfg_blocks.remove(&op_node);
                 // Skip extension ops inside TailLoops
                 if self.nodes_inside_tailloops.contains(&op_node) {
@@ -564,7 +580,6 @@ impl HugrEngine {
             for child in hugr.children(to_block) {
                 let op = hugr.get_optype(child);
                 if matches!(op, OpType::LoadConstant(_)) {
-                    self.processed.remove(&child);
                     self.nodes_inside_cfg_blocks.remove(&child);
                     // Skip nodes inside TailLoops
                     if self.nodes_inside_tailloops.contains(&child) {
@@ -576,7 +591,6 @@ impl HugrEngine {
                 }
                 // Check for classical ops
                 if self.classical_ops.contains_key(&child) {
-                    self.processed.remove(&child);
                     self.nodes_inside_cfg_blocks.remove(&child);
                     // Skip nodes inside TailLoops
                     if self.nodes_inside_tailloops.contains(&child) {
@@ -599,10 +613,6 @@ impl HugrEngine {
             }
 
             // Now activate bool ops in this block
-            // Clear processed state first so they can be re-executed in loops
-            for &op_node in &block_info.bool_ops {
-                self.processed.remove(&op_node);
-            }
             for &op_node in &block_info.bool_ops {
                 self.nodes_inside_cfg_blocks.remove(&op_node);
                 // Skip bool ops inside TailLoops
@@ -616,7 +626,6 @@ impl HugrEngine {
 
             // Also activate TailLoop nodes in this block
             for &tl_node in &block_info.tailloop_nodes {
-                self.processed.remove(&tl_node);
                 self.nodes_inside_cfg_blocks.remove(&tl_node);
                 if !self.work_queue.contains(&tl_node) && !self.processed.contains(&tl_node) {
                     self.work_queue.push_back(tl_node);

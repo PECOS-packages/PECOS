@@ -4422,7 +4422,6 @@ name = "pecos-hugr"
 version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
- "env_logger",
  "log",
  "pecos-core",
  "pecos-engines",

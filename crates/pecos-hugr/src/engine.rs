@@ -2047,6 +2047,69 @@ mod tests {
     }
 
     #[test]
+    fn test_forloop_executes_each_iteration_and_terminates() {
+        // Regression guard for the loop-iteration freeze: guppy's
+        // `for _ in range(3)` lowers to a CFG cycle whose body block calls
+        // the iterator's __next__ each pass. Block re-activation must clear
+        // processed flags for ALL op categories BEFORE any readiness check;
+        // interleaving them let the Call fire against the previous
+        // iteration's flags, re-propagating stale arguments so the loop
+        // re-ran iteration 0 forever (H emitted per wave, no termination).
+        use pecos_engines::{ByteMessageBuilder, ControlEngine, EngineStage};
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pecos/tests/test_data/hugr/forloop_h_test.hugr"
+        );
+        let mut engine = HugrEngine::from_file(path).expect("Failed to load HUGR");
+        let mut stage = engine.start(()).expect("Failed to start engine");
+        let mut gate_counts: BTreeMap<GateType, usize> = BTreeMap::new();
+        let mut rounds = 0;
+        loop {
+            rounds += 1;
+            assert!(
+                rounds <= 10,
+                "forloop should terminate in a few rounds; gate_counts={gate_counts:?}"
+            );
+            match stage {
+                EngineStage::NeedsProcessing(msg) => {
+                    let ops = msg.quantum_ops().expect("parse quantum ops");
+                    for g in &ops {
+                        *gate_counts.entry(g.gate_type).or_insert(0) += 1;
+                    }
+                    let n_meas = ops
+                        .iter()
+                        .filter(|g| {
+                            matches!(
+                                g.gate_type,
+                                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                            )
+                        })
+                        .count();
+                    let mut builder = ByteMessageBuilder::new();
+                    let _ = builder.for_outcomes();
+                    builder.add_outcomes(&vec![0usize; n_meas]);
+                    stage = engine
+                        .continue_processing(builder.build())
+                        .expect("continue");
+                }
+                EngineStage::Complete(_) => break,
+            }
+        }
+
+        // range(3): exactly three H applications, then the final measure.
+        assert_eq!(gate_counts.get(&GateType::H), Some(&3), "{gate_counts:?}");
+        assert_eq!(gate_counts.get(&GateType::MZ), Some(&1), "{gate_counts:?}");
+
+        // Clean completion: no stalled control flow, no starved nodes.
+        assert!(engine.active_cfgs.is_empty());
+        assert!(engine.active_cases.is_empty());
+        assert!(engine.active_calls.is_empty());
+        assert!(engine.active_tailloops.is_empty());
+        assert!(engine.pending_bool_reads.is_empty());
+    }
+
+    #[test]
     fn test_ry_angle_through_tuple_wrap() {
         // Guppy lowers `ry(q, angle(0.5))` with the angle constant wrapped in
         // a 1-tuple (Const -> LoadConstant -> MakeTuple -> UnpackTuple ->

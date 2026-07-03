@@ -1076,6 +1076,19 @@ impl HugrEngine {
                             },
                         );
 
+                        // Clear the Call node's OWN stale output wires (the
+                        // descendant clearing below does not cover them): a
+                        // consumer resolving against the previous
+                        // invocation's outputs mid-call reads one-iteration-
+                        // stale data (observed as a measure loop measuring
+                        // each qubit one iteration late).
+                        for port in 0..func_info.num_outputs {
+                            self.wire_state
+                                .classical_values
+                                .remove(&(current_node, port));
+                            self.wire_state.wire_to_qubit.remove(&(current_node, port));
+                        }
+
                         // Remove FuncDefn descendants from nodes_inside_func_defns
                         // so they can be processed now that the function is being called
                         let mut descendants = BTreeSet::new();
@@ -1190,9 +1203,14 @@ impl HugrEngine {
                 // Successfully resolved - remove from pending if it was there
                 self.pending_bool_reads.remove(&current_node);
 
-                // Store output values
+                // Store output values. A QubitRef output (e.g. an
+                // UnpackTuple or Tag over a linear payload) is mirrored into
+                // the qubit-wire map so downstream gates can resolve it.
                 for (port, value) in outputs {
                     let wire_key = (current_node, port);
+                    if let ClassicalValue::QubitRef(qubit_id) = &value {
+                        self.wire_state.wire_to_qubit.insert(wire_key, *qubit_id);
+                    }
                     self.wire_state.classical_values.insert(wire_key, value);
                 }
 

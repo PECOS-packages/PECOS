@@ -145,6 +145,11 @@ impl HugrEngine {
                     ) => {
                         for (port, value) in elements.into_iter().enumerate() {
                             if port < num_outputs {
+                                if let ClassicalValue::QubitRef(qubit_id) = &value {
+                                    self.wire_state
+                                        .wire_to_qubit
+                                        .insert((node, port), *qubit_id);
+                                }
                                 self.wire_state.classical_values.insert((node, port), value);
                             }
                         }

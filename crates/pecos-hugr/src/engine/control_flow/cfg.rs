@@ -84,15 +84,16 @@ impl HugrEngine {
                     hugr.single_linked_output(src_node, tag_input_port)
                 {
                     let tag_src_wire = (tag_src_node, tag_src_port.index());
-                    if let Some(input_value) = self.wire_state.classical_values.get(&tag_src_wire)
-                        && let Some(v) = input_value.to_u32()
-                    {
+                    if self.wire_state.classical_values.contains_key(&tag_src_wire) {
+                        // A Tag node ALWAYS produces its own variant: the
+                        // branch is the tag, not the wrapped value. (The
+                        // executed-value path above returns the Sum's tag
+                        // for exactly the same reason; this structural
+                        // fallback must agree with it.)
                         debug!(
-                            "CFG block {block_node:?} resolved via Tag: tag={tag_value}, input={v}"
+                            "CFG block {block_node:?} resolved via Tag with known input: tag={tag_value}"
                         );
-                        // For booleans converted to Sum: input_value determines the branch
-                        // The Tag wraps the value - we use the input value as the branch
-                        return Some(v as usize);
+                        return Some(tag_value);
                     }
                 }
 
@@ -867,17 +868,21 @@ impl HugrEngine {
             }
         }
 
-        // Now map other_outputs (port 1+) to successor Input ports
-        // Check if the target Input node has enough outputs to accommodate the payload offset
+        // Now map other_outputs (port 1+) to successor Input ports, offset
+        // by the payload length. In valid HUGR the successor's inputs are
+        // exactly [selected variant's row] ++ [other_outputs], so the offset
+        // always fits; if it does not, something upstream extracted the
+        // wrong variant's payload -- warn loudly rather than silently
+        // dropping the offset (which would overwrite the payload ports just
+        // written above with misaligned data).
         let target_num_outputs = hugr.num_outputs(to_input);
         let num_data_outputs = num_output_ports.saturating_sub(1);
-        // Only apply payload offset if the target has enough outputs
-        // This handles exit blocks which don't expect payloads
-        let effective_payload_len = if payload_len + num_data_outputs <= target_num_outputs {
-            payload_len
-        } else {
-            0 // Target doesn't have room for payloads, don't offset
-        };
+        if payload_len + num_data_outputs > target_num_outputs {
+            debug!(
+                "WARNING: block transition {from_block:?} -> {to_block:?}: payload ({payload_len}) + data ({num_data_outputs}) exceeds target inputs ({target_num_outputs}); upstream variant extraction is suspect"
+            );
+        }
+        let effective_payload_len = payload_len;
         debug!("[TRACE] num_data_outputs={num_data_outputs}");
         debug!(
             "[TRACE] propagate_block_outputs: from_block={from_block:?}, to_block={to_block:?}, num_data_outputs={num_data_outputs}"

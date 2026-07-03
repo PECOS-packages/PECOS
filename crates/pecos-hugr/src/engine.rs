@@ -1005,6 +1005,23 @@ impl HugrEngine {
                     .any(|info| info.func_defn_node == func_defn_node);
 
                 if func_defn_in_use {
+                    // Direct recursion (a call to F from inside F's own
+                    // body) can never make progress: the outer invocation
+                    // waits on this Call node while this Call waits for the
+                    // FuncDefn to free up. Reject it immediately with a
+                    // clear error instead of parking it (indirect recursion
+                    // deadlocks the same way and is caught by the
+                    // completion-time stall detection, which lists the
+                    // parked calls).
+                    let mut cur = hugr.get_parent(current_node);
+                    while let Some(n) = cur {
+                        if n == func_defn_node {
+                            return Err(PecosError::Generic(format!(
+                                "recursive call to FuncDefn {func_defn_node:?} at                                  {current_node:?}: recursion is not supported by the                                  HUGR engine (no call stack; each function has a                                  single execution frame)"
+                            )));
+                        }
+                        cur = hugr.get_parent(n);
+                    }
                     debug!(
                         "Call {current_node:?}: FuncDefn {func_defn_node:?} is in use, queueing"
                     );

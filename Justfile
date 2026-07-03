@@ -745,10 +745,9 @@ go-lint profile="release": (validate-profile "go-lint" profile) (go-build profil
 pytest-perf: build-release
     uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
 
-# Run tests for optional dependencies
+# Run tests for optional dependencies (only quantum-pecos carries the marker)
 [group('test')]
 pytest-dep:
-    uv run --frozen pytest python/pecos-rslib/tests -m "optional_dependency"
     uv run --frozen pytest python/quantum-pecos/tests -m "optional_dependency"
 
 # Run the slower integration lane (excluded from the default fast lane)

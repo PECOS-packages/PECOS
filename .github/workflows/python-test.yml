@@ -513,6 +513,9 @@ jobs:
           fi
         fi
 
+  # Post-merge lanes excluded from the PR fast path: the slow integration
+  # tests and the optional-dependency suite (guppy/selene/QIR runtime tests
+  # marked `optional_dependency`).
   python-slow-postmerge:
     if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
     runs-on: ubuntu-latest
@@ -593,6 +596,9 @@ jobs:
 
     - name: Build core Python packages
       run: just python-ci-build
+
+    - name: Run optional-dependency Python tests
+      run: just pytest-dep
 
     - name: Run slow Python tests
       run: just pytest-slow

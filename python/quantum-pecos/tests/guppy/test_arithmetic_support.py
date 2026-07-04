@@ -185,3 +185,83 @@ def test_euclidean_division_semantics() -> None:
         raw_measurements = results["measurements"]
         measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
         assert measurements == [1, 1, 1], f"Euclidean semantics violated: {measurements}"
+
+
+def test_shift_semantics() -> None:
+    """Left/right shifts on positive values, X-anchored."""
+
+    @guppy
+    def shifts() -> bool:
+        q = qubit()
+        a = 1
+        b = 16
+        if (a << 3) == 8 and (b >> 2) == 4:
+            x(q)
+        return measure(q)
+
+    results = sim(Guppy(shifts)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
+    raw_measurements = results["measurements"]
+    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    assert measurements == [1, 1, 1], f"shift semantics violated: {measurements}"
+
+
+def test_zero_iteration_loop() -> None:
+    """A range(0) loop must run zero iterations and fall through cleanly."""
+
+    @guppy
+    def zero_iters() -> bool:
+        q = qubit()
+        count = 0
+        for _i in range(0):
+            count = count + 1
+        if count == 0:
+            x(q)
+        return measure(q)
+
+    results = sim(Guppy(zero_iters)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
+    raw_measurements = results["measurements"]
+    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    assert measurements == [1, 1, 1], f"zero-iteration loop misbehaved: {measurements}"
+
+
+def test_division_by_zero_yields_zero() -> None:
+    """Division by zero currently yields 0 (documented engine legacy).
+
+    The HUGR spec says the unchecked op panics; the engine's documented
+    stand-in is 0. This pin makes any change to that behavior visible.
+    """
+
+    @guppy
+    def div_zero() -> bool:
+        q = qubit()
+        a = 5
+        b = 0
+        if a // b == 0:
+            x(q)
+        return measure(q)
+
+    results = sim(Guppy(div_zero)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
+    raw_measurements = results["measurements"]
+    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    assert measurements == [1, 1, 1], f"div-by-zero legacy behavior changed: {measurements}"
+
+
+def test_recursion_rejected_loudly() -> None:
+    """Recursive guppy functions must produce a clear engine error, not a
+    hang or silent truncation."""
+
+    @guppy
+    def recurse(n: int) -> int:
+        if n <= 0:
+            return 0
+        return recurse(n - 1)
+
+    @guppy
+    def recursive_main() -> bool:
+        q = qubit()
+        if recurse(3) == 0:
+            x(q)
+        return measure(q)
+
+    with pytest.raises(RuntimeError, match="recursion is not supported"):
+        sim(Guppy(recursive_main)).qubits(1).quantum(state_vector()).seed(1).run(1).to_dict()

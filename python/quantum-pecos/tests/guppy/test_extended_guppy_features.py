@@ -87,11 +87,10 @@ class ExtendedGuppyTester:
                 "error": None,
             }
         except Exception as e:
-            return {
-                "success": False,
-                "result": None,
-                "error": str(e),
-            }
+            # A pipeline failure must FAIL the test: the semantic assertions
+            # in this file are gated behind success, so returning
+            # success=False used to make any engine regression pass.
+            pytest.fail(f"guppy pipeline failed for {func}: {e}")
 
 
 @pytest.fixture
@@ -195,6 +194,10 @@ class TestPhaseAndRotationGates:
 class TestMultiQubitGates:
     """Test multi-qubit gate operations."""
 
+    @pytest.mark.xfail(
+        reason="test program does not compile under guppylang 0.21 (PlaceNotUsedError); needs a rewrite -- never ran behind the old success-gate",
+        strict=True,
+    )
     def test_controlled_y_and_z(self, tester: ExtendedGuppyTester) -> None:
         """Test CY and CZ gates."""
         # Note: state_vector() engine supports non-Clifford operations like CY
@@ -235,6 +238,10 @@ class TestMultiQubitGates:
 class TestQubitArrays:
     """Test qubit array operations and indexing."""
 
+    @pytest.mark.xfail(
+        reason="test program does not compile under guppylang 0.21 (VarNotDefinedError); needs a rewrite -- never ran behind the old success-gate",
+        strict=True,
+    )
     def test_qubit_array_creation_and_access(self, tester: ExtendedGuppyTester) -> None:
         """Test creating and accessing qubit arrays."""
 
@@ -262,6 +269,10 @@ class TestQubitArrays:
             expected = sum(1 for m in measurements if m == (False, True, False, True))
             assert expected > 95, f"Array indexing failed, got {expected}/100 correct"
 
+    @pytest.mark.xfail(
+        reason="test program does not compile under guppylang 0.21 (VarNotDefinedError); needs a rewrite -- never ran behind the old success-gate",
+        strict=True,
+    )
     def test_qubit_array_loops(self, tester: ExtendedGuppyTester) -> None:
         """Test looping over qubit arrays."""
 
@@ -324,6 +335,10 @@ class TestClassicalDataTypes:
             correlated = sum(1 for (a, b) in measurements if a == b)
             assert correlated > 80, f"Tuple ops failed, correlation={correlated}/100"
 
+    @pytest.mark.xfail(
+        reason="pure-classical return values are not captured in results (program has no measurements; return-value capture is a known gap)",
+        strict=True,
+    )
     def test_boolean_expressions(self, tester: ExtendedGuppyTester) -> None:
         """Test complex boolean expressions."""
 
@@ -351,6 +366,10 @@ class TestClassicalDataTypes:
 class TestControlFlow:
     """Test advanced control flow patterns."""
 
+    @pytest.mark.xfail(
+        reason="engine stalls on this nested-loop shape (starved deferred node; nested-container tracking is a known follow-up) -- fails loud instead of silently truncating",
+        strict=True,
+    )
     def test_nested_loops(self, tester: ExtendedGuppyTester) -> None:
         """Test nested loop structures."""
 
@@ -454,6 +473,10 @@ class TestControlFlow:
 class TestQuantumAlgorithms:
     """Test quantum algorithms and protocols."""
 
+    @pytest.mark.xfail(
+        reason="test program does not compile under guppylang 0.21 (VarNotDefinedError); needs a rewrite -- never ran behind the old success-gate",
+        strict=True,
+    )
     def test_ghz_state_creation(self, tester: ExtendedGuppyTester) -> None:
         """Test GHZ state creation for multiple qubits."""
 
@@ -477,6 +500,10 @@ class TestQuantumAlgorithms:
             total_valid = all_zeros + all_ones
             assert total_valid > 95, f"GHZ state invalid, got {total_valid}/100 valid states"
 
+    @pytest.mark.xfail(
+        reason="test program does not compile under guppylang 0.21 (PlaceNotUsedError); needs a rewrite -- never ran behind the old success-gate",
+        strict=True,
+    )
     def test_quantum_phase_kickback(self, tester: ExtendedGuppyTester) -> None:
         """Test phase kickback principle."""
 
@@ -689,6 +716,10 @@ class TestErrorHandling:
 class TestPerformance:
     """Test performance with larger circuits."""
 
+    @pytest.mark.xfail(
+        reason="test program does not compile under guppylang 0.21 (VarNotDefinedError); needs a rewrite -- never ran behind the old success-gate",
+        strict=True,
+    )
     def test_many_qubits(self, tester: ExtendedGuppyTester) -> None:
         """Test handling many qubits."""
 

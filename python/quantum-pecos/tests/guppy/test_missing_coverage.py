@@ -585,15 +585,14 @@ class TestQuantumErrorHandling:
         assert len(success_zeros) > 150, f"H gate should produce ~50% 0s, got {len(success_zeros)}/{len(success_cases)}"
         assert len(success_ones) > 150, f"H gate should produce ~50% 1s, got {len(success_ones)}/{len(success_cases)}"
 
-        # Check error cases (X gate should give all 1s)
-        # Note: Guppy conditional branching has a known issue where gates in
-        # conditional branches may not execute correctly. This test verifies
-        # measurements are valid; full X gate verification may fail until fixed.
-        error_zeros = [m for m in error_cases if m[1] == 0]
+        # Check error cases: the error branch applies X, so m2 must be 1
+        # in EVERY error-case shot. (This assertion spent years disabled
+        # behind a "known conditional-branch issue" note while a tautology
+        # kept the test green; branch execution is fixed.)
         error_ones = [m for m in error_cases if m[1] == 1]
-        assert len(error_ones) + len(error_zeros) == len(
+        assert len(error_ones) == len(
             error_cases,
-        ), "All error cases should have valid m2 measurements"
+        ), f"X branch must force m2=1 in all {len(error_cases)} error cases, got {len(error_ones)}"
 
     def test_projective_measurement(self) -> None:
         """Test measurement collapse behavior."""

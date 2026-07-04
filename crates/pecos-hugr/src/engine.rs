@@ -1029,7 +1029,9 @@ impl HugrEngine {
                     while let Some(n) = cur {
                         if n == func_defn_node {
                             return Err(PecosError::Generic(format!(
-                                "recursive call to FuncDefn {func_defn_node:?} at                                  {current_node:?}: recursion is not supported by the                                  HUGR engine (no call stack; each function has a                                  single execution frame)"
+                                "recursive call to FuncDefn {func_defn_node:?} at {current_node:?}: \
+                                 recursion is not supported by the HUGR engine (no call \
+                                 stack; each function has a single execution frame)"
                             )));
                         }
                         cur = hugr.get_parent(n);
@@ -4065,12 +4067,16 @@ mod tests {
 
         println!("While loop results: {successes} successes, {failures} failures");
 
-        // For now, just check that we can load and attempt to run
-        // Full while loop support may require additional work for CFG back edges
-        assert!(
-            successes > 0 || failures > 0,
-            "Should have attempted at least some shots"
+        // Every shot must succeed: while-loop execution over CFG back edges
+        // is supported (the old `successes > 0 || failures > 0` form was a
+        // tautology that passed with 10/10 failed shots).
+        assert_eq!(
+            failures,
+            0,
+            "while-loop shots failed: {failures}/{}",
+            successes + failures
         );
+        assert!(successes > 0, "no shots ran");
     }
 
     #[test]
@@ -4171,11 +4177,8 @@ mod tests {
 
         // With H gate, should be roughly 50/50
         // Allow for statistical variance
-        assert!(
-            failures < num_shots,
-            "All shots failed - function call not working"
-        );
-        if failures == 0 {
+        assert_eq!(failures, 0, "shots failed: {failures}/{num_shots}");
+        {
             // Check distribution only if all shots succeeded
             let total = count_0 + count_1;
             assert!(total > 0, "No measurements recorded");
@@ -4312,11 +4315,8 @@ mod tests {
         );
 
         // With two independent H gates, should see roughly 25% each
-        assert!(
-            failures < num_shots,
-            "All shots failed - multiple function calls not working"
-        );
-        if failures == 0 {
+        assert_eq!(failures, 0, "shots failed: {failures}/{num_shots}");
+        {
             let total = count_00 + count_01 + count_10 + count_11;
             assert!(total > 0, "No measurements recorded");
             // Each outcome should be roughly 25% (allow 10-40%)
@@ -4424,11 +4424,8 @@ mod tests {
         );
 
         // With H gate (through nested calls), should be roughly 50/50
-        assert!(
-            failures < num_shots,
-            "All shots failed - nested function calls not working"
-        );
-        if failures == 0 {
+        assert_eq!(failures, 0, "shots failed: {failures}/{num_shots}");
+        {
             let total = count_0 + count_1;
             assert!(total > 0, "No measurements recorded");
             let ratio = f64::from(count_0) / f64::from(total);
@@ -4540,11 +4537,8 @@ mod tests {
         );
 
         // Bell state: should only see 00 or 11 (correlated measurements)
-        assert!(
-            failures < num_shots,
-            "All shots failed - multi-qubit function not working"
-        );
-        if failures == 0 {
+        assert_eq!(failures, 0, "shots failed: {failures}/{num_shots}");
+        {
             let total = count_00 + count_01 + count_10 + count_11;
             assert!(total > 0, "No measurements recorded");
 
@@ -4555,6 +4549,10 @@ mod tests {
                 correlated > uncorrelated * 4,
                 "Expected Bell state correlation: {correlated} correlated vs {uncorrelated} uncorrelated"
             );
+            // A zero-gate engine also satisfies the ratio (all shots 00):
+            // a real Bell state must produce BOTH correlated outcomes.
+            assert!(count_00 > 0, "expected some 00 outcomes");
+            assert!(count_11 > 0, "expected some 11 outcomes");
         }
     }
 }

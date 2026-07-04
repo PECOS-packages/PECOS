@@ -93,11 +93,11 @@ class GuppyPipelineTest:
                 "error": None,
             }
         except Exception as e:
-            results["hugr_llvm"] = {
-                "success": False,
-                "result": None,
-                "error": str(e),
-            }
+            # A pipeline failure must FAIL the test: every semantic
+            # assertion in this file is gated behind success, so converting
+            # exceptions into success=False used to make any engine
+            # regression pass everything.
+            pytest.fail(f"guppy pipeline failed for {func}: {e}")
 
         return results
 
@@ -276,6 +276,10 @@ class TestClassicalComputation:
             shots=10,
         )
 
+    @pytest.mark.xfail(
+        reason="pure-classical return values are not captured in results (program has no measurements; return-value capture is a known gap)",
+        strict=True,
+    )
     def test_classical_arithmetic(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Test basic arithmetic operations."""
 
@@ -417,6 +421,10 @@ class TestAdvancedAlgorithms:
             # The test passes if we get results without errors
             assert len(measurements) == 100
 
+    @pytest.mark.xfail(
+        reason="test program does not compile under guppylang 0.21 (PlaceNotUsedError: linearity violation); needs a rewrite -- it never actually ran, the old success-gate silently passed the compile failure",
+        strict=True,
+    )
     def test_deutsch_josza_algorithm(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Test Deutsch-Josza algorithm for 2-bit function."""
         from guppylang.std.quantum import cx, h, measure, qubit, x

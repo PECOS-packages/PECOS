@@ -78,12 +78,14 @@ class TestDynamicCircuitExecution:
         # Run the circuit
         results = sim(Guppy(conditional_x_from_one)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
-        # Extract measurements
+        # Extract the return value (last measurement in each shot) -- each
+        # row is a per-shot LIST, which is always truthy: counting rows
+        # instead of values made this assertion unable to fail.
         measurements = results["measurements"]
-        assert len(measurements) == 100, "should have one measurement row per shot"
+        return_values = [shot[-1] for shot in measurements]
 
         # All results should be True since q1 is |1>, so X is always applied to q2
-        ones_count = sum(1 for m in measurements if m)
+        ones_count = sum(1 for m in return_values if m)
         assert ones_count == 100, f"Conditional X from |1> should always trigger, but got {ones_count}/100 ones"
 
     def test_measurement_feedback_entanglement(self) -> None:
@@ -121,6 +123,10 @@ class TestDynamicCircuitExecution:
 
         # Both measurements should always match
         mismatches = sum(1 for (a, b) in measurements if a != b)
+        # A zero-gate engine also produces zero mismatches (all (0,0)):
+        # require BOTH outcomes to actually occur across 100 shots.
+        firsts = {a for (a, _b) in measurements}
+        assert firsts == {0, 1}, f"expected both outcomes over 100 shots, got {firsts}"
         assert (
             mismatches == 0
         ), f"Measurement feedback should create perfect correlation, but got {mismatches}/100 mismatches"

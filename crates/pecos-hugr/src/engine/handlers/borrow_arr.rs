@@ -35,12 +35,18 @@ use log::debug;
 use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `collections.borrow_arr` operations.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn handle_borrow_arr_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_borrow_arr_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing collections.borrow_arr operation: {op_name} at {node:?}");
 
         match op_name {
@@ -63,7 +69,7 @@ impl HugrEngine {
                 });
                 let Some(size) = size else {
                     debug!("new_all_borrowed at {node:?}: size unresolved, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 #[allow(clippy::cast_possible_truncation)] // Array sizes fit in usize
                 let elements = vec![ClassicalValue::Borrowed; size as usize];
@@ -71,7 +77,7 @@ impl HugrEngine {
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Array(elements));
-                true
+                HandlerOutcome::Processed
             }
             "borrow" => {
                 // [array, usize] -> [array, elem]: take the element at the
@@ -79,7 +85,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("borrow at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
                 let Some(index) = self
@@ -88,7 +94,7 @@ impl HugrEngine {
                     .map(|v| v as usize)
                 else {
                     debug!("borrow at {node:?}: index not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let Some(slot) = elements.get_mut(index) else {
@@ -96,7 +102,7 @@ impl HugrEngine {
                         "borrow at {node:?}: index {index} out of bounds (len={}), deferring",
                         elements.len()
                     );
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let element = std::mem::replace(slot, ClassicalValue::Borrowed);
                 if matches!(element, ClassicalValue::Borrowed) {
@@ -105,7 +111,7 @@ impl HugrEngine {
                     // stall detection names this node instead of handing a
                     // fabricated element downstream.
                     debug!("borrow at {node:?}: slot {index} already borrowed, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 }
 
                 if let ClassicalValue::QubitRef(qubit_id) = &element {
@@ -116,14 +122,14 @@ impl HugrEngine {
                     .classical_values
                     .insert((node, 0), ClassicalValue::Array(elements));
                 debug!("borrow[{index}]: extracted element");
-                true
+                HandlerOutcome::Processed
             }
             "return" => {
                 // [array, usize, elem] -> [array]: fill the hole at the index.
                 let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("return at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
                 let Some(index) = self
@@ -132,7 +138,7 @@ impl HugrEngine {
                     .map(|v| v as usize)
                 else {
                     debug!("return at {node:?}: index not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 // A qubit element arrives on the qubit wire; other elements
                 // as classical values.
@@ -142,7 +148,7 @@ impl HugrEngine {
                     value
                 } else {
                     debug!("return at {node:?}: element not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let Some(slot) = elements.get_mut(index) else {
@@ -150,21 +156,21 @@ impl HugrEngine {
                         "return at {node:?}: index {index} out of bounds (len={}), deferring",
                         elements.len()
                     );
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 *slot = element;
                 debug!("return[{index}]: element returned to borrow array");
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Array(elements));
-                true
+                HandlerOutcome::Processed
             }
             "is_borrowed" => {
                 // [array, usize] -> [array, bool]
                 let Some(ClassicalValue::Array(elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("is_borrowed at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
                 let Some(index) = self
@@ -173,7 +179,7 @@ impl HugrEngine {
                     .map(|v| v as usize)
                 else {
                     debug!("is_borrowed at {node:?}: index not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let borrowed = elements
@@ -186,7 +192,7 @@ impl HugrEngine {
                 self.wire_state
                     .classical_values
                     .insert((node, 1), ClassicalValue::Bool(borrowed));
-                true
+                HandlerOutcome::Processed
             }
             "get" => {
                 // [array, usize] -> [Sum([[], [T]]), array]: copy the element
@@ -196,7 +202,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::Array(elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("get at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 #[allow(clippy::cast_possible_truncation)] // Array indices fit in usize
                 let Some(index) = self
@@ -205,7 +211,7 @@ impl HugrEngine {
                     .map(|v| v as usize)
                 else {
                     debug!("get at {node:?}: index not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let result = match elements.get(index) {
@@ -225,7 +231,7 @@ impl HugrEngine {
                 self.wire_state
                     .classical_values
                     .insert((node, 1), ClassicalValue::Array(elements));
-                true
+                HandlerOutcome::Processed
             }
             "new_array" => {
                 // [T; n] -> [array]: construct from elements. A missing
@@ -244,14 +250,14 @@ impl HugrEngine {
                         debug!(
                             "borrow_arr.new_array at {node:?}: element {port} not ready, deferring"
                         );
-                        return false;
+                        return HandlerOutcome::Defer;
                     }
                 }
                 debug!("borrow_arr.new_array: created {} elements", elements.len());
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Array(elements));
-                true
+                HandlerOutcome::Processed
             }
             "pop_left" => {
                 // [array<n,T>] -> [Sum([[], [T, array<n-1,T>]])]: take the
@@ -260,7 +266,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("pop_left at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let result = if elements.is_empty() {
                     debug!("pop_left at {node:?}: empty array -> None variant");
@@ -274,7 +280,7 @@ impl HugrEngine {
                         // would silently drop the element when it returns.
                         // Defer, matching `borrow` on a borrowed slot.
                         debug!("pop_left at {node:?}: front slot borrowed, deferring");
-                        return false;
+                        return HandlerOutcome::Defer;
                     }
                     let element = elements.remove(0);
                     debug!(
@@ -287,7 +293,7 @@ impl HugrEngine {
                     }
                 };
                 self.wire_state.classical_values.insert((node, 0), result);
-                true
+                HandlerOutcome::Processed
             }
             "discard_empty" => {
                 // [array<0,T>] -> []: consume an empty array. Defer until
@@ -295,24 +301,24 @@ impl HugrEngine {
                 // producer is pending.
                 if self.get_input_value(hugr, node, 0).is_none() {
                     debug!("discard_empty at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 }
                 debug!("discard_empty: array consumed");
-                true
+                HandlerOutcome::Processed
             }
             "clone" => {
                 // [array] -> [array, array] (copyable elements): duplicate.
                 let Some(value @ ClassicalValue::Array(_)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("borrow_arr.clone at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.wire_state
                     .classical_values
                     .insert((node, 0), value.clone());
                 self.wire_state.classical_values.insert((node, 1), value);
                 debug!("borrow_arr.clone at {node:?}: duplicated");
-                true
+                HandlerOutcome::Processed
             }
             "to_array" | "from_array" => {
                 // borrow_array <-> array conversions: identity on the
@@ -320,11 +326,11 @@ impl HugrEngine {
                 let Some(value @ ClassicalValue::Array(_)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("borrow_arr.{op_name} at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.wire_state.classical_values.insert((node, 0), value);
                 debug!("borrow_arr.{op_name} at {node:?}: converted");
-                true
+                HandlerOutcome::Processed
             }
             "discard_all_borrowed" => {
                 // [array] -> []: consumes the (all-borrowed) array; nothing
@@ -332,10 +338,10 @@ impl HugrEngine {
                 // is not marked done while its producer is still pending.
                 if self.get_input_value(hugr, node, 0).is_none() {
                     debug!("discard_all_borrowed at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 }
                 debug!("discard_all_borrowed: array consumed");
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 // Unknown op: defer so it surfaces in the stall report
@@ -343,7 +349,7 @@ impl HugrEngine {
                 debug!(
                     "Unknown collections.borrow_arr operation: {op_name} at {node:?}, deferring"
                 );
-                false
+                HandlerOutcome::Defer
             }
         }
     }

@@ -23,12 +23,18 @@ use log::debug;
 use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `arithmetic.float` operations (transcendental functions, etc.).
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn handle_float_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_float_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing arithmetic.float operation: {op_name} at {node:?}");
 
         // Get input values
@@ -120,7 +126,7 @@ impl HugrEngine {
 
             _ => {
                 debug!("Unknown arithmetic.float operation: {op_name}");
-                return false;
+                return HandlerOutcome::Defer;
             }
         };
 
@@ -128,13 +134,13 @@ impl HugrEngine {
         // processed with no output would strand every consumer.
         let Some(value) = result else {
             debug!("arithmetic.float.{op_name} at {node:?}: input not ready, deferring");
-            return false;
+            return HandlerOutcome::Defer;
         };
         self.wire_state
             .classical_values
             .insert((node, 0), ClassicalValue::Float(value));
         debug!("arithmetic.float.{op_name}: result = {value}");
-        true
+        HandlerOutcome::Processed
     }
 
     /// Handle `arithmetic.int` operations (extended integer operations).
@@ -143,7 +149,12 @@ impl HugrEngine {
         clippy::cast_sign_loss, // shift amounts are clamped to 0-63 before cast to u32
         clippy::cast_possible_truncation // shift amounts are clamped before cast
     )]
-    pub(crate) fn handle_int_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_int_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing arithmetic.int operation: {op_name} at {node:?}");
 
         // Ops with a classify_classical_op entry (add/sub/mul/div/mod/
@@ -223,7 +234,7 @@ impl HugrEngine {
 
             _ => {
                 debug!("Unknown arithmetic.int operation: {op_name}");
-                return false;
+                return HandlerOutcome::Defer;
             }
         };
 
@@ -232,19 +243,19 @@ impl HugrEngine {
         // never retried once processed).
         let Some(value) = result else {
             debug!("arithmetic.int.{op_name} at {node:?}: input not ready, deferring");
-            return false;
+            return HandlerOutcome::Defer;
         };
         self.wire_state
             .classical_values
             .insert((node, 0), ClassicalValue::Int(value));
         debug!("arithmetic.int.{op_name}: result = {value}");
-        true
+        HandlerOutcome::Processed
     }
 
     /// `inarrow_s`/`inarrow_u<M, N>`: narrow to width `N`, returning
     /// `sum_with_error(int)` -- error variant (tag 0) when the value does
     /// not fit, value variant (tag 1) otherwise.
-    fn handle_inarrow(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    fn handle_inarrow(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> HandlerOutcome {
         let signed = !op_name.ends_with('u');
         // Target log-width is the SECOND type arg (source is the first).
         let target_log_width = hugr
@@ -263,7 +274,7 @@ impl HugrEngine {
         let bits = 1u32 << target_log_width.min(6);
         let Some(v) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int()) else {
             debug!("arithmetic.int.{op_name} at {node:?}: input not ready, deferring");
-            return false;
+            return HandlerOutcome::Defer;
         };
         let fits = if signed {
             if bits >= 64 {
@@ -291,7 +302,7 @@ impl HugrEngine {
         };
         debug!("arithmetic.int.{op_name}: {result:?}");
         self.wire_state.classical_values.insert((node, 0), result);
-        true
+        HandlerOutcome::Processed
     }
 
     /// Handle `arithmetic.conversions` operations (int/float conversions).
@@ -306,7 +317,12 @@ impl HugrEngine {
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
     )]
-    pub(crate) fn handle_conversions_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_conversions_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing arithmetic.conversions operation: {op_name} at {node:?}");
 
         match op_name {
@@ -316,7 +332,7 @@ impl HugrEngine {
                 let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int())
                 else {
                     debug!("convert_s at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let result = value as f64;
                 self.wire_state
@@ -331,7 +347,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_uint())
                 else {
                     debug!("convert_u at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let result = value as f64;
                 self.wire_state
@@ -348,7 +364,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_uint())
                 else {
                     debug!("ifromusize at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 #[allow(clippy::cast_possible_wrap)]
                 let result = value as i64;
@@ -361,7 +377,7 @@ impl HugrEngine {
                 let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int())
                 else {
                     debug!("itousize at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 #[allow(clippy::cast_sign_loss)]
                 let result = value as u64;
@@ -379,7 +395,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 else {
                     debug!("trunc_s at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let result = value.trunc() as i64;
                 self.wire_state
@@ -394,7 +410,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 else {
                     debug!("trunc_u at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 // Clamp to non-negative before converting
                 let clamped = value.max(0.0).trunc();
@@ -412,7 +428,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 else {
                     debug!("ceil_s at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let result = value.ceil() as i64;
                 self.wire_state
@@ -426,7 +442,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 else {
                     debug!("ceil_u at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let clamped = value.max(0.0).ceil();
                 let result = clamped as u64;
@@ -441,7 +457,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 else {
                     debug!("floor_s at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let result = value.floor() as i64;
                 self.wire_state
@@ -455,7 +471,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 else {
                     debug!("floor_u at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let clamped = value.max(0.0).floor();
                 let result = clamped as u64;
@@ -472,7 +488,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 else {
                     debug!("round_s at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let result = value.round() as i64;
                 self.wire_state
@@ -486,7 +502,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_float())
                 else {
                     debug!("round_u at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let clamped = value.max(0.0).round();
                 let result = clamped as u64;
@@ -498,10 +514,10 @@ impl HugrEngine {
 
             _ => {
                 debug!("Unknown arithmetic.conversions operation: {op_name}");
-                return false;
+                return HandlerOutcome::Defer;
             }
         }
 
-        true
+        HandlerOutcome::Processed
     }
 }

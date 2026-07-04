@@ -21,11 +21,17 @@ use log::debug;
 use tket::hugr::{Hugr, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `tket.wasm` operations for WebAssembly integration.
-    pub(crate) fn handle_wasm_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_wasm_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.wasm operation: {op_name} at {node:?}");
 
         // WASM operations are for hybrid classical-quantum computation.
@@ -40,13 +46,13 @@ impl HugrEngine {
                     .classical_values
                     .insert((node, 0), ClassicalValue::UInt(0));
                 debug!("tket.wasm.get_context: stub (no WASM support)");
-                true
+                HandlerOutcome::Processed
             }
             "dispose_context" | "DisposeContext" => {
                 // dispose_context: WasmContext -> ()
                 // Clean up WASM context (no-op for stub)
                 debug!("tket.wasm.dispose_context: stub (no WASM support)");
-                true
+                HandlerOutcome::Processed
             }
             "call" | "Call" => {
                 // call: (WasmContext, ...) -> (WasmContext, ...)
@@ -54,7 +60,7 @@ impl HugrEngine {
                 // Stub: pass through inputs to outputs
                 self.propagate_all_inputs(hugr, node);
                 debug!("tket.wasm.call: stub (no WASM support)");
-                true
+                HandlerOutcome::Processed
             }
             "lookup_by_id" | "LookupById" => {
                 // lookup_by_id: (WasmContext, int) -> (WasmContext, WasmFunc)
@@ -66,7 +72,7 @@ impl HugrEngine {
                     .classical_values
                     .insert((node, 1), ClassicalValue::UInt(0));
                 debug!("tket.wasm.lookup_by_id: stub (no WASM support)");
-                true
+                HandlerOutcome::Processed
             }
             "lookup_by_name" | "LookupByName" => {
                 // lookup_by_name: (WasmContext, String) -> (WasmContext, WasmFunc)
@@ -78,7 +84,7 @@ impl HugrEngine {
                     .classical_values
                     .insert((node, 1), ClassicalValue::UInt(0));
                 debug!("tket.wasm.lookup_by_name: stub (no WASM support)");
-                true
+                HandlerOutcome::Processed
             }
             "read_result" | "ReadResult" => {
                 // read_result: WasmResult -> value
@@ -87,11 +93,11 @@ impl HugrEngine {
                     .classical_values
                     .insert((node, 0), ClassicalValue::Int(0));
                 debug!("tket.wasm.read_result: stub (no WASM support)");
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 debug!("Unknown tket.wasm operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }

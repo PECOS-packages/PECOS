@@ -28,6 +28,7 @@ use pecos_quantum::hugr_convert::try_extract_rotation_angle;
 use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
@@ -41,7 +42,7 @@ impl HugrEngine {
         hugr: &Hugr,
         node: Node,
         op_name: &str,
-    ) -> bool {
+    ) -> HandlerOutcome {
         debug!("Processing tket.quantum non-gate operation: {op_name} at {node:?}");
 
         match op_name {
@@ -65,11 +66,11 @@ impl HugrEngine {
                         .insert((node, 0), ClassicalValue::Rotation(0.0));
                     debug!("symbolic_angle: defaulting to 0");
                 }
-                true
+                HandlerOutcome::Processed
             }
             // Quantum gates are handled via the quantum ops path, not here
-            // Return false to let them fall through to the gate handling
-            _ => false,
+            // -- defer so they fall through to the gate handling
+            _ => HandlerOutcome::Defer,
         }
     }
 
@@ -144,7 +145,12 @@ impl HugrEngine {
     /// produce the value, the node stays deferred and the gate consumer
     /// (`resolve_rotation_angle`) fails loud if the statically extracted
     /// gate angle is also missing.
-    pub(crate) fn handle_rotation_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_rotation_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.rotation operation: {op_name} at {node:?}");
 
         match op_name {
@@ -159,7 +165,7 @@ impl HugrEngine {
                     .or_else(|| try_extract_rotation_angle(hugr, node, 0).map(|turns| turns * 2.0))
                 else {
                     debug!("tket.rotation.{op_name} at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 self.wire_state
@@ -167,7 +173,7 @@ impl HugrEngine {
                     .insert((node, 0), ClassicalValue::Rotation(halfturns));
 
                 debug!("tket.rotation.from_halfturns: {halfturns}");
-                true
+                HandlerOutcome::Processed
             }
             "to_halfturns" => {
                 // to_halfturns: Rotation -> float64
@@ -177,7 +183,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_rotation())
                 else {
                     debug!("tket.rotation.to_halfturns at {node:?}: input not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 self.wire_state
@@ -185,7 +191,7 @@ impl HugrEngine {
                     .insert((node, 0), ClassicalValue::Float(halfturns));
 
                 debug!("tket.rotation.to_halfturns: {halfturns}");
-                true
+                HandlerOutcome::Processed
             }
             "radd" => {
                 // radd: (Rotation, Rotation) -> Rotation
@@ -198,7 +204,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_rotation());
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.rotation.radd at {node:?}: inputs not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 // Rotation addition, normalized to [0, 2) half-turns
@@ -209,17 +215,22 @@ impl HugrEngine {
                     .insert((node, 0), ClassicalValue::Rotation(sum));
 
                 debug!("tket.rotation.radd: {a} + {b} = {sum}");
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 debug!("Unknown tket.rotation operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }
 
     /// Handle `tket.modifier` operations for gate modifiers.
-    pub(crate) fn handle_modifier_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_modifier_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.modifier operation: {op_name} at {node:?}");
 
         // Gate modifiers change how gates are applied.
@@ -232,25 +243,25 @@ impl HugrEngine {
                 // For simulation, this is handled by the quantum backend
                 self.propagate_qubit_array(hugr, node);
                 debug!("ControlModifier at {node:?} (handled by quantum backend)");
-                true
+                HandlerOutcome::Processed
             }
             "DaggerModifier" => {
                 // DaggerModifier applies the inverse/adjoint of an operation
                 // For simulation, this is handled by the quantum backend
                 self.propagate_qubit_array(hugr, node);
                 debug!("DaggerModifier at {node:?} (handled by quantum backend)");
-                true
+                HandlerOutcome::Processed
             }
             "PowerModifier" => {
                 // PowerModifier raises an operation to a power
                 // For simulation, this is handled by the quantum backend
                 self.propagate_qubit_array(hugr, node);
                 debug!("PowerModifier at {node:?} (handled by quantum backend)");
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 debug!("Unknown tket.modifier operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }
@@ -261,7 +272,7 @@ impl HugrEngine {
         hugr: &Hugr,
         node: Node,
         op_name: &str,
-    ) -> bool {
+    ) -> HandlerOutcome {
         debug!("Processing tket.global_phase operation: {op_name} at {node:?}");
 
         if op_name == "global_phase" {
@@ -280,10 +291,10 @@ impl HugrEngine {
                 "tket.global_phase: added {phase}, total = {}",
                 self.extension_state.global_phase
             );
-            true
+            HandlerOutcome::Processed
         } else {
             debug!("Unknown tket.global_phase operation: {op_name}");
-            false
+            HandlerOutcome::Defer
         }
     }
 }

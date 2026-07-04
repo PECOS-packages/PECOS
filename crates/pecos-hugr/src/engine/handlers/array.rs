@@ -35,6 +35,7 @@ use tket::hugr::ops::OpTrait;
 use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
@@ -43,7 +44,12 @@ impl HugrEngine {
         clippy::too_many_lines,
         clippy::cast_possible_truncation // Array indices in simulation context won't exceed usize
     )]
-    pub(crate) fn handle_array_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_array_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing collections.array operation: {op_name} at {node:?}");
 
         match op_name {
@@ -61,7 +67,7 @@ impl HugrEngine {
                         elements.push(ClassicalValue::QubitRef(qubit_id));
                     } else {
                         debug!("new_array at {node:?}: element {port} not ready, deferring");
-                        return false;
+                        return HandlerOutcome::Defer;
                     }
                 }
 
@@ -69,14 +75,14 @@ impl HugrEngine {
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Array(elements));
-                true
+                HandlerOutcome::Processed
             }
             "unpack" => {
                 // [array] -> [T; n]: each element on its own output port.
                 let Some(ClassicalValue::Array(elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("array.unpack at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 for (port, value) in elements.into_iter().enumerate() {
                     if let ClassicalValue::QubitRef(qubit_id) = &value {
@@ -87,7 +93,7 @@ impl HugrEngine {
                     self.wire_state.classical_values.insert((node, port), value);
                 }
                 debug!("array.unpack at {node:?}: unpacked");
-                true
+                HandlerOutcome::Processed
             }
             "get" | "Get" | "index" | "Index" => {
                 // [array, usize] -> [option<T>, array]: option on port 0
@@ -95,7 +101,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::Array(elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("array.get at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let Some(index) = self
                     .get_input_value(hugr, node, 1)
@@ -103,7 +109,7 @@ impl HugrEngine {
                     .map(|v| v as usize)
                 else {
                     debug!("array.get at {node:?}: index not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let result = match elements.get(index) {
@@ -121,7 +127,7 @@ impl HugrEngine {
                 self.wire_state
                     .classical_values
                     .insert((node, 1), ClassicalValue::Array(elements));
-                true
+                HandlerOutcome::Processed
             }
             "set" | "Set" => {
                 // [array, usize, T] -> [either([T, array], [T, array])]:
@@ -131,7 +137,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("array.set at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let Some(index) = self
                     .get_input_value(hugr, node, 1)
@@ -139,7 +145,7 @@ impl HugrEngine {
                     .map(|v| v as usize)
                 else {
                     debug!("array.set at {node:?}: index not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let new_value = if let Some(qubit_id) = self.get_input_qubit(hugr, node, 2) {
                     ClassicalValue::QubitRef(qubit_id)
@@ -147,7 +153,7 @@ impl HugrEngine {
                     value
                 } else {
                     debug!("array.set at {node:?}: value not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let result = if let Some(slot) = elements.get_mut(index) {
@@ -165,7 +171,7 @@ impl HugrEngine {
                     }
                 };
                 self.wire_state.classical_values.insert((node, 0), result);
-                true
+                HandlerOutcome::Processed
             }
             "swap" | "Swap" => {
                 // [array, usize, usize] -> [either([array], [array])]:
@@ -174,7 +180,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("array.swap at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let Some(i) = self
                     .get_input_value(hugr, node, 1)
@@ -182,7 +188,7 @@ impl HugrEngine {
                     .map(|v| v as usize)
                 else {
                     debug!("array.swap at {node:?}: first index not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let Some(j) = self
                     .get_input_value(hugr, node, 2)
@@ -190,7 +196,7 @@ impl HugrEngine {
                     .map(|v| v as usize)
                 else {
                     debug!("array.swap at {node:?}: second index not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let result = if i < elements.len() && j < elements.len() {
@@ -211,7 +217,7 @@ impl HugrEngine {
                     }
                 };
                 self.wire_state.classical_values.insert((node, 0), result);
-                true
+                HandlerOutcome::Processed
             }
             "pop_left" | "pop_right" => {
                 // [array<n, T>] -> [option<(T, array<n-1, T>)>]: the empty
@@ -220,7 +226,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::Array(mut elements)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("array.{op_name} at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let result = if elements.is_empty() {
                     debug!("array.{op_name} at {node:?}: empty array -> None variant");
@@ -244,7 +250,7 @@ impl HugrEngine {
                     }
                 };
                 self.wire_state.classical_values.insert((node, 0), result);
-                true
+                HandlerOutcome::Processed
             }
             "discard_empty" => {
                 // [array<0, T>] -> []: consume an empty array. Defer until
@@ -252,10 +258,10 @@ impl HugrEngine {
                 // producer is pending.
                 if self.get_input_value(hugr, node, 0).is_none() {
                     debug!("array.discard_empty at {node:?}: array not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 }
                 debug!("array.discard_empty: array consumed");
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 // Unknown/unimplemented array op (e.g. `repeat`, whose real
@@ -264,7 +270,7 @@ impl HugrEngine {
                 // stall report instead of silently passing values through
                 // as if the op were an identity wire.
                 debug!("Unknown collections.array operation: {op_name} at {node:?}, deferring");
-                false
+                HandlerOutcome::Defer
             }
         }
     }

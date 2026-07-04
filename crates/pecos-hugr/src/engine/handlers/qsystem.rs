@@ -27,12 +27,18 @@ use pecos_core::QubitId;
 use tket::hugr::{Hugr, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::{ClassicalValue, FutureState, RngContextId, RngContextState};
 
 impl HugrEngine {
     /// Handle tket.qsystem operations (lazy measurements, barriers, etc.).
     #[allow(clippy::too_many_lines)] // Operation dispatch is inherently large
-    pub(crate) fn handle_qsystem_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_qsystem_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.qsystem operation: {op_name} at {node:?}");
 
         match op_name {
@@ -41,7 +47,7 @@ impl HugrEngine {
                 // Queue the measurement and create a Future handle
                 let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) else {
                     debug!("LazyMeasure at {node:?}: qubit not resolved, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 // Queue measurement
                 self.message_builder.mz(&[qubit_id.0]);
@@ -66,13 +72,13 @@ impl HugrEngine {
                     .insert((node, 0), ClassicalValue::Future(future_id));
 
                 debug!("LazyMeasure on qubit {qubit_id:?}, created future {future_id}");
-                true
+                HandlerOutcome::Processed
             }
             "LazyMeasureReset" => {
                 // LazyMeasureReset: Qubit -> (Qubit, Future<bool>)
                 let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) else {
                     debug!("LazyMeasureReset at {node:?}: qubit not resolved, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 // Queue measurement
                 self.message_builder.mz(&[qubit_id.0]);
@@ -101,14 +107,14 @@ impl HugrEngine {
                     .insert((node, 1), ClassicalValue::Future(future_id));
 
                 debug!("LazyMeasureReset on qubit {qubit_id:?}, created future {future_id}");
-                true
+                HandlerOutcome::Processed
             }
             "LazyMeasureLeaked" => {
                 // LazyMeasureLeaked: Qubit -> Future<int[6]>
                 // Same as LazyMeasure but result can be 0, 1, or 2 (leaked)
                 let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) else {
                     debug!("LazyMeasureLeaked at {node:?}: qubit not resolved, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.message_builder.mz(&[qubit_id.0]);
                 let measurement_index = self.measurement_state.mappings.len();
@@ -130,14 +136,14 @@ impl HugrEngine {
                     .insert((node, 0), ClassicalValue::Future(future_id));
 
                 debug!("LazyMeasureLeaked on qubit {qubit_id:?}, created future {future_id}");
-                true
+                HandlerOutcome::Processed
             }
             "MeasureReset" => {
                 // MeasureReset: Qubit -> (Qubit, bool)
                 // Atomic measure + reset (not lazy)
                 let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) else {
                     debug!("MeasureReset at {node:?}: qubit not resolved, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.message_builder.mz(&[qubit_id.0]);
                 self.measurement_state.mappings.push((node, qubit_id));
@@ -152,7 +158,7 @@ impl HugrEngine {
                 self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
 
                 debug!("MeasureReset on qubit {qubit_id:?}");
-                true
+                HandlerOutcome::Processed
             }
             "RuntimeBarrier" | "StateResult" => {
                 // Pass-through operations: input array = output array
@@ -160,7 +166,7 @@ impl HugrEngine {
                 // Propagate qubit arrays if present
                 self.propagate_qubit_array(hugr, node);
                 debug!("{op_name} at {node:?} (no-op for simulation)");
-                true
+                HandlerOutcome::Processed
             }
             "TryQAlloc" => {
                 // TryQAlloc: () -> Sum<(), Qubit>
@@ -176,23 +182,28 @@ impl HugrEngine {
                     .insert((node, 0), ClassicalValue::UInt(1));
 
                 debug!("TryQAlloc created qubit {qubit_id:?}");
-                true
+                HandlerOutcome::Processed
             }
             "Reset" | "Rz" | "PhasedX" | "ZZPhase" | "Measure" | "QFree" => {
                 // These are handled as quantum ops (via hugr_op_to_gate_type)
                 // Return false to let the quantum op handler process them
-                false
+                HandlerOutcome::Defer
             }
             _ => {
                 debug!("Unknown tket.qsystem operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }
 
     /// Handle `tket.qsystem.random` operations for random number generation.
     #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    pub(crate) fn handle_random_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_random_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.qsystem.random operation: {op_name} at {node:?}");
 
         match op_name {
@@ -207,7 +218,7 @@ impl HugrEngine {
                     .and_then(|v| v.as_uint())
                 else {
                     debug!("NewRNGContext at {node:?}: seed not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let ctx_id = self.extension_state.next_rng_context_id;
@@ -226,7 +237,7 @@ impl HugrEngine {
                 );
 
                 debug!("NewRNGContext with seed {seed} -> Some(context {ctx_id})");
-                true
+                HandlerOutcome::Processed
             }
             "DeleteRNGContext" => {
                 // DeleteRNGContext: RNGContext -> ()
@@ -234,11 +245,11 @@ impl HugrEngine {
                 let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("DeleteRNGContext at {node:?}: context not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.extension_state.rng_contexts.remove(&ctx_id);
                 debug!("DeleteRNGContext: removed context {ctx_id}");
-                true
+                HandlerOutcome::Processed
             }
             "RandomFloat" => {
                 // RandomFloat: RNGContext -> (float64, RNGContext)
@@ -246,7 +257,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("RandomFloat at {node:?}: context not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let random_float = self.generate_random_float(ctx_id);
 
@@ -259,7 +270,7 @@ impl HugrEngine {
                     .insert((node, 1), ClassicalValue::RngContext(ctx_id));
 
                 debug!("RandomFloat: generated {random_float}");
-                true
+                HandlerOutcome::Processed
             }
             "RandomInt" => {
                 // RandomInt: RNGContext -> (int<32>, RNGContext)
@@ -267,7 +278,7 @@ impl HugrEngine {
                 let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("RandomInt at {node:?}: context not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 // The output is int<32>: keep only the low 32 bits
                 #[allow(clippy::cast_possible_truncation)] // intentional 32-bit mask
@@ -281,7 +292,7 @@ impl HugrEngine {
                     .insert((node, 1), ClassicalValue::RngContext(ctx_id));
 
                 debug!("RandomInt: generated {random_int}");
-                true
+                HandlerOutcome::Processed
             }
             "RandomIntBounded" => {
                 // RandomIntBounded: (RNGContext, int<32>) -> (int<32>, RNGContext)
@@ -289,20 +300,19 @@ impl HugrEngine {
                 let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("RandomIntBounded at {node:?}: context not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let Some(bound) = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int())
                 else {
                     debug!("RandomIntBounded at {node:?}: bound not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 if bound <= 0 {
                     // [0, bound) is empty: there is no value this op could
                     // produce, so clamping would fabricate a result.
-                    self.execution_error = Some(format!(
+                    return HandlerOutcome::Fault(format!(
                         "RandomIntBounded at {node:?}: bound {bound} is not positive"
                     ));
-                    return true;
                 }
                 let random_val = self.generate_random_u64(ctx_id) % bound as u64;
 
@@ -314,7 +324,7 @@ impl HugrEngine {
                     .insert((node, 1), ClassicalValue::RngContext(ctx_id));
 
                 debug!("RandomIntBounded({bound}): generated {random_val}");
-                true
+                HandlerOutcome::Processed
             }
             "RandomAdvance" => {
                 // RandomAdvance: (RNGContext, int<64>) -> RNGContext
@@ -322,12 +332,12 @@ impl HugrEngine {
                 let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("RandomAdvance at {node:?}: context not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 let Some(delta) = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int())
                 else {
                     debug!("RandomAdvance at {node:?}: delta not ready, deferring");
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 {
@@ -345,11 +355,11 @@ impl HugrEngine {
 
                     debug!("RandomAdvance: advanced by {delta} steps");
                 }
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 debug!("Unknown tket.qsystem.random operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }
@@ -373,7 +383,12 @@ impl HugrEngine {
     }
 
     /// Handle `tket.qsystem.utils` operations.
-    pub(crate) fn handle_utils_op(&mut self, _hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_utils_op(
+        &mut self,
+        _hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.qsystem.utils operation: {op_name} at {node:?}");
 
         if op_name == "GetCurrentShot" {
@@ -385,10 +400,10 @@ impl HugrEngine {
             );
 
             debug!("GetCurrentShot: {}", self.extension_state.current_shot);
-            true
+            HandlerOutcome::Processed
         } else {
             debug!("Unknown tket.qsystem.utils operation: {op_name}");
-            false
+            HandlerOutcome::Defer
         }
     }
 }

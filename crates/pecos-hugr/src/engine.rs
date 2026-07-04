@@ -25,6 +25,7 @@
 pub(crate) mod analysis;
 mod control_flow;
 mod handlers;
+use handlers::{ClassicalOutcome, HandlerOutcome};
 mod propagation;
 pub(crate) mod types;
 
@@ -1273,22 +1274,31 @@ impl HugrEngine {
                 );
 
                 // Execute the classical operation
-                let outputs = self.handle_classical_op(&hugr, current_node, &classical_op);
-
-                // If outputs are empty, inputs weren't ready - defer this operation
-                if outputs.is_empty() && classical_op.num_outputs > 0 {
-                    debug!("Classical op {current_node:?}: deferring - inputs not ready");
-                    // Clear stale output values so dependent ops see None and also defer
-                    // This is critical for loops where old iteration values could be misread
-                    for port in 0..classical_op.num_outputs {
-                        self.wire_state
-                            .classical_values
-                            .remove(&(current_node, port));
+                let outputs = match self.handle_classical_op(&hugr, current_node, &classical_op) {
+                    ClassicalOutcome::Outputs(outputs) => outputs,
+                    ClassicalOutcome::Defer if classical_op.num_outputs > 0 => {
+                        debug!("Classical op {current_node:?}: deferring - inputs not ready");
+                        // Clear stale output values so dependent ops see None and also defer
+                        // This is critical for loops where old iteration values could be misread
+                        for port in 0..classical_op.num_outputs {
+                            self.wire_state
+                                .classical_values
+                                .remove(&(current_node, port));
+                        }
+                        // Add to pending bool reads set for retry (reusing the same mechanism)
+                        self.pending_bool_reads.insert(current_node);
+                        continue;
                     }
-                    // Add to pending bool reads set for retry (reusing the same mechanism)
-                    self.pending_bool_reads.insert(current_node);
-                    continue;
-                }
+                    // A zero-output op with nothing to store completes.
+                    ClassicalOutcome::Defer => Vec::new(),
+                    ClassicalOutcome::Fault(msg) => {
+                        // Poison and mark processed; the loop-top check
+                        // raises it before the next node fires.
+                        self.execution_error = Some(msg);
+                        self.processed.insert(current_node);
+                        continue;
+                    }
+                };
 
                 // Successfully resolved - remove from pending if it was there
                 self.pending_bool_reads.remove(&current_node);
@@ -1335,7 +1345,12 @@ impl HugrEngine {
             let op = hugr.get_optype(current_node);
             let is_extension_op = op.as_extension_op().is_some();
             let ext_result = self.handle_extension_op(&hugr, current_node);
-            if ext_result {
+            if let HandlerOutcome::Fault(msg) = &ext_result {
+                // Poison first; the processed path below still runs so the
+                // node does not re-fire before the loop-top check raises it.
+                self.execution_error = Some(msg.clone());
+            }
+            if !matches!(ext_result, HandlerOutcome::Defer) {
                 self.processed.insert(current_node);
 
                 // Retry any pending ops that might now have their inputs ready
@@ -2231,7 +2246,10 @@ mod tests {
 
         // NewRNGContext: u64 seed -> Some(context)
         seed_input(&mut engine, new_ctx, 0, ClassicalValue::Int(123_456));
-        assert!(engine.handle_random_op(&hugr, new_ctx, "NewRNGContext"));
+        assert_eq!(
+            engine.handle_random_op(&hugr, new_ctx, "NewRNGContext"),
+            HandlerOutcome::Processed
+        );
         let Some(ClassicalValue::Sum { tag: 1, values }) = engine
             .wire_state
             .classical_values
@@ -2250,7 +2268,10 @@ mod tests {
         // seed it directly here so the chain below starts from the context.
         seed_input(&mut engine, bounded, 0, ClassicalValue::RngContext(*ctx_id));
         seed_input(&mut engine, bounded, 1, ClassicalValue::Int(100));
-        assert!(engine.handle_random_op(&hugr, bounded, "RandomIntBounded"));
+        assert_eq!(
+            engine.handle_random_op(&hugr, bounded, "RandomIntBounded"),
+            HandlerOutcome::Processed
+        );
         assert!(engine.execution_error.is_none());
         match engine.wire_state.classical_values.get(&(bounded, 0)) {
             Some(ClassicalValue::Int(v)) => assert!((0..100).contains(v)),
@@ -2263,7 +2284,10 @@ mod tests {
 
         // RandomFloat/RandomAdvance/RandomInt/Delete each read the context
         // from the PREVIOUS op's stored output -- no more seeding.
-        assert!(engine.handle_random_op(&hugr, float, "RandomFloat"));
+        assert_eq!(
+            engine.handle_random_op(&hugr, float, "RandomFloat"),
+            HandlerOutcome::Processed
+        );
         match engine.wire_state.classical_values.get(&(float, 0)) {
             Some(ClassicalValue::Float(f)) => assert!((0.0..1.0).contains(f)),
             other => panic!("RandomFloat port 0 must be the value, got {other:?}"),
@@ -2274,9 +2298,15 @@ mod tests {
         ));
 
         seed_input(&mut engine, advance, 1, ClassicalValue::Int(-1));
-        assert!(engine.handle_random_op(&hugr, advance, "RandomAdvance"));
+        assert_eq!(
+            engine.handle_random_op(&hugr, advance, "RandomAdvance"),
+            HandlerOutcome::Processed
+        );
 
-        assert!(engine.handle_random_op(&hugr, int, "RandomInt"));
+        assert_eq!(
+            engine.handle_random_op(&hugr, int, "RandomInt"),
+            HandlerOutcome::Processed
+        );
         match engine.wire_state.classical_values.get(&(int, 0)) {
             Some(ClassicalValue::Int(v)) => {
                 assert!(
@@ -2291,7 +2321,10 @@ mod tests {
             Some(ClassicalValue::RngContext(_))
         ));
 
-        assert!(engine.handle_random_op(&hugr, delete, "DeleteRNGContext"));
+        assert_eq!(
+            engine.handle_random_op(&hugr, delete, "DeleteRNGContext"),
+            HandlerOutcome::Processed
+        );
         assert!(engine.extension_state.rng_contexts.is_empty());
 
         // An empty range has no value to produce: bound 0 must poison the
@@ -2303,8 +2336,11 @@ mod tests {
             .rng_contexts
             .insert(7, RngContextState::new(1));
         seed_input(&mut poisoned, bounded, 1, ClassicalValue::Int(0));
-        assert!(poisoned.handle_random_op(&hugr, bounded, "RandomIntBounded"));
-        let fault = poisoned.execution_error.expect("bound 0 must poison");
+        let HandlerOutcome::Fault(fault) =
+            poisoned.handle_random_op(&hugr, bounded, "RandomIntBounded")
+        else {
+            panic!("bound 0 must fault");
+        };
         assert!(fault.contains("not positive"), "unexpected fault: {fault}");
     }
 

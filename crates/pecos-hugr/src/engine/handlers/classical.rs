@@ -31,12 +31,16 @@ use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::{ClassicalOutcome, HandlerOutcome};
 use crate::engine::types::{ClassicalOp, ClassicalOpType, ClassicalValue};
 
 impl HugrEngine {
-    /// Execute a classical operation and return the output values.
+    /// Execute a classical operation.
     ///
-    /// Returns a vector of (`port_index`, value) pairs for output ports.
+    /// Returns [`ClassicalOutcome::Outputs`] with (`port_index`, value)
+    /// pairs on success, `Defer` when an input is missing or
+    /// unconvertible, and `Fault` for unrecoverable spec-defined errors
+    /// (e.g. unchecked division by zero).
     #[allow(
         clippy::too_many_lines,
         clippy::float_cmp, // Exact float comparison is intentional for feq/fne operations
@@ -49,7 +53,7 @@ impl HugrEngine {
         hugr: &Hugr,
         node: Node,
         op: &ClassicalOp,
-    ) -> Vec<(usize, ClassicalValue)> {
+    ) -> ClassicalOutcome {
         // Collect input values
         let mut inputs = Vec::with_capacity(op.num_inputs);
         for port_idx in 0..op.num_inputs {
@@ -71,11 +75,11 @@ impl HugrEngine {
                     debug!(
                         "Classical op {node:?}: missing input value for port {port_idx} from {wire_key:?}"
                     );
-                    return vec![];
+                    return ClassicalOutcome::Defer;
                 }
             } else {
                 debug!("Classical op {node:?}: no source for input port {port_idx}");
-                return vec![];
+                return ClassicalOutcome::Defer;
             }
         }
 
@@ -88,12 +92,13 @@ impl HugrEngine {
                 return op
                     .const_value
                     .as_ref()
-                    .map(|value| vec![(0, value.clone())])
-                    .unwrap_or_default();
+                    .map_or(ClassicalOutcome::Defer, |value| {
+                        ClassicalOutcome::Outputs(vec![(0, value.clone())])
+                    });
             }
             ClassicalOpType::MakeTuple => {
                 // MakeTuple combines all inputs into a single tuple
-                return vec![(0, ClassicalValue::Tuple(inputs))];
+                return ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Tuple(inputs))]);
             }
             ClassicalOpType::UnpackTuple => {
                 // UnpackTuple takes a single tuple input and produces multiple
@@ -109,28 +114,33 @@ impl HugrEngine {
                         },
                     ) => {
                         // Return each element on its respective output port
-                        return elements.into_iter().enumerate().collect();
+                        return ClassicalOutcome::Outputs(
+                            elements.into_iter().enumerate().collect(),
+                        );
                     }
                     Some(value) => {
                         // If it's a single non-tuple value, just pass it through on port 0
-                        return vec![(0, value)];
+                        return ClassicalOutcome::Outputs(vec![(0, value)]);
                     }
-                    None => return vec![],
+                    None => return ClassicalOutcome::Defer,
                 }
             }
             ClassicalOpType::TagSum => {
                 // Tag wraps its inputs into the given variant of a sum.
                 let OpType::Tag(tag_op) = hugr.get_optype(node) else {
-                    debug!("TagSum at {node:?}: node is not a Tag op");
-                    return vec![];
+                    // Classified as TagSum but not a Tag op: an engine
+                    // invariant violation that no retry can repair.
+                    return ClassicalOutcome::Fault(format!(
+                        "node {node:?} classified as TagSum is not a Tag op"
+                    ));
                 };
-                return vec![(
+                return ClassicalOutcome::Outputs(vec![(
                     0,
                     ClassicalValue::Sum {
                         tag: tag_op.tag,
                         values: inputs,
                     },
-                )];
+                )]);
             }
             _ => {}
         }
@@ -376,22 +386,26 @@ impl HugrEngine {
         })();
 
         if let Some(value) = result {
-            vec![(0, value)]
+            ClassicalOutcome::Outputs(vec![(0, value)])
         } else if div_by_zero {
             // The spec says unchecked division/modulo by zero panics.
-            self.execution_error = Some(format!(
+            ClassicalOutcome::Fault(format!(
                 "division by zero at {node:?} (the HUGR spec defines m=0 as a panic)"
-            ));
-            vec![]
+            ))
         } else {
             debug!("Classical op {node:?}: input type mismatch, deferring");
-            vec![]
+            ClassicalOutcome::Defer
         }
     }
 
     /// Handle `tket.bool` operations.
     #[allow(clippy::too_many_lines)] // Boolean operation dispatch is inherently large
-    pub(crate) fn handle_bool_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_bool_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.bool operation: {op_name} at {node:?}");
 
         match op_name {
@@ -408,14 +422,14 @@ impl HugrEngine {
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.bool.and at {node:?}: deferring - input not ready");
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a && b));
                 debug!("tket.bool.and: {a} && {b} = {}", a && b);
-                true
+                HandlerOutcome::Processed
             }
             "or" => {
                 let a = self
@@ -427,14 +441,14 @@ impl HugrEngine {
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.bool.or at {node:?}: deferring - input not ready");
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a || b));
                 debug!("tket.bool.or: {a} || {b} = {}", a || b);
-                true
+                HandlerOutcome::Processed
             }
             "xor" => {
                 let a = self
@@ -446,14 +460,14 @@ impl HugrEngine {
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.bool.xor at {node:?}: deferring - input not ready");
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a ^ b));
                 debug!("tket.bool.xor: {a} ^ {b} = {}", a ^ b);
-                true
+                HandlerOutcome::Processed
             }
             "not" => {
                 let Some(a) = self
@@ -462,14 +476,14 @@ impl HugrEngine {
                 else {
                     debug!("tket.bool.not at {node:?}: deferring - input not ready");
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(!a));
                 debug!("tket.bool.not: !{a} = {}", !a);
-                true
+                HandlerOutcome::Processed
             }
             "eq" => {
                 let a = self
@@ -481,14 +495,14 @@ impl HugrEngine {
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.bool.eq at {node:?}: deferring - input not ready");
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
                 self.pending_bool_reads.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a == b));
                 debug!("tket.bool.eq: {a} == {b} = {}", a == b);
-                true
+                HandlerOutcome::Processed
             }
             "make_opaque" => {
                 // make_opaque: Sum<bool> -> tket.bool
@@ -501,7 +515,7 @@ impl HugrEngine {
                     debug!("tket.bool.make_opaque at {node:?}: deferring - input not ready");
                     // Track this node so it can be retried when input becomes available
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 // A present but non-bool value is the same hazard as a
@@ -509,7 +523,7 @@ impl HugrEngine {
                 let Some(value) = input_val.as_bool() else {
                     debug!("tket.bool.make_opaque at {node:?}: deferring - input not a bool");
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 // Successfully resolved - remove from pending if it was there
@@ -518,7 +532,7 @@ impl HugrEngine {
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
                 debug!("tket.bool.make_opaque: {value}");
-                true
+                HandlerOutcome::Processed
             }
             "read" => {
                 // read: tket.bool -> Sum<bool>
@@ -533,13 +547,13 @@ impl HugrEngine {
                     debug!("tket.bool.read at {node:?}: deferring - input not ready");
                     // Track this node so it can be retried when measurement results arrive
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 let Some(value) = input_val.as_bool() else {
                     debug!("tket.bool.read at {node:?}: deferring - input not a bool");
                     self.pending_bool_reads.insert(node);
-                    return false;
+                    return HandlerOutcome::Defer;
                 };
 
                 // Successfully resolved - remove from pending if it was there
@@ -548,11 +562,11 @@ impl HugrEngine {
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
                 debug!("tket.bool.read: {value}");
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 debug!("Unknown tket.bool operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }

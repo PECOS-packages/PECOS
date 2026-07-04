@@ -24,13 +24,19 @@ use log::debug;
 use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle prelude extension operations.
     ///
     /// The prelude extension provides fundamental operations used across all HUGR programs.
-    pub(crate) fn handle_prelude_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_prelude_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing prelude operation: {op_name} at {node:?}");
 
         match op_name {
@@ -49,7 +55,7 @@ impl HugrEngine {
                                 self.wire_state
                                     .classical_values
                                     .insert((node, 0), ClassicalValue::UInt(*n));
-                                return true;
+                                return HandlerOutcome::Processed;
                             }
                             tket::hugr::types::TypeArg::Variable(var) => {
                                 if let Some(n) = self.resolve_call_type_arg(hugr, node, var.index())
@@ -61,7 +67,7 @@ impl HugrEngine {
                                     self.wire_state
                                         .classical_values
                                         .insert((node, 0), ClassicalValue::UInt(n));
-                                    return true;
+                                    return HandlerOutcome::Processed;
                                 }
                             }
                             _ => {}
@@ -74,7 +80,7 @@ impl HugrEngine {
                 // engine's pending/retry mechanism (or, at completion, the
                 // stall accounting) surfaces the problem instead.
                 debug!("load_nat at {node:?}: value unresolved, deferring");
-                false
+                HandlerOutcome::Defer
             }
 
             "panic" => {
@@ -83,17 +89,16 @@ impl HugrEngine {
                 // here): raise a fatal fault instead of continuing with the
                 // panic's outputs unproduced, which either stalls with a
                 // misleading message or completes with corrupt results.
-                self.execution_error = Some(format!(
+                HandlerOutcome::Fault(format!(
                     "program panicked (prelude.panic executed at {node:?})"
-                ));
-                true
+                ))
             }
 
             "print" => {
                 // Print operation - for simulation, we just pass through
                 debug!("prelude::print at {node:?}");
                 self.propagate_all_inputs(hugr, node);
-                true
+                HandlerOutcome::Processed
             }
 
             "MakeTuple" => {
@@ -117,7 +122,7 @@ impl HugrEngine {
                         elements.push(ClassicalValue::QubitRef(qubit_id));
                     } else {
                         debug!("MakeTuple at {node:?}: input {port} not ready, deferring");
-                        return false;
+                        return HandlerOutcome::Defer;
                     }
                 }
 
@@ -128,7 +133,7 @@ impl HugrEngine {
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Tuple(elements));
-                true
+                HandlerOutcome::Processed
             }
             "UnpackTuple" => {
                 // UnpackTuple: 1 input (a tuple) -> N outputs (the elements)
@@ -158,7 +163,7 @@ impl HugrEngine {
                             }
                         }
                         debug!("UnpackTuple at {node:?}: unpacked to {num_outputs} outputs");
-                        true
+                        HandlerOutcome::Processed
                     }
                     Some(_) => {
                         // Single non-tuple value - pass through
@@ -166,16 +171,16 @@ impl HugrEngine {
                             "UnpackTuple at {node:?}: input not a tuple, attempting pass-through"
                         );
                         self.propagate_all_inputs(hugr, node);
-                        true
+                        HandlerOutcome::Processed
                     }
                     None if self.get_input_qubit(hugr, node, 0).is_some() => {
                         // Linear (qubit) tuple: flow is resolved structurally.
                         self.propagate_all_inputs(hugr, node);
-                        true
+                        HandlerOutcome::Processed
                     }
                     None => {
                         debug!("UnpackTuple at {node:?}: input not ready, deferring");
-                        false
+                        HandlerOutcome::Defer
                     }
                 }
             }
@@ -183,14 +188,14 @@ impl HugrEngine {
             "Noop" | "Lift" | "Barrier" => {
                 // Genuine identity/annotation ops: pass values through.
                 self.propagate_all_inputs(hugr, node);
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 // Unknown op: defer so it surfaces in the completion-time
                 // stall report -- treating an op the engine knows nothing
                 // about as an identity wire fabricates semantics.
                 debug!("Unknown prelude operation: {op_name} at {node:?}, deferring");
-                false
+                HandlerOutcome::Defer
             }
         }
     }

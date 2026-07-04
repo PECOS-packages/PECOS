@@ -25,12 +25,18 @@ use log::debug;
 use tket::hugr::{Hugr, HugrView, Node, NodeIndex};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::{CapturedResult, ClassicalValue, ResultValue};
 
 impl HugrEngine {
     /// Handle tket.result operations for capturing output values.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn handle_result_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_result_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.result operation: {op_name} at {node:?}");
 
         // Get the label from the first input port (typically the operation has a label parameter)
@@ -48,11 +54,11 @@ impl HugrEngine {
                         label,
                         value: ResultValue::Bool(b),
                     });
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     // Input not ready - defer processing
                     debug!("result_bool at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             "result_int" => {
@@ -64,12 +70,12 @@ impl HugrEngine {
                         value: ResultValue::Int(i),
                     });
                     debug!("Captured result_int: {i}");
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     // Marking the node processed without capturing would
                     // silently drop the result; defer until the value arrives.
                     debug!("result_int at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             "result_uint" => {
@@ -81,10 +87,10 @@ impl HugrEngine {
                         value: ResultValue::UInt(u),
                     });
                     debug!("Captured result_uint: {u}");
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     debug!("result_uint at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             "result_f64" => {
@@ -96,10 +102,10 @@ impl HugrEngine {
                         value: ResultValue::Float(f),
                     });
                     debug!("Captured result_f64: {f}");
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     debug!("result_f64 at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             "result_array_bool" => {
@@ -117,10 +123,10 @@ impl HugrEngine {
                         label,
                         value: ResultValue::ArrayBool(bools),
                     });
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     debug!("result_array_bool at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             "result_array_int" => {
@@ -135,10 +141,10 @@ impl HugrEngine {
                         label,
                         value: ResultValue::ArrayInt(ints),
                     });
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     debug!("result_array_int at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             "result_array_uint" => {
@@ -153,10 +159,10 @@ impl HugrEngine {
                         label,
                         value: ResultValue::ArrayUInt(uints),
                     });
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     debug!("result_array_uint at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             "result_array_f64" => {
@@ -171,15 +177,15 @@ impl HugrEngine {
                         label,
                         value: ResultValue::ArrayFloat(floats),
                     });
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     debug!("result_array_f64 at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             _ => {
                 debug!("Unknown tket.result operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }

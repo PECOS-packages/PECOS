@@ -1891,7 +1891,15 @@ impl ClassicalEngine for HugrEngine {
                                 .insert(wire_key, ClassicalValue::Bool(value != 0));
                         }
                     } else {
-                        debug!("No mapping for measurement index {global_idx}");
+                        // An outcome with no queued measurement to bind to
+                        // means the driver and engine disagree about how
+                        // many measurements this batch contained -- binding
+                        // nothing silently corrupts every later index.
+                        return Err(PecosError::Input(format!(
+                            "measurement outcome {global_idx} has no queued measurement \
+                             (engine queued {}, driver sent {num_outcomes} in this batch)",
+                            self.measurement_state.mappings.len()
+                        )));
                     }
                 }
 
@@ -2729,6 +2737,40 @@ mod tests {
         assert_eq!(
             engine.wire_state.classical_values.get(&(node, 0)),
             Some(&ClassicalValue::Int(3))
+        );
+    }
+
+    /// Excess measurement outcomes (driver/engine batch-count disagreement)
+    /// must raise instead of silently dropping -- an unbound outcome shifts
+    /// every later measurement index.
+    #[test]
+    fn test_excess_measurement_outcomes_error() {
+        use pecos_engines::{ByteMessageBuilder, ControlEngine, EngineStage};
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pecos/tests/test_data/hugr/single_hadamard.hugr"
+        );
+        let mut engine = HugrEngine::from_file(path).expect("Failed to load HUGR");
+        let stage = engine.start(()).expect("start");
+        let EngineStage::NeedsProcessing(msg) = stage else {
+            panic!("expected a processing stage");
+        };
+        let n_meas = msg
+            .quantum_ops()
+            .expect("parse ops")
+            .iter()
+            .filter(|g| matches!(g.gate_type, GateType::MZ))
+            .count();
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_outcomes();
+        builder.add_outcomes(&vec![0usize; n_meas + 3]);
+        let Err(err) = engine.continue_processing(builder.build()) else {
+            panic!("excess outcomes must error");
+        };
+        assert!(
+            err.to_string().contains("has no queued measurement"),
+            "unexpected error: {err}"
         );
     }
 

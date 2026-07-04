@@ -224,12 +224,8 @@ def test_zero_iteration_loop() -> None:
     assert measurements == [1, 1, 1], f"zero-iteration loop misbehaved: {measurements}"
 
 
-def test_division_by_zero_yields_zero() -> None:
-    """Division by zero currently yields 0 (documented engine legacy).
-
-    The HUGR spec says the unchecked op panics; the engine's documented
-    stand-in is 0. This pin makes any change to that behavior visible.
-    """
+def test_division_by_zero_panics() -> None:
+    """Division by zero is a runtime error per the HUGR spec (m=0 panics)."""
 
     @guppy
     def div_zero() -> bool:
@@ -240,10 +236,8 @@ def test_division_by_zero_yields_zero() -> None:
             x(q)
         return measure(q)
 
-    results = sim(Guppy(div_zero)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
-    raw_measurements = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
-    assert measurements == [1, 1, 1], f"div-by-zero legacy behavior changed: {measurements}"
+    with pytest.raises(RuntimeError, match="division by zero"):
+        sim(Guppy(div_zero)).qubits(1).quantum(state_vector()).seed(1).run(1).to_dict()
 
 
 def test_recursion_rejected_loudly() -> None:

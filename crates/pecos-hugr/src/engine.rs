@@ -705,6 +705,7 @@ impl HugrEngine {
                             cfg_node: current_node,
                             current_block: entry_block,
                             completed_blocks: BTreeSet::new(),
+                            transitions: 0,
                         },
                     );
 
@@ -1176,7 +1177,11 @@ impl HugrEngine {
                         let Some((src_node, src_port)) =
                             hugr.single_linked_output(func_info.output_node, out_port)
                         else {
-                            continue;
+                            return Err(PecosError::Generic(format!(
+                                "Call {current_node:?} targets FuncDefn {func_defn_node:?} \
+                                 whose Output port {port} is unwired; the caller's output \
+                                 would silently go missing"
+                            )));
                         };
                         if src_node != func_info.input_node {
                             return Err(PecosError::Generic(format!(

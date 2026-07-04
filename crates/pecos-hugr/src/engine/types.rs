@@ -719,6 +719,10 @@ pub struct ActiveCfgInfo {
     pub current_block: Node,
     /// Blocks that have been fully processed.
     pub completed_blocks: BTreeSet<Node>,
+    /// Number of block transitions taken (loop-iteration ceiling: guppy
+    /// loops lower to CFG cycles, so a never-breaking classical loop would
+    /// otherwise spin forever).
+    pub transitions: u64,
 }
 
 // --- Function Call Types ---

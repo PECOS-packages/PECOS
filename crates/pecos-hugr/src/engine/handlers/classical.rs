@@ -45,7 +45,7 @@ impl HugrEngine {
         clippy::cast_sign_loss // shift amounts are clamped to 0-63 before cast to u32
     )]
     pub(crate) fn handle_classical_op(
-        &self,
+        &mut self,
         hugr: &Hugr,
         node: Node,
         op: &ClassicalOp,
@@ -155,6 +155,7 @@ impl HugrEngine {
         let signed = op.int_info.is_none_or(|(_, is_signed)| is_signed);
 
         // Execute the operation
+        let mut div_by_zero = false;
         #[allow(clippy::cast_possible_wrap)]
         let result: Option<ClassicalValue> = (|| {
             Some(match op.op_type {
@@ -170,28 +171,44 @@ impl HugrEngine {
                 ClassicalOpType::Isub => ClassicalValue::Int(int(0)?.wrapping_sub(int(1)?)),
                 ClassicalOpType::Imul => ClassicalValue::Int(int(0)?.wrapping_mul(int(1)?)),
                 ClassicalOpType::Idiv => {
-                    // Division by zero yields 0 (the spec says the unchecked
-                    // op panics; the engine's panic handling is log-and-
-                    // continue, so 0 is the documented legacy stand-in).
-                    // Signed division is EUCLIDEAN per the HUGR spec
-                    // (idivmod_s: q*m+r=n with 0<=r<m, unsigned divisor) --
-                    // computed in i128 so a divisor above i64::MAX is exact.
+                    // Division by zero panics per the spec ("m=0 will call
+                    // panic"); raised as a fatal execution fault. Signed
+                    // division is EUCLIDEAN per the HUGR spec (idivmod_s:
+                    // q*m+r=n with 0<=r<m, unsigned divisor) -- computed in
+                    // i128 so a divisor above i64::MAX is exact.
                     if signed {
                         let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
-                        ClassicalValue::Int(if m == 0 { 0 } else { n.div_euclid(m) as i64 })
+                        if m == 0 {
+                            div_by_zero = true;
+                            return None;
+                        }
+                        ClassicalValue::Int(n.div_euclid(m) as i64)
                     } else {
                         let (a, b) = (uint(0)?, uint(1)?);
-                        ClassicalValue::Int(a.checked_div(b).unwrap_or(0) as i64)
+                        let Some(q) = a.checked_div(b) else {
+                            div_by_zero = true;
+                            return None;
+                        };
+                        ClassicalValue::Int(q as i64)
                     }
                 }
                 ClassicalOpType::Imod => {
-                    // Euclidean remainder for signed (0 <= r < m), see Idiv.
+                    // Euclidean remainder for signed (0 <= r < m), see Idiv;
+                    // modulo by zero panics per the spec.
                     if signed {
                         let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
-                        ClassicalValue::Int(if m == 0 { 0 } else { n.rem_euclid(m) as i64 })
+                        if m == 0 {
+                            div_by_zero = true;
+                            return None;
+                        }
+                        ClassicalValue::Int(n.rem_euclid(m) as i64)
                     } else {
                         let (a, b) = (uint(0)?, uint(1)?);
-                        ClassicalValue::Int(a.checked_rem(b).unwrap_or(0) as i64)
+                        let Some(r) = a.checked_rem(b) else {
+                            div_by_zero = true;
+                            return None;
+                        };
+                        ClassicalValue::Int(r as i64)
                     }
                 }
                 // Checked variants return sum_with_error(int): tag 1 wraps
@@ -360,6 +377,12 @@ impl HugrEngine {
 
         if let Some(value) = result {
             vec![(0, value)]
+        } else if div_by_zero {
+            // The spec says unchecked division/modulo by zero panics.
+            self.execution_error = Some(format!(
+                "division by zero at {node:?} (the HUGR spec defines m=0 as a panic)"
+            ));
+            vec![]
         } else {
             debug!("Classical op {node:?}: input type mismatch, deferring");
             vec![]

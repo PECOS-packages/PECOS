@@ -304,14 +304,18 @@ impl HugrEngine {
             "RandomAdvance" => {
                 // RandomAdvance: (RNGContext, int<64>) -> RNGContext
                 // Advance the RNG state by delta steps (can be negative for backtracking)
-                let ctx_value = self.get_input_value(hugr, node, 0);
+                let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("RandomAdvance at {node:?}: context not ready, deferring");
+                    return false;
+                };
                 let Some(delta) = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int())
                 else {
                     debug!("RandomAdvance at {node:?}: delta not ready, deferring");
                     return false;
                 };
 
-                if let Some(ClassicalValue::RngContext(ctx_id)) = ctx_value {
+                {
                     // Advance the RNG state by |delta| steps
                     // Note: For simplicity, we only support forward advancement
                     // Negative delta would require storing history which we don't do

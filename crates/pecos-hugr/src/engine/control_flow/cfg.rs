@@ -45,6 +45,10 @@ use crate::engine::analysis::{
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
+    /// Block-transition ceiling for CFGs (loop-iteration bound: guppy loops
+    /// are CFG cycles; a loop that never breaks must error, not hang).
+    const MAX_CFG_TRANSITIONS: u64 = 10_000_000;
+
     /// Try to resolve the branch value for a CFG `DataflowBlock`.
     /// Returns `Some(branch_index)` if the Sum tag value is known, None otherwise.
     #[allow(clippy::too_many_lines)]
@@ -401,10 +405,21 @@ impl HugrEngine {
         self.pending_measurement_propagations
             .push((cfg_node, from_block, to_block));
 
-        // Update active CFG state
+        // Update active CFG state. Guppy loops lower to CFG cycles, so the
+        // transition count doubles as the loop-iteration ceiling: a
+        // never-breaking classical loop would otherwise spin the processing
+        // loop forever with no yield.
         if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
             active_cfg.completed_blocks.insert(from_block);
             active_cfg.current_block = to_block;
+            active_cfg.transitions += 1;
+            if active_cfg.transitions > Self::MAX_CFG_TRANSITIONS {
+                self.execution_error = Some(format!(
+                    "CFG {cfg_node:?} exceeded {} block transitions without exiting",
+                    Self::MAX_CFG_TRANSITIONS
+                ));
+                return;
+            }
         }
 
         // Activate successor block's quantum ops and Call nodes
@@ -642,6 +657,13 @@ impl HugrEngine {
                             );
                             // Recursively transition
                             self.transition_to_cfg_successor(hugr, cfg_node, to_block, next_block);
+                        } else {
+                            // Out-of-range tag = upstream Sum/tag bug.
+                            self.execution_error = Some(format!(
+                                "CFG {cfg_node:?} empty block {to_block:?}: branch tag \
+                                 {branch_idx} out of range ({} successors)",
+                                successors.len()
+                            ));
                         }
                     } else {
                         debug!(

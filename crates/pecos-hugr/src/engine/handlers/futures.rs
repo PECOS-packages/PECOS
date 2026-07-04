@@ -111,13 +111,16 @@ impl HugrEngine {
             }
             "Free" => {
                 // Free: Future<T> -> ()
-                // Discard the Future without reading
-                if let Some(value) = self.get_input_value(hugr, node, 0)
-                    && let ClassicalValue::Future(future_id) = value
-                {
-                    self.extension_state.futures.remove(&future_id);
-                    debug!("Free future {future_id}");
-                }
+                // Discard the Future without reading. Defer until the input
+                // resolves to an actual Future: succeeding without one marks
+                // the node processed while its producer never ran.
+                let Some(ClassicalValue::Future(future_id)) = self.get_input_value(hugr, node, 0)
+                else {
+                    debug!("Free at {node:?}: future not ready, deferring");
+                    return false;
+                };
+                self.extension_state.futures.remove(&future_id);
+                debug!("Free future {future_id}");
                 true
             }
             _ => {

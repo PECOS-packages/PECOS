@@ -144,21 +144,8 @@ impl HugrEngine {
                 }
             }
 
-            // A zero-op case propagates outputs and marks the Conditional
-            // processed inside expand_conditional with no later completion
-            // event to observe it -- run the same completion hooks the
-            // direct expansion path runs, or the enclosing block/loop
-            // strands with no queued work.
-            if !self
-                .active_cases
-                .values()
-                .any(|c| c.conditional_node == cond_node)
-            {
-                self.check_cfg_block_completion(&hugr, cond_node);
-                self.check_tailloop_body_completion(&hugr, cond_node);
-                self.queue_ready_successors(&hugr, cond_node);
-                self.retry_pending_bool_reads();
-            }
+            // expand_conditional runs the zero-op-case completion hooks
+            // itself, so nothing more is needed here.
 
             debug!(
                 "Resolved pending Conditional {cond_node:?}, branch {branch_index} selected, added {num_entry_nodes} entry nodes"
@@ -195,15 +182,22 @@ impl HugrEngine {
             }
         }
 
-        // Propagate outputs for completed cases
+        // Propagate outputs for completed cases. Removing the case UP FRONT
+        // doubles as a re-entrancy guard: the check_case_completion recursion
+        // below can complete a case this loop also collected.
         for (case_node, cond_node) in completed_cases {
+            if self.active_cases.remove(&case_node).is_none() {
+                continue;
+            }
             debug!("Case {case_node:?} complete, propagating outputs to Conditional {cond_node:?}");
             self.propagate_conditional_outputs(hugr, cond_node, case_node);
-            self.active_cases.remove(&case_node);
 
             // The Conditional's outputs exist only now: re-run the checks
             // that treat the Conditional as complete (block completion gates
-            // on the case being done) and wake its consumers.
+            // on the case being done) and wake its consumers. The Conditional
+            // may itself be the last op of an ENCLOSING case, so check case
+            // completion too (recursing one nesting level per call).
+            self.check_case_completion(hugr, cond_node);
             self.check_cfg_block_completion(hugr, cond_node);
             self.check_tailloop_body_completion(hugr, cond_node);
             // A TailLoop whose control Sum rides through this Conditional's
@@ -613,7 +607,8 @@ impl HugrEngine {
         }
 
         // Register this Case as active so we can propagate outputs when complete
-        if ops_in_case.is_empty() {
+        let case_completed_inline = ops_in_case.is_empty();
+        if case_completed_inline {
             // No ops in this Case - propagate outputs immediately
             debug!("Case {selected_case:?} has no ops, propagating outputs immediately");
             self.propagate_conditional_outputs(hugr, cond_node, selected_case);
@@ -636,6 +631,21 @@ impl HugrEngine {
 
         // Mark the Conditional as processed
         self.processed.insert(cond_node);
+
+        // A zero-op case completed inline above with no later completion
+        // event to observe it: check_case_completion never fires for it, so
+        // run the same wake-up sequence here (after the processed mark, or
+        // the readiness checks still see the Conditional as pending). A
+        // consumer gated solely on this Conditional -- e.g. a zero-argument
+        // Call sequenced behind it by an order edge -- otherwise starves.
+        if case_completed_inline {
+            self.check_case_completion(hugr, cond_node);
+            self.check_cfg_block_completion(hugr, cond_node);
+            self.check_tailloop_body_completion(hugr, cond_node);
+            self.try_resolve_pending_tailloops();
+            self.queue_ready_successors(hugr, cond_node);
+            self.retry_pending_bool_reads();
+        }
 
         entry_nodes
     }

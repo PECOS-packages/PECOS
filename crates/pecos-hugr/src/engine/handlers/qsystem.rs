@@ -197,8 +197,11 @@ impl HugrEngine {
 
         match op_name {
             "NewRNGContext" => {
-                // NewRNGContext: int<64> -> RNGContext
-                // Create a new RNG context with the given seed
+                // NewRNGContext: int<64> -> Option<RNGContext>
+                // Create a new RNG context with the given seed. The
+                // signature returns an option (None on a second call); this
+                // engine has no global-context restriction, so it always
+                // produces Some.
                 let Some(seed) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_uint())
@@ -214,11 +217,15 @@ impl HugrEngine {
                     .rng_contexts
                     .insert(ctx_id, RngContextState::new(seed));
 
-                self.wire_state
-                    .classical_values
-                    .insert((node, 0), ClassicalValue::RngContext(ctx_id));
+                self.wire_state.classical_values.insert(
+                    (node, 0),
+                    ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![ClassicalValue::RngContext(ctx_id)],
+                    },
+                );
 
-                debug!("NewRNGContext with seed {seed} -> context {ctx_id}");
+                debug!("NewRNGContext with seed {seed} -> Some(context {ctx_id})");
                 true
             }
             "DeleteRNGContext" => {
@@ -234,7 +241,7 @@ impl HugrEngine {
                 true
             }
             "RandomFloat" => {
-                // RandomFloat: RNGContext -> (RNGContext, float64)
+                // RandomFloat: RNGContext -> (float64, RNGContext)
                 // Generate a random float in [0, 1)
                 let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
                 else {
@@ -243,40 +250,41 @@ impl HugrEngine {
                 };
                 let random_float = self.generate_random_float(ctx_id);
 
-                // Output port 0: RNGContext (pass through)
+                // Value first, context second, per the extension signature
                 self.wire_state
                     .classical_values
-                    .insert((node, 0), ClassicalValue::RngContext(ctx_id));
-                // Output port 1: random float
+                    .insert((node, 0), ClassicalValue::Float(random_float));
                 self.wire_state
                     .classical_values
-                    .insert((node, 1), ClassicalValue::Float(random_float));
+                    .insert((node, 1), ClassicalValue::RngContext(ctx_id));
 
                 debug!("RandomFloat: generated {random_float}");
                 true
             }
             "RandomInt" => {
-                // RandomInt: RNGContext -> (RNGContext, int<32>)
+                // RandomInt: RNGContext -> (int<32>, RNGContext)
                 // Generate a random 32-bit integer
                 let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
                 else {
                     debug!("RandomInt at {node:?}: context not ready, deferring");
                     return false;
                 };
-                let random_int = self.generate_random_u64(ctx_id) as i64;
+                // The output is int<32>: keep only the low 32 bits
+                #[allow(clippy::cast_possible_truncation)] // intentional 32-bit mask
+                let random_int = i64::from(self.generate_random_u64(ctx_id) as u32);
 
                 self.wire_state
                     .classical_values
-                    .insert((node, 0), ClassicalValue::RngContext(ctx_id));
+                    .insert((node, 0), ClassicalValue::Int(random_int));
                 self.wire_state
                     .classical_values
-                    .insert((node, 1), ClassicalValue::Int(random_int));
+                    .insert((node, 1), ClassicalValue::RngContext(ctx_id));
 
                 debug!("RandomInt: generated {random_int}");
                 true
             }
             "RandomIntBounded" => {
-                // RandomIntBounded: (RNGContext, int<32>) -> (RNGContext, int<32>)
+                // RandomIntBounded: (RNGContext, int<32>) -> (int<32>, RNGContext)
                 // Generate a random integer in [0, bound)
                 let Some(ClassicalValue::RngContext(ctx_id)) = self.get_input_value(hugr, node, 0)
                 else {
@@ -288,15 +296,22 @@ impl HugrEngine {
                     debug!("RandomIntBounded at {node:?}: bound not ready, deferring");
                     return false;
                 };
-                let bound = bound.max(1) as u64;
-                let random_val = self.generate_random_u64(ctx_id) % bound;
+                if bound <= 0 {
+                    // [0, bound) is empty: there is no value this op could
+                    // produce, so clamping would fabricate a result.
+                    self.execution_error = Some(format!(
+                        "RandomIntBounded at {node:?}: bound {bound} is not positive"
+                    ));
+                    return true;
+                }
+                let random_val = self.generate_random_u64(ctx_id) % bound as u64;
 
                 self.wire_state
                     .classical_values
-                    .insert((node, 0), ClassicalValue::RngContext(ctx_id));
+                    .insert((node, 0), ClassicalValue::Int(random_val as i64));
                 self.wire_state
                     .classical_values
-                    .insert((node, 1), ClassicalValue::Int(random_val as i64));
+                    .insert((node, 1), ClassicalValue::RngContext(ctx_id));
 
                 debug!("RandomIntBounded({bound}): generated {random_val}");
                 true

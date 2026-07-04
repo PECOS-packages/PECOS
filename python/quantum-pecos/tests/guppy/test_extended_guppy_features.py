@@ -378,13 +378,6 @@ class TestClassicalDataTypes:
 class TestControlFlow:
     """Test advanced control flow patterns."""
 
-    @pytest.mark.xfail(
-        reason=(
-            "engine stalls on this nested-loop shape (starved deferred node; nested-container tracking is a "
-            "known follow-up) -- fails loud instead of silently truncating"
-        ),
-        strict=True,
-    )
     def test_nested_loops(self, tester: ExtendedGuppyTester) -> None:
         """Test nested loop structures."""
 

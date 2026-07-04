@@ -675,9 +675,9 @@ impl HugrEngine {
                         }
                     }
                     debug!("Conditional {current_node:?} expanded, branch {branch_index} selected");
-
-                    // Check if this Conditional completion allows a CFG block to complete
-                    self.check_cfg_block_completion(&hugr, current_node);
+                    // Completion hooks for a zero-op case (block completion,
+                    // consumer wake-up) run inside expand_conditional; a
+                    // non-empty case completes later via check_case_completion.
                 } else {
                     // Can't resolve yet - likely waiting for measurement result
                     // Add to pending conditionals and continue
@@ -1172,6 +1172,22 @@ impl HugrEngine {
                     // stranded outside every completion and stall check
                     // (which silently truncates downstream results).
                     debug!("Call {current_node:?}: FuncDefn has no CFG, treating as passthrough");
+                    // The per-port wiring checks below are vacuous for a
+                    // zero-output function, so check the body shape first:
+                    // any child beyond Input/Output (and inert Const
+                    // statics) is real work this path would silently skip.
+                    if let Some(extra) = hugr.children(func_defn_node).find(|c| {
+                        *c != func_info.input_node
+                            && *c != func_info.output_node
+                            && !matches!(hugr.get_optype(*c), OpType::Const(_))
+                    }) {
+                        return Err(PecosError::Generic(format!(
+                            "Call {current_node:?} targets FuncDefn {func_defn_node:?} \
+                             with no CFG and a non-passthrough body (contains \
+                             {extra:?}); plain dataflow function bodies are not \
+                             supported by the HUGR engine"
+                        )));
+                    }
                     for port in 0..func_info.num_outputs {
                         let out_port = IncomingPort::from(port);
                         let Some((src_node, src_port)) =
@@ -1185,7 +1201,10 @@ impl HugrEngine {
                         };
                         if src_node != func_info.input_node {
                             return Err(PecosError::Generic(format!(
-                                "Call {current_node:?} targets FuncDefn {func_defn_node:?}                                  with no CFG and a non-passthrough body (output {port} fed                                  by {src_node:?}); plain dataflow function bodies are not                                  supported by the HUGR engine"
+                                "Call {current_node:?} targets FuncDefn {func_defn_node:?} \
+                                 with no CFG and a non-passthrough body (output {port} fed \
+                                 by {src_node:?}); plain dataflow function bodies are not \
+                                 supported by the HUGR engine"
                             )));
                         }
                         let func_input_wire = (func_info.input_node, src_port.index());
@@ -2135,6 +2154,158 @@ mod tests {
         let engine = HugrEngine::default();
         assert!(engine.hugr.is_none());
         assert!(engine.quantum_ops.is_empty());
+    }
+
+    /// Build the RNG chain from tket-qsystem's own builder test and drive
+    /// the qsystem handlers over it, pinning the OUTPUT SHAPES to the
+    /// extension signatures: `NewRNGContext -> Option<RNGContext>` (a Sum
+    /// with tag 1) and value-FIRST tuples for the Random* ops. The chain
+    /// seeds only
+    /// the constants and the unwrap Conditional's output; every later op
+    /// resolves its context from the previous op's stored port-1 output, so
+    /// a swapped port order fails the chain, not just one assert.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_rng_ops_emit_value_first_spec_shapes() {
+        use crate::engine::types::RngContextState;
+        use tket::hugr::builder::{Dataflow, DataflowHugr, FunctionBuilder};
+        use tket::hugr::extension::prelude::{UnwrapBuilder, option_type};
+        use tket::hugr::ops::Value;
+        use tket::hugr::std_extensions::arithmetic::int_types::{ConstInt, int_type};
+        use tket::hugr::types::{Signature, Type};
+        use tket_qsystem::extension::random::{CONTEXT_TYPE_NAME, EXTENSION, RandomOpBuilder};
+
+        let hugr = {
+            let mut fb =
+                FunctionBuilder::new("rng_chain", Signature::new(vec![], vec![int_type(5)]))
+                    .unwrap();
+            let seed = fb.add_load_const(Value::from(ConstInt::new_u(6, 123_456).unwrap()));
+            let maybe_ctx = fb.add_new_rng_context(seed).unwrap();
+            let context_type = Type::from(
+                EXTENSION
+                    .get_type(&CONTEXT_TYPE_NAME)
+                    .unwrap()
+                    .instantiate([])
+                    .unwrap(),
+            );
+            let [ctx] = fb
+                .build_unwrap_sum(1, option_type(vec![context_type]), maybe_ctx)
+                .unwrap();
+            let bound = fb.add_load_const(Value::from(ConstInt::new_u(5, 100).unwrap()));
+            let delta = fb.add_load_const(Value::from(ConstInt::new_s(6, -1).unwrap()));
+            let [_, ctx] = fb.add_random_int_bounded(ctx, bound).unwrap();
+            let [_, ctx] = fb.add_random_float(ctx).unwrap();
+            let ctx = fb.add_random_advance(ctx, delta).unwrap();
+            let [rnd, ctx] = fb.add_random_int(ctx).unwrap();
+            fb.add_delete_rng_context(ctx).unwrap();
+            fb.finish_hugr_with_outputs([rnd]).unwrap()
+        };
+
+        let find = |name: &str| -> Node {
+            hugr.nodes()
+                .find(|n| {
+                    hugr.get_optype(*n)
+                        .as_extension_op()
+                        .is_some_and(|op| op.unqualified_id() == name)
+                })
+                .unwrap_or_else(|| panic!("no {name} node in the built chain"))
+        };
+        let new_ctx = find("NewRNGContext");
+        let bounded = find("RandomIntBounded");
+        let float = find("RandomFloat");
+        let advance = find("RandomAdvance");
+        let int = find("RandomInt");
+        let delete = find("DeleteRNGContext");
+
+        let seed_input = |engine: &mut HugrEngine, node: Node, port: usize, value| {
+            let (src, sp) = hugr
+                .single_linked_output(node, IncomingPort::from(port))
+                .unwrap();
+            engine
+                .wire_state
+                .classical_values
+                .insert((src, sp.index()), value);
+        };
+
+        let mut engine = HugrEngine::default();
+
+        // NewRNGContext: u64 seed -> Some(context)
+        seed_input(&mut engine, new_ctx, 0, ClassicalValue::Int(123_456));
+        assert!(engine.handle_random_op(&hugr, new_ctx, "NewRNGContext"));
+        let Some(ClassicalValue::Sum { tag: 1, values }) = engine
+            .wire_state
+            .classical_values
+            .get(&(new_ctx, 0))
+            .cloned()
+        else {
+            panic!("NewRNGContext must produce Sum tag 1 (Some), got {:?}", {
+                engine.wire_state.classical_values.get(&(new_ctx, 0))
+            });
+        };
+        let [ClassicalValue::RngContext(ctx_id)] = values.as_slice() else {
+            panic!("NewRNGContext Some payload must be an RNG context, got {values:?}");
+        };
+
+        // The unwrap Conditional's output is engine-propagated in real runs;
+        // seed it directly here so the chain below starts from the context.
+        seed_input(&mut engine, bounded, 0, ClassicalValue::RngContext(*ctx_id));
+        seed_input(&mut engine, bounded, 1, ClassicalValue::Int(100));
+        assert!(engine.handle_random_op(&hugr, bounded, "RandomIntBounded"));
+        assert!(engine.execution_error.is_none());
+        match engine.wire_state.classical_values.get(&(bounded, 0)) {
+            Some(ClassicalValue::Int(v)) => assert!((0..100).contains(v)),
+            other => panic!("RandomIntBounded port 0 must be the value, got {other:?}"),
+        }
+        assert!(matches!(
+            engine.wire_state.classical_values.get(&(bounded, 1)),
+            Some(ClassicalValue::RngContext(_))
+        ));
+
+        // RandomFloat/RandomAdvance/RandomInt/Delete each read the context
+        // from the PREVIOUS op's stored output -- no more seeding.
+        assert!(engine.handle_random_op(&hugr, float, "RandomFloat"));
+        match engine.wire_state.classical_values.get(&(float, 0)) {
+            Some(ClassicalValue::Float(f)) => assert!((0.0..1.0).contains(f)),
+            other => panic!("RandomFloat port 0 must be the value, got {other:?}"),
+        }
+        assert!(matches!(
+            engine.wire_state.classical_values.get(&(float, 1)),
+            Some(ClassicalValue::RngContext(_))
+        ));
+
+        seed_input(&mut engine, advance, 1, ClassicalValue::Int(-1));
+        assert!(engine.handle_random_op(&hugr, advance, "RandomAdvance"));
+
+        assert!(engine.handle_random_op(&hugr, int, "RandomInt"));
+        match engine.wire_state.classical_values.get(&(int, 0)) {
+            Some(ClassicalValue::Int(v)) => {
+                assert!(
+                    (0..=i64::from(u32::MAX)).contains(v),
+                    "int<32> value, got {v}"
+                );
+            }
+            other => panic!("RandomInt port 0 must be the value, got {other:?}"),
+        }
+        assert!(matches!(
+            engine.wire_state.classical_values.get(&(int, 1)),
+            Some(ClassicalValue::RngContext(_))
+        ));
+
+        assert!(engine.handle_random_op(&hugr, delete, "DeleteRNGContext"));
+        assert!(engine.extension_state.rng_contexts.is_empty());
+
+        // An empty range has no value to produce: bound 0 must poison the
+        // execution, not clamp.
+        let mut poisoned = HugrEngine::default();
+        seed_input(&mut poisoned, bounded, 0, ClassicalValue::RngContext(7));
+        poisoned
+            .extension_state
+            .rng_contexts
+            .insert(7, RngContextState::new(1));
+        seed_input(&mut poisoned, bounded, 1, ClassicalValue::Int(0));
+        assert!(poisoned.handle_random_op(&hugr, bounded, "RandomIntBounded"));
+        let fault = poisoned.execution_error.expect("bound 0 must poison");
+        assert!(fault.contains("not positive"), "unexpected fault: {fault}");
     }
 
     #[test]

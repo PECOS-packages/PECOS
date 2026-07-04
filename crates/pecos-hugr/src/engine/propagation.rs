@@ -376,8 +376,15 @@ impl HugrEngine {
     /// can unpack them at runtime exactly like a `MakeTuple`-built tuple.
     fn const_value_to_classical(value: &Value) -> Option<ClassicalValue> {
         use tket::extension::bool::ConstBool;
+        use tket::extension::rotation::ConstRotation;
         use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
         use tket::hugr::std_extensions::arithmetic::int_types::ConstInt;
+
+        if let Some(const_rot) = value.get_custom_value::<ConstRotation>() {
+            let half_turns = const_rot.half_turns();
+            debug!("const_value_to_classical: found ConstRotation with {half_turns} half-turns");
+            return Some(ClassicalValue::Rotation(half_turns));
+        }
 
         // ConstInt can be signed or unsigned
         if let Some(const_int) = value.get_custom_value::<ConstInt>() {

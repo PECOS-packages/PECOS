@@ -1134,25 +1134,55 @@ impl HugrEngine {
                         if !self.work_queue.contains(&cfg_node) {
                             self.work_queue.push_front(cfg_node);
                         }
-                    } else {
-                        debug!("Call {current_node:?}: FuncDefn has no CFG, passing through");
-                        // No CFG - just pass through qubits (identity function)
-                        for port in 0..func_info.num_outputs {
-                            let func_input_wire = (func_info.input_node, port);
-                            if let Some(&qubit_id) =
-                                self.wire_state.wire_to_qubit.get(&func_input_wire)
-                            {
-                                let call_output_wire = (current_node, port);
-                                self.wire_state
-                                    .wire_to_qubit
-                                    .insert(call_output_wire, qubit_id);
-                            }
+                        // Don't mark Call as processed yet - wait for the
+                        // FuncDefn's CFG to complete; the Call is completed
+                        // in complete_func_call_if_needed.
+                        continue;
+                    }
+
+                    // No CFG: the body is a plain dataflow region. The
+                    // engine only executes CFG-bodied functions, so anything
+                    // beyond a pure Input->Output passthrough is
+                    // unsupported -- fail loud rather than leaving the Call
+                    // stranded outside every completion and stall check
+                    // (which silently truncates downstream results).
+                    debug!("Call {current_node:?}: FuncDefn has no CFG, treating as passthrough");
+                    for port in 0..func_info.num_outputs {
+                        let out_port = IncomingPort::from(port);
+                        let Some((src_node, src_port)) =
+                            hugr.single_linked_output(func_info.output_node, out_port)
+                        else {
+                            continue;
+                        };
+                        if src_node != func_info.input_node {
+                            return Err(PecosError::Generic(format!(
+                                "Call {current_node:?} targets FuncDefn {func_defn_node:?}                                  with no CFG and a non-passthrough body (output {port} fed                                  by {src_node:?}); plain dataflow function bodies are not                                  supported by the HUGR engine"
+                            )));
+                        }
+                        let func_input_wire = (func_info.input_node, src_port.index());
+                        if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&func_input_wire)
+                        {
+                            self.wire_state
+                                .wire_to_qubit
+                                .insert((current_node, port), qubit_id);
+                        }
+                        if let Some(value) = self
+                            .wire_state
+                            .classical_values
+                            .get(&func_input_wire)
+                            .cloned()
+                        {
+                            self.wire_state
+                                .classical_values
+                                .insert((current_node, port), value);
                         }
                     }
+                    self.processed.insert(current_node);
+                    self.check_case_completion(&hugr, current_node);
+                    self.check_cfg_block_completion(&hugr, current_node);
+                    self.check_tailloop_body_completion(&hugr, current_node);
+                    self.queue_ready_successors(&hugr, current_node);
                 }
-
-                // Don't mark Call as processed yet - wait for FuncDefn to complete
-                // The Call will be marked as processed in complete_func_call_if_needed
                 continue;
             }
 
@@ -1165,7 +1195,12 @@ impl HugrEngine {
                         .insert((current_node, 0), value);
                     debug!("LoadConstant {current_node:?}: loaded value");
                 } else {
-                    debug!("LoadConstant {current_node:?}: failed to load value");
+                    // An unparseable constant will never parse: defer so the
+                    // stall report names this node instead of letting its
+                    // block complete around a missing constant-derived value.
+                    debug!("LoadConstant {current_node:?}: failed to load value, deferring");
+                    self.pending_bool_reads.insert(current_node);
+                    continue;
                 }
                 self.processed.insert(current_node);
 

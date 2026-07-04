@@ -580,6 +580,9 @@ impl HugrEngine {
         self.queue_ready_successors(hugr, tailloop_node);
 
         // Check if this TailLoop completion allows a CFG block to complete
+        // A parent Case whose final completion event is this loop must
+        // observe it too.
+        self.check_case_completion(hugr, tailloop_node);
         self.check_cfg_block_completion(hugr, tailloop_node);
     }
 

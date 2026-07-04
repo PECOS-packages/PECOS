@@ -156,6 +156,11 @@ impl HugrEngine {
                 self.processed.insert(call_node);
                 self.active_calls.remove(&call_node);
 
+                // Check if this Call completion allows a parent Case to
+                // complete (a case whose FINAL completion event is the Call
+                // itself would otherwise stay active forever).
+                self.check_case_completion(hugr, call_node);
+
                 // Check if this Call completion allows a parent CFG block to complete
                 // This is critical for nested function calls
                 self.check_cfg_block_completion(hugr, call_node);

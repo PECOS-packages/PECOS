@@ -277,7 +277,10 @@ class TestClassicalComputation:
         )
 
     @pytest.mark.xfail(
-        reason="pure-classical return values are not captured in results (program has no measurements; return-value capture is a known gap)",
+        reason=(
+            "pure-classical return values are not captured in results (program has no measurements; return- "
+            "value capture is a known gap)"
+        ),
         strict=True,
     )
     def test_classical_arithmetic(self, pipeline_tester: GuppyPipelineTest) -> None:
@@ -422,7 +425,11 @@ class TestAdvancedAlgorithms:
             assert len(measurements) == 100
 
     @pytest.mark.xfail(
-        reason="test program does not compile under guppylang 0.21 (PlaceNotUsedError: linearity violation); needs a rewrite -- it never actually ran, the old success-gate silently passed the compile failure",
+        reason=(
+            "test program does not compile under guppylang 0.21 (PlaceNotUsedError: linearity violation); "
+            "needs a rewrite -- it never actually ran, the old success-gate silently passed the compile "
+            "failure"
+        ),
         strict=True,
     )
     def test_deutsch_josza_algorithm(self, pipeline_tester: GuppyPipelineTest) -> None:

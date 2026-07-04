@@ -276,17 +276,10 @@ class TestClassicalComputation:
             shots=10,
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "pure-classical return values are not captured in results (program has no measurements; return- "
-            "value capture is a known gap)"
-        ),
-        strict=True,
-    )
     def test_classical_arithmetic(self, pipeline_tester: GuppyPipelineTest) -> None:
-        """Test basic arithmetic operations."""
+        """Pure-classical programs surface the entrypoint's return value
+        under the "return" key (no measurements, no result() calls)."""
 
-        # NOTE: This may fail on current pipelines due to limited classical support
         @guppy
         def arithmetic_test() -> int:
             # Simple arithmetic that doesn't depend on quantum measurements
@@ -294,16 +287,11 @@ class TestClassicalComputation:
             b = 3
             return a + b
 
-        results = pipeline_tester.test_function_on_both_pipelines(
-            arithmetic_test,
-            shots=5,
-        )
+        from pecos import Guppy, sim
+        from pecos_rslib import state_vector
 
-        # Document current limitations
-        if not results.get("hugr_llvm", {}).get("success"):
-            pass
-        if not results.get("phir", {}).get("success"):
-            pass
+        results = sim(Guppy(arithmetic_test)).qubits(1).quantum(state_vector()).seed(1).run(5).to_dict()
+        assert list(results["return"]) == [8] * 5, f"keys: {sorted(results)}"
 
 
 # ============================================================================

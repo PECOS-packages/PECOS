@@ -93,6 +93,11 @@ pub struct HugrEngine {
     /// In-flight higher-order array scans, keyed by scan node.
     pub(crate) active_scans: BTreeMap<Node, ActiveScanInfo>,
 
+    /// The entrypoint's classical return values, captured when its CFG
+    /// completes. Pure-classical programs (no measurements, no `result()`
+    /// calls) surface these as their shot results.
+    pub(crate) return_values: Vec<ClassicalValue>,
+
     /// Container regions the engine actually activated this shot
     /// (`DataflowBlocks`, selected Cases, `TailLoop` bodies), with a label for
     /// diagnostics. Persistent across the shot (unlike the active_* maps),
@@ -391,6 +396,7 @@ impl HugrEngine {
         self.pending_tailloop_control.clear();
         self.execution_error = None;
         self.active_scans.clear();
+        self.return_values.clear();
         self.executed_containers.clear();
 
         // Clear result capture state
@@ -1772,6 +1778,7 @@ impl Default for HugrEngine {
             work_queue: VecDeque::new(),
             processed: BTreeSet::new(),
             active_scans: BTreeMap::new(),
+            return_values: Vec::new(),
             executed_containers: BTreeMap::new(),
             message_builder: ByteMessageBuilder::new(),
             // Grouped state
@@ -1959,6 +1966,33 @@ impl ClassicalEngine for HugrEngine {
                 result
                     .data
                     .insert("measurements".to_string(), Data::from_u32_vec(values));
+            }
+
+            // Pure-classical programs (no measurements either): surface the
+            // entrypoint's return values -- "return" for a single value,
+            // "return_{port}" for multiple.
+            if self.measurement_state.results.is_empty() && !self.return_values.is_empty() {
+                let scalars: Vec<Data> = self
+                    .return_values
+                    .iter()
+                    .filter_map(|value| match value {
+                        ClassicalValue::Bool(b) => Some(Data::Bool(*b)),
+                        ClassicalValue::Int(i) => Some(Data::I64(*i)),
+                        ClassicalValue::UInt(u) => Some(Data::U64(*u)),
+                        ClassicalValue::Float(f) => Some(Data::F64(*f)),
+                        _ => None,
+                    })
+                    .collect();
+                if scalars.len() == 1 {
+                    let mut scalars = scalars;
+                    result
+                        .data
+                        .insert("return".to_string(), scalars.pop().expect("len 1"));
+                } else {
+                    for (i, data) in scalars.into_iter().enumerate() {
+                        result.data.insert(format!("return_{i}"), data);
+                    }
+                }
             }
         }
 

@@ -617,6 +617,30 @@ impl HugrEngine {
         self.processed.insert(cfg_node);
         self.active_cfgs.remove(&cfg_node);
 
+        // The ENTRYPOINT's CFG (module-level FuncDefn that nothing calls or
+        // scans through) completing means main returned: capture its
+        // classical return values so pure-classical programs surface them.
+        let parent_is_entry_func = hugr.get_parent(cfg_node).is_some_and(|fd| {
+            matches!(hugr.get_optype(fd), OpType::FuncDefn(_))
+                && hugr.get_parent(fd) == Some(hugr.module_root())
+                && !self.call_targets.values().any(|&target| target == fd)
+                && !self
+                    .active_scans
+                    .values()
+                    .any(|scan| scan.func_defn_node == fd)
+        });
+        if parent_is_entry_func {
+            let mut values = Vec::new();
+            for port in 0..hugr.num_outputs(cfg_node) {
+                if let Some(value) = self.wire_state.classical_values.get(&(cfg_node, port)) {
+                    values.push(value.clone());
+                }
+            }
+            if !values.is_empty() {
+                self.return_values = values;
+            }
+        }
+
         // Check if this CFG is inside a FuncDefn that's being called
         self.complete_func_call_if_needed(hugr, cfg_node);
 

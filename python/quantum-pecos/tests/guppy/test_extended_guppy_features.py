@@ -344,15 +344,8 @@ class TestClassicalDataTypes:
             correlated = sum(1 for (a, b) in measurements if a == b)
             assert correlated > 80, f"Tuple ops failed, correlation={correlated}/100"
 
-    @pytest.mark.xfail(
-        reason=(
-            "pure-classical return values are not captured in results (program has no measurements; return- "
-            "value capture is a known gap)"
-        ),
-        strict=True,
-    )
     def test_boolean_expressions(self, tester: ExtendedGuppyTester) -> None:
-        """Test complex boolean expressions."""
+        """Pure-classical boolean returns surface under the "return" key."""
 
         @guppy
         def boolean_expr_test() -> bool:
@@ -363,11 +356,13 @@ class TestClassicalDataTypes:
             # Complex boolean expression
             return (a and b) or (not b and c) or (a and not c)
 
-        result = tester.test_function(boolean_expr_test, shots=10)
-        if result["success"]:
-            results = result["result"]["results"]
-            # (True and False) or (True and True) or (True and False) = True
-            assert all(r for r in results), f"Boolean expression failed: {results}"
+        from pecos import Guppy, sim
+        from pecos_rslib import state_vector
+
+        results = sim(Guppy(boolean_expr_test)).qubits(1).quantum(state_vector()).seed(1).run(10).to_dict()
+        # (True and False) or (True and True) or (True and False) = True
+        values = [bool(v) for v in results["return"]]
+        assert values == [True] * 10, f"Boolean expression failed: {values}"
 
 
 # ============================================================================

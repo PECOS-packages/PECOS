@@ -142,6 +142,86 @@ impl HugrEngine {
                     },
                 )]);
             }
+            ClassicalOpType::Idivmod => {
+                // Combined Euclidean division+remainder, TWO outputs (q, r);
+                // m=0 panics per the spec, like Idiv/Imod.
+                let int_at = |i: usize| inputs.get(i).and_then(ClassicalValue::as_int);
+                let uint_at = |i: usize| match inputs.get(i) {
+                    Some(ClassicalValue::UInt(u)) => Some(*u),
+                    #[allow(clippy::cast_sign_loss)]
+                    other => other.and_then(ClassicalValue::as_int).map(|v| v as u64),
+                };
+                let signed = op.int_info.is_none_or(|(_, is_signed)| is_signed);
+                let qr = if signed {
+                    let (Some(n), Some(m)) = (int_at(0), uint_at(1)) else {
+                        debug!("idivmod at {node:?}: inputs not ready, deferring");
+                        return ClassicalOutcome::Defer;
+                    };
+                    let (n, m) = (i128::from(n), i128::from(m));
+                    if m == 0 {
+                        None
+                    } else {
+                        #[allow(clippy::cast_possible_truncation)]
+                        Some((n.div_euclid(m) as i64, n.rem_euclid(m) as i64))
+                    }
+                } else {
+                    let (Some(a), Some(b)) = (uint_at(0), uint_at(1)) else {
+                        debug!("idivmod at {node:?}: inputs not ready, deferring");
+                        return ClassicalOutcome::Defer;
+                    };
+                    #[allow(clippy::cast_possible_wrap)]
+                    (b != 0).then(|| ((a / b) as i64, (a % b) as i64))
+                };
+                let Some((q, r)) = qr else {
+                    return ClassicalOutcome::Fault(format!(
+                        "division by zero at {node:?} (the HUGR spec defines m=0 as a panic)"
+                    ));
+                };
+                return ClassicalOutcome::Outputs(vec![
+                    (0, ClassicalValue::Int(q)),
+                    (1, ClassicalValue::Int(r)),
+                ]);
+            }
+            ClassicalOpType::IdivmodChecked => {
+                // sum_with_error(tuple(q, r)): error = tag 0, value = tag 1.
+                let int_at = |i: usize| inputs.get(i).and_then(ClassicalValue::as_int);
+                let uint_at = |i: usize| match inputs.get(i) {
+                    Some(ClassicalValue::UInt(u)) => Some(*u),
+                    #[allow(clippy::cast_sign_loss)]
+                    other => other.and_then(ClassicalValue::as_int).map(|v| v as u64),
+                };
+                let signed = op.int_info.is_none_or(|(_, is_signed)| is_signed);
+                let qr = if signed {
+                    let (Some(n), Some(m)) = (int_at(0), uint_at(1)) else {
+                        debug!("idivmod_checked at {node:?}: inputs not ready, deferring");
+                        return ClassicalOutcome::Defer;
+                    };
+                    let (n, m) = (i128::from(n), i128::from(m));
+                    #[allow(clippy::cast_possible_truncation)]
+                    (m != 0).then(|| (n.div_euclid(m) as i64, n.rem_euclid(m) as i64))
+                } else {
+                    let (Some(a), Some(b)) = (uint_at(0), uint_at(1)) else {
+                        debug!("idivmod_checked at {node:?}: inputs not ready, deferring");
+                        return ClassicalOutcome::Defer;
+                    };
+                    #[allow(clippy::cast_possible_wrap)]
+                    (b != 0).then(|| ((a / b) as i64, (a % b) as i64))
+                };
+                let value = match qr {
+                    Some((q, r)) => ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![ClassicalValue::Tuple(vec![
+                            ClassicalValue::Int(q),
+                            ClassicalValue::Int(r),
+                        ])],
+                    },
+                    None => ClassicalValue::Sum {
+                        tag: 0,
+                        values: vec![],
+                    },
+                };
+                return ClassicalOutcome::Outputs(vec![(0, value)]);
+            }
             _ => {}
         }
 
@@ -313,6 +393,30 @@ impl HugrEngine {
                     let shift = int(1)?.clamp(0, 63) as u32;
                     ClassicalValue::Int((uint(0)? >> shift) as i64)
                 }
+                ClassicalOpType::Ipow => {
+                    // "raise first input to the power of second input, the
+                    // exponent is treated as an unsigned integer"; wrapping
+                    // square-and-multiply so huge exponents stay exact under
+                    // two's-complement wrap.
+                    let (mut base, mut exp) = (int(0)?, uint(1)?);
+                    let mut result: i64 = 1;
+                    while exp > 0 {
+                        if exp & 1 == 1 {
+                            result = result.wrapping_mul(base);
+                        }
+                        base = base.wrapping_mul(base);
+                        exp >>= 1;
+                    }
+                    ClassicalValue::Int(result)
+                }
+                ClassicalOpType::ItoBool => {
+                    // itobool: int<1> -> bool (1 is true, 0 is false)
+                    ClassicalValue::Bool(int(0)? != 0)
+                }
+                ClassicalOpType::IfromBool => {
+                    // ifrombool: bool -> int<1>
+                    ClassicalValue::Int(i64::from(boolean(0)?))
+                }
 
                 // Float arithmetic
                 ClassicalOpType::Fadd => ClassicalValue::Float(float(0)? + float(1)?),
@@ -381,7 +485,9 @@ impl HugrEngine {
                 | ClassicalOpType::ConstBool
                 | ClassicalOpType::MakeTuple
                 | ClassicalOpType::UnpackTuple
-                | ClassicalOpType::TagSum => return None,
+                | ClassicalOpType::TagSum
+                | ClassicalOpType::Idivmod
+                | ClassicalOpType::IdivmodChecked => return None,
             })
         })();
 

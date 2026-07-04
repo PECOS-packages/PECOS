@@ -2423,6 +2423,180 @@ mod tests {
         );
     }
 
+    /// Build ipow / idivmod / itobool / ifrombool via the hugr std-arith
+    /// builders and drive the classical executor over them, pinning the
+    /// spec shapes: Euclidean (q, r) pairs on two ports, fail-loud m=0 for
+    /// the unchecked ops, error Sums for the checked ones, and wrapping
+    /// square-and-multiply exponentiation.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_missing_int_ops_execute_per_spec() {
+        use crate::engine::analysis::classify_classical_op;
+        use crate::engine::handlers::ClassicalOutcome;
+        use crate::engine::types::ClassicalOp;
+        use tket::hugr::builder::{Dataflow, DataflowHugr, FunctionBuilder};
+        use tket::hugr::ops::Value;
+        use tket::hugr::std_extensions::arithmetic::conversions::ConvertOpDef;
+        use tket::hugr::std_extensions::arithmetic::int_ops::IntOpDef;
+        use tket::hugr::std_extensions::arithmetic::int_types::{ConstInt, int_type};
+        use tket::hugr::types::Signature;
+
+        let hugr = {
+            let mut fb =
+                FunctionBuilder::new("int_ops", Signature::new(vec![], vec![int_type(6)])).unwrap();
+            let n = fb.add_load_const(Value::from(ConstInt::new_s(6, -7).unwrap()));
+            let m = fb.add_load_const(Value::from(ConstInt::new_u(6, 3).unwrap()));
+            let base = fb.add_load_const(Value::from(ConstInt::new_s(6, 3).unwrap()));
+            let exp = fb.add_load_const(Value::from(ConstInt::new_u(6, 4).unwrap()));
+            let bit = fb.add_load_const(Value::from(ConstInt::new_u(0, 1).unwrap()));
+            let flag = fb.add_load_const(Value::true_val());
+            let [pow] = fb
+                .add_dataflow_op(IntOpDef::ipow.with_log_width(6), [base, exp])
+                .unwrap()
+                .outputs_arr();
+            let [_q, _r] = fb
+                .add_dataflow_op(IntOpDef::idivmod_s.with_log_width(6), [n, m])
+                .unwrap()
+                .outputs_arr();
+            let [_qr_sum] = fb
+                .add_dataflow_op(IntOpDef::idivmod_checked_s.with_log_width(6), [n, m])
+                .unwrap()
+                .outputs_arr();
+            let [_b] = fb
+                .add_dataflow_op(ConvertOpDef::itobool.without_log_width(), [bit])
+                .unwrap()
+                .outputs_arr();
+            let [_i] = fb
+                .add_dataflow_op(ConvertOpDef::ifrombool.without_log_width(), [flag])
+                .unwrap()
+                .outputs_arr();
+            fb.finish_hugr_with_outputs([pow]).unwrap()
+        };
+
+        let find = |name: &str| -> Node {
+            hugr.nodes()
+                .find(|n| {
+                    hugr.get_optype(*n)
+                        .as_extension_op()
+                        .is_some_and(|op| op.unqualified_id() == name)
+                })
+                .unwrap_or_else(|| panic!("no {name} node"))
+        };
+        let mut engine = HugrEngine::default();
+        let run = |engine: &mut HugrEngine,
+                   name: &str,
+                   seeds: &[(usize, ClassicalValue)]|
+         -> ClassicalOutcome {
+            let node = find(name);
+            for (port, value) in seeds {
+                let (src, sp) = hugr
+                    .single_linked_output(node, IncomingPort::from(*port))
+                    .unwrap();
+                engine
+                    .wire_state
+                    .classical_values
+                    .insert((src, sp.index()), value.clone());
+            }
+            let (op_type, num_inputs, num_outputs, int_info) =
+                classify_classical_op(hugr.get_optype(node))
+                    .unwrap_or_else(|| panic!("{name} must classify"));
+            let op = ClassicalOp {
+                node,
+                op_type,
+                num_inputs,
+                num_outputs,
+                int_info,
+                const_value: None,
+            };
+            engine.handle_classical_op(&hugr, node, &op)
+        };
+
+        // ipow: 3^4 = 81
+        let got = run(
+            &mut engine,
+            "ipow",
+            &[(0, ClassicalValue::Int(3)), (1, ClassicalValue::Int(4))],
+        );
+        assert_eq!(
+            got,
+            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Int(81))])
+        );
+
+        // idivmod_s: Euclidean -7 divmod 3 -> (q, r) = (-3, 2) on two ports
+        let got = run(
+            &mut engine,
+            "idivmod_s",
+            &[(0, ClassicalValue::Int(-7)), (1, ClassicalValue::Int(3))],
+        );
+        assert_eq!(
+            got,
+            ClassicalOutcome::Outputs(vec![
+                (0, ClassicalValue::Int(-3)),
+                (1, ClassicalValue::Int(2))
+            ])
+        );
+
+        // idivmod_s by zero: fatal fault per the spec
+        let got = run(
+            &mut engine,
+            "idivmod_s",
+            &[(0, ClassicalValue::Int(-7)), (1, ClassicalValue::Int(0))],
+        );
+        assert!(
+            matches!(got, ClassicalOutcome::Fault(ref msg) if msg.contains("division by zero")),
+            "expected div-by-zero fault, got {got:?}"
+        );
+
+        // idivmod_checked_s: value = Sum tag 1 with a (q, r) tuple payload
+        let got = run(
+            &mut engine,
+            "idivmod_checked_s",
+            &[(0, ClassicalValue::Int(-7)), (1, ClassicalValue::Int(3))],
+        );
+        assert_eq!(
+            got,
+            ClassicalOutcome::Outputs(vec![(
+                0,
+                ClassicalValue::Sum {
+                    tag: 1,
+                    values: vec![ClassicalValue::Tuple(vec![
+                        ClassicalValue::Int(-3),
+                        ClassicalValue::Int(2)
+                    ])],
+                }
+            )])
+        );
+
+        // idivmod_checked_s by zero: error Sum (tag 0), not a fault
+        let got = run(
+            &mut engine,
+            "idivmod_checked_s",
+            &[(0, ClassicalValue::Int(-7)), (1, ClassicalValue::Int(0))],
+        );
+        assert_eq!(
+            got,
+            ClassicalOutcome::Outputs(vec![(
+                0,
+                ClassicalValue::Sum {
+                    tag: 0,
+                    values: vec![]
+                }
+            )])
+        );
+
+        // itobool / ifrombool
+        let got = run(&mut engine, "itobool", &[(0, ClassicalValue::Int(1))]);
+        assert_eq!(
+            got,
+            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Bool(true))])
+        );
+        let got = run(&mut engine, "ifrombool", &[(0, ClassicalValue::Bool(true))]);
+        assert_eq!(
+            got,
+            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Int(1))])
+        );
+    }
+
     #[test]
     fn test_completion_audit_reports_unexecuted_container_ops() {
         // The reachability audit must catch a container the engine claims

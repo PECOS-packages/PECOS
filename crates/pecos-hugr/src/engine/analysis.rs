@@ -651,6 +651,9 @@ pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
                 "idiv_checked" => (ClassicalOpType::IdivChecked, 2, 1, Some((6, is_signed))),
                 "imod" => (ClassicalOpType::Imod, 2, 1, Some((6, is_signed))),
                 "imod_checked" => (ClassicalOpType::ImodChecked, 2, 1, Some((6, is_signed))),
+                "idivmod" => (ClassicalOpType::Idivmod, 2, 2, Some((6, is_signed))),
+                "idivmod_checked" => (ClassicalOpType::IdivmodChecked, 2, 1, Some((6, is_signed))),
+                "ipow" => (ClassicalOpType::Ipow, 2, 1, Some((6, is_signed))),
                 "ineg" => (ClassicalOpType::Ineg, 1, 1, Some((6, true))),
                 "iabs" => (ClassicalOpType::Iabs, 1, 1, Some((6, is_signed))),
                 "ieq" => (ClassicalOpType::Ieq, 2, 1, Some((6, is_signed))),
@@ -703,6 +706,8 @@ pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
                 1,
                 Some((6, false)),
             ),
+            "itobool" => (ClassicalOpType::ItoBool, 1, 1, Some((0, false))),
+            "ifrombool" => (ClassicalOpType::IfromBool, 1, 1, Some((0, false))),
             _ => return None,
         },
         // Prelude extension (tuples, etc.)

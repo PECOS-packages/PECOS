@@ -187,6 +187,16 @@ pub enum ClassicalOpType {
     Imul,
     Idiv,
     Imod,
+    /// Combined Euclidean division+remainder: two outputs (q, r).
+    Idivmod,
+    /// Checked combined div+mod: `sum_with_error(tuple(q, r))`.
+    IdivmodChecked,
+    /// Exponentiation; the exponent is treated as unsigned per the spec.
+    Ipow,
+    /// Convert a 1-bit integer to bool.
+    ItoBool,
+    /// Convert a bool to a 1-bit integer.
+    IfromBool,
     /// Checked division: `sum_with_error(int)` -- error variant (tag 0) on
     /// division by zero, value variant (tag 1) otherwise
     IdivChecked,

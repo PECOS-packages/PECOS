@@ -344,6 +344,22 @@ pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
             let classical_ops = find_classical_ops_in_block(hugr, node);
             let bool_ops = find_bool_ops_in_block(hugr, node);
             let conditional_nodes = find_conditional_nodes_in_block(hugr, node);
+            // Nested containers: direct TailLoop/CFG children of the body.
+            // Nothing else queues them once the body is gated, and body
+            // completion must wait for them.
+            let mut tailloop_nodes = BTreeSet::new();
+            let mut cfg_nodes = BTreeSet::new();
+            for child in hugr.children(node) {
+                match hugr.get_optype(child) {
+                    OpType::TailLoop(_) => {
+                        tailloop_nodes.insert(child);
+                    }
+                    OpType::CFG(_) => {
+                        cfg_nodes.insert(child);
+                    }
+                    _ => {}
+                }
+            }
 
             debug!(
                 "Found TailLoop node {:?} with {} inputs, {} outputs, {} quantum ops, {} calls, {} extension ops, {} classical ops, {} bool ops, {} conditionals",
@@ -373,6 +389,8 @@ pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
                     classical_ops,
                     bool_ops,
                     conditional_nodes,
+                    tailloop_nodes,
+                    cfg_nodes,
                     num_inputs,
                     num_outputs,
                 },

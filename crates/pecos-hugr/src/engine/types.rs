@@ -802,6 +802,10 @@ pub struct TailLoopInfo {
     pub bool_ops: BTreeSet<Node>,
     /// All Conditional nodes inside this `TailLoop` body.
     pub conditional_nodes: BTreeSet<Node>,
+    /// Nested `TailLoop` nodes directly inside this `TailLoop` body.
+    pub tailloop_nodes: BTreeSet<Node>,
+    /// Nested CFG nodes directly inside this `TailLoop` body.
+    pub cfg_nodes: BTreeSet<Node>,
     /// Total number of `TailLoop` input ports.
     pub num_inputs: usize,
     /// Total number of `TailLoop` output ports.

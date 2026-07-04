@@ -175,6 +175,7 @@ impl HugrEngine {
                             .any(|c| c.conditional_node == *op)
                         && !self.active_tailloops.contains_key(op)
                         && !self.active_calls.contains_key(op)
+                        && !self.active_cfgs.contains_key(op)
                 });
 
                 if all_done {
@@ -523,10 +524,14 @@ impl HugrEngine {
         // set and propagate outputs before the nested work even starts.
         let mut case_calls: Vec<Node> = Vec::new();
         let mut case_containers: Vec<Node> = Vec::new();
+        let mut case_cfgs: Vec<Node> = Vec::new();
         for child in hugr.children(selected_case) {
             match hugr.get_optype(child) {
                 OpType::Call(_) => case_calls.push(child),
                 OpType::TailLoop(_) | OpType::Conditional(_) => case_containers.push(child),
+                // CFGs copy their inputs one-shot at activation, so they
+                // queue like Calls: only once their producers ran.
+                OpType::CFG(_) => case_cfgs.push(child),
                 _ => {}
             }
         }
@@ -536,6 +541,7 @@ impl HugrEngine {
             .chain(case_extension.iter())
             .chain(case_load_consts.iter())
             .chain(case_calls.iter())
+            .chain(case_cfgs.iter())
         {
             act.reset(op_node);
             act.queue(op_node, QueuePolicy::IfReady);

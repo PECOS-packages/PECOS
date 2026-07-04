@@ -665,6 +665,13 @@ impl HugrEngine {
                 self.work_queue.push_back(succ_node);
             }
         }
+
+        // A nested CFG may be the last op of an enclosing case or loop
+        // body -- run the container completion hooks (mirrors
+        // complete_tailloop). Block completion needs no hook: blocks do
+        // not track nested CFG children.
+        self.check_case_completion(hugr, cfg_node);
+        self.check_tailloop_body_completion(hugr, cfg_node);
     }
 
     /// Propagate wire mappings from a completed block to a successor block.

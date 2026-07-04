@@ -161,6 +161,18 @@ impl HugrEngine {
             act.reset(cond_node);
             act.queue(cond_node, QueuePolicy::Always);
         }
+        // Nested containers (TailLoop-in-TailLoop, CFG-in-body): nothing
+        // else queues them once the body is gated. Loops defer internally
+        // until their inputs resolve; CFGs copy their inputs one-shot at
+        // activation, so they must wait for readiness like Calls do.
+        for &nested in &tailloop_info.tailloop_nodes {
+            act.reset(nested);
+            act.queue(nested, QueuePolicy::Always);
+        }
+        for &nested in &tailloop_info.cfg_nodes {
+            act.reset(nested);
+            act.queue(nested, QueuePolicy::IfReady);
+        }
         // Body LoadConstants are gated behind nodes_inside_tailloops (no
         // other path queues them) while readiness gates their consumers on
         // the processed flag, so skipping them starves the body's classical
@@ -283,6 +295,14 @@ impl HugrEngine {
         for &cond_node in &tailloop_info.conditional_nodes {
             act.reset_processed(cond_node);
             act.queue(cond_node, QueuePolicy::Always);
+        }
+        for &nested in &tailloop_info.tailloop_nodes {
+            act.reset_processed(nested);
+            act.queue(nested, QueuePolicy::Always);
+        }
+        for &nested in &tailloop_info.cfg_nodes {
+            act.reset_processed(nested);
+            act.queue(nested, QueuePolicy::IfReady);
         }
         for child in hugr.children(tailloop_node) {
             if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
@@ -432,6 +452,9 @@ impl HugrEngine {
         // observe it too.
         self.check_case_completion(hugr, tailloop_node);
         self.check_cfg_block_completion(hugr, tailloop_node);
+        // A completed loop may be the last op of an ENCLOSING loop's body
+        // (TailLoop-in-TailLoop).
+        self.check_tailloop_body_completion(hugr, tailloop_node);
     }
 
     /// Propagate outputs from `TailLoop` body to `TailLoop` node outputs.
@@ -562,7 +585,9 @@ impl HugrEngine {
                 || tailloop_info.extension_ops.contains(&processed_node)
                 || tailloop_info.classical_ops.contains(&processed_node)
                 || tailloop_info.bool_ops.contains(&processed_node)
-                || tailloop_info.conditional_nodes.contains(&processed_node);
+                || tailloop_info.conditional_nodes.contains(&processed_node)
+                || tailloop_info.tailloop_nodes.contains(&processed_node)
+                || tailloop_info.cfg_nodes.contains(&processed_node);
 
             if is_in_loop {
                 // Check if all ops are processed
@@ -597,12 +622,23 @@ impl HugrEngine {
                             .any(|case| case.conditional_node == *cond)
                 });
 
+                // Nested containers count as done only once processed AND
+                // no longer active (a nested loop marks processed at its
+                // own completion; a nested CFG at complete_cfg_execution).
+                let all_nested_done = tailloop_info.tailloop_nodes.iter().all(|tl| {
+                    self.processed.contains(tl) && !self.active_tailloops.contains_key(tl)
+                }) && tailloop_info
+                    .cfg_nodes
+                    .iter()
+                    .all(|c| self.processed.contains(c) && !self.active_cfgs.contains_key(c));
+
                 if all_quantum_done
                     && all_calls_done
                     && all_extension_done
                     && all_classical_done
                     && all_bool_done
                     && all_conditionals_done
+                    && all_nested_done
                 {
                     completions.push(*tailloop_node);
                 }

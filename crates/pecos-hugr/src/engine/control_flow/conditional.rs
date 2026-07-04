@@ -44,6 +44,7 @@ use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
+use crate::engine::activation::{ContainerActivation, QueuePolicy};
 use crate::engine::analysis::find_input_node;
 use crate::engine::types::{ActiveCaseInfo, ClassicalValue, QuantumOp};
 
@@ -479,27 +480,18 @@ impl HugrEngine {
                 ops_in_case.insert(child);
             }
         }
-        // Quantum ops queued as entries bypass the container gates, but any
-        // re-queue goes through queue_ready_successors which checks all of
-        // them -- clear the gates so retried case ops are reachable. Also
-        // clear their processed flags: a case re-expanded on a later loop
-        // iteration must re-emit its gates (nothing else resets
-        // case-internal quantum ops now that container op-collection stops
-        // at case boundaries).
+        // Build the case activation batch through the shared two-phase
+        // mechanism: every processed flag and stale output wire in the case
+        // clears BEFORE any readiness check, so consumers cannot pass
+        // readiness against the previous execution's flags of a
+        // not-yet-cleared producer (same discipline as CFG/TailLoop
+        // re-activation). Quantum ops are queued separately as entry nodes
+        // by the caller, so they only reset and ungate here; a case
+        // re-expanded on a later loop iteration must re-emit its gates.
+        let mut act = ContainerActivation::new();
         for &node in &ops_in_case {
-            self.processed.remove(&node);
-            self.nodes_inside_cases.remove(&node);
-            self.nodes_inside_cfg_blocks.remove(&node);
-            self.nodes_inside_tailloops.remove(&node);
-            // Clear stale OUTPUT wires from the previous expansion: a
-            // consumer popping before this op re-runs would otherwise read
-            // last iteration's value/qubit (e.g. a gate resolving the
-            // previous iteration's borrowed qubit).
-            let num_outputs = hugr.num_outputs(node);
-            for port_idx in 0..num_outputs {
-                self.wire_state.classical_values.remove(&(node, port_idx));
-                self.wire_state.wire_to_qubit.remove(&(node, port_idx));
-            }
+            act.reset(node);
+            act.ungate(node);
         }
 
         // The Case's classical, bool, and extension ops must also execute
@@ -538,33 +530,6 @@ impl HugrEngine {
                 _ => {}
             }
         }
-        // PHASE 1: clear processed state for everything in the case before
-        // ANY readiness check, so consumers cannot pass readiness against
-        // the previous execution's flags of a not-yet-cleared producer
-        // (same discipline as CFG block re-activation).
-        for &op_node in case_classical
-            .iter()
-            .chain(case_bools.iter())
-            .chain(case_extension.iter())
-            .chain(case_load_consts.iter())
-            .chain(case_calls.iter())
-            .chain(case_containers.iter())
-        {
-            self.processed.remove(&op_node);
-            // Clear stale OUTPUT wires too: a consumer queued in this same
-            // expansion (e.g. a measurement whose qubit rides an
-            // UnpackTuple output) would otherwise resolve against the
-            // previous iteration's value before this op re-runs.
-            let num_outputs = hugr.num_outputs(op_node);
-            for port_idx in 0..num_outputs {
-                self.wire_state
-                    .classical_values
-                    .remove(&(op_node, port_idx));
-                self.wire_state.wire_to_qubit.remove(&(op_node, port_idx));
-            }
-        }
-        // PHASE 2: queue ready ops; ops that are not ready are queued later
-        // by queue_ready_successors when their producers complete.
         for &op_node in case_classical
             .iter()
             .chain(case_bools.iter())
@@ -572,39 +537,18 @@ impl HugrEngine {
             .chain(case_load_consts.iter())
             .chain(case_calls.iter())
         {
-            // Clear ALL container gates, not just the case gate: a case
-            // nested in a TailLoop nested in a CFG block leaves its ops in
-            // the outer gate sets too, and the retry path
-            // (queue_ready_successors) checks every gate -- an op that is
-            // not ready at expansion would otherwise never be queued.
-            self.nodes_inside_cases.remove(&op_node);
-            self.nodes_inside_cfg_blocks.remove(&op_node);
-            self.nodes_inside_tailloops.remove(&op_node);
+            act.reset(op_node);
+            act.queue(op_node, QueuePolicy::IfReady);
             ops_in_case.insert(op_node);
-            if !self.work_queue.contains(&op_node)
-                && crate::engine::analysis::all_predecessors_ready(
-                    hugr,
-                    op_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.processed,
-                )
-            {
-                self.work_queue.push_back(op_node);
-            }
         }
         // TailLoops and nested Conditionals defer internally until their
         // control resolves, so they queue without a readiness check.
         for &op_node in &case_containers {
-            self.nodes_inside_cases.remove(&op_node);
-            self.nodes_inside_cfg_blocks.remove(&op_node);
-            self.nodes_inside_tailloops.remove(&op_node);
+            act.reset(op_node);
+            act.queue(op_node, QueuePolicy::Always);
             ops_in_case.insert(op_node);
-            if !self.work_queue.contains(&op_node) {
-                self.work_queue.push_back(op_node);
-            }
         }
+        self.run_activation(hugr, &act);
 
         // Register this Case as active so we can propagate outputs when complete
         let case_completed_inline = ops_in_case.is_empty();

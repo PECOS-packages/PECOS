@@ -106,6 +106,9 @@ impl HugrEngine {
 
     /// Try to resolve any pending conditionals that were waiting for measurement results.
     pub(crate) fn try_resolve_pending_conditionals(&mut self) {
+        if self.pending_conditionals.is_empty() {
+            return;
+        }
         let hugr = match &self.hugr {
             Some(h) => h.clone(),
             None => return,

@@ -78,10 +78,14 @@ impl HugrEngine {
             }
 
             "panic" => {
-                // Panic operation - for simulation, we log it and continue
-                // In a real execution, this would halt the program
-                debug!("prelude::panic encountered at {node:?}");
-                // Mark as handled but don't crash the simulation
+                // An EXECUTED panic is a real runtime error on the taken
+                // path (guppy routes bounds/borrow/arithmetic failures
+                // here): raise a fatal fault instead of continuing with the
+                // panic's outputs unproduced, which either stalls with a
+                // misleading message or completes with corrupt results.
+                self.execution_error = Some(format!(
+                    "program panicked (prelude.panic executed at {node:?})"
+                ));
                 true
             }
 

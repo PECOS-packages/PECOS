@@ -274,8 +274,16 @@ pub fn find_block_successors(hugr: &Hugr, block: Node, num_successors: usize) ->
         }
     }
 
-    // Convert Option<Node> to Node, filtering out None entries
-    successors.into_iter().flatten().collect()
+    // Positions are tag indices: compacting out a None would shift every
+    // later successor onto the wrong tag. Truncate at the first gap instead
+    // (the downstream out-of-range check then fails loud for tags past it).
+    let valid = successors.iter().take_while(|s| s.is_some()).count();
+    if valid != num_successors {
+        debug!(
+            "find_block_successors: block {block:?} has unconnected successor port {valid}              of {num_successors}; truncating (tags past it will error loudly)"
+        );
+    }
+    successors.into_iter().take(valid).flatten().collect()
 }
 
 /// Find all nodes inside CFG blocks (should be deferred until block is active).

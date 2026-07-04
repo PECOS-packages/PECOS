@@ -277,15 +277,14 @@ impl HugrEngine {
                     let shift = int(1)?.clamp(0, 63) as u32;
                     ClassicalValue::Int(int(0)?.wrapping_shl(shift))
                 }
-                #[allow(clippy::cast_sign_loss)]
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
                 ClassicalOpType::Ishr => {
-                    // Arithmetic shift for signed, logical for unsigned
+                    // LOGICAL shift per the spec ("rightmost bits dropped,
+                    // leftmost bits set to zero") -- ishr has no signed
+                    // variant; the value's signedness does not change the
+                    // shift semantics.
                     let shift = int(1)?.clamp(0, 63) as u32;
-                    if signed {
-                        ClassicalValue::Int(int(0)?.wrapping_shr(shift))
-                    } else {
-                        ClassicalValue::Int((uint(0)? >> shift) as i64)
-                    }
+                    ClassicalValue::Int((uint(0)? >> shift) as i64)
                 }
 
                 // Float arithmetic

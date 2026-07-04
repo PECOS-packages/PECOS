@@ -43,6 +43,10 @@ use crate::engine::analysis::all_predecessors_ready;
 use crate::engine::types::{ActiveTailLoopInfo, TailLoopInfo};
 
 impl HugrEngine {
+    /// Iteration ceiling for `TailLoop`s: a loop that never breaks would
+    /// otherwise spin the processing loop forever with no yield.
+    const MAX_LOOP_ITERATIONS: usize = 10_000_000;
+
     /// Try to resolve the control value for a `TailLoop`'s current iteration.
     /// Returns `Some(0)` for `CONTINUE_TAG` (continue looping) or `Some(1)` for `BREAK_TAG` (exit loop).
     pub(crate) fn try_resolve_tailloop_control(
@@ -148,6 +152,36 @@ impl HugrEngine {
         {
             self.nodes_inside_cfg_blocks.remove(&op_node);
             self.nodes_inside_cases.remove(&op_node);
+        }
+
+        // Two-phase discipline (parity with continue_tailloop_iteration and
+        // CFG/case re-activation): clear processed flags AND stale output
+        // wires for every tracked body op BEFORE any readiness check below.
+        // A TailLoop nested in a re-expanded Case/CFG otherwise inherits the
+        // previous execution's state and its consumers pass readiness
+        // against stale flags.
+        for &op_node in tailloop_info
+            .quantum_ops
+            .iter()
+            .chain(&tailloop_info.call_nodes)
+            .chain(&tailloop_info.extension_ops)
+            .chain(&tailloop_info.classical_ops)
+            .chain(&tailloop_info.bool_ops)
+            .chain(&tailloop_info.conditional_nodes)
+        {
+            self.processed.remove(&op_node);
+            let num_outputs = hugr.num_outputs(op_node);
+            for port_idx in 0..num_outputs {
+                self.wire_state
+                    .classical_values
+                    .remove(&(op_node, port_idx));
+                self.wire_state.wire_to_qubit.remove(&(op_node, port_idx));
+            }
+        }
+        for child in hugr.children(tailloop_node) {
+            if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
+                self.processed.remove(&child);
+            }
         }
 
         // Propagate input wires from TailLoop inputs to body Input node outputs
@@ -317,6 +351,19 @@ impl HugrEngine {
         };
 
         debug!("TailLoop {tailloop_node:?}: continuing to iteration {new_iteration}");
+
+        // Safety ceiling: a loop whose control never breaks (a program bug,
+        // or an engine bug feeding a stale control value) would otherwise
+        // spin forever inside the processing loop with no yield -- the batch
+        // cap counts only quantum ops, so a purely classical loop hangs the
+        // host process.
+        if new_iteration > Self::MAX_LOOP_ITERATIONS {
+            self.execution_error = Some(format!(
+                "TailLoop {tailloop_node:?} exceeded {} iterations without breaking",
+                Self::MAX_LOOP_ITERATIONS
+            ));
+            return;
+        }
 
         // Clear processed state for body nodes so they can be re-executed
         for &op_node in &tailloop_info.quantum_ops {

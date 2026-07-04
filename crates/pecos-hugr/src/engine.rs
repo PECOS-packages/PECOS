@@ -169,6 +169,12 @@ pub struct HugrEngine {
 
     /// Pending `TailLoops` waiting for Sum value (measurement result) to determine continue/break.
     pub(crate) pending_tailloop_control: BTreeSet<Node>,
+    /// A fatal execution fault raised from deep (non-Result) code paths --
+    /// e.g. an executed `prelude.panic`, an out-of-range branch tag, or a
+    /// loop-iteration ceiling. Checked by the main processing loop, which
+    /// converts it into an error instead of continuing on corrupt control
+    /// flow.
+    pub(crate) execution_error: Option<String>,
 
     // === Result Capture ===
     /// Captured results from tket.result operations.
@@ -372,6 +378,7 @@ impl HugrEngine {
         // Clear TailLoop control flow state
         self.active_tailloops.clear();
         self.pending_tailloop_control.clear();
+        self.execution_error = None;
 
         // Clear result capture state
         self.captured_results.clear();
@@ -533,6 +540,9 @@ impl HugrEngine {
 
     /// Try to resolve pending `TailLoop` control values after measurement results are available.
     fn try_resolve_pending_tailloops(&mut self) {
+        if self.pending_tailloop_control.is_empty() {
+            return;
+        }
         let hugr = match &self.hugr {
             Some(h) => h.clone(),
             None => return,
@@ -635,6 +645,9 @@ impl HugrEngine {
         let mut hit_measurement = false;
 
         while let Some(current_node) = self.work_queue.pop_front() {
+            if let Some(fault) = self.execution_error.take() {
+                return Err(PecosError::Generic(fault));
+            }
             if self.processed.contains(&current_node) {
                 continue;
             }
@@ -916,6 +929,15 @@ impl HugrEngine {
                                         entry_block,
                                         successors[branch_idx],
                                     );
+                                } else {
+                                    // An out-of-range tag means a Sum/tag
+                                    // propagation bug upstream -- taking an
+                                    // arbitrary branch would mask it as a
+                                    // plausible control-flow path.
+                                    self.execution_error = Some(format!(
+                                        "CFG {current_node:?} block {entry_block:?}: branch                                          tag {branch_idx} out of range ({} successors)",
+                                        successors.len()
+                                    ));
                                 }
                             } else {
                                 debug!("[TRACE] Branch NOT resolved, adding to pending");
@@ -1360,6 +1382,9 @@ impl HugrEngine {
             }
         }
 
+        if let Some(fault) = self.execution_error.take() {
+            return Err(PecosError::Generic(fault));
+        }
         if operation_count == 0 {
             // Queue drained with no measurement pause: this is the engine's
             // completion claim. Any still-active control flow or starved
@@ -1781,6 +1806,7 @@ impl Default for HugrEngine {
             nodes_inside_tailloops: BTreeSet::new(),
             active_tailloops: BTreeMap::new(),
             pending_tailloop_control: BTreeSet::new(),
+            execution_error: None,
             // Result capture
             captured_results: Vec::new(),
             // WASM support

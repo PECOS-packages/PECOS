@@ -198,6 +198,9 @@ impl HugrEngine {
 
     /// Try to resolve pending CFG blocks that were waiting for measurement results.
     pub(crate) fn try_resolve_pending_cfg_branches(&mut self) {
+        if self.pending_cfg_branches.is_empty() {
+            return;
+        }
         let hugr = match &self.hugr {
             Some(h) => h.clone(),
             None => return,
@@ -231,12 +234,12 @@ impl HugrEngine {
                 );
                 self.transition_to_cfg_successor(&hugr, cfg_node, block_node, next_block);
             } else {
-                debug!(
-                    "[TRACE] Resolving pending: {block_node:?} branch {branch_idx} out of range, using first"
-                );
-                if !successors.is_empty() {
-                    self.transition_to_cfg_successor(&hugr, cfg_node, block_node, successors[0]);
-                }
+                // Out-of-range tag = upstream Sum/tag propagation bug;
+                // taking an arbitrary successor would mask it.
+                self.execution_error = Some(format!(
+                    "CFG {cfg_node:?} block {block_node:?}: pending branch tag {branch_idx}                      out of range ({} successors)",
+                    successors.len()
+                ));
             }
         }
     }
@@ -338,19 +341,13 @@ impl HugrEngine {
                             next_block,
                         );
                     } else {
-                        debug!(
-                            "CFG {:?} block {:?}: branch {} out of range ({}), defaulting to first",
-                            cfg_node,
-                            completed_block,
-                            branch_idx,
+                        // An out-of-range tag means a Sum/tag propagation
+                        // bug upstream; routing to an arbitrary successor
+                        // would mask it as plausible control flow.
+                        self.execution_error = Some(format!(
+                            "CFG {cfg_node:?} block {completed_block:?}: branch tag                              {branch_idx} out of range ({} successors)",
                             successors.len()
-                        );
-                        self.transition_to_cfg_successor(
-                            hugr,
-                            cfg_node,
-                            completed_block,
-                            successors[0],
-                        );
+                        ));
                     }
                 } else {
                     // Branch value not yet known - store as pending

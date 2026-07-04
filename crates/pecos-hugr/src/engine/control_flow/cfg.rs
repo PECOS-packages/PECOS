@@ -425,6 +425,7 @@ impl HugrEngine {
 
         // Activate successor block's quantum ops and Call nodes
         if let Some(block_info) = cfg_info.blocks.get(&to_block) {
+            self.executed_containers.insert(to_block, "DataflowBlock");
             // Re-activate the block through the shared two-phase mechanism.
             // Stale wires clear for every child except the Input node (it
             // holds fresh values from propagation): without this, nodes

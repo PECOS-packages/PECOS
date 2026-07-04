@@ -134,6 +134,9 @@ impl HugrEngine {
 
         debug!("Expanding TailLoop {tailloop_node:?} for iteration 0");
 
+        self.executed_containers
+            .insert(tailloop_node, "TailLoop body");
+
         // Two-phase discipline via the shared activation mechanism (parity
         // with continue_tailloop_iteration and CFG/case re-activation): all
         // processed flags and stale output wires clear BEFORE any readiness

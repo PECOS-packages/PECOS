@@ -481,6 +481,7 @@ impl HugrEngine {
                 ops_in_case.insert(child);
             }
         }
+        self.executed_containers.insert(selected_case, "Case");
         // Build the case activation batch through the shared two-phase
         // mechanism: every processed flag and stale output wire in the case
         // clears BEFORE any readiness check, so consumers cannot pass

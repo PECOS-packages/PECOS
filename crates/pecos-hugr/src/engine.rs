@@ -90,6 +90,12 @@ pub struct HugrEngine {
     /// Set of processed nodes.
     pub(crate) processed: BTreeSet<Node>,
 
+    /// Container regions the engine actually activated this shot
+    /// (`DataflowBlocks`, selected Cases, `TailLoop` bodies), with a label for
+    /// diagnostics. Persistent across the shot (unlike the active_* maps),
+    /// so completion can audit that every child of an executed region ran.
+    pub(crate) executed_containers: BTreeMap<Node, &'static str>,
+
     /// Reusable message builder for generating commands.
     pub(crate) message_builder: ByteMessageBuilder,
 
@@ -381,6 +387,7 @@ impl HugrEngine {
         self.active_tailloops.clear();
         self.pending_tailloop_control.clear();
         self.execution_error = None;
+        self.executed_containers.clear();
 
         // Clear result capture state
         self.captured_results.clear();
@@ -724,6 +731,8 @@ impl HugrEngine {
                     // Propagate CFG inputs to entry block's Input node
                     self.propagate_cfg_inputs_to_entry_block(&hugr, current_node, entry_block);
 
+                    self.executed_containers
+                        .insert(entry_block, "DataflowBlock");
                     // First activation of the entry block via the shared
                     // mechanism (no resets -- nothing has executed yet).
                     // Ops inside TailLoops leave the block gate but queue
@@ -1031,6 +1040,13 @@ impl HugrEngine {
                         for node in &descendants {
                             self.nodes_inside_func_defns.remove(node);
                             act.reset(*node);
+                            // The frame reset invalidates the PREVIOUS
+                            // invocation's executed-container records (their
+                            // processed flags are being cleared); this
+                            // invocation re-records whatever it executes, so
+                            // the completion audit covers exactly the final
+                            // invocation of each frame.
+                            self.executed_containers.remove(node);
                         }
                         act.keep_wires(func_info.input_node);
                         act.reset_processed(cfg_node);
@@ -1391,6 +1407,19 @@ impl HugrEngine {
                     .collect::<Vec<_>>()
             ));
         }
+        // Reachability audit: the bookkeeping above only sees nodes that
+        // entered a queue or pending set. A node that was never QUEUED at
+        // all -- an op the category tracking missed inside a container the
+        // engine executed -- is invisible to it. Check every direct child
+        // of every executed region instead.
+        let unexecuted = self.audit_executed_containers();
+        if !unexecuted.is_empty() {
+            let shown: Vec<&String> = unexecuted.iter().take(10).collect();
+            stalled.push(format!(
+                "unexecuted ops in executed containers ({} total): {shown:?}",
+                unexecuted.len()
+            ));
+        }
         if stalled.is_empty() {
             Ok(())
         } else {
@@ -1400,6 +1429,33 @@ impl HugrEngine {
                 stalled.join("; ")
             )))
         }
+    }
+
+    /// Audit that every direct child of every executed container region
+    /// (activated `DataflowBlock`, selected Case, expanded `TailLoop` body)
+    /// was processed. Exempt kinds never execute: Input/Output boundaries,
+    /// static constants, and linear qubit-routing Tags (only Tags
+    /// classified as classical `TagSum` ops execute).
+    ///
+    /// Only the FINAL activation of a re-activated container is audited
+    /// (earlier iterations cleared and re-set the same flags), which is
+    /// exactly the activation whose flags are still live.
+    fn audit_executed_containers(&self) -> Vec<String> {
+        let Some(hugr) = &self.hugr else {
+            return Vec::new();
+        };
+        let mut misses = Vec::new();
+        for (&container, kind) in &self.executed_containers {
+            for child in hugr.children(container) {
+                let op = hugr.get_optype(child);
+                let exempt = matches!(op, OpType::Input(_) | OpType::Output(_) | OpType::Const(_))
+                    || (matches!(op, OpType::Tag(_)) && !self.classical_ops.contains_key(&child));
+                if !exempt && !self.processed.contains(&child) {
+                    misses.push(format!("{child:?} ({op}) in {kind} {container:?}"));
+                }
+            }
+        }
+        misses
     }
 
     /// Emit a quantum gate operation to the message builder.
@@ -1700,6 +1756,7 @@ impl Default for HugrEngine {
             classical_ops: BTreeMap::new(),
             work_queue: VecDeque::new(),
             processed: BTreeSet::new(),
+            executed_containers: BTreeMap::new(),
             message_builder: ByteMessageBuilder::new(),
             // Grouped state
             wire_state: WireState::default(),
@@ -2367,6 +2424,45 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_audit_reports_unexecuted_container_ops() {
+        // The reachability audit must catch a container the engine claims
+        // to have executed whose ops never ran -- the class of bug that is
+        // invisible to queue/pending bookkeeping (a node that was never
+        // queued at all). Simulate one by recording a real block as
+        // executed without running anything.
+        use tket::hugr::ops::OpType;
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pecos/tests/test_data/hugr/forloop_h_test.hugr"
+        );
+        let mut engine = HugrEngine::from_file(path).expect("Failed to load HUGR");
+        let hugr = engine.hugr.clone().expect("hugr loaded");
+        let block = hugr
+            .nodes()
+            .find(|n| {
+                matches!(hugr.get_optype(*n), OpType::DataflowBlock(_))
+                    && hugr.children(*n).any(|c| {
+                        !matches!(
+                            hugr.get_optype(c),
+                            OpType::Input(_) | OpType::Output(_) | OpType::Const(_)
+                        )
+                    })
+            })
+            .expect("fixture has a non-trivial block");
+        engine.executed_containers.insert(block, "DataflowBlock");
+
+        let err = engine
+            .ensure_no_stalled_execution()
+            .expect_err("audit must fail with unexecuted ops");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unexecuted ops in executed containers"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
     fn test_forloop_executes_each_iteration_and_terminates() {
         // Regression guard for the loop-iteration freeze: guppy's
         // `for _ in range(3)` lowers to a CFG cycle whose body block calls
@@ -2377,6 +2473,7 @@ mod tests {
         // re-ran iteration 0 forever (H emitted per wave, no termination).
         use pecos_engines::{ByteMessageBuilder, ControlEngine, EngineStage};
 
+        let _ = env_logger::builder().is_test(true).try_init();
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../pecos/tests/test_data/hugr/forloop_h_test.hugr"

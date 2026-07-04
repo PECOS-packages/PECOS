@@ -2590,10 +2590,129 @@ mod tests {
             got,
             ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Bool(true))])
         );
+        // ifrombool produces int<1>; the canonical (sign-extended) storage
+        // of a 1-bit "1" is -1, matching ConstInt::value_s parsing. A
+        // round-trip through itobool still reads it as true.
         let got = run(&mut engine, "ifrombool", &[(0, ClassicalValue::Bool(true))]);
         assert_eq!(
             got,
-            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Int(1))])
+            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Int(-1))])
+        );
+        let got = run(&mut engine, "itobool", &[(0, ClassicalValue::Int(-1))]);
+        assert_eq!(
+            got,
+            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Bool(true))])
+        );
+    }
+
+    /// int<5> (32-bit) semantics: wrapping addition, shift-out-to-zero,
+    /// rotation within 32 bits, and leading-zero counts relative to the
+    /// width -- all derived from the op's `BoundedNat` type arg rather than
+    /// the engine's 64-bit storage.
+    #[test]
+    fn test_int_width_modeling_32bit() {
+        use crate::engine::analysis::classify_classical_op;
+        use crate::engine::handlers::{ClassicalOutcome, HandlerOutcome};
+        use crate::engine::types::ClassicalOp;
+        use tket::hugr::builder::{Dataflow, DataflowHugr, FunctionBuilder};
+        use tket::hugr::ops::Value;
+        use tket::hugr::std_extensions::arithmetic::int_ops::IntOpDef;
+        use tket::hugr::std_extensions::arithmetic::int_types::{ConstInt, int_type};
+        use tket::hugr::types::Signature;
+
+        let hugr = {
+            let mut fb =
+                FunctionBuilder::new("w32", Signature::new(vec![], vec![int_type(5)])).unwrap();
+            let a = fb.add_load_const(Value::from(ConstInt::new_u(5, 0x7FFF_FFFF).unwrap()));
+            let b = fb.add_load_const(Value::from(ConstInt::new_u(5, 1).unwrap()));
+            let [sum] = fb
+                .add_dataflow_op(IntOpDef::iadd.with_log_width(5), [a, b])
+                .unwrap()
+                .outputs_arr();
+            let [_shifted] = fb
+                .add_dataflow_op(IntOpDef::ishl.with_log_width(5), [a, b])
+                .unwrap()
+                .outputs_arr();
+            let [_rot] = fb
+                .add_dataflow_op(IntOpDef::irotl.with_log_width(5), [a, b])
+                .unwrap()
+                .outputs_arr();
+            fb.finish_hugr_with_outputs([sum]).unwrap()
+        };
+
+        let find = |name: &str| -> Node {
+            hugr.nodes()
+                .find(|n| {
+                    hugr.get_optype(*n)
+                        .as_extension_op()
+                        .is_some_and(|op| op.unqualified_id() == name)
+                })
+                .unwrap_or_else(|| panic!("no {name} node"))
+        };
+        let mut engine = HugrEngine::default();
+        let seed = |engine: &mut HugrEngine, node: Node, port: usize, value: ClassicalValue| {
+            let (src, sp) = hugr
+                .single_linked_output(node, IncomingPort::from(port))
+                .unwrap();
+            engine
+                .wire_state
+                .classical_values
+                .insert((src, sp.index()), value);
+        };
+        let classical = |node: Node| -> ClassicalOp {
+            let (op_type, num_inputs, num_outputs, int_info) =
+                classify_classical_op(hugr.get_optype(node)).expect("classifies");
+            ClassicalOp {
+                node,
+                op_type,
+                num_inputs,
+                num_outputs,
+                int_info,
+                const_value: None,
+            }
+        };
+
+        // iadd at 32 bits: i32::MAX + 1 wraps to i32::MIN (canonical
+        // sign-extended storage)
+        let node = find("iadd");
+        seed(&mut engine, node, 0, ClassicalValue::Int(0x7FFF_FFFF));
+        seed(&mut engine, node, 1, ClassicalValue::Int(1));
+        assert_eq!(
+            engine.handle_classical_op(&hugr, node, &classical(node)),
+            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Int(i64::from(i32::MIN)))])
+        );
+
+        // ishl at 32 bits: 1 << 31 = i32::MIN; 1 << 32 drops every bit
+        let node = find("ishl");
+        seed(&mut engine, node, 0, ClassicalValue::Int(1));
+        seed(&mut engine, node, 1, ClassicalValue::Int(31));
+        assert_eq!(
+            engine.handle_classical_op(&hugr, node, &classical(node)),
+            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Int(i64::from(i32::MIN)))])
+        );
+        seed(&mut engine, node, 1, ClassicalValue::Int(32));
+        assert_eq!(
+            engine.handle_classical_op(&hugr, node, &classical(node)),
+            ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Int(0))])
+        );
+
+        // irotl at 32 bits: rotating 0x8000_0001 left by 1 gives
+        // 0x0000_0003 (the high bit wraps into bit 0 within 32 bits)
+        let node = find("irotl");
+        seed(
+            &mut engine,
+            node,
+            0,
+            ClassicalValue::Int(i64::from(u32::from_le_bytes([1, 0, 0, 0x80]).cast_signed())),
+        );
+        seed(&mut engine, node, 1, ClassicalValue::Int(1));
+        assert_eq!(
+            engine.handle_int_op(&hugr, node, "irotl"),
+            HandlerOutcome::Processed
+        );
+        assert_eq!(
+            engine.wire_state.classical_values.get(&(node, 0)),
+            Some(&ClassicalValue::Int(3))
         );
     }
 

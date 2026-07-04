@@ -34,6 +34,29 @@ use crate::engine::HugrEngine;
 use crate::engine::handlers::{ClassicalOutcome, HandlerOutcome};
 use crate::engine::types::{ClassicalOp, ClassicalOpType, ClassicalValue};
 
+/// Mask for the low `2^log_width` bits (`log_width` >= 6 means full `i64`).
+pub(crate) fn width_mask(log_width: u8) -> u64 {
+    if log_width >= 6 {
+        u64::MAX
+    } else {
+        (1u64 << (1u32 << log_width)) - 1
+    }
+}
+
+/// Canonicalize a value to the op's width: mask to `2^log_width` bits and
+/// sign-extend, so the stored i64 is the two's-complement value the width
+/// implies (e.g. `int<5>` `0xFFFF_FFFF` stores as -1). Matches `ConstInt`
+/// parsing, which stores `value_s()` (sign-extended) for every width.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+pub(crate) fn canonicalize_width(value: i64, log_width: u8) -> i64 {
+    if log_width >= 6 {
+        return value;
+    }
+    let bits = 1u32 << log_width;
+    let masked = (value as u64) & width_mask(log_width);
+    ((masked << (64 - bits)) as i64) >> (64 - bits)
+}
+
 impl HugrEngine {
     /// Execute a classical operation.
     ///
@@ -229,14 +252,26 @@ impl HugrEngine {
         // unconvertible input is the same hazard as a missing one --
         // defaulting (the old unwrap_or(0/false/0.0)) silently computes on
         // fabricated operands, so extraction failure defers the whole op.
-        let int = |i: usize| inputs.get(i).and_then(ClassicalValue::as_int);
+        // Extraction is width-aware: the op's declared width (int_info)
+        // masks unsigned reads and canonicalizes signed ones, so narrow
+        // ints (int<5> = 32-bit etc.) compute exactly.
+        let log_width = op.int_info.map_or(6, |(lw, _)| lw);
+        let int = |i: usize| {
+            inputs
+                .get(i)
+                .and_then(ClassicalValue::as_int)
+                .map(|v| canonicalize_width(v, log_width))
+        };
         // Unsigned ops reinterpret the stored i64 bit pattern: wrapping
         // arithmetic stores results through Int, so as_uint (which rejects
         // negatives) would spuriously defer on e.g. u64::MAX.
         #[allow(clippy::cast_sign_loss)]
-        let uint = |i: usize| match inputs.get(i) {
-            Some(ClassicalValue::UInt(u)) => Some(*u),
-            other => other.and_then(ClassicalValue::as_int).map(|v| v as u64),
+        let uint = |i: usize| {
+            match inputs.get(i) {
+                Some(ClassicalValue::UInt(u)) => Some(*u),
+                other => other.and_then(ClassicalValue::as_int).map(|v| v as u64),
+            }
+            .map(|v| v & width_mask(log_width))
         };
         let boolean = |i: usize| inputs.get(i).and_then(ClassicalValue::as_bool);
         let float = |i: usize| inputs.get(i).and_then(ClassicalValue::as_float);
@@ -379,19 +414,30 @@ impl HugrEngine {
                 ClassicalOpType::Ior => ClassicalValue::Int(int(0)? | int(1)?),
                 ClassicalOpType::Ixor => ClassicalValue::Int(int(0)? ^ int(1)?),
                 ClassicalOpType::Inot => ClassicalValue::Int(!int(0)?),
-                #[allow(clippy::cast_sign_loss)]
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
                 ClassicalOpType::Ishl => {
-                    let shift = int(1)?.clamp(0, 63) as u32;
-                    ClassicalValue::Int(int(0)?.wrapping_shl(shift))
+                    // "leftmost bits dropped, rightmost bits set to zero":
+                    // shifting by k >= N drops every bit.
+                    let k = uint(1)?;
+                    let bits = u64::from(1u32 << log_width);
+                    if k >= bits {
+                        return Some(ClassicalValue::Int(0));
+                    }
+                    #[allow(clippy::cast_possible_truncation)]
+                    ClassicalValue::Int((uint(0)? << (k as u32)) as i64)
                 }
                 #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
                 ClassicalOpType::Ishr => {
                     // LOGICAL shift per the spec ("rightmost bits dropped,
                     // leftmost bits set to zero") -- ishr has no signed
-                    // variant; the value's signedness does not change the
-                    // shift semantics.
-                    let shift = int(1)?.clamp(0, 63) as u32;
-                    ClassicalValue::Int((uint(0)? >> shift) as i64)
+                    // variant, and shifting by k >= N drops every bit.
+                    let k = uint(1)?;
+                    let bits = u64::from(1u32 << log_width);
+                    if k >= bits {
+                        return Some(ClassicalValue::Int(0));
+                    }
+                    #[allow(clippy::cast_possible_truncation)]
+                    ClassicalValue::Int((uint(0)? >> (k as u32)) as i64)
                 }
                 ClassicalOpType::Ipow => {
                     // "raise first input to the power of second input, the
@@ -492,6 +538,15 @@ impl HugrEngine {
         })();
 
         if let Some(value) = result {
+            // Results of width-carrying ops store CANONICAL: masked to the
+            // op's width and sign-extended (so wrapping at int<5> etc. is
+            // exact, and every consumer sees the value the width implies).
+            let value = match value {
+                ClassicalValue::Int(v) if op.int_info.is_some() => {
+                    ClassicalValue::Int(canonicalize_width(v, log_width))
+                }
+                other => other,
+            };
             ClassicalOutcome::Outputs(vec![(0, value)])
         } else if div_by_zero {
             // The spec says unchecked division/modulo by zero panics.

@@ -643,31 +643,42 @@ pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
             // Parse operation name to extract signedness info
             // Operations like "iadd", "isub" are signed; "iadd_u" are unsigned
             let is_signed = !op_name.ends_with("_u");
+            // The op's width comes from its BoundedNat type arg
+            // (log_width: int<N> has 2^N bits); absent args mean the
+            // generic default of 64-bit.
+            let lw = ext_op
+                .args()
+                .iter()
+                .find_map(|arg| match arg {
+                    tket::hugr::types::TypeArg::BoundedNat(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+                .unwrap_or(6);
             match op_name.trim_end_matches("_u").trim_end_matches("_s") {
-                "iadd" => (ClassicalOpType::Iadd, 2, 1, Some((6, is_signed))), // default 64-bit
-                "isub" => (ClassicalOpType::Isub, 2, 1, Some((6, is_signed))),
-                "imul" => (ClassicalOpType::Imul, 2, 1, Some((6, is_signed))),
-                "idiv" => (ClassicalOpType::Idiv, 2, 1, Some((6, is_signed))),
-                "idiv_checked" => (ClassicalOpType::IdivChecked, 2, 1, Some((6, is_signed))),
-                "imod" => (ClassicalOpType::Imod, 2, 1, Some((6, is_signed))),
-                "imod_checked" => (ClassicalOpType::ImodChecked, 2, 1, Some((6, is_signed))),
-                "idivmod" => (ClassicalOpType::Idivmod, 2, 2, Some((6, is_signed))),
-                "idivmod_checked" => (ClassicalOpType::IdivmodChecked, 2, 1, Some((6, is_signed))),
-                "ipow" => (ClassicalOpType::Ipow, 2, 1, Some((6, is_signed))),
-                "ineg" => (ClassicalOpType::Ineg, 1, 1, Some((6, true))),
-                "iabs" => (ClassicalOpType::Iabs, 1, 1, Some((6, is_signed))),
-                "ieq" => (ClassicalOpType::Ieq, 2, 1, Some((6, is_signed))),
-                "ine" => (ClassicalOpType::Ine, 2, 1, Some((6, is_signed))),
-                "ilt" => (ClassicalOpType::Ilt, 2, 1, Some((6, is_signed))),
-                "ile" => (ClassicalOpType::Ile, 2, 1, Some((6, is_signed))),
-                "igt" => (ClassicalOpType::Igt, 2, 1, Some((6, is_signed))),
-                "ige" => (ClassicalOpType::Ige, 2, 1, Some((6, is_signed))),
-                "iand" => (ClassicalOpType::Iand, 2, 1, Some((6, is_signed))),
-                "ior" => (ClassicalOpType::Ior, 2, 1, Some((6, is_signed))),
-                "ixor" => (ClassicalOpType::Ixor, 2, 1, Some((6, is_signed))),
-                "inot" => (ClassicalOpType::Inot, 1, 1, Some((6, is_signed))),
-                "ishl" => (ClassicalOpType::Ishl, 2, 1, Some((6, is_signed))),
-                "ishr" => (ClassicalOpType::Ishr, 2, 1, Some((6, is_signed))),
+                "iadd" => (ClassicalOpType::Iadd, 2, 1, Some((lw, is_signed))), // default 64-bit
+                "isub" => (ClassicalOpType::Isub, 2, 1, Some((lw, is_signed))),
+                "imul" => (ClassicalOpType::Imul, 2, 1, Some((lw, is_signed))),
+                "idiv" => (ClassicalOpType::Idiv, 2, 1, Some((lw, is_signed))),
+                "idiv_checked" => (ClassicalOpType::IdivChecked, 2, 1, Some((lw, is_signed))),
+                "imod" => (ClassicalOpType::Imod, 2, 1, Some((lw, is_signed))),
+                "imod_checked" => (ClassicalOpType::ImodChecked, 2, 1, Some((lw, is_signed))),
+                "idivmod" => (ClassicalOpType::Idivmod, 2, 2, Some((lw, is_signed))),
+                "idivmod_checked" => (ClassicalOpType::IdivmodChecked, 2, 1, Some((lw, is_signed))),
+                "ipow" => (ClassicalOpType::Ipow, 2, 1, Some((lw, is_signed))),
+                "ineg" => (ClassicalOpType::Ineg, 1, 1, Some((lw, true))),
+                "iabs" => (ClassicalOpType::Iabs, 1, 1, Some((lw, is_signed))),
+                "ieq" => (ClassicalOpType::Ieq, 2, 1, Some((lw, is_signed))),
+                "ine" => (ClassicalOpType::Ine, 2, 1, Some((lw, is_signed))),
+                "ilt" => (ClassicalOpType::Ilt, 2, 1, Some((lw, is_signed))),
+                "ile" => (ClassicalOpType::Ile, 2, 1, Some((lw, is_signed))),
+                "igt" => (ClassicalOpType::Igt, 2, 1, Some((lw, is_signed))),
+                "ige" => (ClassicalOpType::Ige, 2, 1, Some((lw, is_signed))),
+                "iand" => (ClassicalOpType::Iand, 2, 1, Some((lw, is_signed))),
+                "ior" => (ClassicalOpType::Ior, 2, 1, Some((lw, is_signed))),
+                "ixor" => (ClassicalOpType::Ixor, 2, 1, Some((lw, is_signed))),
+                "inot" => (ClassicalOpType::Inot, 1, 1, Some((lw, is_signed))),
+                "ishl" => (ClassicalOpType::Ishl, 2, 1, Some((lw, is_signed))),
+                "ishr" => (ClassicalOpType::Ishr, 2, 1, Some((lw, is_signed))),
                 _ => return None,
             }
         }
@@ -690,26 +701,36 @@ pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
             _ => return None,
         },
         // Conversion extension
-        "arithmetic.conversions" => match op_name.as_str() {
-            "convert_s" => (ClassicalOpType::ConvertIntToFloat, 1, 1, Some((6, true))),
-            "convert_u" => (ClassicalOpType::ConvertIntToFloat, 1, 1, Some((6, false))),
-            // trunc_s/trunc_u return sum_with_error(int), not a raw int
-            "trunc_s" => (
-                ClassicalOpType::ConvertFloatToIntChecked,
-                1,
-                1,
-                Some((6, true)),
-            ),
-            "trunc_u" => (
-                ClassicalOpType::ConvertFloatToIntChecked,
-                1,
-                1,
-                Some((6, false)),
-            ),
-            "itobool" => (ClassicalOpType::ItoBool, 1, 1, Some((0, false))),
-            "ifrombool" => (ClassicalOpType::IfromBool, 1, 1, Some((0, false))),
-            _ => return None,
-        },
+        "arithmetic.conversions" => {
+            let lw = ext_op
+                .args()
+                .iter()
+                .find_map(|arg| match arg {
+                    tket::hugr::types::TypeArg::BoundedNat(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+                .unwrap_or(6);
+            match op_name.as_str() {
+                "convert_s" => (ClassicalOpType::ConvertIntToFloat, 1, 1, Some((lw, true))),
+                "convert_u" => (ClassicalOpType::ConvertIntToFloat, 1, 1, Some((lw, false))),
+                // trunc_s/trunc_u return sum_with_error(int), not a raw int
+                "trunc_s" => (
+                    ClassicalOpType::ConvertFloatToIntChecked,
+                    1,
+                    1,
+                    Some((lw, true)),
+                ),
+                "trunc_u" => (
+                    ClassicalOpType::ConvertFloatToIntChecked,
+                    1,
+                    1,
+                    Some((lw, false)),
+                ),
+                "itobool" => (ClassicalOpType::ItoBool, 1, 1, Some((0, false))),
+                "ifrombool" => (ClassicalOpType::IfromBool, 1, 1, Some((0, false))),
+                _ => return None,
+            }
+        }
         // Prelude extension (tuples, etc.)
         "prelude" => {
             // Use the dataflow-signature port counts, NOT hugr.num_inputs/

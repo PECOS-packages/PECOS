@@ -165,24 +165,70 @@ impl HugrEngine {
         // division while the classical path is Euclidean), so they were
         // removed.
 
-        // Get input values
+        // Get input values. The op's width (BoundedNat type arg) makes the
+        // bit-level ops exact for narrow ints; absent args default to 64.
+        let log_width = hugr
+            .get_optype(node)
+            .as_extension_op()
+            .and_then(|ext| {
+                ext.args().iter().find_map(|arg| match arg {
+                    tket::hugr::types::TypeArg::BoundedNat(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+            })
+            .unwrap_or(6);
+        let bits = u64::from(1u32 << log_width);
+        let mask = crate::engine::handlers::classical::width_mask(log_width);
+        let canon = |v: i64| crate::engine::handlers::classical::canonicalize_width(v, log_width);
         let a = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int());
         let b = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int());
 
         #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let result: Option<i64> = match op_name {
-            // Rotations: the amount is reduced modulo the width (64), per
-            // the spec's const-fold (`k = n1 % w`); clamping mapped
-            // rotate-by-64 to rotate-by-63 instead of the identity.
-            "irotl" | "rotl" => a.zip(b).map(|(x, y)| x.rotate_left((y as u64 % 64) as u32)),
-            "irotr" | "rotr" => a
-                .zip(b)
-                .map(|(x, y)| x.rotate_right((y as u64 % 64) as u32)),
+            // Rotations: the amount is reduced modulo the width, per the
+            // spec's const-fold (`k = n1 % w`); the rotation happens within
+            // the op's N bits.
+            "irotl" | "rotl" => a.zip(b).map(|(x, y)| {
+                let k = (y as u64) % bits;
+                let x = (x as u64) & mask;
+                let rotated = if k == 0 {
+                    x
+                } else {
+                    ((x << k) | (x >> (bits - k))) & mask
+                };
+                canon(rotated.cast_signed())
+            }),
+            "irotr" | "rotr" => a.zip(b).map(|(x, y)| {
+                let k = (y as u64) % bits;
+                let x = (x as u64) & mask;
+                let rotated = if k == 0 {
+                    x
+                } else {
+                    ((x >> k) | (x << (bits - k))) & mask
+                };
+                canon(rotated.cast_signed())
+            }),
 
-            // Bit counting
-            "ipopcnt" | "popcnt" | "popcount" => a.map(|x| i64::from(x.count_ones())),
-            "iclz" | "clz" => a.map(|x| i64::from(x.leading_zeros())),
-            "ictz" | "ctz" => a.map(|x| i64::from(x.trailing_zeros())),
+            // Bit counting, within the op's N bits
+            "ipopcnt" | "popcnt" | "popcount" => {
+                a.map(|x| i64::from(((x as u64) & mask).count_ones()))
+            }
+            "iclz" | "clz" => a.map(|x| {
+                let masked = (x as u64) & mask;
+                i64::from(if masked == 0 {
+                    bits as u32
+                } else {
+                    masked.leading_zeros() - (64 - bits as u32)
+                })
+            }),
+            "ictz" | "ctz" => a.map(|x| {
+                let masked = (x as u64) & mask;
+                i64::from(if masked == 0 {
+                    bits as u32
+                } else {
+                    masked.trailing_zeros()
+                })
+            }),
 
             // Min/max
             "imin_s" | "imin" => a.zip(b).map(|(x, y)| x.min(y)),
@@ -208,14 +254,17 @@ impl HugrEngine {
                 au.zip(bu).map(|(x, y)| x.max(y) as i64)
             }
 
-            // Width widening: no-op for the 64-bit unified storage
+            // Width widening. Signed values are stored canonically
+            // sign-extended, so widen_s is the identity; widen_u must
+            // ZERO-extend from the source width (the first BoundedNat arg),
+            // e.g. a canonical 1-bit "1" is stored as -1 and widens to 1.
             #[allow(clippy::match_same_arms)]
             "iwiden_s" | "widen_s" => a,
             #[allow(clippy::cast_possible_wrap)]
             "iwiden_u" | "widen_u" => self
                 .get_input_value(hugr, node, 0)
                 .and_then(|v| v.as_uint())
-                .map(|x| x as i64),
+                .map(|x| (x & mask) as i64),
 
             // Width narrowing returns sum_with_error(int): handled below
             // (multi-variant output, not a plain i64).

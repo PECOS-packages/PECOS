@@ -671,6 +671,7 @@ impl HugrEngine {
         // body -- run the container completion hooks (mirrors
         // complete_tailloop). Block completion needs no hook: blocks do
         // not track nested CFG children.
+        self.check_scan_frame_completion(hugr, cfg_node);
         self.check_case_completion(hugr, cfg_node);
         self.check_tailloop_body_completion(hugr, cfg_node);
     }

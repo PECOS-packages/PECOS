@@ -343,6 +343,7 @@ impl HugrEngine {
                 debug!("discard_all_borrowed: array consumed");
                 HandlerOutcome::Processed
             }
+            "scan" => self.handle_scan_op(hugr, node),
             _ => {
                 // Unknown op: defer so it surfaces in the stall report
                 // instead of silently passing values through.

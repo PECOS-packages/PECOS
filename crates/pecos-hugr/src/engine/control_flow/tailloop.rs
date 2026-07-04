@@ -453,6 +453,7 @@ impl HugrEngine {
         // Check if this TailLoop completion allows a CFG block to complete
         // A parent Case whose final completion event is this loop must
         // observe it too.
+        self.check_scan_frame_completion(hugr, tailloop_node);
         self.check_case_completion(hugr, tailloop_node);
         self.check_cfg_block_completion(hugr, tailloop_node);
         // A completed loop may be the last op of an ENCLOSING loop's body

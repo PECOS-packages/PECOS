@@ -50,9 +50,9 @@ pub use types::{CapturedResult, ClassicalValue, FutureId, ResultValue, RngContex
 
 // Use internal types from submodules
 use types::{
-    ActiveCallInfo, ActiveCaseInfo, ActiveCfgInfo, ActiveTailLoopInfo, CfgInfo, ClassicalOp,
-    ConditionalInfo, ExtensionState, FuncDefnInfo, MeasurementState, QuantumOp, TailLoopInfo,
-    WireState,
+    ActiveCallInfo, ActiveCaseInfo, ActiveCfgInfo, ActiveScanInfo, ActiveTailLoopInfo, CfgInfo,
+    ClassicalOp, ConditionalInfo, ExtensionState, FuncDefnInfo, MeasurementState, QuantumOp,
+    TailLoopInfo, WireState,
 };
 
 // Use analysis functions from submodule
@@ -89,6 +89,9 @@ pub struct HugrEngine {
 
     /// Set of processed nodes.
     pub(crate) processed: BTreeSet<Node>,
+
+    /// In-flight higher-order array scans, keyed by scan node.
+    pub(crate) active_scans: BTreeMap<Node, ActiveScanInfo>,
 
     /// Container regions the engine actually activated this shot
     /// (`DataflowBlocks`, selected Cases, `TailLoop` bodies), with a label for
@@ -387,6 +390,7 @@ impl HugrEngine {
         self.active_tailloops.clear();
         self.pending_tailloop_control.clear();
         self.execution_error = None;
+        self.active_scans.clear();
         self.executed_containers.clear();
 
         // Clear result capture state
@@ -1124,6 +1128,7 @@ impl HugrEngine {
                         }
                     }
                     self.processed.insert(current_node);
+                    self.check_scan_frame_completion(&hugr, current_node);
                     self.check_case_completion(&hugr, current_node);
                     self.check_cfg_block_completion(&hugr, current_node);
                     self.check_tailloop_body_completion(&hugr, current_node);
@@ -1156,6 +1161,7 @@ impl HugrEngine {
                 // A Case/block may consist of just constants feeding its
                 // Output (e.g. a loop's continue-flag bool) -- check
                 // completion so outputs propagate only with values present.
+                self.check_scan_frame_completion(&hugr, current_node);
                 self.check_case_completion(&hugr, current_node);
                 self.check_cfg_block_completion(&hugr, current_node);
 
@@ -1223,6 +1229,7 @@ impl HugrEngine {
                 // Check if this classical op completion allows a Case to
                 // complete (cases may contain only classical ops, e.g. sum
                 // construction for an iterator's continue/break value)
+                self.check_scan_frame_completion(&hugr, current_node);
                 self.check_case_completion(&hugr, current_node);
 
                 // Check if this classical op completion allows a CFG block to complete
@@ -1258,6 +1265,7 @@ impl HugrEngine {
 
                 // Check if this extension op completion allows a Case to
                 // complete (cases may contain only classical/extension ops)
+                self.check_scan_frame_completion(&hugr, current_node);
                 self.check_case_completion(&hugr, current_node);
 
                 // Check if this extension op completion allows a CFG block to complete
@@ -1303,6 +1311,7 @@ impl HugrEngine {
             operation_count += 1;
 
             // Check if this operation completes any active Case
+            self.check_scan_frame_completion(&hugr, current_node);
             self.check_case_completion(&hugr, current_node);
 
             // Check if this operation completes any active CFG block
@@ -1372,6 +1381,12 @@ impl HugrEngine {
             stalled.push(format!(
                 "active TailLoops: {:?}",
                 self.active_tailloops.keys().collect::<Vec<_>>()
+            ));
+        }
+        if !self.active_scans.is_empty() {
+            stalled.push(format!(
+                "active scans: {:?}",
+                self.active_scans.keys().collect::<Vec<_>>()
             ));
         }
         if !self.pending_bool_reads.is_empty() {
@@ -1756,6 +1771,7 @@ impl Default for HugrEngine {
             classical_ops: BTreeMap::new(),
             work_queue: VecDeque::new(),
             processed: BTreeSet::new(),
+            active_scans: BTreeMap::new(),
             executed_containers: BTreeMap::new(),
             message_builder: ByteMessageBuilder::new(),
             // Grouped state
@@ -3630,24 +3646,16 @@ mod tests {
 
         let mut engine = HugrEngine::from_file(hugr_path).expect("Failed to load HUGR");
 
-        // Drive with one outcome per measurement (all zeros). The quantum
-        // part of this fixture executes correctly (asserted below), but its
+        // Drive with one outcome per measurement (all zeros). The
         // result-reporting tail maps a function over the measured array via
-        // collections.borrow_arr.scan -- a higher-order op the engine does
-        // not execute (function-valued arguments). The engine must report
-        // that as a loud stall rather than pass the scan through as an
-        // identity wire and hand result_array_bool garbage, which is
-        // exactly how this test "passed" for most of its life. Flip the
-        // stall expectation to clean completion when scan support lands.
+        // collections.borrow_arr.scan; with scan support the program runs
+        // to clean completion and captures the reported result array.
         let mut stage = engine.start(()).expect("Failed to start engine");
         let mut gate_counts: BTreeMap<GateType, usize> = BTreeMap::new();
         let mut rounds = 0;
         loop {
             rounds += 1;
-            assert!(
-                rounds <= 20,
-                "conditional_x should stall or complete quickly"
-            );
+            assert!(rounds <= 20, "conditional_x should complete quickly");
             match stage {
                 pecos_engines::EngineStage::NeedsProcessing(msg) => {
                     let ops = msg.quantum_ops().expect("parse quantum ops");
@@ -3666,33 +3674,30 @@ mod tests {
                     let mut builder = ByteMessageBuilder::new();
                     let _ = builder.for_outcomes();
                     builder.add_outcomes(&vec![0usize; n_meas]);
-                    match engine.continue_processing(builder.build()) {
-                        Ok(next) => stage = next,
-                        Err(e) => {
-                            let msg = e.to_string();
-                            assert!(
-                                msg.contains("stalled before completion"),
-                                "expected the unsupported-scan stall, got: {msg}"
-                            );
-                            break;
-                        }
-                    }
+                    stage = engine
+                        .continue_processing(builder.build())
+                        .expect("conditional_x must complete cleanly under scan support");
                 }
-                pecos_engines::EngineStage::Complete(_) => {
-                    panic!(
-                        "conditional_x unexpectedly completed: borrow_arr.scan support                          has landed -- flip this test to assert clean completion"
-                    );
-                }
+                pecos_engines::EngineStage::Complete(_) => break,
             }
         }
 
-        // Non-vacuous: the quantum part must have executed before the
-        // reporting tail stalled. With all-zero outcomes the measurement
-        // selects the else branch: H on the control, two measurements, and
-        // NO conditional X.
+        // With all-zero outcomes the measurement selects the else branch:
+        // H on the control, two measurements, and NO conditional X.
         assert_eq!(gate_counts.get(&GateType::H), Some(&1), "{gate_counts:?}");
         assert_eq!(gate_counts.get(&GateType::MZ), Some(&2), "{gate_counts:?}");
         assert_eq!(gate_counts.get(&GateType::X), None, "{gate_counts:?}");
+
+        // The scan-driven reporting tail must produce the result array:
+        // both measured bits are 0.
+        assert!(engine.active_scans.is_empty());
+        let captured = engine.get_captured_results();
+        assert!(
+            captured.iter().any(
+                |r| matches!(&r.value, ResultValue::ArrayBool(bits) if bits == &vec![false, false])
+            ),
+            "expected a [false, false] result array, got {captured:?}"
+        );
     }
 
     // --- Integration Tests with Quantum Simulator ---

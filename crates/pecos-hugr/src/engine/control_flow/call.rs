@@ -97,6 +97,11 @@ impl HugrEngine {
     /// 3. Adds Call successors to the work queue
     /// 4. Starts any pending calls to the same `FuncDefn`
     pub(crate) fn complete_func_call_if_needed(&mut self, hugr: &Hugr, cfg_node: tket::hugr::Node) {
+        // A scan folding through this FuncDefn owns the frame: route the
+        // completion to it (next element, or scan completion).
+        if self.continue_scan_after_frame(hugr, cfg_node) {
+            return;
+        }
         // Find which active Call (if any) has a FuncDefn with this CFG
         let call_to_complete: Option<(tket::hugr::Node, tket::hugr::Node)> = self
             .active_calls
@@ -159,6 +164,7 @@ impl HugrEngine {
                 // Check if this Call completion allows a parent Case to
                 // complete (a case whose FINAL completion event is the Call
                 // itself would otherwise stay active forever).
+                self.check_scan_frame_completion(hugr, call_node);
                 self.check_case_completion(hugr, call_node);
 
                 // Check if this Call completion allows a parent CFG block to complete

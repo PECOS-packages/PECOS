@@ -190,21 +190,22 @@ impl HugrEngine {
         }
     }
 
-    /// Extract result label from operation parameters.
+    /// Extract the result label from the op's TYPED String arg.
+    ///
+    /// tket.result ops carry the user label as a String type arg; reading
+    /// it directly replaces the old Debug-output scrape, whose quote
+    /// heuristics also rejected legitimate labels containing "result",
+    /// "Op", or "Report".
     #[allow(clippy::unused_self)] // Consistent with other handler methods; may use self in future
     pub(crate) fn extract_result_label(&self, hugr: &Hugr, node: Node, op_name: &str) -> String {
-        // Try to extract label from the ExtensionOp's debug representation
-        // The debug format typically includes the label as a string parameter
         let op = hugr.get_optype(node);
         if let Some(ext_op) = op.as_extension_op() {
-            let debug_str = format!("{ext_op:?}");
-            // Look for quoted string patterns that might be labels
-            // Common patterns: "label", label="value", or ("label", ...)
-            if let Some(label) = Self::extract_string_from_debug(&debug_str)
-                && !label.is_empty()
-                && label != op_name
-            {
-                return label;
+            for arg in ext_op.args() {
+                if let tket::hugr::types::TypeArg::String(label) = arg
+                    && !label.is_empty()
+                {
+                    return label.clone();
+                }
             }
         }
         // Fallback: use node ID as label

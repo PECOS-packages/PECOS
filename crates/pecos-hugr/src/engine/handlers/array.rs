@@ -263,6 +263,7 @@ impl HugrEngine {
                 debug!("array.discard_empty: array consumed");
                 HandlerOutcome::Processed
             }
+            "scan" => self.handle_scan_op(hugr, node),
             _ => {
                 // Unknown/unimplemented array op (e.g. `repeat`, whose real
                 // signature takes a function value the engine cannot

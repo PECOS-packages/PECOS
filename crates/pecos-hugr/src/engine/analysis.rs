@@ -621,6 +621,12 @@ pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
         return Some((ClassicalOpType::TagSum, sig.input_count(), 1, None));
     }
 
+    // LoadFunction produces a first-class function value for its static
+    // FuncDefn target (consumed by higher-order ops like scan).
+    if let OpType::LoadFunction(_) = op {
+        return Some((ClassicalOpType::LoadFunc, 0, 1, None));
+    }
+
     let ext_op = op.as_extension_op()?;
 
     let ext_id = ext_op.extension_id();

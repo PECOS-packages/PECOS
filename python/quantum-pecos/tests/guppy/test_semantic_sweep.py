@@ -26,6 +26,7 @@ sequential loops sharing state.
 """
 
 from guppylang import guppy
+from guppylang.std.builtins import result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -294,3 +295,39 @@ def test_loop_carrying_measured_state() -> None:
         return measure(q_out)
 
     _expect_all_ones(loop_measures)
+
+
+def test_result_label_containing_reserved_words() -> None:
+    """Labels are read from the op's typed String arg, so user labels
+    containing "result", "Op", or "Report" (which the old Debug-scrape
+    heuristics rejected) must survive verbatim as result keys. The array
+    variant matters most: its extra BoundedNat arg broke the old primary
+    pattern, falling through to the rejecting heuristics."""
+
+    @guppy
+    def labeled() -> None:
+        q = qubit()
+        x(q)
+        result("my_result_Report_Op", measure(q))
+
+    results = sim(Guppy(labeled)).qubits(2).quantum(state_vector()).seed(7).run(3).to_dict()
+    assert results["my_result_Report_Op"] == [1, 1, 1], f"keys: {sorted(results)}"
+
+
+def test_array_result_label_containing_reserved_words() -> None:
+    """Array results carry [String, BoundedNat] type args; the label must
+    still come from the typed String arg."""
+    from guppylang.std.builtins import array
+    from guppylang.std.quantum import measure_array
+
+    @guppy
+    def labeled_array() -> None:
+        qs = array(qubit() for _ in range(2))
+        x(qs[0])
+        x(qs[1])
+        result("my_result_Report", measure_array(qs))
+
+    results = (
+        sim(Guppy(labeled_array)).qubits(3).quantum(state_vector()).seed(7).run(2).to_dict()
+    )
+    assert results["my_result_Report"] == [[1, 1], [1, 1]], f"keys: {sorted(results)}"

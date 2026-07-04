@@ -199,6 +199,7 @@ impl HugrEngine {
             // on the case being done) and wake its consumers. The Conditional
             // may itself be the last op of an ENCLOSING case, so check case
             // completion too (recursing one nesting level per call).
+            self.check_scan_frame_completion(hugr, cond_node);
             self.check_case_completion(hugr, cond_node);
             self.check_cfg_block_completion(hugr, cond_node);
             self.check_tailloop_body_completion(hugr, cond_node);
@@ -590,6 +591,7 @@ impl HugrEngine {
         // consumer gated solely on this Conditional -- e.g. a zero-argument
         // Call sequenced behind it by an order edge -- otherwise starves.
         if case_completed_inline {
+            self.check_scan_frame_completion(hugr, cond_node);
             self.check_case_completion(hugr, cond_node);
             self.check_cfg_block_completion(hugr, cond_node);
             self.check_tailloop_body_completion(hugr, cond_node);

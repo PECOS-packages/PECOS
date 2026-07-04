@@ -193,6 +193,8 @@ pub enum ClassicalOpType {
     IdivmodChecked,
     /// Exponentiation; the exponent is treated as unsigned per the spec.
     Ipow,
+    /// `LoadFunction`: produce a `FuncRef` value for the static target.
+    LoadFunc,
     /// Convert a 1-bit integer to bool.
     ItoBool,
     /// Convert a bool to a 1-bit integer.
@@ -316,6 +318,9 @@ pub enum ClassicalValue {
     Future(FutureId),
     /// Rotation angle (in half-turns, i.e., multiples of pi)
     Rotation(f64),
+    /// A first-class function value: the `FuncDefn` it references
+    /// (produced by `LoadFunction`, consumed by higher-order ops like scan).
+    FuncRef(Node),
     /// RNG context handle
     RngContext(RngContextId),
     /// Qubit reference (for storing qubits in arrays)
@@ -342,6 +347,7 @@ impl ClassicalValue {
             | Self::Rotation(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
+            | Self::FuncRef(_)
             | Self::Borrowed => None,
         }
     }
@@ -365,6 +371,7 @@ impl ClassicalValue {
             | Self::Rotation(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
+            | Self::FuncRef(_)
             | Self::Borrowed => None,
         }
     }
@@ -387,6 +394,7 @@ impl ClassicalValue {
             | Self::Rotation(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
+            | Self::FuncRef(_)
             | Self::Borrowed => None,
         }
     }
@@ -409,6 +417,7 @@ impl ClassicalValue {
             | Self::Rotation(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
+            | Self::FuncRef(_)
             | Self::Borrowed => None,
         }
     }
@@ -431,6 +440,7 @@ impl ClassicalValue {
             | Self::Future(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
+            | Self::FuncRef(_)
             | Self::Borrowed => None,
         }
     }
@@ -773,6 +783,29 @@ pub struct ActiveCallInfo {
 }
 
 // --- TailLoop Control Flow Types ---
+
+/// State of an in-flight higher-order array `scan`: the engine runs the
+/// scanned function once per element through the normal Call-frame
+/// machinery, so quantum ops inside the function (e.g. `measure_array`'s
+/// per-qubit measure) go through real measurement rounds.
+#[derive(Debug, Clone)]
+pub struct ActiveScanInfo {
+    /// The scan node itself.
+    pub scan_node: Node,
+    /// The scanned function.
+    pub func_defn_node: Node,
+    /// Elements not yet folded (front = next).
+    pub remaining: std::collections::VecDeque<ClassicalValue>,
+    /// Mapped outputs collected so far.
+    pub results: Vec<ClassicalValue>,
+    /// Current accumulator values (scan signature `*A`).
+    pub accs: Vec<ClassicalValue>,
+    /// For a scanned function with a plain DATAFLOW body (no CFG): the
+    /// body ops whose completion finishes one element. Empty for
+    /// CFG-bodied functions (their frame completes through
+    /// `complete_func_call_if_needed`).
+    pub frame_ops: std::collections::BTreeSet<Node>,
+}
 
 /// Information about a `TailLoop` node.
 ///

@@ -148,6 +148,15 @@ impl HugrEngine {
                     None => return ClassicalOutcome::Defer,
                 }
             }
+            ClassicalOpType::LoadFunc => {
+                // Resolve the static FuncDefn target into a function value.
+                let Some(func_defn) = hugr.static_source(node) else {
+                    return ClassicalOutcome::Fault(format!(
+                        "LoadFunction at {node:?} has no static source"
+                    ));
+                };
+                return ClassicalOutcome::Outputs(vec![(0, ClassicalValue::FuncRef(func_defn))]);
+            }
             ClassicalOpType::TagSum => {
                 // Tag wraps its inputs into the given variant of a sum.
                 let OpType::Tag(tag_op) = hugr.get_optype(node) else {
@@ -533,7 +542,8 @@ impl HugrEngine {
                 | ClassicalOpType::UnpackTuple
                 | ClassicalOpType::TagSum
                 | ClassicalOpType::Idivmod
-                | ClassicalOpType::IdivmodChecked => return None,
+                | ClassicalOpType::IdivmodChecked
+                | ClassicalOpType::LoadFunc => return None,
             })
         })();
 

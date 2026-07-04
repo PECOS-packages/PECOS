@@ -182,6 +182,16 @@ impl HugrEngine {
         let canon = |v: i64| crate::engine::handlers::classical::canonicalize_width(v, log_width);
         let a = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int());
         let b = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int());
+        // Unsigned reads must reinterpret the canonical (sign-extended)
+        // bit pattern at the op's width -- as_uint rejects negatives, so a
+        // canonical int<1> "1" (stored -1) would defer forever.
+        #[allow(clippy::cast_sign_loss)]
+        let read_unsigned = |engine: &Self, port: usize| -> Option<u64> {
+            engine
+                .get_input_value(hugr, node, port)
+                .and_then(|v| v.as_int())
+                .map(|v| (v as u64) & mask)
+        };
 
         #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let result: Option<i64> = match op_name {
@@ -235,36 +245,27 @@ impl HugrEngine {
             "imax_s" | "imax" => a.zip(b).map(|(x, y)| x.max(y)),
             #[allow(clippy::cast_possible_wrap)]
             "imin_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| x.min(y) as i64)
+                let au = read_unsigned(self, 0);
+                let bu = read_unsigned(self, 1);
+                au.zip(bu).map(|(x, y)| canon(x.min(y) as i64))
             }
             #[allow(clippy::cast_possible_wrap)]
             "imax_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| x.max(y) as i64)
+                let au = read_unsigned(self, 0);
+                let bu = read_unsigned(self, 1);
+                au.zip(bu).map(|(x, y)| canon(x.max(y) as i64))
             }
 
             // Width widening. Signed values are stored canonically
             // sign-extended, so widen_s is the identity; widen_u must
-            // ZERO-extend from the source width (the first BoundedNat arg),
-            // e.g. a canonical 1-bit "1" is stored as -1 and widens to 1.
+            // ZERO-extend from the source width (the first BoundedNat arg,
+            // which is what `mask` derives from), e.g. a canonical 1-bit
+            // "1" is stored as -1 and widens to 1. The zero-extended value
+            // is already canonical at the (wider) destination.
             #[allow(clippy::match_same_arms)]
             "iwiden_s" | "widen_s" => a,
             #[allow(clippy::cast_possible_wrap)]
-            "iwiden_u" | "widen_u" => self
-                .get_input_value(hugr, node, 0)
-                .and_then(|v| v.as_uint())
-                .map(|x| (x & mask) as i64),
+            "iwiden_u" | "widen_u" => read_unsigned(self, 0).map(|x| x as i64),
 
             // Width narrowing returns sum_with_error(int): handled below
             // (multi-variant output, not a plain i64).
@@ -320,33 +321,56 @@ impl HugrEngine {
                     .nth(1)
             })
             .unwrap_or(6);
+        // Source log-width is the FIRST type arg: the unsigned range test
+        // must reinterpret the canonical (sign-extended) storage as the
+        // SOURCE-width bit pattern, or a high-bit unsigned value (stored
+        // negative) would spuriously fail to fit.
+        let source_log_width = hugr
+            .get_optype(node)
+            .as_extension_op()
+            .and_then(|ext| {
+                ext.args().iter().find_map(|arg| match arg {
+                    tket::hugr::types::TypeArg::BoundedNat(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+            })
+            .unwrap_or(6);
         let bits = 1u32 << target_log_width.min(6);
         let Some(v) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int()) else {
             debug!("arithmetic.int.{op_name} at {node:?}: input not ready, deferring");
             return HandlerOutcome::Defer;
         };
-        let fits = if signed {
-            if bits >= 64 {
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+        let (fits, narrowed) = if signed {
+            let fits = if bits >= 64 {
                 true
             } else {
                 let min = -(1i64 << (bits - 1));
                 let max = (1i64 << (bits - 1)) - 1;
                 v >= min && v <= max
-            }
-        } else if bits >= 64 {
-            v >= 0
+            };
+            (fits, v)
         } else {
-            v >= 0 && v < (1i64 << bits)
+            let pattern =
+                (v as u64) & crate::engine::handlers::classical::width_mask(source_log_width);
+            let fits = bits >= 64 || pattern < (1u64 << bits);
+            // Store canonically at the TARGET width (sign-extended).
+            #[allow(clippy::cast_possible_truncation)]
+            let narrowed = crate::engine::handlers::classical::canonicalize_width(
+                pattern as i64,
+                target_log_width.min(6) as u8,
+            );
+            (fits, narrowed)
         };
         let result = if fits {
             ClassicalValue::Sum {
                 tag: 1,
-                values: vec![ClassicalValue::Int(v)],
+                values: vec![ClassicalValue::Int(narrowed)],
             }
         } else {
             ClassicalValue::Sum {
                 tag: 0,
-                values: vec![],
+                values: vec![ClassicalValue::Tuple(vec![])],
             }
         };
         debug!("arithmetic.int.{op_name}: {result:?}");

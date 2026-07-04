@@ -248,8 +248,11 @@ impl HugrEngine {
                         ])],
                     },
                     None => ClassicalValue::Sum {
+                        // The error variant of sum_with_error carries an
+                        // error payload; an opaque token keeps the case
+                        // Input port arity correct for propagation.
                         tag: 0,
-                        values: vec![],
+                        values: vec![ClassicalValue::Tuple(vec![])],
                     },
                 };
                 return ClassicalOutcome::Outputs(vec![(0, value)]);
@@ -366,8 +369,9 @@ impl HugrEngine {
                             values: vec![ClassicalValue::Int(q)],
                         },
                         None => ClassicalValue::Sum {
+                            // sum_with_error error variants carry a payload
                             tag: 0,
-                            values: vec![],
+                            values: vec![ClassicalValue::Tuple(vec![])],
                         },
                     }
                 }
@@ -386,8 +390,9 @@ impl HugrEngine {
                             values: vec![ClassicalValue::Int(r)],
                         },
                         None => ClassicalValue::Sum {
+                            // sum_with_error error variants carry a payload
                             tag: 0,
-                            values: vec![],
+                            values: vec![ClassicalValue::Tuple(vec![])],
                         },
                     }
                 }
@@ -528,8 +533,9 @@ impl HugrEngine {
                         }
                     } else {
                         ClassicalValue::Sum {
+                            // sum_with_error error variants carry a payload
                             tag: 0,
-                            values: vec![],
+                            values: vec![ClassicalValue::Tuple(vec![])],
                         }
                     }
                 }

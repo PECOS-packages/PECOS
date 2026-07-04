@@ -328,6 +328,20 @@ impl HugrEngine {
         self.try_resolve_pending_tailloops();
         self.queue_ready_successors(hugr, scan_node);
         self.retry_pending_bool_reads();
+
+        // The frame is free now: wake any Call that parked waiting for it
+        // (mirrors complete_func_call_if_needed).
+        if let Some(pending) = self.pending_func_calls.get_mut(&state.func_defn_node)
+            && let Some(next_call) = pending.pop()
+        {
+            debug!(
+                "FuncDefn {:?} free after scan: starting pending Call {next_call:?}",
+                state.func_defn_node
+            );
+            if !self.work_queue.contains(&next_call) {
+                self.work_queue.push_front(next_call);
+            }
+        }
     }
 
     /// Store the scan node's outputs: the mapped array on port 0 and the

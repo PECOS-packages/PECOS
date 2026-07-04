@@ -934,12 +934,18 @@ impl HugrEngine {
 
                 debug!("Processing Call {current_node:?} to FuncDefn {func_defn_node:?}");
 
-                // Check if there's already an active call to this FuncDefn
-                // If so, queue this call to wait
+                // Check if there's already an active call OR an in-flight
+                // scan folding through this FuncDefn -- both own the single
+                // execution frame, and activating over a scan would reset
+                // the scanned function's state mid-element.
                 let func_defn_in_use = self
                     .active_calls
                     .values()
-                    .any(|info| info.func_defn_node == func_defn_node);
+                    .any(|info| info.func_defn_node == func_defn_node)
+                    || self
+                        .active_scans
+                        .values()
+                        .any(|scan| scan.func_defn_node == func_defn_node);
 
                 if func_defn_in_use {
                     // Direct recursion (a call to F from inside F's own
@@ -2625,7 +2631,8 @@ mod tests {
             )])
         );
 
-        // idivmod_checked_s by zero: error Sum (tag 0), not a fault
+        // idivmod_checked_s by zero: error Sum (tag 0) with the opaque
+        // error payload sum_with_error's error variant carries
         let got = run(
             &mut engine,
             "idivmod_checked_s",
@@ -2637,7 +2644,7 @@ mod tests {
                 0,
                 ClassicalValue::Sum {
                     tag: 0,
-                    values: vec![]
+                    values: vec![ClassicalValue::Tuple(vec![])]
                 }
             )])
         );
@@ -2805,6 +2812,144 @@ mod tests {
         assert!(
             err.to_string().contains("has no queued measurement"),
             "unexpected error: {err}"
+        );
+    }
+
+    /// Round-8 regressions: unsigned width conversions must reinterpret
+    /// the canonical (sign-extended) storage as a bit pattern at the
+    /// SOURCE width -- as_uint-style negative rejection deferred a
+    /// canonical `int<1>` "1" (stored -1) forever, and `inarrow_u`'s signed
+    /// range test rejected legitimate high-bit unsigned values.
+    #[test]
+    fn test_unsigned_width_conversions_handle_canonical_storage() {
+        use crate::engine::handlers::HandlerOutcome;
+        use tket::hugr::builder::{Dataflow, DataflowHugr, FunctionBuilder};
+        use tket::hugr::ops::Value;
+        use tket::hugr::std_extensions::arithmetic::int_ops::IntOpDef;
+        use tket::hugr::std_extensions::arithmetic::int_types::{ConstInt, int_type};
+        use tket::hugr::types::Signature;
+
+        let hugr = {
+            let mut fb =
+                FunctionBuilder::new("widen", Signature::new(vec![], vec![int_type(6)])).unwrap();
+            let bit = fb.add_load_const(Value::from(ConstInt::new_u(0, 1).unwrap()));
+            let wide = fb.add_load_const(Value::from(ConstInt::new_u(6, 1).unwrap()));
+            let [widened] = fb
+                .add_dataflow_op(IntOpDef::iwiden_u.with_two_log_widths(0, 6), [bit])
+                .unwrap()
+                .outputs_arr();
+            let [_narrowed] = fb
+                .add_dataflow_op(IntOpDef::inarrow_u.with_two_log_widths(6, 5), [wide])
+                .unwrap()
+                .outputs_arr();
+            let _ = widened;
+            fb.finish_hugr_with_outputs([widened]).unwrap()
+        };
+        let find = |name: &str| -> Node {
+            hugr.nodes()
+                .find(|n| {
+                    hugr.get_optype(*n)
+                        .as_extension_op()
+                        .is_some_and(|op| op.unqualified_id() == name)
+                })
+                .unwrap_or_else(|| panic!("no {name} node"))
+        };
+        let seed = |engine: &mut HugrEngine, node: Node, value: ClassicalValue| {
+            let (src, sp) = hugr
+                .single_linked_output(node, IncomingPort::from(0))
+                .unwrap();
+            engine
+                .wire_state
+                .classical_values
+                .insert((src, sp.index()), value);
+        };
+
+        let mut engine = HugrEngine::default();
+
+        // iwiden_u int<1> -> int<64>: canonical 1-bit "1" stores as -1 and
+        // must widen (zero-extend) to 1, not defer or become u64::MAX.
+        let widen = find("iwiden_u");
+        seed(&mut engine, widen, ClassicalValue::Int(-1));
+        assert_eq!(
+            engine.handle_int_op(&hugr, widen, "iwiden_u"),
+            HandlerOutcome::Processed
+        );
+        assert_eq!(
+            engine.wire_state.classical_values.get(&(widen, 0)),
+            Some(&ClassicalValue::Int(1))
+        );
+
+        // inarrow_u int<64> -> int<32> of 0xFFFF_FFFF: fits as unsigned,
+        // and the narrowed value stores canonically (sign-extended) as -1.
+        let narrow = find("inarrow_u");
+        seed(&mut engine, narrow, ClassicalValue::Int(0xFFFF_FFFF));
+        assert_eq!(
+            engine.handle_int_op(&hugr, narrow, "inarrow_u"),
+            HandlerOutcome::Processed
+        );
+        assert_eq!(
+            engine.wire_state.classical_values.get(&(narrow, 0)),
+            Some(&ClassicalValue::Sum {
+                tag: 1,
+                values: vec![ClassicalValue::Int(-1)]
+            })
+        );
+
+        // inarrow_u of a value ABOVE 2^32 must produce the error variant
+        // (with its opaque payload), not a fault and not a fit.
+        seed(&mut engine, narrow, ClassicalValue::Int(0x1_0000_0000));
+        assert_eq!(
+            engine.handle_int_op(&hugr, narrow, "inarrow_u"),
+            HandlerOutcome::Processed
+        );
+        assert_eq!(
+            engine.wire_state.classical_values.get(&(narrow, 0)),
+            Some(&ClassicalValue::Sum {
+                tag: 0,
+                values: vec![ClassicalValue::Tuple(vec![])]
+            })
+        );
+    }
+
+    /// A DEAD (uncalled, non-entrypoint) module-level function must not
+    /// execute: its body used to be ungated (only CALLED `FuncDefns` were
+    /// gated), so it raced the real program and could clobber the
+    /// entrypoint's captured return values.
+    #[test]
+    fn test_dead_function_body_does_not_execute() {
+        use tket::hugr::builder::{Container, Dataflow, DataflowSubContainer, ModuleBuilder};
+        use tket::hugr::hugr::hugrmut::HugrMut;
+        use tket::hugr::ops::Value;
+        use tket::hugr::ops::handle::NodeHandle;
+        use tket::hugr::std_extensions::arithmetic::int_types::{ConstInt, int_type};
+        use tket::hugr::types::Signature;
+
+        let (hugr, dead_load) = {
+            let mut module = ModuleBuilder::new();
+            let mut main_fb = module
+                .define_function("main", Signature::new(vec![], vec![int_type(6)]))
+                .unwrap();
+            let seven = main_fb.add_load_const(Value::from(ConstInt::new_u(6, 7).unwrap()));
+            let main_id = main_fb.finish_with_outputs([seven]).unwrap();
+            let mut dead_fb = module
+                .define_function("dead", Signature::new(vec![], vec![int_type(6)]))
+                .unwrap();
+            let nine = dead_fb.add_load_const(Value::from(ConstInt::new_u(6, 9).unwrap()));
+            let dead_load = nine.node();
+            dead_fb.finish_with_outputs([nine]).unwrap();
+            let mut hugr = module.hugr().clone();
+            hugr.set_entrypoint(main_id.node());
+            (hugr, dead_load)
+        };
+
+        let engine = HugrEngine::from_hugr(hugr);
+        assert!(
+            engine.nodes_inside_func_defns.contains(&dead_load),
+            "dead function body must be gated"
+        );
+        assert!(
+            !engine.work_queue.contains(&dead_load),
+            "dead function body must not be queued"
         );
     }
 

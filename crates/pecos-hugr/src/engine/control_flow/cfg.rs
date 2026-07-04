@@ -617,17 +617,23 @@ impl HugrEngine {
         self.processed.insert(cfg_node);
         self.active_cfgs.remove(&cfg_node);
 
-        // The ENTRYPOINT's CFG (module-level FuncDefn that nothing calls or
-        // scans through) completing means main returned: capture its
+        // The ENTRYPOINT's CFG completing means main returned: capture its
         // classical return values so pure-classical programs surface them.
+        // The entrypoint is taken from the HUGR itself when it names a
+        // FuncDefn; the not-called-not-scanned fallback covers graphs
+        // whose entrypoint is the module root.
         let parent_is_entry_func = hugr.get_parent(cfg_node).is_some_and(|fd| {
             matches!(hugr.get_optype(fd), OpType::FuncDefn(_))
-                && hugr.get_parent(fd) == Some(hugr.module_root())
-                && !self.call_targets.values().any(|&target| target == fd)
-                && !self
-                    .active_scans
-                    .values()
-                    .any(|scan| scan.func_defn_node == fd)
+                && if matches!(hugr.get_optype(hugr.entrypoint()), OpType::FuncDefn(_)) {
+                    fd == hugr.entrypoint()
+                } else {
+                    hugr.get_parent(fd) == Some(hugr.module_root())
+                        && !self.call_targets.values().any(|&target| target == fd)
+                        && !self
+                            .active_scans
+                            .values()
+                            .any(|scan| scan.func_defn_node == fd)
+                }
         });
         if parent_is_entry_func {
             let mut values = Vec::new();

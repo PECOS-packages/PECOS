@@ -504,11 +504,25 @@ pub fn find_nodes_inside_func_defns(
 ) -> BTreeSet<Node> {
     let mut inside_func_defns = BTreeSet::new();
 
-    // Find which FuncDefns are called (not the entrypoint)
-    let called_func_defns: BTreeSet<Node> = call_targets.values().copied().collect();
+    // Gate EVERY FuncDefn body except the entrypoint's: called functions
+    // activate through Call/scan frames, and a DEAD (uncalled) function
+    // must not execute at top level at all -- it would race the real
+    // program and clobber its return values. Guppy packages carry the
+    // entrypoint on the HUGR; fall back to the old called-only gating for
+    // HUGRs whose entrypoint is not a FuncDefn (e.g. module-rooted test
+    // graphs).
+    let entrypoint = hugr.entrypoint();
+    if func_defns.contains_key(&entrypoint) {
+        for &func_defn_node in func_defns.keys() {
+            if func_defn_node != entrypoint {
+                collect_descendants(hugr, func_defn_node, &mut inside_func_defns);
+            }
+        }
+        return inside_func_defns;
+    }
 
+    let called_func_defns: BTreeSet<Node> = call_targets.values().copied().collect();
     for &func_defn_node in func_defns.keys() {
-        // Only defer nodes inside FuncDefns that are called (not the entrypoint)
         if called_func_defns.contains(&func_defn_node) {
             collect_descendants(hugr, func_defn_node, &mut inside_func_defns);
         }

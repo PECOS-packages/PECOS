@@ -182,6 +182,10 @@ impl HugrEngine {
                 // never completed.)
                 self.queue_ready_successors(hugr, call_node);
 
+                // A scan parked on this frame retries through the pending
+                // mechanism -- wake the parked set now that the frame freed.
+                self.retry_pending_bool_reads();
+
                 // Check if there are pending calls to this FuncDefn
                 if let Some(pending) = self.pending_func_calls.get_mut(&func_defn_node)
                     && let Some(next_call) = pending.pop()

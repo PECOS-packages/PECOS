@@ -412,17 +412,9 @@ class TestAdvancedAlgorithms:
             # The test passes if we get results without errors
             assert len(measurements) == 100
 
-    @pytest.mark.xfail(
-        reason=(
-            "test program does not compile under guppylang 0.21 (PlaceNotUsedError: linearity violation); "
-            "needs a rewrite -- it never actually ran, the old success-gate silently passed the compile "
-            "failure"
-        ),
-        strict=True,
-    )
     def test_deutsch_josza_algorithm(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Test Deutsch-Josza algorithm for 2-bit function."""
-        from guppylang.std.quantum import cx, h, measure, qubit, x
+        from guppylang.std.quantum import cx, discard, h, measure, qubit, x
 
         @guppy
         def deutsch_josza_constant() -> tuple[bool, bool]:
@@ -447,8 +439,10 @@ class TestAdvancedAlgorithms:
             h(q0)
             h(q1)
 
-            # Measure input qubits (ancilla can be discarded)
-            return measure(q0), measure(q1)
+            # Measure input qubits; the ancilla is discarded (linearity)
+            r = measure(q0), measure(q1)
+            discard(anc)
+            return r
 
         @guppy
         def deutsch_josza_balanced() -> tuple[bool, bool]:
@@ -475,8 +469,10 @@ class TestAdvancedAlgorithms:
             h(q0)
             h(q1)
 
-            # Measure input qubits
-            return measure(q0), measure(q1)
+            # Measure input qubits; the ancilla is discarded (linearity)
+            r = measure(q0), measure(q1)
+            discard(anc)
+            return r
 
         # Test constant function
         results_const = pipeline_tester.test_function_on_both_pipelines(
@@ -485,10 +481,8 @@ class TestAdvancedAlgorithms:
         )
         if results_const.get("hugr_llvm", {}).get("success"):
             measurements = results_const["hugr_llvm"]["result"]["results"]
-            # Decode integer-encoded results
-            decoded_measurements = decode_integer_results(measurements, 2)
-            # For constant function, should measure |00⟩ with high probability
-            zeros = sum(1 for (a, b) in decoded_measurements if not a and not b)
+            # Rows are already per-shot (q0, q1) bit tuples
+            zeros = sum(1 for (a, b) in measurements if not a and not b)
             assert zeros > 95, f"Constant oracle should give |00⟩, got {zeros}/100"
 
         # Test balanced function
@@ -498,10 +492,8 @@ class TestAdvancedAlgorithms:
         )
         if results_bal.get("hugr_llvm", {}).get("success"):
             measurements = results_bal["hugr_llvm"]["result"]["results"]
-            # Decode integer-encoded results
-            decoded_measurements = decode_integer_results(measurements, 2)
-            # For balanced function, should never measure |00⟩
-            zeros = sum(1 for (a, b) in decoded_measurements if not a and not b)
+            # Rows are already per-shot (q0, q1) bit tuples
+            zeros = sum(1 for (a, b) in measurements if not a and not b)
             assert zeros < 5, f"Balanced oracle should not give |00⟩, got {zeros}/100"
 
     def test_grover_search(self, pipeline_tester: GuppyPipelineTest) -> None:

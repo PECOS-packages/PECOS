@@ -327,7 +327,5 @@ def test_array_result_label_containing_reserved_words() -> None:
         x(qs[1])
         result("my_result_Report", measure_array(qs))
 
-    results = (
-        sim(Guppy(labeled_array)).qubits(3).quantum(state_vector()).seed(7).run(2).to_dict()
-    )
+    results = sim(Guppy(labeled_array)).qubits(3).quantum(state_vector()).seed(7).run(2).to_dict()
     assert results["my_result_Report"] == [[1, 1], [1, 1]], f"keys: {sorted(results)}"

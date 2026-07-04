@@ -194,13 +194,6 @@ class TestPhaseAndRotationGates:
 class TestMultiQubitGates:
     """Test multi-qubit gate operations."""
 
-    @pytest.mark.xfail(
-        reason=(
-            "test program does not compile under guppylang 0.21 (PlaceNotUsedError); needs a rewrite -- "
-            "never ran behind the old success-gate"
-        ),
-        strict=True,
-    )
     def test_controlled_y_and_z(self, tester: ExtendedGuppyTester) -> None:
         """Test CY and CZ gates."""
         # Note: state_vector() engine supports non-Clifford operations like CY
@@ -213,6 +206,7 @@ class TestMultiQubitGates:
             x(q1)  # Set control to |1⟩
             cy(q1, q2)  # Apply Y to q2 since control is |1⟩
             r1 = measure(q2)  # Should be |1⟩
+            discard(q1)  # Control no longer needed (linearity)
 
             # Test CZ gate
             q3 = qubit()
@@ -241,32 +235,24 @@ class TestMultiQubitGates:
 class TestQubitArrays:
     """Test qubit array operations and indexing."""
 
-    @pytest.mark.xfail(
-        reason=(
-            "test program does not compile under guppylang 0.21 (VarNotDefinedError); needs a rewrite -- "
-            "never ran behind the old success-gate"
-        ),
-        strict=True,
-    )
     def test_qubit_array_creation_and_access(self, tester: ExtendedGuppyTester) -> None:
         """Test creating and accessing qubit arrays."""
+        from guppylang.std.builtins import array
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def array_test() -> tuple[bool, bool, bool, bool]:
             # Create array of 4 qubits
-            qubits = qubit_array(4)
+            qubits = array(qubit() for _ in range(4))
 
             # Apply different gates to different qubits
             x(qubits[1])  # Flip second qubit
             x(qubits[3])  # Flip fourth qubit
 
-            # Measure all
-            return (
-                measure(qubits[0]),
-                measure(qubits[1]),
-                measure(qubits[2]),
-                measure(qubits[3]),
-            )
+            # Measure all (elements cannot move out of a subscript;
+            # measure the array and index the copyable bits)
+            bits = measure_array(qubits)
+            return bits[0], bits[1], bits[2], bits[3]
 
         result = tester.test_function(array_test, shots=100)
         if result["success"]:
@@ -275,38 +261,33 @@ class TestQubitArrays:
             expected = sum(1 for m in measurements if m == (False, True, False, True))
             assert expected > 95, f"Array indexing failed, got {expected}/100 correct"
 
-    @pytest.mark.xfail(
-        reason=(
-            "test program does not compile under guppylang 0.21 (VarNotDefinedError); needs a rewrite -- "
-            "never ran behind the old success-gate"
-        ),
-        strict=True,
-    )
     def test_qubit_array_loops(self, tester: ExtendedGuppyTester) -> None:
         """Test looping over qubit arrays."""
+        from guppylang.std.builtins import array
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def array_loop_test() -> int:
-            n = 5
-            qubits = qubit_array(n)
+            qubits = array(qubit() for _ in range(5))
 
             # Apply H to all qubits
-            for i in range(n):
+            for i in range(5):
                 h(qubits[i])
 
             # Count how many measure to |1⟩
+            bits = measure_array(qubits)
             count = 0
-            for i in range(n):
-                if measure(qubits[i]):
+            for i in range(5):
+                if bits[i]:
                     count += 1
-
             return count
 
         result = tester.test_function(array_loop_test, shots=100)
         if result["success"]:
-            # With 5 qubits in superposition, expect average ~2.5
-            counts = result["result"]["results"]
-            avg = sum(counts) / len(counts)
+            # Each shot yields the 5 measured bits; with 5 qubits in
+            # superposition the mean ones-per-shot is ~2.5
+            rows = result["result"]["results"]
+            avg = sum(sum(row) for row in rows) / len(rows)
             assert 1.5 < avg < 3.5, f"Superposition statistics off, avg={avg}"
 
 
@@ -476,26 +457,22 @@ class TestControlFlow:
 class TestQuantumAlgorithms:
     """Test quantum algorithms and protocols."""
 
-    @pytest.mark.xfail(
-        reason=(
-            "test program does not compile under guppylang 0.21 (VarNotDefinedError); needs a rewrite -- "
-            "never ran behind the old success-gate"
-        ),
-        strict=True,
-    )
     def test_ghz_state_creation(self, tester: ExtendedGuppyTester) -> None:
         """Test GHZ state creation for multiple qubits."""
+        from guppylang.std.builtins import array
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def create_ghz3() -> tuple[bool, bool, bool]:
             # Create 3-qubit GHZ state: (|000⟩ + |111⟩)/√2
-            qubits = qubit_array(3)
+            qubits = array(qubit() for _ in range(3))
 
             h(qubits[0])
             cx(qubits[0], qubits[1])
             cx(qubits[1], qubits[2])
 
-            return measure(qubits[0]), measure(qubits[1]), measure(qubits[2])
+            bits = measure_array(qubits)
+            return bits[0], bits[1], bits[2]
 
         result = tester.test_function(create_ghz3, shots=100)
         if result["success"]:
@@ -506,13 +483,6 @@ class TestQuantumAlgorithms:
             total_valid = all_zeros + all_ones
             assert total_valid > 95, f"GHZ state invalid, got {total_valid}/100 valid states"
 
-    @pytest.mark.xfail(
-        reason=(
-            "test program does not compile under guppylang 0.21 (PlaceNotUsedError); needs a rewrite -- "
-            "never ran behind the old success-gate"
-        ),
-        strict=True,
-    )
     def test_quantum_phase_kickback(self, tester: ExtendedGuppyTester) -> None:
         """Test phase kickback principle."""
 
@@ -532,7 +502,9 @@ class TestQuantumAlgorithms:
             # Measure in X basis (apply H before measuring)
             h(control)
 
-            return measure(control)
+            r = measure(control)
+            discard(target)  # linearity: target is no longer needed
+            return r
 
         result = tester.test_function(phase_kickback_test, shots=100)
         if result["success"]:
@@ -725,38 +697,32 @@ class TestErrorHandling:
 class TestPerformance:
     """Test performance with larger circuits."""
 
-    @pytest.mark.xfail(
-        reason=(
-            "test program does not compile under guppylang 0.21 (VarNotDefinedError); needs a rewrite -- "
-            "never ran behind the old success-gate"
-        ),
-        strict=True,
-    )
     def test_many_qubits(self, tester: ExtendedGuppyTester) -> None:
         """Test handling many qubits."""
+        from guppylang.std.builtins import array
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def many_qubits_test() -> int:
             # Create 10 qubits
-            n = 10
-            qubits = qubit_array(n)
+            qubits = array(qubit() for _ in range(10))
 
             # Apply H to all
-            for i in range(n):
+            for i in range(10):
                 h(qubits[i])
 
             # Count ones
+            bits = measure_array(qubits)
             count = 0
-            for i in range(n):
-                if measure(qubits[i]):
+            for i in range(10):
+                if bits[i]:
                     count += 1
-
             return count
 
         result = tester.test_function(many_qubits_test, shots=50)
         if result["success"]:
-            counts = result["result"]["results"]
-            avg = sum(counts) / len(counts)
+            rows = result["result"]["results"]
+            avg = sum(sum(row) for row in rows) / len(rows)
             assert 3 < avg < 7, f"Many qubit statistics off, avg={avg}"
 
     @pytest.mark.skip(

@@ -694,6 +694,16 @@ impl HugrEngine {
 
             // --- Control Flow: CFG ---
             if let Some(cfg_info) = self.cfgs.get(&current_node).cloned() {
+                // A CFG re-queued while it is still executing must NOT
+                // restart: re-registering resets current_block/transitions
+                // mid-flight and silently corrupts the walk. (Legitimate
+                // re-execution -- a second Call to the same function --
+                // only happens after complete_cfg_execution removed the
+                // active entry.)
+                if self.active_cfgs.contains_key(&current_node) {
+                    debug!("CFG {current_node:?} re-queued while active, ignoring");
+                    continue;
+                }
                 debug!("Starting CFG {current_node:?} execution");
                 debug!("[TRACE] Starting CFG {current_node:?}");
 

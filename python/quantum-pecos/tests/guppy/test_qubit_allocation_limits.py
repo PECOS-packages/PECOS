@@ -66,14 +66,16 @@ class TestQubitAllocationLimits:
         average = sum(measurements) / len(measurements)
         assert 0.3 < average < 0.7, f"Average should be around 0.5 (last measurement only), got {average}"
 
-    def test_dynamic_allocation_exceeds_limit(self) -> None:
-        """Test behavior when program requires more qubits than available.
+    def test_allocation_exceeds_limit_fixed_size_simulator(self) -> None:
+        """A fixed-size simulator must reject allocation past the qubit limit.
 
-        This test verifies how the system handles programs that need more
-        qubits than the specified limit. The behavior depends on whether
-        the compiler can optimize the program to fit within the limit.
+        Stabilizer-family simulators do not grow: a program that touches a
+        qubit index at or beyond the configured capacity must fail with the
+        capacity-guard error naming the op, the qubit, and the capacity --
+        not succeed silently or die with an unrelated IPC failure.
         """
         from guppylang.std.quantum import cx
+        from pecos_rslib import sparse_stab
 
         @guppy
         def four_qubit_program() -> tuple[bool, bool, bool, bool]:
@@ -92,62 +94,41 @@ class TestQubitAllocationLimits:
             # Measure all
             return measure(q0), measure(q1), measure(q2), measure(q3)
 
-        # Try to run with only 3 qubits available (need 4)
-        # This tests the system's resource constraint handling
-        allocation_succeeded = False
-        error_was_expected = False
+        with pytest.raises(RuntimeError, match=r"targets qubit 3.*holds 3 qubits"):
+            sim(Guppy(four_qubit_program)).qubits(3).quantum(sparse_stab()).run(10)
 
-        try:
-            results = sim(Guppy(four_qubit_program)).qubits(3).quantum(state_vector()).run(10)
-            allocation_succeeded = True
+    def test_allocation_exceeds_limit_state_vector_grows(self) -> None:
+        """The state-vector engine grows past the configured qubit count.
 
-            # If it succeeded, verify we got some results
-            # The compiler might have optimized the program
-            assert hasattr(results, "__getitem__"), "Results should be dict-like"
+        Unlike the fixed-size simulators, the state-vector engine expands to
+        the highest qubit index a message touches, so a 4-qubit program with
+        .qubits(3) runs anyway -- and must still produce CORRECT physics
+        (a GHZ chain measures all-equal), not results computed on a
+        truncated register.
+        """
+        from guppylang.std.quantum import cx
 
-            # Check if we got any measurements
-            # Results dict should have measurement keys
-            has_measurements = "measurement_0" in results or "measurements" in results or "result" in results
+        @guppy
+        def four_qubit_ghz() -> tuple[bool, bool, bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            q2 = qubit()
+            q3 = qubit()
 
-            # If no measurement keys, check if results dict has any content
-            if not has_measurements and len(results) > 0:
-                has_measurements = True
+            h(q0)
+            cx(q0, q1)
+            cx(q1, q2)
+            cx(q2, q3)
 
-            # The assertion is not critical - if the sim succeeded with 3 qubits
-            # for a 4-qubit program, it means optimization worked
-            # An empty results dict can happen if the simulation framework
-            # optimized away the measurements or hasn't returned them yet
-            if not has_measurements:
-                pass  # Simulation succeeded, which is the main test
+            return measure(q0), measure(q1), measure(q2), measure(q3)
 
-        except (RuntimeError, ValueError, OSError) as e:
-            error_was_expected = True
-            error_msg = str(e).lower()
+        results = sim(Guppy(four_qubit_ghz)).qubits(3).quantum(state_vector()).seed(42).run(10).to_dict()
 
-            # Verify the error is related to resource constraints or IPC failure
-            # IPC failures often happen when subprocess terminates due to resource limits
-            expected_error_keywords = [
-                "qubit",  # Qubit allocation error
-                "range",  # Index out of range
-                "sigpipe",  # Process communication error
-                "subprocess",  # Subprocess failure
-                "cannot send",  # Communication failure
-                "resource",  # Resource limit
-                "allocation",  # Allocation failure
-                "exceeded",  # Limit exceeded
-                "broken pipe",  # IPC failure when subprocess terminates
-                "pipe",  # General pipe errors
-                "ipc",  # IPC errors
-            ]
-
-            assert any(
-                keyword in error_msg for keyword in expected_error_keywords
-            ), f"Error should be related to resource constraints, got: {e}"
-
-        # Either optimization succeeded or we got an expected error
-        assert (
-            allocation_succeeded or error_was_expected
-        ), "Should either succeed with optimization or fail with resource error"
+        measurements = results["measurements"]
+        assert len(measurements) == 10, "Should have 10 shots"
+        for m in measurements:
+            assert len(m) == 4, f"Each shot should measure 4 qubits, got {len(m)}"
+            assert len(set(m)) == 1, f"GHZ measurements must all agree, got {m}"
 
     @pytest.mark.skip(
         reason="Nested loops with int return not supported by HUGR interpreter",

@@ -33,6 +33,12 @@ use crate::engine::analysis::get_container_type;
 use crate::engine::types::{ClassicalValue, ContainerType, QuantumOp, WireKey};
 
 impl HugrEngine {
+    /// Ceiling on flattened-DFG boundary hops when tracing a value or
+    /// qubit backwards. Valid HUGRs bound this by nesting depth (the
+    /// hierarchy is a tree and each region a DAG); the cap keeps a
+    /// malformed graph from recursing without limit.
+    const MAX_DFG_TRACE_DEPTH: usize = 64;
+
     /// Trace through an Input node to find the actual source wire.
     ///
     /// When processing nodes inside containers (DFG, Case, `FuncDefn`, etc.),
@@ -66,15 +72,15 @@ impl HugrEngine {
                 output_port
             }
             ContainerType::Conditional => {
-                // Conditional: Port 0 of Input unpacks Sum fields; subsequent ports are data
-                // This is complex - the Input node outputs come from unpacking the Sum
-                // For now, skip port 0 (Sum unpacking) and map other ports
-                if output_port == 0 {
-                    debug!("Skipping Conditional Sum unpacking (port 0)");
-                    return None;
-                }
-                // Data ports start at container input port 1 (after control)
-                output_port // Actually maps to same port since control is separate
+                // Conditional: the Input row is [sum payload..., other data...]
+                // while the container's port row is [sum, other data...]. A
+                // direct port-N -> port-N mapping is only correct when the
+                // selected variant's payload arity is exactly 1; for any
+                // other arity it silently reads the WRONG container port.
+                // Case expansion populates these Input ports explicitly, so
+                // decline to trace rather than guess.
+                debug!("Conditional Input ports are populated by case expansion; not tracing");
+                return None;
             }
             ContainerType::TailLoop => {
                 // TailLoop is complex - inputs come from both initial values and CONTINUE tag
@@ -189,6 +195,20 @@ impl HugrEngine {
         node: Node,
         port: usize,
     ) -> Option<ClassicalValue> {
+        self.get_input_value_depth(hugr, node, port, 0)
+    }
+
+    fn get_input_value_depth(
+        &self,
+        hugr: &Hugr,
+        node: Node,
+        port: usize,
+        depth: usize,
+    ) -> Option<ClassicalValue> {
+        if depth > Self::MAX_DFG_TRACE_DEPTH {
+            debug!("get_input_value({node:?}, {port}): DFG trace depth exceeded");
+            return None;
+        }
         let in_port = IncomingPort::from(port);
         if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
             let wire_key = (src_node, src_port.index());
@@ -209,11 +229,17 @@ impl HugrEngine {
             // structurally, exactly like qubit tracing does. A DFG node's
             // outputs live at its Output child's sources; a DFG's Input
             // node ports live at the DFG node's own input wires. Bounded
-            // by nesting depth.
+            // by nesting depth (belt-and-braces cap above: a malformed
+            // graph must not recurse unboundedly).
             match hugr.get_optype(src_node) {
                 OpType::DFG(_) => {
                     let output_node = hugr.get_io(src_node).map(|[_, o]| o)?;
-                    return self.get_input_value(hugr, output_node, src_port.index());
+                    return self.get_input_value_depth(
+                        hugr,
+                        output_node,
+                        src_port.index(),
+                        depth + 1,
+                    );
                 }
                 OpType::Input(_)
                     if hugr
@@ -221,7 +247,7 @@ impl HugrEngine {
                         .is_some_and(|p| matches!(hugr.get_optype(p), OpType::DFG(_))) =>
                 {
                     let dfg_node = hugr.get_parent(src_node)?;
-                    return self.get_input_value(hugr, dfg_node, src_port.index());
+                    return self.get_input_value_depth(hugr, dfg_node, src_port.index(), depth + 1);
                 }
                 _ => {}
             }
@@ -235,12 +261,45 @@ impl HugrEngine {
     /// Get a qubit ID from an input port.
     ///
     /// Follows the wire connected to the specified input port and returns
-    /// the qubit ID at the source, if any.
+    /// the qubit ID at the source, if any. Traces across flattened-DFG
+    /// boundaries the same way [`Self::get_input_value`] does, so both
+    /// value kinds resolve identically.
     pub(crate) fn get_input_qubit(&self, hugr: &Hugr, node: Node, port: usize) -> Option<QubitId> {
+        self.get_input_qubit_depth(hugr, node, port, 0)
+    }
+
+    fn get_input_qubit_depth(
+        &self,
+        hugr: &Hugr,
+        node: Node,
+        port: usize,
+        depth: usize,
+    ) -> Option<QubitId> {
+        if depth > Self::MAX_DFG_TRACE_DEPTH {
+            debug!("get_input_qubit({node:?}, {port}): DFG trace depth exceeded");
+            return None;
+        }
         let in_port = IncomingPort::from(port);
         if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
             let wire_key = (src_node, src_port.index());
-            self.wire_state.wire_to_qubit.get(&wire_key).copied()
+            if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&wire_key) {
+                return Some(qubit_id);
+            }
+            match hugr.get_optype(src_node) {
+                OpType::DFG(_) => {
+                    let output_node = hugr.get_io(src_node).map(|[_, o]| o)?;
+                    self.get_input_qubit_depth(hugr, output_node, src_port.index(), depth + 1)
+                }
+                OpType::Input(_)
+                    if hugr
+                        .get_parent(src_node)
+                        .is_some_and(|p| matches!(hugr.get_optype(p), OpType::DFG(_))) =>
+                {
+                    let dfg_node = hugr.get_parent(src_node)?;
+                    self.get_input_qubit_depth(hugr, dfg_node, src_port.index(), depth + 1)
+                }
+                _ => None,
+            }
         } else {
             None
         }
@@ -248,23 +307,32 @@ impl HugrEngine {
 
     /// Propagate qubit array from input to output (for pass-through operations).
     ///
-    /// This handles operations like barriers that pass qubit arrays through unchanged.
-    pub(crate) fn propagate_qubit_array(&mut self, hugr: &Hugr, node: Node) {
+    /// This handles operations like barriers that pass qubit arrays through
+    /// unchanged. Returns false when the input carried NEITHER an array nor
+    /// a single qubit: the caller must DEFER -- marking the pass-through
+    /// processed would permanently drop the late-arriving value (these ops
+    /// have no retry of their own).
+    #[must_use]
+    pub(crate) fn propagate_qubit_array(&mut self, hugr: &Hugr, node: Node) -> bool {
         // For now, just propagate qubit wire mappings
         let in_port = IncomingPort::from(0);
+        let mut found = false;
         if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
             let src_key = (src_node, src_port.index());
 
             // Propagate qubit array if present
             if let Some(qubits) = self.wire_state.qubit_arrays.get(&src_key).cloned() {
                 self.wire_state.qubit_arrays.insert((node, 0), qubits);
+                found = true;
             }
 
             // Also propagate individual qubit mappings
             if let Some(qubit_id) = self.wire_state.wire_to_qubit.get(&src_key).copied() {
                 self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
+                found = true;
             }
         }
+        found
     }
 
     /// Resolve qubit IDs for an operation by following input wires.

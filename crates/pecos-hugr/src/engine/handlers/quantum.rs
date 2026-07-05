@@ -232,39 +232,20 @@ impl HugrEngine {
     }
 
     /// Handle `tket.modifier` operations for gate modifiers.
-    pub(crate) fn handle_modifier_op(
-        &mut self,
-        hugr: &Hugr,
-        node: Node,
-        op_name: &str,
-    ) -> HandlerOutcome {
+    pub(crate) fn handle_modifier_op(node: Node, op_name: &str) -> HandlerOutcome {
         debug!("Processing tket.modifier operation: {op_name} at {node:?}");
 
-        // Gate modifiers change how gates are applied.
-        // For simulation, we track these as metadata but the actual gate
-        // application happens in the quantum backend.
+        // Gate modifiers (control/dagger/power) CHANGE the semantics of the
+        // operation they wrap. The engine has no machinery to apply that
+        // change: passing the qubits through and reporting Processed would
+        // silently execute the UNMODIFIED gate -- wrong answers, no error.
+        // Fail loud until modifier semantics are actually implemented.
         match op_name {
-            "ControlModifier" => {
-                // ControlModifier adds quantum control to an operation
-                // Input: control qubit(s) + operation
-                // For simulation, this is handled by the quantum backend
-                self.propagate_qubit_array(hugr, node);
-                debug!("ControlModifier at {node:?} (handled by quantum backend)");
-                HandlerOutcome::Processed
-            }
-            "DaggerModifier" => {
-                // DaggerModifier applies the inverse/adjoint of an operation
-                // For simulation, this is handled by the quantum backend
-                self.propagate_qubit_array(hugr, node);
-                debug!("DaggerModifier at {node:?} (handled by quantum backend)");
-                HandlerOutcome::Processed
-            }
-            "PowerModifier" => {
-                // PowerModifier raises an operation to a power
-                // For simulation, this is handled by the quantum backend
-                self.propagate_qubit_array(hugr, node);
-                debug!("PowerModifier at {node:?} (handled by quantum backend)");
-                HandlerOutcome::Processed
+            "ControlModifier" | "DaggerModifier" | "PowerModifier" => {
+                HandlerOutcome::Fault(format!(
+                    "tket.modifier {op_name} at {node:?} is not supported by the HUGR \
+                     engine; executing the wrapped operation unmodified would be wrong"
+                ))
             }
             _ => {
                 debug!("Unknown tket.modifier operation: {op_name}");
@@ -284,11 +265,16 @@ impl HugrEngine {
 
         if op_name == "global_phase" {
             // global_phase: Rotation -> ()
-            // Add global phase to the circuit
-            let phase = self
+            // Add global phase to the circuit. No silent zero default: the
+            // rotation may simply not have resolved YET, and folding it to
+            // 0 would drop the phase without any visible failure.
+            let Some(phase) = self
                 .get_input_value(hugr, node, 0)
                 .and_then(|v| v.as_rotation())
-                .unwrap_or(0.0);
+            else {
+                debug!("tket.global_phase at {node:?}: rotation not resolved, deferring");
+                return HandlerOutcome::Defer;
+            };
 
             // Accumulate global phase (normalized to [0, 2))
             self.extension_state.global_phase =

@@ -277,20 +277,17 @@ impl HugrEngine {
                     || block_info.load_constants.contains(&processed_node);
 
                 if is_in_block {
+                    // node_settled, not bare `processed`: several container
+                    // ops are marked processed while their results are still
+                    // in flight (a Conditional at EXPANSION, a Call/TailLoop
+                    // while its frame is active) -- transitioning then would
+                    // copy missing values.
                     let all_done = |set: &std::collections::BTreeSet<Node>| {
-                        set.iter().all(|op| self.processed.contains(op))
+                        set.iter().all(|op| self.node_settled(*op))
                     };
-                    // A conditional is only DONE once its selected Case has
-                    // completed and propagated outputs -- expansion alone
-                    // marks it processed, but its output values do not exist
-                    // yet (transitioning then would copy missing values).
-                    let conditionals_done = block_info
-                        .conditional_nodes
-                        .iter()
-                        .all(|cond| self.node_settled(*cond));
                     let block_complete = all_done(&block_info.quantum_ops)
                         && all_done(&block_info.call_nodes)
-                        && conditionals_done
+                        && all_done(&block_info.conditional_nodes)
                         && all_done(&block_info.bool_ops)
                         && all_done(&block_info.extension_ops)
                         && all_done(&block_info.tailloop_nodes)
@@ -401,13 +398,16 @@ impl HugrEngine {
 
             // Record this propagation for re-propagation after measurement results
             // are available (measurement results may not be stored yet when we
-            // transition). Only the LATEST transition per CFG may stay recorded:
-            // replaying a superseded edge (e.g. the previous loop iteration's)
-            // re-reads source wires that have since been cleared or partially
-            // rewritten and clobbers the successor's fresh inputs with stale
-            // values (observed as a loop re-borrowing the same array slot).
+            // transition). Retention is PURGE-ON-REACTIVATION: entering
+            // to_block supersedes any previously recorded edge INTO it (the
+            // previous loop iteration's), while edges into other blocks of
+            // the same chain survive -- a multi-hop transition through an
+            // empty block records EVERY hop, so replay can walk the chain
+            // and carry a late measurement value across it. (The old
+            // latest-edge-only policy amputated chains: the A->empty hop
+            // was dropped and the value never reached the consumer.)
             self.pending_measurement_propagations
-                .retain(|(cfg, _, _)| *cfg != cfg_node);
+                .retain(|(cfg, _, to)| *cfg != cfg_node || *to != to_block);
             self.pending_measurement_propagations
                 .push((cfg_node, from_block, to_block));
 
@@ -643,6 +643,11 @@ impl HugrEngine {
         // Mark CFG as processed
         self.processed.insert(cfg_node);
         self.active_cfgs.remove(&cfg_node);
+        // Recorded edges must not outlive their CFG walk: a later
+        // re-invocation (next Call / scan element) starts a fresh chain
+        // against reset frame state.
+        self.pending_measurement_propagations
+            .retain(|(cfg, _, _)| *cfg != cfg_node);
 
         // The ENTRYPOINT's CFG completing means main returned: capture its
         // classical return values so pure-classical programs surface them.
@@ -734,6 +739,24 @@ impl HugrEngine {
         from_block: Node,
         to_block: Node,
     ) {
+        self.propagate_block_outputs(hugr, from_block, to_block, false);
+    }
+
+    /// Copy a completed block's outputs onto the successor's Input node.
+    ///
+    /// Transition mode (`fill_only == false`) clears every successor Input
+    /// port first so a port this propagation cannot source starves loudly
+    /// instead of keeping the previous iteration's value. Measurement
+    /// replay (`fill_only == true`) runs against LIVE state whose sources
+    /// a later activation may have legitimately consumed: it never clears
+    /// and writes only ports that are currently missing.
+    pub(crate) fn propagate_block_outputs(
+        &mut self,
+        hugr: &Hugr,
+        from_block: Node,
+        to_block: Node,
+        fill_only: bool,
+    ) {
         debug!("[TRACE] propagate_block_outputs_to_successor: from {from_block:?} to {to_block:?}");
         let from_output = find_output_node(hugr, from_block);
         let to_input = find_input_node(hugr, to_block);
@@ -762,12 +785,15 @@ impl HugrEngine {
         // batch exempts the Input node from wire clearing (keep_wires) so
         // fresh values survive, which means any port this propagation
         // cannot source would otherwise keep the PREVIOUS iteration's
-        // value. Missing sources must starve loudly instead.
-        for port_idx in 0..target_num_outputs {
-            self.wire_state
-                .classical_values
-                .remove(&(to_input, port_idx));
-            self.wire_state.wire_to_qubit.remove(&(to_input, port_idx));
+        // value. Missing sources must starve loudly instead. Replay
+        // (fill_only) must NOT clear -- it runs against live state.
+        if !fill_only {
+            for port_idx in 0..target_num_outputs {
+                self.wire_state
+                    .classical_values
+                    .remove(&(to_input, port_idx));
+                self.wire_state.wire_to_qubit.remove(&(to_input, port_idx));
+            }
         }
 
         // First, check if port 0 (Sum) has payload values from a Conditional
@@ -787,6 +813,14 @@ impl HugrEngine {
             {
                 payload_len = values.len();
                 for (i, value) in values.into_iter().enumerate().take(expected_payload_len) {
+                    if fill_only
+                        && self
+                            .wire_state
+                            .classical_values
+                            .contains_key(&(to_input, i))
+                    {
+                        continue;
+                    }
                     debug!(
                         "[TRACE] Block transition: propagated branch payload {value:?} to {to_input:?}:{i}"
                     );
@@ -811,7 +845,9 @@ impl HugrEngine {
                     .cloned()
                 {
                     let to_wire = (to_input, idx - 1);
-                    self.wire_state.classical_values.insert(to_wire, value);
+                    if !(fill_only && self.wire_state.classical_values.contains_key(&to_wire)) {
+                        self.wire_state.classical_values.insert(to_wire, value);
+                    }
                     payload_len += 1;
                     idx += 1;
                 }
@@ -849,7 +885,13 @@ impl HugrEngine {
                 );
                 let src_wire = (src_node, src_port.index());
 
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
+                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire)
+                    && !(fill_only
+                        && self
+                            .wire_state
+                            .wire_to_qubit
+                            .contains_key(&(to_input, to_port_idx)))
+                {
                     self.wire_state
                         .wire_to_qubit
                         .insert((to_input, to_port_idx), qubit_id);
@@ -863,8 +905,17 @@ impl HugrEngine {
                     );
                 }
 
+                let target_filled = fill_only
+                    && self
+                        .wire_state
+                        .classical_values
+                        .contains_key(&(to_input, to_port_idx));
+
                 // Also propagate classical values
-                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                if target_filled {
+                    // Fill-only replay never overwrites a live value.
+                } else if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned()
+                {
                     let to_wire = (to_input, to_port_idx);
                     debug!(
                         "[TRACE] Block transition: propagated classical value {value:?} from {src_wire:?} to {to_wire:?}"
@@ -905,10 +956,12 @@ impl HugrEngine {
                     if let Some(value) = self.wire_state.classical_values.get(&input_wire).cloned()
                     {
                         let to_wire = (to_input, to_port_idx);
-                        debug!(
-                            "[TRACE] Fallback: propagating {value:?} from input {input_wire:?} to {to_wire:?}"
-                        );
-                        self.wire_state.classical_values.insert(to_wire, value);
+                        if !(fill_only && self.wire_state.classical_values.contains_key(&to_wire)) {
+                            debug!(
+                                "[TRACE] Fallback: propagating {value:?} from input {input_wire:?} to {to_wire:?}"
+                            );
+                            self.wire_state.classical_values.insert(to_wire, value);
+                        }
                     }
                 }
             }
@@ -921,19 +974,20 @@ impl HugrEngine {
     /// happens before measurement results are available. This function re-propagates
     /// values after measurement results are stored.
     pub(crate) fn repropagate_measurement_values(&mut self, hugr: &Hugr) {
-        // Take ownership of the pending list to avoid borrow issues
-        let pending: Vec<_> = std::mem::take(&mut self.pending_measurement_propagations);
-
+        // Replay every recorded edge IN ORDER, FILL-ONLY: writes land only
+        // on ports that are currently missing, and nothing is cleared.
+        // Fill-only is what makes replay safe against live state -- a full
+        // re-propagation cleared the successor's inputs and re-read source
+        // wires that a later activation may have legitimately destroyed
+        // (self-loop blocks corrupted an in-flight iteration this way).
+        // Ordered chain replay is what carries a late measurement value
+        // across empty-block hops. Edges stay recorded (fill-only is
+        // idempotent); they are purged when their target re-activates or
+        // their CFG completes.
+        let pending = self.pending_measurement_propagations.clone();
         for (cfg_node, from_block, to_block) in pending {
-            // Replay only while the successor is still the CFG's current
-            // block; a transition the CFG has since moved past would write
-            // stale values into a block that already has fresh inputs.
-            if self
-                .active_cfgs
-                .get(&cfg_node)
-                .is_some_and(|active| active.current_block == to_block)
-            {
-                self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
+            if self.active_cfgs.contains_key(&cfg_node) {
+                self.propagate_block_outputs(hugr, from_block, to_block, true);
             }
         }
     }

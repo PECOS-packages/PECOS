@@ -28,7 +28,7 @@
 
 use log::debug;
 use tket::hugr::ops::OpType;
-use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
+use tket::hugr::{Hugr, HugrView, IncomingPort, Node};
 
 use crate::engine::HugrEngine;
 use crate::engine::handlers::{ClassicalOutcome, HandlerOutcome};
@@ -77,31 +77,30 @@ impl HugrEngine {
         node: Node,
         op: &ClassicalOp,
     ) -> ClassicalOutcome {
-        // Collect input values
+        // Collect input values. get_input_value (not a raw wire read) so
+        // values are found across flattened-DFG boundaries -- the executor
+        // must see exactly what the tracing layer sees, or a classical op
+        // fed by a nested DFG defers forever.
         let mut inputs = Vec::with_capacity(op.num_inputs);
         for port_idx in 0..op.num_inputs {
             let in_port = IncomingPort::from(port_idx);
-            if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
-                let wire_key = (src_node, src_port.index());
-                if let Some(value) = self.wire_state.classical_values.get(&wire_key) {
-                    inputs.push(value.clone());
-                } else if matches!(op.op_type, ClassicalOpType::TagSum)
-                    && let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&wire_key)
-                {
-                    // A Tag may carry linear payload elements (e.g. an
-                    // iterator's Option over (qubit, state)): represent the
-                    // qubit as a QubitRef so the Sum value materializes.
-                    // Scoped to TagSum only -- a qubit input to an
-                    // arithmetic op is a semantic error, not a value.
-                    inputs.push(ClassicalValue::QubitRef(qubit_id));
-                } else {
-                    debug!(
-                        "Classical op {node:?}: missing input value for port {port_idx} from {wire_key:?}"
-                    );
-                    return ClassicalOutcome::Defer;
-                }
-            } else {
+            if hugr.single_linked_output(node, in_port).is_none() {
                 debug!("Classical op {node:?}: no source for input port {port_idx}");
+                return ClassicalOutcome::Defer;
+            }
+            if let Some(value) = self.get_input_value(hugr, node, port_idx) {
+                inputs.push(value);
+            } else if matches!(op.op_type, ClassicalOpType::TagSum)
+                && let Some(qubit_id) = self.get_input_qubit(hugr, node, port_idx)
+            {
+                // A Tag may carry linear payload elements (e.g. an
+                // iterator's Option over (qubit, state)): represent the
+                // qubit as a QubitRef so the Sum value materializes.
+                // Scoped to TagSum only -- a qubit input to an
+                // arithmetic op is a semantic error, not a value.
+                inputs.push(ClassicalValue::QubitRef(qubit_id));
+            } else {
+                debug!("Classical op {node:?}: missing input value for port {port_idx}");
                 return ClassicalOutcome::Defer;
             }
         }

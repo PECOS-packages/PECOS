@@ -284,6 +284,23 @@ impl HugrEngine {
                     // Store them at "virtual" output ports (1, 2, ...) on the Conditional
                     // These will be used during CFG block transitions
                     let num_tag_inputs = hugr.num_inputs(src_node);
+
+                    // Clear the previous execution's virtual run first: the
+                    // consumer walks virtual ports upward until the first
+                    // gap, so a survivor from a LONGER previous payload
+                    // would extend this one with stale data (and a payload
+                    // element that is not ready yet must read as a gap, not
+                    // as the old value).
+                    let mut stale_idx = port_idx + 1;
+                    while self
+                        .wire_state
+                        .classical_values
+                        .remove(&(cond_node, stale_idx))
+                        .is_some()
+                    {
+                        stale_idx += 1;
+                    }
+
                     for payload_idx in 0..num_tag_inputs {
                         let tag_in_port = IncomingPort::from(payload_idx);
                         if let Some((payload_src_node, payload_src_port)) =
@@ -410,6 +427,13 @@ impl HugrEngine {
     /// Re-run case-input propagation for every active case (measurement
     /// results may have landed after the case expanded).
     pub(crate) fn repropagate_active_case_inputs(&mut self, hugr: &Hugr) {
+        // Unlike the CFG replay path, this writes WITHOUT clearing first:
+        // propagate_case_inputs copies whatever sources exist right now
+        // onto the Case's Input ports, overwriting like-for-like. That is
+        // safe here because a case expands exactly once per conditional
+        // resolution (its Input ports have a single producer -- this copy),
+        // whereas CFG block Inputs are rewritten every iteration and so
+        // need fill-only replay to avoid clobbering live state.
         let targets: Vec<(Node, Node)> = self
             .active_cases
             .iter()

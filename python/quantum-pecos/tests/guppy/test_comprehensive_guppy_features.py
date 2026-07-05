@@ -282,7 +282,7 @@ class TestClassicalComputation:
         rows = results_or["hugr_llvm"]["result"]["results"]
         assert [int(r) for r in rows] == [1] * 10, f"OR path measurements: {rows}"
 
-    def test_classical_arithmetic(self, pipeline_tester: GuppyPipelineTest) -> None:
+    def test_classical_arithmetic(self) -> None:
         """Pure-classical programs surface the entrypoint's return value
         under the "return" key (no measurements, no result() calls)."""
 

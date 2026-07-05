@@ -333,7 +333,7 @@ class TestClassicalDataTypes:
             correlated = sum(1 for (a, b) in measurements if a == b)
             assert correlated > 80, f"Tuple ops failed, correlation={correlated}/100"
 
-    def test_boolean_expressions(self, tester: ExtendedGuppyTester) -> None:
+    def test_boolean_expressions(self) -> None:
         """Pure-classical boolean returns surface under the "return" key."""
 
         @guppy

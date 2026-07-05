@@ -166,8 +166,10 @@ impl HugrEngine {
             "RuntimeBarrier" | "StateResult" => {
                 // Pass-through operations: input array = output array
                 // For simulation, these are no-ops
-                // Propagate qubit arrays if present
-                self.propagate_qubit_array(hugr, node);
+                if !self.propagate_qubit_array(hugr, node) {
+                    debug!("{op_name} at {node:?}: input not resolved, deferring");
+                    return HandlerOutcome::Defer;
+                }
                 debug!("{op_name} at {node:?} (no-op for simulation)");
                 HandlerOutcome::Processed
             }

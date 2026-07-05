@@ -636,6 +636,10 @@ impl HugrEngine {
         };
 
         if self.work_queue.is_empty() && self.quantum_ops.is_empty() {
+            // "Nothing to do" is only a completion claim if nothing is
+            // stranded -- a purely classical program that starved mid-run
+            // also lands here, and it must report as a stall.
+            self.ensure_no_stalled_execution()?;
             debug!("Empty HUGR, no commands to generate");
             return Ok(None);
         }
@@ -712,6 +716,12 @@ impl HugrEngine {
                 }
                 debug!("Starting CFG {current_node:?} execution");
                 debug!("[TRACE] Starting CFG {current_node:?}");
+
+                // A fresh walk must not replay the previous invocation's
+                // measurement-propagation edges (completion purges them;
+                // this covers a walk that never completed).
+                self.pending_measurement_propagations
+                    .retain(|(cfg, _, _)| *cfg != current_node);
 
                 // Start CFG execution by activating the entry block's operations
                 let entry_block = cfg_info.entry_block;
@@ -974,6 +984,18 @@ impl HugrEngine {
                 }
 
                 if let Some(func_info) = self.func_defns.get(&func_defn_node).cloned() {
+                    // Clear every FuncDefn Input port before copying: the
+                    // frame reset below exempts the Input node (keep_wires)
+                    // so the fresh arguments survive, which means a port
+                    // whose source is missing would otherwise keep the
+                    // PREVIOUS call's argument. Missing sources must starve
+                    // loudly instead.
+                    for in_port in 0..func_info.num_inputs {
+                        let func_input_wire = (func_info.input_node, in_port);
+                        self.wire_state.classical_values.remove(&func_input_wire);
+                        self.wire_state.wire_to_qubit.remove(&func_input_wire);
+                    }
+
                     // Map Call inputs to FuncDefn Input node outputs
                     // Call inputs come from upstream nodes
                     for in_port in 0..func_info.num_inputs {
@@ -1739,7 +1761,15 @@ impl HugrEngine {
             }
 
             _ => {
-                debug!("Unsupported gate type: {:?}", op.gate_type);
+                // A recognized quantum op the emitter cannot lower: skipping
+                // it silently executes a DIFFERENT circuit (the node was
+                // already marked processed by the dispatcher, so nothing
+                // downstream would notice).
+                return Err(PecosError::Generic(format!(
+                    "quantum gate {:?} at {node:?} is not supported by the \
+                     HUGR engine's gate emitter",
+                    op.gate_type
+                )));
             }
         }
 
@@ -1988,6 +2018,13 @@ impl ClassicalEngine for HugrEngine {
                     // own control before OTHER data inputs (later
                     // measurements) exist; refresh its Input ports now.
                     self.repropagate_active_case_inputs(&hugr);
+
+                    // Replay can fill the very port a pending control was
+                    // starving on (the resolver pass above ran before the
+                    // fill), so give the resolvers a second look now.
+                    self.try_resolve_pending_conditionals();
+                    self.try_resolve_pending_cfg_branches();
+                    self.try_resolve_pending_tailloops();
                 }
 
                 // Retry any bool.read nodes that were waiting for measurement results
@@ -2030,25 +2067,37 @@ impl ClassicalEngine for HugrEngine {
             // entrypoint's return values -- "return" for a single value,
             // "return_{port}" for multiple.
             if self.measurement_state.results.is_empty() && !self.return_values.is_empty() {
-                let scalars: Vec<Data> = self
+                // Keys carry the ACTUAL port index: compacting around an
+                // unconvertible value (a Tuple/Sum return) would silently
+                // relabel every later port, and "return" only applies when
+                // the function genuinely returns one value.
+                let scalars: Vec<(usize, Data)> = self
                     .return_values
                     .iter()
-                    .filter_map(|value| match value {
-                        ClassicalValue::Bool(b) => Some(Data::Bool(*b)),
-                        ClassicalValue::Int(i) => Some(Data::I64(*i)),
-                        ClassicalValue::UInt(u) => Some(Data::U64(*u)),
-                        ClassicalValue::Float(f) => Some(Data::F64(*f)),
-                        _ => None,
+                    .enumerate()
+                    .filter_map(|(port, value)| {
+                        let data = match value {
+                            ClassicalValue::Bool(b) => Some(Data::Bool(*b)),
+                            ClassicalValue::Int(i) => Some(Data::I64(*i)),
+                            ClassicalValue::UInt(u) => Some(Data::U64(*u)),
+                            ClassicalValue::Float(f) => Some(Data::F64(*f)),
+                            _ => {
+                                debug!(
+                                    "return port {port}: non-scalar value {value:?} not surfaced"
+                                );
+                                None
+                            }
+                        };
+                        data.map(|d| (port, d))
                     })
                     .collect();
-                if scalars.len() == 1 {
-                    let mut scalars = scalars;
-                    result
-                        .data
-                        .insert("return".to_string(), scalars.pop().expect("len 1"));
+                if self.return_values.len() == 1 {
+                    if let Some((_, data)) = scalars.into_iter().next() {
+                        result.data.insert("return".to_string(), data);
+                    }
                 } else {
-                    for (i, data) in scalars.into_iter().enumerate() {
-                        result.data.insert(format!("return_{i}"), data);
+                    for (port, data) in scalars {
+                        result.data.insert(format!("return_{port}"), data);
                     }
                 }
             }
@@ -2154,8 +2203,16 @@ impl Engine for HugrEngine {
         match stage {
             EngineStage::Complete(result) => Ok(result),
             EngineStage::NeedsProcessing(_) => {
-                debug!("HugrEngine cannot process quantum operations directly");
-                Ok(self.get_results()?)
+                // The program emitted quantum commands, but this entry point
+                // has no quantum backend to run them: any results would be
+                // the pre-measurement partial state, silently wrong. The
+                // caller must drive the engine through `start`/`step` with a
+                // quantum engine attached instead.
+                Err(PecosError::Generic(
+                    "HUGR program requires quantum processing; \
+                     Engine::process has no quantum backend to run it"
+                        .to_string(),
+                ))
             }
         }
     }
@@ -2675,6 +2732,23 @@ mod tests {
             ])
         );
 
+        // idivmod_s with a "negative" divisor: the divisor port is UNSIGNED
+        // per the spec, so canonical -3 reads as its bit pattern (2^64 - 3)
+        // and the huge divisor makes q = 0, r = the dividend. This is the
+        // Selene-validated guppy semantics (7 // -3 == 0, 7 % -3 == 7).
+        let got = run(
+            &mut engine,
+            "idivmod_s",
+            &[(0, ClassicalValue::Int(7)), (1, ClassicalValue::Int(-3))],
+        );
+        assert_eq!(
+            got,
+            ClassicalOutcome::Outputs(vec![
+                (0, ClassicalValue::Int(0)),
+                (1, ClassicalValue::Int(7))
+            ])
+        );
+
         // idivmod_s by zero: fatal fault per the spec
         let got = run(
             &mut engine,
@@ -3127,6 +3201,55 @@ mod tests {
         assert_eq!(
             engine.get_input_value(&hugr, func_output, 0),
             Some(ClassicalValue::Int(42))
+        );
+    }
+
+    /// End-to-end companion to the tracing test above: the EXECUTOR
+    /// (`handle_classical_op` via the work-queue dispatch, not the
+    /// `get_input_value` helper in isolation) must resolve a classical op's
+    /// inputs across a flattened-DFG boundary. Before the executor used
+    /// the tracing layer it raw-read the source wire, so the iadd inside
+    /// the DFG deferred forever and this run failed as a stall.
+    #[test]
+    fn test_classical_op_inside_dfg_executes_end_to_end() {
+        use tket::hugr::builder::{Dataflow, DataflowHugr, DataflowSubContainer, FunctionBuilder};
+        use tket::hugr::ops::Value;
+        use tket::hugr::std_extensions::arithmetic::int_ops::IntOpDef;
+        use tket::hugr::std_extensions::arithmetic::int_types::{ConstInt, int_type};
+        use tket::hugr::types::Signature;
+
+        let (hugr, iadd_node) = {
+            let mut fb =
+                FunctionBuilder::new("dfg_exec", Signature::new(vec![], vec![int_type(6)]))
+                    .unwrap();
+            let a = fb.add_load_const(Value::from(ConstInt::new_u(6, 30).unwrap()));
+            let b = fb.add_load_const(Value::from(ConstInt::new_u(6, 12).unwrap()));
+            let mut dfg = fb
+                .dfg_builder(
+                    Signature::new(vec![int_type(6); 2], vec![int_type(6)]),
+                    [a, b],
+                )
+                .unwrap();
+            let [ia, ib] = dfg.input_wires_arr();
+            let [sum] = dfg
+                .add_dataflow_op(IntOpDef::iadd.with_log_width(6), [ia, ib])
+                .unwrap()
+                .outputs_arr();
+            let iadd_node = sum.node();
+            let dfg_handle = dfg.finish_with_outputs([sum]).unwrap();
+            let [out] = dfg_handle.outputs_arr();
+            let hugr = fb.finish_hugr_with_outputs([out]).unwrap();
+            (hugr, iadd_node)
+        };
+
+        let mut engine = HugrEngine::from_hugr(hugr);
+        engine
+            .generate_commands()
+            .expect("pure-classical DFG program must complete without stalling");
+        assert_eq!(
+            engine.wire_state.classical_values.get(&(iadd_node, 0)),
+            Some(&ClassicalValue::Int(42)),
+            "iadd inside the DFG must execute with values traced across the boundary"
         );
     }
 

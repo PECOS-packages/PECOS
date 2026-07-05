@@ -36,7 +36,10 @@ impl HugrEngine {
         if op_name == "StateResult" {
             // StateResult: array<N, Qubit> -> array<N, Qubit>
             // Pass-through for simulation; optionally log state info
-            self.propagate_qubit_array(hugr, node);
+            if !self.propagate_qubit_array(hugr, node) {
+                debug!("StateResult at {node:?}: input not resolved, deferring");
+                return HandlerOutcome::Defer;
+            }
             debug!("StateResult at {node:?} (no-op for simulation)");
             HandlerOutcome::Processed
         } else {

@@ -147,7 +147,7 @@ impl HugrEngine {
             "tket.debug" => self.handle_debug_op(hugr, node, &op_name),
             "tket.bool" => self.handle_bool_op(hugr, node, &op_name),
             "tket.rotation" => self.handle_rotation_op(hugr, node, &op_name),
-            "tket.modifier" => self.handle_modifier_op(hugr, node, &op_name),
+            "tket.modifier" => Self::handle_modifier_op(node, &op_name),
             "tket.wasm" => self.handle_wasm_op(hugr, node, &op_name),
             "tket.guppy" => self.handle_guppy_op(hugr, node, &op_name),
             "tket.global_phase" => self.handle_global_phase_op(hugr, node, &op_name),

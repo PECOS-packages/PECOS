@@ -610,3 +610,39 @@ def test_surface_memory_noiseless_complementary_family_repeats_after_projection(
         )
         for row in results[comp_key]:
             assert _round_blocks_repeat(row, num_rounds)
+
+
+def test_divergent_classical_semantics_match_selene_reference() -> None:
+    """The HUGR engine's spec-derived pins for the Python-divergent regimes
+    (negative divisors under Euclidean division with an unsigned divisor
+    bit pattern; logical right shift on negative operands) must agree with
+    the Selene reference implementation.
+
+    Values are compared as booleans because the local Selene runtime does
+    not link int-result reporting (print_int). Shift-past-width is pinned
+    engine-side only: hugr-core's ishr CONST-FOLDER panics (debug) or
+    mis-folds (release) on constant shifts >= width, so that program cannot
+    compile through the QIS path until the upstream fix lands.
+    """
+    import pecos
+    from guppylang import guppy
+    from guppylang.std.builtins import result
+
+    _require_selene_runtime()
+    _configure_selene_caches()
+
+    @guppy
+    def divergent_agrees() -> None:
+        a = 7
+        b = -3
+        result("div", (a // b) == 0)
+        result("mod", (a % b) == 7)
+        c = -8
+        result("shr", (c >> 1) == 9223372036854775804)
+
+    r = pecos.sim(pecos.Guppy(divergent_agrees)).qubits(1).classical(pecos.selene_engine()).seed(1).run(1).to_dict()
+    assert [int(r["div"][0]), int(r["mod"][0]), int(r["shr"][0])] == [
+        1,
+        1,
+        1,
+    ], f"Selene disagrees with the engine's spec pins: {r}"

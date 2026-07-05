@@ -140,14 +140,12 @@ class TestBasicQuantumOperations:
             hadamard_test,
             shots=50,
         )
-        assert results.get("hugr_llvm", {}).get(
-            "success",
-            False,
-        ), f"HUGR-LLVM failed: {results.get('hugr_llvm', {}).get('error')}"
-        # PHIR might not be available on all systems
-        if "phir" in results:
-            # print(f"PHIR result: {results['phir']}")
-            pass
+        rows = results["hugr_llvm"]["result"]["results"]
+        assert len(rows) == 50
+        # H|0> is an exact 50/50 superposition: both outcomes must appear
+        # with a near-even split.
+        ones = sum(int(r) for r in rows)
+        assert 12 <= ones <= 38, f"H distribution off: {ones}/50 ones"
 
     def test_pauli_gates(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Test all Pauli gates (X, Y, Z)."""
@@ -227,7 +225,9 @@ class TestBasicQuantumOperations:
                 decoded_measurements = decode_integer_results(measurements, 2)
             correlated = sum(1 for (a, b) in decoded_measurements if a == b)
             correlation_rate = correlated / len(decoded_measurements)
-            assert correlation_rate > 0.8, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
+            assert (
+                correlation_rate == 1.0
+            ), f"Bell correlation is EXACT on a noiseless statevector, got {correlation_rate:.2%}"
 
         # Verify PHIR pipeline results if available
         if results.get("phir", {}).get("success"):
@@ -236,7 +236,9 @@ class TestBasicQuantumOperations:
             decoded_measurements = decode_integer_results(measurements, 2)
             correlated = sum(1 for (a, b) in decoded_measurements if a == b)
             correlation_rate = correlated / len(decoded_measurements)
-            assert correlation_rate > 0.8, f"PHIR Bell state should be highly correlated, got {correlation_rate:.2%}"
+            assert (
+                correlation_rate == 1.0
+            ), f"PHIR Bell correlation is EXACT on a noiseless statevector, got {correlation_rate:.2%}"
 
 
 # ============================================================================
@@ -264,17 +266,21 @@ class TestClassicalComputation:
             result = measure(q)  # Will be True
             return result or False
 
-        # Test AND operation
-        pipeline_tester.test_function_on_both_pipelines(
+        # AND: measure(|0>) is deterministically 0
+        results_and = pipeline_tester.test_function_on_both_pipelines(
             boolean_and_test,
             shots=10,
         )
+        rows = results_and["hugr_llvm"]["result"]["results"]
+        assert [int(r) for r in rows] == [0] * 10, f"AND path measurements: {rows}"
 
-        # Test OR operation
-        pipeline_tester.test_function_on_both_pipelines(
+        # OR: measure(X|0>) is deterministically 1
+        results_or = pipeline_tester.test_function_on_both_pipelines(
             boolean_or_test,
             shots=10,
         )
+        rows = results_or["hugr_llvm"]["result"]["results"]
+        assert [int(r) for r in rows] == [1] * 10, f"OR path measurements: {rows}"
 
     def test_classical_arithmetic(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Pure-classical programs surface the entrypoint's return value
@@ -352,10 +358,17 @@ class TestHybridPrograms:
 
             return result1, measure(q2)
 
-        pipeline_tester.test_function_on_both_pipelines(
+        results = pipeline_tester.test_function_on_both_pipelines(
             feedback_circuit,
             shots=50,
         )
+        rows = results["hugr_llvm"]["result"]["results"]
+        # The correction makes q2 EQUAL q1 on every shot -- this is the
+        # engine's core measurement-feedback path.
+        assert all(int(a) == int(b) for (a, b) in rows), f"feedback broke: {rows[:10]}"
+        # And H gives both branches: both outcomes must appear over 50 shots.
+        ones = sum(int(a) for (a, _) in rows)
+        assert 10 <= ones <= 40, f"H distribution off: {ones}/50 ones"
 
 
 # ============================================================================
@@ -405,12 +418,16 @@ class TestAdvancedAlgorithms:
 
         results = pipeline_tester.test_function_on_both_pipelines(qft_2qubit, shots=100)
 
-        if results.get("hugr_llvm", {}).get("success"):
-            # QFT of |01⟩ should give a specific pattern
-            measurements = results["hugr_llvm"]["result"]["results"]
-            # print(f"QFT results distribution: {set(measurements)}")
-            # The test passes if we get results without errors
-            assert len(measurements) == 100
+        # QFT of a computational basis state measured in the computational
+        # basis is UNIFORM over all four outcomes (phases are invisible
+        # here, so this pins the H layers and plumbing, not the CRZ angle).
+        measurements = results["hugr_llvm"]["result"]["results"]
+        assert len(measurements) == 100
+        from collections import Counter
+
+        counts = Counter(tuple(int(v) for v in row) for row in measurements)
+        assert set(counts) == {(0, 0), (0, 1), (1, 0), (1, 1)}, f"missing outcomes: {counts}"
+        assert all(10 <= c <= 45 for c in counts.values()), f"non-uniform: {counts}"
 
     def test_deutsch_josza_algorithm(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Test Deutsch-Josza algorithm for 2-bit function."""
@@ -554,4 +571,4 @@ class TestAdvancedAlgorithms:
                 decoded_measurements = decode_integer_results(measurements, 2)
             # Should find |11⟩ with high probability after 1 Grover iteration
             found = sum(1 for (a, b) in decoded_measurements if a and b)
-            assert found > 70, f"Grover should amplify |11⟩, got {found}/100"
+            assert found == 100, f"2-qubit Grover with one iteration is deterministic |11>, got {found}/100"

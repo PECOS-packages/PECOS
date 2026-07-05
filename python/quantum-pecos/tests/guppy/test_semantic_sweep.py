@@ -329,3 +329,49 @@ def test_array_result_label_containing_reserved_words() -> None:
 
     results = sim(Guppy(labeled_array)).qubits(3).quantum(state_vector()).seed(7).run(2).to_dict()
     assert results["my_result_Report"] == [[1, 1], [1, 1]], f"keys: {sorted(results)}"
+
+
+def test_negative_divisor_euclidean_semantics() -> None:
+    """Division/modulo with NEGATIVE divisors -- the regime where Python's
+    floor semantics and HUGR's Euclidean semantics diverge. HUGR idiv_s
+    takes an UNSIGNED divisor, so a negative divisor contributes its
+    two's-complement bit pattern (2^64 - 3 here): Euclidean q*m+r=n with
+    0 <= r < m gives q=0, r=7. (Python would say 7 // -3 == -3.)"""
+
+    @guppy
+    def neg_div() -> int:
+        a = 7
+        b = -3
+        return a // b
+
+    @guppy
+    def neg_mod() -> int:
+        a = 7
+        b = -3
+        return a % b
+
+    r = sim(Guppy(neg_div)).qubits(1).quantum(state_vector()).seed(1).run(2).to_dict()
+    assert list(r["return"]) == [0, 0], f"7 // -3 per HUGR spec: {r['return']}"
+    r = sim(Guppy(neg_mod)).qubits(1).quantum(state_vector()).seed(1).run(2).to_dict()
+    assert list(r["return"]) == [7, 7], f"7 %% -3 per HUGR spec: {r['return']}"
+
+
+def test_logical_shift_on_negative_and_past_width() -> None:
+    """ishr is LOGICAL per the spec ("leftmost bits set to zero"), unlike
+    Python's arithmetic >>; and shifting by k >= width drops every bit."""
+
+    @guppy
+    def shift_negative() -> int:
+        a = -8
+        return a >> 1
+
+    @guppy
+    def shift_past_width() -> int:
+        a = 5
+        return a >> 70
+
+    r = sim(Guppy(shift_negative)).qubits(1).quantum(state_vector()).seed(1).run(2).to_dict()
+    # (-8 as u64) >> 1 = 0x7FFF_FFFF_FFFF_FFFC
+    assert list(r["return"]) == [0x7FFF_FFFF_FFFF_FFFC] * 2, f"logical shift: {r['return']}"
+    r = sim(Guppy(shift_past_width)).qubits(1).quantum(state_vector()).seed(1).run(2).to_dict()
+    assert list(r["return"]) == [0, 0], f"past-width shift: {r['return']}"

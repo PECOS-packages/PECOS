@@ -21,9 +21,13 @@ the same value. Every divergence -- a wrong arithmetic result, a
 mis-executed loop, a dropped branch -- fails loudly as a 0 measurement.
 
 Generated programs stay in Euclidean-safe territory (every reduction uses a
-positive literal modulus, divisions use positive literal divisors) so
-Python's floor semantics coincide exactly with the HUGR spec's Euclidean
-semantics, and magnitudes stay far below 64-bit wrap.
+positive literal modulus, divisions use positive literal divisors, shift
+operands are pre-masked non-negative) BY DESIGN: plain Python is only a
+valid reference where its semantics coincide with HUGR's. The regimes
+where they diverge -- negative divisors (floor vs Euclidean with an
+UNSIGNED divisor bit pattern), arithmetic-vs-logical right shift on
+negative operands, and shifts past the width -- are pinned separately with
+hand-derived spec expectations in test_semantic_sweep.py.
 """
 
 import importlib.util
@@ -162,14 +166,7 @@ def test_fuzzed_program_matches_python_reference(seed: int, tmp_path: Path) -> N
     )
     module = _load_guppy_module(tmp_path, seed, source)
 
-    results = (
-        sim(Guppy(module.fuzz_prog))
-        .qubits(2)
-        .quantum(state_vector())
-        .seed(7)
-        .run(2)
-        .to_dict()
-    )
+    results = sim(Guppy(module.fuzz_prog)).qubits(2).quantum(state_vector()).seed(7).run(2).to_dict()
     raw = results["measurements"]
     values = [m[-1] if isinstance(m, list) else m for m in raw]
     assert values == [1, 1], f"seed {seed}: engine diverged from reference\n{source}"

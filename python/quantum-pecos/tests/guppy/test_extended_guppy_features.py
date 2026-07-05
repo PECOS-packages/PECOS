@@ -55,11 +55,9 @@ class ExtendedGuppyTester:
     ) -> dict[str, Any]:
         """Test a Guppy function and return results."""
         if not self.backends.get("rust_backend", False):
-            return {
-                "success": False,
-                "error": "Rust backend not available",
-                "result": None,
-            }
+            # Skipping is honest; returning success=False used to
+            # green-pass every assertion gated behind `if success`.
+            pytest.skip("Rust backend not available")
 
         try:
             # Use sim() API
@@ -130,9 +128,14 @@ class TestPhaseAndRotationGates:
             return r1, r2
 
         result = tester.test_function(phase_gate_test, shots=100)
-        if result["success"]:
-            pass
-            # print(f"Phase gate test results: {result['result']['results'][:10]}...")
+        rows = result["result"]["results"]
+        assert len(rows) == 100
+        # H;S;H and H;T;T;H both give an exact 50/50 distribution; a broken
+        # S or T (e.g. silently applied as identity) gives all-zeros.
+        r1_ones = sum(r[0] for r in rows)
+        r2_ones = sum(r[1] for r in rows)
+        assert 30 <= r1_ones <= 70, f"S-gate distribution off: {r1_ones}/100 ones"
+        assert 30 <= r2_ones <= 70, f"T^2-gate distribution off: {r2_ones}/100 ones"
 
     def test_phase_gate_inverses(self, tester: ExtendedGuppyTester) -> None:
         """Test S† and T† (inverse phase gates)."""
@@ -179,11 +182,16 @@ class TestPhaseAndRotationGates:
             return r1, r2
 
         result = tester.test_function(rotation_test, shots=100)
-        if result["success"]:
-            # RY(pi/2) on |0⟩ creates equal superposition, so roughly 50/50 distribution
-            # RZ just adds phase, results will vary
-            result["result"]["results"]
-            # print(f"Rotation gate test results (first 10): {results[:10]}")
+        rows = result["result"]["results"]
+        assert len(rows) == 100
+        # RY(pi/2)|0> is an equal superposition: both outcomes must appear
+        # with a near-even split (a dropped rotation gives all-zeros).
+        r1_ones = sum(r[0] for r in rows)
+        assert 30 <= r1_ones <= 70, f"RY(pi/2) distribution off: {r1_ones}/100 ones"
+        # H;RZ(pi/4);H gives P(1) = sin^2(pi/8) ~ 0.146: assert the skewed
+        # but non-degenerate distribution.
+        r2_ones = sum(r[1] for r in rows)
+        assert 3 <= r2_ones <= 35, f"RZ(pi/4) distribution off: {r2_ones}/100 ones"
 
 
 # ============================================================================
@@ -386,40 +394,38 @@ class TestControlFlow:
                     expected_pattern,
                 ), f"Pattern mismatch: {shot_result}"
 
-    @pytest.mark.skip(
-        reason="While loops with compound conditions need more work in HUGR interpreter",
-    )
-    def test_while_with_quantum(self, tester: ExtendedGuppyTester) -> None:
-        """Test while loops with quantum operations."""
+    def test_while_with_quantum(self) -> None:
+        """A repeat-until-success while loop with a compound condition.
+
+        The measurement count varies per shot, so raw measurements cannot
+        aggregate into rectangular results -- report through result(),
+        which is exactly what the engine's captured-result path is for.
+        """
+        from guppylang.std.builtins import result
 
         @guppy
-        def while_quantum_test() -> int:
+        def while_quantum_test() -> None:
             count = 0
             tries = 0
 
-            # Keep trying until we get a |1⟩ measurement
+            # Keep trying until we get a |1> measurement (max 10 tries)
             while count == 0 and tries < 10:
                 q = qubit()
-                h(q)  # 50% chance of |1⟩
+                h(q)  # 50% chance of |1>
                 if measure(q):
                     count = 1
                 tries += 1
 
-            return tries
+            result("tries", tries)
 
-        result = tester.test_function(while_quantum_test, shots=100)
-        if result["success"]:
-            # Function returns measurements, not the tries count
-            # Results are tuples of measurements (number varies per shot based on loop iterations)
-            # We can count the number of measurements to approximate tries, but can't directly verify the int return
-            # Just verify that we got measurement results
-            measurements = result["result"]["results"]
-            assert len(measurements) == 100, f"Expected 100 shots, got {len(measurements)}"
-            # Each shot should have at least one measurement (at least 1 try)
-            for shot_measurements in measurements:
-                if isinstance(shot_measurements, tuple):
-                    assert len(shot_measurements) >= 1, "Should have at least 1 measurement per shot"
-                # Can't verify avg_tries since we don't get the integer return value
+        results = sim(Guppy(while_quantum_test)).qubits(2).quantum(state_vector()).seed(11).run(100).to_dict()
+        tries = [int(t) for t in results["tries"]]
+        assert len(tries) == 100
+        # Geometric with p=1/2 capped at 10: every value in [1, 10], and
+        # the mean is ~2 (assert a generous but non-vacuous band).
+        assert all(1 <= t <= 10 for t in tries), f"out-of-range tries: {sorted(set(tries))}"
+        mean = sum(tries) / len(tries)
+        assert 1.5 < mean < 3.0, f"RUS try distribution off: mean={mean}"
 
     def test_early_return(self, tester: ExtendedGuppyTester) -> None:
         """Test early return from functions."""
@@ -621,15 +627,10 @@ class TestQuantumAlgorithms:
         ones = sum(measurements_interference)
         prob_one = ones / len(measurements_interference)
 
-        # The S gate behavior might vary by implementation
-        # If S gate is not working as expected, we might get 50/50
-        # For now, just verify we get measurements
-        assert 0 <= prob_one <= 1, f"Probability should be between 0 and 1, got {prob_one:.3f}"
-
-        # Note: In ideal case, H-S-H on |0⟩ should give |0⟩ with high probability
-        # But current implementation seems to give 50/50, which suggests
-        # either S gate implementation differs or there's a phase issue
-        # This would need deeper investigation into the simulator's S gate
+        # H;S;H on |0> is EXACTLY 50/50: S maps |+> to (|0> + i|1>)/sqrt(2),
+        # and the final H yields P(1) = |1 - i|^2 / 4 = 1/2. (An S applied
+        # as identity would give all-zeros; as Z, all-ones.)
+        assert 0.4 <= prob_one <= 0.6, f"H;S;H must be 50/50, got {prob_one:.3f}"
 
 
 # ============================================================================
@@ -725,9 +726,6 @@ class TestPerformance:
             avg = sum(sum(row) for row in rows) / len(rows)
             assert 3 < avg < 7, f"Many qubit statistics off, avg={avg}"
 
-    @pytest.mark.skip(
-        reason="For-loop in function body returns empty results in HUGR interpreter",
-    )
     def test_deep_circuit(self, tester: ExtendedGuppyTester) -> None:
         """Test deep circuit with many gates."""
 

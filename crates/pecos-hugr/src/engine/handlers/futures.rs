@@ -53,24 +53,37 @@ impl HugrEngine {
                     debug!("futures.Read at {node:?}: unknown future {future_id}, deferring");
                     return HandlerOutcome::Defer;
                 };
+                // Produce the future's DECLARED type: Future<bool> reads a
+                // Bool; Future<int> (LazyMeasureLeaked, 0/1/2-leaked) reads
+                // an Int -- a Bool there loses the leak value.
+                let to_value = |outcome: u32, int_valued: bool| {
+                    if int_valued {
+                        ClassicalValue::Int(i64::from(outcome))
+                    } else {
+                        ClassicalValue::Bool(outcome != 0)
+                    }
+                };
                 match state {
-                    FutureState::Resolved(outcome) => {
-                        self.wire_state
-                            .classical_values
-                            .insert((node, 0), ClassicalValue::Bool(*outcome != 0));
+                    FutureState::Resolved {
+                        outcome,
+                        int_valued,
+                    } => {
+                        let value = to_value(*outcome, *int_valued);
+                        self.wire_state.classical_values.insert((node, 0), value);
                         debug!("Read future {future_id} -> {outcome}");
                         HandlerOutcome::Processed
                     }
                     FutureState::Pending {
-                        measurement_index, ..
+                        measurement_index,
+                        int_valued,
+                        ..
                     } => {
                         if let Some((_, qubit)) =
                             self.measurement_state.mappings.get(*measurement_index)
                             && let Some(&result) = self.measurement_state.results.get(qubit)
                         {
-                            self.wire_state
-                                .classical_values
-                                .insert((node, 0), ClassicalValue::Bool(result != 0));
+                            let value = to_value(result, *int_valued);
+                            self.wire_state.classical_values.insert((node, 0), value);
                             debug!("Read future {future_id} from measurement -> {result}");
                             HandlerOutcome::Processed
                         } else {

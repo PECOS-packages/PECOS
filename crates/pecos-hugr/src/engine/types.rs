@@ -557,9 +557,17 @@ pub enum FutureState {
         qubit: QubitId,
         /// Index in `measurement_mappings` for result retrieval.
         measurement_index: usize,
+        /// True for `Future<int>` (`LazyMeasureLeaked`: 0/1/2-leaked);
+        /// false for `Future<bool>`. Read must produce the declared type.
+        int_valued: bool,
     },
-    /// The measurement result is available.
-    Resolved(u32),
+    /// The measurement result is available (same `int_valued` semantics).
+    Resolved {
+        /// The measurement outcome.
+        outcome: u32,
+        /// See [`FutureState::Pending::int_valued`].
+        int_valued: bool,
+    },
 }
 
 // --- Container Type Classification ---

@@ -63,6 +63,7 @@ impl HugrEngine {
                         measurement_node: node,
                         qubit: qubit_id,
                         measurement_index,
+                        int_valued: false,
                     },
                 );
 
@@ -97,6 +98,7 @@ impl HugrEngine {
                         measurement_node: node,
                         qubit: qubit_id,
                         measurement_index,
+                        int_valued: false,
                     },
                 );
 
@@ -128,6 +130,7 @@ impl HugrEngine {
                         measurement_node: node,
                         qubit: qubit_id,
                         measurement_index,
+                        int_valued: true,
                     },
                 );
 

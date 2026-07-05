@@ -188,7 +188,7 @@ impl HugrEngine {
 
                 // Check if there are pending calls to this FuncDefn
                 if let Some(pending) = self.pending_func_calls.get_mut(&func_defn_node)
-                    && let Some(next_call) = pending.pop()
+                    && let Some(next_call) = pending.pop_front()
                 {
                     debug!(
                         "FuncDefn {func_defn_node:?} free: starting next pending Call {next_call:?}"

@@ -123,7 +123,7 @@ pub struct HugrEngine {
 
     /// Pending conditionals waiting for measurement results.
     /// Maps the Conditional node to the qubit ID whose measurement determines the branch.
-    pub(crate) pending_conditionals: BTreeMap<Node, QubitId>,
+    pub(crate) pending_conditionals: BTreeSet<Node>,
 
     /// Pending bool.read nodes waiting for measurement results.
     /// These are re-added to the work queue when measurement results arrive.
@@ -171,7 +171,7 @@ pub struct HugrEngine {
 
     /// Pending Calls waiting for a `FuncDefn` to be free.
     /// Maps `FuncDefn` node -> queue of Call nodes waiting.
-    pub(crate) pending_func_calls: BTreeMap<Node, Vec<Node>>,
+    pub(crate) pending_func_calls: BTreeMap<Node, VecDeque<Node>>,
 
     // === TailLoop Support ===
     /// `TailLoop` nodes extracted from the HUGR.
@@ -405,6 +405,7 @@ impl HugrEngine {
         // Re-initialize nodes_inside_* from their respective control structures
         // (in case we need to re-process after a reset)
         if let Some(hugr) = &self.hugr {
+            self.nodes_inside_cases = find_nodes_inside_cases(hugr, &self.conditionals);
             self.nodes_inside_cfg_blocks = find_nodes_inside_cfg_blocks(hugr, &self.cfgs);
             self.nodes_inside_func_defns =
                 find_nodes_inside_func_defns(hugr, &self.func_defns, &self.call_targets);
@@ -572,9 +573,20 @@ impl HugrEngine {
             self.pending_tailloop_control.len()
         );
 
-        // Collect TailLoops that can now be resolved
+        // Collect TailLoops that can now be resolved. A loop whose body is
+        // still mid-iteration must NOT resolve here: a stale or early
+        // control value would re-activate (or complete) the loop while
+        // in-flight body ops still run, silently corrupting the iteration.
+        // Only body completion legitimately re-arms resolution.
         let mut to_resolve = Vec::new();
         for &tailloop_node in &self.pending_tailloop_control {
+            if self
+                .active_tailloops
+                .get(&tailloop_node)
+                .is_some_and(|info| info.body_active)
+            {
+                continue;
+            }
             if let Some(tag) = self.try_resolve_tailloop_control(&hugr, tailloop_node) {
                 to_resolve.push((tailloop_node, tag));
             }
@@ -584,7 +596,12 @@ impl HugrEngine {
         for (tailloop_node, tag) in to_resolve {
             self.pending_tailloop_control.remove(&tailloop_node);
 
-            if tag == 0 {
+            if tag > 1 {
+                // Two variants only (0=continue, 1=break); see the loop arm.
+                self.execution_error = Some(format!(
+                    "TailLoop {tailloop_node:?}: control tag {tag} out of range"
+                ));
+            } else if tag == 0 {
                 // CONTINUE_TAG - start next iteration
                 debug!("Pending TailLoop {tailloop_node:?}: CONTINUE, starting next iteration");
                 self.continue_tailloop_iteration(&hugr, tailloop_node);
@@ -637,6 +654,13 @@ impl HugrEngine {
     /// - `Ok(None)` - No operations to process (empty or complete)
     #[allow(clippy::too_many_lines, clippy::unnecessary_wraps)]
     fn process_hugr_impl(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        // A fault raised by a completion cascade (e.g. during measurement
+        // handling) must surface even when the queue is empty -- check
+        // BEFORE the early returns below, or the message is discarded and
+        // at best re-reported as a generic stall.
+        if let Some(fault) = self.execution_error.take() {
+            return Err(PecosError::Generic(fault));
+        }
         self.message_builder.reset();
         let _ = self.message_builder.for_quantum_operations();
 
@@ -703,8 +727,7 @@ impl HugrEngine {
                     debug!("Conditional {current_node:?} cannot be resolved yet, deferring");
                     // We'll re-add this after measurement results come in
                     // For now, mark as pending and don't add back to queue
-                    self.pending_conditionals
-                        .insert(current_node, QubitId::from(0)); // placeholder
+                    self.pending_conditionals.insert(current_node);
                 }
                 continue;
             }
@@ -884,10 +907,21 @@ impl HugrEngine {
             // --- Control Flow: TailLoop ---
             if self.tailloops.contains_key(&current_node) {
                 // Check if already active
-                if self.active_tailloops.contains_key(&current_node) {
-                    // Active TailLoop - check if we can resolve control
-                    if let Some(tag) = self.try_resolve_tailloop_control(&hugr, current_node) {
-                        if tag == 0 {
+                if let Some(active_info) = self.active_tailloops.get(&current_node) {
+                    // A loop whose body is still mid-iteration must not
+                    // resolve control: a stale/early value would re-activate
+                    // or complete it over in-flight body ops. Body
+                    // completion re-arms resolution.
+                    if active_info.body_active {
+                        debug!("TailLoop {current_node:?}: body mid-iteration, not resolving");
+                    } else if let Some(tag) = self.try_resolve_tailloop_control(&hugr, current_node)
+                    {
+                        if tag > 1 {
+                            // Two variants only (0=continue, 1=break).
+                            self.execution_error = Some(format!(
+                                "TailLoop {current_node:?}: control tag {tag} out of range"
+                            ));
+                        } else if tag == 0 {
                             // CONTINUE_TAG - start next iteration
                             debug!("TailLoop {current_node:?}: CONTINUE, starting next iteration");
                             self.continue_tailloop_iteration(&hugr, current_node);
@@ -970,10 +1004,12 @@ impl HugrEngine {
                     debug!(
                         "Call {current_node:?}: FuncDefn {func_defn_node:?} is in use, queueing"
                     );
-                    self.pending_func_calls
-                        .entry(func_defn_node)
-                        .or_default()
-                        .push(current_node);
+                    let queue = self.pending_func_calls.entry(func_defn_node).or_default();
+                    // A parked Call re-queued by a retry wave would
+                    // otherwise park twice.
+                    if !queue.contains(&current_node) {
+                        queue.push_back(current_node);
+                    }
                     continue;
                 }
 
@@ -1300,6 +1336,17 @@ impl HugrEngine {
             }
             // Fall through to quantum op handling
 
+            // A container optype the engine cannot drive must fail loud:
+            // silently dropping it starves its consumers with a stall report
+            // naming everything except the cause.
+            if matches!(hugr.get_optype(current_node), OpType::DFG(_)) {
+                self.execution_error = Some(format!(
+                    "unsupported container op DFG at {current_node:?}: the engine \
+                     executes CFG/Conditional/TailLoop/Call containers only"
+                ));
+                continue;
+            }
+
             // --- Quantum Operations (gates, measurements) ---
             let Some(op) = self.quantum_ops.get(&current_node).cloned() else {
                 continue;
@@ -1410,7 +1457,7 @@ impl HugrEngine {
         if !self.pending_conditionals.is_empty() {
             stalled.push(format!(
                 "unresolved Conditionals: {:?}",
-                self.pending_conditionals.keys().collect::<Vec<_>>()
+                self.pending_conditionals
             ));
         }
         if !self.pending_cfg_branches.is_empty() {
@@ -1475,8 +1522,9 @@ impl HugrEngine {
         for (&container, kind) in &self.executed_containers {
             for child in hugr.children(container) {
                 let op = hugr.get_optype(child);
-                let exempt = matches!(op, OpType::Input(_) | OpType::Output(_) | OpType::Const(_))
-                    || (matches!(op, OpType::Tag(_)) && !self.classical_ops.contains_key(&child));
+                // Every Tag classifies as an executable TagSum (linear
+                // payloads become QubitRef values), so Tags are NOT exempt.
+                let exempt = matches!(op, OpType::Input(_) | OpType::Output(_) | OpType::Const(_));
                 if !exempt && !self.processed.contains(&child) {
                     misses.push(format!("{child:?} ({op}) in {kind} {container:?}"));
                 }
@@ -1793,7 +1841,7 @@ impl Default for HugrEngine {
             extension_state: ExtensionState::default(),
             // Control flow fields (Conditional)
             conditionals: BTreeMap::new(),
-            pending_conditionals: BTreeMap::new(),
+            pending_conditionals: BTreeSet::new(),
             pending_bool_reads: BTreeSet::new(),
             nodes_inside_cases: BTreeSet::new(),
             active_cases: BTreeMap::new(),

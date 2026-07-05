@@ -659,7 +659,14 @@ impl HugrEngine {
 
             // Try to resolve control immediately
             if let Some(tag) = self.try_resolve_tailloop_control(hugr, tailloop_node) {
-                if tag == 0 {
+                if tag > 1 {
+                    // The control Sum has exactly two variants (0=continue,
+                    // 1=break); anything else is an upstream propagation
+                    // bug that must not complete cleanly as a break.
+                    self.execution_error = Some(format!(
+                        "TailLoop {tailloop_node:?}: control tag {tag} out of range"
+                    ));
+                } else if tag == 0 {
                     // CONTINUE
                     self.continue_tailloop_iteration(hugr, tailloop_node);
                 } else {

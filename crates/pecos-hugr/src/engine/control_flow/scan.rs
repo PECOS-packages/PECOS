@@ -332,7 +332,7 @@ impl HugrEngine {
         // The frame is free now: wake any Call that parked waiting for it
         // (mirrors complete_func_call_if_needed).
         if let Some(pending) = self.pending_func_calls.get_mut(&state.func_defn_node)
-            && let Some(next_call) = pending.pop()
+            && let Some(next_call) = pending.pop_front()
         {
             debug!(
                 "FuncDefn {:?} free after scan: starting pending Call {next_call:?}",

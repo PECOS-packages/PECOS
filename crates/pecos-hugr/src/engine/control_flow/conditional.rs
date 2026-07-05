@@ -120,7 +120,7 @@ impl HugrEngine {
         // path in the meantime -- expanding it again would re-run its case.
         let mut to_resolve = Vec::new();
         let mut already_expanded = Vec::new();
-        for &cond_node in self.pending_conditionals.keys() {
+        for &cond_node in &self.pending_conditionals {
             if self.processed.contains(&cond_node) {
                 already_expanded.push(cond_node);
             } else if let Some(branch_index) =
@@ -420,12 +420,15 @@ impl HugrEngine {
         };
 
         if branch_index >= cond_info.cases.len() {
-            debug!(
-                "Branch index {} out of range for Conditional {:?} with {} cases",
-                branch_index,
-                cond_node,
+            // An out-of-range tag means an upstream Sum-propagation bug;
+            // swallowing it here left the Conditional neither processed nor
+            // pending -- an eventual stall naming innocent starved
+            // consumers. Poison instead, like the CFG branch sites.
+            self.execution_error = Some(format!(
+                "Conditional {cond_node:?}: branch tag {branch_index} out of range \
+                 ({} cases)",
                 cond_info.cases.len()
-            );
+            ));
             return Vec::new();
         }
 

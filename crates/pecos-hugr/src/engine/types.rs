@@ -318,9 +318,11 @@ pub enum ClassicalValue {
     Future(FutureId),
     /// Rotation angle (in half-turns, i.e., multiples of pi)
     Rotation(f64),
-    /// A first-class function value: the `FuncDefn` it references
-    /// (produced by `LoadFunction`, consumed by higher-order ops like scan).
-    FuncRef(Node),
+    /// A first-class function value: the `FuncDefn` it references and the
+    /// type args instantiating it (produced by `LoadFunction`, consumed by
+    /// higher-order ops like scan -- generic scanned functions resolve
+    /// type-level naturals through these, symmetric with Call frames).
+    FuncRef(Node, Vec<tket::hugr::types::TypeArg>),
     /// RNG context handle
     RngContext(RngContextId),
     /// Qubit reference (for storing qubits in arrays)
@@ -347,7 +349,7 @@ impl ClassicalValue {
             | Self::Rotation(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
-            | Self::FuncRef(_)
+            | Self::FuncRef(..)
             | Self::Borrowed => None,
         }
     }
@@ -371,7 +373,7 @@ impl ClassicalValue {
             | Self::Rotation(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
-            | Self::FuncRef(_)
+            | Self::FuncRef(..)
             | Self::Borrowed => None,
         }
     }
@@ -394,7 +396,7 @@ impl ClassicalValue {
             | Self::Rotation(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
-            | Self::FuncRef(_)
+            | Self::FuncRef(..)
             | Self::Borrowed => None,
         }
     }
@@ -417,7 +419,7 @@ impl ClassicalValue {
             | Self::Rotation(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
-            | Self::FuncRef(_)
+            | Self::FuncRef(..)
             | Self::Borrowed => None,
         }
     }
@@ -440,7 +442,7 @@ impl ClassicalValue {
             | Self::Future(_)
             | Self::RngContext(_)
             | Self::QubitRef(_)
-            | Self::FuncRef(_)
+            | Self::FuncRef(..)
             | Self::Borrowed => None,
         }
     }
@@ -804,6 +806,9 @@ pub struct ActiveScanInfo {
     pub results: Vec<ClassicalValue>,
     /// Current accumulator values (scan signature `*A`).
     pub accs: Vec<ClassicalValue>,
+    /// Type args instantiating the scanned function (from its
+    /// `LoadFunction`), for resolving type-level variables in the body.
+    pub type_args: Vec<tket::hugr::types::TypeArg>,
     /// For a scanned function with a plain DATAFLOW body (no CFG): the
     /// body ops whose completion finishes one element. Empty for
     /// CFG-bodied functions (their frame completes through

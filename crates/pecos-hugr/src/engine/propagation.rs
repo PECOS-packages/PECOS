@@ -393,6 +393,25 @@ impl HugrEngine {
             return Some(ClassicalValue::Int(int_value));
         }
 
+        if let Some(const_usize) =
+            value.get_custom_value::<tket::hugr::extension::prelude::ConstUsize>()
+        {
+            let usize_value = const_usize.value();
+            debug!("const_value_to_classical: found ConstUsize with value {usize_value}");
+            return Some(ClassicalValue::UInt(usize_value));
+        }
+
+        if value
+            .get_custom_value::<tket::hugr::extension::prelude::ConstError>()
+            .is_some()
+        {
+            // Error constants feed prelude.panic (which faults before
+            // reading its input) -- an opaque token keeps the LoadConstant
+            // from deferring forever and stalling instead of panicking.
+            debug!("const_value_to_classical: found ConstError");
+            return Some(ClassicalValue::Tuple(vec![]));
+        }
+
         if let Some(const_f64) = value.get_custom_value::<ConstF64>() {
             let float_value = const_f64.value();
             debug!("const_value_to_classical: found ConstF64 with value {float_value}");

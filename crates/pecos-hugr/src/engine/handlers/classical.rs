@@ -149,13 +149,23 @@ impl HugrEngine {
                 }
             }
             ClassicalOpType::LoadFunc => {
-                // Resolve the static FuncDefn target into a function value.
+                // Resolve the static FuncDefn target into a function value,
+                // carrying the instantiation's type args (generic functions
+                // executed through scan resolve type-level naturals from
+                // them, symmetric with Call frames).
                 let Some(func_defn) = hugr.static_source(node) else {
                     return ClassicalOutcome::Fault(format!(
                         "LoadFunction at {node:?} has no static source"
                     ));
                 };
-                return ClassicalOutcome::Outputs(vec![(0, ClassicalValue::FuncRef(func_defn))]);
+                let type_args = match hugr.get_optype(node) {
+                    OpType::LoadFunction(lf) => lf.type_args.clone(),
+                    _ => Vec::new(),
+                };
+                return ClassicalOutcome::Outputs(vec![(
+                    0,
+                    ClassicalValue::FuncRef(func_defn, type_args),
+                )]);
             }
             ClassicalOpType::TagSum => {
                 // Tag wraps its inputs into the given variant of a sum.
@@ -509,27 +519,31 @@ impl HugrEngine {
                 }
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 ClassicalOpType::ConvertFloatToIntChecked => {
-                    // trunc_s/trunc_u: sum_with_error(int) -- error (tag 0)
-                    // for NaN/infinite/out-of-range, value (tag 1) otherwise.
+                    // trunc_s/trunc_u: sum_with_error(int<N>) -- error (tag
+                    // 0) for NaN/infinite/out-of-range AT THE OP'S WIDTH,
+                    // value (tag 1) otherwise. The spec folds through
+                    // ConstInt::new_s/new_u(log_width, ..), which rejects
+                    // values that do not fit the declared width.
                     let f = float(0)?;
                     let t = f.trunc();
-                    // Strict upper bounds: i64::MAX as f64 rounds UP to
-                    // 2^63 (and u64::MAX to 2^64), so `<= MAX as f64` would
-                    // accept one out-of-range value and saturate instead of
-                    // taking the error branch. i64::MIN (-2^63) is exactly
-                    // representable, so >= is correct there.
-                    let in_range = if signed {
-                        t.is_finite()
-                            && (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0)
-                                .contains(&t)
+                    // Strict upper bounds: the width's MAX as f64 can round
+                    // UP to 2^bits (e.g. i64::MAX -> 2^63), so `<= MAX`
+                    // would accept one out-of-range value and saturate
+                    // instead of taking the error branch. The signed MIN
+                    // (-2^(bits-1)) is exactly representable, so >= holds.
+                    let bits_width = 1u32 << log_width.min(6);
+                    let (lo, hi) = if signed {
+                        let half = 2f64.powi(bits_width as i32 - 1);
+                        (-half, half)
                     } else {
-                        t.is_finite() && (0.0..18_446_744_073_709_551_616.0).contains(&t)
+                        (0.0, 2f64.powi(bits_width as i32))
                     };
+                    let in_range = t.is_finite() && (lo..hi).contains(&t);
                     if in_range {
                         let bits = if signed { t as i64 } else { (t as u64) as i64 };
                         ClassicalValue::Sum {
                             tag: 1,
-                            values: vec![ClassicalValue::Int(bits)],
+                            values: vec![ClassicalValue::Int(canonicalize_width(bits, log_width))],
                         }
                     } else {
                         ClassicalValue::Sum {

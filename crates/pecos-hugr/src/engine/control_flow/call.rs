@@ -69,17 +69,28 @@ impl HugrEngine {
                 }
                 cur = hugr.get_parent(n);
             };
-            // Find the active call executing this FuncDefn and read its arg.
-            let info = self
+            // Find the active call OR scan executing this FuncDefn and
+            // read its arg (a scanned function's frame carries the
+            // LoadFunction's instantiation args).
+            let (owner_node, arg) = if let Some(info) = self
                 .active_calls
                 .values()
-                .find(|info| info.func_defn_node == func_defn)?;
-            match info.type_args.get(var_idx)? {
-                TypeArg::BoundedNat(n) => return Some(*n),
+                .find(|info| info.func_defn_node == func_defn)
+            {
+                (info.call_node, info.type_args.get(var_idx)?.clone())
+            } else {
+                let scan = self
+                    .active_scans
+                    .values()
+                    .find(|scan| scan.func_defn_node == func_defn)?;
+                (scan.scan_node, scan.type_args.get(var_idx)?.clone())
+            };
+            match arg {
+                TypeArg::BoundedNat(n) => return Some(n),
                 TypeArg::Variable(var) => {
                     // Forwarded generic: continue resolution in the CALLER's
                     // frame, at the caller's variable index.
-                    node = info.call_node;
+                    node = owner_node;
                     var_idx = var.index();
                 }
                 _ => return None,

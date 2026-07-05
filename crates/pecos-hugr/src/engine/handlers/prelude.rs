@@ -83,6 +83,17 @@ impl HugrEngine {
                 HandlerOutcome::Defer
             }
 
+            "exit" => {
+                // prelude.exit "immediately halts a single shot's
+                // execution" -- a NORMAL termination the engine's
+                // drain-to-completion model cannot express mid-shot yet.
+                // Fault with a clear message instead of stalling with a
+                // starved-node report.
+                HandlerOutcome::Fault(format!(
+                    "prelude.exit executed at {node:?}: mid-shot halt is not \
+                     supported by the engine yet"
+                ))
+            }
             "panic" => {
                 // An EXECUTED panic is a real runtime error on the taken
                 // path (guppy routes bounds/borrow/arithmetic failures

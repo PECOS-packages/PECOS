@@ -47,7 +47,8 @@ impl HugrEngine {
             debug!("scan at {node:?}: array not ready, deferring");
             return HandlerOutcome::Defer;
         };
-        let Some(ClassicalValue::FuncRef(func_defn_node)) = self.get_input_value(hugr, node, 1)
+        let Some(ClassicalValue::FuncRef(func_defn_node, func_type_args)) =
+            self.get_input_value(hugr, node, 1)
         else {
             debug!("scan at {node:?}: function value not ready, deferring");
             return HandlerOutcome::Defer;
@@ -89,6 +90,7 @@ impl HugrEngine {
             remaining: elements.into(),
             results: Vec::new(),
             accs,
+            type_args: func_type_args,
             frame_ops: std::collections::BTreeSet::new(),
         };
         if state.remaining.is_empty() {

@@ -109,21 +109,10 @@ impl HugrEngine {
                 a.zip(b).zip(c).map(|((x, y), z)| x.mul_add(y, z))
             }
 
-            // Float comparisons - exact comparison is intentional per HUGR semantics
-            #[allow(clippy::float_cmp)]
-            "feq" => a.zip(b).map(|(x, y)| if x == y { 1.0 } else { 0.0 }),
-            #[allow(clippy::float_cmp)]
-            "fne" => a.zip(b).map(|(x, y)| if x == y { 0.0 } else { 1.0 }),
-            "flt" => a.zip(b).map(|(x, y)| if x < y { 1.0 } else { 0.0 }),
-            "fle" => a.zip(b).map(|(x, y)| if x <= y { 1.0 } else { 0.0 }),
-            "fgt" => a.zip(b).map(|(x, y)| if x > y { 1.0 } else { 0.0 }),
-            "fge" => a.zip(b).map(|(x, y)| if x >= y { 1.0 } else { 0.0 }),
-
-            // Check for special values
-            "fis_nan" | "is_nan" => a.map(|x| if x.is_nan() { 1.0 } else { 0.0 }),
-            "fis_inf" | "is_inf" => a.map(|x| if x.is_infinite() { 1.0 } else { 0.0 }),
-            "fis_finite" | "is_finite" => a.map(|x| if x.is_finite() { 1.0 } else { 0.0 }),
-
+            // Float comparisons (feq/fne/flt/fle/fgt/fge) are CLASSIFIED
+            // ops handled by the classical path with proper Bool outputs;
+            // duplicate arms here used to return Float(1.0/0.0) -- deleted
+            // so classification drift cannot resurrect the wrong type.
             _ => {
                 debug!("Unknown arithmetic.float operation: {op_name}");
                 return HandlerOutcome::Defer;
@@ -219,27 +208,6 @@ impl HugrEngine {
                 canon(rotated.cast_signed())
             }),
 
-            // Bit counting, within the op's N bits
-            "ipopcnt" | "popcnt" | "popcount" => {
-                a.map(|x| i64::from(((x as u64) & mask).count_ones()))
-            }
-            "iclz" | "clz" => a.map(|x| {
-                let masked = (x as u64) & mask;
-                i64::from(if masked == 0 {
-                    bits as u32
-                } else {
-                    masked.leading_zeros() - (64 - bits as u32)
-                })
-            }),
-            "ictz" | "ctz" => a.map(|x| {
-                let masked = (x as u64) & mask;
-                i64::from(if masked == 0 {
-                    bits as u32
-                } else {
-                    masked.trailing_zeros()
-                })
-            }),
-
             // Min/max
             "imin_s" | "imin" => a.zip(b).map(|(x, y)| x.min(y)),
             "imax_s" | "imax" => a.zip(b).map(|(x, y)| x.max(y)),
@@ -273,14 +241,39 @@ impl HugrEngine {
                 return self.handle_inarrow(hugr, node, op_name);
             }
 
-            // Signedness reinterpretation - value-preserving for the
-            // in-range values guppy emits (usize indices/counters). The spec
-            // panics out of range; the engine passes the bit pattern through
-            // (documented divergence, tracked as a follow-up).
-            #[allow(clippy::match_same_arms)]
-            "iu_to_s" => a,
-            #[allow(clippy::match_same_arms)]
-            "is_to_u" => a,
+            // Signedness reinterpretation. The spec PANICS out of range
+            // (iu_to_s of an unsigned value >= 2^(N-1); is_to_u of a
+            // negative) -- silently passing the bit pattern through would
+            // hand consumers a sign-flipped value.
+            "iu_to_s" => match read_unsigned(self, 0) {
+                None => None,
+                Some(value) => {
+                    let out_of_range = if log_width < 6 {
+                        value >= (1u64 << ((1u32 << log_width) - 1))
+                    } else {
+                        value > i64::MAX as u64
+                    };
+                    if out_of_range {
+                        return HandlerOutcome::Fault(format!(
+                            "iu_to_s at {node:?}: unsigned value {value} does not fit \
+                             the signed range at width 2^{log_width} (the spec panics)"
+                        ));
+                    }
+                    Some(canon(value.cast_signed()))
+                }
+            },
+            "is_to_u" => match a {
+                None => None,
+                Some(value) => {
+                    if canon(value) < 0 {
+                        return HandlerOutcome::Fault(format!(
+                            "is_to_u at {node:?}: negative value {value} has no \
+                             unsigned interpretation (the spec panics)"
+                        ));
+                    }
+                    Some(canon(value))
+                }
+            },
 
             _ => {
                 debug!("Unknown arithmetic.int operation: {op_name}");
@@ -399,35 +392,10 @@ impl HugrEngine {
         debug!("Processing arithmetic.conversions operation: {op_name} at {node:?}");
 
         match op_name {
-            // Integer to float conversions
-            "convert_s" | "itof_s" => {
-                // Signed integer to float
-                let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int())
-                else {
-                    debug!("convert_s at {node:?}: input not ready, deferring");
-                    return HandlerOutcome::Defer;
-                };
-                let result = value as f64;
-                self.wire_state
-                    .classical_values
-                    .insert((node, 0), ClassicalValue::Float(result));
-                debug!("convert_s: {value} -> {result}");
-            }
-            "convert_u" | "itof_u" => {
-                // Unsigned integer to float
-                let Some(value) = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint())
-                else {
-                    debug!("convert_u at {node:?}: input not ready, deferring");
-                    return HandlerOutcome::Defer;
-                };
-                let result = value as f64;
-                self.wire_state
-                    .classical_values
-                    .insert((node, 0), ClassicalValue::Float(result));
-                debug!("convert_u: {value} -> {result}");
-            }
+            // convert_s / convert_u are CLASSIFIED ops handled by the
+            // width-aware classical path; the duplicate arms here read
+            // via as_uint (which rejects canonical negative storage) and
+            // were deleted so classification drift cannot resurrect them.
 
             // usize <-> int conversions (e.g. guppy loop bounds built from
             // prelude.load_nat's usize output)

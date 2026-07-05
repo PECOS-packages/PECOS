@@ -442,6 +442,7 @@ impl HugrEngine {
                         &self.quantum_ops,
                         &self.conditionals,
                         &self.cfgs,
+                        &self.active_cases,
                         &self.processed,
                     )
                 {
@@ -460,6 +461,7 @@ impl HugrEngine {
                         &self.quantum_ops,
                         &self.conditionals,
                         &self.cfgs,
+                        &self.active_cases,
                         &self.processed,
                     )
                 {
@@ -478,6 +480,7 @@ impl HugrEngine {
                         &self.quantum_ops,
                         &self.conditionals,
                         &self.cfgs,
+                        &self.active_cases,
                         &self.processed,
                     )
                 {
@@ -496,6 +499,7 @@ impl HugrEngine {
                         &self.quantum_ops,
                         &self.conditionals,
                         &self.cfgs,
+                        &self.active_cases,
                         &self.processed,
                     )
                 {
@@ -514,6 +518,7 @@ impl HugrEngine {
                         &self.quantum_ops,
                         &self.conditionals,
                         &self.cfgs,
+                        &self.active_cases,
                         &self.processed,
                     )
                 {
@@ -544,6 +549,7 @@ impl HugrEngine {
                         &self.quantum_ops,
                         &self.conditionals,
                         &self.cfgs,
+                        &self.active_cases,
                         &self.processed,
                     )
                 {
@@ -837,6 +843,7 @@ impl HugrEngine {
                         && num_tailloops == 0
                         && num_classical == 0
                         && num_extension == 0
+                        && block_info.load_constants.is_empty()
                     {
                         debug!(
                             "[TRACE] Entry block {:?} has 0 ops and 0 calls, successors: {:?}",
@@ -948,6 +955,7 @@ impl HugrEngine {
                         &self.quantum_ops,
                         &self.conditionals,
                         &self.cfgs,
+                        &self.active_cases,
                         &self.processed,
                     ) {
                         debug!("TailLoop {current_node:?}: inputs not ready, deferring expansion");
@@ -1800,6 +1808,7 @@ impl HugrEngine {
                     &self.quantum_ops,
                     &self.conditionals,
                     &self.cfgs,
+                    &self.active_cases,
                     &self.processed,
                 )
             {
@@ -1815,6 +1824,7 @@ impl HugrEngine {
                         &self.quantum_ops,
                         &self.conditionals,
                         &self.cfgs,
+                        &self.active_cases,
                         &self.processed
                     )
                 );

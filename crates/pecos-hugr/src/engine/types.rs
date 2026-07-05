@@ -721,6 +721,10 @@ pub struct DataflowBlockInfo {
     pub extension_ops: BTreeSet<Node>,
     /// All `TailLoop` nodes inside this block.
     pub tailloop_nodes: BTreeSet<Node>,
+    /// `LoadConstant` nodes inside this block: they execute like every
+    /// other op, so block emptiness and completion must count them (a
+    /// constants-only block used to transition before they ran).
+    pub load_constants: BTreeSet<Node>,
     /// Input node inside this block (kept for future wire tracing).
     #[allow(dead_code)]
     pub input_node: Option<Node>,

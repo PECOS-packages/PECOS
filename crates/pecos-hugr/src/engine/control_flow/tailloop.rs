@@ -341,6 +341,21 @@ impl HugrEngine {
 
         let just_inputs_count = tailloop_info.just_inputs_count;
 
+        // Clear EVERY Input port before writing fresh values: the
+        // activation batch exempts the Input node from wire clearing
+        // (keep_wires) so the fresh values survive, which means any port
+        // this propagation cannot source would otherwise silently keep the
+        // PREVIOUS iteration's value. Missing sources must starve loudly
+        // instead (same discipline as case-input propagation).
+        for port_idx in 0..(just_inputs_count + tailloop_info.rest_count) {
+            self.wire_state
+                .classical_values
+                .remove(&(input_node, port_idx));
+            self.wire_state
+                .wire_to_qubit
+                .remove(&(input_node, port_idx));
+        }
+
         // Propagate the "rest" values from Output ports 1.. to Input ports (after just_inputs)
         for rest_idx in 0..tailloop_info.rest_count {
             let output_port_idx = rest_idx + 1; // Skip Sum port

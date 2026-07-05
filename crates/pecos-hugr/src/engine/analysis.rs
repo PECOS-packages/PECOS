@@ -39,8 +39,8 @@ use tket::hugr::ops::{OpTrait, OpType};
 use tket::hugr::{Hugr, HugrView, Node};
 
 use super::types::{
-    CfgInfo, ClassicalOp, ClassicalOpType, ConditionalInfo, ContainerType, DataflowBlockInfo,
-    FuncDefnInfo, QuantumOp, TailLoopInfo,
+    ActiveCaseInfo, CfgInfo, ClassicalOp, ClassicalOpType, ConditionalInfo, ContainerType,
+    DataflowBlockInfo, FuncDefnInfo, QuantumOp, TailLoopInfo,
 };
 
 // --- Conditional extraction ---
@@ -216,6 +216,13 @@ pub fn extract_dataflow_block_info(
     // Find TailLoop nodes inside this block
     let tailloop_nodes = find_tailloop_nodes_in_block(hugr, node);
 
+    // LoadConstant children execute like every other op: block emptiness
+    // and completion must count them.
+    let load_constants: BTreeSet<Node> = hugr
+        .children(node)
+        .filter(|&child| matches!(hugr.get_optype(child), OpType::LoadConstant(_)))
+        .collect();
+
     debug!(
         "DataflowBlock {:?}: {} inputs, {} successors, {} quantum ops, {} calls, {} conditionals, {} bool_ops, {} classical_ops, {} extension_ops, {} tailloops",
         node,
@@ -242,6 +249,7 @@ pub fn extract_dataflow_block_info(
         classical_ops,
         extension_ops,
         tailloop_nodes,
+        load_constants,
         input_node,
         output_node,
     }
@@ -1053,6 +1061,7 @@ pub fn all_predecessors_ready(
     quantum_ops: &BTreeMap<Node, QuantumOp>,
     conditionals: &BTreeMap<Node, ConditionalInfo>,
     cfgs: &BTreeMap<Node, CfgInfo>,
+    active_cases: &BTreeMap<Node, ActiveCaseInfo>,
     processed: &BTreeSet<Node>,
 ) -> bool {
     for pred_node in hugr.input_neighbours(node) {
@@ -1060,8 +1069,18 @@ pub fn all_predecessors_ready(
         if quantum_ops.contains_key(&pred_node) && !processed.contains(&pred_node) {
             return false;
         }
-        // Check conditionals (they also produce qubit outputs)
-        if conditionals.contains_key(&pred_node) && !processed.contains(&pred_node) {
+        // Check conditionals (they also produce qubit outputs). A
+        // Conditional is marked processed at EXPANSION, but its outputs
+        // exist only once its selected case completes -- treating it as
+        // ready while a case is active lets one-shot input copiers (Calls,
+        // TailLoop expansion, CFG activation) fire early, copy missing
+        // values, and starve with no repair path.
+        if conditionals.contains_key(&pred_node)
+            && (!processed.contains(&pred_node)
+                || active_cases
+                    .values()
+                    .any(|case| case.conditional_node == pred_node))
+        {
             return false;
         }
         // Check CFG nodes (they also produce qubit outputs)

@@ -209,6 +209,7 @@ impl HugrEngine {
             // the only other retry point, and a purely classical case
             // completion may never be followed by one).
             self.try_resolve_pending_tailloops();
+            self.try_resolve_pending_cfg_branches();
             self.queue_ready_successors(hugr, cond_node);
             self.retry_pending_bool_reads();
         }
@@ -329,11 +330,26 @@ impl HugrEngine {
     /// copy would leave those Case Input ports empty forever.
     pub(crate) fn propagate_case_inputs(&mut self, hugr: &Hugr, cond_node: Node, input_node: Node) {
         // The Case's Input row is [selected variant's PAYLOAD] ++
-        // [other inputs]. Unpack the control Sum's payload values into
-        // the first Case Input ports (e.g. an iterator's
-        // Continue(item, state) payload); empty-payload variants (plain
-        // bools) contribute nothing and leave the offset at 0.
-        let mut payload_len = 0;
+        // [other inputs]. The payload ARITY comes from the Conditional's
+        // TYPE (sum_rows of the selected variant), never from the control
+        // value: when the branch resolves through the structural Tag
+        // fallback the value is a bare tag with no payload, and deriving
+        // the offset from it would land the data inputs on the payload's
+        // ports.
+        let payload_len = hugr
+            .get_parent(input_node)
+            .and_then(|case_node| {
+                let branch = hugr.children(cond_node).position(|c| c == case_node)?;
+                if let OpType::Conditional(cond_op) = hugr.get_optype(cond_node) {
+                    cond_op
+                        .sum_rows
+                        .get(branch)
+                        .map(tket::hugr::types::TypeRow::len)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
         if let Some((ctrl_src, ctrl_port)) =
             hugr.single_linked_output(cond_node, IncomingPort::from(0))
             && let Some(ClassicalValue::Sum { values, .. }) = self
@@ -342,8 +358,14 @@ impl HugrEngine {
                 .get(&(ctrl_src, ctrl_port.index()))
                 .cloned()
         {
-            payload_len = values.len();
-            for (i, value) in values.into_iter().enumerate() {
+            if values.len() != payload_len {
+                debug!(
+                    "Conditional {cond_node:?}: control payload arity {} != type arity \
+                     {payload_len}; propagating what exists at type offsets",
+                    values.len()
+                );
+            }
+            for (i, value) in values.into_iter().enumerate().take(payload_len) {
                 debug!("Propagated control payload {value:?} to Case Input ({input_node:?}, {i})");
                 if let ClassicalValue::QubitRef(qubit_id) = &value {
                     self.wire_state
@@ -599,6 +621,7 @@ impl HugrEngine {
             self.check_cfg_block_completion(hugr, cond_node);
             self.check_tailloop_body_completion(hugr, cond_node);
             self.try_resolve_pending_tailloops();
+            self.try_resolve_pending_cfg_branches();
             self.queue_ready_successors(hugr, cond_node);
             self.retry_pending_bool_reads();
         }

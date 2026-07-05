@@ -106,21 +106,33 @@ impl HugrEngine {
             .pop_front()
             .expect("non-empty checked above");
         self.active_scans.insert(node, state);
-        self.launch_scan_iteration(hugr, node, element);
+        if self.launch_scan_iteration(hugr, node, element) {
+            // Pure-passthrough frame: fold the remaining elements now.
+            self.advance_scan(hugr, node);
+        }
         // Like a Call, the scan node stays unprocessed while its frame
-        // runs; completion marks it. Defer parks it harmlessly.
+        // runs; completion marks it (advance_scan may already have, in
+        // which case the processed check absorbs this Defer harmlessly).
         HandlerOutcome::Defer
     }
 
-    /// Run one element through the scanned function's frame.
-    fn launch_scan_iteration(&mut self, hugr: &Hugr, scan_node: Node, element: ClassicalValue) {
+    /// Run one element through the scanned function's frame. Returns true
+    /// when the frame completed INSTANTLY (an empty dataflow passthrough
+    /// body): the caller must then advance in ITS loop -- calling back into
+    /// completion here would recurse once per element.
+    fn launch_scan_iteration(
+        &mut self,
+        hugr: &Hugr,
+        scan_node: Node,
+        element: ClassicalValue,
+    ) -> bool {
         let Some(state) = self.active_scans.get(&scan_node) else {
-            return;
+            return false;
         };
         let func_defn_node = state.func_defn_node;
         let accs = state.accs.clone();
         let Some(func_info) = self.func_defns.get(&func_defn_node).cloned() else {
-            return;
+            return false;
         };
 
         // Reset the frame exactly like a Call re-activation: descendants'
@@ -188,10 +200,14 @@ impl HugrEngine {
             if !self.work_queue.contains(&cfg_node) {
                 self.work_queue.push_front(cfg_node);
             }
+            false
         } else {
             debug!("scan {scan_node:?}: launched dataflow frame");
-            // An EMPTY dataflow body (pure passthrough) completes at once.
-            self.check_scan_frame_completion(hugr, scan_node);
+            // An EMPTY dataflow body (pure passthrough) completes at once;
+            // the caller advances iteratively.
+            self.active_scans
+                .get(&scan_node)
+                .is_some_and(|state| state.frame_ops.is_empty())
         }
     }
 
@@ -253,94 +269,104 @@ impl HugrEngine {
     }
 
     /// One element's frame finished: collect its outputs, then fold the
-    /// next element or complete the scan.
+    /// next element or complete the scan. Iterative: a pure-passthrough
+    /// frame completes each launch instantly, and recursing per element
+    /// would grow the stack with the array length.
     fn advance_scan(&mut self, hugr: &Hugr, scan_node: Node) {
-        let Some(state) = self.active_scans.get(&scan_node) else {
-            return;
-        };
-        let Some(func_info) = self.func_defns.get(&state.func_defn_node).cloned() else {
-            return;
-        };
+        loop {
+            let Some(state) = self.active_scans.get(&scan_node) else {
+                return;
+            };
+            let Some(func_info) = self.func_defns.get(&state.func_defn_node).cloned() else {
+                return;
+            };
 
-        // Collect the frame's outputs: port 0 = mapped element, 1.. = accs.
-        let read_output = |engine: &Self, port: usize| -> Option<ClassicalValue> {
-            let (src, sp) =
-                hugr.single_linked_output(func_info.output_node, IncomingPort::from(port))?;
-            let wire = (src, sp.index());
-            if let Some(value) = engine.wire_state.classical_values.get(&wire) {
-                return Some(value.clone());
-            }
-            engine
-                .wire_state
-                .wire_to_qubit
-                .get(&wire)
-                .map(|q| ClassicalValue::QubitRef(*q))
-        };
-        let Some(mapped) = read_output(self, 0) else {
-            // The frame completed without producing the mapped value: a
-            // wiring bug this must not paper over.
-            self.execution_error = Some(format!(
-                "scan {scan_node:?}: frame completed without an output value"
-            ));
-            self.active_scans.remove(&scan_node);
-            return;
-        };
-        let num_accs = self.active_scans[&scan_node].accs.len();
-        let mut new_accs = Vec::with_capacity(num_accs);
-        for i in 0..num_accs {
-            if let Some(value) = read_output(self, 1 + i) {
-                new_accs.push(value);
-            } else {
+            // Collect the frame's outputs: port 0 = mapped element, 1.. = accs.
+            let read_output = |engine: &Self, port: usize| -> Option<ClassicalValue> {
+                let (src, sp) =
+                    hugr.single_linked_output(func_info.output_node, IncomingPort::from(port))?;
+                let wire = (src, sp.index());
+                if let Some(value) = engine.wire_state.classical_values.get(&wire) {
+                    return Some(value.clone());
+                }
+                engine
+                    .wire_state
+                    .wire_to_qubit
+                    .get(&wire)
+                    .map(|q| ClassicalValue::QubitRef(*q))
+            };
+            let Some(mapped) = read_output(self, 0) else {
+                // The frame completed without producing the mapped value: a
+                // wiring bug this must not paper over.
                 self.execution_error = Some(format!(
-                    "scan {scan_node:?}: frame completed without accumulator {i}"
+                    "scan {scan_node:?}: frame completed without an output value"
                 ));
                 self.active_scans.remove(&scan_node);
                 return;
+            };
+            let num_accs = self.active_scans[&scan_node].accs.len();
+            let mut new_accs = Vec::with_capacity(num_accs);
+            for i in 0..num_accs {
+                if let Some(value) = read_output(self, 1 + i) {
+                    new_accs.push(value);
+                } else {
+                    self.execution_error = Some(format!(
+                        "scan {scan_node:?}: frame completed without accumulator {i}"
+                    ));
+                    self.active_scans.remove(&scan_node);
+                    return;
+                }
             }
-        }
 
-        let state = self
-            .active_scans
-            .get_mut(&scan_node)
-            .expect("checked above");
-        state.results.push(mapped);
-        state.accs = new_accs;
+            let state = self
+                .active_scans
+                .get_mut(&scan_node)
+                .expect("checked above");
+            state.results.push(mapped);
+            state.accs = new_accs;
 
-        if let Some(element) = state.remaining.pop_front() {
-            self.launch_scan_iteration(hugr, scan_node, element);
-            return;
-        }
+            if let Some(element) = state.remaining.pop_front() {
+                if self.launch_scan_iteration(hugr, scan_node, element) {
+                    // Instant (passthrough) completion: fold the next element
+                    // in this same loop.
+                    continue;
+                }
+                return;
+            }
 
-        // All elements folded: store outputs and complete the scan node.
-        let state = self.active_scans.remove(&scan_node).expect("present above");
-        self.store_scan_outputs(&state);
-        self.processed.insert(scan_node);
-        self.pending_bool_reads.remove(&scan_node);
-        debug!(
-            "scan {scan_node:?}: complete with {} results",
-            state.results.len()
-        );
-
-        // Same completion cascade as a Call.
-        self.check_case_completion(hugr, scan_node);
-        self.check_cfg_block_completion(hugr, scan_node);
-        self.check_tailloop_body_completion(hugr, scan_node);
-        self.try_resolve_pending_tailloops();
-        self.queue_ready_successors(hugr, scan_node);
-        self.retry_pending_bool_reads();
-
-        // The frame is free now: wake any Call that parked waiting for it
-        // (mirrors complete_func_call_if_needed).
-        if let Some(pending) = self.pending_func_calls.get_mut(&state.func_defn_node)
-            && let Some(next_call) = pending.pop_front()
-        {
+            // All elements folded: store outputs and complete the scan node.
+            let state = self.active_scans.remove(&scan_node).expect("present above");
+            self.store_scan_outputs(&state);
+            self.processed.insert(scan_node);
+            self.pending_bool_reads.remove(&scan_node);
             debug!(
-                "FuncDefn {:?} free after scan: starting pending Call {next_call:?}",
-                state.func_defn_node
+                "scan {scan_node:?}: complete with {} results",
+                state.results.len()
             );
-            if !self.work_queue.contains(&next_call) {
-                self.work_queue.push_front(next_call);
+
+            // Same completion cascade as a Call.
+            self.check_case_completion(hugr, scan_node);
+            self.check_cfg_block_completion(hugr, scan_node);
+            self.check_tailloop_body_completion(hugr, scan_node);
+            self.try_resolve_pending_tailloops();
+            self.try_resolve_pending_cfg_branches();
+            self.queue_ready_successors(hugr, scan_node);
+            self.retry_pending_bool_reads();
+
+            // The frame is free now: wake any Call that parked waiting for it
+            // (mirrors complete_func_call_if_needed).
+            if let Some(pending) = self.pending_func_calls.get_mut(&state.func_defn_node)
+                && let Some(next_call) = pending.pop_front()
+            {
+                debug!(
+                    "FuncDefn {:?} free after scan: starting pending Call {next_call:?}",
+                    state.func_defn_node
+                );
+                if !self.work_queue.contains(&next_call) {
+                    self.work_queue.push_front(next_call);
+                }
             }
+            return;
         }
     }
 

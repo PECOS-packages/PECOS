@@ -274,7 +274,8 @@ impl HugrEngine {
                     || block_info.bool_ops.contains(&processed_node)
                     || block_info.extension_ops.contains(&processed_node)
                     || block_info.tailloop_nodes.contains(&processed_node)
-                    || block_info.classical_ops.contains(&processed_node);
+                    || block_info.classical_ops.contains(&processed_node)
+                    || block_info.load_constants.contains(&processed_node);
 
                 if is_in_block {
                     let all_done = |set: &std::collections::BTreeSet<Node>| {
@@ -297,7 +298,8 @@ impl HugrEngine {
                         && all_done(&block_info.bool_ops)
                         && all_done(&block_info.extension_ops)
                         && all_done(&block_info.tailloop_nodes)
-                        && all_done(&block_info.classical_ops);
+                        && all_done(&block_info.classical_ops)
+                        && all_done(&block_info.load_constants);
 
                     if block_complete {
                         block_completions.push((
@@ -380,223 +382,242 @@ impl HugrEngine {
             return;
         };
 
-        // If to_block is the ExitBlock, complete the CFG.
-        // ExitBlock has no operations - it's just a marker node. The from_block (a DataflowBlock)
-        // should have already executed any result operations before this transition.
-        if to_block == cfg_info.exit_block {
-            debug!("CFG {cfg_node:?}: transitioning to exit block {to_block:?}");
-            self.complete_cfg_execution(hugr, cfg_node, from_block);
-            return;
-        }
+        // ITERATIVE transition: a chain of empty blocks re-enters this
+        // logic once per hop. Recursing here overflowed the stack around
+        // ~10^5 hops -- an abort, not the clean MAX_CFG_TRANSITIONS error.
+        let mut from_block = from_block;
+        let mut to_block = to_block;
+        'transition: loop {
+            let _ = &from_block;
 
-        debug!("CFG {cfg_node:?}: transitioning from block {from_block:?} to {to_block:?}");
-
-        // Propagate wire mappings from completed block to successor block
-        self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
-
-        // Record this propagation for re-propagation after measurement results
-        // are available (measurement results may not be stored yet when we
-        // transition). Only the LATEST transition per CFG may stay recorded:
-        // replaying a superseded edge (e.g. the previous loop iteration's)
-        // re-reads source wires that have since been cleared or partially
-        // rewritten and clobbers the successor's fresh inputs with stale
-        // values (observed as a loop re-borrowing the same array slot).
-        self.pending_measurement_propagations
-            .retain(|(cfg, _, _)| *cfg != cfg_node);
-        self.pending_measurement_propagations
-            .push((cfg_node, from_block, to_block));
-
-        // Update active CFG state. Guppy loops lower to CFG cycles, so the
-        // transition count doubles as the loop-iteration ceiling: a
-        // never-breaking classical loop would otherwise spin the processing
-        // loop forever with no yield.
-        if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
-            active_cfg.completed_blocks.insert(from_block);
-            active_cfg.current_block = to_block;
-            active_cfg.transitions += 1;
-            if active_cfg.transitions > Self::MAX_CFG_TRANSITIONS {
-                self.execution_error = Some(format!(
-                    "CFG {cfg_node:?} exceeded {} block transitions without exiting",
-                    Self::MAX_CFG_TRANSITIONS
-                ));
+            // If to_block is the ExitBlock, complete the CFG.
+            // ExitBlock has no operations - it's just a marker node. The from_block (a DataflowBlock)
+            // should have already executed any result operations before this transition.
+            if to_block == cfg_info.exit_block {
+                debug!("CFG {cfg_node:?}: transitioning to exit block {to_block:?}");
+                self.complete_cfg_execution(hugr, cfg_node, from_block);
                 return;
             }
-        }
 
-        // Activate successor block's quantum ops and Call nodes
-        if let Some(block_info) = cfg_info.blocks.get(&to_block) {
-            self.executed_containers.insert(to_block, "DataflowBlock");
-            // Re-activate the block through the shared two-phase mechanism.
-            // Stale wires clear for every child except the Input node (it
-            // holds fresh values from propagation): without this, nodes
-            // like tket.bool.read retain values from the previous loop
-            // iteration and a Conditional queued before the bool op reads
-            // the stale value and selects the wrong branch. Processed flags
-            // clear for EVERY op category before ANY readiness check:
-            // interleaving clear-and-queue per category let a Call pass
-            // readiness against the PREVIOUS iteration's flags of a
-            // not-yet-cleared producer and re-execute the same iteration
-            // forever. Ops inside TailLoops leave the block gate but queue
-            // only when their loop expands.
-            let block_input_node = find_input_node(hugr, to_block);
-            let extension_ops: Vec<Node> = find_extension_ops_in_block(hugr, to_block);
-            let mut act = ContainerActivation::new();
-            for child in hugr.children(to_block) {
-                act.reset_wires(child);
+            debug!("CFG {cfg_node:?}: transitioning from block {from_block:?} to {to_block:?}");
+
+            // Propagate wire mappings from completed block to successor block
+            self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
+
+            // Record this propagation for re-propagation after measurement results
+            // are available (measurement results may not be stored yet when we
+            // transition). Only the LATEST transition per CFG may stay recorded:
+            // replaying a superseded edge (e.g. the previous loop iteration's)
+            // re-reads source wires that have since been cleared or partially
+            // rewritten and clobbers the successor's fresh inputs with stale
+            // values (observed as a loop re-borrowing the same array slot).
+            self.pending_measurement_propagations
+                .retain(|(cfg, _, _)| *cfg != cfg_node);
+            self.pending_measurement_propagations
+                .push((cfg_node, from_block, to_block));
+
+            // Update active CFG state. Guppy loops lower to CFG cycles, so the
+            // transition count doubles as the loop-iteration ceiling: a
+            // never-breaking classical loop would otherwise spin the processing
+            // loop forever with no yield.
+            if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
+                active_cfg.completed_blocks.insert(from_block);
+                active_cfg.current_block = to_block;
+                active_cfg.transitions += 1;
+                if active_cfg.transitions > Self::MAX_CFG_TRANSITIONS {
+                    self.execution_error = Some(format!(
+                        "CFG {cfg_node:?} exceeded {} block transitions without exiting",
+                        Self::MAX_CFG_TRANSITIONS
+                    ));
+                    return;
+                }
             }
-            if let Some(input) = block_input_node {
-                act.keep_wires(input);
-            }
-            for &op_node in block_info
-                .quantum_ops
-                .iter()
-                .chain(&block_info.call_nodes)
-                .chain(&block_info.conditional_nodes)
-                .chain(&block_info.bool_ops)
-                .chain(&block_info.tailloop_nodes)
-                .chain(&extension_ops)
-            {
-                act.reset_processed(op_node);
-            }
-            for child in hugr.children(to_block) {
-                if matches!(hugr.get_optype(child), OpType::LoadConstant(_))
-                    || self.classical_ops.contains_key(&child)
+
+            // Activate successor block's quantum ops and Call nodes
+            if let Some(block_info) = cfg_info.blocks.get(&to_block) {
+                self.executed_containers.insert(to_block, "DataflowBlock");
+                // Re-activate the block through the shared two-phase mechanism.
+                // Stale wires clear for every child except the Input node (it
+                // holds fresh values from propagation): without this, nodes
+                // like tket.bool.read retain values from the previous loop
+                // iteration and a Conditional queued before the bool op reads
+                // the stale value and selects the wrong branch. Processed flags
+                // clear for EVERY op category before ANY readiness check:
+                // interleaving clear-and-queue per category let a Call pass
+                // readiness against the PREVIOUS iteration's flags of a
+                // not-yet-cleared producer and re-execute the same iteration
+                // forever. Ops inside TailLoops leave the block gate but queue
+                // only when their loop expands.
+                let block_input_node = find_input_node(hugr, to_block);
+                let extension_ops: Vec<Node> = find_extension_ops_in_block(hugr, to_block);
+                let mut act = ContainerActivation::new();
+                for child in hugr.children(to_block) {
+                    act.reset_wires(child);
+                }
+                if let Some(input) = block_input_node {
+                    act.keep_wires(input);
+                }
+                for &op_node in block_info
+                    .quantum_ops
+                    .iter()
+                    .chain(&block_info.call_nodes)
+                    .chain(&block_info.conditional_nodes)
+                    .chain(&block_info.bool_ops)
+                    .chain(&block_info.tailloop_nodes)
+                    .chain(&extension_ops)
                 {
-                    act.reset_processed(child);
+                    act.reset_processed(op_node);
                 }
-            }
-            // Queue order preserves the historical activation order
-            // (extension/classical before bool ops so their results are
-            // available; each loop iteration must re-run Calls). Policies:
-            // Calls and classical ops copy inputs at fire time, so they
-            // wait for readiness; the rest defer internally or are static.
-            let submit = |act: &mut ContainerActivation, node: Node, policy: QueuePolicy| {
-                if self.nodes_inside_tailloops.contains(&node) {
-                    // Skip ops inside TailLoops - they'll be added when the
-                    // loop expands
-                    act.ungate_block_only(node);
-                } else {
-                    act.queue(node, policy);
-                }
-            };
-            for &op_node in &block_info.quantum_ops {
-                submit(&mut act, op_node, QueuePolicy::Always);
-            }
-            for &call_node in &block_info.call_nodes {
-                submit(&mut act, call_node, QueuePolicy::IfReady);
-            }
-            for &cond_node in &block_info.conditional_nodes {
-                submit(&mut act, cond_node, QueuePolicy::Always);
-            }
-            for &op_node in &extension_ops {
-                submit(&mut act, op_node, QueuePolicy::Always);
-            }
-            for child in hugr.children(to_block) {
-                if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
-                    submit(&mut act, child, QueuePolicy::Always);
-                }
-                if self.classical_ops.contains_key(&child) {
-                    submit(&mut act, child, QueuePolicy::IfReady);
-                }
-            }
-            for &op_node in &block_info.bool_ops {
-                submit(&mut act, op_node, QueuePolicy::Always);
-            }
-            // TailLoop nodes queue even when nested inside another loop's
-            // body tracking: they defer internally until their inputs are
-            // ready.
-            for &tl_node in &block_info.tailloop_nodes {
-                act.queue(tl_node, QueuePolicy::Always);
-            }
-            self.run_activation(hugr, &act);
-
-            let num_ops = block_info.quantum_ops.len();
-            let num_calls = block_info.call_nodes.len();
-            let num_conditionals = block_info.conditional_nodes.len();
-            let num_bool_ops = block_info.bool_ops.len();
-            let num_tailloops = block_info.tailloop_nodes.len();
-            debug!(
-                "[TRACE] Activated block {to_block:?} with {num_ops} ops, {num_calls} calls, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops"
-            );
-
-            // Handle blocks with no operations - immediately complete and transition
-            // IMPORTANT: Also check for extension_ops and classical_ops, not just quantum/bool/conditional
-            let has_extension_ops = !extension_ops.is_empty();
-            let has_classical_ops = !block_info.classical_ops.is_empty();
-            let has_tailloops = !block_info.tailloop_nodes.is_empty();
-
-            if num_ops == 0
-                && num_calls == 0
-                && num_conditionals == 0
-                && num_bool_ops == 0
-                && !has_extension_ops
-                && !has_classical_ops
-                && !has_tailloops
-            {
-                debug!(
-                    "[TRACE] Block {to_block:?} has 0 ops and 0 calls, trying to resolve branch"
-                );
-                debug!("[TRACE] Block {to_block:?} has no quantum ops, checking for successors");
-                // Mark this block as complete in the active CFG
-                if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
-                    active_cfg.completed_blocks.insert(to_block);
-                }
-
-                // Get successors for this block
-                let successors = block_info.successors.clone();
-                if successors.is_empty() {
-                    // No successors - exit block
-                    self.complete_cfg_execution(hugr, cfg_node, to_block);
-                } else if successors.len() == 1 {
-                    // Single successor - transition immediately. Recurse into
-                    // the canonical transition path (same as the resolved
-                    // multi-successor case below) so the successor gets the
-                    // full two-phase activation: a hand-rolled copy here used
-                    // to skip the stale-value clearing and check Call
-                    // readiness against uncleared producer flags, reviving
-                    // the loop-iteration freeze through empty blocks.
-                    let next_block = successors[0];
-                    if next_block == cfg_info.exit_block {
-                        self.complete_cfg_execution(hugr, cfg_node, to_block);
-                    } else {
-                        debug!(
-                            "[TRACE] Empty block {to_block:?} transitioning to single successor {next_block:?}"
-                        );
-                        self.transition_to_cfg_successor(hugr, cfg_node, to_block, next_block);
+                for child in hugr.children(to_block) {
+                    if matches!(hugr.get_optype(child), OpType::LoadConstant(_))
+                        || self.classical_ops.contains_key(&child)
+                    {
+                        act.reset_processed(child);
                     }
-                } else {
-                    // Multiple successors - need to resolve branch
+                }
+                // Queue order preserves the historical activation order
+                // (extension/classical before bool ops so their results are
+                // available; each loop iteration must re-run Calls). Policies:
+                // Calls and classical ops copy inputs at fire time, so they
+                // wait for readiness; the rest defer internally or are static.
+                let submit = |act: &mut ContainerActivation, node: Node, policy: QueuePolicy| {
+                    if self.nodes_inside_tailloops.contains(&node) {
+                        // Skip ops inside TailLoops - they'll be added when the
+                        // loop expands
+                        act.ungate_block_only(node);
+                    } else {
+                        act.queue(node, policy);
+                    }
+                };
+                for &op_node in &block_info.quantum_ops {
+                    submit(&mut act, op_node, QueuePolicy::Always);
+                }
+                for &call_node in &block_info.call_nodes {
+                    submit(&mut act, call_node, QueuePolicy::IfReady);
+                }
+                for &cond_node in &block_info.conditional_nodes {
+                    submit(&mut act, cond_node, QueuePolicy::Always);
+                }
+                for &op_node in &extension_ops {
+                    submit(&mut act, op_node, QueuePolicy::Always);
+                }
+                for child in hugr.children(to_block) {
+                    if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
+                        submit(&mut act, child, QueuePolicy::Always);
+                    }
+                    if self.classical_ops.contains_key(&child) {
+                        submit(&mut act, child, QueuePolicy::IfReady);
+                    }
+                }
+                for &op_node in &block_info.bool_ops {
+                    submit(&mut act, op_node, QueuePolicy::Always);
+                }
+                // TailLoop nodes queue even when nested inside another loop's
+                // body tracking: they defer internally until their inputs are
+                // ready.
+                for &tl_node in &block_info.tailloop_nodes {
+                    act.queue(tl_node, QueuePolicy::Always);
+                }
+                self.run_activation(hugr, &act);
+
+                let num_ops = block_info.quantum_ops.len();
+                let num_calls = block_info.call_nodes.len();
+                let num_conditionals = block_info.conditional_nodes.len();
+                let num_bool_ops = block_info.bool_ops.len();
+                let num_tailloops = block_info.tailloop_nodes.len();
+                debug!(
+                    "[TRACE] Activated block {to_block:?} with {num_ops} ops, {num_calls} calls, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops"
+                );
+
+                // Handle blocks with no operations - immediately complete and transition
+                // IMPORTANT: Also check for extension_ops and classical_ops, not just quantum/bool/conditional
+                let has_extension_ops = !extension_ops.is_empty();
+                let has_classical_ops = !block_info.classical_ops.is_empty();
+                let has_tailloops = !block_info.tailloop_nodes.is_empty();
+                let has_load_consts = !block_info.load_constants.is_empty();
+
+                if num_ops == 0
+                    && num_calls == 0
+                    && num_conditionals == 0
+                    && num_bool_ops == 0
+                    && !has_extension_ops
+                    && !has_classical_ops
+                    && !has_tailloops
+                    && !has_load_consts
+                {
                     debug!(
-                        "[TRACE] Block {:?} has {} successors, resolving branch",
-                        to_block,
-                        successors.len()
+                        "[TRACE] Block {to_block:?} has 0 ops and 0 calls, trying to resolve branch"
                     );
-                    if let Some(branch_idx) = self.try_resolve_cfg_block_branch(hugr, to_block) {
-                        debug!("[TRACE] Branch resolved to {branch_idx} for block {to_block:?}");
-                        if branch_idx < successors.len() {
-                            let next_block = successors[branch_idx];
-                            debug!(
-                                "[TRACE] Empty block {to_block:?} resolved branch {branch_idx} to {next_block:?}"
-                            );
-                            // Recursively transition
-                            self.transition_to_cfg_successor(hugr, cfg_node, to_block, next_block);
+                    debug!(
+                        "[TRACE] Block {to_block:?} has no quantum ops, checking for successors"
+                    );
+                    // Mark this block as complete in the active CFG
+                    if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
+                        active_cfg.completed_blocks.insert(to_block);
+                    }
+
+                    // Get successors for this block
+                    let successors = block_info.successors.clone();
+                    if successors.is_empty() {
+                        // No successors - exit block
+                        self.complete_cfg_execution(hugr, cfg_node, to_block);
+                    } else if successors.len() == 1 {
+                        // Single successor - transition immediately. Recurse into
+                        // the canonical transition path (same as the resolved
+                        // multi-successor case below) so the successor gets the
+                        // full two-phase activation: a hand-rolled copy here used
+                        // to skip the stale-value clearing and check Call
+                        // readiness against uncleared producer flags, reviving
+                        // the loop-iteration freeze through empty blocks.
+                        let next_block = successors[0];
+                        if next_block == cfg_info.exit_block {
+                            self.complete_cfg_execution(hugr, cfg_node, to_block);
                         } else {
+                            debug!(
+                                "[TRACE] Empty block {to_block:?} transitioning to single successor {next_block:?}"
+                            );
+                            from_block = to_block;
+                            to_block = next_block;
+                            continue 'transition;
+                        }
+                    } else {
+                        // Multiple successors - need to resolve branch
+                        debug!(
+                            "[TRACE] Block {:?} has {} successors, resolving branch",
+                            to_block,
+                            successors.len()
+                        );
+                        if let Some(branch_idx) = self.try_resolve_cfg_block_branch(hugr, to_block)
+                        {
+                            debug!(
+                                "[TRACE] Branch resolved to {branch_idx} for block {to_block:?}"
+                            );
+                            if branch_idx < successors.len() {
+                                let next_block = successors[branch_idx];
+                                debug!(
+                                    "[TRACE] Empty block {to_block:?} resolved branch {branch_idx} to {next_block:?}"
+                                );
+                                from_block = to_block;
+                                to_block = next_block;
+                                continue 'transition;
+                            }
                             // Out-of-range tag = upstream Sum/tag bug.
                             self.execution_error = Some(format!(
                                 "CFG {cfg_node:?} empty block {to_block:?}: branch tag \
                                  {branch_idx} out of range ({} successors)",
                                 successors.len()
                             ));
+                        } else {
+                            debug!(
+                                "[TRACE] Branch NOT resolved for block {to_block:?}, adding to pending"
+                            );
+                            // Branch not resolved - add to pending
+                            let block_key = (cfg_node, to_block);
+                            self.pending_cfg_branches.insert(block_key, successors);
                         }
-                    } else {
-                        debug!(
-                            "[TRACE] Branch NOT resolved for block {to_block:?}, adding to pending"
-                        );
-                        // Branch not resolved - add to pending
-                        let block_key = (cfg_node, to_block);
-                        self.pending_cfg_branches.insert(block_key, successors);
                     }
                 }
+                return;
             }
         }
     }
@@ -689,6 +710,7 @@ impl HugrEngine {
                     &self.quantum_ops,
                     &self.conditionals,
                     &self.cfgs,
+                    &self.active_cases,
                     &self.processed,
                 )
             {

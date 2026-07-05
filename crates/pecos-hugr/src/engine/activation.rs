@@ -167,6 +167,7 @@ impl HugrEngine {
                     &self.quantum_ops,
                     &self.conditionals,
                     &self.cfgs,
+                    &self.active_cases,
                     &self.processed,
                 )
             {

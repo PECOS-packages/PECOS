@@ -1313,10 +1313,14 @@ impl HugrEngine {
             let op = hugr.get_optype(current_node);
             let is_extension_op = op.as_extension_op().is_some();
             let ext_result = self.handle_extension_op(&hugr, current_node);
-            if let HandlerOutcome::Fault(msg) = &ext_result {
-                // Poison first; the processed path below still runs so the
-                // node does not re-fire before the loop-top check raises it.
-                self.execution_error = Some(msg.clone());
+            if let HandlerOutcome::Fault(msg) = ext_result {
+                // Poison and stop this node cold: running the completion
+                // cascades (retries, block/case checks, successor queueing)
+                // on a poisoned engine does arbitrary work that can only
+                // mask the fault. The loop-top check raises it next.
+                self.execution_error = Some(msg);
+                self.processed.insert(current_node);
+                continue;
             }
             if !matches!(ext_result, HandlerOutcome::Defer) {
                 self.processed.insert(current_node);
@@ -1343,23 +1347,32 @@ impl HugrEngine {
                 self.queue_ready_successors(&hugr, current_node);
 
                 continue;
-            } else if is_extension_op && !self.quantum_ops.contains_key(&current_node) {
+            } else if is_extension_op
+                && !self.quantum_ops.contains_key(&current_node)
+                && !self.processed.contains(&current_node)
+            {
                 // Extension op couldn't be processed (input not ready) - defer it
                 // But don't defer if it's also a quantum op (e.g., MeasureFree from tket.quantum)
-                // - those should fall through to the quantum op handling below
+                // - those should fall through to the quantum op handling below.
+                // The processed guard matters for complete-then-Defer handlers
+                // (a scan whose whole fold ran synchronously): re-parking a
+                // completed node would read as a stall at completion time.
                 self.deferred_nodes.insert(current_node);
                 continue;
             }
             // Fall through to quantum op handling
 
-            // A container optype the engine cannot drive must fail loud:
-            // silently dropping it starves its consumers with a stall report
-            // naming everything except the cause.
+            // DFG containers execute by FLATTENING: their children are
+            // extracted into the global op maps at load (nodes_inside_* does
+            // not gate DFG interiors) and wire tracing crosses the boundary
+            // structurally, so the container node itself is a no-op --
+            // marked processed explicitly rather than silently dropped.
+            // Classical values are NOT propagated onto a DFG's Input node
+            // (tracked follow-up); consumers of such values defer and the
+            // stall machinery keeps the gap loud.
             if matches!(hugr.get_optype(current_node), OpType::DFG(_)) {
-                self.execution_error = Some(format!(
-                    "unsupported container op DFG at {current_node:?}: the engine \
-                     executes CFG/Conditional/TailLoop/Call containers only"
-                ));
+                debug!("DFG container {current_node:?}: flattened, marking processed");
+                self.processed.insert(current_node);
                 continue;
             }
 

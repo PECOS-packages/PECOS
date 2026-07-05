@@ -242,7 +242,8 @@ impl HugrEngine {
                 // Out-of-range tag = upstream Sum/tag propagation bug;
                 // taking an arbitrary successor would mask it.
                 self.execution_error = Some(format!(
-                    "CFG {cfg_node:?} block {block_node:?}: pending branch tag {branch_idx}                      out of range ({} successors)",
+                    "CFG {cfg_node:?} block {block_node:?}: pending branch tag {branch_idx} \
+                     out of range ({} successors)",
                     successors.len()
                 ));
             }
@@ -352,7 +353,8 @@ impl HugrEngine {
                         // bug upstream; routing to an arbitrary successor
                         // would mask it as plausible control flow.
                         self.execution_error = Some(format!(
-                            "CFG {cfg_node:?} block {completed_block:?}: branch tag                              {branch_idx} out of range ({} successors)",
+                            "CFG {cfg_node:?} block {completed_block:?}: branch tag {branch_idx} \
+                             out of range ({} successors)",
                             successors.len()
                         ));
                     }
@@ -388,8 +390,6 @@ impl HugrEngine {
         let mut from_block = from_block;
         let mut to_block = to_block;
         'transition: loop {
-            let _ = &from_block;
-
             // If to_block is the ExitBlock, complete the CFG.
             // ExitBlock has no operations - it's just a marker node. The from_block (a DataflowBlock)
             // should have already executed any result operations before this transition.
@@ -434,7 +434,18 @@ impl HugrEngine {
             }
 
             // Activate successor block's quantum ops and Call nodes
-            if let Some(block_info) = cfg_info.blocks.get(&to_block) {
+            let Some(block_info) = cfg_info.blocks.get(&to_block) else {
+                // A successor that is not a known DataflowBlock (invalid
+                // HUGR, or a stale pending branch racing CFG completion)
+                // must fault: falling through here used to re-run the loop
+                // with unchanged state -- a 10M-hop spin at best, unbounded
+                // if the active entry was already gone.
+                self.execution_error = Some(format!(
+                    "CFG {cfg_node:?}: successor {to_block:?} is not a known DataflowBlock"
+                ));
+                return;
+            };
+            {
                 self.executed_containers.insert(to_block, "DataflowBlock");
                 // Re-activate the block through the shared two-phase mechanism.
                 // Stale wires clear for every child except the Input node (it
@@ -749,12 +760,28 @@ impl HugrEngine {
         // Block Output ports: [Sum (port 0), data1, data2, ...]
         // For CFG blocks with branching, the successor Input ports are:
         //   [payload from Sum (if any), other_outputs...]
-        // So we need to:
-        // 1. Check if port 0's source is a Conditional/Tag with payload
-        // 2. Extract payload values and map them to successor Input ports 0..payload_len-1
-        // 3. Map other_outputs (port 1+) to successor Input ports payload_len+
-
+        //
+        // The payload ARITY is a TYPE-level fact: the successor's input row
+        // is fixed, so every branch into it carries exactly
+        // (successor inputs - other outputs) payload values. Deriving the
+        // offset from the runtime value's length mis-laid the data ports
+        // whenever the Sum resolved structurally (bare tag, no payload).
         let num_output_ports = hugr.num_inputs(from_output);
+        let target_num_outputs = hugr.num_outputs(to_input);
+        let num_data_outputs = num_output_ports.saturating_sub(1);
+        let expected_payload_len = target_num_outputs.saturating_sub(num_data_outputs);
+
+        // Clear EVERY successor Input port before writing: the transition
+        // batch exempts the Input node from wire clearing (keep_wires) so
+        // fresh values survive, which means any port this propagation
+        // cannot source would otherwise keep the PREVIOUS iteration's
+        // value. Missing sources must starve loudly instead.
+        for port_idx in 0..target_num_outputs {
+            self.wire_state
+                .classical_values
+                .remove(&(to_input, port_idx));
+            self.wire_state.wire_to_qubit.remove(&(to_input, port_idx));
+        }
 
         // First, check if port 0 (Sum) has payload values from a Conditional
         let sum_port = IncomingPort::from(0);
@@ -772,7 +799,7 @@ impl HugrEngine {
                 self.wire_state.classical_values.get(&sum_wire).cloned()
             {
                 payload_len = values.len();
-                for (i, value) in values.into_iter().enumerate() {
+                for (i, value) in values.into_iter().enumerate().take(expected_payload_len) {
                     debug!(
                         "[TRACE] Block transition: propagated branch payload {value:?} to {to_input:?}:{i}"
                     );
@@ -804,21 +831,17 @@ impl HugrEngine {
             }
         }
 
-        // Now map other_outputs (port 1+) to successor Input ports, offset
-        // by the payload length. In valid HUGR the successor's inputs are
-        // exactly [selected variant's row] ++ [other_outputs], so the offset
-        // always fits; if it does not, something upstream extracted the
-        // wrong variant's payload -- warn loudly rather than silently
-        // dropping the offset (which would overwrite the payload ports just
-        // written above with misaligned data).
-        let target_num_outputs = hugr.num_outputs(to_input);
-        let num_data_outputs = num_output_ports.saturating_sub(1);
-        if payload_len + num_data_outputs > target_num_outputs {
+        // Now map other_outputs (port 1+) to successor Input ports at the
+        // TYPE-derived offset. A runtime payload arity that disagrees with
+        // the type row means upstream variant extraction is suspect -- warn,
+        // but the offset stays type-correct either way.
+        if payload_len != expected_payload_len {
             debug!(
-                "WARNING: block transition {from_block:?} -> {to_block:?}: payload ({payload_len}) + data ({num_data_outputs}) exceeds target inputs ({target_num_outputs}); upstream variant extraction is suspect"
+                "WARNING: block transition {from_block:?} -> {to_block:?}: runtime payload \
+                 arity ({payload_len}) != type arity ({expected_payload_len})"
             );
         }
-        let effective_payload_len = payload_len;
+        let effective_payload_len = expected_payload_len;
         debug!("[TRACE] num_data_outputs={num_data_outputs}");
         debug!(
             "[TRACE] propagate_block_outputs: from_block={from_block:?}, to_block={to_block:?}, num_data_outputs={num_data_outputs}"
@@ -941,7 +964,15 @@ impl HugrEngine {
         // When the Sum is built by a Tag, its inputs are the PAYLOAD carried
         // into the exit variant -- these become the first CFG outputs (e.g. a
         // called function's return value rides in the Tag payload, not on the
-        // data ports).
+        // data ports). The payload ARITY is type-level: CFG outputs minus
+        // the final block's data ports (a bare-tag structural resolution
+        // must not collapse the offset to zero).
+        let num_data_outputs = hugr.num_inputs(output_node).saturating_sub(1);
+        let expected_payload_len = hugr
+            .get_optype(cfg_node)
+            .dataflow_signature()
+            .map_or(0, |sig| sig.output_count())
+            .saturating_sub(num_data_outputs);
         let mut payload_len = 0;
         if let Some((sum_src, sum_src_port)) =
             hugr.single_linked_output(output_node, IncomingPort::from(0))
@@ -955,7 +986,7 @@ impl HugrEngine {
                 self.wire_state.classical_values.get(&sum_wire).cloned()
             {
                 payload_len = values.len();
-                for (i, value) in values.into_iter().enumerate() {
+                for (i, value) in values.into_iter().enumerate().take(expected_payload_len) {
                     debug!("CFG {cfg_node:?} output {i}: mapped payload value {value:?}");
                     if let ClassicalValue::QubitRef(qubit_id) = &value {
                         self.wire_state
@@ -1000,12 +1031,17 @@ impl HugrEngine {
             }
         }
 
-        // CFG outputs after the payload correspond to the data ports.
-        let num_data_outputs = hugr.num_inputs(output_node).saturating_sub(1);
-
+        // CFG outputs after the payload correspond to the data ports, at
+        // the TYPE-derived offset.
+        if payload_len != expected_payload_len {
+            debug!(
+                "WARNING: CFG {cfg_node:?} exit: runtime payload arity ({payload_len}) != \
+                 type arity ({expected_payload_len})"
+            );
+        }
         for port_idx in 0..num_data_outputs {
             let block_port = IncomingPort::from(port_idx + 1); // Skip Sum port
-            let cfg_out_idx = payload_len + port_idx;
+            let cfg_out_idx = expected_payload_len + port_idx;
 
             if let Some((src_node, src_port)) = hugr.single_linked_output(output_node, block_port) {
                 let src_wire = (src_node, src_port.index());

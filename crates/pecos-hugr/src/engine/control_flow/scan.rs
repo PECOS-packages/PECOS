@@ -113,8 +113,9 @@ impl HugrEngine {
             self.advance_scan(hugr, node);
         }
         // Like a Call, the scan node stays unprocessed while its frame
-        // runs; completion marks it (advance_scan may already have, in
-        // which case the processed check absorbs this Defer harmlessly).
+        // runs; completion marks it. When advance_scan already completed
+        // the whole fold synchronously, the dispatcher's processed guard
+        // prevents this Defer from re-parking a finished node.
         HandlerOutcome::Defer
     }
 
@@ -129,11 +130,20 @@ impl HugrEngine {
         element: ClassicalValue,
     ) -> bool {
         let Some(state) = self.active_scans.get(&scan_node) else {
+            // Unreachable from current call sites; if ever reached, a
+            // silent false would impersonate a launched frame whose
+            // completion never comes.
+            self.execution_error = Some(format!(
+                "scan {scan_node:?}: launch without an active scan state"
+            ));
             return false;
         };
         let func_defn_node = state.func_defn_node;
         let accs = state.accs.clone();
         let Some(func_info) = self.func_defns.get(&func_defn_node).cloned() else {
+            self.execution_error = Some(format!(
+                "scan {scan_node:?}: FuncDefn {func_defn_node:?} vanished mid-fold"
+            ));
             return false;
         };
 

@@ -58,7 +58,9 @@ impl HugrEngine {
                 // call: (WasmContext, ...) -> (WasmContext, ...)
                 // Call a WASM function
                 // Stub: pass through inputs to outputs
-                self.propagate_all_inputs(hugr, node);
+                if !self.propagate_all_inputs(hugr, node) {
+                    return HandlerOutcome::Defer;
+                }
                 debug!("tket.wasm.call: stub (no WASM support)");
                 HandlerOutcome::Processed
             }

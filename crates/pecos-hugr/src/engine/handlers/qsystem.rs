@@ -222,9 +222,14 @@ impl HugrEngine {
                 // signature returns an option (None on a second call); this
                 // engine has no global-context restriction, so it always
                 // produces Some.
+                // The u64 seed must be read as the canonical bit pattern:
+                // as_uint rejects negative storage, so a valid seed >= 2^63
+                // (stored sign-extended) would defer forever.
+                #[allow(clippy::cast_sign_loss)]
                 let Some(seed) = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint())
+                    .and_then(|v| v.as_int())
+                    .map(|v| v as u64)
                 else {
                     debug!("NewRNGContext at {node:?}: seed not ready, deferring");
                     return HandlerOutcome::Defer;

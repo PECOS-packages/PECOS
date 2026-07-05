@@ -61,14 +61,18 @@ impl HugrEngine {
                 // Log a warning but allow execution to continue
                 debug!("guppylang.unsupported at {node:?} - operation not supported");
                 // Pass through any inputs to outputs
-                self.propagate_all_inputs(hugr, node);
+                if !self.propagate_all_inputs(hugr, node) {
+                    return HandlerOutcome::Defer;
+                }
                 HandlerOutcome::Processed
             }
             "partial" => {
                 // partial: partial function application
                 // For simulation, treat as identity/pass-through
                 debug!("guppylang.partial at {node:?} - pass-through");
-                self.propagate_all_inputs(hugr, node);
+                if !self.propagate_all_inputs(hugr, node) {
+                    return HandlerOutcome::Defer;
+                }
                 HandlerOutcome::Processed
             }
             _ => {

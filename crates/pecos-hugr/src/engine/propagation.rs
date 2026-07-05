@@ -152,19 +152,31 @@ impl HugrEngine {
     /// Propagate all input values to corresponding output ports.
     ///
     /// This is used for pass-through operations that don't modify values.
-    pub(crate) fn propagate_all_inputs(&mut self, hugr: &Hugr, node: Node) {
+    /// Copy every input wire to the corresponding output wire (pass-through
+    /// ops). Returns false when some port had NEITHER a classical value nor
+    /// a qubit mapping: the caller must DEFER -- marking the op processed
+    /// would permanently drop the late value (pass-throughs have no retry
+    /// of their own).
+    #[must_use]
+    pub(crate) fn propagate_all_inputs(&mut self, hugr: &Hugr, node: Node) -> bool {
         use tket::hugr::ops::OpTrait;
         let op = hugr.get_optype(node);
         let num_outputs = op.dataflow_signature().map_or(0, |sig| sig.output_count());
 
+        let mut complete = true;
         for port in 0..num_outputs {
+            let mut found = false;
             if let Some(value) = self.get_input_value(hugr, node, port) {
                 self.wire_state.classical_values.insert((node, port), value);
+                found = true;
             }
             if let Some(qubit) = self.get_input_qubit(hugr, node, port) {
                 self.wire_state.wire_to_qubit.insert((node, port), qubit);
+                found = true;
             }
+            complete &= found;
         }
+        complete
     }
 
     /// Get a classical value from an input port.

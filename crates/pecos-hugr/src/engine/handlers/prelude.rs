@@ -108,7 +108,10 @@ impl HugrEngine {
             "print" => {
                 // Print operation - for simulation, we just pass through
                 debug!("prelude::print at {node:?}");
-                self.propagate_all_inputs(hugr, node);
+                if !self.propagate_all_inputs(hugr, node) {
+                    debug!("prelude::print at {node:?}: inputs not ready, deferring");
+                    return HandlerOutcome::Defer;
+                }
                 HandlerOutcome::Processed
             }
 
@@ -181,12 +184,14 @@ impl HugrEngine {
                         debug!(
                             "UnpackTuple at {node:?}: input not a tuple, attempting pass-through"
                         );
-                        self.propagate_all_inputs(hugr, node);
+                        if !self.propagate_all_inputs(hugr, node) {
+                            return HandlerOutcome::Defer;
+                        }
                         HandlerOutcome::Processed
                     }
                     None if self.get_input_qubit(hugr, node, 0).is_some() => {
                         // Linear (qubit) tuple: flow is resolved structurally.
-                        self.propagate_all_inputs(hugr, node);
+                        let _ = self.propagate_all_inputs(hugr, node);
                         HandlerOutcome::Processed
                     }
                     None => {
@@ -197,8 +202,13 @@ impl HugrEngine {
             }
 
             "Noop" | "Lift" | "Barrier" => {
-                // Genuine identity/annotation ops: pass values through.
-                self.propagate_all_inputs(hugr, node);
+                // Genuine identity/annotation ops: pass values through;
+                // a missing input defers (marking processed would drop a
+                // late value permanently).
+                if !self.propagate_all_inputs(hugr, node) {
+                    debug!("prelude::{op_name} at {node:?}: inputs not ready, deferring");
+                    return HandlerOutcome::Defer;
+                }
                 HandlerOutcome::Processed
             }
             _ => {

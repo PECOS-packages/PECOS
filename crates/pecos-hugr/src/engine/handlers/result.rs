@@ -79,8 +79,13 @@ impl HugrEngine {
                 }
             }
             "result_uint" => {
+                // Reinterpret the canonical (sign-extended) bit pattern:
+                // as_uint REJECTS negative storage, but a canonical u64
+                // >= 2^63 stores negative -- rejecting it defers the result
+                // op forever and kills the shot in the stall report.
+                #[allow(clippy::cast_sign_loss)]
                 if let Some(value) = self.get_input_value(hugr, node, 0)
-                    && let Some(u) = value.as_uint()
+                    && let Some(u) = value.as_int().map(|v| v as u64)
                 {
                     self.captured_results.push(CapturedResult {
                         label,
@@ -148,11 +153,13 @@ impl HugrEngine {
                 }
             }
             "result_array_uint" => {
+                // Bit-reinterpret canonical storage; see result_uint.
+                #[allow(clippy::cast_sign_loss)]
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
                     && let Some(uints) = arr
                         .iter()
-                        .map(ClassicalValue::as_uint)
+                        .map(|v| v.as_int().map(|i| i as u64))
                         .collect::<Option<Vec<u64>>>()
                 {
                     self.captured_results.push(CapturedResult {

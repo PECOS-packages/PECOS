@@ -48,25 +48,29 @@ impl HugrEngine {
         match op_name {
             "symbolic_angle" => {
                 // symbolic_angle: () -> rotation
-                // Creates a rotation from a symbolic expression (sympy string parameter)
-                // For simulation, we try to parse simple numeric expressions
+                // Creates a rotation from a symbolic expression (sympy
+                // string parameter). Simple numeric expressions parse; an
+                // UNRESOLVED symbolic angle must fault -- defaulting to 0.0
+                // silently simulates the identity instead of the program.
                 let op = hugr.get_optype(node);
-                if let Some(ext_op) = op.as_extension_op() {
+                let parsed = op.as_extension_op().and_then(|ext_op| {
                     let debug_str = format!("{ext_op:?}");
-                    // Try to extract the symbolic expression from parameters
-                    let angle = Self::parse_symbolic_angle(&debug_str);
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Rotation(angle));
-                    debug!("symbolic_angle: parsed angle = {angle} half-turns");
-                } else {
-                    // Default to 0 if we can't parse
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Rotation(0.0));
-                    debug!("symbolic_angle: defaulting to 0");
+                    Self::parse_symbolic_angle(&debug_str)
+                });
+                match parsed {
+                    Some(angle) => {
+                        self.wire_state
+                            .classical_values
+                            .insert((node, 0), ClassicalValue::Rotation(angle));
+                        debug!("symbolic_angle: parsed angle = {angle} half-turns");
+                        HandlerOutcome::Processed
+                    }
+                    None => HandlerOutcome::Fault(format!(
+                        "symbolic_angle at {node:?}: unresolved symbolic expression \
+                         (cannot be simulated; substituting 0 would silently run the \
+                         wrong circuit)"
+                    )),
                 }
-                HandlerOutcome::Processed
             }
             // Quantum gates are handled via the quantum ops path, not here
             // -- defer so they fall through to the gate handling
@@ -80,44 +84,47 @@ impl HugrEngine {
     /// - Numeric literals: "0.5", "1.0", "-0.25"
     /// - Pi expressions: "pi", "pi/2", "pi/4", "2*pi"
     /// - Fractions: "1/2", "1/4"
-    pub(crate) fn parse_symbolic_angle(debug_str: &str) -> f64 {
+    ///
+    /// Returns None for expressions it cannot evaluate -- the caller must
+    /// fail loud, never substitute a default angle.
+    pub(crate) fn parse_symbolic_angle(debug_str: &str) -> Option<f64> {
         // Look for quoted string content that might contain the expression
         if let Some(expr) = Self::extract_string_from_debug(debug_str) {
             let expr = expr.trim().to_lowercase();
 
             // Try parsing as a simple float
             if let Ok(val) = expr.parse::<f64>() {
-                return val;
+                return Some(val);
             }
 
             // Handle pi expressions (angles in half-turns, so pi = 1.0 half-turn)
             if expr == "pi" {
-                return 1.0;
+                return Some(1.0);
             }
             if expr == "-pi" {
-                return -1.0;
+                return Some(-1.0);
             }
             if expr == "2*pi" || expr == "2pi" {
-                return 2.0;
+                return Some(2.0);
             }
 
             // Handle pi/n expressions
             if let Some(rest) = expr.strip_prefix("pi/")
                 && let Ok(divisor) = rest.parse::<f64>()
             {
-                return 1.0 / divisor;
+                return Some(1.0 / divisor);
             }
             if let Some(rest) = expr.strip_prefix("-pi/")
                 && let Ok(divisor) = rest.parse::<f64>()
             {
-                return -1.0 / divisor;
+                return Some(-1.0 / divisor);
             }
 
             // Handle n*pi expressions
             if let Some(rest) = expr.strip_suffix("*pi")
                 && let Ok(multiplier) = rest.parse::<f64>()
             {
-                return multiplier;
+                return Some(multiplier);
             }
 
             // Handle simple fractions like 1/2, 1/4
@@ -125,13 +132,13 @@ impl HugrEngine {
                 && let (Ok(num), Ok(denom)) = (num_str.parse::<f64>(), denom_str.parse::<f64>())
                 && denom != 0.0
             {
-                return num / denom;
+                return Some(num / denom);
             }
 
-            debug!("Could not parse symbolic angle expression: '{expr}', defaulting to 0");
+            debug!("Could not parse symbolic angle expression: '{expr}'");
         }
 
-        0.0
+        None
     }
 
     /// Handle `tket.rotation` operations.

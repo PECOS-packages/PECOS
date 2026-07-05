@@ -169,17 +169,23 @@ impl HugrEngine {
                 HandlerOutcome::Processed
             }
             "TryQAlloc" => {
-                // TryQAlloc: () -> Sum<(), Qubit>
-                // For simulation, always succeed and allocate a qubit
+                // TryQAlloc: () -> Option<Qubit>
+                // For simulation, always succeed and allocate a qubit. The
+                // value must be a REAL Sum carrying the qubit payload:
+                // case-input propagation unpacks payloads from Sum values,
+                // and a bare scalar loses the allocated qubit (falling into
+                // implicit re-allocation downstream).
                 let qubit_id = QubitId::from(self.wire_state.next_qubit_id);
                 self.wire_state.next_qubit_id += 1;
 
-                // Output on port 0 (Sum type, tag 1 = success with qubit)
                 self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
-                // Store Sum tag = 1 (success) for control flow
-                self.wire_state
-                    .classical_values
-                    .insert((node, 0), ClassicalValue::UInt(1));
+                self.wire_state.classical_values.insert(
+                    (node, 0),
+                    ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![ClassicalValue::QubitRef(qubit_id)],
+                    },
+                );
 
                 debug!("TryQAlloc created qubit {qubit_id:?}");
                 HandlerOutcome::Processed
@@ -280,9 +286,12 @@ impl HugrEngine {
                     debug!("RandomInt at {node:?}: context not ready, deferring");
                     return HandlerOutcome::Defer;
                 };
-                // The output is int<32>: keep only the low 32 bits
+                // The output is int<5> (32-bit): canonical storage is the
+                // sign-extended low 32 bits, per the engine-wide width
+                // convention (a raw zero-extended u32 would misread in every
+                // signed consumer).
                 #[allow(clippy::cast_possible_truncation)] // intentional 32-bit mask
-                let random_int = i64::from(self.generate_random_u64(ctx_id) as u32);
+                let random_int = i64::from((self.generate_random_u64(ctx_id) as u32).cast_signed());
 
                 self.wire_state
                     .classical_values
@@ -307,18 +316,25 @@ impl HugrEngine {
                     debug!("RandomIntBounded at {node:?}: bound not ready, deferring");
                     return HandlerOutcome::Defer;
                 };
-                if bound <= 0 {
-                    // [0, bound) is empty: there is no value this op could
+                // The bound is UNSIGNED int<5>: reinterpret the canonical
+                // (sign-extended) storage as its 32-bit pattern -- a bound
+                // >= 2^31 stores negative but names a valid nonempty range.
+                #[allow(clippy::cast_sign_loss)]
+                let bound = (bound as u64) & 0xFFFF_FFFF;
+                if bound == 0 {
+                    // [0, 0) is empty: there is no value this op could
                     // produce, so clamping would fabricate a result.
                     return HandlerOutcome::Fault(format!(
-                        "RandomIntBounded at {node:?}: bound {bound} is not positive"
+                        "RandomIntBounded at {node:?}: bound 0 names an empty range"
                     ));
                 }
-                let random_val = self.generate_random_u64(ctx_id) % bound as u64;
+                let random_val = self.generate_random_u64(ctx_id) % bound;
 
-                self.wire_state
-                    .classical_values
-                    .insert((node, 0), ClassicalValue::Int(random_val as i64));
+                #[allow(clippy::cast_possible_truncation)]
+                self.wire_state.classical_values.insert(
+                    (node, 0),
+                    ClassicalValue::Int(i64::from((random_val as u32).cast_signed())),
+                );
                 self.wire_state
                     .classical_values
                     .insert((node, 1), ClassicalValue::RngContext(ctx_id));
@@ -341,10 +357,24 @@ impl HugrEngine {
                 };
 
                 {
-                    // Advance the RNG state by |delta| steps
-                    // Note: For simplicity, we only support forward advancement
-                    // Negative delta would require storing history which we don't do
+                    const MAX_ADVANCE_STEPS: u64 = 1 << 24;
+                    // The spec advances OR BACKTRACKS by delta; this
+                    // step-based implementation can only go forward, and a
+                    // huge forward delta would hang the host. Fail loud on
+                    // both instead of silently advancing the wrong way.
+                    if delta < 0 {
+                        return HandlerOutcome::Fault(format!(
+                            "RandomAdvance at {node:?}: backtracking (delta {delta}) is \
+                             not supported by the step-based RNG implementation"
+                        ));
+                    }
                     let steps = delta.unsigned_abs();
+                    if steps > MAX_ADVANCE_STEPS {
+                        return HandlerOutcome::Fault(format!(
+                            "RandomAdvance at {node:?}: delta {steps} exceeds the \
+                             step-based implementation's ceiling ({MAX_ADVANCE_STEPS})"
+                        ));
+                    }
                     for _ in 0..steps {
                         self.generate_random_u64(ctx_id);
                     }

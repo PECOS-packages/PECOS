@@ -2347,7 +2347,15 @@ mod tests {
             Some(ClassicalValue::RngContext(_))
         ));
 
+        // Backtracking is unsupported by the step-based implementation and
+        // must FAULT (the spec allows negative delta; silently advancing
+        // forward instead fabricates a different stream).
         seed_input(&mut engine, advance, 1, ClassicalValue::Int(-1));
+        assert!(matches!(
+            engine.handle_random_op(&hugr, advance, "RandomAdvance"),
+            HandlerOutcome::Fault(_)
+        ));
+        seed_input(&mut engine, advance, 1, ClassicalValue::Int(2));
         assert_eq!(
             engine.handle_random_op(&hugr, advance, "RandomAdvance"),
             HandlerOutcome::Processed
@@ -2359,9 +2367,11 @@ mod tests {
         );
         match engine.wire_state.classical_values.get(&(int, 0)) {
             Some(ClassicalValue::Int(v)) => {
+                // Canonical int<5> storage: the 32-bit value sign-extended,
+                // i.e. exactly the i32 range (NOT zero-extended [0, 2^32)).
                 assert!(
-                    (0..=i64::from(u32::MAX)).contains(v),
-                    "int<32> value, got {v}"
+                    (i64::from(i32::MIN)..=i64::from(i32::MAX)).contains(v),
+                    "canonical int<32> value, got {v}"
                 );
             }
             other => panic!("RandomInt port 0 must be the value, got {other:?}"),
@@ -2377,8 +2387,9 @@ mod tests {
         );
         assert!(engine.extension_state.rng_contexts.is_empty());
 
-        // An empty range has no value to produce: bound 0 must poison the
-        // execution, not clamp.
+        // An empty range has no value to produce: bound 0 must fault, not
+        // clamp. (Negative-looking bounds are canonical high-bit unsigned
+        // values and are VALID.)
         let mut poisoned = HugrEngine::default();
         seed_input(&mut poisoned, bounded, 0, ClassicalValue::RngContext(7));
         poisoned
@@ -2391,7 +2402,7 @@ mod tests {
         else {
             panic!("bound 0 must fault");
         };
-        assert!(fault.contains("not positive"), "unexpected fault: {fault}");
+        assert!(fault.contains("empty range"), "unexpected fault: {fault}");
     }
 
     #[test]

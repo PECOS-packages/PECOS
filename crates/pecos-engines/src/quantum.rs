@@ -92,6 +92,22 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
         let cmd = &batch[cmd_idx];
+        // Capacity guard: an emitted qubit id past the simulator's size
+        // (e.g. a program allocating per loop iteration beyond the
+        // configured .qubits(n)) must fail HERE with the op and the
+        // capacity named, not deep inside the simulator.
+        for q in &cmd.qubits {
+            if q.0 >= sim.num_qubits() {
+                return Err(PecosError::Generic(format!(
+                    "quantum op {:?} targets qubit {} but the simulator holds {} qubits \
+                     (dynamic allocation exceeded the configured capacity; raise the \
+                     builder's qubit count)",
+                    cmd.gate_type,
+                    q.0,
+                    sim.num_qubits()
+                )));
+            }
+        }
         match cmd.gate_type {
             // Single-qubit Clifford gates
             GateType::X => {
@@ -309,6 +325,22 @@ fn process_general_message<
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
         let cmd = &batch[cmd_idx];
+        // Capacity guard: an emitted qubit id past the simulator's size
+        // (e.g. a program allocating per loop iteration beyond the
+        // configured .qubits(n)) must fail HERE with the op and the
+        // capacity named, not deep inside the simulator.
+        for q in &cmd.qubits {
+            if q.0 >= sim.num_qubits() {
+                return Err(PecosError::Generic(format!(
+                    "quantum op {:?} targets qubit {} but the simulator holds {} qubits \
+                     (dynamic allocation exceeded the configured capacity; raise the \
+                     builder's qubit count)",
+                    cmd.gate_type,
+                    q.0,
+                    sim.num_qubits()
+                )));
+            }
+        }
         match cmd.gate_type {
             // Single-qubit Clifford gates
             GateType::X => {

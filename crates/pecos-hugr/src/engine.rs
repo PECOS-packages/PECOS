@@ -29,6 +29,7 @@ mod handlers;
 use handlers::{ClassicalOutcome, HandlerOutcome};
 mod propagation;
 pub(crate) mod types;
+mod work_queue;
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -76,7 +77,10 @@ use analysis::{
 /// 3. Operations from the selected branch are processed
 pub struct HugrEngine {
     /// The HUGR program being executed.
-    pub(crate) hugr: Option<Hugr>,
+    /// The loaded program, shared behind an Arc: the main loop and every
+    /// resolution wave take a handle per round, and a deep graph clone
+    /// there cost O(program) per measurement round.
+    pub(crate) hugr: Option<std::sync::Arc<Hugr>>,
 
     /// Extracted quantum operations indexed by node.
     pub(crate) quantum_ops: BTreeMap<Node, QuantumOp>,
@@ -85,7 +89,7 @@ pub struct HugrEngine {
     pub(crate) classical_ops: BTreeMap<Node, ClassicalOp>,
 
     /// Work queue for topological traversal.
-    pub(crate) work_queue: VecDeque<Node>,
+    pub(crate) work_queue: work_queue::WorkQueue,
 
     /// Set of processed nodes.
     pub(crate) processed: BTreeSet<Node>,
@@ -363,7 +367,7 @@ impl HugrEngine {
             self.classical_ops.len()
         );
 
-        self.hugr = Some(hugr);
+        self.hugr = Some(std::sync::Arc::new(hugr));
         self.reset_state();
     }
 
@@ -439,7 +443,7 @@ impl HugrEngine {
             // (but skip nodes inside cases or CFG blocks)
             for node in self.quantum_ops.keys() {
                 if !should_skip(node)
-                    && !self.work_queue.contains(node)
+                    && !self.work_queue.contains(*node)
                     && all_predecessors_ready(
                         hugr,
                         *node,
@@ -458,7 +462,7 @@ impl HugrEngine {
             // (but skip classical ops inside cases, CFG blocks, etc.)
             for node in self.classical_ops.keys() {
                 if !should_skip(node)
-                    && !self.work_queue.contains(node)
+                    && !self.work_queue.contains(*node)
                     && all_predecessors_ready(
                         hugr,
                         *node,
@@ -477,7 +481,7 @@ impl HugrEngine {
             // (but skip Conditionals inside FuncDefn bodies or CFG blocks)
             for node in self.conditionals.keys() {
                 if !should_skip(node)
-                    && !self.work_queue.contains(node)
+                    && !self.work_queue.contains(*node)
                     && all_predecessors_ready(
                         hugr,
                         *node,
@@ -496,7 +500,7 @@ impl HugrEngine {
             // (but skip CFGs inside FuncDefn bodies - they should only be activated when called)
             for node in self.cfgs.keys() {
                 if !should_skip(node)
-                    && !self.work_queue.contains(node)
+                    && !self.work_queue.contains(*node)
                     && all_predecessors_ready(
                         hugr,
                         *node,
@@ -515,7 +519,7 @@ impl HugrEngine {
             // (but skip Calls inside FuncDefn bodies or CFG blocks)
             for node in self.call_targets.keys() {
                 if !should_skip(node)
-                    && !self.work_queue.contains(node)
+                    && !self.work_queue.contains(*node)
                     && all_predecessors_ready(
                         hugr,
                         *node,
@@ -536,7 +540,7 @@ impl HugrEngine {
                 let op = hugr.get_optype(node);
                 if matches!(op, OpType::LoadConstant(_))
                     && !should_skip(&node)
-                    && !self.work_queue.contains(&node)
+                    && !self.work_queue.contains(node)
                 {
                     self.work_queue.push_back(node);
                 }
@@ -546,7 +550,7 @@ impl HugrEngine {
             // (but skip TailLoops inside FuncDefn bodies, CFG blocks, etc.)
             for node in self.tailloops.keys() {
                 if !should_skip(node)
-                    && !self.work_queue.contains(node)
+                    && !self.work_queue.contains(*node)
                     && all_predecessors_ready(
                         hugr,
                         *node,
@@ -633,7 +637,7 @@ impl HugrEngine {
             .collect();
 
         for node in pending {
-            if !self.processed.contains(&node) && !self.work_queue.contains(&node) {
+            if !self.processed.contains(&node) && !self.work_queue.contains(node) {
                 self.work_queue.push_back(node);
             }
         }
@@ -723,7 +727,7 @@ impl HugrEngine {
                     // Expand the selected branch and add its entry nodes to the queue
                     let entry_nodes = self.expand_conditional(&hugr, current_node, branch_index);
                     for entry_node in entry_nodes {
-                        if !self.work_queue.contains(&entry_node) {
+                        if !self.work_queue.contains(entry_node) {
                             self.work_queue.push_back(entry_node);
                         }
                     }
@@ -1118,7 +1122,7 @@ impl HugrEngine {
                         self.run_activation(&hugr, &act);
 
                         // Add the CFG to the work queue to be processed
-                        if !self.work_queue.contains(&cfg_node) {
+                        if !self.work_queue.contains(cfg_node) {
                             self.work_queue.push_front(cfg_node);
                         }
                         // Don't mark Call as processed yet - wait for the
@@ -1802,7 +1806,7 @@ impl HugrEngine {
             if (is_relevant || is_extension)
                 && !inside_control_flow
                 && !self.processed.contains(&succ_node)
-                && !self.work_queue.contains(&succ_node)
+                && !self.work_queue.contains(succ_node)
                 && all_predecessors_ready(
                     hugr,
                     succ_node,
@@ -1818,7 +1822,7 @@ impl HugrEngine {
                 debug!(
                     "queue_ready_successors({node:?}): skipped {succ_node:?} gated={inside_control_flow} processed={} queued={} ready={}",
                     self.processed.contains(&succ_node),
-                    self.work_queue.contains(&succ_node),
+                    self.work_queue.contains(succ_node),
                     all_predecessors_ready(
                         hugr,
                         succ_node,
@@ -1840,7 +1844,7 @@ impl Default for HugrEngine {
             hugr: None,
             quantum_ops: BTreeMap::new(),
             classical_ops: BTreeMap::new(),
-            work_queue: VecDeque::new(),
+            work_queue: work_queue::WorkQueue::new(),
             processed: BTreeSet::new(),
             active_scans: BTreeMap::new(),
             return_values: Vec::new(),
@@ -3018,7 +3022,7 @@ mod tests {
             "dead function body must be gated"
         );
         assert!(
-            !engine.work_queue.contains(&dead_load),
+            !engine.work_queue.contains(dead_load),
             "dead function body must not be queued"
         );
     }

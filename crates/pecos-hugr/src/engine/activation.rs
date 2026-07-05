@@ -157,7 +157,7 @@ impl HugrEngine {
         // their readiness check here are queued later by
         // queue_ready_successors when their producers complete.
         for &(node, policy) in &act.queue {
-            if self.work_queue.contains(&node) || self.processed.contains(&node) {
+            if self.work_queue.contains(node) || self.processed.contains(&node) {
                 continue;
             }
             if policy == QueuePolicy::IfReady

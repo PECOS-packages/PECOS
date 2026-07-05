@@ -692,7 +692,7 @@ impl HugrEngine {
                 // Add to pending
                 self.pending_tailloop_control.insert(tailloop_node);
                 // Re-add to work queue for resolution after measurements
-                if !self.work_queue.contains(&tailloop_node) {
+                if !self.work_queue.contains(tailloop_node) {
                     self.work_queue.push_back(tailloop_node);
                 }
             }

@@ -698,12 +698,12 @@ impl HugrEngine {
                 is_relevant,
                 is_extension,
                 self.processed.contains(&succ_node),
-                self.work_queue.contains(&succ_node)
+                self.work_queue.contains(succ_node)
             );
 
             if (is_relevant || is_extension)
                 && !self.processed.contains(&succ_node)
-                && !self.work_queue.contains(&succ_node)
+                && !self.work_queue.contains(succ_node)
                 && all_predecessors_ready(
                     hugr,
                     succ_node,

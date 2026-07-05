@@ -140,7 +140,7 @@ impl HugrEngine {
             let entry_nodes = self.expand_conditional(&hugr, cond_node, branch_index);
             let num_entry_nodes = entry_nodes.len();
             for entry_node in entry_nodes {
-                if !self.work_queue.contains(&entry_node) && !self.processed.contains(&entry_node) {
+                if !self.work_queue.contains(entry_node) && !self.processed.contains(&entry_node) {
                     self.work_queue.push_back(entry_node);
                 }
             }

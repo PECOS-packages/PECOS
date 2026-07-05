@@ -199,7 +199,7 @@ impl HugrEngine {
 
         if let Some(cfg_node) = func_info.cfg_node {
             debug!("scan {scan_node:?}: launching frame CFG {cfg_node:?}");
-            if !self.work_queue.contains(&cfg_node) {
+            if !self.work_queue.contains(cfg_node) {
                 self.work_queue.push_front(cfg_node);
             }
             false
@@ -364,7 +364,7 @@ impl HugrEngine {
                     "FuncDefn {:?} free after scan: starting pending Call {next_call:?}",
                     state.func_defn_node
                 );
-                if !self.work_queue.contains(&next_call) {
+                if !self.work_queue.contains(next_call) {
                     self.work_queue.push_front(next_call);
                 }
             }

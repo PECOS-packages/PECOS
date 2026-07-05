@@ -206,7 +206,7 @@ impl HugrEngine {
                     );
                     // Add the pending call to the front of the work queue
                     // so it gets processed next
-                    if !self.work_queue.contains(&next_call) {
+                    if !self.work_queue.contains(next_call) {
                         self.work_queue.push_front(next_call);
                     }
                 }

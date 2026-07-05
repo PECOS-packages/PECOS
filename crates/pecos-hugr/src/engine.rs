@@ -2362,18 +2362,30 @@ mod tests {
             Some(ClassicalValue::RngContext(_))
         ));
 
-        // Backtracking is unsupported by the step-based implementation and
-        // must FAULT (the spec allows negative delta; silently advancing
-        // forward instead fabricates a different stream).
-        seed_input(&mut engine, advance, 1, ClassicalValue::Int(-1));
-        assert!(matches!(
-            engine.handle_random_op(&hugr, advance, "RandomAdvance"),
-            HandlerOutcome::Fault(_)
-        ));
-        seed_input(&mut engine, advance, 1, ClassicalValue::Int(2));
+        // Advance then backtrack by the same delta must round-trip the
+        // stream exactly (xorshift64 jumps are exact in both directions).
+        let ctx_id_now = match engine.wire_state.classical_values.get(&(float, 1)) {
+            Some(ClassicalValue::RngContext(id)) => *id,
+            other => panic!("expected context after RandomFloat, got {other:?}"),
+        };
+        let state_before = engine.extension_state.rng_contexts[&ctx_id_now].state;
+        seed_input(&mut engine, advance, 1, ClassicalValue::Int(1000));
         assert_eq!(
             engine.handle_random_op(&hugr, advance, "RandomAdvance"),
             HandlerOutcome::Processed
+        );
+        assert_ne!(
+            engine.extension_state.rng_contexts[&ctx_id_now].state,
+            state_before
+        );
+        seed_input(&mut engine, advance, 1, ClassicalValue::Int(-1000));
+        assert_eq!(
+            engine.handle_random_op(&hugr, advance, "RandomAdvance"),
+            HandlerOutcome::Processed
+        );
+        assert_eq!(
+            engine.extension_state.rng_contexts[&ctx_id_now].state, state_before,
+            "advance(+1000) then advance(-1000) must round-trip"
         );
 
         assert_eq!(
@@ -3025,6 +3037,30 @@ mod tests {
             !engine.work_queue.contains(dead_load),
             "dead function body must not be queued"
         );
+    }
+
+    /// xorshift64 jump-ahead must be EXACT: M^k over GF(2) equals k
+    /// sequential steps, and backward jumps invert them via the 2^64-1
+    /// period.
+    #[test]
+    fn test_rng_jump_matches_stepping() {
+        use crate::engine::types::RngContextState;
+
+        let mut stepped = RngContextState::new(0xDEAD_BEEF);
+        let mut jumped = RngContextState::new(0xDEAD_BEEF);
+        for _ in 0..137 {
+            stepped.next_u64();
+        }
+        jumped.jump(137);
+        assert_eq!(stepped.state, jumped.state);
+
+        jumped.jump_back(137);
+        assert_eq!(jumped.state, RngContextState::new(0xDEAD_BEEF).state);
+
+        // Identity jump.
+        let before = stepped.state;
+        stepped.jump(0);
+        assert_eq!(stepped.state, before);
     }
 
     #[test]

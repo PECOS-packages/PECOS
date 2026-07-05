@@ -646,6 +646,61 @@ impl RngContextState {
         let result = bits as f64 / (1u64 << 53) as f64;
         result
     }
+
+    /// Advance the generator by `steps` in O(log steps), exactly as if
+    /// `next_u64` had been called `steps` times.
+    ///
+    /// xorshift64 is a LINEAR map over GF(2): one step is multiplication
+    /// by a fixed 64x64 bit matrix, so stepping k times is the matrix
+    /// power M^k. Backtracking uses the generator's period 2^64 - 1
+    /// (all nonzero states form one cycle): k steps back == period - k
+    /// steps forward.
+    pub fn jump(&mut self, steps: u128) {
+        const PERIOD: u128 = (1u128 << 64) - 1;
+        let steps = steps % PERIOD;
+        if steps == 0 {
+            return;
+        }
+        // Row i of the one-step matrix = transform applied to basis 1<<i.
+        let step_matrix: [u64; 64] = std::array::from_fn(|i| {
+            let mut x = 1u64 << i;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        });
+        let mat_vec = |m: &[u64; 64], v: u64| -> u64 {
+            let mut out = 0u64;
+            for (i, row) in m.iter().enumerate() {
+                if (v >> i) & 1 == 1 {
+                    out ^= row;
+                }
+            }
+            out
+        };
+        let mat_mul = |a: &[u64; 64], b: &[u64; 64]| -> [u64; 64] {
+            std::array::from_fn(|i| mat_vec(a, b[i]))
+        };
+        // result = M^steps via binary exponentiation.
+        let identity: [u64; 64] = std::array::from_fn(|i| 1u64 << i);
+        let mut result = identity;
+        let mut base = step_matrix;
+        let mut e = steps;
+        while e > 0 {
+            if e & 1 == 1 {
+                result = mat_mul(&result, &base);
+            }
+            base = mat_mul(&base, &base);
+            e >>= 1;
+        }
+        self.state = mat_vec(&result, self.state);
+    }
+
+    /// Step `steps` BACKWARD, exactly undoing that many `next_u64` calls.
+    pub fn jump_back(&mut self, steps: u64) {
+        const PERIOD: u128 = (1u128 << 64) - 1;
+        self.jump(PERIOD - (u128::from(steps) % PERIOD));
+    }
 }
 
 // --- Conditional Control Flow Types ---

@@ -360,26 +360,15 @@ impl HugrEngine {
                 };
 
                 {
-                    const MAX_ADVANCE_STEPS: u64 = 1 << 24;
-                    // The spec advances OR BACKTRACKS by delta; this
-                    // step-based implementation can only go forward, and a
-                    // huge forward delta would hang the host. Fail loud on
-                    // both instead of silently advancing the wrong way.
-                    if delta < 0 {
-                        return HandlerOutcome::Fault(format!(
-                            "RandomAdvance at {node:?}: backtracking (delta {delta}) is \
-                             not supported by the step-based RNG implementation"
-                        ));
-                    }
-                    let steps = delta.unsigned_abs();
-                    if steps > MAX_ADVANCE_STEPS {
-                        return HandlerOutcome::Fault(format!(
-                            "RandomAdvance at {node:?}: delta {steps} exceeds the \
-                             step-based implementation's ceiling ({MAX_ADVANCE_STEPS})"
-                        ));
-                    }
-                    for _ in 0..steps {
-                        self.generate_random_u64(ctx_id);
+                    // The spec advances OR BACKTRACKS by delta. xorshift64
+                    // is linear over GF(2), so both directions jump in
+                    // O(log delta) -- no step loop, no ceiling.
+                    if let Some(ctx) = self.extension_state.rng_contexts.get_mut(&ctx_id) {
+                        if delta >= 0 {
+                            ctx.jump(delta.unsigned_abs().into());
+                        } else {
+                            ctx.jump_back(delta.unsigned_abs());
+                        }
                     }
 
                     self.wire_state

@@ -122,12 +122,16 @@ pub struct HugrEngine {
     pub(crate) conditionals: BTreeMap<Node, ConditionalInfo>,
 
     /// Pending conditionals waiting for measurement results.
-    /// Maps the Conditional node to the qubit ID whose measurement determines the branch.
+    /// Conditionals whose control value is not yet resolvable (waiting on
+    /// a measurement); retried when results arrive.
     pub(crate) pending_conditionals: BTreeSet<Node>,
 
-    /// Pending bool.read nodes waiting for measurement results.
-    /// These are re-added to the work queue when measurement results arrive.
-    pub(crate) pending_bool_reads: BTreeSet<Node>,
+    /// The starved-node parking lot: every op that DEFERRED (missing or
+    /// unconvertible inputs) -- classical ops, bool reads, extension ops,
+    /// `LoadConstants`, parked scans. Re-queued by `retry_deferred_nodes` on
+    /// completions and measurement rounds; anything still here at
+    /// completion time surfaces in the stall report.
+    pub(crate) deferred_nodes: BTreeSet<Node>,
 
     /// Set of nodes that are inside Case nodes (children of Conditionals).
     /// These should not be processed until their parent Conditional is expanded.
@@ -379,7 +383,7 @@ impl HugrEngine {
 
         // Clear Conditional control flow state
         self.pending_conditionals.clear();
-        self.pending_bool_reads.clear();
+        self.deferred_nodes.clear();
         self.active_cases.clear();
 
         // Clear CFG control flow state
@@ -622,9 +626,9 @@ impl HugrEngine {
     /// Re-queue pending bool.read nodes that were waiting for measurement results.
     /// When a measurement result arrives, the classical value is stored and we need to
     /// retry any bool.read nodes that were deferred because their input wasn't ready.
-    fn retry_pending_bool_reads(&mut self) {
+    fn retry_deferred_nodes(&mut self) {
         // Move pending bool.reads to work queue so they can be retried
-        let pending: Vec<_> = std::mem::take(&mut self.pending_bool_reads)
+        let pending: Vec<_> = std::mem::take(&mut self.deferred_nodes)
             .into_iter()
             .collect();
 
@@ -1206,13 +1210,13 @@ impl HugrEngine {
                     // stall report names this node instead of letting its
                     // block complete around a missing constant-derived value.
                     debug!("LoadConstant {current_node:?}: failed to load value, deferring");
-                    self.pending_bool_reads.insert(current_node);
+                    self.deferred_nodes.insert(current_node);
                     continue;
                 }
                 self.processed.insert(current_node);
 
                 // Retry any pending ops that might now have their inputs ready
-                self.retry_pending_bool_reads();
+                self.retry_deferred_nodes();
 
                 // A Case/block may consist of just constants feeding its
                 // Output (e.g. a loop's continue-flag bool) -- check
@@ -1245,7 +1249,7 @@ impl HugrEngine {
                                 .remove(&(current_node, port));
                         }
                         // Add to pending bool reads set for retry (reusing the same mechanism)
-                        self.pending_bool_reads.insert(current_node);
+                        self.deferred_nodes.insert(current_node);
                         continue;
                     }
                     // A zero-output op with nothing to store completes.
@@ -1260,7 +1264,7 @@ impl HugrEngine {
                 };
 
                 // Successfully resolved - remove from pending if it was there
-                self.pending_bool_reads.remove(&current_node);
+                self.deferred_nodes.remove(&current_node);
 
                 // Store output values. A QubitRef output (e.g. an
                 // UnpackTuple or Tag over a linear payload) is mirrored into
@@ -1277,7 +1281,7 @@ impl HugrEngine {
                 self.processed.insert(current_node);
 
                 // Retry any pending ops that might now have their inputs ready
-                self.retry_pending_bool_reads();
+                self.retry_deferred_nodes();
 
                 // Check if any pending conditionals can now be resolved
                 self.try_resolve_pending_conditionals();
@@ -1314,7 +1318,7 @@ impl HugrEngine {
                 self.processed.insert(current_node);
 
                 // Retry any pending ops that might now have their inputs ready
-                self.retry_pending_bool_reads();
+                self.retry_deferred_nodes();
 
                 // Check if any pending conditionals can now be resolved
                 self.try_resolve_pending_conditionals();
@@ -1339,7 +1343,7 @@ impl HugrEngine {
                 // Extension op couldn't be processed (input not ready) - defer it
                 // But don't defer if it's also a quantum op (e.g., MeasureFree from tket.quantum)
                 // - those should fall through to the quantum op handling below
-                self.pending_bool_reads.insert(current_node);
+                self.deferred_nodes.insert(current_node);
                 continue;
             }
             // Fall through to quantum op handling
@@ -1364,10 +1368,10 @@ impl HugrEngine {
             // qubit wire has no mapping yet (its producer has not run --
             // completion of that producer re-queues this node).
             let Some(qubits) = self.resolve_qubits(&hugr, current_node, &op) else {
-                self.pending_bool_reads.insert(current_node);
+                self.deferred_nodes.insert(current_node);
                 continue;
             };
-            self.pending_bool_reads.remove(&current_node);
+            self.deferred_nodes.remove(&current_node);
 
             // Emit the gate operation
             if self.emit_quantum_gate(&hugr, current_node, &op, &qubits)? {
@@ -1456,11 +1460,8 @@ impl HugrEngine {
                 self.active_scans.keys().collect::<Vec<_>>()
             ));
         }
-        if !self.pending_bool_reads.is_empty() {
-            stalled.push(format!(
-                "starved deferred nodes: {:?}",
-                self.pending_bool_reads
-            ));
+        if !self.deferred_nodes.is_empty() {
+            stalled.push(format!("starved deferred nodes: {:?}", self.deferred_nodes));
         }
         if !self.pending_conditionals.is_empty() {
             stalled.push(format!(
@@ -1852,7 +1853,7 @@ impl Default for HugrEngine {
             // Control flow fields (Conditional)
             conditionals: BTreeMap::new(),
             pending_conditionals: BTreeSet::new(),
-            pending_bool_reads: BTreeSet::new(),
+            deferred_nodes: BTreeSet::new(),
             nodes_inside_cases: BTreeSet::new(),
             active_cases: BTreeMap::new(),
             // Control flow fields (CFG)
@@ -1997,7 +1998,7 @@ impl ClassicalEngine for HugrEngine {
                 }
 
                 // Retry any bool.read nodes that were waiting for measurement results
-                self.retry_pending_bool_reads();
+                self.retry_deferred_nodes();
 
                 Ok(())
             }
@@ -2550,9 +2551,9 @@ mod tests {
         );
         assert!(engine.active_tailloops.is_empty());
         assert!(
-            engine.pending_bool_reads.is_empty(),
+            engine.deferred_nodes.is_empty(),
             "starved nodes: {:?}",
-            engine.pending_bool_reads
+            engine.deferred_nodes
         );
     }
 
@@ -3122,7 +3123,7 @@ mod tests {
         assert!(engine.active_cases.is_empty());
         assert!(engine.active_calls.is_empty());
         assert!(engine.active_tailloops.is_empty());
-        assert!(engine.pending_bool_reads.is_empty());
+        assert!(engine.deferred_nodes.is_empty());
     }
 
     #[test]

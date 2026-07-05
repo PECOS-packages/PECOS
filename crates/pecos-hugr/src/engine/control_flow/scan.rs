@@ -340,7 +340,7 @@ impl HugrEngine {
             let state = self.active_scans.remove(&scan_node).expect("present above");
             self.store_scan_outputs(&state);
             self.processed.insert(scan_node);
-            self.pending_bool_reads.remove(&scan_node);
+            self.deferred_nodes.remove(&scan_node);
             debug!(
                 "scan {scan_node:?}: complete with {} results",
                 state.results.len()
@@ -353,7 +353,7 @@ impl HugrEngine {
             self.try_resolve_pending_tailloops();
             self.try_resolve_pending_cfg_branches();
             self.queue_ready_successors(hugr, scan_node);
-            self.retry_pending_bool_reads();
+            self.retry_deferred_nodes();
 
             // The frame is free now: wake any Call that parked waiting for it
             // (mirrors complete_func_call_if_needed).

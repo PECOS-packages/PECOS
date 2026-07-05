@@ -612,10 +612,10 @@ impl HugrEngine {
                     .and_then(|v| v.as_bool());
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.bool.and at {node:?}: deferring - input not ready");
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
-                self.pending_bool_reads.remove(&node);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a && b));
@@ -631,10 +631,10 @@ impl HugrEngine {
                     .and_then(|v| v.as_bool());
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.bool.or at {node:?}: deferring - input not ready");
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
-                self.pending_bool_reads.remove(&node);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a || b));
@@ -650,10 +650,10 @@ impl HugrEngine {
                     .and_then(|v| v.as_bool());
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.bool.xor at {node:?}: deferring - input not ready");
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
-                self.pending_bool_reads.remove(&node);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a ^ b));
@@ -666,10 +666,10 @@ impl HugrEngine {
                     .and_then(|v| v.as_bool())
                 else {
                     debug!("tket.bool.not at {node:?}: deferring - input not ready");
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
-                self.pending_bool_reads.remove(&node);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(!a));
@@ -685,10 +685,10 @@ impl HugrEngine {
                     .and_then(|v| v.as_bool());
                 let (Some(a), Some(b)) = (a, b) else {
                     debug!("tket.bool.eq at {node:?}: deferring - input not ready");
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
-                self.pending_bool_reads.remove(&node);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a == b));
@@ -705,7 +705,7 @@ impl HugrEngine {
                 let Some(input_val) = input_value else {
                     debug!("tket.bool.make_opaque at {node:?}: deferring - input not ready");
                     // Track this node so it can be retried when input becomes available
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
 
@@ -713,12 +713,12 @@ impl HugrEngine {
                 // missing one: fabricating `false` commits a wrong value.
                 let Some(value) = input_val.as_bool() else {
                     debug!("tket.bool.make_opaque at {node:?}: deferring - input not a bool");
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
 
                 // Successfully resolved - remove from pending if it was there
-                self.pending_bool_reads.remove(&node);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
@@ -737,18 +737,18 @@ impl HugrEngine {
                 let Some(input_val) = input_value else {
                     debug!("tket.bool.read at {node:?}: deferring - input not ready");
                     // Track this node so it can be retried when measurement results arrive
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
 
                 let Some(value) = input_val.as_bool() else {
                     debug!("tket.bool.read at {node:?}: deferring - input not a bool");
-                    self.pending_bool_reads.insert(node);
+                    self.deferred_nodes.insert(node);
                     return HandlerOutcome::Defer;
                 };
 
                 // Successfully resolved - remove from pending if it was there
-                self.pending_bool_reads.remove(&node);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));

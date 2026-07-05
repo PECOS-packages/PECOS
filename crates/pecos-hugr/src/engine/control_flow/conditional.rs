@@ -211,7 +211,7 @@ impl HugrEngine {
             self.try_resolve_pending_tailloops();
             self.try_resolve_pending_cfg_branches();
             self.queue_ready_successors(hugr, cond_node);
-            self.retry_pending_bool_reads();
+            self.retry_deferred_nodes();
         }
     }
 
@@ -623,7 +623,7 @@ impl HugrEngine {
             self.try_resolve_pending_tailloops();
             self.try_resolve_pending_cfg_branches();
             self.queue_ready_successors(hugr, cond_node);
-            self.retry_pending_bool_reads();
+            self.retry_deferred_nodes();
         }
 
         entry_nodes

@@ -77,6 +77,29 @@ impl ChannelDispatch for DensityMatrix {
 
 /// Process a `ByteMessage` against any Clifford-capable simulator.
 ///
+/// Capacity guard: an emitted qubit id past the simulator's size (e.g. a
+/// program allocating per loop iteration beyond the configured qubit
+/// count) must fail with the op and the capacity named, not deep inside
+/// the simulator. Called for every dispatched command, INCLUDING commands
+/// consumed by MZ-batching lookahead.
+fn check_qubit_capacity(
+    gate_type: pecos_core::gate_type::GateType,
+    qubits: &[QubitId],
+    capacity: usize,
+) -> Result<(), PecosError> {
+    for q in qubits {
+        if q.0 >= capacity {
+            return Err(PecosError::Generic(format!(
+                "quantum op {gate_type:?} targets qubit {} but the simulator holds \
+                 {capacity} qubits (dynamic allocation exceeded the configured \
+                 capacity; raise the builder's qubit count)",
+                q.0
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Shared gate dispatch for `SparseStabEngine`, `StabilizerEngine`, etc.
 /// Supports Clifford gates, preparations, measurements, and Clifford rotations
 /// (non-Clifford angles produce an error via `CliffordRotation::try_*`).
@@ -92,22 +115,7 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
         let cmd = &batch[cmd_idx];
-        // Capacity guard: an emitted qubit id past the simulator's size
-        // (e.g. a program allocating per loop iteration beyond the
-        // configured .qubits(n)) must fail HERE with the op and the
-        // capacity named, not deep inside the simulator.
-        for q in &cmd.qubits {
-            if q.0 >= sim.num_qubits() {
-                return Err(PecosError::Generic(format!(
-                    "quantum op {:?} targets qubit {} but the simulator holds {} qubits \
-                     (dynamic allocation exceeded the configured capacity; raise the \
-                     builder's qubit count)",
-                    cmd.gate_type,
-                    q.0,
-                    sim.num_qubits()
-                )));
-            }
-        }
+        check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
             // Single-qubit Clifford gates
             GateType::X => {
@@ -204,6 +212,12 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                     )
                 {
                     cmd_idx += 1;
+                    // Lookahead-consumed commands need the guard too.
+                    check_qubit_capacity(
+                        batch[cmd_idx].gate_type,
+                        &batch[cmd_idx].qubits,
+                        sim.num_qubits(),
+                    )?;
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
                 let meas_ids = sim.mz(&mz_qubits);
@@ -325,22 +339,7 @@ fn process_general_message<
     let mut cmd_idx = 0;
     while cmd_idx < batch.len() {
         let cmd = &batch[cmd_idx];
-        // Capacity guard: an emitted qubit id past the simulator's size
-        // (e.g. a program allocating per loop iteration beyond the
-        // configured .qubits(n)) must fail HERE with the op and the
-        // capacity named, not deep inside the simulator.
-        for q in &cmd.qubits {
-            if q.0 >= sim.num_qubits() {
-                return Err(PecosError::Generic(format!(
-                    "quantum op {:?} targets qubit {} but the simulator holds {} qubits \
-                     (dynamic allocation exceeded the configured capacity; raise the \
-                     builder's qubit count)",
-                    cmd.gate_type,
-                    q.0,
-                    sim.num_qubits()
-                )));
-            }
-        }
+        check_qubit_capacity(cmd.gate_type, &cmd.qubits, sim.num_qubits())?;
         match cmd.gate_type {
             // Single-qubit Clifford gates
             GateType::X => {
@@ -572,6 +571,12 @@ fn process_general_message<
                     )
                 {
                     cmd_idx += 1;
+                    // Lookahead-consumed commands need the guard too.
+                    check_qubit_capacity(
+                        batch[cmd_idx].gate_type,
+                        &batch[cmd_idx].qubits,
+                        sim.num_qubits(),
+                    )?;
                     mz_qubits.extend_from_slice(&batch[cmd_idx].qubits);
                 }
                 let meas_ids = sim.mz(&mz_qubits);

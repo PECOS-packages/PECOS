@@ -202,7 +202,30 @@ impl HugrEngine {
                 wire_key,
                 value
             );
-            value
+            if value.is_some() {
+                return value;
+            }
+            // FLATTENING: classical values cross DFG boundaries
+            // structurally, exactly like qubit tracing does. A DFG node's
+            // outputs live at its Output child's sources; a DFG's Input
+            // node ports live at the DFG node's own input wires. Bounded
+            // by nesting depth.
+            match hugr.get_optype(src_node) {
+                OpType::DFG(_) => {
+                    let output_node = hugr.get_io(src_node).map(|[_, o]| o)?;
+                    return self.get_input_value(hugr, output_node, src_port.index());
+                }
+                OpType::Input(_)
+                    if hugr
+                        .get_parent(src_node)
+                        .is_some_and(|p| matches!(hugr.get_optype(p), OpType::DFG(_))) =>
+                {
+                    let dfg_node = hugr.get_parent(src_node)?;
+                    return self.get_input_value(hugr, dfg_node, src_port.index());
+                }
+                _ => {}
+            }
+            None
         } else {
             debug!("get_input_value({node:?}, {port}): no linked output");
             None

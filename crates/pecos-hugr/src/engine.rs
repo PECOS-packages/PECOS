@@ -3052,6 +3052,84 @@ mod tests {
         assert_eq!(stepped.state, before);
     }
 
+    /// Classical values must cross DFG boundaries structurally (the
+    /// flattening semantics qubit tracing already had): a consumer inside
+    /// a nested DFG reads through the Input boundary to the outer
+    /// producer, and a consumer of the DFG node reads through its Output
+    /// child.
+    #[test]
+    fn test_classical_values_trace_through_dfg_boundaries() {
+        use tket::hugr::builder::{Dataflow, DataflowHugr, DataflowSubContainer, FunctionBuilder};
+        use tket::hugr::ops::Value;
+        use tket::hugr::ops::handle::NodeHandle;
+        use tket::hugr::std_extensions::arithmetic::int_ops::IntOpDef;
+        use tket::hugr::std_extensions::arithmetic::int_types::{ConstInt, int_type};
+        use tket::hugr::types::Signature;
+
+        let (hugr, iadd_node, dfg_node) = {
+            let mut fb =
+                FunctionBuilder::new("dfg_flow", Signature::new(vec![], vec![int_type(6)]))
+                    .unwrap();
+            let a = fb.add_load_const(Value::from(ConstInt::new_u(6, 30).unwrap()));
+            let b = fb.add_load_const(Value::from(ConstInt::new_u(6, 12).unwrap()));
+            let mut dfg = fb
+                .dfg_builder(
+                    Signature::new(vec![int_type(6); 2], vec![int_type(6)]),
+                    [a, b],
+                )
+                .unwrap();
+            let [ia, ib] = dfg.input_wires_arr();
+            let [sum] = dfg
+                .add_dataflow_op(IntOpDef::iadd.with_log_width(6), [ia, ib])
+                .unwrap()
+                .outputs_arr();
+            let iadd_node = sum.node();
+            let dfg_handle = dfg.finish_with_outputs([sum]).unwrap();
+            let dfg_node = dfg_handle.node();
+            let [out] = dfg_handle.outputs_arr();
+            let hugr = fb.finish_hugr_with_outputs([out]).unwrap();
+            (hugr, iadd_node, dfg_node)
+        };
+
+        let mut engine = HugrEngine::default();
+        // Seed the OUTER producers (the LoadConstant wires feeding the DFG).
+        for (port, value) in [(0, 30i64), (1, 12i64)] {
+            let (src, sp) = hugr
+                .single_linked_output(dfg_node, IncomingPort::from(port))
+                .unwrap();
+            engine
+                .wire_state
+                .classical_values
+                .insert((src, sp.index()), ClassicalValue::Int(value));
+        }
+
+        // Inside: the iadd's inputs read THROUGH the DFG Input boundary.
+        assert_eq!(
+            engine.get_input_value(&hugr, iadd_node, 0),
+            Some(ClassicalValue::Int(30))
+        );
+        assert_eq!(
+            engine.get_input_value(&hugr, iadd_node, 1),
+            Some(ClassicalValue::Int(12))
+        );
+
+        // Outside: once the interior op stores its result, a consumer of
+        // the DFG node reads THROUGH its Output child. The function's
+        // Output node consumes the DFG's port 0.
+        engine
+            .wire_state
+            .classical_values
+            .insert((iadd_node, 0), ClassicalValue::Int(42));
+        let func_output = hugr
+            .get_io(hugr.get_parent(dfg_node).unwrap())
+            .map(|[_, o]| o)
+            .unwrap();
+        assert_eq!(
+            engine.get_input_value(&hugr, func_output, 0),
+            Some(ClassicalValue::Int(42))
+        );
+    }
+
     #[test]
     fn test_completion_audit_reports_unexecuted_container_ops() {
         // The reachability audit must catch a container the engine claims

@@ -633,23 +633,19 @@ impl HugrEngine {
                 // A Conditional is marked processed at EXPANSION; its
                 // outputs exist only once its selected case completes, so
                 // an active case must also block body completion.
-                let all_conditionals_done = tailloop_info.conditional_nodes.iter().all(|cond| {
-                    self.processed.contains(cond)
-                        && !self
-                            .active_cases
-                            .values()
-                            .any(|case| case.conditional_node == *cond)
-                });
+                let all_conditionals_done = tailloop_info
+                    .conditional_nodes
+                    .iter()
+                    .all(|cond| self.node_settled(*cond));
 
                 // Nested containers count as done only once processed AND
                 // no longer active (a nested loop marks processed at its
                 // own completion; a nested CFG at complete_cfg_execution).
-                let all_nested_done = tailloop_info.tailloop_nodes.iter().all(|tl| {
-                    self.processed.contains(tl) && !self.active_tailloops.contains_key(tl)
-                }) && tailloop_info
-                    .cfg_nodes
+                let all_nested_done = tailloop_info
+                    .tailloop_nodes
                     .iter()
-                    .all(|c| self.processed.contains(c) && !self.active_cfgs.contains_key(c));
+                    .chain(&tailloop_info.cfg_nodes)
+                    .all(|nested| self.node_settled(*nested));
 
                 if all_quantum_done
                     && all_calls_done

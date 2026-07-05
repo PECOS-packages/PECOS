@@ -247,16 +247,7 @@ impl HugrEngine {
             let Some(state) = self.active_scans.get(&scan_node) else {
                 continue;
             };
-            let all_done = state.frame_ops.iter().all(|op| {
-                self.processed.contains(op)
-                    && !self
-                        .active_cases
-                        .values()
-                        .any(|case| case.conditional_node == *op)
-                    && !self.active_tailloops.contains_key(op)
-                    && !self.active_calls.contains_key(op)
-                    && !self.active_cfgs.contains_key(op)
-            });
+            let all_done = state.frame_ops.iter().all(|op| self.node_settled(*op));
             if all_done {
                 debug!("scan {scan_node:?}: dataflow frame complete");
                 self.advance_scan(hugr, scan_node);

@@ -167,16 +167,10 @@ impl HugrEngine {
                 // nested Conditional is marked processed at EXPANSION (its
                 // outputs exist only once its own case completes), and
                 // active TailLoops/Calls are still producing values.
-                let all_done = case_info.ops_in_case.iter().all(|op| {
-                    self.processed.contains(op)
-                        && !self
-                            .active_cases
-                            .values()
-                            .any(|c| c.conditional_node == *op)
-                        && !self.active_tailloops.contains_key(op)
-                        && !self.active_calls.contains_key(op)
-                        && !self.active_cfgs.contains_key(op)
-                });
+                let all_done = case_info
+                    .ops_in_case
+                    .iter()
+                    .all(|op| self.node_settled(*op));
 
                 if all_done {
                     completed_cases.push((*case_node, case_info.conditional_node));

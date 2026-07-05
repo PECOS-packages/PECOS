@@ -40,9 +40,7 @@ use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
 use crate::engine::activation::{ContainerActivation, QueuePolicy};
-use crate::engine::analysis::{
-    all_predecessors_ready, find_extension_ops_in_block, find_input_node, find_output_node,
-};
+use crate::engine::analysis::{find_extension_ops_in_block, find_input_node, find_output_node};
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
@@ -286,13 +284,10 @@ impl HugrEngine {
                     // completed and propagated outputs -- expansion alone
                     // marks it processed, but its output values do not exist
                     // yet (transitioning then would copy missing values).
-                    let conditionals_done = block_info.conditional_nodes.iter().all(|cond| {
-                        self.processed.contains(cond)
-                            && !self
-                                .active_cases
-                                .values()
-                                .any(|case| case.conditional_node == *cond)
-                    });
+                    let conditionals_done = block_info
+                        .conditional_nodes
+                        .iter()
+                        .all(|cond| self.node_settled(*cond));
                     let block_complete = all_done(&block_info.quantum_ops)
                         && all_done(&block_info.call_nodes)
                         && conditionals_done
@@ -715,15 +710,7 @@ impl HugrEngine {
             if (is_relevant || is_extension)
                 && !self.processed.contains(&succ_node)
                 && !self.work_queue.contains(succ_node)
-                && all_predecessors_ready(
-                    hugr,
-                    succ_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.active_cases,
-                    &self.processed,
-                )
+                && self.all_predecessors_ready(hugr, succ_node)
             {
                 debug!("CFG complete: adding successor {succ_node:?} to work queue");
                 self.work_queue.push_back(succ_node);

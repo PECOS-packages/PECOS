@@ -58,10 +58,10 @@ use types::{
 
 // Use analysis functions from submodule
 use analysis::{
-    all_predecessors_ready, collect_descendants, extract_call_targets, extract_cfgs,
-    extract_classical_ops, extract_conditionals, extract_func_defns, extract_quantum_ops,
-    extract_tailloops, find_nodes_inside_cases, find_nodes_inside_cfg_blocks,
-    find_nodes_inside_func_defns, find_nodes_inside_tailloops,
+    collect_descendants, extract_call_targets, extract_cfgs, extract_classical_ops,
+    extract_conditionals, extract_func_defns, extract_quantum_ops, extract_tailloops,
+    find_nodes_inside_cases, find_nodes_inside_cfg_blocks, find_nodes_inside_func_defns,
+    find_nodes_inside_tailloops,
 };
 /// A HUGR interpreter engine that directly executes HUGR programs.
 ///
@@ -444,15 +444,7 @@ impl HugrEngine {
             for node in self.quantum_ops.keys() {
                 if !should_skip(node)
                     && !self.work_queue.contains(*node)
-                    && all_predecessors_ready(
-                        hugr,
-                        *node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.active_cases,
-                        &self.processed,
-                    )
+                    && self.all_predecessors_ready(hugr, *node)
                 {
                     self.work_queue.push_back(*node);
                 }
@@ -463,15 +455,7 @@ impl HugrEngine {
             for node in self.classical_ops.keys() {
                 if !should_skip(node)
                     && !self.work_queue.contains(*node)
-                    && all_predecessors_ready(
-                        hugr,
-                        *node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.active_cases,
-                        &self.processed,
-                    )
+                    && self.all_predecessors_ready(hugr, *node)
                 {
                     self.work_queue.push_back(*node);
                 }
@@ -482,15 +466,7 @@ impl HugrEngine {
             for node in self.conditionals.keys() {
                 if !should_skip(node)
                     && !self.work_queue.contains(*node)
-                    && all_predecessors_ready(
-                        hugr,
-                        *node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.active_cases,
-                        &self.processed,
-                    )
+                    && self.all_predecessors_ready(hugr, *node)
                 {
                     self.work_queue.push_back(*node);
                 }
@@ -501,15 +477,7 @@ impl HugrEngine {
             for node in self.cfgs.keys() {
                 if !should_skip(node)
                     && !self.work_queue.contains(*node)
-                    && all_predecessors_ready(
-                        hugr,
-                        *node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.active_cases,
-                        &self.processed,
-                    )
+                    && self.all_predecessors_ready(hugr, *node)
                 {
                     self.work_queue.push_back(*node);
                 }
@@ -520,15 +488,7 @@ impl HugrEngine {
             for node in self.call_targets.keys() {
                 if !should_skip(node)
                     && !self.work_queue.contains(*node)
-                    && all_predecessors_ready(
-                        hugr,
-                        *node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.active_cases,
-                        &self.processed,
-                    )
+                    && self.all_predecessors_ready(hugr, *node)
                 {
                     self.work_queue.push_back(*node);
                 }
@@ -551,15 +511,7 @@ impl HugrEngine {
             for node in self.tailloops.keys() {
                 if !should_skip(node)
                     && !self.work_queue.contains(*node)
-                    && all_predecessors_ready(
-                        hugr,
-                        *node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.active_cases,
-                        &self.processed,
-                    )
+                    && self.all_predecessors_ready(hugr, *node)
                 {
                     self.work_queue.push_back(*node);
                 }
@@ -957,15 +909,7 @@ impl HugrEngine {
                     // so expanding early starves the body forever. When a
                     // producer completes, queue_ready_successors re-queues
                     // this node.
-                    if !all_predecessors_ready(
-                        &hugr,
-                        current_node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.active_cases,
-                        &self.processed,
-                    ) {
+                    if !self.all_predecessors_ready(&hugr, current_node) {
                         debug!("TailLoop {current_node:?}: inputs not ready, deferring expansion");
                         continue;
                     }
@@ -1531,6 +1475,54 @@ impl HugrEngine {
         }
     }
 
+    /// A node is SETTLED as a dependency: processed AND no active container
+    /// state machine still owns it. A Conditional is marked processed at
+    /// EXPANSION but its outputs exist only once its selected case
+    /// completes; Calls/TailLoops/CFGs/scans mark processed at completion,
+    /// where the active check is redundant but keeps this predicate the
+    /// single source of truth (five sites used to hand-roll subsets of it,
+    /// and a sixth would have forgotten one).
+    pub(crate) fn node_settled(&self, node: Node) -> bool {
+        self.processed.contains(&node)
+            && !self
+                .active_cases
+                .values()
+                .any(|case| case.conditional_node == node)
+            && !self.active_tailloops.contains_key(&node)
+            && !self.active_calls.contains_key(&node)
+            && !self.active_cfgs.contains_key(&node)
+            && !self.active_scans.contains_key(&node)
+    }
+
+    /// Whether every producer feeding `node` is settled: the gate for
+    /// one-shot input copiers (Calls, TailLoop/CFG activation, classical
+    /// and extension ops) -- firing before a producer settles copies
+    /// missing or stale values with no repair path.
+    pub(crate) fn all_predecessors_ready(&self, hugr: &Hugr, node: Node) -> bool {
+        for pred_node in hugr.input_neighbours(node) {
+            let op = hugr.get_optype(pred_node);
+            let gates = self.quantum_ops.contains_key(&pred_node)
+                || self.conditionals.contains_key(&pred_node)
+                || self.cfgs.contains_key(&pred_node)
+                || matches!(
+                    op,
+                    OpType::Call(_) | OpType::TailLoop(_) | OpType::LoadConstant(_)
+                )
+                // Extension-op and executable-Tag predecessors (classical
+                // ops, tket.* ops, copyable sum construction) produce
+                // classical values; firing a consumer before they complete
+                // copies MISSING inputs. Linear (qubit-routing) Tags never
+                // execute... but every Tag classifies as executable now, so
+                // the classical-op check covers them.
+                || op.as_extension_op().is_some()
+                || crate::engine::analysis::classify_classical_op(op).is_some();
+            if gates && !self.node_settled(pred_node) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Audit that every direct child of every executed container region
     /// (activated `DataflowBlock`, selected Case, expanded `TailLoop` body)
     /// was processed. Exempt kinds never execute: Input/Output boundaries,
@@ -1820,15 +1812,7 @@ impl HugrEngine {
                 && !inside_control_flow
                 && !self.processed.contains(&succ_node)
                 && !self.work_queue.contains(succ_node)
-                && all_predecessors_ready(
-                    hugr,
-                    succ_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.active_cases,
-                    &self.processed,
-                )
+                && self.all_predecessors_ready(hugr, succ_node)
             {
                 self.work_queue.push_back(succ_node);
             } else if is_relevant || is_extension {
@@ -1836,15 +1820,7 @@ impl HugrEngine {
                     "queue_ready_successors({node:?}): skipped {succ_node:?} gated={inside_control_flow} processed={} queued={} ready={}",
                     self.processed.contains(&succ_node),
                     self.work_queue.contains(succ_node),
-                    all_predecessors_ready(
-                        hugr,
-                        succ_node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.active_cases,
-                        &self.processed
-                    )
+                    self.all_predecessors_ready(hugr, succ_node)
                 );
             }
         }

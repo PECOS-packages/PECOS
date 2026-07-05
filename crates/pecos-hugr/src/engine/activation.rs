@@ -34,7 +34,6 @@ use std::collections::BTreeSet;
 use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
-use crate::engine::analysis::all_predecessors_ready;
 
 /// Whether a node queues unconditionally or only once its predecessors are
 /// processed.
@@ -160,17 +159,7 @@ impl HugrEngine {
             if self.work_queue.contains(node) || self.processed.contains(&node) {
                 continue;
             }
-            if policy == QueuePolicy::IfReady
-                && !all_predecessors_ready(
-                    hugr,
-                    node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.active_cases,
-                    &self.processed,
-                )
-            {
+            if policy == QueuePolicy::IfReady && !self.all_predecessors_ready(hugr, node) {
                 continue;
             }
             self.work_queue.push_back(node);

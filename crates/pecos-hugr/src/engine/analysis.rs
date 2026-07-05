@@ -39,8 +39,8 @@ use tket::hugr::ops::{OpTrait, OpType};
 use tket::hugr::{Hugr, HugrView, Node};
 
 use super::types::{
-    ActiveCaseInfo, CfgInfo, ClassicalOp, ClassicalOpType, ConditionalInfo, ContainerType,
-    DataflowBlockInfo, FuncDefnInfo, QuantumOp, TailLoopInfo,
+    CfgInfo, ClassicalOp, ClassicalOpType, ConditionalInfo, ContainerType, DataflowBlockInfo,
+    FuncDefnInfo, QuantumOp, TailLoopInfo,
 };
 
 // --- Conditional extraction ---
@@ -1051,65 +1051,6 @@ pub fn get_container_type(hugr: &Hugr, node: Node) -> ContainerType {
         OpType::DataflowBlock(_) => ContainerType::DataflowBlock,
         _ => ContainerType::Other,
     }
-}
-
-/// Check if all quantum predecessors of a node have been processed.
-/// This includes quantum operations, Conditionals, CFGs, `TailLoops`, and Call nodes.
-pub fn all_predecessors_ready(
-    hugr: &Hugr,
-    node: Node,
-    quantum_ops: &BTreeMap<Node, QuantumOp>,
-    conditionals: &BTreeMap<Node, ConditionalInfo>,
-    cfgs: &BTreeMap<Node, CfgInfo>,
-    active_cases: &BTreeMap<Node, ActiveCaseInfo>,
-    processed: &BTreeSet<Node>,
-) -> bool {
-    for pred_node in hugr.input_neighbours(node) {
-        // Check quantum ops
-        if quantum_ops.contains_key(&pred_node) && !processed.contains(&pred_node) {
-            return false;
-        }
-        // Check conditionals (they also produce qubit outputs). A
-        // Conditional is marked processed at EXPANSION, but its outputs
-        // exist only once its selected case completes -- treating it as
-        // ready while a case is active lets one-shot input copiers (Calls,
-        // TailLoop expansion, CFG activation) fire early, copy missing
-        // values, and starve with no repair path.
-        if conditionals.contains_key(&pred_node)
-            && (!processed.contains(&pred_node)
-                || active_cases
-                    .values()
-                    .any(|case| case.conditional_node == pred_node))
-        {
-            return false;
-        }
-        // Check CFG nodes (they also produce qubit outputs)
-        if cfgs.contains_key(&pred_node) && !processed.contains(&pred_node) {
-            return false;
-        }
-        // Check Call, TailLoop, and LoadConstant nodes (they produce
-        // qubit/array/classical outputs the consumer needs)
-        let op = hugr.get_optype(pred_node);
-        if matches!(
-            op,
-            OpType::Call(_) | OpType::TailLoop(_) | OpType::LoadConstant(_)
-        ) && !processed.contains(&pred_node)
-        {
-            return false;
-        }
-        // Check extension-op and executable-Tag predecessors (classical ops,
-        // tket.* ops, copyable sum construction): they produce classical
-        // values, and firing a consumer before they complete copies MISSING
-        // inputs (e.g. a Call activated before its argument tuple exists
-        // silently starves the whole called body). Linear (qubit-routing)
-        // Tags never execute, so they must NOT gate readiness.
-        if (op.as_extension_op().is_some() || classify_classical_op(op).is_some())
-            && !processed.contains(&pred_node)
-        {
-            return false;
-        }
-    }
-    true
 }
 
 #[cfg(test)]

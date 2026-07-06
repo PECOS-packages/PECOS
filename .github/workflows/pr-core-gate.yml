@@ -43,7 +43,9 @@ defaults:
 jobs:
   pr-core-python:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 75 min: a cold-cache build plus the core suite exceeded 45 (timed
+    # out at 45:17 on the first branch with a large Cargo-graph change).
+    timeout-minutes: 75
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -145,7 +147,8 @@ jobs:
 
   pr-core-rust:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 60 min: 31 observed on a cold cache.
+    timeout-minutes: 60
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

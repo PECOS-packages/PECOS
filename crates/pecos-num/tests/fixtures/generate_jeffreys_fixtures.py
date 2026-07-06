@@ -91,6 +91,13 @@ def cases() -> list[tuple[int, int, float]]:
     out.append((100_000, 1_000_000, 0.05))
     out.append((100_000, 100_000_000, 0.05))
     out.append((1_000_000, 10_000_000, 0.05))
+    # Small-a upper-tail pocket below the round-4 BGRAT gate (round-3 review):
+    # CF served hi endpoints here at up to 1.1e-10; rows span the candidate
+    # boundary region so both sides of wherever the final gate lands are pinned
+    for n in (1_000_000, 3_000_000, 6_000_000, 8_900_002, 8_999_990):
+        for k in (2, 5, 20, 64):
+            out.append((k, n, 0.05))
+        out.append((n - 2, n, 0.05))
     # Deduplicate, preserving order
     seen: set[tuple[int, int, float]] = set()
     unique = []

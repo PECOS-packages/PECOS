@@ -67,6 +67,19 @@ def cases() -> list[tuple[int, int, float]]:
     for n in (1_000, 1_000_000):
         out.append((n // 2, n, 1e-6))
         out.append((n // 2, n, 0.05))
+    # Asymmetric Gauss-Legendre-region shapes (both Beta shapes > 3000), including
+    # the k=3016, n=1e6 tail-orientation regression and a large-n asymmetric case
+    for k in (3000, 3016, 3100, 5000, 10_000):
+        for alpha in (0.01, 0.05, 1e-6):
+            out.append((k, 1_000_000, alpha))
+    out.append((15_881, 20_000, 0.05))
+    out.append((10_000, 100_000_000, 0.05))
+    out.append((67_867_393, 100_000_000, 0.05))
+    # Continued-fraction accuracy band: moderate a with huge b, straddling the
+    # asymptotic-branch gate at a = 64.5
+    for k in (63, 64, 65, 100, 300, 1_000, 3_000):
+        for alpha in (0.01, 0.05):
+            out.append((k, 100_000_000, alpha))
     # Deduplicate, preserving order
     seen: set[tuple[int, int, float]] = set()
     unique = []

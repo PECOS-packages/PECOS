@@ -80,6 +80,17 @@ def cases() -> list[tuple[int, int, float]]:
     for k in (63, 64, 65, 100, 300, 1_000, 3_000):
         for alpha in (0.01, 0.05):
             out.append((k, 100_000_000, alpha))
+    # Mid-band b in [1e7, 5e7): small-a upper bounds routed through the CF path
+    # missed the first asymptotic gate (round-2 review); mirrors pin the lo side
+    for n in (10_000_000, 20_000_000, 40_000_000, 49_999_990):
+        for k in (10, 64, 300):
+            for alpha in (0.01, 0.05):
+                out.append((k, n, alpha))
+        out.append((n - 64, n, 0.05))
+    # Median-shortcut gate edges (min posterior shape near 1e5 and 1e6)
+    out.append((100_000, 1_000_000, 0.05))
+    out.append((100_000, 100_000_000, 0.05))
+    out.append((1_000_000, 10_000_000, 0.05))
     # Deduplicate, preserving order
     seen: set[tuple[int, int, float]] = set()
     unique = []

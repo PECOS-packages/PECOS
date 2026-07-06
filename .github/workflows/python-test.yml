@@ -517,7 +517,11 @@ jobs:
   # tests and the optional-dependency suite (guppy/selene/QIR runtime tests
   # marked `optional_dependency`).
   python-slow-postmerge:
-    if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+    # workflow_dispatch escape hatch: the optional-dependency suite
+    # (guppy/selene/QIR) otherwise has NO pre-merge path -- a branch whose
+    # risk lives in that suite could only get its first CI signal after
+    # landing. Dispatch is manual-only; the PR fast path is unaffected.
+    if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:

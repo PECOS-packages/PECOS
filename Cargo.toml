@@ -89,8 +89,11 @@ pest_derive = "2"
 regex = "1"
 
 # --- Numerical computing ---
+libm = "0.2"
 nalgebra = "0.35"
 num = "0.4"
+# Dev-only differential oracle for special-function tests (see design/jeffreys-pecos-num.md)
+puruspe = "0.4"
 num-complex = "0.4"
 num-traits = "0.2"
 num-bigint = { version = "0.4", features = ["serde"] }

@@ -82,7 +82,7 @@ def compile_hugr_to_qis(
     """
     # Try to use PECOS's HUGR to LLVM compiler
     try:
-        from pecos_rslib import compile_hugr_to_qis
+        from pecos_rslib_llvm import compile_hugr_to_qis
 
         rust_backend_available = True
     except ImportError:

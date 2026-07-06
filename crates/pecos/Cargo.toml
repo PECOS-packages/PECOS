@@ -85,8 +85,13 @@ llvm = ["sim", "dep:pecos-llvm"]
 # qis: QIS/LLVM IR execution support (Selene runtime)
 qis = ["llvm", "dep:pecos-qis", "pecos-qis/llvm"]
 
-# hugr: HUGR program support (requires QIS) + direct Guppy HUGR interpreter
-hugr = ["qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis/hugr", "pecos-quantum/hugr", "dep:pecos-hugr"]
+# hugr: the direct Guppy HUGR interpreter + HUGR<->DAG conversion. NO LLVM:
+# this is what the base Python wheel enables, and it must not force an LLVM
+# link (LLVM 21's Windows build drags zlib.dll into any linking artifact).
+hugr = ["sim", "pecos-quantum/hugr", "dep:pecos-hugr"]
+
+# hugr-qis: HUGR -> QIS (LLVM IR) compilation on top of the interpreter.
+hugr-qis = ["hugr", "qis", "dep:pecos-hugr-qis", "pecos-hugr-qis/llvm", "pecos-qis/hugr"]
 wasm = ["sim", "dep:pecos-wasm", "pecos-wasm/wasm"]
 
 # Quantum simulator backends (C++ wrappers)
@@ -106,7 +111,7 @@ all-decoders = ["ldpc", "pymatching", "fusion-blossom", "tesseract", "chromobius
 qec = ["quantum", "dep:pecos-qec"]
 
 # Everything
-full = ["runtime", "all-simulators", "all-decoders", "hugr", "wasm", "qec"]
+full = ["runtime", "all-simulators", "all-decoders", "hugr-qis", "wasm", "qec"]
 
 [dev-dependencies]
 criterion.workspace = true

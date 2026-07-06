@@ -21,7 +21,7 @@ use pecos_experimental::{
     DepolarizingNoiseModel, HugrExecutionError, NoisyMeasurementHistory,
     NoisyMeasurementHistoryBuilder, NoisyMeasurementSampler, execute_hugr,
 };
-use pecos_hugr_qis::read_hugr_envelope;
+use pecos_hugr::load_hugr_from_bytes as read_hugr_envelope;
 use pecos_quantum::Circuit;
 use pecos_quantum::hugr_convert::SimpleHugr;
 use pecos_simulators::{MeasurementHistory, MeasurementSampler, SymbolicSparseStab};

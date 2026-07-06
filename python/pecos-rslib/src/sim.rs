@@ -34,10 +34,6 @@ fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResul
     }
 }
 
-fn clone_py_any_option(py: Python, value: Option<&Py<PyAny>>) -> Option<Py<PyAny>> {
-    value.map(|inner| inner.clone_ref(py))
-}
-
 /// Check if a Python object is a Guppy function
 fn is_guppy_function(py: Python, obj: &Py<PyAny>) -> PyResult<bool> {
     // Check if guppylang module is available
@@ -155,6 +151,10 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
                 hugr_bytes: None, // QIS programs don't have HUGR bytes
+                qis_source: match &qis_prog.inner.content {
+                    pecos_programs::QisContent::Ir(ir) => Some(ir.clone()),
+                    pecos_programs::QisContent::Bitcode(_) => None,
+                },
                 operation_trace_dir: None,
             }),
         })
@@ -283,7 +283,20 @@ impl PySimBuilder {
                 }
                 SimBuilderInner::QisControl(sim_builder) => {
                     if let Ok(qis_engine) = engine_builder.extract::<PyQisEngineBuilder>(py) {
-                        sim_builder.engine_builder = Arc::new(Mutex::new(Some(qis_engine.inner)));
+                        // A fresh builder replaces the program-loaded one:
+                        // re-attach the stored QIS source, or the built
+                        // engine has no program to run.
+                        let mut inner = qis_engine.inner;
+                        if let Some(ref source) = sim_builder.qis_source {
+                            inner = inner
+                                .try_program(pecos_programs::Qis::from_string(source))
+                                .map_err(|e| {
+                                    PyRuntimeError::new_err(format!(
+                                        "Failed to re-attach QIS program to the new engine builder: {e}"
+                                    ))
+                                })?;
+                        }
+                        sim_builder.engine_builder = Arc::new(Mutex::new(Some(inner)));
                         Ok(PySimBuilder {
                             inner: self.inner.clone(),
                         })
@@ -324,13 +337,29 @@ impl PySimBuilder {
                                 "HUGR program bytes are not available to switch this simulation onto the QIS/Helios path",
                             )
                         })?;
+                        // HUGR -> QIS lowering lives in the pecos-rslib-llvm
+                        // extension (this wheel does not LINK LLVM): call it
+                        // through Python at runtime, failing loudly when it
+                        // is not installed.
+                        let ir: String = py
+                            .import("pecos_rslib_llvm")
+                            .map_err(|_| {
+                                PyRuntimeError::new_err(
+                                    "running a HUGR program on the QIS/Selene engine requires \
+                                     the pecos-rslib-llvm package for HUGR -> QIS lowering \
+                                     (the base pecos-rslib wheel does not link LLVM)",
+                                )
+                            })?
+                            .getattr("compile_hugr_to_qis")?
+                            .call1((pyo3::types::PyBytes::new(py, &hugr_bytes), py.None()))?
+                            .extract()?;
                         let qis_engine = qis_engine
                             .inner
                             .clone()
-                            .try_program(Hugr::from_bytes(hugr_bytes.clone()))
+                            .try_program(pecos_programs::Qis::from_string(&ir))
                             .map_err(|e| {
                                 PyRuntimeError::new_err(format!(
-                                    "Failed to load HUGR program into QIS engine: {e}"
+                                    "Failed to load lowered HUGR program into QIS engine: {e}"
                                 ))
                             })?;
 
@@ -340,17 +369,18 @@ impl PySimBuilder {
                                 seed: sim_builder.seed,
                                 workers: sim_builder.workers,
                                 shots: sim_builder.shots,
-                                quantum_engine_builder: clone_py_any_option(
-                                    py,
-                                    sim_builder.quantum_engine_builder.as_ref(),
-                                ),
-                                noise_builder: clone_py_any_option(
-                                    py,
-                                    sim_builder.noise_builder.as_ref(),
-                                ),
+                                quantum_engine_builder: sim_builder
+                                    .quantum_engine_builder
+                                    .as_ref()
+                                    .map(|obj| obj.clone_ref(py)),
+                                noise_builder: sim_builder
+                                    .noise_builder
+                                    .as_ref()
+                                    .map(|obj| obj.clone_ref(py)),
                                 explicit_num_qubits: sim_builder.explicit_num_qubits,
                                 keep_intermediate_files: sim_builder.keep_intermediate_files,
                                 hugr_bytes: Some(hugr_bytes),
+                                qis_source: Some(ir),
                                 operation_trace_dir: None,
                             }),
                         })
@@ -574,7 +604,9 @@ impl PySimBuilder {
     /// When enabled, the built simulation will have a `temp_dir` attribute
     /// pointing to a directory containing:
     /// - `program.hugr` - The HUGR bytes (if available)
-    /// - `program.ll` - The compiled LLVM IR
+    ///
+    /// (LLVM IR is no longer saved here: HUGR -> QIS compilation lives in
+    /// the pecos-rslib-llvm wheel; use its `compile_hugr_to_qis`.)
     fn keep_intermediate_files(&mut self, keep: bool) -> PyResult<Self> {
         match &mut self.inner {
             SimBuilderInner::QisControl(builder) => {
@@ -1500,20 +1532,9 @@ impl PySimBuilder {
                                 PyRuntimeError::new_err(format!("Failed to write HUGR file: {e}"))
                             })?;
 
-                            // Also compile and save LLVM IR
-                            match compile_hugr_bytes_to_string(hugr_bytes) {
-                                Ok(llvm_ir) => {
-                                    let ll_file = temp_path.join("program.ll");
-                                    std::fs::write(&ll_file, llvm_ir).map_err(|e| {
-                                        PyRuntimeError::new_err(format!(
-                                            "Failed to write LLVM IR file: {e}"
-                                        ))
-                                    })?;
-                                }
-                                Err(e) => {
-                                    log::warn!("Could not compile HUGR to LLVM IR for saving: {e}");
-                                }
-                            }
+                            // LLVM IR is not saved: HUGR -> QIS compilation
+                            // lives in the pecos-rslib-llvm wheel (the base
+                            // wheel must not link LLVM).
                         }
 
                         // Keep the directory (don't let it be deleted on drop)
@@ -1682,18 +1703,9 @@ impl PySimBuilder {
                                 PyRuntimeError::new_err(format!("Failed to write HUGR file: {e}"))
                             })?;
 
-                            // Also compile and save LLVM IR for debugging (graceful failure)
-                            match compile_hugr_bytes_to_string(hugr_bytes) {
-                                Ok(llvm_ir) => {
-                                    let ll_file = temp_path.join("program.ll");
-                                    if let Err(e) = std::fs::write(&ll_file, llvm_ir) {
-                                        log::warn!("Could not write LLVM IR file: {e}");
-                                    }
-                                }
-                                Err(e) => {
-                                    log::warn!("Could not compile HUGR to LLVM IR for saving: {e}");
-                                }
-                            }
+                            // LLVM IR is not saved: HUGR -> QIS compilation
+                            // lives in the pecos-rslib-llvm wheel (the base
+                            // wheel must not link LLVM).
                         }
 
                         // Keep the directory (don't let it be deleted on drop)
@@ -1975,6 +1987,7 @@ impl Clone for SimBuilderInner {
                     explicit_num_qubits: builder.explicit_num_qubits,
                     keep_intermediate_files: builder.keep_intermediate_files,
                     hugr_bytes: builder.hugr_bytes.clone(),
+                    qis_source: builder.qis_source.clone(),
                     operation_trace_dir: builder.operation_trace_dir.clone(),
                 })
             }

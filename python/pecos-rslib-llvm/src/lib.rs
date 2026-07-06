@@ -15,6 +15,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+mod hugr_compilation_bindings;
 mod llvm_bindings;
 
 use pyo3::prelude::*;
@@ -27,6 +28,12 @@ fn pecos_rslib_llvm(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register binding module (pecos_rslib_llvm.binding)
     llvm_bindings::register_binding_module(m)?;
+
+    // HUGR -> QIS (LLVM IR) compilation entry points. These live in the
+    // LLVM wheel, not base pecos-rslib: they are what forces an LLVM link,
+    // and the base wheel must import cleanly on machines without LLVM's
+    // runtime dependencies (LLVM 21's Windows build pulls zlib.dll).
+    hugr_compilation_bindings::register_hugr_compilation_functions(m)?;
 
     Ok(())
 }

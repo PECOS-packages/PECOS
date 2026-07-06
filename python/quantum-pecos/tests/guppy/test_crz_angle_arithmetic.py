@@ -1,6 +1,7 @@
 """Test suite for CRz angle arithmetic improvements."""
 
 import pecos_rslib
+import pecos_rslib_llvm
 from guppylang import guppy
 from guppylang.std.quantum import crz, h, measure, pi, qubit
 
@@ -20,7 +21,7 @@ class TestCRzAngleArithmetic:
             return measure(q0), measure(q1)
 
         hugr = test_crz_pi.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have proper angle arithmetic
         assert "___rzz" in output
@@ -46,7 +47,7 @@ class TestCRzAngleArithmetic:
             return measure(q0), measure(q1)
 
         hugr = test_crz_pi_half.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should decompose correctly
         assert "___rzz" in output
@@ -63,7 +64,7 @@ class TestCRzAngleArithmetic:
             return measure(q0), measure(q1)
 
         hugr = test_crz_pi_fourth.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Verify the decomposition is present
         assert "tail call void @___rzz" in output
@@ -83,7 +84,7 @@ class TestCRzAngleArithmetic:
             return measure(q0), measure(q1)
 
         hugr = simple_crz.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should decompose CRz into RZZ and RZ operations
         assert "___rzz" in output, "CRz should use RZZ in its decomposition"
@@ -107,7 +108,7 @@ class TestCRzAngleArithmetic:
             return measure(q0), measure(q1)
 
         hugr = test_crz_zero.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Even with zero angle, should still have the decomposition structure
         assert "___rzz" in output or len(output) > 100  # Should compile successfully

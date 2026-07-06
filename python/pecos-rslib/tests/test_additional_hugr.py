@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from pecos_rslib import compile_hugr_to_qis
+from pecos_rslib_llvm import compile_hugr_to_qis
 
 
 def test_hugr_compilation_with_support() -> None:

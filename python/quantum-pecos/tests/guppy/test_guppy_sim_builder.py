@@ -136,8 +136,10 @@ class TestGuppySimBuilder:
         ll_files = list(temp_path.glob("*.ll"))
         hugr_files = list(temp_path.glob("*.hugr"))
 
-        assert len(ll_files) > 0, "Should have created LLVM IR file"
         assert len(hugr_files) > 0, "Should have created HUGR file"
+        # LLVM IR is deliberately NOT saved: HUGR -> QIS compilation lives
+        # in the pecos-rslib-llvm wheel (the base wheel does not link LLVM).
+        assert len(ll_files) == 0, "Base wheel must not emit LLVM IR artifacts"
 
         # Run simulation
         results = sim_obj.run(10).to_dict()
@@ -147,7 +149,6 @@ class TestGuppySimBuilder:
 
         # Files should still exist after run
         assert Path(sim_obj.temp_dir).exists()
-        assert ll_files[0].exists()
         assert hugr_files[0].exists()
 
         # Manually clean up

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from guppylang import GuppyModule, guppy
-from pecos_rslib import compile_hugr_to_qis as rust_compile
+from pecos_rslib_llvm import compile_hugr_to_qis as rust_compile
 from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
 
 # Import quantum operations - try stdlib first, fall back to std

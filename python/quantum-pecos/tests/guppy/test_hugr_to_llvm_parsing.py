@@ -8,7 +8,7 @@ def test_hugr_to_llvm_compilation() -> None:
     try:
         from guppylang import guppy
         from guppylang.std.quantum import cx, h, measure, qubit
-        from pecos_rslib import compile_hugr_to_qis
+        from pecos_rslib_llvm import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
@@ -40,7 +40,7 @@ def test_simple_hadamard_circuit() -> None:
     try:
         from guppylang import guppy
         from guppylang.std.quantum import h, measure, qubit
-        from pecos_rslib import compile_hugr_to_qis
+        from pecos_rslib_llvm import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
@@ -69,7 +69,7 @@ def test_trace_metadata_helper_uses_public_symbol() -> None:
         from guppylang import guppy
         from guppylang.std.builtins import owned
         from guppylang.std.quantum import h, measure, qubit
-        from pecos_rslib import compile_hugr_to_qis
+        from pecos_rslib_llvm import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
@@ -95,7 +95,7 @@ def test_runtime_barrier_pair_helper_uses_public_symbol() -> None:
         from guppylang import guppy
         from guppylang.std.builtins import owned
         from guppylang.std.quantum import cx, h, measure, qubit
-        from pecos_rslib import compile_hugr_to_qis
+        from pecos_rslib_llvm import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 

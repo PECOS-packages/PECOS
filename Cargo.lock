@@ -4778,7 +4778,6 @@ dependencies = [
  "pecos-engines",
  "pecos-experimental",
  "pecos-hugr",
- "pecos-hugr-qis",
  "pecos-num",
  "pecos-phir",
  "pecos-phir-json",
@@ -4836,6 +4835,7 @@ version = "0.2.0-dev.0"
 dependencies = [
  "inkwell",
  "log",
+ "pecos-hugr-qis",
  "pecos-llvm",
  "pyo3",
  "regex",

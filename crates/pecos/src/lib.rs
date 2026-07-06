@@ -48,7 +48,7 @@ pub mod engines {
 /// Quantum circuit representation and Pauli algebra.
 #[cfg(feature = "quantum")]
 pub mod quantum {
-    #[cfg(feature = "hugr")]
+    #[cfg(feature = "hugr-qis")]
     pub use pecos_hugr_qis::read_hugr_envelope;
     #[cfg(feature = "hugr")]
     pub use pecos_quantum::hugr_convert::{

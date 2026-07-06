@@ -1,5 +1,5 @@
 // Python bindings for HUGR to LLVM compilation
-use crate::prelude::*;
+use pecos_hugr_qis::{CompileArgs, QSystemPlatform, compile_hugr_bytes_to_string_with_options};
 use std::fs;
 
 use pyo3::prelude::*;

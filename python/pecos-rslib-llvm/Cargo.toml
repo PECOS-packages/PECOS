@@ -26,6 +26,7 @@ extension-module = [
 
 [dependencies]
 pecos-llvm.workspace = true
+pecos-hugr-qis.workspace = true
 inkwell.workspace = true
 pyo3.workspace = true
 regex.workspace = true

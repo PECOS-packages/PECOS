@@ -143,7 +143,7 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::read_hugr_envelope;
+    use crate::load_hugr_from_bytes as read_hugr_envelope;
 
     // Fixtures compiled from Guppy (committed so the regression does not
     // depend on a Python toolchain at test time):

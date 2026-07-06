@@ -234,6 +234,7 @@ impl PyQisEngineBuilder {
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
                 hugr_bytes: None,
+                qis_source: None,
                 operation_trace_dir: None,
             }),
         })
@@ -399,6 +400,9 @@ pub struct PyQisControlSimBuilder {
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) keep_intermediate_files: bool,
     pub(crate) hugr_bytes: Option<Vec<u8>>,
+    /// The QIS IR source, kept so classical() can re-attach the program
+    /// when a fresh engine builder replaces the program-loaded one.
+    pub(crate) qis_source: Option<String>,
     pub(crate) operation_trace_dir: Option<String>,
 }
 

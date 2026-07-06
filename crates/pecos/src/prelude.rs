@@ -95,7 +95,7 @@ pub use pecos_random::prelude::*;
 pub use pecos_num::prelude::*;
 
 // Re-export HUGR compiler prelude
-#[cfg(feature = "hugr")]
+#[cfg(feature = "hugr-qis")]
 pub use pecos_hugr_qis::prelude::*;
 
 // Re-export Guppy HUGR direct interpreter (HugrEngine)

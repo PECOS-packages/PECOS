@@ -48,7 +48,6 @@ mod experimental_bindings;
 mod fault_tolerance_bindings;
 mod gate_registry_bindings;
 mod graph_bindings;
-mod hugr_compilation_bindings;
 mod namespace_modules;
 mod num_bindings;
 mod pauli_bindings;
@@ -291,7 +290,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     engine_builders::register_engine_builders(m)?;
 
     // Register HUGR compilation functions
-    hugr_compilation_bindings::register_hugr_compilation_functions(m)?;
 
     // Register numerical computing module (scipy.optimize replacements)
     num_bindings::register_num_module(m)?;

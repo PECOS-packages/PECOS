@@ -35,11 +35,49 @@
 use log::debug;
 use tket::hugr::ops::OpType;
 use tket::hugr::types::TypeArg;
-use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
+use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
 
 impl HugrEngine {
+    /// Fill-only repair of active calls' argument ports.
+    ///
+    /// A Call launches as soon as it is dispatched; an argument that is a
+    /// measurement result still in flight leaves its `FuncDefn` Input port
+    /// cleared. Called after each measurement round: writes only ports that
+    /// are currently MISSING (never overwrites live frame state), reading
+    /// through the tracing layer.
+    pub(crate) fn repropagate_active_call_inputs(&mut self, hugr: &Hugr) {
+        let targets: Vec<(Node, Node, usize)> = self
+            .active_calls
+            .iter()
+            .filter_map(|(&call_node, info)| {
+                self.func_defns
+                    .get(&info.func_defn_node)
+                    .map(|fi| (call_node, fi.input_node, fi.num_inputs))
+            })
+            .collect();
+        for (call_node, input_node, num_inputs) in targets {
+            for port in 0..num_inputs {
+                let wire = (input_node, port);
+                if self.wire_state.classical_values.contains_key(&wire)
+                    || self.wire_state.wire_to_qubit.contains_key(&wire)
+                {
+                    continue;
+                }
+                if let Some(qubit_id) = self.get_input_qubit(hugr, call_node, port) {
+                    self.wire_state.wire_to_qubit.insert(wire, qubit_id);
+                }
+                if let Some(value) = self.get_input_value(hugr, call_node, port) {
+                    debug!(
+                        "Call {call_node:?}: late argument {port} repaired with {value:?} on {wire:?}"
+                    );
+                    self.wire_state.classical_values.insert(wire, value);
+                }
+            }
+        }
+    }
+
     /// Resolve a type variable used inside a called function body to the
     /// concrete `BoundedNat` from the calling `Call`'s instantiation args.
     ///
@@ -138,33 +176,26 @@ impl HugrEngine {
                 for port in 0..func_info.num_outputs {
                     // Check if we have a wire mapping for the FuncDefn Output input
                     // FuncDefn Output receives from CFG outputs
-                    let output_in_port = IncomingPort::from(port);
-                    if let Some((src_node, src_port)) =
-                        hugr.single_linked_output(func_info.output_node, output_in_port)
+                    // Traced reads: a return value produced inside a
+                    // flattened DFG must resolve like any other read.
+                    let call_output_wire = (call_node, port);
+                    if let Some(qubit_id) = self.get_input_qubit(hugr, func_info.output_node, port)
                     {
-                        let src_wire = (src_node, src_port.index());
-                        // Map qubits
-                        if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                            let call_output_wire = (call_node, port);
-                            self.wire_state
-                                .wire_to_qubit
-                                .insert(call_output_wire, qubit_id);
-                            debug!(
-                                "Call {call_node:?}: mapped FuncDefn output {port} qubit {qubit_id:?} to Call output"
-                            );
-                        }
-                        // Map classical values (including arrays)
-                        if let Some(value) =
-                            self.wire_state.classical_values.get(&src_wire).cloned()
-                        {
-                            let call_output_wire = (call_node, port);
-                            self.wire_state
-                                .classical_values
-                                .insert(call_output_wire, value.clone());
-                            debug!(
-                                "Call {call_node:?}: mapped FuncDefn output {port} classical value {value:?} to Call output"
-                            );
-                        }
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert(call_output_wire, qubit_id);
+                        debug!(
+                            "Call {call_node:?}: mapped FuncDefn output {port} qubit {qubit_id:?} to Call output"
+                        );
+                    }
+                    // Map classical values (including arrays)
+                    if let Some(value) = self.get_input_value(hugr, func_info.output_node, port) {
+                        debug!(
+                            "Call {call_node:?}: mapped FuncDefn output {port} classical value {value:?} to Call output"
+                        );
+                        self.wire_state
+                            .classical_values
+                            .insert(call_output_wire, value);
                     }
                 }
 

@@ -44,16 +44,20 @@ use std::collections::BTreeMap;
 /// State for tracking wire values through the HUGR graph.
 ///
 /// This groups all wire-related state: qubit mappings, classical values,
-/// and qubit arrays. The propagation system uses this to track values
-/// as they flow from output ports to connected input ports.
+/// and conditional Sum payloads. The propagation system uses this to track
+/// values as they flow from output ports to connected input ports.
 #[derive(Debug, Default, Clone)]
 pub struct WireState {
     /// Map from (node, `output_port`) to qubit ID for tracking wire flow.
     pub wire_to_qubit: BTreeMap<WireKey, QubitId>,
     /// Classical wire values: tracks bool/integer/float values flowing through wires.
     pub classical_values: BTreeMap<WireKey, ClassicalValue>,
-    /// Maps array wire keys to lists of qubit IDs for qubit arrays.
-    pub qubit_arrays: BTreeMap<WireKey, Vec<QubitId>>,
+    /// Payload elements of a Conditional output resolved through the
+    /// structural Tag fallback, keyed by (conditional node, output port).
+    /// A DEDICATED map: storing these at "virtual" classical-value ports
+    /// aliased the Conditional's real output ports (payload for output 0
+    /// landed on output 1's wire key).
+    pub conditional_payloads: BTreeMap<WireKey, Vec<ClassicalValue>>,
     /// Next available qubit ID.
     pub next_qubit_id: usize,
 }
@@ -63,7 +67,7 @@ impl WireState {
     pub fn reset(&mut self) {
         self.wire_to_qubit.clear();
         self.classical_values.clear();
-        self.qubit_arrays.clear();
+        self.conditional_payloads.clear();
         self.next_qubit_id = 0;
     }
 }

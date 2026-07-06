@@ -83,8 +83,15 @@ impl HugrEngine {
                 return None;
             }
             ContainerType::TailLoop => {
-                // TailLoop is complex - inputs come from both initial values and CONTINUE tag
-                // For simplicity, use direct mapping
+                // Direct mapping reads the loop node's own input wire: the
+                // iteration-0 value. Guppy carries every live value in the
+                // varying row, so past the first Continue this CAN serve a
+                // stale generation for a mutated value -- but the corpus
+                // relies on it for carried-but-invariant values whose
+                // continue propagation gapped on a pending measurement.
+                // The proper fix is completeness of the population paths
+                // (continue repropagation after measurement rounds), not
+                // starving this fallback.
                 output_port
             }
             ContainerType::Call => {
@@ -305,32 +312,29 @@ impl HugrEngine {
         }
     }
 
-    /// Propagate qubit array from input to output (for pass-through operations).
+    /// Propagate a pass-through operation's input to its output port
+    /// (barriers, `StateResult`).
     ///
-    /// This handles operations like barriers that pass qubit arrays through
-    /// unchanged. Returns false when the input carried NEITHER an array nor
-    /// a single qubit: the caller must DEFER -- marking the pass-through
-    /// processed would permanently drop the late-arriving value (these ops
-    /// have no retry of their own).
+    /// Qubit arrays travel as `ClassicalValue::Array` of `QubitRef`s, so
+    /// the CLASSICAL value is what must pass through; a bare qubit wire
+    /// passes its mapping. Both read through the tracing layer so an input
+    /// produced across a flattened-DFG boundary resolves. Returns false
+    /// when the input carried NEITHER: the caller must DEFER -- marking the
+    /// pass-through processed would permanently drop the late-arriving
+    /// value (these ops have no retry of their own).
     #[must_use]
     pub(crate) fn propagate_qubit_array(&mut self, hugr: &Hugr, node: Node) -> bool {
-        // For now, just propagate qubit wire mappings
-        let in_port = IncomingPort::from(0);
         let mut found = false;
-        if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
-            let src_key = (src_node, src_port.index());
-
-            // Propagate qubit array if present
-            if let Some(qubits) = self.wire_state.qubit_arrays.get(&src_key).cloned() {
-                self.wire_state.qubit_arrays.insert((node, 0), qubits);
-                found = true;
+        if let Some(value) = self.get_input_value(hugr, node, 0) {
+            if let ClassicalValue::QubitRef(qubit_id) = &value {
+                self.wire_state.wire_to_qubit.insert((node, 0), *qubit_id);
             }
-
-            // Also propagate individual qubit mappings
-            if let Some(qubit_id) = self.wire_state.wire_to_qubit.get(&src_key).copied() {
-                self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
-                found = true;
-            }
+            self.wire_state.classical_values.insert((node, 0), value);
+            found = true;
+        }
+        if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
+            self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
+            found = true;
         }
         found
     }
@@ -392,6 +396,26 @@ impl HugrEngine {
                             src_node,
                             src_port.index()
                         );
+                    }
+                }
+
+                // A DFG source executes by FLATTENING: its output qubits
+                // live at its Output child's sources, never at the DFG
+                // node's own wires -- and the DFG node is marked processed
+                // at dispatch, so falling through would hit the implicit-
+                // allocation branch below and run this gate on a PHANTOM
+                // qubit. Trace instead; defer if the interior has not
+                // produced the qubit yet.
+                if matches!(src_op, OpType::DFG(_))
+                    && !self.wire_state.wire_to_qubit.contains_key(&wire_key)
+                {
+                    if let Some(qubit_id) = self.get_input_qubit(hugr, node, port_idx) {
+                        self.wire_state.wire_to_qubit.insert(wire_key, qubit_id);
+                    } else {
+                        debug!(
+                            "resolve_qubits at {node:?}: DFG source {wire_key:?} not resolved, deferring"
+                        );
+                        return None;
                     }
                 }
 

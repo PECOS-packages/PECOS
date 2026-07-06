@@ -379,6 +379,9 @@ impl HugrEngine {
         // ITERATIVE transition: a chain of empty blocks re-enters this
         // logic once per hop. Recursing here overflowed the stack around
         // ~10^5 hops -- an abort, not the clean MAX_CFG_TRANSITIONS error.
+        // Every hop inside this invocation shares one cascade id.
+        self.cfg_transition_cascade += 1;
+        let cascade = self.cfg_transition_cascade;
         let mut from_block = from_block;
         let mut to_block = to_block;
         'transition: loop {
@@ -406,10 +409,13 @@ impl HugrEngine {
             // and carry a late measurement value across it. (The old
             // latest-edge-only policy amputated chains: the A->empty hop
             // was dropped and the value never reached the consumer.)
+            // A revisit WITHIN this cascade must not purge the older hop
+            // into the same block (that hop is part of the chain a late
+            // value walks); a re-entry in a LATER cascade supersedes it.
             self.pending_measurement_propagations
-                .retain(|(cfg, _, to)| *cfg != cfg_node || *to != to_block);
+                .retain(|(cfg, _, to, c)| *cfg != cfg_node || *to != to_block || *c == cascade);
             self.pending_measurement_propagations
-                .push((cfg_node, from_block, to_block));
+                .push((cfg_node, from_block, to_block, cascade));
 
             // Update active CFG state. Guppy loops lower to CFG cycles, so the
             // transition count doubles as the loop-iteration ceiling: a
@@ -456,8 +462,34 @@ impl HugrEngine {
                 // only when their loop expands.
                 let block_input_node = find_input_node(hugr, to_block);
                 let extension_ops: Vec<Node> = find_extension_ops_in_block(hugr, to_block);
+
+                // DFG interiors FLATTEN into the global op maps, so no
+                // container machinery owns their re-activation -- without
+                // resetting them here, an interior op (e.g. a Tag over
+                // loop-carried values) keeps its previous-iteration wire
+                // forever, and the tracing layer serves that frozen value
+                // SILENTLY. Collect them and treat them like direct
+                // children. (Nested Conditionals/TailLoops own their own
+                // frames; only DFG chains are descended.)
+                let mut dfg_interior: Vec<Node> = Vec::new();
+                let mut dfg_stack: Vec<Node> = hugr
+                    .children(to_block)
+                    .filter(|c| matches!(hugr.get_optype(*c), OpType::DFG(_)))
+                    .collect();
+                while let Some(dfg) = dfg_stack.pop() {
+                    for child in hugr.children(dfg) {
+                        dfg_interior.push(child);
+                        if matches!(hugr.get_optype(child), OpType::DFG(_)) {
+                            dfg_stack.push(child);
+                        }
+                    }
+                }
+
                 let mut act = ContainerActivation::new();
                 for child in hugr.children(to_block) {
+                    act.reset_wires(child);
+                }
+                for &child in &dfg_interior {
                     act.reset_wires(child);
                 }
                 if let Some(input) = block_input_node {
@@ -474,7 +506,7 @@ impl HugrEngine {
                 {
                     act.reset_processed(op_node);
                 }
-                for child in hugr.children(to_block) {
+                for child in hugr.children(to_block).chain(dfg_interior.iter().copied()) {
                     if matches!(hugr.get_optype(child), OpType::LoadConstant(_))
                         || self.classical_ops.contains_key(&child)
                     {
@@ -507,7 +539,7 @@ impl HugrEngine {
                 for &op_node in &extension_ops {
                     submit(&mut act, op_node, QueuePolicy::Always);
                 }
-                for child in hugr.children(to_block) {
+                for child in hugr.children(to_block).chain(dfg_interior.iter().copied()) {
                     if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
                         submit(&mut act, child, QueuePolicy::Always);
                     }
@@ -647,7 +679,7 @@ impl HugrEngine {
         // re-invocation (next Call / scan element) starts a fresh chain
         // against reset frame state.
         self.pending_measurement_propagations
-            .retain(|(cfg, _, _)| *cfg != cfg_node);
+            .retain(|(cfg, _, _, _)| *cfg != cfg_node);
 
         // The ENTRYPOINT's CFG completing means main returned: capture its
         // classical return values so pure-classical programs surface them.
@@ -668,13 +700,25 @@ impl HugrEngine {
                 }
         });
         if parent_is_entry_func {
-            let mut values = Vec::new();
-            for port in 0..hugr.num_outputs(cfg_node) {
-                if let Some(value) = self.wire_state.classical_values.get(&(cfg_node, port)) {
-                    values.push(value.clone());
-                }
-            }
-            if !values.is_empty() {
+            // Positional capture: entry i holds port i's value or None.
+            // Compacting present values would silently relabel every later
+            // port (and make a 2-port return with port 0 missing surface
+            // port 1 under "return"). Arity comes from the dataflow
+            // SIGNATURE -- the portgraph count includes the order port.
+            use tket::hugr::ops::OpTrait;
+            let arity = hugr
+                .get_optype(cfg_node)
+                .dataflow_signature()
+                .map_or(0, |sig| sig.output_count());
+            let values: Vec<Option<ClassicalValue>> = (0..arity)
+                .map(|port| {
+                    self.wire_state
+                        .classical_values
+                        .get(&(cfg_node, port))
+                        .cloned()
+                })
+                .collect();
+            if values.iter().any(Option::is_some) {
                 self.return_values = values;
             }
         }
@@ -807,9 +851,10 @@ impl HugrEngine {
 
             // If the branch Sum has an executed VALUE (e.g. built by a Tag
             // over classical values, like a loop's carried state), its
-            // payload elements are the successor's first inputs.
+            // payload elements are the successor's first inputs. Traced
+            // read: the Sum may be produced inside a flattened DFG.
             if let Some(ClassicalValue::Sum { values, .. }) =
-                self.wire_state.classical_values.get(&sum_wire).cloned()
+                self.get_input_value(hugr, from_output, 0)
             {
                 payload_len = values.len();
                 for (i, value) in values.into_iter().enumerate().take(expected_payload_len) {
@@ -834,22 +879,25 @@ impl HugrEngine {
                         .insert((to_input, i), value);
                 }
             }
-            // Check if it's a Conditional - extract payload from virtual output ports
+            // Check if it's a Conditional -- read the payload recorded for
+            // the EXACT output port feeding this block's Sum (the payload
+            // map is keyed by (conditional, output port); the old scheme
+            // stored payloads at "virtual" classical-value ports, which
+            // aliased real output ports AND was read from index 1
+            // regardless of which output the Tag fed).
             else if matches!(sum_src_op, OpType::Conditional(_)) {
-                // Look for payload values at virtual output ports (1, 2, ...)
-                let mut idx = 1;
-                while let Some(value) = self
+                let payload = self
                     .wire_state
-                    .classical_values
-                    .get(&(sum_src_node, idx))
+                    .conditional_payloads
+                    .get(&sum_wire)
                     .cloned()
-                {
-                    let to_wire = (to_input, idx - 1);
+                    .unwrap_or_default();
+                for (idx, value) in payload.into_iter().enumerate() {
+                    let to_wire = (to_input, idx);
                     if !(fill_only && self.wire_state.classical_values.contains_key(&to_wire)) {
                         self.wire_state.classical_values.insert(to_wire, value);
                     }
                     payload_len += 1;
-                    idx += 1;
                 }
             }
         }
@@ -885,7 +933,7 @@ impl HugrEngine {
                 );
                 let src_wire = (src_node, src_port.index());
 
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire)
+                if let Some(qubit_id) = self.get_input_qubit(hugr, from_output, port_idx + 1)
                     && !(fill_only
                         && self
                             .wire_state
@@ -914,8 +962,7 @@ impl HugrEngine {
                 // Also propagate classical values
                 if target_filled {
                     // Fill-only replay never overwrites a live value.
-                } else if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned()
-                {
+                } else if let Some(value) = self.get_input_value(hugr, from_output, port_idx + 1) {
                     let to_wire = (to_input, to_port_idx);
                     debug!(
                         "[TRACE] Block transition: propagated classical value {value:?} from {src_wire:?} to {to_wire:?}"
@@ -984,9 +1031,18 @@ impl HugrEngine {
         // across empty-block hops. Edges stay recorded (fill-only is
         // idempotent); they are purged when their target re-activates or
         // their CFG completes.
+        // Only each CFG's LATEST cascade replays: older cascades' edges
+        // point at sources a later iteration may have rewritten, and
+        // fill-only stops overwrites but not wrong FILLS of legitimately
+        // missing ports.
+        let mut latest: std::collections::BTreeMap<Node, u64> = std::collections::BTreeMap::new();
+        for (cfg_node, _, _, cascade) in &self.pending_measurement_propagations {
+            let entry = latest.entry(*cfg_node).or_insert(*cascade);
+            *entry = (*entry).max(*cascade);
+        }
         let pending = self.pending_measurement_propagations.clone();
-        for (cfg_node, from_block, to_block) in pending {
-            if self.active_cfgs.contains_key(&cfg_node) {
+        for (cfg_node, from_block, to_block, cascade) in pending {
+            if self.active_cfgs.contains_key(&cfg_node) && latest.get(&cfg_node) == Some(&cascade) {
                 self.propagate_block_outputs(hugr, from_block, to_block, true);
             }
         }
@@ -1022,9 +1078,9 @@ impl HugrEngine {
             // direct Tag, or a Sum routed through a Conditional's output):
             // its payload elements are the CFG outputs (a called function's
             // return value rides here).
-            let sum_wire = (sum_src, sum_src_port.index());
+            let _sum_wire = (sum_src, sum_src_port.index());
             if let Some(ClassicalValue::Sum { values, .. }) =
-                self.wire_state.classical_values.get(&sum_wire).cloned()
+                self.get_input_value(hugr, output_node, 0)
             {
                 payload_len = values.len();
                 for (i, value) in values.into_iter().enumerate().take(expected_payload_len) {
@@ -1046,26 +1102,17 @@ impl HugrEngine {
                     .dataflow_signature()
                     .map_or(0, |sig| sig.input_count());
                 for i in 0..num_payload {
-                    if let Some((vsrc, vport)) =
-                        hugr.single_linked_output(sum_src, IncomingPort::from(i))
-                    {
-                        let src_wire = (vsrc, vport.index());
-                        if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                            self.wire_state
-                                .wire_to_qubit
-                                .insert((cfg_node, i), qubit_id);
-                            debug!(
-                                "CFG {cfg_node:?} output {i}: mapped payload qubit {qubit_id:?}"
-                            );
-                        }
-                        if let Some(value) =
-                            self.wire_state.classical_values.get(&src_wire).cloned()
-                        {
-                            debug!("CFG {cfg_node:?} output {i}: mapped payload value {value:?}");
-                            self.wire_state
-                                .classical_values
-                                .insert((cfg_node, i), value);
-                        }
+                    if let Some(qubit_id) = self.get_input_qubit(hugr, sum_src, i) {
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((cfg_node, i), qubit_id);
+                        debug!("CFG {cfg_node:?} output {i}: mapped payload qubit {qubit_id:?}");
+                    }
+                    if let Some(value) = self.get_input_value(hugr, sum_src, i) {
+                        debug!("CFG {cfg_node:?} output {i}: mapped payload value {value:?}");
+                        self.wire_state
+                            .classical_values
+                            .insert((cfg_node, i), value);
                     }
                 }
                 payload_len = num_payload;
@@ -1084,16 +1131,14 @@ impl HugrEngine {
             let block_port = IncomingPort::from(port_idx + 1); // Skip Sum port
             let cfg_out_idx = expected_payload_len + port_idx;
 
-            if let Some((src_node, src_port)) = hugr.single_linked_output(output_node, block_port) {
-                let src_wire = (src_node, src_port.index());
-
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
+            if hugr.single_linked_output(output_node, block_port).is_some() {
+                if let Some(qubit_id) = self.get_input_qubit(hugr, output_node, port_idx + 1) {
                     self.wire_state
                         .wire_to_qubit
                         .insert((cfg_node, cfg_out_idx), qubit_id);
                     debug!("CFG {cfg_node:?} output {cfg_out_idx}: mapped qubit {qubit_id:?}");
                 }
-                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                if let Some(value) = self.get_input_value(hugr, output_node, port_idx + 1) {
                     debug!("CFG {cfg_node:?} output {cfg_out_idx}: mapped value {value:?}");
                     self.wire_state
                         .classical_values

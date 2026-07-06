@@ -133,6 +133,7 @@ impl HugrEngine {
             for port in 0..hugr.num_outputs(*node) {
                 self.wire_state.classical_values.remove(&(*node, port));
                 self.wire_state.wire_to_qubit.remove(&(*node, port));
+                self.wire_state.conditional_payloads.remove(&(*node, port));
             }
         }
 

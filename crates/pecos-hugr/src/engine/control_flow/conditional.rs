@@ -237,18 +237,17 @@ impl HugrEngine {
             let out_in_port = IncomingPort::from(port_idx);
 
             // Find what's connected to this Output node input
-            if let Some((src_node, src_port)) = hugr.single_linked_output(output_node, out_in_port)
+            if let Some((src_node, _src_port)) = hugr.single_linked_output(output_node, out_in_port)
             {
-                let src_wire = (src_node, src_port.index());
-
-                // Check if we have a qubit mapping for this wire
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
+                // Reads go through the tracing layer so a case output
+                // produced inside a flattened DFG resolves.
+                if let Some(qubit_id) = self.get_input_qubit(hugr, output_node, port_idx) {
                     // Map to the Conditional's output port
                     self.wire_state
                         .wire_to_qubit
                         .insert((cond_node, port_idx), qubit_id);
                     debug!(
-                        "Mapped Conditional {cond_node:?} output {port_idx} to qubit {qubit_id:?} (from {src_wire:?})"
+                        "Mapped Conditional {cond_node:?} output {port_idx} to qubit {qubit_id:?}"
                     );
                 }
 
@@ -257,14 +256,14 @@ impl HugrEngine {
                 // value -- the structural fallback below must NOT overwrite
                 // it with just the tag number.
                 let has_value = if let Some(value) =
-                    self.wire_state.classical_values.get(&src_wire).cloned()
+                    self.get_input_value(hugr, output_node, port_idx)
                 {
+                    debug!(
+                        "Mapped Conditional {cond_node:?} output {port_idx} to classical value {value:?}"
+                    );
                     self.wire_state
                         .classical_values
-                        .insert((cond_node, port_idx), value.clone());
-                    debug!(
-                        "Mapped Conditional {cond_node:?} output {port_idx} to classical value {value:?} (from {src_wire:?})"
-                    );
+                        .insert((cond_node, port_idx), value);
                     true
                 } else {
                     false
@@ -280,53 +279,35 @@ impl HugrEngine {
                         .classical_values
                         .insert((cond_node, port_idx), ClassicalValue::Int(tag_value as i64));
 
-                    // Also extract and store the Tag's inputs (Sum payload values)
-                    // Store them at "virtual" output ports (1, 2, ...) on the Conditional
-                    // These will be used during CFG block transitions
+                    // Also extract and store the Tag's inputs (Sum payload
+                    // values) in the DEDICATED payload map, keyed by this
+                    // output port, for CFG block transitions to consume.
+                    // Whole-vector replace doubles as the stale-run clear
+                    // (a previous, longer payload cannot survive), and a
+                    // not-yet-ready element truncates the vector -- the
+                    // consumer sees exactly the ready prefix, never a stale
+                    // value. Elements read through the tracing layer so a
+                    // payload produced inside a flattened DFG resolves.
                     let num_tag_inputs = hugr.num_inputs(src_node);
-
-                    // Clear the previous execution's virtual run first: the
-                    // consumer walks virtual ports upward until the first
-                    // gap, so a survivor from a LONGER previous payload
-                    // would extend this one with stale data (and a payload
-                    // element that is not ready yet must read as a gap, not
-                    // as the old value).
-                    let mut stale_idx = port_idx + 1;
-                    while self
-                        .wire_state
-                        .classical_values
-                        .remove(&(cond_node, stale_idx))
-                        .is_some()
-                    {
-                        stale_idx += 1;
-                    }
-
+                    let mut payload = Vec::with_capacity(num_tag_inputs);
                     for payload_idx in 0..num_tag_inputs {
-                        let tag_in_port = IncomingPort::from(payload_idx);
-                        if let Some((payload_src_node, payload_src_port)) =
-                            hugr.single_linked_output(src_node, tag_in_port)
+                        if let Some(payload_value) =
+                            self.get_input_value(hugr, src_node, payload_idx)
                         {
-                            let payload_src_wire = (payload_src_node, payload_src_port.index());
-                            if let Some(payload_value) = self
-                                .wire_state
-                                .classical_values
-                                .get(&payload_src_wire)
-                                .cloned()
-                            {
-                                // Store at virtual output port (port_idx + 1 + payload_idx)
-                                // This allows CFG block transitions to find the payload values
-                                let virtual_port = port_idx + 1 + payload_idx;
-                                debug!(
-                                    "Conditional {cond_node:?} Tag payload {payload_idx}: {payload_value:?} at virtual port {virtual_port}"
-                                );
-                                self.wire_state
-                                    .classical_values
-                                    .insert((cond_node, virtual_port), payload_value);
-                            } else {
-                                debug!("No payload value at {payload_src_wire:?}");
-                            }
+                            debug!(
+                                "Conditional {cond_node:?} output {port_idx} Tag payload {payload_idx}: {payload_value:?}"
+                            );
+                            payload.push(payload_value);
+                        } else {
+                            debug!(
+                                "Conditional {cond_node:?} Tag payload {payload_idx} not ready; truncating"
+                            );
+                            break;
                         }
                     }
+                    self.wire_state
+                        .conditional_payloads
+                        .insert((cond_node, port_idx), payload);
                 }
             }
         }
@@ -394,32 +375,30 @@ impl HugrEngine {
         // following the payload values unpacked above.
         let num_cond_inputs = hugr.num_inputs(cond_node);
 
-        // Start from port 1 (skip control), propagate all inputs
+        // Start from port 1 (skip control), propagate all inputs. Reads go
+        // through the tracing layer so a data input produced inside a
+        // flattened DFG resolves.
         for port_idx in 1..num_cond_inputs {
-            let cond_in_port = IncomingPort::from(port_idx);
-            if let Some((src_node, src_port)) = hugr.single_linked_output(cond_node, cond_in_port) {
-                let src_wire = (src_node, src_port.index());
-                let input_output_idx = payload_len + port_idx - 1;
+            let input_output_idx = payload_len + port_idx - 1;
 
-                // Propagate qubit mappings
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                    self.wire_state
-                        .wire_to_qubit
-                        .insert((input_node, input_output_idx), qubit_id);
-                    debug!(
-                        "Propagated qubit {qubit_id:?} to Input node {input_node:?} port {input_output_idx}"
-                    );
-                }
+            // Propagate qubit mappings
+            if let Some(qubit_id) = self.get_input_qubit(hugr, cond_node, port_idx) {
+                self.wire_state
+                    .wire_to_qubit
+                    .insert((input_node, input_output_idx), qubit_id);
+                debug!(
+                    "Propagated qubit {qubit_id:?} to Input node {input_node:?} port {input_output_idx}"
+                );
+            }
 
-                // Also propagate classical values (integers, bools, etc.)
-                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                    debug!(
-                        "Propagated classical value {value:?} from {src_wire:?} to Case Input ({input_node:?}, {input_output_idx})"
-                    );
-                    self.wire_state
-                        .classical_values
-                        .insert((input_node, input_output_idx), value);
-                }
+            // Also propagate classical values (integers, bools, etc.)
+            if let Some(value) = self.get_input_value(hugr, cond_node, port_idx) {
+                debug!(
+                    "Propagated classical value {value:?} to Case Input ({input_node:?}, {input_output_idx})"
+                );
+                self.wire_state
+                    .classical_values
+                    .insert((input_node, input_output_idx), value);
             }
         }
     }

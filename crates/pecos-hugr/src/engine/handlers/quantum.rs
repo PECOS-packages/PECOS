@@ -267,7 +267,11 @@ impl HugrEngine {
             // global_phase: Rotation -> ()
             // Add global phase to the circuit. No silent zero default: the
             // rotation may simply not have resolved YET, and folding it to
-            // 0 would drop the phase without any visible failure.
+            // 0 would drop the phase without any visible failure. Note the
+            // blast radius: global phase is unobservable in every result
+            // this engine surfaces, yet a rotation that NEVER resolves
+            // fails the whole program via the stall report -- accepted
+            // (defer-forever bugs must stay loud), revisit if it bites.
             let Some(phase) = self
                 .get_input_value(hugr, node, 0)
                 .and_then(|v| v.as_rotation())

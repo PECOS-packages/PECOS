@@ -98,9 +98,11 @@ pub struct HugrEngine {
     pub(crate) active_scans: BTreeMap<Node, ActiveScanInfo>,
 
     /// The entrypoint's classical return values, captured when its CFG
-    /// completes. Pure-classical programs (no measurements, no `result()`
+    /// completes: entry i is output port i's value, or None if it never
+    /// materialized (positional, so a missing port cannot relabel the
+    /// rest). Pure-classical programs (no measurements, no `result()`
     /// calls) surface these as their shot results.
-    pub(crate) return_values: Vec<ClassicalValue>,
+    pub(crate) return_values: Vec<Option<ClassicalValue>>,
 
     /// Container regions the engine actually activated this shot
     /// (`DataflowBlocks`, selected Cases, `TailLoop` bodies), with a label for
@@ -161,7 +163,16 @@ pub struct HugrEngine {
 
     /// Pending block propagations that need re-propagation after measurement results.
     /// Stores (`cfg_node`, `from_block`, `to_block`) tuples.
-    pub(crate) pending_measurement_propagations: Vec<(Node, Node, Node)>,
+    pub(crate) pending_measurement_propagations: Vec<(Node, Node, Node, u64)>,
+
+    /// Monotone id for each `transition_to_cfg_successor` invocation (one
+    /// synchronous cascade of block hops). Recorded on each replay edge so
+    /// (a) a block revisited WITHIN one cascade does not purge the older
+    /// hop into it -- the chain a late measurement value must walk -- while
+    /// a re-entry in a LATER cascade (next loop iteration) does, and (b)
+    /// replay uses only each CFG's latest cascade, never re-filling ports
+    /// from a superseded iteration's sources.
+    pub(crate) cfg_transition_cascade: u64,
 
     // === Call/FuncDefn Support ===
     /// `FuncDefn` nodes extracted from the HUGR.
@@ -394,6 +405,7 @@ impl HugrEngine {
         self.active_cfgs.clear();
         self.pending_cfg_branches.clear();
         self.pending_measurement_propagations.clear();
+        self.cfg_transition_cascade = 0;
 
         // Clear Call/FuncDefn control flow state
         self.active_calls.clear();
@@ -721,7 +733,7 @@ impl HugrEngine {
                 // measurement-propagation edges (completion purges them;
                 // this covers a walk that never completed).
                 self.pending_measurement_propagations
-                    .retain(|(cfg, _, _)| *cfg != current_node);
+                    .retain(|(cfg, _, _, _)| *cfg != current_node);
 
                 // Start CFG execution by activating the entry block's operations
                 let entry_block = cfg_info.entry_block;
@@ -984,51 +996,53 @@ impl HugrEngine {
                 }
 
                 if let Some(func_info) = self.func_defns.get(&func_defn_node).cloned() {
+                    // Resolve arguments through the tracing layer (an
+                    // argument produced inside a flattened DFG must resolve
+                    // like any other read). A port with neither a qubit nor
+                    // a classical value stays cleared: some argument types
+                    // are legitimately not modeled per-wire, so the Call
+                    // launches anyway, and a late-arriving value (e.g. a
+                    // measurement result) is repaired fill-only by
+                    // repropagate_active_call_inputs after each
+                    // measurement round.
+                    let args: Vec<(Option<QubitId>, Option<ClassicalValue>)> = (0..func_info
+                        .num_inputs)
+                        .map(|in_port| {
+                            (
+                                self.get_input_qubit(&hugr, current_node, in_port),
+                                self.get_input_value(&hugr, current_node, in_port),
+                            )
+                        })
+                        .collect();
+
                     // Clear every FuncDefn Input port before copying: the
                     // frame reset below exempts the Input node (keep_wires)
-                    // so the fresh arguments survive, which means a port
-                    // whose source is missing would otherwise keep the
-                    // PREVIOUS call's argument. Missing sources must starve
-                    // loudly instead.
+                    // so the fresh arguments survive -- a port must never
+                    // keep the PREVIOUS call's argument.
                     for in_port in 0..func_info.num_inputs {
                         let func_input_wire = (func_info.input_node, in_port);
                         self.wire_state.classical_values.remove(&func_input_wire);
                         self.wire_state.wire_to_qubit.remove(&func_input_wire);
                     }
-
-                    // Map Call inputs to FuncDefn Input node outputs
-                    // Call inputs come from upstream nodes
-                    for in_port in 0..func_info.num_inputs {
-                        let call_in_port = IncomingPort::from(in_port);
-                        if let Some((src_node, src_port)) =
-                            hugr.single_linked_output(current_node, call_in_port)
-                        {
-                            let src_wire = (src_node, src_port.index());
-
-                            // Map qubits
-                            if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                                let func_input_wire = (func_info.input_node, in_port);
-                                self.wire_state
-                                    .wire_to_qubit
-                                    .insert(func_input_wire, qubit_id);
-                                debug!(
-                                    "Call {:?}: mapped input {} qubit {:?} to FuncDefn Input {:?}",
-                                    current_node, in_port, qubit_id, func_info.input_node
-                                );
-                            }
-                            // Map classical values (including arrays)
-                            if let Some(value) =
-                                self.wire_state.classical_values.get(&src_wire).cloned()
-                            {
-                                let func_input_wire = (func_info.input_node, in_port);
-                                self.wire_state
-                                    .classical_values
-                                    .insert(func_input_wire, value.clone());
-                                debug!(
-                                    "Call {:?}: mapped input {} classical value {:?} to FuncDefn Input {:?}",
-                                    current_node, in_port, value, func_info.input_node
-                                );
-                            }
+                    for (in_port, (qubit, value)) in args.into_iter().enumerate() {
+                        let func_input_wire = (func_info.input_node, in_port);
+                        if let Some(qubit_id) = qubit {
+                            self.wire_state
+                                .wire_to_qubit
+                                .insert(func_input_wire, qubit_id);
+                            debug!(
+                                "Call {:?}: mapped input {} qubit {:?} to FuncDefn Input {:?}",
+                                current_node, in_port, qubit_id, func_info.input_node
+                            );
+                        }
+                        if let Some(value) = value {
+                            debug!(
+                                "Call {:?}: mapped input {} classical value {:?} to FuncDefn Input {:?}",
+                                current_node, in_port, value, func_info.input_node
+                            );
+                            self.wire_state
+                                .classical_values
+                                .insert(func_input_wire, value);
                         }
                     }
 
@@ -1386,11 +1400,22 @@ impl HugrEngine {
         if let Some(fault) = self.execution_error.take() {
             return Err(PecosError::Generic(fault));
         }
-        if operation_count == 0 {
-            // Queue drained with no measurement pause: this is the engine's
+        // "Anything to send?" is the BUILDER's message count, not the
+        // dispatch loop's operation_count: extension handlers (qsystem
+        // Measure/MeasureReset/...) emit commands without passing through
+        // the quantum-op arm, and QAlloc/QFree count as operations without
+        // emitting anything. Judging by operation_count dropped a batch
+        // whose only commands were handler-emitted.
+        if operation_count == 0 && self.message_builder.message_count() == 0 {
+            // No progress at all this batch: this is the engine's
             // completion claim. Any still-active control flow or starved
-            // deferred node at this point means execution stalled mid-program
-            // -- fail loud instead of returning silently truncated results.
+            // deferred node at this point means execution stalled
+            // mid-program -- fail loud instead of returning silently
+            // truncated results. A batch that made progress but emitted
+            // nothing (e.g. lifecycle ops only) falls through and returns
+            // an empty message: the driver's round-trip re-enters
+            // handle_measurements, whose repropagation can unstick work
+            // that is waiting on already-recorded values.
             self.ensure_no_stalled_execution()?;
             debug!("No operations processed");
             return Ok(None);
@@ -1885,6 +1910,7 @@ impl Default for HugrEngine {
             active_cfgs: BTreeMap::new(),
             pending_cfg_branches: BTreeMap::new(),
             pending_measurement_propagations: Vec::new(),
+            cfg_transition_cascade: 0,
             // Control flow fields (Call/FuncDefn)
             func_defns: BTreeMap::new(),
             call_targets: BTreeMap::new(),
@@ -2018,6 +2044,12 @@ impl ClassicalEngine for HugrEngine {
                     // own control before OTHER data inputs (later
                     // measurements) exist; refresh its Input ports now.
                     self.repropagate_active_case_inputs(&hugr);
+                    // And for launched calls whose argument was a
+                    // measurement result still in flight (fill-only).
+                    self.repropagate_active_call_inputs(&hugr);
+                    // And for first-iteration tail loops in the same
+                    // situation (fill-only, never past the first Continue).
+                    self.repropagate_tailloop_initial_inputs(&hugr);
 
                     // Replay can fill the very port a pending control was
                     // starving on (the resolver pass above ran before the
@@ -2067,36 +2099,26 @@ impl ClassicalEngine for HugrEngine {
             // entrypoint's return values -- "return" for a single value,
             // "return_{port}" for multiple.
             if self.measurement_state.results.is_empty() && !self.return_values.is_empty() {
-                // Keys carry the ACTUAL port index: compacting around an
-                // unconvertible value (a Tuple/Sum return) would silently
-                // relabel every later port, and "return" only applies when
-                // the function genuinely returns one value.
-                let scalars: Vec<(usize, Data)> = self
-                    .return_values
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(port, value)| {
-                        let data = match value {
-                            ClassicalValue::Bool(b) => Some(Data::Bool(*b)),
-                            ClassicalValue::Int(i) => Some(Data::I64(*i)),
-                            ClassicalValue::UInt(u) => Some(Data::U64(*u)),
-                            ClassicalValue::Float(f) => Some(Data::F64(*f)),
-                            _ => {
-                                debug!(
-                                    "return port {port}: non-scalar value {value:?} not surfaced"
-                                );
-                                None
-                            }
-                        };
-                        data.map(|d| (port, d))
-                    })
-                    .collect();
-                if self.return_values.len() == 1 {
-                    if let Some((_, data)) = scalars.into_iter().next() {
+                // Positional capture: return_values.len() IS the entrypoint's
+                // output arity (missing ports are None), so "return" applies
+                // exactly when the function returns one value, and every key
+                // carries the actual port index.
+                let single_return = self.return_values.len() == 1;
+                for (port, value) in self.return_values.iter().enumerate() {
+                    let Some(value) = value else { continue };
+                    let data = match value {
+                        ClassicalValue::Bool(b) => Data::Bool(*b),
+                        ClassicalValue::Int(i) => Data::I64(*i),
+                        ClassicalValue::UInt(u) => Data::U64(*u),
+                        ClassicalValue::Float(f) => Data::F64(*f),
+                        _ => {
+                            debug!("return port {port}: non-scalar value {value:?} not surfaced");
+                            continue;
+                        }
+                    };
+                    if single_return {
                         result.data.insert("return".to_string(), data);
-                    }
-                } else {
-                    for (port, data) in scalars {
+                    } else {
                         result.data.insert(format!("return_{port}"), data);
                     }
                 }
@@ -2734,8 +2756,10 @@ mod tests {
 
         // idivmod_s with a "negative" divisor: the divisor port is UNSIGNED
         // per the spec, so canonical -3 reads as its bit pattern (2^64 - 3)
-        // and the huge divisor makes q = 0, r = the dividend. This is the
-        // Selene-validated guppy semantics (7 // -3 == 0, 7 % -3 == 7).
+        // and the huge divisor makes q = 0, r = the dividend. This pins the
+        // RAW OP's semantics (what guppy-compiled programs observe, validated
+        // against the Selene reference) -- NOT Python-level `//`, which a
+        // frontend handling divisor sign separately would layer on top.
         let got = run(
             &mut engine,
             "idivmod_s",

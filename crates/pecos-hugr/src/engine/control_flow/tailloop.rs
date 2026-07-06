@@ -216,31 +216,68 @@ impl HugrEngine {
         let input_node = tailloop_info.input_node;
 
         if iteration == 0 {
-            // First iteration: inputs come from TailLoop's external inputs
+            // First iteration: inputs come from TailLoop's external inputs,
+            // read through the tracing layer (an initial value produced
+            // inside a flattened DFG must resolve like any other read).
+            // Clear each port first: a loop re-expanded inside a re-run
+            // frame must not keep the PREVIOUS execution's final-iteration
+            // value on a port whose source is not ready yet (the same
+            // stale-argument class fixed for Call inputs). Late values are
+            // repaired fill-only after measurement rounds.
             for port_idx in 0..tailloop_info.num_inputs {
-                let tailloop_in_port = IncomingPort::from(port_idx);
-                if let Some((src_node, src_port)) =
-                    hugr.single_linked_output(tailloop_node, tailloop_in_port)
-                {
-                    let src_wire = (src_node, src_port.index());
-                    if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                        self.wire_state
-                            .wire_to_qubit
-                            .insert((input_node, port_idx), qubit_id);
-                        debug!(
-                            "TailLoop {tailloop_node:?} iter {iteration}: propagated qubit {qubit_id:?} to Input port {port_idx}"
-                        );
-                    }
-                    // Also propagate classical values
-                    if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                        self.wire_state
-                            .classical_values
-                            .insert((input_node, port_idx), value);
-                    }
+                let input_wire = (input_node, port_idx);
+                self.wire_state.classical_values.remove(&input_wire);
+                self.wire_state.wire_to_qubit.remove(&input_wire);
+                if let Some(qubit_id) = self.get_input_qubit(hugr, tailloop_node, port_idx) {
+                    self.wire_state.wire_to_qubit.insert(input_wire, qubit_id);
+                    debug!(
+                        "TailLoop {tailloop_node:?} iter {iteration}: propagated qubit {qubit_id:?} to Input port {port_idx}"
+                    );
+                }
+                if let Some(value) = self.get_input_value(hugr, tailloop_node, port_idx) {
+                    self.wire_state.classical_values.insert(input_wire, value);
                 }
             }
         }
         // For subsequent iterations, propagate_continue_values handles this
+    }
+
+    /// Fill-only repair of active tail loops still on their FIRST
+    /// iteration: an initial value that was a measurement result in flight
+    /// at expansion left its body-Input port cleared. Called after each
+    /// measurement round; never touches a loop past its first Continue
+    /// (those ports belong to continue propagation) and never overwrites a
+    /// live port.
+    pub(crate) fn repropagate_tailloop_initial_inputs(&mut self, hugr: &Hugr) {
+        let targets: Vec<(Node, Node, usize)> = self
+            .active_tailloops
+            .iter()
+            .filter(|(_, active)| active.iteration == 0)
+            .filter_map(|(&tailloop_node, _)| {
+                self.tailloops
+                    .get(&tailloop_node)
+                    .map(|info| (tailloop_node, info.input_node, info.num_inputs))
+            })
+            .collect();
+        for (tailloop_node, input_node, num_inputs) in targets {
+            for port_idx in 0..num_inputs {
+                let input_wire = (input_node, port_idx);
+                if self.wire_state.classical_values.contains_key(&input_wire)
+                    || self.wire_state.wire_to_qubit.contains_key(&input_wire)
+                {
+                    continue;
+                }
+                if let Some(qubit_id) = self.get_input_qubit(hugr, tailloop_node, port_idx) {
+                    self.wire_state.wire_to_qubit.insert(input_wire, qubit_id);
+                }
+                if let Some(value) = self.get_input_value(hugr, tailloop_node, port_idx) {
+                    debug!(
+                        "TailLoop {tailloop_node:?}: late initial input {port_idx} repaired with {value:?}"
+                    );
+                    self.wire_state.classical_values.insert(input_wire, value);
+                }
+            }
+        }
     }
 
     /// Continue a `TailLoop` with a new iteration after receiving `CONTINUE_TAG`.

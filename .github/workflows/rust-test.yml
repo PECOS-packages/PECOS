@@ -11,6 +11,7 @@ env:
   LLVM_RELEASE_VERSION: "21.1.8"
 
 on:
+  workflow_dispatch:
   push:
     branches: [ "main", "master", "development", "dev" ]
     paths:

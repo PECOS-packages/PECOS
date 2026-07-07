@@ -1,0 +1,23 @@
+# Keep this crate independent of parent workspace
+[workspace]
+
+[package]
+name = "zlup-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "FFI traits and types for integrating Rust code with Zlup"
+license = "Apache-2.0"
+repository = "https://github.com/PECOS-packages/PECOS"
+keywords = ["quantum", "qec", "ffi", "decoder"]
+categories = ["science", "api-bindings"]
+
+[features]
+default = []
+# TODO: Enable proc macros for #[zlup_export] once zlup-ffi-macros crate exists
+# macros = ["zlup-ffi-macros"]
+
+[dependencies]
+# TODO: Add proc macro crate when implemented
+# zlup-ffi-macros = { path = "../zlup-ffi-macros", optional = true }
+
+[dev-dependencies]

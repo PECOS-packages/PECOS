@@ -1,0 +1,25 @@
+/// GHZ State Example
+/// Creates an N-qubit Greenberger-Horne-Zeilinger state: (|000...0⟩ + |111...1⟩) / sqrt(2)
+///
+/// This is a maximally entangled state of N qubits.
+/// When measured, all qubits will give the same result.
+
+pub fn main() -> unit {
+    q := qalloc(4);
+    pz q;
+
+    // Put first qubit in superposition
+    h q[0];
+
+    // Entangle each subsequent qubit with the first
+    cx (q[0], q[1]);
+    cx (q[0], q[2]);
+    cx (q[0], q[3]);
+
+    // Measure all qubits
+    results: [4]u1 = mz([4]u1) [q[0], q[1], q[2], q[3]];
+
+    // All measurements will be the same: either all 0 or all 1
+
+    return unit;
+}

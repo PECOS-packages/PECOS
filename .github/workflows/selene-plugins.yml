@@ -223,6 +223,7 @@ jobs:
         with:
           name: wheel-${{ matrix.plugin.name }}-${{ matrix.os }}
           path: python/selene-plugins/${{ matrix.plugin.name }}/dist/*.whl
+          if-no-files-found: error
 
   # Collect all wheels into a single artifact
   collect-wheels:
@@ -254,3 +255,4 @@ jobs:
         with:
           name: selene-plugin-wheels
           path: wheels/*.whl
+          if-no-files-found: error

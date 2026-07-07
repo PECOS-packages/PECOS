@@ -40,6 +40,7 @@ pub mod logical_algorithm;
 pub mod logical_subgraph;
 pub mod matrix;
 pub mod multi_decoder;
+pub mod obs_mask;
 pub mod pauli_frame;
 pub mod perturbed;
 pub mod preprocessor;
@@ -167,14 +168,35 @@ pub trait BatchDecoder: Decoder {
 /// orchestrator needs -- it doesn't care about decoder internals, weights,
 /// convergence, or matched edges.
 pub trait ObservableDecoder {
-    /// Decode a dense syndrome and return predicted observable flips as a bitmask.
+    /// Decode a dense syndrome and return predicted observable flips as a wide
+    /// [`ObsMask`](crate::obs_mask::ObsMask).
     ///
-    /// Bit `i` of the returned value is 1 if observable `i` is predicted to flip.
+    /// Bit `i` of the mask is set if observable `i` is predicted to flip. This is
+    /// the primitive every decoder implements; it carries one inline stack word
+    /// for the common `<= 64`-observable case and spills to the heap only beyond,
+    /// so more than 64 observables are supported with no truncation.
     ///
     /// # Errors
     ///
     /// Returns [`DecoderError`] if decoding fails.
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError>;
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError>;
+
+    /// Narrowing convenience over [`Self::decode_obs`]: the predicted observable
+    /// flips packed into a `u64` (bit `i` = observable `i`).
+    ///
+    /// Errors (rather than truncating) if the decoder has more than 64
+    /// observables; callers that may exceed 64 should use [`Self::decode_obs`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if decoding fails or the mask exceeds 64 observables.
+    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+        self.decode_obs(syndrome)?.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
+            )
+        })
+    }
 
     /// Batch decode: flat buffer of `num_shots × num_detectors` bytes.
     /// Returns one `u64` observable mask per shot.

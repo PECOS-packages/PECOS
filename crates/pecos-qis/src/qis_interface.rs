@@ -19,6 +19,21 @@ pub enum ProgramFormat {
     QisBitcode,
 }
 
+impl ProgramFormat {
+    /// A stable identifier for persistent-cache keys and manifests, independent
+    /// of the `Debug` representation (which would change if a variant is renamed,
+    /// silently invalidating or, worse, colliding cached objects).
+    #[must_use]
+    pub fn cache_tag(self) -> &'static str {
+        match self {
+            Self::LlvmIrText => "llvm-ir-text",
+            Self::LlvmBitcode => "llvm-bitcode",
+            Self::HugrBytes => "hugr-bytes",
+            Self::QisBitcode => "qis-bitcode",
+        }
+    }
+}
+
 /// Error type for interface operations
 ///
 /// This is kept minimal to avoid circular dependencies with pecos-core.

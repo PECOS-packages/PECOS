@@ -22,7 +22,9 @@ pub use crate::{
 };
 
 // Re-export types
-pub use crate::{CompileArgs, HugrCompiler, HugrCompilerConfig, OptimizationLevel};
+pub use crate::{
+    CompileArgs, HugrCompiler, HugrCompilerConfig, OptimizationLevel, QSystemPlatform,
+};
 
 // Re-export helper functions
 pub use crate::{

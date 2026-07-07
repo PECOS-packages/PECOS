@@ -17,7 +17,7 @@ def test_y_gate_only() -> None:
 
     results = sim(Guppy(y_only)).qubits(1).quantum(state_vector()).run(5).to_dict()
     # measurements is list of lists like [[1], [1], ...], extract last value from each shot
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert all(val == 1 for val in measurements)  # Y|0⟩ should give |1⟩
 
@@ -33,7 +33,7 @@ def test_z_gate_only() -> None:
 
     results = sim(Guppy(z_only)).qubits(1).quantum(state_vector()).run(5).to_dict()
     # measurements is list of lists like [[0], [0], ...], extract last value from each shot
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert all(val == 0 for val in measurements)  # Z|0⟩ should give |0⟩
 
@@ -55,7 +55,7 @@ def test_y_and_z_tuple() -> None:
 
     results = sim(Guppy(yz_tuple)).qubits(2).quantum(state_vector()).run(5).to_dict()
     # measurements is list of lists like [[1, 0], [1, 0], ...] for tuple returns
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
 
     for i in range(5):
         assert raw_measurements[i][0] == 1  # Y|0⟩ should give |1⟩
@@ -83,7 +83,7 @@ def test_xyz_tuple() -> None:
 
     results = sim(Guppy(xyz_tuple)).qubits(3).quantum(state_vector()).run(5).to_dict()
     # measurements is list of lists like [[1, 1, 0], [1, 1, 0], ...] for tuple returns
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
 
     for i in range(5):
         assert raw_measurements[i][0] == 1  # X|0⟩ should give |1⟩

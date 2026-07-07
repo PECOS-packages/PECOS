@@ -607,6 +607,18 @@ impl TwoQubitChannel {
 
         // Determine if this is an emission or Pauli error (using precomputed threshold)
         if self.emission_ratio > 0.0 && rng.check_probability(self.emission_threshold) {
+            // Emission REPLACES the gate: undo it (apply its dagger) so the net
+            // effect is the gate removed, then apply the emission error. (Matches
+            // engines' apply_tq_faults, which drops the original two-qubit gate
+            // on a spontaneous-emission fault.)
+            let original = GateCommand::with_angles(
+                gate_type,
+                smallvec::smallvec![qubit0, qubit1],
+                angles.iter().copied().collect::<SmallVec<[Angle64; 2]>>(),
+            );
+            if let Some(dagger) = original.dagger() {
+                gates.push(dagger);
+            }
             // Emission error - sample from emission weights
             let idx = self.emission_weights.sample(rng.random::<f64>());
             let result = TwoQubitEmissionWeights::get_result(idx);

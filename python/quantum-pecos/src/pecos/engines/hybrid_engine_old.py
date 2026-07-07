@@ -141,8 +141,7 @@ class HybridEngine:
         # --------------------
         self.generate_errors = True
         error_circuits = error_gen.start(circuit, error_params)
-        self.rng_model.count = 0
-        self.rng_model.shot_id = shot_id
+        self.rng_model.start_shot(shot_id)
 
         # run through the circuits...
         # ---------------------------

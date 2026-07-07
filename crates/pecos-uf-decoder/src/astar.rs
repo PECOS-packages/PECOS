@@ -135,6 +135,7 @@ impl AStarDecoder {
     /// Returns `DecoderError` if the DEM is malformed.
     pub fn from_dem(dem: &str, config: AStarConfig) -> Result<Self, DecoderError> {
         let graph = DemMatchingGraph::from_dem_str(dem)?;
+        graph.ensure_observables_fit_u64()?;
         let num_detectors = graph.num_detectors;
 
         let mut mechanisms = Vec::new();
@@ -189,6 +190,7 @@ impl AStarDecoder {
 
         let dcm = DemCheckMatrix::from_dem_str(dem)
             .map_err(|e| DecoderError::InvalidGraph(e.to_string()))?;
+        dcm.ensure_observables_fit_u64()?;
         let num_detectors = dcm.num_detectors;
 
         let mut mechanisms = Vec::new();
@@ -306,7 +308,10 @@ impl AStarDecoder {
 }
 
 impl ObservableDecoder for AStarDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let n = self.num_detectors;
         let m = self.num_mechanisms;
 
@@ -319,7 +324,7 @@ impl ObservableDecoder for AStarDecoder {
         }
         let num_defects = init_residual.count_ones();
         if num_defects == 0 {
-            return Ok(0);
+            return Ok(pecos_decoder_core::obs_mask::ObsMask::new());
         }
 
         // A* priority queue and visited set.
@@ -462,7 +467,7 @@ impl ObservableDecoder for AStarDecoder {
             }
         }
 
-        Ok(best_obs)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(best_obs))
     }
 }
 

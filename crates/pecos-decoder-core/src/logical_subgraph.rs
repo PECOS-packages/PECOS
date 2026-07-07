@@ -653,7 +653,7 @@ impl LogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for LogicalSubgraphDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         let mut obs_mask = 0u64;
 
         for (i, (sg, dec)) in self
@@ -685,7 +685,7 @@ impl ObservableDecoder for LogicalSubgraphDecoder {
             }
         }
 
-        Ok(obs_mask)
+        Ok(crate::obs_mask::ObsMask::from_u64(obs_mask))
     }
 }
 

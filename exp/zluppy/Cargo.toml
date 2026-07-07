@@ -1,0 +1,33 @@
+[package]
+name = "zluppy-python"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Python bindings for Zluppy quantum programming language"
+publish = false
+
+[lib]
+name = "_zluppy"
+crate-type = ["cdylib", "rlib"]
+# Skip doc tests as they won't work properly in this setup
+doctest = false
+# Skip unit tests - all testing should be done through Python
+test = false
+
+[dependencies]
+# The zlup library crate (with HUGR support for compilation to HUGR)
+zlup = { path = "../zlup", features = ["hugr"] }
+
+# PyO3 for Python bindings
+pyo3 = { workspace = true, features = ["extension-module", "abi3-py310"] }
+
+# Serialization
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -44,11 +44,17 @@ export AbstractDecoder, DecodingResult, decode, check_count, bit_count
 Result of a decoding operation.
 """
 struct DecodingResult
-    """Decoded observable/correction vector."""
+    """
+    Decoded observable/correction vector.
+    """
     observable::Vector{UInt8}
-    """Weight/cost of the solution."""
+    """
+    Weight/cost of the solution.
+    """
     weight::Float64
-    """Whether the decoder converged (nothing = unknown)."""
+    """
+    Whether the decoder converged (nothing = unknown).
+    """
     converged::Union{Bool,Nothing}
 end
 

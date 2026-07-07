@@ -1,0 +1,381 @@
+/// Standard library containers for Zluppy.
+/// All containers have bounded capacity for NASA Power of 10 compliance.
+
+/// Error set for container operations.
+pub OverflowError := error { Overflow };
+
+/// Bounded stack (LIFO) container.
+///
+/// Example:
+/// ```zlup
+/// stack: Stack(u32, 64) = .{};
+/// try stack.push(42);
+/// if val := stack.pop() {
+///     // use val
+/// }
+/// ```
+pub Stack := fn(comptime T: type, comptime capacity: usize) -> type {
+    struct {
+        /// Internal storage
+        items: [capacity]T = undefined,
+        /// Current number of elements
+        len: usize = 0,
+
+        /// Push an item onto the stack.
+        /// Returns error.Overflow if the stack is full.
+        pub fn push(&mut self, item: T) -> OverflowError!void {
+            if (self.len >= capacity) {
+                return error.Overflow;
+            }
+            self.items[self.len] = item;
+            self.len += 1;
+            return unit;
+        }
+
+        /// Pop an item from the stack.
+        /// Returns none if the stack is empty.
+        pub fn pop(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            self.len -= 1;
+            return self.items[self.len];
+        }
+
+        /// Peek at the top item without removing it.
+        /// Returns none if the stack is empty.
+        pub fn peek(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            return self.items[self.len - 1];
+        }
+
+        /// Check if the stack is empty.
+        pub fn is_empty(&mut self) -> bool {
+            return self.len == 0;
+        }
+
+        /// Check if the stack is full.
+        pub fn is_full(&mut self) -> bool {
+            return self.len >= capacity;
+        }
+
+        /// Clear all items from the stack.
+        pub fn clear(&mut self) -> unit {
+            self.len = 0;
+            return unit;
+        }
+
+        /// Get the current number of items.
+        pub fn count(&mut self) -> usize {
+            return self.len;
+        }
+
+        /// Get the maximum capacity.
+        pub fn get_capacity(&mut self) -> usize {
+            return capacity;
+        }
+    }
+};
+
+/// Bounded queue (FIFO) container using a ring buffer.
+///
+/// Example:
+/// ```zlup
+/// queue: Queue(u32, 64) = .{};
+/// try queue.enqueue(42);
+/// if val := queue.dequeue() {
+///     // use val
+/// }
+/// ```
+pub Queue := fn(comptime T: type, comptime capacity: usize) -> type {
+    struct {
+        /// Internal storage (ring buffer)
+        items: [capacity]T = undefined,
+        /// Index of the front element
+        head: usize = 0,
+        /// Index where the next element will be inserted
+        tail: usize = 0,
+        /// Current number of elements
+        len: usize = 0,
+
+        /// Add an item to the back of the queue.
+        /// Returns error.Overflow if the queue is full.
+        pub fn enqueue(&mut self, item: T) -> OverflowError!void {
+            if (self.len >= capacity) {
+                return error.Overflow;
+            }
+            self.items[self.tail] = item;
+            self.tail = (self.tail + 1) % capacity;
+            self.len += 1;
+            return unit;
+        }
+
+        /// Remove and return the front item.
+        /// Returns none if the queue is empty.
+        pub fn dequeue(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            item := self.items[self.head];
+            self.head = (self.head + 1) % capacity;
+            self.len -= 1;
+            return item;
+        }
+
+        /// Peek at the front item without removing it.
+        /// Returns none if the queue is empty.
+        pub fn peek_front(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            return self.items[self.head];
+        }
+
+        /// Check if the queue is empty.
+        pub fn is_empty(&mut self) -> bool {
+            return self.len == 0;
+        }
+
+        /// Check if the queue is full.
+        pub fn is_full(&mut self) -> bool {
+            return self.len >= capacity;
+        }
+
+        /// Clear all items from the queue.
+        pub fn clear(&mut self) -> unit {
+            self.head = 0;
+            self.tail = 0;
+            self.len = 0;
+            return unit;
+        }
+
+        /// Get the current number of items.
+        pub fn count(&mut self) -> usize {
+            return self.len;
+        }
+    }
+};
+
+/// Bounded double-ended queue (deque) container.
+/// Supports efficient insertion and removal at both ends.
+///
+/// Example:
+/// ```zlup
+/// deque: Deque(u32, 64) = .{};
+/// try deque.push_back(42);
+/// try deque.push_front(1);
+/// if val := deque.pop_front() {
+///     // use val
+/// }
+/// ```
+pub Deque := fn(comptime T: type, comptime capacity: usize) -> type {
+    struct {
+        /// Internal storage (ring buffer)
+        items: [capacity]T = undefined,
+        /// Index of the front element
+        head: usize = 0,
+        /// Current number of elements
+        len: usize = 0,
+
+        /// Add an item to the back of the deque.
+        /// Returns error.Overflow if the deque is full.
+        pub fn push_back(&mut self, item: T) -> OverflowError!void {
+            if (self.len >= capacity) {
+                return error.Overflow;
+            }
+            tail := (self.head + self.len) % capacity;
+            self.items[tail] = item;
+            self.len += 1;
+            return unit;
+        }
+
+        /// Add an item to the front of the deque.
+        /// Returns error.Overflow if the deque is full.
+        pub fn push_front(&mut self, item: T) -> OverflowError!void {
+            if (self.len >= capacity) {
+                return error.Overflow;
+            }
+            self.head = (self.head + capacity - 1) % capacity;
+            self.items[self.head] = item;
+            self.len += 1;
+            return unit;
+        }
+
+        /// Remove and return the back item.
+        /// Returns none if the deque is empty.
+        pub fn pop_back(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            self.len -= 1;
+            tail := (self.head + self.len) % capacity;
+            return self.items[tail];
+        }
+
+        /// Remove and return the front item.
+        /// Returns none if the deque is empty.
+        pub fn pop_front(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            item := self.items[self.head];
+            self.head = (self.head + 1) % capacity;
+            self.len -= 1;
+            return item;
+        }
+
+        /// Peek at the front item without removing it.
+        pub fn peek_front(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            return self.items[self.head];
+        }
+
+        /// Peek at the back item without removing it.
+        pub fn peek_back(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            tail := (self.head + self.len - 1) % capacity;
+            return self.items[tail];
+        }
+
+        /// Check if the deque is empty.
+        pub fn is_empty(&mut self) -> bool {
+            return self.len == 0;
+        }
+
+        /// Check if the deque is full.
+        pub fn is_full(&mut self) -> bool {
+            return self.len >= capacity;
+        }
+
+        /// Clear all items from the deque.
+        pub fn clear(&mut self) -> unit {
+            self.head = 0;
+            self.len = 0;
+            return unit;
+        }
+
+        /// Get the current number of items.
+        pub fn count(&mut self) -> usize {
+            return self.len;
+        }
+    }
+};
+
+/// Bounded priority queue (min-heap).
+/// Elements are ordered by priority, with the smallest element at the front.
+///
+/// Example:
+/// ```zlup
+/// pq: PriorityQueue(u32, 64) = .{};
+/// try pq.insert(42);
+/// try pq.insert(10);
+/// if val := pq.extract_min() {
+///     // val is 10
+/// }
+/// ```
+pub PriorityQueue := fn(comptime T: type, comptime capacity: usize) -> type {
+    struct {
+        /// Internal storage (binary heap)
+        items: [capacity]T = undefined,
+        /// Current number of elements
+        len: usize = 0,
+
+        /// Insert an item into the priority queue.
+        /// Returns error.Overflow if the queue is full.
+        pub fn insert(&mut self, item: T) -> OverflowError!void {
+            if (self.len >= capacity) {
+                return error.Overflow;
+            }
+            // Add at the end
+            self.items[self.len] = item;
+            // Bubble up
+            self.bubble_up(self.len);
+            self.len += 1;
+            return unit;
+        }
+
+        /// Remove and return the minimum element.
+        /// Returns none if the queue is empty.
+        pub fn extract_min(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            min := self.items[0];
+            self.len -= 1;
+            if (self.len > 0) {
+                self.items[0] = self.items[self.len];
+                self.bubble_down(0);
+            }
+            return min;
+        }
+
+        /// Peek at the minimum element without removing it.
+        pub fn peek_min(&mut self) -> ?T {
+            if (self.len == 0) {
+                return none;
+            }
+            return self.items[0];
+        }
+
+        /// Check if the queue is empty.
+        pub fn is_empty(&mut self) -> bool {
+            return self.len == 0;
+        }
+
+        // Internal: bubble up element at index i
+        // Max iterations is log2(capacity) which is bounded by capacity
+        fn bubble_up(&mut self, i: usize) -> unit {
+            mut idx := i;
+            // Bounded loop: at most capacity iterations (actually log2(capacity))
+            for _ in 0..capacity {
+                if (idx == 0) {
+                    break;
+                }
+                parent := (idx - 1) / 2;
+                if (self.items[idx] >= self.items[parent]) {
+                    break;
+                }
+                // Swap
+                tmp := self.items[idx];
+                self.items[idx] = self.items[parent];
+                self.items[parent] = tmp;
+                idx = parent;
+            }
+            return unit;
+        }
+
+        // Internal: bubble down element at index i
+        // Max iterations is log2(capacity) which is bounded by capacity
+        fn bubble_down(&mut self, i: usize) -> unit {
+            mut idx := i;
+            // Bounded loop: at most capacity iterations (actually log2(capacity))
+            for _ in 0..capacity {
+                smallest := idx;
+                left := 2 * idx + 1;
+                right := 2 * idx + 2;
+
+                if (left < self.len and self.items[left] < self.items[smallest]) {
+                    smallest = left;
+                }
+                if (right < self.len and self.items[right] < self.items[smallest]) {
+                    smallest = right;
+                }
+                if (smallest == idx) {
+                    break;
+                }
+                // Swap
+                tmp := self.items[idx];
+                self.items[idx] = self.items[smallest];
+                self.items[smallest] = tmp;
+                idx = smallest;
+            }
+            return unit;
+        }
+    }
+};

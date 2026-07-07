@@ -39,6 +39,7 @@ from pecos_rslib.qec import (
     InfluenceBuilder,
     PauliFrameLookup,
     ParsedDem,
+    PauliFrameLookup,
     assert_dems_equivalent,
     compare_dems_exact,
     compare_dems_statistical,

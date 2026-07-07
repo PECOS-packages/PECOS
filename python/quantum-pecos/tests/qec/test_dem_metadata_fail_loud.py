@@ -18,6 +18,7 @@ from pecos_rslib.qec import (
     DemSampler,
     DetectorErrorModel,
 )
+from pecos_rslib.quantum import Gate, GateType
 
 
 def _one_measurement_dag(*, num_measurements: str = "1") -> DagCircuit:

@@ -40,14 +40,11 @@ from pecos.simulators.sparsestab import (
 )
 from pecos.simulators.statevec import StateVec
 
-# Attempt to import optional cuquantum and cupy packages (Python cuQuantum bindings)
+# Python cuQuantum CuStateVec backend. Import always succeeds if the package is
+# present; CuPy / cuQuantum availability is checked at construction time (like the
+# Rust CudaStateVec below), so users get a clear error only when they use it.
 try:
-    import cupy
-    import cuquantum
-
-    from pecos.simulators.custatevec.state import (
-        CuStateVec,
-    )
+    from pecos.simulators.custatevec.state import CuStateVec
 except ImportError:
     CuStateVec = None
 

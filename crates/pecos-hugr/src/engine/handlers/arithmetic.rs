@@ -20,15 +20,21 @@
 //! - Conversions: int<->float type conversions
 
 use log::debug;
-use tket::hugr::{Hugr, Node};
+use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
     /// Handle `arithmetic.float` operations (transcendental functions, etc.).
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn handle_float_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_float_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing arithmetic.float operation: {op_name} at {node:?}");
 
         // Get input values
@@ -103,35 +109,27 @@ impl HugrEngine {
                 a.zip(b).zip(c).map(|((x, y), z)| x.mul_add(y, z))
             }
 
-            // Float comparisons - exact comparison is intentional per HUGR semantics
-            #[allow(clippy::float_cmp)]
-            "feq" => a.zip(b).map(|(x, y)| if x == y { 1.0 } else { 0.0 }),
-            #[allow(clippy::float_cmp)]
-            "fne" => a.zip(b).map(|(x, y)| if x == y { 0.0 } else { 1.0 }),
-            "flt" => a.zip(b).map(|(x, y)| if x < y { 1.0 } else { 0.0 }),
-            "fle" => a.zip(b).map(|(x, y)| if x <= y { 1.0 } else { 0.0 }),
-            "fgt" => a.zip(b).map(|(x, y)| if x > y { 1.0 } else { 0.0 }),
-            "fge" => a.zip(b).map(|(x, y)| if x >= y { 1.0 } else { 0.0 }),
-
-            // Check for special values
-            "fis_nan" | "is_nan" => a.map(|x| if x.is_nan() { 1.0 } else { 0.0 }),
-            "fis_inf" | "is_inf" => a.map(|x| if x.is_infinite() { 1.0 } else { 0.0 }),
-            "fis_finite" | "is_finite" => a.map(|x| if x.is_finite() { 1.0 } else { 0.0 }),
-
+            // Float comparisons (feq/fne/flt/fle/fgt/fge) are CLASSIFIED
+            // ops handled by the classical path with proper Bool outputs;
+            // duplicate arms here used to return Float(1.0/0.0) -- deleted
+            // so classification drift cannot resurrect the wrong type.
             _ => {
                 debug!("Unknown arithmetic.float operation: {op_name}");
-                return false;
+                return HandlerOutcome::Defer;
             }
         };
 
-        if let Some(value) = result {
-            self.wire_state
-                .classical_values
-                .insert((node, 0), ClassicalValue::Float(value));
-            debug!("arithmetic.float.{op_name}: result = {value}");
-        }
-
-        true
+        // A missing or unconvertible input defers the op: marking it
+        // processed with no output would strand every consumer.
+        let Some(value) = result else {
+            debug!("arithmetic.float.{op_name} at {node:?}: input not ready, deferring");
+            return HandlerOutcome::Defer;
+        };
+        self.wire_state
+            .classical_values
+            .insert((node, 0), ClassicalValue::Float(value));
+        debug!("arithmetic.float.{op_name}: result = {value}");
+        HandlerOutcome::Processed
     }
 
     /// Handle `arithmetic.int` operations (extended integer operations).
@@ -140,165 +138,237 @@ impl HugrEngine {
         clippy::cast_sign_loss, // shift amounts are clamped to 0-63 before cast to u32
         clippy::cast_possible_truncation // shift amounts are clamped before cast
     )]
-    pub(crate) fn handle_int_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_int_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing arithmetic.int operation: {op_name} at {node:?}");
 
-        // Get input values
+        // Ops with a classify_classical_op entry (add/sub/mul/div/mod/
+        // comparisons/bitwise/shifts and their checked variants) never reach
+        // this handler -- they execute through the classical-op path. Only
+        // the UNCLASSIFIED arithmetic.int ops live here; keeping shadowed
+        // duplicate arms around invited semantic drift (they had truncating
+        // division while the classical path is Euclidean), so they were
+        // removed.
+
+        // Get input values. The op's width (BoundedNat type arg) makes the
+        // bit-level ops exact for narrow ints; absent args default to 64.
+        let log_width = hugr
+            .get_optype(node)
+            .as_extension_op()
+            .and_then(|ext| {
+                ext.args().iter().find_map(|arg| match arg {
+                    tket::hugr::types::TypeArg::BoundedNat(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+            })
+            .unwrap_or(6);
+        let bits = u64::from(1u32 << log_width);
+        let mask = crate::engine::handlers::classical::width_mask(log_width);
+        let canon = |v: i64| crate::engine::handlers::classical::canonicalize_width(v, log_width);
         let a = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int());
         let b = self.get_input_value(hugr, node, 1).and_then(|v| v.as_int());
+        // Unsigned reads must reinterpret the canonical (sign-extended)
+        // bit pattern at the op's width -- as_uint rejects negatives, so a
+        // canonical int<1> "1" (stored -1) would defer forever.
+        #[allow(clippy::cast_sign_loss)]
+        let read_unsigned = |engine: &Self, port: usize| -> Option<u64> {
+            engine
+                .get_input_value(hugr, node, port)
+                .and_then(|v| v.as_int())
+                .map(|v| (v as u64) & mask)
+        };
 
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let result: Option<i64> = match op_name {
-            // Basic arithmetic (may also be handled elsewhere)
-            "iadd" => a.zip(b).map(|(x, y)| x.wrapping_add(y)),
-            "isub" => a.zip(b).map(|(x, y)| x.wrapping_sub(y)),
-            "imul" => a.zip(b).map(|(x, y)| x.wrapping_mul(y)),
-            "idiv_s" | "idiv" => a.zip(b).map(|(x, y)| if y != 0 { x / y } else { 0 }),
-            // Cast u64 result to i64 for unified storage - wrap is acceptable for large values
-            #[allow(clippy::cast_possible_wrap)]
-            "idiv_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu)
-                    .map(|(x, y)| x.checked_div(y).map_or(0, |q| q as i64))
-            }
-            "imod_s" | "imod" => a.zip(b).map(|(x, y)| if y != 0 { x % y } else { 0 }),
-            #[allow(clippy::cast_possible_wrap)]
-            "imod_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu)
-                    .map(|(x, y)| if y != 0 { (x % y) as i64 } else { 0 })
-            }
-            "ineg" => a.map(i64::wrapping_neg),
-            "iabs" => a.map(i64::abs),
-
-            // Bitwise operations
-            "iand" => a.zip(b).map(|(x, y)| x & y),
-            "ior" => a.zip(b).map(|(x, y)| x | y),
-            "ixor" => a.zip(b).map(|(x, y)| x ^ y),
-            "inot" => a.map(|x| !x),
-
-            // Shift operations - clamp shift amount to valid range (0-63 for i64)
-            "ishl" => a.zip(b).map(|(x, y)| x.wrapping_shl(y.clamp(0, 63) as u32)),
-            "ishr_s" | "ishr" => a.zip(b).map(|(x, y)| x.wrapping_shr(y.clamp(0, 63) as u32)),
-            #[allow(clippy::cast_possible_wrap)]
-            "ishr_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                au.zip(b).map(|(x, y)| (x >> y.clamp(0, 63) as u32) as i64)
-            }
-            "irotl" | "rotl" => a.zip(b).map(|(x, y)| x.rotate_left(y.clamp(0, 63) as u32)),
-            "irotr" | "rotr" => a.zip(b).map(|(x, y)| x.rotate_right(y.clamp(0, 63) as u32)),
-
-            // Bit counting
-            "ipopcnt" | "popcnt" | "popcount" => a.map(|x| i64::from(x.count_ones())),
-            "iclz" | "clz" => a.map(|x| i64::from(x.leading_zeros())),
-            "ictz" | "ctz" => a.map(|x| i64::from(x.trailing_zeros())),
+            // Rotations: the amount is reduced modulo the width, per the
+            // spec's const-fold (`k = n1 % w`); the rotation happens within
+            // the op's N bits.
+            "irotl" | "rotl" => a.zip(b).map(|(x, y)| {
+                let k = (y as u64) % bits;
+                let x = (x as u64) & mask;
+                let rotated = if k == 0 {
+                    x
+                } else {
+                    ((x << k) | (x >> (bits - k))) & mask
+                };
+                canon(rotated.cast_signed())
+            }),
+            "irotr" | "rotr" => a.zip(b).map(|(x, y)| {
+                let k = (y as u64) % bits;
+                let x = (x as u64) & mask;
+                let rotated = if k == 0 {
+                    x
+                } else {
+                    ((x >> k) | (x << (bits - k))) & mask
+                };
+                canon(rotated.cast_signed())
+            }),
 
             // Min/max
             "imin_s" | "imin" => a.zip(b).map(|(x, y)| x.min(y)),
             "imax_s" | "imax" => a.zip(b).map(|(x, y)| x.max(y)),
             #[allow(clippy::cast_possible_wrap)]
             "imin_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| x.min(y) as i64)
+                let au = read_unsigned(self, 0);
+                let bu = read_unsigned(self, 1);
+                au.zip(bu).map(|(x, y)| canon(x.min(y) as i64))
             }
             #[allow(clippy::cast_possible_wrap)]
             "imax_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| x.max(y) as i64)
+                let au = read_unsigned(self, 0);
+                let bu = read_unsigned(self, 1);
+                au.zip(bu).map(|(x, y)| canon(x.max(y) as i64))
             }
 
-            // Sign extension / truncation - all no-ops for i64 unified storage
-            #[allow(clippy::match_same_arms)] // Intentionally separate for clarity
-            "iwiden_s" | "widen_s" => a, // Sign-extend (no-op for i64)
+            // Width widening. Signed values are stored canonically
+            // sign-extended, so widen_s is the identity; widen_u must
+            // ZERO-extend from the source width (the first BoundedNat arg,
+            // which is what `mask` derives from), e.g. a canonical 1-bit
+            // "1" is stored as -1 and widens to 1. The zero-extended value
+            // is already canonical at the (wider) destination.
+            #[allow(clippy::match_same_arms)]
+            "iwiden_s" | "widen_s" => a,
             #[allow(clippy::cast_possible_wrap)]
-            "iwiden_u" | "widen_u" => self
-                .get_input_value(hugr, node, 0)
-                .and_then(|v| v.as_uint())
-                .map(|x| x as i64),
-            #[allow(clippy::match_same_arms)]
-            "inarrow_s" | "narrow_s" => a, // Truncate (no-op for now)
-            #[allow(clippy::match_same_arms)]
-            "inarrow_u" | "narrow_u" => a, // Truncate (no-op for now)
+            "iwiden_u" | "widen_u" => read_unsigned(self, 0).map(|x| x as i64),
 
-            // Comparisons (return 0 or 1)
-            "ieq" => a.zip(b).map(|(x, y)| i64::from(x == y)),
-            "ine" => a.zip(b).map(|(x, y)| i64::from(x != y)),
-            "ilt_s" | "ilt" => a.zip(b).map(|(x, y)| i64::from(x < y)),
-            "ile_s" | "ile" => a.zip(b).map(|(x, y)| i64::from(x <= y)),
-            "igt_s" | "igt" => a.zip(b).map(|(x, y)| i64::from(x > y)),
-            "ige_s" | "ige" => a.zip(b).map(|(x, y)| i64::from(x >= y)),
-            "ilt_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| i64::from(x < y))
+            // Width narrowing returns sum_with_error(int): handled below
+            // (multi-variant output, not a plain i64).
+            "inarrow_s" | "narrow_s" | "inarrow_u" | "narrow_u" => {
+                return self.handle_inarrow(hugr, node, op_name);
             }
-            "ile_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| i64::from(x <= y))
-            }
-            "igt_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| i64::from(x > y))
-            }
-            "ige_u" => {
-                let au = self
-                    .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_uint());
-                let bu = self
-                    .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_uint());
-                au.zip(bu).map(|(x, y)| i64::from(x >= y))
-            }
+
+            // Signedness reinterpretation. The spec PANICS out of range
+            // (iu_to_s of an unsigned value >= 2^(N-1); is_to_u of a
+            // negative) -- silently passing the bit pattern through would
+            // hand consumers a sign-flipped value.
+            "iu_to_s" => match read_unsigned(self, 0) {
+                None => None,
+                Some(value) => {
+                    let out_of_range = if log_width < 6 {
+                        value >= (1u64 << ((1u32 << log_width) - 1))
+                    } else {
+                        value > i64::MAX as u64
+                    };
+                    if out_of_range {
+                        return HandlerOutcome::Fault(format!(
+                            "iu_to_s at {node:?}: unsigned value {value} does not fit \
+                             the signed range at width 2^{log_width} (the spec panics)"
+                        ));
+                    }
+                    Some(canon(value.cast_signed()))
+                }
+            },
+            "is_to_u" => match a {
+                None => None,
+                Some(value) => {
+                    if canon(value) < 0 {
+                        return HandlerOutcome::Fault(format!(
+                            "is_to_u at {node:?}: negative value {value} has no \
+                             unsigned interpretation (the spec panics)"
+                        ));
+                    }
+                    Some(canon(value))
+                }
+            },
 
             _ => {
                 debug!("Unknown arithmetic.int operation: {op_name}");
-                return false;
+                return HandlerOutcome::Defer;
             }
         };
 
-        if let Some(value) = result {
-            self.wire_state
-                .classical_values
-                .insert((node, 0), ClassicalValue::Int(value));
-            debug!("arithmetic.int.{op_name}: result = {value}");
-        }
+        // A missing or unconvertible input defers the op: marking it
+        // processed with no output would strand every consumer (the node is
+        // never retried once processed).
+        let Some(value) = result else {
+            debug!("arithmetic.int.{op_name} at {node:?}: input not ready, deferring");
+            return HandlerOutcome::Defer;
+        };
+        self.wire_state
+            .classical_values
+            .insert((node, 0), ClassicalValue::Int(value));
+        debug!("arithmetic.int.{op_name}: result = {value}");
+        HandlerOutcome::Processed
+    }
 
-        true
+    /// `inarrow_s`/`inarrow_u<M, N>`: narrow to width `N`, returning
+    /// `sum_with_error(int)` -- error variant (tag 0) when the value does
+    /// not fit, value variant (tag 1) otherwise.
+    fn handle_inarrow(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> HandlerOutcome {
+        let signed = !op_name.ends_with('u');
+        // Target log-width is the SECOND type arg (source is the first).
+        let target_log_width = hugr
+            .get_optype(node)
+            .as_extension_op()
+            .and_then(|ext| {
+                ext.args()
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        tket::hugr::types::TypeArg::BoundedNat(n) => Some(*n),
+                        _ => None,
+                    })
+                    .nth(1)
+            })
+            .unwrap_or(6);
+        // Source log-width is the FIRST type arg: the unsigned range test
+        // must reinterpret the canonical (sign-extended) storage as the
+        // SOURCE-width bit pattern, or a high-bit unsigned value (stored
+        // negative) would spuriously fail to fit.
+        let source_log_width = hugr
+            .get_optype(node)
+            .as_extension_op()
+            .and_then(|ext| {
+                ext.args().iter().find_map(|arg| match arg {
+                    tket::hugr::types::TypeArg::BoundedNat(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+            })
+            .unwrap_or(6);
+        let bits = 1u32 << target_log_width.min(6);
+        let Some(v) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int()) else {
+            debug!("arithmetic.int.{op_name} at {node:?}: input not ready, deferring");
+            return HandlerOutcome::Defer;
+        };
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+        let (fits, narrowed) = if signed {
+            let fits = if bits >= 64 {
+                true
+            } else {
+                let min = -(1i64 << (bits - 1));
+                let max = (1i64 << (bits - 1)) - 1;
+                v >= min && v <= max
+            };
+            (fits, v)
+        } else {
+            let pattern =
+                (v as u64) & crate::engine::handlers::classical::width_mask(source_log_width);
+            let fits = bits >= 64 || pattern < (1u64 << bits);
+            // Store canonically at the TARGET width (sign-extended).
+            #[allow(clippy::cast_possible_truncation)]
+            let narrowed = crate::engine::handlers::classical::canonicalize_width(
+                pattern as i64,
+                target_log_width.min(6) as u8,
+            );
+            (fits, narrowed)
+        };
+        let result = if fits {
+            ClassicalValue::Sum {
+                tag: 1,
+                values: vec![ClassicalValue::Int(narrowed)],
+            }
+        } else {
+            ClassicalValue::Sum {
+                tag: 0,
+                values: vec![ClassicalValue::Tuple(vec![])],
+            }
+        };
+        debug!("arithmetic.int.{op_name}: {result:?}");
+        self.wire_state.classical_values.insert((node, 0), result);
+        HandlerOutcome::Processed
     }
 
     /// Handle `arithmetic.conversions` operations (int/float conversions).
@@ -313,150 +383,182 @@ impl HugrEngine {
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
     )]
-    pub(crate) fn handle_conversions_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_conversions_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing arithmetic.conversions operation: {op_name} at {node:?}");
 
         match op_name {
-            // Integer to float conversions
-            "convert_s" | "itof_s" => {
-                // Signed integer to float
-                if let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int()) {
-                    let result = value as f64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Float(result));
-                    debug!("convert_s: {value} -> {result}");
-                }
-            }
-            "convert_u" | "itof_u" => {
-                // Unsigned integer to float
-                if let Some(value) = self
+            // convert_s / convert_u are CLASSIFIED ops handled by the
+            // width-aware classical path; the duplicate arms here read
+            // via as_uint (which rejects canonical negative storage) and
+            // were deleted so classification drift cannot resurrect them.
+
+            // usize <-> int conversions (e.g. guppy loop bounds built from
+            // prelude.load_nat's usize output)
+            "ifromusize" => {
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_uint())
-                {
-                    let result = value as f64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Float(result));
-                    debug!("convert_u: {value} -> {result}");
-                }
+                else {
+                    debug!("ifromusize at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                #[allow(clippy::cast_possible_wrap)]
+                let result = value as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("ifromusize: {value} -> {result}");
+            }
+            "itousize" => {
+                let Some(value) = self.get_input_value(hugr, node, 0).and_then(|v| v.as_int())
+                else {
+                    debug!("itousize at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                #[allow(clippy::cast_sign_loss)]
+                let result = value as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("itousize: {value} -> {result}");
             }
 
             // Float to integer conversions (truncate toward zero)
-            "trunc_s" | "ftoi_s" => {
+            "ftoi_s" => {
                 // Float to signed integer (truncate)
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let result = value.trunc() as i64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Int(result));
-                    debug!("trunc_s: {value} -> {result}");
-                }
+                else {
+                    debug!("trunc_s at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                let result = value.trunc() as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("trunc_s: {value} -> {result}");
             }
-            "trunc_u" | "ftoi_u" => {
+            "ftoi_u" => {
                 // Float to unsigned integer (truncate)
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    // Clamp to non-negative before converting
-                    let clamped = value.max(0.0).trunc();
-                    let result = clamped as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(result));
-                    debug!("trunc_u: {value} -> {result}");
-                }
+                else {
+                    debug!("trunc_u at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                // Clamp to non-negative before converting
+                let clamped = value.max(0.0).trunc();
+                let result = clamped as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("trunc_u: {value} -> {result}");
             }
 
             // Ceiling/floor variants
             "ceil_s" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let result = value.ceil() as i64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Int(result));
-                    debug!("ceil_s: {value} -> {result}");
-                }
+                else {
+                    debug!("ceil_s at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                let result = value.ceil() as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("ceil_s: {value} -> {result}");
             }
             "ceil_u" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let clamped = value.max(0.0).ceil();
-                    let result = clamped as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(result));
-                    debug!("ceil_u: {value} -> {result}");
-                }
+                else {
+                    debug!("ceil_u at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                let clamped = value.max(0.0).ceil();
+                let result = clamped as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("ceil_u: {value} -> {result}");
             }
             "floor_s" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let result = value.floor() as i64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Int(result));
-                    debug!("floor_s: {value} -> {result}");
-                }
+                else {
+                    debug!("floor_s at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                let result = value.floor() as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("floor_s: {value} -> {result}");
             }
             "floor_u" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let clamped = value.max(0.0).floor();
-                    let result = clamped as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(result));
-                    debug!("floor_u: {value} -> {result}");
-                }
+                else {
+                    debug!("floor_u at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                let clamped = value.max(0.0).floor();
+                let result = clamped as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("floor_u: {value} -> {result}");
             }
 
             // Rounding
             "round_s" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let result = value.round() as i64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::Int(result));
-                    debug!("round_s: {value} -> {result}");
-                }
+                else {
+                    debug!("round_s at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                let result = value.round() as i64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::Int(result));
+                debug!("round_s: {value} -> {result}");
             }
             "round_u" => {
-                if let Some(value) = self
+                let Some(value) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_float())
-                {
-                    let clamped = value.max(0.0).round();
-                    let result = clamped as u64;
-                    self.wire_state
-                        .classical_values
-                        .insert((node, 0), ClassicalValue::UInt(result));
-                    debug!("round_u: {value} -> {result}");
-                }
+                else {
+                    debug!("round_u at {node:?}: input not ready, deferring");
+                    return HandlerOutcome::Defer;
+                };
+                let clamped = value.max(0.0).round();
+                let result = clamped as u64;
+                self.wire_state
+                    .classical_values
+                    .insert((node, 0), ClassicalValue::UInt(result));
+                debug!("round_u: {value} -> {result}");
             }
 
             _ => {
                 debug!("Unknown arithmetic.conversions operation: {op_name}");
-                return false;
+                return HandlerOutcome::Defer;
             }
         }
 
-        true
+        HandlerOutcome::Processed
     }
 }

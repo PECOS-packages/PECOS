@@ -581,6 +581,27 @@ impl DemCheckMatrix {
         })
     }
 
+    /// Hyperedge matching decoders (MWPF, A* on the full DEM) pack observable
+    /// flips into a `u64` (`1 << observable`), so they support at most 64
+    /// observables. Returns an error (rather than letting construction
+    /// overflow-panic on `1 << o` for `o >= 64`) if this DEM exceeds that,
+    /// directing callers to a wide decoder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] if `num_observables > 64`.
+    pub fn ensure_observables_fit_u64(&self) -> Result<(), DecoderError> {
+        if self.num_observables > 64 {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "this matching decoder packs observables into a u64 and supports at most 64 \
+                 observables, but the DEM has {}; use the 'pymatching' decoder or \
+                 LogicalSubgraphDecoder for wider observable sets",
+                self.num_observables
+            )));
+        }
+        Ok(())
+    }
+
     /// Compute the observable prediction from a correction vector.
     ///
     /// Given a binary correction vector (one entry per mechanism, from a
@@ -611,6 +632,26 @@ impl DemCheckMatrix {
         for (i, &v) in obs.iter().enumerate() {
             if v != 0 {
                 mask |= 1 << i;
+            }
+        }
+        mask
+    }
+
+    /// Pack observable predictions into an [`ObsMask`](crate::obs_mask::ObsMask).
+    ///
+    /// Bit `i` is set if observable `i` is predicted to flip. Unlike
+    /// [`Self::observables_mask_from_correction`], this supports more than 64
+    /// observables without truncation or overflow.
+    #[must_use]
+    pub fn observables_obsmask_from_correction(
+        &self,
+        correction: &[u8],
+    ) -> crate::obs_mask::ObsMask {
+        let obs = self.observables_from_correction(correction);
+        let mut mask = crate::obs_mask::ObsMask::new();
+        for (i, &v) in obs.iter().enumerate() {
+            if v != 0 {
+                mask.set(i);
             }
         }
         mask
@@ -821,6 +862,29 @@ impl DemMatchingGraph {
         })
     }
 
+    /// Matching decoders pack observable flips into a `u64` (`1 << observable`),
+    /// so they support at most 64 observables. Returns an error (rather than
+    /// letting construction overflow-panic on `1 << o` for `o >= 64`) if this
+    /// graph exceeds that, directing callers to a wide decoder.
+    ///
+    /// Call this at the start of any matching-decoder construction that enters
+    /// the `1 << o` packing loop, on untrusted DEM input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] if `num_observables > 64`.
+    pub fn ensure_observables_fit_u64(&self) -> Result<(), DecoderError> {
+        if self.num_observables > 64 {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "this matching decoder packs observables into a u64 and supports at most 64 \
+                 observables, but the DEM has {}; use the 'pymatching' decoder or \
+                 LogicalSubgraphDecoder for wider observable sets",
+                self.num_observables
+            )));
+        }
+        Ok(())
+    }
+
     /// Merge edges with independent fault-ID-aware probability combination.
     ///
     /// Components from the same fault mechanism (same `fault_id`) that land on
@@ -977,7 +1041,7 @@ impl<D> super::ObservableDecoder for CheckMatrixObservableDecoder<D>
 where
     D: super::Decoder,
 {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         use super::DecodingResultTrait;
 
         // Copy syndrome into reusable buffer (no allocation after first call)
@@ -995,7 +1059,7 @@ where
             .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
 
         let correction = result.correction();
-        Ok(self.dem.observables_mask_from_correction(correction))
+        Ok(self.dem.observables_obsmask_from_correction(correction))
     }
 }
 

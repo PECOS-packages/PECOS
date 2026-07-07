@@ -4,7 +4,8 @@ import pytest
 from guppylang import guppy
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos import Guppy, sim
-from pecos_rslib import compile_hugr_to_qis, state_vector
+from pecos_rslib import state_vector
+from pecos_rslib_llvm import compile_hugr_to_qis
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:

@@ -198,11 +198,11 @@ mod tests {
             // Trivial decoder that always returns 0.
             struct Zero;
             impl crate::ObservableDecoder for Zero {
-                fn decode_to_observables(
+                fn decode_obs(
                     &mut self,
                     _: &[u8],
-                ) -> Result<u64, crate::errors::DecoderError> {
-                    Ok(0)
+                ) -> Result<crate::obs_mask::ObsMask, crate::errors::DecoderError> {
+                    Ok(crate::obs_mask::ObsMask::new())
                 }
             }
             Ok(Box::new(Zero))

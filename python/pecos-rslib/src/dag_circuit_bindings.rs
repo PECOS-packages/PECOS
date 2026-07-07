@@ -1800,7 +1800,7 @@ fn tick_gate_error_to_pyerr(err: TickGateError, tick_idx: Option<usize>) -> PyEr
 #[pyfunction]
 #[pyo3(name = "hugr_to_dag_circuit")]
 fn py_hugr_to_dag_circuit(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<PyDagCircuit> {
-    use pecos_hugr_qis::read_hugr_envelope;
+    use pecos_hugr::load_hugr_from_bytes as read_hugr_envelope;
     use pecos_quantum::hugr_convert::hugr_to_dag_circuit;
 
     let bytes = hugr_bytes.as_bytes();
@@ -1842,8 +1842,9 @@ fn py_resolve_result_tags_for_guppy(
     hugr_bytes: &Bound<'_, PyBytes>,
     traced_meas_count: usize,
 ) -> PyResult<(String, String)> {
-    use pecos_hugr_qis::{
-        extract_result_tag_measurements, measurement_op_count, read_hugr_envelope,
+    use pecos_hugr::{
+        extract_result_tag_measurements, load_hugr_from_bytes as read_hugr_envelope,
+        measurement_op_count,
     };
     use pecos_qec::fault_tolerance::dem_builder::resolve_result_tags;
 

@@ -21,13 +21,14 @@
 //!
 //! ```
 //! use pecos_decoder_core::{DecoderError, ObservableDecoder};
+//! use pecos_decoder_core::obs_mask::ObsMask;
 //! use pecos_decoder_core::pauli_frame::PauliFrameAccumulator;
 //!
 //! struct FixedDecoder(u64);
 //!
 //! impl ObservableDecoder for FixedDecoder {
-//!     fn decode_to_observables(&mut self, _syndrome: &[u8]) -> Result<u64, DecoderError> {
-//!         Ok(self.0)
+//!     fn decode_obs(&mut self, _syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+//!         Ok(ObsMask::from_u64(self.0))
 //!     }
 //! }
 //!
@@ -185,8 +186,8 @@ mod tests {
 
     struct FixedDecoder(u64);
     impl ObservableDecoder for FixedDecoder {
-        fn decode_to_observables(&mut self, _: &[u8]) -> Result<u64, DecoderError> {
-            Ok(self.0)
+        fn decode_obs(&mut self, _: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+            Ok(crate::obs_mask::ObsMask::from_u64(self.0))
         }
     }
 

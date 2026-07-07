@@ -34,7 +34,7 @@
 //!
 //! # LLVM Setup
 //!
-//! This crate requires LLVM 14 for QIR (Quantum Intermediate Representation) support.
+//! This crate requires LLVM 21.1 for QIR (Quantum Intermediate Representation) support.
 //!
 //! If the build fails, run:
 //!

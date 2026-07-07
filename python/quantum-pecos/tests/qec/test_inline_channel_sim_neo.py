@@ -5,7 +5,7 @@
 
 import pytest
 from pecos_rslib.quantum import TickCircuit
-from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer
+from pecos_rslib_exp import depolarizing, meas_sampling, monte_carlo, sim_neo, stabilizer
 
 
 def prep_measure_circuit() -> TickCircuit:
@@ -43,18 +43,25 @@ def test_tick_circuit_with_noise_rejects_invalid_probabilities() -> None:
         prep_measure_circuit().with_noise(p2=1.1)
 
 
-def test_sim_neo_default_routes_inline_channels_through_density_matrix() -> None:
+def test_sim_neo_auto_routes_inline_channels_through_density_matrix() -> None:
     noisy = prep_measure_circuit().with_noise(p_prep=1.0)
 
-    result = sim_neo(noisy).shots(5).seed(123).run()
+    result = sim_neo(noisy).auto().sampling(monte_carlo(5)).seed(123).run()
 
     assert measurement_rows(result) == [[1], [1], [1], [1], [1]]
+
+
+def test_sim_neo_inline_channels_require_explicit_backend_or_auto() -> None:
+    noisy = prep_measure_circuit().with_noise(p_prep=1.0)
+
+    with pytest.raises(ValueError, match="No quantum backend set"):
+        sim_neo(noisy).sampling(monte_carlo(5)).run()
 
 
 def test_sim_neo_stabilizer_samples_inline_pauli_channels() -> None:
     noisy = prep_measure_circuit().with_noise(p_prep=1.0)
 
-    result = sim_neo(noisy).quantum(stabilizer()).shots(5).seed(123).run()
+    result = sim_neo(noisy).quantum(stabilizer()).sampling(monte_carlo(5)).seed(123).run()
 
     assert measurement_rows(result) == [[1], [1], [1], [1], [1]]
 

@@ -48,7 +48,6 @@ mod experimental_bindings;
 mod fault_tolerance_bindings;
 mod gate_registry_bindings;
 mod graph_bindings;
-mod hugr_compilation_bindings;
 mod namespace_modules;
 mod num_bindings;
 mod pauli_bindings;
@@ -102,11 +101,12 @@ use wasm_foreign_object_bindings::PyWasmForeignObject;
 
 /// Find an LLVM tool by name (e.g., "llvm-as", "llc", "opt").
 ///
-/// This searches for the tool in the LLVM 14 installation using the same
+/// This searches for the tool in the LLVM 21.1 installation using the same
 /// logic as the pecos-build crate:
-/// 1. ~/.pecos/llvm/ (PECOS managed installation)
-/// 2. Project-local llvm/ directory
-/// 3. System installations (Homebrew on macOS, package manager on Linux)
+/// 1. ~/.pecos/deps/llvm-21.1/ (PECOS-managed installation where supported)
+/// 2. ~/.pecos/llvm/ (legacy path)
+/// 3. Project-local llvm/ directory
+/// 4. System installations (Homebrew on macOS, package manager on Linux)
 ///
 /// Returns None if the tool is not found.
 #[pyfunction]
@@ -187,7 +187,7 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     setup_cuda_library_path();
 
     // CRITICAL: Preload libselene_simple_runtime.so with RTLD_GLOBAL BEFORE anything else
-    // This prevents conflicts with LLVM-14 when the Selene runtime is loaded later
+    // This prevents conflicts with LLVM-21.1 when the Selene runtime is loaded later
     #[cfg(unix)]
     {
         use std::ffi::CString;
@@ -290,7 +290,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     engine_builders::register_engine_builders(m)?;
 
     // Register HUGR compilation functions
-    hugr_compilation_bindings::register_hugr_compilation_functions(m)?;
 
     // Register numerical computing module (scipy.optimize replacements)
     num_bindings::register_num_module(m)?;

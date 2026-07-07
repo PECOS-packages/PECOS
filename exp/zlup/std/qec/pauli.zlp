@@ -1,0 +1,175 @@
+/// Standard library: Pauli frame tracking for QEC
+///
+/// Pauli frames are represented as two u64 bitmasks (x_frame, z_frame)
+/// supporting up to 64 qidxs.
+
+// =============================================================================
+// Pauli Frame Operations
+// =============================================================================
+
+/// Apply X correction to frame (toggle bit in x_frame)
+pub fn frame_apply_x(x_frame: u64, qidx: u64) -> u64 {
+    if qidx >= 64 {
+        return x_frame;
+    }
+    mask: u64 = 1 << qidx;
+    return x_frame ^ mask;
+}
+
+/// Apply Z correction to frame (toggle bit in z_frame)
+pub fn frame_apply_z(z_frame: u64, qidx: u64) -> u64 {
+    if qidx >= 64 {
+        return z_frame;
+    }
+    mask: u64 = 1 << qidx;
+    return z_frame ^ mask;
+}
+
+/// Check if qidx has X correction
+pub fn frame_has_x(x_frame: u64, qidx: u64) -> bool {
+    if qidx >= 64 {
+        return false;
+    }
+    return ((x_frame >> qidx) & 1) == 1;
+}
+
+/// Check if qidx has Z correction
+pub fn frame_has_z(z_frame: u64, qidx: u64) -> bool {
+    if qidx >= 64 {
+        return false;
+    }
+    return ((z_frame >> qidx) & 1) == 1;
+}
+
+// =============================================================================
+// Gate Propagation (returns new frame values)
+// =============================================================================
+
+/// Propagate X frame through CNOT: X on control propagates to target
+/// Returns the new X frame
+pub fn propagate_cx_x(x_frame: u64, control: u64, target: u64) -> u64 {
+    if control >= 64 or target >= 64 {
+        return x_frame;
+    }
+    // X on control propagates to target
+    if ((x_frame >> control) & 1) == 1 {
+        mask: u64 = 1 << target;
+        return x_frame ^ mask;
+    }
+    return x_frame;
+}
+
+/// Propagate Z frame through CNOT: Z on target propagates to control
+/// Returns the new Z frame
+pub fn propagate_cx_z(z_frame: u64, control: u64, target: u64) -> u64 {
+    if control >= 64 or target >= 64 {
+        return z_frame;
+    }
+    // Z on target propagates to control
+    if ((z_frame >> target) & 1) == 1 {
+        mask: u64 = 1 << control;
+        return z_frame ^ mask;
+    }
+    return z_frame;
+}
+
+/// Propagate X frame through CZ: X on qa propagates Z to qb
+/// Returns the new Z frame (X frame unchanged by CZ)
+pub fn propagate_cz_to_z(x_frame: u64, z_frame: u64, qa: u64, qb: u64) -> u64 {
+    if qa >= 64 or qb >= 64 {
+        return z_frame;
+    }
+    mut new_z := z_frame;
+    // X on a propagates Z to b
+    if ((x_frame >> qa) & 1) == 1 {
+        mask: u64 = 1 << qb;
+        new_z = new_z ^ mask;
+    }
+    // X on b propagates Z to a
+    if ((x_frame >> qb) & 1) == 1 {
+        mask: u64 = 1 << qa;
+        new_z = new_z ^ mask;
+    }
+    return new_z;
+}
+
+/// Swap X and Z for a qidx (Hadamard propagation)
+/// Returns (new_x_frame, new_z_frame) packed as (x << 64) | z...
+/// Actually, let's return just the swapped values for one qidx
+pub fn propagate_h_x(x_frame: u64, z_frame: u64, qidx: u64) -> u64 {
+    // After H, new X = old Z
+    if qidx >= 64 {
+        return x_frame;
+    }
+    has_z := ((z_frame >> qidx) & 1) == 1;
+    mask: u64 = 1 << qidx;
+    // Clear old X bit
+    mut new_x := x_frame & (~mask);
+    // Set from old Z
+    if has_z {
+        new_x = new_x | mask;
+    }
+    return new_x;
+}
+
+pub fn propagate_h_z(x_frame: u64, z_frame: u64, qidx: u64) -> u64 {
+    // After H, new Z = old X
+    if qidx >= 64 {
+        return z_frame;
+    }
+    has_x := ((x_frame >> qidx) & 1) == 1;
+    mask: u64 = 1 << qidx;
+    // Clear old Z bit
+    mut new_z := z_frame & (~mask);
+    // Set from old X
+    if has_x {
+        new_z = new_z | mask;
+    }
+    return new_z;
+}
+
+/// S gate propagation: X gains Z
+pub fn propagate_s_z(x_frame: u64, z_frame: u64, qidx: u64) -> u64 {
+    if qidx >= 64 {
+        return z_frame;
+    }
+    // X on qidx gains Z
+    if ((x_frame >> qidx) & 1) == 1 {
+        mask: u64 = 1 << qidx;
+        return z_frame ^ mask;
+    }
+    return z_frame;
+}
+
+// =============================================================================
+// Pauli Multiplication
+// =============================================================================
+
+/// Pauli operators: 0=I, 1=X, 2=Y, 3=Z
+pub PAULI_I: u8 = 0;
+pub PAULI_X: u8 = 1;
+pub PAULI_Y: u8 = 2;
+pub PAULI_Z: u8 = 3;
+
+/// Multiply two Pauli operators (ignoring phase)
+pub fn pauli_mul(a: u8, b: u8) -> u8 {
+    if a == 0 {
+        return b;
+    }
+    if b == 0 {
+        return a;
+    }
+    if a == b {
+        return 0;
+    }
+    // Different non-identity: result is the third
+    return 6 - a - b;
+}
+
+/// Check if two Paulis commute
+pub fn pauli_commute(a: u8, b: u8) -> bool {
+    if a == 0 or b == 0 {
+        return true;
+    }
+    return a == b;
+}

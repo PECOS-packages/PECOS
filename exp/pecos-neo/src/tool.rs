@@ -89,18 +89,22 @@ mod system;
 
 // Re-export core types
 pub use self::core::Tool;
+pub use crate::sampling::subset::{LevelStats, SubsetResult};
 pub use importance::{
     CurrentShotWeight, ImportanceSamplingConfig, ImportanceSamplingPlugin,
     ImportanceSamplingResults,
 };
+pub use pecos_results::{Data, Shot, ShotMap, ShotVec};
 pub use plugin::{Plugin, PluginGroup};
 pub use resource::{Resource, Resources};
 pub use simulation::{
-    Circuit, CustomBackendBuilder, ImportanceSamplingBuilder, NoiseResource, QuantumBackend,
-    Sampling, SimConfig, SimNeoBuilder, SimNeoInput, Simulation, SimulationResults,
-    SimulatorFactory, SparseStabBuilder, StabilizerBuilder, StateVecBuilder, StoredOverrides,
+    Circuit, CustomBackendBuilder, ImportanceSamplingBuilder, MonteCarloBuilder, NoiseResource,
+    PathEnumerationBuilder, QuantumBackend, Sampling, SimConfig, SimNeoBuilder, SimNeoInput,
+    Simulation, SimulationResults, SimulatorFactory, SparseStabBuilder, StabilizerBuilder,
+    StateVecBuilder, StoredOverrides, SubsetFailureFn, SubsetScoreFn, SubsetSimulationBuilder,
     custom_backend, custom_backend_from_factory, custom_backend_with_rotations,
-    importance_sampling, sim_neo, sim_neo_builder, sparse_stab, stabilizer, state_vector,
+    importance_sampling, monte_carlo, path_enumeration, sim_neo, sim_neo_builder, sparse_stab,
+    stabilizer, state_vector, subset_simulation,
 };
 pub use simulation::{PendingEngineBuilder, TypedProgram};
 pub use system::{IntoSystem, Schedule, System};

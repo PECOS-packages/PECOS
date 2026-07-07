@@ -4,6 +4,8 @@
 //! It is only compiled when the `selene` feature is enabled.
 
 use log::info;
+#[cfg(target_os = "windows")]
+use pecos_build::llvm::LLVM_SYS_PREFIX_ENV;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -186,7 +188,7 @@ EXPORTS
 
     // Try to use llvm-dlltool (from LLVM) or dlltool (from MinGW) to generate import library
     // First try llvm-dlltool which should be available with our LLVM installation
-    let dlltool_result = if let Ok(llvm_prefix) = env::var("LLVM_SYS_140_PREFIX") {
+    let dlltool_result = if let Ok(llvm_prefix) = env::var(LLVM_SYS_PREFIX_ENV) {
         let llvm_dlltool = PathBuf::from(llvm_prefix)
             .join("bin")
             .join("llvm-dlltool.exe");
@@ -208,7 +210,7 @@ EXPORTS
     } else {
         Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "LLVM_SYS_140_PREFIX not set",
+            format!("{LLVM_SYS_PREFIX_ENV} not set"),
         ))
     };
 

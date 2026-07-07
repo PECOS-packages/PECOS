@@ -32,9 +32,18 @@ dependencies = [
     "pecos-rslib-llvm==0.8.0.dev8",
     "phir>=0.3.3",
     "networkx>=2.1.0",
-    "guppylang>=0.21.6",
-    "tket<0.12.16",  # 0.12.16 requires GLIBC 2.38 (manylinux_2_38)
-    "hugr>=0.13.0",
+    # Pin to the 0.21.x line (tket.bool era). guppylang 0.22+ emits the
+    # tket.measurement HUGR format, which our Rust tket (0.19) cannot read; do not
+    # uncap until the Rust tket stack is bumped to 0.20+.
+    "guppylang>=0.21.16,<0.22",
+    # tket 0.13.x pairs with the latest stable guppylang (0.21.16, tket.bool era).
+    # Do not bump past 0.13 until a stable guppylang emits tket.measurement (which
+    # needs Rust tket 0.20+). The old `tket<0.12.16` GLIBC-2.38 cap was stale.
+    "tket>=0.13,<0.14",
+    # hugr-py 0.16.x pairs with guppylang 0.21.16 / tket 0.13.x. The runtime relies on
+    # the binary Model envelope (`Package.to_bytes`/`from_bytes`); cap to the tested
+    # 0.16 line rather than accept an unverified newer serialization.
+    "hugr>=0.16,<0.17",
     "selene-sim~=0.2.0",
 ]
 classifiers = [
@@ -70,26 +79,37 @@ all = [
     "quantum-pecos[stim]",
 ]
 
-# CUDA dependencies. See docs/user-guide/cuda-setup.md for detailed installation instructions
-# Requires CUDA Toolkit 13 or 12 installed at system level first.
-# For Ubuntu/Pop!_OS: sudo apt install cuda-toolkit-13
-# These packages work with uv/pip once CUDA toolkit is installed.
-# Note: CUDA packages require Python 3.11+ due to cuquantum-python-cu13 requirements
-cuda = [
-    "pecos-rslib-cuda==0.8.0.dev8",
-    "cupy-cuda13x>=13.0.0; python_version >= '3.11'",  # Use cupy-cuda12x for CUDA 12
-    "cuquantum-python-cu13>=25.3.0; python_version >= '3.11'",  # Use cuquantum-python-cu12 for CUDA 12
+# CUDA dependencies for the Python cuStateVec / MPS backends. See
+# docs/user-guide/cuda-setup.md. Requires a system CUDA toolkit and a matching NVIDIA
+# driver. Pick the extra matching your CUDA major -- do NOT install both (mixing
+# cupy-cudaXXx wheels is unsupported). Python 3.11+ required.
+#   uv pip install -e .[cuda13]   # CUDA 13, Turing/CC 7.5+ GPUs (recommended)
+#   uv pip install -e .[cuda12]   # CUDA 12
+# V100/Volta (CC 7.0): cuStateVec dropped Volta at 25.09, so pin
+#   cuquantum-python-cu12>=25.3,<25.9 manually (see cuda-setup.md).
+# The Rust GPU backend (CudaStateVec/CudaStabilizer) is a separate install:
+#   pip install pecos-rslib-cuda
+cuda13 = [
+    "cupy-cuda13x>=13.0.0; python_version >= '3.11'",
+    "cuquantum-python-cu13>=25.9.0; python_version >= '3.11'",
     "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
 ]
-# Install with: uv pip install -e .[cuda]
+cuda12 = [
+    "cupy-cuda12x>=13.0.0; python_version >= '3.11'",
+    "cuquantum-python-cu12>=25.3.0; python_version >= '3.11'",
+    "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
+]
 
 # Dependency groups are defined at workspace root (pyproject.toml)
 # Package-specific groups can be added here if needed
 
+[tool.uv]
+# CUDA 12 and CUDA 13 use different, mutually exclusive cupy/cuquantum wheels.
+conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }]]
+
 [tool.uv.sources]
 pecos-rslib = { workspace = true }
 pecos-rslib-llvm = { workspace = true }
-pecos-rslib-cuda = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pecos"]

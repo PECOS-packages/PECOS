@@ -24,6 +24,9 @@ pecos-core = { workspace = true, features = ["anyhow"] }
 # LLVM features are required for this crate's core functionality
 tket = { workspace = true, features = ["llvm"] }
 tket-qsystem = { workspace = true, features = ["llvm"] }
+# `hugr-llvm` only exposes plain `llvm21-1`; this keeps its transitive
+# inkwell/llvm-sys build preferring libLLVM when a shared LLVM is available.
+inkwell.workspace = true
 
 [features]
 default = []

@@ -1,0 +1,56 @@
+[package]
+name = "guppy-zlup"
+version = "0.1.0"
+edition = "2024"
+description = "Guppy to Zlup compiler"
+license = "Apache-2.0"
+repository = "https://github.com/PECOS-packages/PECOS"
+readme = "README.md"
+keywords = ["quantum", "compiler", "guppy", "zlup"]
+categories = ["compilers", "command-line-utilities"]
+
+[lib]
+name = "guppy_zlup"
+
+[[bin]]
+name = "guppy-zlup"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+# Python AST parsing (for linter)
+rustpython-parser = "0.4"
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+# Error handling
+thiserror.workspace = true
+miette = { version = "7.0", features = ["fancy"] }
+
+# Regex for noqa parsing
+regex = "1.10"
+
+# CLI (optional)
+clap = { workspace = true, optional = true }
+
+# Parallel processing (optional, for CLI)
+rayon = { version = "1.10", optional = true }
+
+# File watching (optional, for CLI)
+notify = { version = "6.1", optional = true }
+notify-debouncer-mini = { version = "0.4", optional = true }
+
+# Link to zlup for AST types
+zlup = { path = "../zlup" }
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+insta = "1.40"
+tempfile.workspace = true
+
+[features]
+default = []
+cli = ["dep:clap", "dep:rayon", "dep:notify", "dep:notify-debouncer-mini"]

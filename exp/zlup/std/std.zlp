@@ -1,0 +1,88 @@
+/// Zlup Standard Library
+///
+/// Simple, explicit utilities for quantum programming.
+/// No magic, no hidden allocations, bounded everything.
+///
+/// Usage:
+///   std := @import("std");       // imports this file (std/std.zlp)
+///   bits := @import("bits.zlp"); // relative import within std/
+///
+/// Type-namespaced constants (preferred):
+///   std.f64.pi                   // pi as f64 (3.14159...)
+///   std.a64.quarter_turn         // 1/4 turn as a64 angle
+///   std.a64.t_angle              // T-gate angle (1/8 turn)
+///
+/// Available modules:
+///   std/f64.zlp       - f64 constants (pi, tau, e, sqrt2, etc.)
+///   std/a64.zlp       - a64 angle constants (quarter_turn, t_angle, etc.)
+///   std/bits.zlp      - bit operations (popcount, parity, shifts)
+///   std/math.zlp      - math functions (gcd, lcm, isqrt, log2, factorial, etc.)
+///   std/algorithm.zlp - algorithms (search, sort, min/max, hamming distance)
+///   std/qec/          - quantum error correction
+///     pauli.zlp       - Pauli frame tracking
+///     syndrome.zlp    - syndrome utilities
+///     decoder.zlp     - simple decoders for small codes
+///     errors.zlp      - error tracking and statistics
+
+// =============================================================================
+// Type-Namespaced Modules
+// =============================================================================
+
+/// f64 constants: std.f64.pi, std.f64.tau, std.f64.e, etc.
+pub f64 := @import("f64.zlp");
+
+/// a64 angle constants: std.a64.quarter_turn, std.a64.t_angle, etc.
+pub a64 := @import("a64.zlp");
+
+// =============================================================================
+// Bit Operations (core subset inlined for convenience)
+// =============================================================================
+
+/// Count set bits in u8
+pub fn popcount_u8(x: u8) -> u8 {
+    mut count: u8 = 0;
+    mut n := x;
+    for _ in 0..8 {
+        if n == 0 {
+            break;
+        }
+        n = n & (n - 1);
+        count = count + 1;
+    }
+    return count;
+}
+
+/// Count set bits in u64
+pub fn popcount_u64(x: u64) -> u64 {
+    mut count: u64 = 0;
+    mut n := x;
+    for _ in 0..64 {
+        if n == 0 {
+            break;
+        }
+        n = n & (n - 1);
+        count = count + 1;
+    }
+    return count;
+}
+
+/// Parity of u8
+pub fn parity_u8(x: u8) -> u8 {
+    mut p := x;
+    p = p ^ (p >> 4);
+    p = p ^ (p >> 2);
+    p = p ^ (p >> 1);
+    return p & 1;
+}
+
+/// Parity of u64
+pub fn parity_u64(x: u64) -> u64 {
+    mut p := x;
+    p = p ^ (p >> 32);
+    p = p ^ (p >> 16);
+    p = p ^ (p >> 8);
+    p = p ^ (p >> 4);
+    p = p ^ (p >> 2);
+    p = p ^ (p >> 1);
+    return p & 1;
+}

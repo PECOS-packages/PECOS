@@ -11,9 +11,11 @@ default:
     @echo "Quick start:"
     @echo "  just install-cli    # Optional: install pecos CLI for direct use"
     @echo "  just setup          # First time: detect and install dependencies"
+    @echo "  just setup-env      # Configure LLVM 21.1 for local development"
+    @echo "  just dev-preflight  # Check LLVM before the longer dev workflow"
     @echo "  just build          # Build PECOS (runs setup if needed)"
     @echo "  just test           # Run all tests"
-    @echo "  just dev            # Build + test (daily workflow)"
+    @echo "  just dev            # Build + test (runs dev-preflight first)"
     @echo "  just lint           # Check formatting and linting"
     @echo "  just security-check # Check dependency/security policy"
     @echo "  just doctor         # Diagnose environment problems"
@@ -53,12 +55,14 @@ setup: _msvc-bootstrap
 setup-ci: _msvc-bootstrap
     {{pecos}} setup --yes
 
+# Install/configure local LLVM 21.1 build environment
+[group('setup')]
+setup-env: ensure-local-build-env
+    @echo "Development environment is configured. Run: just doctor"
+
 # Ensure CI has a runtime-valid LLVM and export PECOS build env files
 [group('setup')]
-ci-env: _msvc-bootstrap
-    #!/usr/bin/env bash
-    set -euo pipefail
-    {{pecos}} llvm ensure --managed --no-configure
+ci-env: ensure-ci-build-env
     {{pecos}} env --github-actions
 
 # Check development environment for common problems
@@ -70,17 +74,18 @@ doctor: _msvc-bootstrap
     ok()   { echo "  [OK] $1: $2"; }
     fail() { echo "  [!!] $1: $2"; PROBLEMS=$((PROBLEMS + 1)); }
 
-    echo "LLVM 14:"
+    echo "LLVM 21.1:"
     if LLVM_DIR=$({{pecos}} llvm find 2>/dev/null); then
         VERSION=$("$LLVM_DIR/bin/llvm-config" --version 2>/dev/null || {{pecos}} llvm version 2>/dev/null | head -1 || echo "unknown")
-        ok "installed" "$VERSION at $LLVM_DIR"
+        LINK_MODE=$("$LLVM_DIR/bin/llvm-config" --shared-mode 2>/dev/null || echo "unknown")
+        ok "installed" "$VERSION ($LINK_MODE LLVM) at $LLVM_DIR"
     else
         fail "installed" "not found (run: just setup)"
     fi
-    if [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_140_PREFIX" .cargo/config.toml 2>/dev/null; then
-        ok ".cargo/config.toml" "LLVM_SYS_140_PREFIX configured"
+    if [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_211_PREFIX" .cargo/config.toml 2>/dev/null; then
+        ok ".cargo/config.toml" "LLVM_SYS_211_PREFIX configured"
     else
-        fail ".cargo/config.toml" "LLVM_SYS_140_PREFIX not set (run: pecos llvm configure)"
+        fail ".cargo/config.toml" "LLVM_SYS_211_PREFIX not set (run: pecos llvm configure)"
     fi
     echo ""
 
@@ -154,19 +159,14 @@ dependency-integrity-check:
 [group('security')]
 security-check: dependency-integrity-check cargo-deny
 
-# Run cargo-deny against every Rust lockfile covered by CI
+# Run cargo-deny against the root Rust workspace (the only tracked lockfile)
 [group('security')]
-cargo-deny: cargo-deny-workspace cargo-deny-native-bench
+cargo-deny: cargo-deny-workspace
 
 # Check the root Rust workspace with cargo-deny
 [group('security')]
 cargo-deny-workspace:
     cargo deny --locked --all-features check advisories bans sources
-
-# Check the standalone native benchmark crate with cargo-deny
-[group('security')]
-cargo-deny-native-bench:
-    cargo deny --manifest-path scripts/native_bench/bench_pecos/Cargo.toml --locked --all-features check advisories bans sources
 
 # List installed and cached dependencies
 [group('setup')]
@@ -207,6 +207,31 @@ build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profi
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
 
+# Build only the Python workspace members needed by the fast CI smoke lanes.
+[group('build')]
+python-ci-build profile="debug": _msvc-bootstrap (validate-profile "python-ci-build" profile) python-ci-sync
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE" --no-cuda
+
+# Build only the Python packages needed for docs validation.
+[group('build')]
+python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-docs" profile) python-ci-sync-docs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
+
+# Build the extra experimental bindings exercised by the fast Python core test lane.
+[group('build')]
+python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-test" profile) python-ci-sync-test
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PROFILE="{{profile}}"
+    {{pecos}} python build --profile "$PROFILE" --no-cuda
+    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+
 # =============================================================================
 # Testing
 # =============================================================================
@@ -224,6 +249,23 @@ pytest *args:
         uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
         uv run --frozen pytest python/selene-plugins
     fi
+
+# Run the substantive PR Python lane after building the test-only native bindings it needs.
+[group('test')]
+python-ci-core profile="debug": (python-ci-build-test profile)
+    just pytest-ci-core
+
+# Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
+[group('test')]
+pytest-ci-core:
+    uv run --frozen pytest python/pecos-rslib/tests -m "not performance"
+    uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "numpy and not performance"
+    uv run --frozen pytest python/quantum-pecos/tests -m "not optional_dependency and not slow"
+
+# Build and import the core Python packages on a target platform/interpreter.
+[group('test')]
+python-ci-smoke profile="debug": (python-ci-build profile)
+    uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
 [group('test')]
@@ -304,6 +346,29 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-chec
         fi
     fi
 
+# Fast lint lane for Python PR CI. Keep this scoped to Rust + Python checks so
+# the Python critical path does not opportunistically pick up Julia/Go tools.
+[group('lint')]
+python-ci-lint: _msvc-bootstrap python-workspace-check
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
+        CLIPPY_FEATURES="--all-features"
+        echo "(CUDA detected -- linting with all features)"
+    else
+        CLIPPY_FEATURES=""
+        echo "(No CUDA -- linting with default features only)"
+    fi
+
+    echo "==> Checking Rust formatting..."
+    cargo fmt --all -- --check
+    echo "==> Running clippy..."
+    cargo clippy --locked --workspace --all-targets $CLIPPY_FEATURES -- -D warnings
+    echo "==> Running pre-commit..."
+    uv run --frozen pre-commit run --all-files
+    echo "==> Running cargo check..."
+    cargo check --locked --workspace --all-targets
+
 # Run cargo check
 [group('lint')]
 check: _msvc-bootstrap
@@ -369,9 +434,51 @@ bench profile="release" features="" pattern="": _msvc-bootstrap (validate-bench-
 # Dev Workflows
 # =============================================================================
 
+# Check local prerequisites before the longer dev workflow
+[group('dev')]
+dev-preflight: _msvc-bootstrap
+    #!/usr/bin/env bash
+    set -euo pipefail
+    print_llvm_hint() {
+        echo "Run: just setup-env"
+        echo "Or configure your own LLVM 21.1 install:"
+        echo "  cargo run --locked -p pecos-cli -- llvm configure /path/to/llvm"
+    }
+
+    if ! LLVM_CHECK_OUTPUT=$({{pecos}} llvm check 2>&1); then
+        echo "$LLVM_CHECK_OUTPUT"
+        echo ""
+        echo "PECOS dev preflight failed: LLVM 21.1 is not ready."
+        print_llvm_hint
+        exit 1
+    fi
+
+    if [ ! -f .cargo/config.toml ] || ! grep -q "LLVM_SYS_211_PREFIX" .cargo/config.toml 2>/dev/null; then
+        echo "PECOS dev preflight failed: .cargo/config.toml does not set LLVM_SYS_211_PREFIX."
+        print_llvm_hint
+        exit 1
+    fi
+
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*|Windows*) ;;
+        *)
+            LLVM_DIR=$({{pecos}} llvm find 2>/dev/null || true)
+            if [ -n "$LLVM_DIR" ] && [ -x "$LLVM_DIR/bin/llvm-config" ]; then
+                LINK_MODE=$("$LLVM_DIR/bin/llvm-config" --shared-mode 2>/dev/null || echo "unknown")
+                if [ "$LINK_MODE" != "shared" ]; then
+                    echo "PECOS dev preflight failed: LLVM at $LLVM_DIR reports '$LINK_MODE' link mode."
+                    echo "Full workspace HUGR tests need shared LLVM 21.1 to avoid high-memory static links."
+                    print_llvm_hint
+                    exit 1
+                fi
+            fi
+            ;;
+    esac
+    echo "PECOS dev preflight passed."
+
 # Fast dev cycle: build + test only (lang: all, rust, python, julia, go)
 [group('dev')]
-dev lang="all": (validate-dev-lang lang)
+dev lang="all": (validate-dev-lang lang) dev-preflight
     #!/usr/bin/env bash
     set -euo pipefail
     DEV_LANG="{{lang}}"
@@ -458,7 +565,7 @@ docs-test:
 # Deps Management (prefer `just setup` or `pecos install <target>`)
 # =============================================================================
 
-# Install LLVM 14
+# Install PECOS-managed LLVM 21.1 where supported
 [group('deps')]
 install-llvm: _msvc-bootstrap
     {{pecos}} install llvm
@@ -473,7 +580,7 @@ install-cuda: _msvc-bootstrap
 configure-llvm: _msvc-bootstrap
     {{pecos}} llvm configure
 
-# Check LLVM 14 installation status
+# Check LLVM 21.1 installation status
 [group('deps')]
 check-llvm: _msvc-bootstrap
     -{{pecos}} llvm check
@@ -638,10 +745,9 @@ go-lint profile="release": (validate-profile "go-lint" profile) (go-build profil
 pytest-perf: build-release
     uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
 
-# Run tests for optional dependencies
+# Run tests for optional dependencies (only quantum-pecos carries the marker)
 [group('test')]
 pytest-dep:
-    uv run --frozen pytest python/pecos-rslib/tests -m "optional_dependency"
     uv run --frozen pytest python/quantum-pecos/tests -m "optional_dependency"
 
 # Run the slower integration lane (excluded from the default fast lane)
@@ -785,6 +891,62 @@ setup-quiet:
     set -euo pipefail
     {{pecos}} setup --quiet
 
+[private]
+ensure-local-build-env: _msvc-bootstrap
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    has_llvm_config() {
+        [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_211_PREFIX" .cargo/config.toml 2>/dev/null
+    }
+
+    if {{pecos}} llvm check >/dev/null 2>&1 && has_llvm_config; then
+        exit 0
+    fi
+
+    if {{pecos}} llvm find >/dev/null 2>&1; then
+        {{pecos}} llvm configure
+        exit 0
+    fi
+
+    just install-build-llvm
+
+[private]
+ensure-ci-build-env: install-build-llvm
+
+[private]
+install-build-llvm: _msvc-bootstrap
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LLVM_RELEASE_VERSION="${LLVM_RELEASE_VERSION:-21.1.8}"
+    case "${RUNNER_OS:-$(uname -s)}" in
+        Linux)
+            {{pecos}} llvm ensure --managed --no-configure || bash scripts/ci/install-llvm-21-conda-linux.sh
+            {{pecos}} llvm configure
+            ;;
+        macOS|Darwin)
+            if ! command -v brew >/dev/null 2>&1; then
+                echo "PECOS-managed LLVM is not available on macOS yet." >&2
+                echo "Install Homebrew LLVM 21 or configure your own shared LLVM 21.1:" >&2
+                echo "  brew install llvm@21" >&2
+                echo "  cargo run --locked -p pecos-cli -- llvm configure /path/to/llvm" >&2
+                exit 1
+            fi
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
+            {{pecos}} llvm configure "$(brew --prefix llvm@21)"
+            ;;
+        Windows*|MINGW*|MSYS*|CYGWIN*)
+            LLVM_ENV_ROOT="${USERPROFILE:-$HOME}\\.pecos\\deps\\llvm-21.1"
+            LLVM_PREFIX="${LLVM_ENV_ROOT}\\Library"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ci/install-llvm-21-windows.ps1 -InstallDir "$LLVM_ENV_ROOT" -Version "$LLVM_RELEASE_VERSION"
+            {{pecos}} llvm configure "$LLVM_PREFIX"
+            ;;
+        *)
+            {{pecos}} llvm ensure --managed --no-configure
+            {{pecos}} llvm configure
+            ;;
+    esac
+
 # Sync Python deps (fast if already installed, skips maturin rebuilds)
 [private]
 sync-deps:
@@ -801,10 +963,51 @@ sync-deps:
     # the toolkit is installed AND an NVIDIA GPU is present. Pure Rust users
     # and machines without a GPU skip this -- mirrors `pecos python build`.
     if {{pecos}} cuda check -q 2>/dev/null && nvidia-smi -L 2>/dev/null | grep -q "^GPU "; then
-        echo "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages"
-        SYNC_ARGS+=(--group cuda)
+        # Pick the cuda group matching the CUDA major (default cuda13).
+        CUDA_GROUP=cuda13
+        if nvcc --version 2>/dev/null | grep -qE "release 12[.,]"; then CUDA_GROUP=cuda12; fi
+        echo "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages ($CUDA_GROUP)"
+        SYNC_ARGS+=(--group "$CUDA_GROUP")
     fi
     uv sync "${SYNC_ARGS[@]}"
+
+[group('setup')]
+python-ci-sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --package pecos-rslib \
+      --package pecos-rslib-llvm \
+      --package quantum-pecos
+
+[group('setup')]
+python-ci-sync-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --package pecos-rslib \
+      --package pecos-rslib-exp \
+      --package pecos-rslib-llvm \
+      --package quantum-pecos
+
+[group('setup')]
+python-ci-sync-docs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just python-ci-sync
+
+[group('setup')]
+python-ci-sync-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    uv sync --locked \
+      --group dev \
+      --group test \
+      --no-install-workspace
 
 # Windows MSVC bootstrap: write the correct linker + LIB/INCLUDE into
 # .cargo/config.toml (read by cargo *after* it spawns, so it bypasses

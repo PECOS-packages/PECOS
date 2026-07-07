@@ -22,8 +22,13 @@
 //! 1. **Overrides**: Custom executors registered via `GateOverrides`
 //! 2. **Clifford trait methods**: Core Clifford gates via `CliffordGateable`
 //! 3. **Rotation trait methods**: If `rotations()` constructor was used
-//! 4. **Decomposition**: Expand using `GateDefinitions`
-//! 5. **Error**: If none of the above apply
+//! 4. **Clifford-angle rotations**: Automatic fallback that runs a
+//!    rotation gate at a Clifford angle (e.g. `RZ(pi/2)` as `S`) on a
+//!    Clifford backend — but ONLY when the gate has no user-registered
+//!    decomposition (step 5), so an explicit decomposition is never
+//!    silently bypassed.
+//! 5. **Decomposition**: Expand using `GateDefinitions`
+//! 6. **Error**: If none of the above apply
 //!
 //! Before and after each gate, noise events and user handlers are dispatched.
 //!
@@ -591,6 +596,9 @@ impl<S> GateOverrides<S> {
 pub enum ExecutionError {
     /// No decomposition found for a gate.
     NoDecomposition { gate_id: GateId },
+    /// A rotation gate with a non-Clifford angle reached a Clifford-only
+    /// backend with no rotation support and no registered decomposition.
+    NonCliffordAngle { gate_id: GateId },
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
 }
@@ -601,6 +609,15 @@ impl std::fmt::Display for ExecutionError {
             Self::NoDecomposition { gate_id } => {
                 write!(f, "No decomposition found for gate ID {}", gate_id.0)
             }
+            Self::NonCliffordAngle { gate_id } => {
+                write!(
+                    f,
+                    "Rotation gate ID {} has a non-Clifford angle, which this Clifford-only \
+                     backend cannot execute; use a rotation-capable backend such as \
+                     state_vector()",
+                    gate_id.0
+                )
+            }
             Self::MaxDecompositionDepthExceeded => {
                 write!(f, "Maximum decomposition depth exceeded")
             }
@@ -609,6 +626,32 @@ impl std::fmt::Display for ExecutionError {
 }
 
 impl std::error::Error for ExecutionError {}
+
+/// Outcome of the Clifford-rotation execution attempt.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CliffordRotationAttempt {
+    /// The gate executed via Clifford-angle decomposition.
+    Executed,
+    /// The gate is a rotation but the angle is not Clifford.
+    NonCliffordAngle,
+    /// The gate is not a rotation this path handles.
+    NotARotation,
+}
+
+/// Upgrade a missing-decomposition error to the more specific
+/// non-Clifford-angle error when that is the actual cause.
+fn upgrade_rotation_error(
+    error: ExecutionError,
+    rotation_attempt: CliffordRotationAttempt,
+) -> ExecutionError {
+    match (error, rotation_attempt) {
+        (
+            ExecutionError::NoDecomposition { gate_id },
+            CliffordRotationAttempt::NonCliffordAngle,
+        ) => ExecutionError::NonCliffordAngle { gate_id },
+        (error, _) => error,
+    }
+}
 
 /// Stateless quantum simulation runner.
 ///
@@ -1201,12 +1244,26 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     return Ok(());
                 }
 
-                // Execute through unified precedence chain
+                // Execute through unified precedence chain. The automatic
+                // Clifford-angle rotation step is a FALLBACK gated on the
+                // gate having no user-registered decomposition, so an
+                // explicit GateDefinitions decomposition wins at Clifford
+                // angles too (see execute_gate for the rationale).
+                let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
                 let executed =
                     self.try_execute_override(sim, gate_id, qubits, command.angles.as_slice())
                         || Self::try_execute_clifford(sim, gate_id, qubits)
                         || self.rotation_executor.is_some_and(|executor| {
                             executor(sim, gate_id, command.angles.as_slice(), qubits)
+                        })
+                        || (!self.definitions.has_decomposition(gate_id) && {
+                            rotation_attempt = Self::try_execute_clifford_rotation(
+                                sim,
+                                gate_id,
+                                qubits,
+                                command.angles.as_slice(),
+                            );
+                            rotation_attempt == CliffordRotationAttempt::Executed
                         });
 
                 if !executed {
@@ -1216,7 +1273,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                         qubits,
                         command.angles.as_slice(),
                         0,
-                    )?;
+                    )
+                    .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
                 }
 
                 self.dispatch_after_gate_for_id(
@@ -1388,15 +1446,27 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             return Ok(());
         }
 
-        // Try execution in order of precedence
+        // Try execution in order of precedence. The automatic
+        // Clifford-angle rotation step is a FALLBACK: it fires only when
+        // the gate has no user-registered decomposition, so an explicit
+        // GateDefinitions decomposition wins at Clifford angles too
+        // (registering a decomposition is an explicit user choice, like
+        // GateOverrides, and must not be silently bypassed).
+        let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
         let executed = self.try_execute_override(sim, gate_id, qubits, angles)
             || Self::try_execute_clifford(sim, gate_id, qubits)
             || self
                 .rotation_executor
-                .is_some_and(|executor| executor(sim, gate_id, angles, qubits));
+                .is_some_and(|executor| executor(sim, gate_id, angles, qubits))
+            || (!self.definitions.has_decomposition(gate_id) && {
+                rotation_attempt =
+                    Self::try_execute_clifford_rotation(sim, gate_id, qubits, angles);
+                rotation_attempt == CliffordRotationAttempt::Executed
+            });
 
         if !executed {
-            self.execute_via_decomposition(sim, gate_id, qubits, angles, depth)?;
+            self.execute_via_decomposition(sim, gate_id, qubits, angles, depth)
+                .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
         }
 
         // Emit after-gate noise event
@@ -1526,6 +1596,41 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Try to execute a rotation gate with a Clifford angle via the generic
+    /// `CliffordRotation` decomposition (the same path the pecos-engines
+    /// stack uses), so Clifford backends run e.g. QASM's `s`/`u1(pi/2)`
+    /// compiled to `rz(k*pi/2)` without a rotation-capable simulator.
+    /// Non-Clifford angles fall through to the decomposition registry;
+    /// the attempt outcome distinguishes them so the final error can point
+    /// at a rotation-capable backend instead of a missing decomposition.
+    fn try_execute_clifford_rotation(
+        sim: &mut S,
+        gate_id: GateId,
+        qubits: &[QubitId],
+        angles: &[Angle64],
+    ) -> CliffordRotationAttempt {
+        use pecos_simulators::clifford_rotation::CliffordRotation;
+        let Some(gate_type) = gate_id.try_to_gate_type() else {
+            return CliffordRotationAttempt::NotARotation;
+        };
+        let [angle] = angles else {
+            return CliffordRotationAttempt::NotARotation;
+        };
+        let result = match gate_type {
+            GateType::RZ => sim.try_rz(*angle, qubits).map(|_| ()),
+            GateType::RX => sim.try_rx(*angle, qubits).map(|_| ()),
+            GateType::RY => sim.try_ry(*angle, qubits).map(|_| ()),
+            GateType::RZZ => sim.try_rzz(*angle, &flat_to_pairs(qubits)).map(|_| ()),
+            GateType::RXX => sim.try_rxx(*angle, &flat_to_pairs(qubits)).map(|_| ()),
+            GateType::RYY => sim.try_ryy(*angle, &flat_to_pairs(qubits)).map(|_| ()),
+            _ => return CliffordRotationAttempt::NotARotation,
+        };
+        match result {
+            Ok(()) => CliffordRotationAttempt::Executed,
+            Err(_) => CliffordRotationAttempt::NonCliffordAngle,
         }
     }
 
@@ -3020,6 +3125,84 @@ mod tests {
             result.unwrap_err(),
             ExecutionError::NoDecomposition { .. }
         ));
+    }
+
+    #[test]
+    fn test_non_clifford_angle_gets_specific_error() {
+        // rz with an arbitrary angle on a Clifford-only backend must point
+        // the user at a rotation-capable backend, not at a missing
+        // decomposition.
+        let circuit = crate::command::CommandBuilder::new()
+            .pz(&[0])
+            .rz(&[0], Angle64::from_radians(0.123))
+            .mz(&[0])
+            .build();
+
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new();
+
+        let err = runner
+            .apply_circuit(&mut state, &circuit)
+            .expect_err("non-Clifford angle must error");
+        assert!(matches!(err, ExecutionError::NonCliffordAngle { .. }));
+        assert!(err.to_string().contains("state_vector()"));
+    }
+
+    #[test]
+    fn user_registered_decomposition_wins_over_clifford_rotation_at_clifford_angle() {
+        use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
+        use std::sync::Arc;
+
+        // The automatic Clifford-angle rotation step is a fallback: an
+        // explicit user-registered decomposition must take precedence even
+        // at a Clifford angle, instead of being silently bypassed.
+        //
+        // Register RZ to "decompose" into a single X gate (not physically
+        // RZ, but distinguishable): if the decomposition runs, |0> -> |1>
+        // and the measurement is 1; if the Clifford-rotation fast path runs
+        // instead, RZ(pi/2) = S leaves |0> unchanged and the measurement
+        // is 0.
+        let mut defs = GateDefinitions::new();
+        defs.set_decomposition(
+            gates::RZ,
+            DecompEntry {
+                requires: crate::extensible::GateSupportSet::from_iter([gates::X]),
+                decomposition: Decomposition::Dynamic(Arc::new(vec![DecompOp::gate1(gates::X, 0)])),
+            },
+        );
+
+        let circuit = CommandBuilder::new()
+            .pz(&[0])
+            .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
+            .mz(&[0])
+            .build();
+
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::with_definitions(defs).with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &circuit).unwrap();
+
+        let bit = outcomes.iter().next().expect("one measurement").outcome;
+        assert!(
+            bit,
+            "the registered RZ->X decomposition must run (measure 1), not the \
+             Clifford-rotation S fast path (which would measure 0)"
+        );
+
+        // Control: with no registered decomposition, the Clifford-rotation
+        // fast path executes RZ(pi/2) = S and |0> stays |0> (measure 0).
+        let control = CommandBuilder::new()
+            .pz(&[0])
+            .rz(&[0], Angle64::from_radians(std::f64::consts::FRAC_PI_2))
+            .mz(&[0])
+            .build();
+        let mut state = SparseStab::new(1);
+        let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
+        let outcomes = runner.apply_circuit(&mut state, &control).unwrap();
+        let bit = outcomes.iter().next().expect("one measurement").outcome;
+        assert!(
+            !bit,
+            "default RZ(pi/2) = S leaves |0> unchanged (measure 0)"
+        );
     }
 
     // --- apply_gate (interpreter mode) tests ---

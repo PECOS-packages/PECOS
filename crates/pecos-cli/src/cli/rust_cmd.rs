@@ -3,6 +3,7 @@
 use pecos_build::Result;
 use pecos_build::errors::Error;
 use serde_json::Value;
+use std::path::PathBuf;
 use std::process::Command;
 
 /// FFI crates that need a non-Rust toolchain or external SDK to check /
@@ -61,6 +62,72 @@ enum GpuProbeResult {
     Available,
     Unavailable,
     ProbeFailed(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LlvmLinkMode {
+    Shared,
+    Static,
+    Unknown,
+}
+
+impl LlvmLinkMode {
+    fn from_llvm_config(output: &str) -> Self {
+        match output.trim().to_ascii_lowercase().as_str() {
+            "shared" => Self::Shared,
+            "static" => Self::Static,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+fn detect_cargo_llvm_link_mode() -> Option<(PathBuf, LlvmLinkMode)> {
+    let llvm_path = pecos_build::llvm::find_configured_or_detected_llvm(None)?;
+    let link_mode = pecos_build::llvm::get_llvm_shared_mode(&llvm_path)
+        .map_or(LlvmLinkMode::Unknown, |mode| {
+            LlvmLinkMode::from_llvm_config(&mode)
+        });
+    Some((llvm_path, link_mode))
+}
+
+fn reject_static_llvm_workspace_test() -> Result<()> {
+    let Some((llvm_path, link_mode)) = detect_cargo_llvm_link_mode() else {
+        return Ok(());
+    };
+    if matches!(link_mode, LlvmLinkMode::Shared) {
+        return Ok(());
+    }
+
+    if cfg!(target_os = "windows") && matches!(link_mode, LlvmLinkMode::Static) {
+        println!(
+            "Windows MSVC uses static LLVM libraries because llvm-sys does not support dynamic LLVM linking on this target."
+        );
+        return Ok(());
+    }
+
+    let mode = if matches!(link_mode, LlvmLinkMode::Static) {
+        "static"
+    } else {
+        "unknown"
+    };
+
+    let setup_hint = pecos_build::llvm::installer::managed_install_unavailable_reason().map_or(
+        "Install/configure shared LLVM 21.1 instead, for example `pecos install llvm --force` \
+         or `pecos llvm configure /path/to/llvm`."
+            .to_string(),
+        |reason| {
+            format!(
+                "{reason} `pecos rust test` requires shared LLVM; use targeted Cargo tests if you must build against static LLVM."
+            )
+        },
+    );
+
+    Err(Error::Config(format!(
+        "Refusing full workspace HUGR tests with {mode} LLVM at {}. \
+         LLVM 21.1 static workspace tests can spawn many multi-GB linker jobs. \
+         {setup_hint}",
+        llvm_path.display()
+    )))
 }
 
 /// Run the rust subcommand
@@ -202,7 +269,7 @@ fn is_tool_available(tool: &str) -> bool {
 
 /// Run a cargo command and return success status.
 ///
-/// Applies the PECOS build environment (`CMAKE`, `LLVM_SYS_140_PREFIX`,
+/// Applies the PECOS build environment (`CMAKE`, `LLVM_SYS_211_PREFIX`,
 /// `SDKROOT`, etc.) so build scripts like highs-sys's cmake-rs invocation
 /// find the PECOS-managed cmake without further plumbing.
 fn run_cargo_command(args: &[&str]) -> bool {
@@ -457,9 +524,10 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
     // hugr = qis (includes llvm) + hugr compilation
+    // neo = sim() routing to the pecos-neo stack (contract tests)
     // pecos-cli is excluded here and tested separately below with --features=runtime
     // to ensure the pecos binary has PHIR/QIS support for integration tests.
-    let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,hugr"];
+    let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,hugr,neo"];
 
     for crate_name in FFI_CRATES.iter().chain(PYO3_CDYLIB_TEST_EXCLUDES) {
         args.push("--exclude");
@@ -478,6 +546,7 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     ]);
 
     args.extend(profile_args);
+    reject_static_llvm_workspace_test()?;
 
     if !run(&args) {
         return Err(Error::Config("cargo test (workspace) failed".to_string()));
@@ -494,6 +563,19 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     if !run(&cli_args) {
         return Err(Error::Config(
             "cargo test (pecos-cli with runtime) failed".to_string(),
+        ));
+    }
+
+    // Test zlup's CLI integration tests separately with --features=cli. The
+    // `zlup` binary has `required-features = ["cli"]`, so the default-feature
+    // workspace run above does not build it and skips tests/cli.rs entirely;
+    // this run exercises those CLI integration tests.
+    println!("Testing zlup with cli feature...");
+    let mut zlup_args: Vec<&str> = vec!["test", "-p", "zlup", "--features=cli"];
+    zlup_args.extend(profile_args);
+    if !run(&zlup_args) {
+        return Err(Error::Config(
+            "cargo test (zlup with cli) failed".to_string(),
         ));
     }
 
@@ -549,4 +631,25 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     println!();
     println!("cargo test completed successfully");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn llvm_link_mode_parses_llvm_config_output() {
+        assert_eq!(
+            LlvmLinkMode::from_llvm_config("shared\n"),
+            LlvmLinkMode::Shared
+        );
+        assert_eq!(
+            LlvmLinkMode::from_llvm_config("STATIC"),
+            LlvmLinkMode::Static
+        );
+        assert_eq!(
+            LlvmLinkMode::from_llvm_config("unknown"),
+            LlvmLinkMode::Unknown
+        );
+    }
 }

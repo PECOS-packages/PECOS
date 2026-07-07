@@ -1,0 +1,72 @@
+/// Standard library: f64 constants
+///
+/// Usage:
+///   std := @import("std");
+///   angle := std.f64.pi / 4.0;  // pi/4 as f64
+///
+/// Or import directly:
+///   f64_consts := @import("std/f64.zlp");
+///   angle := f64_consts.pi / 4.0;
+
+// =============================================================================
+// Mathematical Constants (f64)
+// =============================================================================
+
+/// Pi - ratio of circumference to diameter
+pub pi: f64 = 3.14159265358979323846;
+
+/// Tau - 2*pi, full circle in radians
+pub tau: f64 = 6.28318530717958647692;
+
+/// Euler's number
+pub e: f64 = 2.71828182845904523536;
+
+/// Square root of 2
+pub sqrt2: f64 = 1.41421356237309504880;
+
+/// 1 / sqrt(2) - common in quantum gates
+pub sqrt2_inv: f64 = 0.70710678118654752440;
+
+/// Square root of 3
+pub sqrt3: f64 = 1.73205080756887729353;
+
+/// Natural logarithm of 2
+pub ln2: f64 = 0.69314718055994530942;
+
+/// Natural logarithm of 10
+pub ln10: f64 = 2.30258509299404568402;
+
+// =============================================================================
+// Common Angle Fractions in Radians
+// =============================================================================
+
+/// pi/2 - quarter turn in radians
+pub pi_2: f64 = 1.57079632679489661923;
+
+/// pi/4 - eighth turn in radians (T-gate)
+pub pi_4: f64 = 0.78539816339744830962;
+
+/// pi/8 - sixteenth turn in radians
+pub pi_8: f64 = 0.39269908169872415481;
+
+/// pi/3 - sixth turn in radians
+pub pi_3: f64 = 1.04719755119659774615;
+
+/// pi/6 - twelfth turn in radians
+pub pi_6: f64 = 0.52359877559829887308;
+
+// =============================================================================
+// Conversion Factors
+// =============================================================================
+
+/// Degrees to radians: multiply degrees by this
+pub deg_to_rad: f64 = 0.01745329251994329577;
+
+/// Radians to degrees: multiply radians by this
+pub rad_to_deg: f64 = 57.29577951308232087680;
+
+/// Turns to radians: multiply turns by this (= 2*pi)
+pub turns_to_rad: f64 = 6.28318530717958647692;
+
+/// Radians to turns: multiply radians by this (= 1/(2*pi))
+pub rad_to_turns: f64 = 0.15915494309189533577;

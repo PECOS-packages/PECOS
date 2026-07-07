@@ -236,8 +236,8 @@ impl LogicalAlgorithmDecoder {
 }
 
 impl ObservableDecoder for LogicalAlgorithmDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        self.decode_shot(syndrome)
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+        Ok(crate::obs_mask::ObsMask::from_u64(self.decode_shot(syndrome)?))
     }
 }
 
@@ -576,8 +576,8 @@ impl LogicalCircuitDecoder {
 }
 
 impl ObservableDecoder for LogicalCircuitDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        self.decode_shot(syndrome)
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+        Ok(crate::obs_mask::ObsMask::from_u64(self.decode_shot(syndrome)?))
     }
 }
 

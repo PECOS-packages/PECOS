@@ -19,11 +19,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import cupy as cp
-from cuquantum import ComputeType, cudaDataType
-from cuquantum.bindings import custatevec as cusv
-
 from pecos.simulators.custatevec import bindings
+from pecos.simulators.custatevec._cuquantum_compat import (
+    ComputeType,
+    cp,
+    cudaDataType,
+    cusv,
+    require_custatevec,
+)
 from pecos.simulators.sim_class_types import StateVector
 
 if TYPE_CHECKING:
@@ -50,6 +53,9 @@ class CuStateVec(StateVector):
             num_qubits (int): Number of qubits being represented.
             _seed (int): Seed for randomness (kept for API compatibility, not used in GPU-based simulator).
         """
+        # Fail loudly (and only here, at construction) if CuPy / bindings-era cuQuantum
+        # is unavailable -- importing pecos must stay non-fatal without CUDA installed.
+        require_custatevec()
         self.libhandle = None
         if not isinstance(num_qubits, int):
             msg = "``num_qubits`` should be of type ``int``."

@@ -15,7 +15,8 @@ fn main() -> Result<(), PecosError> {
         .quantum(state_vector())
         .noise(DepolarizingNoise { p: 0.01 })
         .seed(42)
-        .run(50)?;
+        .shots(50)
+        .run()?;
     println!("  Results: {} shots", results.len());
 
     // Example 2: Different program types
@@ -23,7 +24,11 @@ fn main() -> Result<(), PecosError> {
 
     // QASM program
     let qasm_prog = Qasm::from_string("OPENQASM 2.0; qreg q[2]; h q[0]; cx q[0],q[1];");
-    let results = sim(qasm_prog).quantum(sparse_stab()).seed(42).run(100)?;
+    let results = sim(qasm_prog)
+        .quantum(sparse_stab())
+        .seed(42)
+        .shots(100)
+        .run()?;
     println!("  QASM: {} shots", results.len());
 
     // LLVM program
@@ -41,7 +46,8 @@ fn main() -> Result<(), PecosError> {
     );
     let results = sim(llvm_prog)
         .qubits(1) // LLVM programs need explicit qubit count
-        .run(50)?;
+        .shots(50)
+        .run()?;
     println!("  LLVM: {} shots", results.len());
 
     // Example 3: Using sim_builder() for empty builder
@@ -76,7 +82,8 @@ fn main() -> Result<(), PecosError> {
     // QASM program but use LLVM engine
     let results = sim(qasm_prog)
         .classical(qis_engine().program(llvm_prog))
-        .run(20)?;
+        .shots(20)
+        .run()?;
     println!("  Results: {} shots", results.len());
 
     // Example 5: Build once, run multiple times
@@ -112,7 +119,8 @@ fn main() -> Result<(), PecosError> {
         Qasm::from_string("OPENQASM 2.0; qreg q[3]; h q[0]; cx q[0],q[1]; cx q[1],q[2];");
     let results = sim(qasm_prog)
         .auto_workers() // Use all available CPU cores
-        .run(1000)?;
+        .shots(1000)
+        .run()?;
     println!("  Results: {} shots with auto workers", results.len());
 
     // Example 7: Using engine builder with sim_from()

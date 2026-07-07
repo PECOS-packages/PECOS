@@ -48,6 +48,12 @@ pub enum DecoderError {
     #[error("Invalid node index {index}: must be < {max}")]
     InvalidNodeIndex { index: usize, max: usize },
 
+    /// Observable-frame bit index out of range for the `u64` frame
+    #[error(
+        "Observable frame bit {bit} out of range: boundary-gate bits index a u64 frame and must be < 64"
+    )]
+    ObservableBitOutOfRange { bit: u32 },
+
     /// Invalid edge
     #[error("Invalid edge: {0}")]
     InvalidEdge(String),

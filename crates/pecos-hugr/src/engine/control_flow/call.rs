@@ -33,12 +33,110 @@
 //! 6. Call's successors are added to work queue
 
 use log::debug;
-use tket::hugr::{Hugr, HugrView, IncomingPort, PortIndex};
+use tket::hugr::ops::OpType;
+use tket::hugr::types::TypeArg;
+use tket::hugr::{Hugr, HugrView, Node};
 
 use crate::engine::HugrEngine;
-use crate::engine::analysis::all_predecessors_ready;
 
 impl HugrEngine {
+    /// Fill-only repair of active calls' argument ports.
+    ///
+    /// A Call launches as soon as it is dispatched; an argument that is a
+    /// measurement result still in flight leaves its `FuncDefn` Input port
+    /// cleared. Called after each measurement round: writes only ports that
+    /// are currently MISSING (never overwrites live frame state), reading
+    /// through the tracing layer.
+    pub(crate) fn repropagate_active_call_inputs(&mut self, hugr: &Hugr) {
+        let targets: Vec<(Node, Node, usize)> = self
+            .active_calls
+            .iter()
+            .filter_map(|(&call_node, info)| {
+                self.func_defns
+                    .get(&info.func_defn_node)
+                    .map(|fi| (call_node, fi.input_node, fi.num_inputs))
+            })
+            .collect();
+        for (call_node, input_node, num_inputs) in targets {
+            for port in 0..num_inputs {
+                let wire = (input_node, port);
+                if self.wire_state.classical_values.contains_key(&wire)
+                    || self.wire_state.wire_to_qubit.contains_key(&wire)
+                {
+                    continue;
+                }
+                if let Some(qubit_id) = self.get_input_qubit(hugr, call_node, port) {
+                    self.wire_state.wire_to_qubit.insert(wire, qubit_id);
+                }
+                if let Some(value) = self.get_input_value(hugr, call_node, port) {
+                    debug!(
+                        "Call {call_node:?}: late argument {port} repaired with {value:?} on {wire:?}"
+                    );
+                    self.wire_state.classical_values.insert(wire, value);
+                }
+            }
+        }
+    }
+
+    /// Resolve a type variable used inside a called function body to the
+    /// concrete `BoundedNat` from the calling `Call`'s instantiation args.
+    ///
+    /// Generic function bodies reference their type parameters as variables
+    /// (e.g. `prelude.load_nat` of a generic loop bound); only the calling
+    /// `Call` op knows the concrete instantiation.
+    pub(crate) fn resolve_call_type_arg(
+        &self,
+        hugr: &Hugr,
+        node: Node,
+        var_idx: usize,
+    ) -> Option<u64> {
+        let mut node = node;
+        let mut var_idx = var_idx;
+        // A generic function may be called from another generic function
+        // with the type arg forwarded as a variable (`f<$0>` inside `g<n>`),
+        // so resolution walks the active call chain until a concrete
+        // BoundedNat appears. Bounded by the active-call count: each hop
+        // consumes one distinct call frame.
+        for _ in 0..=self.active_calls.len() {
+            // Find the enclosing FuncDefn of this node.
+            let mut cur = hugr.get_parent(node);
+            let func_defn = loop {
+                let n = cur?;
+                if matches!(hugr.get_optype(n), OpType::FuncDefn(_)) {
+                    break n;
+                }
+                cur = hugr.get_parent(n);
+            };
+            // Find the active call OR scan executing this FuncDefn and
+            // read its arg (a scanned function's frame carries the
+            // LoadFunction's instantiation args).
+            let (owner_node, arg) = if let Some(info) = self
+                .active_calls
+                .values()
+                .find(|info| info.func_defn_node == func_defn)
+            {
+                (info.call_node, info.type_args.get(var_idx)?.clone())
+            } else {
+                let scan = self
+                    .active_scans
+                    .values()
+                    .find(|scan| scan.func_defn_node == func_defn)?;
+                (scan.scan_node, scan.type_args.get(var_idx)?.clone())
+            };
+            match arg {
+                TypeArg::BoundedNat(n) => return Some(n),
+                TypeArg::Variable(var) => {
+                    // Forwarded generic: continue resolution in the CALLER's
+                    // frame, at the caller's variable index.
+                    node = owner_node;
+                    var_idx = var.index();
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
     /// Complete a function call if the completed CFG belongs to an active Call's `FuncDefn`.
     ///
     /// This method is called when a CFG completes. It checks if that CFG belongs
@@ -48,6 +146,11 @@ impl HugrEngine {
     /// 3. Adds Call successors to the work queue
     /// 4. Starts any pending calls to the same `FuncDefn`
     pub(crate) fn complete_func_call_if_needed(&mut self, hugr: &Hugr, cfg_node: tket::hugr::Node) {
+        // A scan folding through this FuncDefn owns the frame: route the
+        // completion to it (next element, or scan completion).
+        if self.continue_scan_after_frame(hugr, cfg_node) {
+            return;
+        }
         // Find which active Call (if any) has a FuncDefn with this CFG
         let call_to_complete: Option<(tket::hugr::Node, tket::hugr::Node)> = self
             .active_calls
@@ -73,39 +176,38 @@ impl HugrEngine {
                 for port in 0..func_info.num_outputs {
                     // Check if we have a wire mapping for the FuncDefn Output input
                     // FuncDefn Output receives from CFG outputs
-                    let output_in_port = IncomingPort::from(port);
-                    if let Some((src_node, src_port)) =
-                        hugr.single_linked_output(func_info.output_node, output_in_port)
+                    // Traced reads: a return value produced inside a
+                    // flattened DFG must resolve like any other read.
+                    let call_output_wire = (call_node, port);
+                    if let Some(qubit_id) = self.get_input_qubit(hugr, func_info.output_node, port)
                     {
-                        let src_wire = (src_node, src_port.index());
-                        // Map qubits
-                        if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                            let call_output_wire = (call_node, port);
-                            self.wire_state
-                                .wire_to_qubit
-                                .insert(call_output_wire, qubit_id);
-                            debug!(
-                                "Call {call_node:?}: mapped FuncDefn output {port} qubit {qubit_id:?} to Call output"
-                            );
-                        }
-                        // Map classical values (including arrays)
-                        if let Some(value) =
-                            self.wire_state.classical_values.get(&src_wire).cloned()
-                        {
-                            let call_output_wire = (call_node, port);
-                            self.wire_state
-                                .classical_values
-                                .insert(call_output_wire, value.clone());
-                            debug!(
-                                "Call {call_node:?}: mapped FuncDefn output {port} classical value {value:?} to Call output"
-                            );
-                        }
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert(call_output_wire, qubit_id);
+                        debug!(
+                            "Call {call_node:?}: mapped FuncDefn output {port} qubit {qubit_id:?} to Call output"
+                        );
+                    }
+                    // Map classical values (including arrays)
+                    if let Some(value) = self.get_input_value(hugr, func_info.output_node, port) {
+                        debug!(
+                            "Call {call_node:?}: mapped FuncDefn output {port} classical value {value:?} to Call output"
+                        );
+                        self.wire_state
+                            .classical_values
+                            .insert(call_output_wire, value);
                     }
                 }
 
                 // Mark Call as processed FIRST so successors can be added correctly
                 self.processed.insert(call_node);
                 self.active_calls.remove(&call_node);
+
+                // Check if this Call completion allows a parent Case to
+                // complete (a case whose FINAL completion event is the Call
+                // itself would otherwise stay active forever).
+                self.check_scan_frame_completion(hugr, call_node);
+                self.check_case_completion(hugr, call_node);
 
                 // Check if this Call completion allows a parent CFG block to complete
                 // This is critical for nested function calls
@@ -115,38 +217,27 @@ impl HugrEngine {
                 // This is critical for function calls inside TailLoop bodies
                 self.check_tailloop_body_completion(hugr, call_node);
 
-                // Add Call's successors to work queue
-                for succ_node in hugr.output_neighbours(call_node) {
-                    if (self.quantum_ops.contains_key(&succ_node)
-                        || self.call_targets.contains_key(&succ_node)
-                        || self.conditionals.contains_key(&succ_node)
-                        || self.cfgs.contains_key(&succ_node))
-                        && !self.processed.contains(&succ_node)
-                        && !self.work_queue.contains(&succ_node)
-                        && all_predecessors_ready(
-                            hugr,
-                            succ_node,
-                            &self.quantum_ops,
-                            &self.conditionals,
-                            &self.cfgs,
-                            &self.processed,
-                        )
-                    {
-                        debug!("Call {call_node:?}: adding successor {succ_node:?} to work queue");
-                        self.work_queue.push_back(succ_node);
-                    }
-                }
+                // Add Call's successors to the work queue via the canonical
+                // readiness check. (A hand-rolled subset here used to omit
+                // classical and extension ops, so e.g. a MakeTuple consuming
+                // the Call's result never ran and the enclosing CFG block
+                // never completed.)
+                self.queue_ready_successors(hugr, call_node);
+
+                // A scan parked on this frame retries through the pending
+                // mechanism -- wake the parked set now that the frame freed.
+                self.retry_deferred_nodes();
 
                 // Check if there are pending calls to this FuncDefn
                 if let Some(pending) = self.pending_func_calls.get_mut(&func_defn_node)
-                    && let Some(next_call) = pending.pop()
+                    && let Some(next_call) = pending.pop_front()
                 {
                     debug!(
                         "FuncDefn {func_defn_node:?} free: starting next pending Call {next_call:?}"
                     );
                     // Add the pending call to the front of the work queue
                     // so it gets processed next
-                    if !self.work_queue.contains(&next_call) {
+                    if !self.work_queue.contains(next_call) {
                         self.work_queue.push_front(next_call);
                     }
                 }

@@ -249,13 +249,10 @@ def test_error_pattern_reproducibility(backend: str) -> None:
 # Optional backends (require special dependencies)
 def test_custatevec_determinism() -> None:
     """Test seed determinism for CuStateVec (GPU simulator)."""
-    try:
-        from pecos.simulators import CuStateVec
+    from pecos.simulators.custatevec._cuquantum_compat import custatevec_available
 
-        if CuStateVec is None:
-            pytest.skip("CuStateVec not available")
-    except ImportError:
-        pytest.skip("CuStateVec requires cuQuantum")
+    if not custatevec_available():
+        pytest.skip("CuStateVec unavailable (requires CuPy + cuQuantum >= 25.03)")
 
     seed = 7
     shots = 100

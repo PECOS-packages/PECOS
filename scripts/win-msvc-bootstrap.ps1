@@ -22,7 +22,7 @@
 #
 # This script is the ONLY writer of the `[target.x86_64-pc-windows-msvc]` table
 # and the MSVC subset of `[env]` (LIB/INCLUDE/LIBPATH). It does a *scoped* merge
-# so it never disturbs the keys the Rust writers own (LLVM_SYS_140_PREFIX,
+# so it never disturbs the keys the Rust writers own (LLVM_SYS_211_PREFIX,
 # CUQUANTUM_ROOT) or any other table, and never emits a duplicate `[env]`.
 #
 # Inert (exit 0) on non-Windows so it is safe as an unconditional just prereq.

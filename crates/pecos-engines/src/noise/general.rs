@@ -77,7 +77,7 @@
 mod builder;
 mod default;
 
-pub use self::builder::GeneralNoiseModelBuilder;
+pub use self::builder::{GeneralNoiseModelBuilder, PauliWithAngleScaling};
 
 use crate::Gate;
 use crate::byte_message::{ByteMessage, ByteMessageBuilder, GateType};
@@ -505,6 +505,40 @@ impl GeneralNoiseModel {
         )
     }
 
+    /// Get the angle-dependent two-qubit error coefficients `(a, b, c, d)`.
+    ///
+    /// These parameterize the error rate as a function of the rotation angle
+    /// (see [`Self::p2_angle_error_rate`]). Exposed so other simulation stacks
+    /// can read the model's defaults without re-declaring them.
+    #[must_use]
+    pub fn p2_angle_params(&self) -> (f64, f64, f64, f64) {
+        (
+            self.p2_angle_a,
+            self.p2_angle_b,
+            self.p2_angle_c,
+            self.p2_angle_d,
+        )
+    }
+
+    /// Get the angle-dependent two-qubit error power exponent.
+    #[must_use]
+    pub fn p2_angle_power(&self) -> f64 {
+        self.p2_angle_power
+    }
+
+    /// Get the single-qubit spontaneous-emission ratio (fraction of 1q gate
+    /// errors that are emission faults, which replace the gate).
+    #[must_use]
+    pub fn p1_emission_ratio(&self) -> f64 {
+        self.p1_emission_ratio
+    }
+
+    /// Get the two-qubit spontaneous-emission ratio.
+    #[must_use]
+    pub fn p2_emission_ratio(&self) -> f64 {
+        self.p2_emission_ratio
+    }
+
     /// Apply noise at the start of `QuantumSystem` processing (typically a collection of gates)
     ///
     /// # Panics
@@ -608,9 +642,17 @@ impl GeneralNoiseModel {
                     self.apply_sq_faults(&gate, &mut builder);
                 }
                 _ if gate.is_two_qubit() => {
-                    // For angle-dependent error rates (rotation gates like RZZ)
+                    // For angle-dependent error rates (rotation gates like RZZ).
+                    // Use the SIGNED principal value (-pi, pi]: `p2_angle_error_rate`
+                    // is sign-aware (separate coefficients for negative vs positive
+                    // angles), and the gate unitaries themselves read the angle via
+                    // `to_radians_signed`. The unsigned `to_radians` ([0, 2pi)) is
+                    // always non-negative, so it would make the negative-angle
+                    // coefficients dead via the gate path and assign RZZ(-pi/2) the
+                    // noise of a 3pi/2 rotation (the two are equal up to global
+                    // phase, so they must share a noise rate).
                     let p2 = if gate.angle_arity() >= 1 && !gate.angles.is_empty() {
-                        let angle = gate.angles[0].to_radians();
+                        let angle = gate.angles[0].to_radians_signed();
                         self.p2_angle_error_rate(angle)
                     } else {
                         self.p2

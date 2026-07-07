@@ -67,7 +67,7 @@ pub fn run(
 }
 
 fn has_missing_deps(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) -> bool {
-    if !skip_llvm && pecos_build::llvm::find_llvm_14(None).is_none() {
+    if !skip_llvm && pecos_build::llvm::find_llvm(None).is_none() {
         return true;
     }
     if !skip_cuda && cuda_platform_supported() && pecos_build::cuda::find_cuda().is_none() {
@@ -97,11 +97,15 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
 
     // LLVM
     if skip_llvm {
-        println!("  LLVM 14:    skipped (--skip-llvm)");
-    } else if let Some(path) = pecos_build::llvm::find_llvm_14(None) {
-        println!("  LLVM 14:    {}", path.display());
+        println!("  LLVM 21.1:    skipped (--skip-llvm)");
+    } else if let Some(path) = pecos_build::llvm::find_llvm(None) {
+        println!("  LLVM 21.1:    {}", path.display());
+    } else if pecos_build::llvm::installer::managed_install_unavailable_reason().is_some() {
+        println!("  LLVM 21.1:    not found (configure a shared LLVM 21 install manually)");
     } else {
-        println!("  LLVM 14:    not found (~400 MB, required for QIR/HUGR compilation)");
+        println!(
+            "  LLVM 21.1:    not found (several hundred MB, required for QIR/HUGR compilation)"
+        );
     }
 
     // CUDA
@@ -131,7 +135,7 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool) {
         if super::cuda_cmd::cuda_python_packages_installed() {
             println!("  cupy:       installed (CUDA Python packages synced)");
         } else {
-            println!("  cupy:       not installed (~500 MB via `uv sync --locked --group cuda`)");
+            println!("  cupy:       not installed (~500 MB via `pecos cuda setup-python`)");
         }
     }
 
@@ -250,13 +254,55 @@ fn find_repo_root() -> Option<PathBuf> {
 // ── Migration ──────────────────────────────────────────────────────────────
 
 fn check_legacy_deps(mode: PromptMode) -> Result<()> {
-    let legacy = pecos_build::home::find_legacy_deps()?;
-    if legacy.is_empty() {
+    let legacy = pecos_build::home::find_legacy_dep_status()?;
+    if legacy.migratable.is_empty() && legacy.incompatible.is_empty() {
+        return Ok(());
+    }
+
+    if !legacy.incompatible.is_empty() {
+        println!("Found legacy dependencies that need manual action:");
+        for dep in &legacy.incompatible {
+            println!("  {} at {}", dep.name, dep.old.display());
+            println!("    {}", dep.reason);
+            if dep.name == "LLVM" {
+                println!("    This will not be migrated into ~/.pecos/deps/llvm-21.1/.");
+                println!("    Remove it before installing/configuring LLVM 21.1.");
+                println!("    Then install LLVM 21.1 with `pecos install llvm`, or configure");
+                println!(
+                    "    an existing LLVM 21.1 install with `pecos llvm configure /path/to/llvm`."
+                );
+            }
+        }
+        println!();
+
+        for dep in &legacy.incompatible {
+            if dep.name != "LLVM" {
+                continue;
+            }
+            if confirm(
+                &format!("Remove incompatible legacy LLVM at {}?", dep.old.display()),
+                true,
+                mode,
+            ) {
+                print!("  Removing old LLVM...");
+                pecos_build::home::remove_incompatible_legacy_dep(dep)?;
+                println!(" done");
+            } else {
+                println!(
+                    "  Keeping old LLVM at {}. It will not be used as LLVM 21.1.",
+                    dep.old.display()
+                );
+            }
+        }
+        println!();
+    }
+
+    if legacy.migratable.is_empty() {
         return Ok(());
     }
 
     println!("Found dependencies at legacy paths:");
-    for dep in &legacy {
+    for dep in &legacy.migratable {
         println!("  {} -> {}", dep.old.display(), dep.new.display());
     }
 
@@ -265,7 +311,7 @@ fn check_legacy_deps(mode: PromptMode) -> Result<()> {
         true,
         mode,
     ) {
-        for dep in &legacy {
+        for dep in &legacy.migratable {
             print!("  Moving {}...", dep.name);
             pecos_build::home::migrate_legacy_dep(dep)?;
             println!(" done");
@@ -282,14 +328,23 @@ fn check_legacy_deps(mode: PromptMode) -> Result<()> {
 // ── LLVM ────────────────────────────────────────────────────────────────────
 
 fn setup_llvm(mode: PromptMode) -> Result<()> {
-    if pecos_build::llvm::find_llvm_14(None).is_some() {
+    if pecos_build::llvm::find_llvm(None).is_some() {
         ensure_llvm_configured();
+        return Ok(());
+    }
+
+    if let Some(reason) = pecos_build::llvm::installer::managed_install_unavailable_reason() {
+        println!("  LLVM 21.1 not found.");
+        println!("  {reason}");
+        println!("  QIR/HUGR features will not be available until LLVM is configured.");
         return Ok(());
     }
 
     let version = pecos_build::home::LLVM_VERSION;
     if confirm(
-        &format!("Install LLVM {version}? (~400 MB download, required for QIR/HUGR)"),
+        &format!(
+            "Install PECOS-managed LLVM {version}? (large download, several GB extracted, shared LLVM required; use `pecos llvm configure /path/to/llvm` for your own install)"
+        ),
         true,
         mode,
     ) {
@@ -353,7 +408,7 @@ fn setup_cuda_python(mode: PromptMode) -> Result<()> {
     }
 
     if confirm(
-        "Install CUDA Python packages? (cupy, cuquantum, pytket-cutensornet via `uv sync --locked --group cuda`)",
+        "Install CUDA Python packages? (cupy, cuquantum, pytket-cutensornet via `pecos cuda setup-python`)",
         true, // default yes when CUDA toolkit + NVIDIA GPU are present
         mode,
     ) {

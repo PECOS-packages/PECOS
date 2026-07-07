@@ -82,6 +82,26 @@ impl CargoConfig {
         Ok(self)
     }
 
+    /// Remove `[env]` entries matching the predicate. Returns the removed keys.
+    ///
+    /// # Errors
+    /// Returns an error if `[env]` exists but is not a table.
+    pub fn remove_env_matching<F>(&mut self, mut should_remove: F) -> Result<Vec<String>>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        let env = Self::table_mut(&mut self.doc, "env")?;
+        let keys: Vec<String> = env
+            .iter()
+            .filter(|(key, _)| should_remove(key))
+            .map(|(key, _)| key.to_string())
+            .collect();
+        for key in &keys {
+            env.remove(key);
+        }
+        Ok(keys)
+    }
+
     /// Set `[target.<triple>].linker`.
     ///
     /// # Errors
@@ -240,5 +260,25 @@ mod tests {
             !again.save().unwrap(),
             "re-applying the same value must not rewrite the file"
         );
+    }
+
+    #[test]
+    fn removes_matching_env_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = CargoConfig::open(tmp.path()).unwrap();
+        cfg.set_env("LLVM_SYS_140_PREFIX", "/old", true).unwrap();
+        cfg.set_env("LLVM_SYS_211_PREFIX", "/llvm", true).unwrap();
+        cfg.set_env("FOO", "bar", false).unwrap();
+
+        let removed = cfg
+            .remove_env_matching(|key| key.starts_with("LLVM_SYS_") && key != "LLVM_SYS_211_PREFIX")
+            .unwrap();
+        assert_eq!(removed, vec!["LLVM_SYS_140_PREFIX"]);
+        cfg.save().unwrap();
+
+        let parsed: toml::Value = toml::from_str(&read(tmp.path())).unwrap();
+        assert!(parsed["env"].get("LLVM_SYS_140_PREFIX").is_none());
+        assert!(parsed["env"].get("LLVM_SYS_211_PREFIX").is_some());
+        assert_eq!(parsed["env"]["FOO"].as_str().unwrap(), "bar");
     }
 }

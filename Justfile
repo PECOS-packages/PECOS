@@ -301,9 +301,10 @@ test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
 
 # Fix formatting and linting issues (or: just lint check)
 [group('lint')]
-lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-check
+lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-env python-workspace-check
     #!/usr/bin/env bash
     set -euo pipefail
+    eval "$({{pecos}} env)"
     MODE="{{mode}}"
     # Detect CUDA: only use --all-features when CUDA toolkit is available
     if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
@@ -350,9 +351,10 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) python-workspace-chec
 # Fast lint lane for Python PR CI. Keep this scoped to Rust + Python checks so
 # the Python critical path does not opportunistically pick up Julia/Go tools.
 [group('lint')]
-python-ci-lint: _msvc-bootstrap python-workspace-check
+python-ci-lint: _msvc-bootstrap ensure-local-build-env python-workspace-check
     #!/usr/bin/env bash
     set -euo pipefail
+    eval "$({{pecos}} env)"
     if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
         CLIPPY_FEATURES="--all-features"
         echo "(CUDA detected -- linting with all features)"
@@ -372,7 +374,10 @@ python-ci-lint: _msvc-bootstrap python-workspace-check
 
 # Run cargo check
 [group('lint')]
-check: _msvc-bootstrap
+check: _msvc-bootstrap ensure-local-build-env
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$({{pecos}} env)"
     cargo check --locked --workspace --all-targets
 
 # Check Python workspace metadata
@@ -382,9 +387,10 @@ python-workspace-check:
 
 # Run cargo clippy (CUDA-aware: uses --all-features only when CUDA is available)
 [group('lint')]
-clippy: _msvc-bootstrap
+clippy: _msvc-bootstrap ensure-local-build-env
     #!/usr/bin/env bash
     set -euo pipefail
+    eval "$({{pecos}} env)"
     if command -v nvcc >/dev/null 2>&1 || [ -n "${CUDA_PATH:-}" ] || [ -d /usr/local/cuda ]; then
         echo "(CUDA detected -- clippy with all features)"
         cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -396,6 +402,8 @@ clippy: _msvc-bootstrap
 # Check Rust formatting
 [group('lint')]
 fmt:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo fmt --all -- --check
 
 # Run benchmarks (profile: release/native; features: optional; pattern: filter)

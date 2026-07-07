@@ -36,7 +36,7 @@ use super::propagator::{DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply
 use pecos_core::QubitId;
 use pecos_simulators::{PauliProp, SymbolicSparseStab};
 use smallvec::SmallVec;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeSet, BinaryHeap};
 
 struct ObservablePropagationWork<'a> {
     recorder: &'a mut CompoundRecorder,
@@ -250,7 +250,7 @@ impl<'a> InfluenceBuilder<'a> {
     }
 
     /// Run symbolic simulation to get measurement correlations.
-    fn run_symbolic_simulation(&self) -> MeasurementInfo {
+    pub(crate) fn run_symbolic_simulation(&self) -> MeasurementInfo {
         let topo_order = self.dag.topological_order();
 
         // Determine number of qubits from the circuit
@@ -479,6 +479,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// Extract fault locations from the propagator.
     fn extract_locations(propagator: &DagPropagator<'_>) -> Vec<DagSpacetimeLocation> {
         let mut locations = Vec::new();
+        let mut prepared_qubits: BTreeSet<QubitId> = BTreeSet::new();
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
@@ -497,18 +498,33 @@ impl<'a> InfluenceBuilder<'a> {
                 // Standard circuit noise model: one fault location per gate.
                 //   Measurement: before. All others: after.
                 let before = is_measurement;
-                for &q in &qubits {
-                    // idle_duration() returns a non-negative integer stored as f64;
-                    // truncation and sign loss are not a concern.
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let idle_duration = gate.idle_duration() as u64;
+                let location_qubits: Vec<QubitId> =
+                    if gate.gate_type == pecos_quantum::GateType::MeasCrosstalkGlobalPayload {
+                        qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.remove(&q);
+                        });
+                        let victims = prepared_qubits.iter().copied().collect();
+                        qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.insert(q);
+                        });
+                        victims
+                    } else {
+                        qubits.clone()
+                    };
+                for q in location_qubits {
                     locations.push(DagSpacetimeLocation {
                         node,
                         qubits: vec![q],
                         before,
                         gate_type: gate.gate_type,
-                        idle_duration,
+                        idle_duration: gate.idle_duration(),
                     });
+                }
+                if matches!(
+                    gate.gate_type,
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                ) {
+                    prepared_qubits.extend(qubits.iter().copied());
                 }
             }
         }
@@ -803,6 +819,7 @@ impl<'a> InfluenceBuilder<'a> {
         let mut map: std::collections::HashMap<(usize, bool), Vec<(usize, usize)>> =
             std::collections::HashMap::new();
         let mut loc_idx = 0;
+        let mut prepared_qubits: BTreeSet<QubitId> = BTreeSet::new();
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
@@ -816,10 +833,29 @@ impl<'a> InfluenceBuilder<'a> {
                 );
 
                 let before = is_measurement;
-                for q in &gate.qubits {
+                let location_qubits: Vec<QubitId> =
+                    if gate.gate_type == pecos_quantum::GateType::MeasCrosstalkGlobalPayload {
+                        gate.qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.remove(&q);
+                        });
+                        let victims = prepared_qubits.iter().copied().collect();
+                        gate.qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.insert(q);
+                        });
+                        victims
+                    } else {
+                        gate.qubits.to_vec()
+                    };
+                for q in &location_qubits {
                     let qi = q.index();
                     map.entry((node, before)).or_default().push((qi, loc_idx));
                     loc_idx += 1;
+                }
+                if matches!(
+                    gate.gate_type,
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                ) {
+                    prepared_qubits.extend(gate.qubits.iter().copied());
                 }
             }
         }
@@ -866,11 +902,11 @@ impl<'a> InfluenceBuilder<'a> {
 }
 
 /// Information about measurements from symbolic simulation.
-struct MeasurementInfo {
-    history: pecos_simulators::symbolic_sparse_stab::MeasurementHistory,
-    node_to_meas_idx: Vec<Option<usize>>,
+pub(crate) struct MeasurementInfo {
+    pub(crate) history: pecos_simulators::symbolic_sparse_stab::MeasurementHistory,
+    pub(crate) node_to_meas_idx: Vec<Option<usize>>,
     #[allow(dead_code)]
-    num_measurements: usize,
+    pub(crate) num_measurements: usize,
 }
 
 /// Definition of a detector as XOR of measurements.

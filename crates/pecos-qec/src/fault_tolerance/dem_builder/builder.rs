@@ -16,14 +16,22 @@
 //! influence maps and detector/DEM-output metadata.
 
 use super::types::{
-    DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, FaultMechanism,
-    NoiseConfig, PerGateTypeNoise, SourceMetadata, record_offset_to_absolute_index,
+    DemOutput, DetectorDef, DetectorErrorModel, DirectSourceComponents, DirectSourceFamily,
+    FaultMechanism, MeasurementCrosstalkDemMode, NoiseConfig, PerGateTypeNoise,
+    ReplacementBranchApproximation, SourceMetadata, record_offset_to_absolute_index,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
-use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
+use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Direction, Pauli, apply_gate};
+use pecos_core::BitSet;
 use pecos_core::gate_type::GateType;
+use pecos_simulators::{
+    PauliProp, SymbolicMeasurementResult, SymbolicSparseStab,
+    symbolic_sparse_stab::MeasurementHistory,
+};
 use smallvec::SmallVec;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 // ============================================================================
 // JSON Parsing Types
@@ -111,6 +119,36 @@ pub struct DemBuilder<'a> {
     /// Optional measurement order: maps `TickCircuit` measurement index -> qubit.
     /// This allows proper mapping between record offsets and influence map indices.
     measurement_order: Option<Vec<usize>>,
+    /// Optional circuit context for future exact replacement-branch replay.
+    exact_branch_context: Option<ExactBranchReplayContext<'a>>,
+    /// Ideal symbolic measurement history shared by exact branch replays.
+    exact_ideal_history_cache: RefCell<Option<Rc<MeasurementHistory>>>,
+    /// Per-gate cache for exact replacement-branch replay effects.
+    exact_branch_cache: RefCell<BTreeMap<usize, ExactBranchReplayAnalysis>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExactBranchReplayContext<'a> {
+    circuit: &'a pecos_quantum::DagCircuit,
+}
+
+#[derive(Debug, Clone)]
+struct ExactBranchReplayAnalysis {
+    base_effect: FaultMechanism,
+    branch_effects: [[FaultMechanism; 4]; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExactBranchReplayRequest {
+    gate_node: usize,
+    gate_type: GateType,
+    loc_indices: [usize; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MeasurementParityExpression {
+    dependencies: BitSet,
+    flip: bool,
 }
 
 impl<'a> DemBuilder<'a> {
@@ -163,7 +201,23 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
-        build_dem_from_circuit(circuit, p1, p2, p_meas, p_prep)
+        build_dem_from_circuit(circuit, NoiseConfig::new(p1, p2, p_meas, p_prep))
+    }
+
+    /// Try to build a `DetectorErrorModel` directly from a `DagCircuit` and
+    /// full noise configuration.
+    ///
+    /// Reads detector/DEM output definitions from circuit metadata and returns
+    /// parser errors instead of dropping malformed metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector or observable metadata is malformed.
+    pub fn try_from_circuit_with_noise_config(
+        circuit: &pecos_quantum::DagCircuit,
+        noise: NoiseConfig,
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
+        build_dem_from_circuit(circuit, noise)
     }
 
     /// Build a `DetectorErrorModel` from a `TickCircuit` and noise.
@@ -202,7 +256,24 @@ impl<'a> DemBuilder<'a> {
         p_prep: f64,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
         let dag = pecos_quantum::DagCircuit::from(circuit);
-        build_dem_from_circuit(&dag, p1, p2, p_meas, p_prep)
+        build_dem_from_circuit(&dag, NoiseConfig::new(p1, p2, p_meas, p_prep))
+    }
+
+    /// Try to build a `DetectorErrorModel` from a `TickCircuit` and full noise
+    /// configuration.
+    ///
+    /// Converts to `DagCircuit` internally and returns parser errors instead
+    /// of dropping malformed metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detector or observable metadata is malformed.
+    pub fn try_from_tick_circuit_with_noise_config(
+        circuit: &pecos_quantum::TickCircuit,
+        noise: NoiseConfig,
+    ) -> Result<DetectorErrorModel, DemBuilderError> {
+        let dag = pecos_quantum::DagCircuit::from(circuit);
+        build_dem_from_circuit(&dag, noise)
     }
 
     /// Creates a new DEM builder from a fault influence map.
@@ -216,7 +287,14 @@ impl<'a> DemBuilder<'a> {
             observables: Vec::new(),
             num_measurements: influence_map.measurements.len(),
             measurement_order: None,
+            exact_branch_context: None,
+            exact_ideal_history_cache: RefCell::new(None),
+            exact_branch_cache: RefCell::new(BTreeMap::new()),
         }
+    }
+
+    fn clear_exact_branch_cache(&mut self) {
+        self.exact_branch_cache.get_mut().clear();
     }
 
     /// Sets the noise configuration from individual parameters.
@@ -230,6 +308,17 @@ impl<'a> DemBuilder<'a> {
     #[must_use]
     pub fn with_noise_config(mut self, noise: NoiseConfig) -> Self {
         self.noise = noise;
+        self
+    }
+
+    #[must_use]
+    pub fn with_exact_branch_replay_context(
+        mut self,
+        circuit: &'a pecos_quantum::DagCircuit,
+    ) -> Self {
+        self.exact_branch_context = Some(ExactBranchReplayContext { circuit });
+        self.exact_ideal_history_cache.get_mut().take();
+        self.clear_exact_branch_cache();
         self
     }
 
@@ -282,15 +371,16 @@ impl<'a> DemBuilder<'a> {
                 pg.rate_1q(loc.gate_type, 2),
             ];
         }
+        let p1_total = self.noise.p1_rate_for_gate(loc.gate_type);
         if let Some(weights) = &self.noise.p1_weights {
             use pecos_core::pauli::{X, Y, Z};
             return [
-                self.noise.p1 * weights.weight_for(&X(0)),
-                self.noise.p1 * weights.weight_for(&Y(0)),
-                self.noise.p1 * weights.weight_for(&Z(0)),
+                p1_total * weights.weight_for(&X(0)),
+                p1_total * weights.weight_for(&Y(0)),
+                p1_total * weights.weight_for(&Z(0)),
             ];
         }
-        let per = per_channel_probability(self.noise.p1, 3);
+        let per = per_channel_probability(p1_total, 3);
         [per, per, per]
     }
 
@@ -306,8 +396,7 @@ impl<'a> DemBuilder<'a> {
                 return rates;
             }
             if pg.base.uses_dedicated_idle_noise() {
-                #[allow(clippy::cast_precision_loss)]
-                let duration = loc.idle_duration.max(1) as f64;
+                let duration = loc.idle_duration.max(0.0);
                 let probs = pg.base.idle_pauli_probs(duration);
                 return [probs.px, probs.py, probs.pz];
             }
@@ -315,8 +404,7 @@ impl<'a> DemBuilder<'a> {
         }
 
         if self.noise.uses_dedicated_idle_noise() {
-            #[allow(clippy::cast_precision_loss)]
-            let duration = loc.idle_duration.max(1) as f64;
+            let duration = loc.idle_duration.max(0.0);
             let probs = self.noise.idle_pauli_probs(duration);
             return [probs.px, probs.py, probs.pz];
         }
@@ -347,16 +435,32 @@ impl<'a> DemBuilder<'a> {
                 let flat = idx + 1;
                 let p1 = flat / 4;
                 let p2 = flat % 4;
-                self.noise.p2 * weights.weight_for(&pauli_pair_for_weight(p1, p2))
+                let pauli = pauli_pair_for_weight(p1, p2);
+                let p2_total = self.noise.p2_rate_for_gate(loc1.gate_type);
+                let weight = if self.noise.p2_replacement_approximation
+                    == ReplacementBranchApproximation::BranchImpact
+                    || self.noise.p2_replacement_approximation
+                        == ReplacementBranchApproximation::ExactBranchReplay
+                {
+                    weights.post_gate_two_qubit_weight_for(&pauli)
+                } else {
+                    weights.two_qubit_weight_for(
+                        loc1.gate_type,
+                        &pauli,
+                        self.noise.p2_replacement_approximation,
+                    )
+                };
+                p2_total * weight
             });
         }
-        [per_channel_probability(self.noise.p2, 15); 15]
+        [per_channel_probability(self.noise.p2_rate_for_gate(loc1.gate_type), 15); 15]
     }
 
     /// Sets the number of measurements (used for record offset calculation).
     #[must_use]
     pub fn with_num_measurements(mut self, num: usize) -> Self {
         self.num_measurements = num;
+        self.clear_exact_branch_cache();
         self
     }
 
@@ -381,6 +485,7 @@ impl<'a> DemBuilder<'a> {
     #[must_use]
     pub fn with_measurement_order(mut self, order: Vec<usize>) -> Self {
         self.measurement_order = Some(order);
+        self.clear_exact_branch_cache();
         self
     }
 
@@ -401,6 +506,7 @@ impl<'a> DemBuilder<'a> {
     /// Returns an error if the JSON is malformed.
     pub fn with_detectors_json(mut self, json: &str) -> Result<Self, DemBuilderError> {
         self.detectors = parse_detectors_json(json)?;
+        self.clear_exact_branch_cache();
         Ok(self)
     }
 
@@ -416,6 +522,7 @@ impl<'a> DemBuilder<'a> {
     /// Returns an error if the JSON is malformed.
     pub fn with_observables_json(mut self, json: &str) -> Result<Self, DemBuilderError> {
         self.observables = parse_observables_json(json)?;
+        self.clear_exact_branch_cache();
         Ok(self)
     }
 
@@ -432,6 +539,7 @@ impl<'a> DemBuilder<'a> {
                 meas_ids: Vec::new(),
             })
             .collect();
+        self.clear_exact_branch_cache();
         self
     }
 
@@ -537,6 +645,38 @@ impl<'a> DemBuilder<'a> {
             .collect()
     }
 
+    fn measurement_indices_from_refs(
+        &self,
+        records: &[i32],
+        meas_ids: &[usize],
+    ) -> Result<Vec<usize>, DemBuilderError> {
+        if !records.is_empty() {
+            return records
+                .iter()
+                .map(|&rec| {
+                    record_offset_to_absolute_index(self.num_measurements, rec).ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "record offset {rec} is out of range for a circuit with {} measurement(s)",
+                            self.num_measurements
+                        ))
+                    })
+                })
+                .collect();
+        }
+
+        meas_ids
+            .iter()
+            .map(|&meas_id| {
+                self.resolve_meas_id_to_tc_index(meas_id).ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "meas_id {meas_id} is not present in the circuit's {} measurement(s)",
+                        self.num_measurements
+                    ))
+                })
+            })
+            .collect()
+    }
+
     /// Validates metadata refs, then builds the Detector Error Model.
     ///
     /// This is the fail-loud entry point. Every path that ingests
@@ -597,6 +737,8 @@ impl<'a> DemBuilder<'a> {
     pub fn try_build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         self.validate_measurement_count()?;
         self.validate_metadata_refs()?;
+        self.validate_replacement_branch_approximation()?;
+        self.validate_measurement_crosstalk_dem_mode()?;
         Ok(self.build())
     }
 
@@ -609,8 +751,18 @@ impl<'a> DemBuilder<'a> {
     ///
     /// This does **not** validate metadata refs; callers ingesting
     /// circuit-derived metadata must use [`Self::try_build`] instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configured replacement-branch approximation or measurement
+    /// crosstalk DEM mode is invalid. Use [`Self::try_build`] to receive those as
+    /// errors instead of panicking.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
+        self.validate_replacement_branch_approximation()
+            .expect("invalid DEM replacement branch approximation");
+        self.validate_measurement_crosstalk_dem_mode()
+            .expect("invalid DEM measurement crosstalk configuration");
         let num_influence_dem_outputs = self
             .num_influence_dem_outputs()
             .max(self.influence_map.dem_output_metadata.len());
@@ -677,6 +829,579 @@ impl<'a> DemBuilder<'a> {
         dem
     }
 
+    fn validate_replacement_branch_approximation(&self) -> Result<(), DemBuilderError> {
+        let has_replacement_branches = self
+            .noise
+            .p2_weights
+            .as_ref()
+            .is_some_and(super::types::PauliWeights::has_replacement_entries);
+        if self.noise.p2_replacement_approximation
+            == ReplacementBranchApproximation::ExactBranchReplay
+            && has_replacement_branches
+        {
+            if let Some(context) = self.exact_branch_context {
+                let requests =
+                    context.replacement_branch_requests(&self.influence_map.locations)?;
+                let weights = self
+                    .noise
+                    .p2_weights
+                    .as_ref()
+                    .expect("replacement entries exist");
+                for request in &requests {
+                    for (replacement_pauli, _weight) in weights.replacement_entries() {
+                        let label = two_qubit_label_for_replay(replacement_pauli)?;
+                        let _replacement_effect =
+                            self.exact_replacement_branch_effect(context, *request, &label)?;
+                    }
+                }
+                return Ok(());
+            }
+            return Err(DemBuilderError::ConfigurationError(
+                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_measurement_crosstalk_dem_mode(&self) -> Result<(), DemBuilderError> {
+        if self.noise.measurement_crosstalk_dem_mode == MeasurementCrosstalkDemMode::Omitted {
+            return Ok(());
+        }
+
+        let has_local_payloads = self
+            .influence_map
+            .locations
+            .iter()
+            .any(|loc| !loc.before && loc.gate_type == GateType::MeasCrosstalkLocalPayload);
+        let has_global_payloads = self
+            .influence_map
+            .locations
+            .iter()
+            .any(|loc| !loc.before && loc.gate_type == GateType::MeasCrosstalkGlobalPayload);
+
+        if !self.noise.p_meas_crosstalk_model.is_valid() {
+            return Err(DemBuilderError::ConfigurationError(
+                "measurement crosstalk transition probabilities must be finite, non-negative, and have each hidden-outcome row sum <= 1"
+                    .to_string(),
+            ));
+        }
+
+        if self.noise.p_meas_crosstalk_global > 0.0 && !has_global_payloads {
+            return Err(DemBuilderError::ConfigurationError(
+                "exact deterministic measurement crosstalk DEM replay requested a positive global rate, but the influence map contains no MeasCrosstalkGlobalPayload locations"
+                    .to_string(),
+            ));
+        }
+
+        if self.noise.p_meas_crosstalk_local > 0.0 && !has_local_payloads {
+            return Err(DemBuilderError::ConfigurationError(
+                "exact deterministic measurement crosstalk DEM replay requested a positive local rate, but the influence map contains no MeasCrosstalkLocalPayload locations"
+                    .to_string(),
+            ));
+        }
+
+        if self.noise.p_meas_crosstalk_local <= 0.0 && self.noise.p_meas_crosstalk_global <= 0.0 {
+            return Ok(());
+        }
+
+        if self.noise.p_meas_crosstalk_model.has_leakage()
+            && !matches!(
+                self.noise.measurement_crosstalk_dem_mode,
+                MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+                    | MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing
+            )
+        {
+            return Err(DemBuilderError::ConfigurationError(
+                "exact deterministic measurement crosstalk DEM replay does not yet support leakage transitions"
+                    .to_string(),
+            ));
+        }
+
+        let needs_circuit_context =
+            self.noise.measurement_crosstalk_dem_mode != MeasurementCrosstalkDemMode::Omitted;
+        let Some(context) = self.exact_branch_context else {
+            if needs_circuit_context {
+                return Err(DemBuilderError::ConfigurationError(
+                    "measurement crosstalk DEM replay requires a circuit-aware builder context"
+                        .to_string(),
+                ));
+            }
+            return Ok(());
+        };
+
+        let requires_deterministic_hidden_measurements = matches!(
+            self.noise.measurement_crosstalk_dem_mode,
+            MeasurementCrosstalkDemMode::ExactDeterministic
+                | MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+        );
+        if !requires_deterministic_hidden_measurements {
+            return Ok(());
+        }
+
+        for (loc_idx, loc) in self.influence_map.locations.iter().enumerate() {
+            if loc.before
+                || !matches!(
+                    loc.gate_type,
+                    GateType::MeasCrosstalkLocalPayload | GateType::MeasCrosstalkGlobalPayload
+                )
+            {
+                continue;
+            }
+            let result = Self::hidden_mz_result_before_crosstalk_payload(context, loc)?;
+            if !result.is_deterministic || !result.outcome.is_empty() {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "exact deterministic measurement crosstalk DEM replay requires a state-independent hidden MZ result at location {loc_idx} (node {}, qubit {:?}); got deterministic={}, dependencies={:?}",
+                    loc.node,
+                    loc.qubits.first(),
+                    result.is_deterministic,
+                    result.outcome
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn hidden_mz_result_before_crosstalk_payload(
+        context: ExactBranchReplayContext<'_>,
+        loc: &DagSpacetimeLocation,
+    ) -> Result<SymbolicMeasurementResult, DemBuilderError> {
+        let qubit = loc.qubits.first().copied().ok_or_else(|| {
+            DemBuilderError::ConfigurationError(format!(
+                "measurement crosstalk payload at node {} has no victim qubit",
+                loc.node
+            ))
+        })?;
+        let qubit_index = qubit.index();
+        let topo_order = context.circuit.topological_order();
+        let max_qubit = topo_order
+            .iter()
+            .filter_map(|&node| context.circuit.gate(node))
+            .flat_map(|gate| gate.qubits.iter())
+            .map(pecos_core::QubitId::index)
+            .max()
+            .unwrap_or(qubit_index);
+        let mut sim = SymbolicSparseStab::new(max_qubit.max(qubit_index) + 1);
+
+        for node in topo_order {
+            if node == loc.node {
+                return sim.mz(&[qubit_index]).into_iter().next().ok_or_else(|| {
+                    DemBuilderError::ConfigurationError(format!(
+                        "failed to synthesize hidden MZ for measurement crosstalk payload at node {}",
+                        loc.node
+                    ))
+                });
+            }
+
+            if let Some(gate) = context.circuit.gate(node) {
+                let qubits: Vec<usize> =
+                    gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+                Self::apply_symbolic_gate_for_crosstalk_hidden_mz(
+                    &mut sim,
+                    node,
+                    gate.gate_type,
+                    &qubits,
+                )?;
+            }
+        }
+
+        Err(DemBuilderError::ConfigurationError(format!(
+            "measurement crosstalk payload node {} was not found in the replay circuit",
+            loc.node
+        )))
+    }
+
+    fn exact_measurement_crosstalk_pauli_effect(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        loc: &DagSpacetimeLocation,
+        pauli: Pauli,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
+
+        for detector in &self.detectors {
+            let indices =
+                self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)?;
+            if self.measurement_parity_anticommutes_after_crosstalk_payload(
+                context, loc, pauli, &indices,
+            )? {
+                xor_toggle_4(&mut triggered_dets, detector.id);
+            }
+        }
+
+        for observable in &self.observables {
+            let indices =
+                self.measurement_indices_from_refs(&observable.records, &observable.meas_ids)?;
+            if self.measurement_parity_anticommutes_after_crosstalk_payload(
+                context, loc, pauli, &indices,
+            )? {
+                xor_toggle_2(&mut triggered_obs, observable.id);
+            }
+        }
+
+        triggered_dets.sort_unstable();
+        triggered_obs.sort_unstable();
+        Ok(FaultMechanism::from_sorted_with_tracked_paulis(
+            triggered_dets,
+            triggered_obs,
+            SmallVec::new(),
+        ))
+    }
+
+    fn measurement_parity_anticommutes_after_crosstalk_payload(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        loc: &DagSpacetimeLocation,
+        pauli: Pauli,
+        measurement_indices: &[usize],
+    ) -> Result<bool, DemBuilderError> {
+        let victim = loc.qubits.first().copied().ok_or_else(|| {
+            DemBuilderError::ConfigurationError(format!(
+                "measurement crosstalk payload at node {} has no victim qubit",
+                loc.node
+            ))
+        })?;
+        let victim_index = victim.index();
+        let mut prop = PauliProp::new();
+        for &measurement_idx in measurement_indices {
+            let &(_, qubit, basis) = self
+                .influence_map
+                .measurements
+                .get(measurement_idx)
+                .ok_or_else(|| {
+                    DemBuilderError::ConfigurationError(format!(
+                        "measurement crosstalk exact replay has no measurement {measurement_idx}"
+                    ))
+                })?;
+            match basis {
+                0 => prop.track_z(&[qubit]),
+                1 => prop.track_x(&[qubit]),
+                other => {
+                    return Err(DemBuilderError::ConfigurationError(format!(
+                        "measurement crosstalk exact replay does not support measurement basis {other}"
+                    )));
+                }
+            }
+        }
+
+        let topo_order = context.circuit.topological_order();
+        let payload_pos = topo_order
+            .iter()
+            .position(|&node| node == loc.node)
+            .ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "measurement crosstalk payload node {} was not found in the replay circuit",
+                    loc.node
+                ))
+            })?;
+        for &node in topo_order[payload_pos + 1..].iter().rev() {
+            if let Some(gate) = context.circuit.gate(node) {
+                apply_gate(&mut prop, gate, Direction::Backward);
+            }
+        }
+
+        Ok(Self::pauli_anticommutes_with_prop_on_qubit(
+            &prop,
+            victim_index,
+            pauli,
+        ))
+    }
+
+    fn pauli_anticommutes_with_prop_on_qubit(prop: &PauliProp, qubit: usize, pauli: Pauli) -> bool {
+        let has_x = prop.contains_x(qubit);
+        let has_z = prop.contains_z(qubit);
+        match pauli {
+            Pauli::I => false,
+            Pauli::X => has_z,
+            Pauli::Z => has_x,
+            Pauli::Y => has_x ^ has_z,
+        }
+    }
+
+    fn apply_symbolic_gate_for_crosstalk_hidden_mz(
+        sim: &mut SymbolicSparseStab,
+        node: usize,
+        gate_type: GateType,
+        qubits: &[usize],
+    ) -> Result<(), DemBuilderError> {
+        let require = |n: usize| -> Result<(), DemBuilderError> {
+            if qubits.len() < n {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "measurement crosstalk replay expected gate {:?} at node {} to have at least {} qubit(s), got {}",
+                    gate_type,
+                    node,
+                    n,
+                    qubits.len()
+                )));
+            }
+            Ok(())
+        };
+        let pairs = || -> Result<Vec<(usize, usize)>, DemBuilderError> {
+            require(2)?;
+            if !qubits.len().is_multiple_of(2) {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "measurement crosstalk replay expected gate {:?} at node {} to have an even number of qubits, got {}",
+                    gate_type,
+                    node,
+                    qubits.len()
+                )));
+            }
+            Ok(qubits
+                .chunks_exact(2)
+                .map(|pair| (pair[0], pair[1]))
+                .collect())
+        };
+
+        match gate_type {
+            GateType::H => {
+                require(1)?;
+                sim.h(qubits);
+            }
+            GateType::F => {
+                require(1)?;
+                sim.sx(qubits);
+                sim.sz(qubits);
+            }
+            GateType::Fdg => {
+                require(1)?;
+                sim.szdg(qubits);
+                sim.sxdg(qubits);
+            }
+            GateType::SX => {
+                require(1)?;
+                sim.sx(qubits);
+            }
+            GateType::SXdg => {
+                require(1)?;
+                sim.sxdg(qubits);
+            }
+            GateType::SY => {
+                require(1)?;
+                sim.sy(qubits);
+            }
+            GateType::SYdg => {
+                require(1)?;
+                sim.sydg(qubits);
+            }
+            GateType::SZ => {
+                require(1)?;
+                sim.sz(qubits);
+            }
+            GateType::SZdg => {
+                require(1)?;
+                sim.szdg(qubits);
+            }
+            GateType::X => {
+                require(1)?;
+                sim.x(qubits);
+            }
+            GateType::Y => {
+                require(1)?;
+                sim.y(qubits);
+            }
+            GateType::Z => {
+                require(1)?;
+                sim.z(qubits);
+            }
+            GateType::CX => {
+                sim.cx(&pairs()?);
+            }
+            GateType::CY => {
+                sim.cy(&pairs()?);
+            }
+            GateType::CZ => {
+                sim.cz(&pairs()?);
+            }
+            GateType::SXX => {
+                sim.sxx(&pairs()?);
+            }
+            GateType::SXXdg => {
+                sim.sxxdg(&pairs()?);
+            }
+            GateType::SYY => {
+                sim.syy(&pairs()?);
+            }
+            GateType::SYYdg => {
+                sim.syydg(&pairs()?);
+            }
+            GateType::SZZ => {
+                sim.szz(&pairs()?);
+            }
+            GateType::SZZdg => {
+                sim.szzdg(&pairs()?);
+            }
+            GateType::SWAP => {
+                sim.swap(&pairs()?);
+            }
+            GateType::MZ | GateType::MeasureFree => {
+                require(1)?;
+                sim.mz(qubits);
+            }
+            GateType::PZ | GateType::QAlloc => {
+                require(1)?;
+                for &qubit in qubits {
+                    sim.pz(qubit);
+                }
+            }
+            GateType::I
+            | GateType::Idle
+            | GateType::QFree
+            | GateType::MeasCrosstalkGlobalPayload
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::TrackedPauliMeta => {}
+            _ => {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "measurement crosstalk exact deterministic replay does not support gate {gate_type:?} before payload node {node}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn exact_omitted_branch_base_effect(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        request: ExactBranchReplayRequest,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        let branch = circuit_with_omitted_two_qubit_gate(context.circuit, request.gate_node)?;
+        self.exact_omitted_branch_base_effect_for_branch(context, request, &branch)
+    }
+
+    fn exact_omitted_branch_base_effect_for_branch(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        request: ExactBranchReplayRequest,
+        branch: &pecos_quantum::DagCircuit,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
+
+        let ideal_history = self.exact_ideal_measurement_history(context);
+        let branch_info = InfluenceBuilder::new(branch).run_symbolic_simulation();
+        let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
+
+        for detector in &self.detectors {
+            let indices =
+                self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)?;
+            if omitted_branch_flips_measurement_parity_from_histories(
+                request,
+                ideal_history.as_ref(),
+                &branch_info.history,
+                &indices,
+            )? {
+                xor_toggle_4(&mut triggered_dets, detector.id);
+            }
+        }
+
+        for observable in &self.observables {
+            let indices =
+                self.measurement_indices_from_refs(&observable.records, &observable.meas_ids)?;
+            if omitted_branch_flips_measurement_parity_from_histories(
+                request,
+                ideal_history.as_ref(),
+                &branch_info.history,
+                &indices,
+            )? {
+                xor_toggle_2(&mut triggered_obs, observable.id);
+            }
+        }
+
+        triggered_dets.sort_unstable();
+        triggered_obs.sort_unstable();
+        Ok(FaultMechanism::from_sorted_with_tracked_paulis(
+            triggered_dets,
+            triggered_obs,
+            SmallVec::new(),
+        ))
+    }
+
+    fn exact_ideal_measurement_history(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+    ) -> Rc<MeasurementHistory> {
+        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
+
+        if let Some(cached) = self.exact_ideal_history_cache.borrow().as_ref().cloned() {
+            return cached;
+        }
+
+        let history = Rc::new(
+            InfluenceBuilder::new(context.circuit)
+                .run_symbolic_simulation()
+                .history,
+        );
+        *self.exact_ideal_history_cache.borrow_mut() = Some(history.clone());
+        history
+    }
+
+    fn exact_branch_analysis(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        request: ExactBranchReplayRequest,
+    ) -> Result<ExactBranchReplayAnalysis, DemBuilderError> {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+
+        if let Some(cached) = self
+            .exact_branch_cache
+            .borrow()
+            .get(&request.gate_node)
+            .cloned()
+        {
+            return Ok(cached);
+        }
+
+        let branch = circuit_with_omitted_two_qubit_gate(context.circuit, request.gate_node)?;
+        let base_effect =
+            self.exact_omitted_branch_base_effect_for_branch(context, request, &branch)?;
+        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
+        let branch_locs = identity_location_pair_for_request(
+            request,
+            &self.influence_map.locations,
+            &branch_map.locations,
+        )?;
+        let (meas_to_detectors, meas_to_observables) = self.build_measurement_mappings();
+        let branch_effects = Self::two_qubit_effect_table_for_map(
+            &branch_map,
+            branch_locs[0],
+            branch_locs[1],
+            &meas_to_detectors,
+            &meas_to_observables,
+        );
+        let analysis = ExactBranchReplayAnalysis {
+            base_effect,
+            branch_effects,
+        };
+        self.exact_branch_cache
+            .borrow_mut()
+            .insert(request.gate_node, analysis.clone());
+        Ok(analysis)
+    }
+
+    fn exact_replacement_branch_effect(
+        &self,
+        context: ExactBranchReplayContext<'_>,
+        request: ExactBranchReplayRequest,
+        replacement_pauli_label: &str,
+    ) -> Result<FaultMechanism, DemBuilderError> {
+        let (p1, p2) = two_qubit_label_to_pauli_indices(replacement_pauli_label).ok_or_else(|| {
+            DemBuilderError::ConfigurationError(format!(
+                "exact_branch_replay replacement Pauli label {replacement_pauli_label:?} is not a two-qubit Pauli label"
+            ))
+        })?;
+        let analysis = self.exact_branch_analysis(context, request)?;
+        if p1 == 0 && p2 == 0 {
+            return Ok(analysis.base_effect);
+        }
+
+        Ok(analysis
+            .base_effect
+            .xor(&analysis.branch_effects[p1 as usize][p2 as usize]))
+    }
+
     fn num_influence_dem_outputs(&self) -> usize {
         self.influence_map
             .influences
@@ -695,9 +1420,6 @@ impl<'a> DemBuilder<'a> {
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) {
         let locations = &self.influence_map.locations;
-
-        // Group CX locations by node for two-qubit gate processing
-        let mut cx_groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
 
         for (loc_idx, loc) in locations.iter().enumerate() {
             match loc.gate_type {
@@ -721,23 +1443,43 @@ impl<'a> DemBuilder<'a> {
                         meas_to_observables,
                     );
                 }
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ
-                    if !loc.before =>
+                GateType::MeasCrosstalkLocalPayload
+                    if !loc.before
+                        && matches!(
+                            self.noise.measurement_crosstalk_dem_mode,
+                            MeasurementCrosstalkDemMode::ExactDeterministic
+                                | MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+                                | MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing
+                        )
+                        && self.noise.p_meas_crosstalk_local > 0.0 =>
                 {
-                    cx_groups.entry(loc.node).or_default().push(loc_idx);
+                    self.process_measurement_crosstalk_source_tracked(
+                        loc_idx,
+                        self.noise.p_meas_crosstalk_local,
+                        dem,
+                        meas_to_detectors,
+                        meas_to_observables,
+                    );
                 }
+                GateType::MeasCrosstalkGlobalPayload
+                    if !loc.before
+                        && matches!(
+                            self.noise.measurement_crosstalk_dem_mode,
+                            MeasurementCrosstalkDemMode::ExactDeterministic
+                                | MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+                                | MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing
+                        )
+                        && self.noise.p_meas_crosstalk_global > 0.0 =>
+                {
+                    self.process_measurement_crosstalk_source_tracked(
+                        loc_idx,
+                        self.noise.p_meas_crosstalk_global,
+                        dem,
+                        meas_to_detectors,
+                        meas_to_observables,
+                    );
+                }
+                gate_type if is_two_qubit_noise_gate(gate_type) && !loc.before => {}
                 GateType::H
                 | GateType::F
                 | GateType::Fdg
@@ -787,24 +1529,37 @@ impl<'a> DemBuilder<'a> {
         }
 
         // Process two-qubit gates.
-        for (_, loc_indices) in cx_groups {
-            for pair in loc_indices.chunks(2) {
-                if pair.len() != 2 {
-                    continue;
-                }
-                let loc1 = &locations[pair[0]];
-                let loc2 = &locations[pair[1]];
-                let rates = self.rates_2q_for_locs(loc1, loc2);
-                if rates.iter().any(|r| *r > 0.0) {
-                    self.process_two_qubit_fault_source_tracked(
-                        pair[0],
-                        pair[1],
-                        rates,
-                        dem,
-                        meas_to_detectors,
-                        meas_to_observables,
-                    );
-                }
+        for [loc1_idx, loc2_idx] in two_qubit_after_location_pairs(locations) {
+            let loc1 = &locations[loc1_idx];
+            let loc2 = &locations[loc2_idx];
+            let rates = self.rates_2q_for_locs(loc1, loc2);
+            if rates.iter().any(|r| *r > 0.0) {
+                self.process_two_qubit_fault_source_tracked(
+                    loc1_idx,
+                    loc2_idx,
+                    rates,
+                    dem,
+                    meas_to_detectors,
+                    meas_to_observables,
+                );
+            }
+            if self.noise.p2_replacement_approximation
+                == ReplacementBranchApproximation::BranchImpact
+            {
+                self.process_two_qubit_replacement_branch_impacts_source_tracked(
+                    loc1_idx,
+                    loc2_idx,
+                    dem,
+                    meas_to_detectors,
+                    meas_to_observables,
+                );
+            }
+            if self.noise.p2_replacement_approximation
+                == ReplacementBranchApproximation::ExactBranchReplay
+            {
+                self.process_two_qubit_exact_replacement_branches_source_tracked(
+                    loc1_idx, loc2_idx, dem,
+                );
             }
         }
     }
@@ -831,6 +1586,112 @@ impl<'a> DemBuilder<'a> {
         }
     }
 
+    /// Processes starred two-qubit replacement branches as explicit branch impacts.
+    fn process_two_qubit_replacement_branch_impacts_source_tracked(
+        &self,
+        loc1: usize,
+        loc2: usize,
+        dem: &mut DetectorErrorModel,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) {
+        let Some(weights) = &self.noise.p2_weights else {
+            return;
+        };
+        let loc1_meta = &self.influence_map.locations[loc1];
+        let branch_impacts = weights.replacement_branch_impacts(loc1_meta.gate_type);
+        if branch_impacts.is_empty() {
+            return;
+        }
+
+        let effects =
+            self.two_qubit_effect_table(loc1, loc2, meas_to_detectors, meas_to_observables);
+        let loc2_meta = &self.influence_map.locations[loc2];
+
+        for impact in branch_impacts {
+            let Some((p1, p2)) = two_qubit_label_to_pauli_indices(&impact.pauli_label) else {
+                continue;
+            };
+            let prob = self.noise.p2 * impact.relative_probability;
+            Self::add_two_qubit_pauli_contribution(
+                loc1,
+                loc2,
+                p1,
+                p2,
+                prob,
+                &effects,
+                loc1_meta,
+                loc2_meta,
+                dem,
+                Some(DirectSourceFamily::TwoLocationReplacementBranchImpact),
+            );
+        }
+    }
+
+    /// Processes starred two-qubit replacement branches by replaying the exact
+    /// omitted-gate branch against detector/observable metadata.
+    fn process_two_qubit_exact_replacement_branches_source_tracked(
+        &self,
+        loc1: usize,
+        loc2: usize,
+        dem: &mut DetectorErrorModel,
+    ) {
+        let Some(weights) = &self.noise.p2_weights else {
+            return;
+        };
+        if !weights.has_replacement_entries() {
+            return;
+        }
+
+        let context = self
+            .exact_branch_context
+            .expect("exact_branch_replay was validated with circuit context");
+        let loc1_meta = &self.influence_map.locations[loc1];
+        let loc2_meta = &self.influence_map.locations[loc2];
+        let request = ExactBranchReplayRequest {
+            gate_node: loc1_meta.node,
+            gate_type: loc1_meta.gate_type,
+            loc_indices: [loc1, loc2],
+        };
+
+        for (replacement_pauli, relative_probability) in weights.replacement_entries() {
+            if *relative_probability <= 0.0 {
+                continue;
+            }
+            let label = two_qubit_label_for_replay(replacement_pauli)
+                .expect("exact_branch_replay replacement Pauli was validated");
+            let (p1, p2) = two_qubit_label_to_pauli_indices(&label)
+                .expect("exact_branch_replay label must be a two-qubit Pauli");
+            let analysis = self
+                .exact_branch_analysis(context, request)
+                .expect("exact_branch_replay effect was validated");
+            let base_effect = analysis.base_effect.clone();
+            let branch_pauli_effect = analysis.branch_effects[p1 as usize][p2 as usize].clone();
+            let effect = base_effect.xor(&branch_pauli_effect);
+            if effect.is_empty() {
+                continue;
+            }
+
+            let source_locations = [loc1, loc2];
+            let source_paulis = [Pauli::from_u8(p1), Pauli::from_u8(p2)];
+            let source_gate_types = [loc1_meta.gate_type, loc2_meta.gate_type];
+            let source_before_flags = [loc1_meta.before, loc2_meta.before];
+            dem.add_direct_contribution_with_source_components(
+                effect,
+                self.noise.p2 * *relative_probability,
+                SourceMetadata::new(
+                    &source_locations,
+                    &source_paulis,
+                    &source_gate_types,
+                    &source_before_flags,
+                )
+                .with_direct_source_family(DirectSourceFamily::TwoLocationExactReplacementBranch)
+                .with_replacement_branch(),
+                DirectSourceComponents::new(&base_effect, &branch_pauli_effect),
+            );
+        }
+    }
+
     /// Processes a measurement fault with source tracking.
     fn process_meas_fault_source_tracked(
         &self,
@@ -850,6 +1711,142 @@ impl<'a> DemBuilder<'a> {
                 p,
                 SourceMetadata::new(&[loc_idx], &[Pauli::X], &[loc.gate_type], &[loc.before]),
             );
+        }
+    }
+
+    /// Processes local measurement-crosstalk payloads when hidden outcomes are
+    /// deterministic and state-independent.
+    fn process_measurement_crosstalk_source_tracked(
+        &self,
+        loc_idx: usize,
+        payload_rate: f64,
+        dem: &mut DetectorErrorModel,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) {
+        let (bit_flip_probability, leak_probability) =
+            match self.noise.measurement_crosstalk_dem_mode {
+                MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing => (
+                    0.5 * (self.noise.p_meas_crosstalk_model.p_0_to_1
+                        + self.noise.p_meas_crosstalk_model.p_1_to_0),
+                    0.5 * (self.noise.p_meas_crosstalk_model.p_0_to_leak
+                        + self.noise.p_meas_crosstalk_model.p_1_to_leak),
+                ),
+                MeasurementCrosstalkDemMode::ExactDeterministic
+                | MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing => {
+                    let context = self.exact_branch_context.expect(
+                        "measurement crosstalk exact deterministic mode was validated with context",
+                    );
+                    let loc = &self.influence_map.locations[loc_idx];
+                    let hidden = Self::hidden_mz_result_before_crosstalk_payload(context, loc)
+                        .expect(
+                            "measurement crosstalk exact deterministic hidden result was validated",
+                        );
+                    if hidden.flip {
+                        (
+                            self.noise.p_meas_crosstalk_model.p_1_to_0,
+                            self.noise.p_meas_crosstalk_model.p_1_to_leak,
+                        )
+                    } else {
+                        (
+                            self.noise.p_meas_crosstalk_model.p_0_to_1,
+                            self.noise.p_meas_crosstalk_model.p_0_to_leak,
+                        )
+                    }
+                }
+                MeasurementCrosstalkDemMode::Omitted => {
+                    return;
+                }
+            };
+        if matches!(
+            self.noise.measurement_crosstalk_dem_mode,
+            MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing
+                | MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing
+        ) {
+            let leak_pauli_probability = leak_probability / 4.0;
+            self.process_measurement_crosstalk_pauli_rates_source_tracked(
+                loc_idx,
+                [
+                    payload_rate * (bit_flip_probability + leak_pauli_probability),
+                    payload_rate * leak_pauli_probability,
+                    payload_rate * leak_pauli_probability,
+                ],
+                dem,
+                meas_to_detectors,
+                meas_to_observables,
+            );
+        } else {
+            self.process_measurement_crosstalk_pauli_rates_source_tracked(
+                loc_idx,
+                [payload_rate * bit_flip_probability, 0.0, 0.0],
+                dem,
+                meas_to_detectors,
+                meas_to_observables,
+            );
+        }
+    }
+
+    /// Processes local measurement-crosstalk payloads as single-location Pauli
+    /// source channels while preserving crosstalk source metadata.
+    fn process_measurement_crosstalk_pauli_rates_source_tracked(
+        &self,
+        loc_idx: usize,
+        rates: [f64; 3],
+        dem: &mut DetectorErrorModel,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) {
+        let loc = &self.influence_map.locations[loc_idx];
+        let [rate_x, rate_y, rate_z] = rates;
+        let effect = |pauli| -> FaultMechanism {
+            if loc.gate_type == GateType::MeasCrosstalkGlobalPayload {
+                let context = self.exact_branch_context.expect(
+                    "measurement crosstalk exact deterministic mode was validated with context",
+                );
+                self.exact_measurement_crosstalk_pauli_effect(context, loc, pauli)
+                    .expect("global measurement crosstalk exact replay was validated")
+            } else {
+                self.compute_mechanism(loc_idx, pauli, meas_to_detectors, meas_to_observables)
+            }
+        };
+        let x_effect = effect(Pauli::X);
+        let z_effect = effect(Pauli::Z);
+
+        if rate_x > 0.0 && !x_effect.is_empty() {
+            dem.add_direct_contribution_with_source(
+                x_effect.clone(),
+                rate_x,
+                SourceMetadata::new(&[loc_idx], &[Pauli::X], &[loc.gate_type], &[loc.before])
+                    .with_direct_source_family(DirectSourceFamily::MeasurementCrosstalk),
+            );
+        }
+        if rate_z > 0.0 && !z_effect.is_empty() {
+            dem.add_direct_contribution_with_source(
+                z_effect.clone(),
+                rate_z,
+                SourceMetadata::new(&[loc_idx], &[Pauli::Z], &[loc.gate_type], &[loc.before])
+                    .with_direct_source_family(DirectSourceFamily::MeasurementCrosstalk),
+            );
+        }
+
+        let y_effect = x_effect.xor(&z_effect);
+        if rate_y > 0.0 && !y_effect.is_empty() {
+            if !x_effect.is_empty() && !z_effect.is_empty() {
+                dem.add_y_decomposed_contribution_with_source(
+                    &x_effect,
+                    &z_effect,
+                    rate_y,
+                    SourceMetadata::new(&[loc_idx], &[Pauli::Y], &[loc.gate_type], &[loc.before])
+                        .with_direct_source_family(DirectSourceFamily::MeasurementCrosstalk),
+                );
+            } else {
+                dem.add_direct_contribution_with_source(
+                    y_effect,
+                    rate_y,
+                    SourceMetadata::new(&[loc_idx], &[Pauli::Y], &[loc.gate_type], &[loc.before])
+                        .with_direct_source_family(DirectSourceFamily::MeasurementCrosstalk),
+                );
+            }
         }
     }
 
@@ -944,19 +1941,47 @@ impl<'a> DemBuilder<'a> {
         let loc1_meta = &self.influence_map.locations[loc1];
         let loc2_meta = &self.influence_map.locations[loc2];
 
-        // Compute base effects for X and Z on each qubit
+        let effects =
+            self.two_qubit_effect_table(loc1, loc2, meas_to_detectors, meas_to_observables);
+
+        // Process all 15 non-trivial Pauli combinations
+        for p1 in 0u8..4 {
+            for p2 in 0u8..4 {
+                if p1 == 0 && p2 == 0 {
+                    continue; // Skip II
+                }
+
+                // Per-pair rate: index = 4*p1 + p2 - 1 (skipping II at idx 0).
+                let flat = 4 * (p1 as usize) + (p2 as usize);
+                let prob = rates[flat - 1];
+                if prob == 0.0 {
+                    continue;
+                }
+                Self::add_two_qubit_pauli_contribution(
+                    loc1, loc2, p1, p2, prob, &effects, loc1_meta, loc2_meta, dem, None,
+                );
+            }
+        }
+    }
+
+    fn two_qubit_effect_table(
+        &self,
+        loc1: usize,
+        loc2: usize,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) -> [[FaultMechanism; 4]; 4] {
         let x1 = self.compute_mechanism(loc1, Pauli::X, meas_to_detectors, meas_to_observables);
         let z1 = self.compute_mechanism(loc1, Pauli::Z, meas_to_detectors, meas_to_observables);
         let x2 = self.compute_mechanism(loc2, Pauli::X, meas_to_detectors, meas_to_observables);
         let z2 = self.compute_mechanism(loc2, Pauli::Z, meas_to_detectors, meas_to_observables);
 
-        // Build effect table for all 16 Pauli combinations
         let get_single_effect = |p: u8, x: &FaultMechanism, z: &FaultMechanism| -> FaultMechanism {
             match p {
-                0 => FaultMechanism::new(), // I
-                1 => x.clone(),             // X
-                2 => x.xor(z),              // Y = X XOR Z
-                3 => z.clone(),             // Z
+                0 => FaultMechanism::new(),
+                1 => x.clone(),
+                2 => x.xor(z),
+                3 => z.clone(),
                 _ => unreachable!("Pauli index must be 0-3"),
             }
         };
@@ -969,82 +1994,196 @@ impl<'a> DemBuilder<'a> {
                 effects[p1 as usize][p2 as usize] = e1.xor(&e2);
             }
         }
+        effects
+    }
 
-        // Process all 15 non-trivial Pauli combinations
-        for p1 in 0u8..4 {
-            for p2 in 0u8..4 {
-                if p1 == 0 && p2 == 0 {
-                    continue; // Skip II
-                }
+    fn two_qubit_effect_table_for_map(
+        influence_map: &DagFaultInfluenceMap,
+        loc1: usize,
+        loc2: usize,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) -> [[FaultMechanism; 4]; 4] {
+        let x1 = Self::compute_mechanism_for_map(
+            influence_map,
+            loc1,
+            Pauli::X,
+            meas_to_detectors,
+            meas_to_observables,
+        );
+        let z1 = Self::compute_mechanism_for_map(
+            influence_map,
+            loc1,
+            Pauli::Z,
+            meas_to_detectors,
+            meas_to_observables,
+        );
+        let x2 = Self::compute_mechanism_for_map(
+            influence_map,
+            loc2,
+            Pauli::X,
+            meas_to_detectors,
+            meas_to_observables,
+        );
+        let z2 = Self::compute_mechanism_for_map(
+            influence_map,
+            loc2,
+            Pauli::Z,
+            meas_to_detectors,
+            meas_to_observables,
+        );
 
-                let effect = &effects[p1 as usize][p2 as usize];
-                if effect.is_empty() {
-                    continue;
-                }
+        let get_single_effect = |p: u8, x: &FaultMechanism, z: &FaultMechanism| -> FaultMechanism {
+            match p {
+                0 => FaultMechanism::new(),
+                1 => x.clone(),
+                2 => x.xor(z),
+                3 => z.clone(),
+                _ => unreachable!("Pauli index must be 0-3"),
+            }
+        };
 
-                // Per-pair rate: index = 4*p1 + p2 - 1 (skipping II at idx 0).
-                let flat = 4 * (p1 as usize) + (p2 as usize);
-                let prob = rates[flat - 1];
-                if prob == 0.0 {
-                    continue;
-                }
-
-                // Get component effects (P1I and IP2)
-                let e1 = &effects[p1 as usize][0]; // P1 on qubit 1, I on qubit 2
-                let e2 = &effects[0][p2 as usize]; // I on qubit 1, P2 on qubit 2
-
-                // Check if this is a "graphlike decomposable" source:
-                // - Combined effect has exactly 2 detectors and no dem_outputs
-                // - Both component effects are non-empty
-                // - Both component effects are graphlike (≤2 detectors)
-                let graphlike_decomposable = effect.num_detectors() == 2
-                    && effect.dem_outputs.is_empty()
-                    && !e1.is_empty()
-                    && !e2.is_empty()
-                    && e1.num_detectors() <= 2
-                    && e2.num_detectors() <= 2;
-                if graphlike_decomposable {
-                    dem.mark_graphlike_decomposable(effect.detectors[0], effect.detectors[1]);
-                }
-
-                // Check for intra-channel decomposition (Y-containing cases)
-                if let Some((a1, a2, b1, b2)) = get_y_decomposition(p1, p2) {
-                    // Y-containing channels can be decomposable if both their X and Z
-                    // components have non-empty, distinct effects. Otherwise they
-                    // produce the effect directly without decomposition.
-                    let e_a = &effects[a1 as usize][a2 as usize];
-                    let e_b = &effects[b1 as usize][b2 as usize];
-
-                    // Only truly decomposable if both components are non-empty and different.
-                    // add_y_decomposed_contribution handles routing to Direct when appropriate.
-                    dem.add_y_decomposed_contribution_with_source(
-                        e_a,
-                        e_b,
-                        prob,
-                        SourceMetadata::new(
-                            &[loc1, loc2],
-                            &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
-                            &[loc1_meta.gate_type, loc2_meta.gate_type],
-                            &[loc1_meta.before, loc2_meta.before],
-                        ),
-                    );
-                } else {
-                    // Non-Y channel (XI, IX, ZI, IZ, XX, XZ, ZX, ZZ)
-                    // These are always direct sources.
-                    dem.add_direct_contribution_with_source_components(
-                        effect.clone(),
-                        prob,
-                        SourceMetadata::new(
-                            &[loc1, loc2],
-                            &[Pauli::from_u8(p1), Pauli::from_u8(p2)],
-                            &[loc1_meta.gate_type, loc2_meta.gate_type],
-                            &[loc1_meta.before, loc2_meta.before],
-                        ),
-                        DirectSourceComponents::new(e1, e2),
-                    );
-                }
+        let mut effects: [[FaultMechanism; 4]; 4] = Default::default();
+        for p1 in 0..4u8 {
+            for p2 in 0..4u8 {
+                let e1 = get_single_effect(p1, &x1, &z1);
+                let e2 = get_single_effect(p2, &x2, &z2);
+                effects[p1 as usize][p2 as usize] = e1.xor(&e2);
             }
         }
+        effects
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_two_qubit_pauli_contribution(
+        loc1: usize,
+        loc2: usize,
+        p1: u8,
+        p2: u8,
+        prob: f64,
+        effects: &[[FaultMechanism; 4]; 4],
+        loc1_meta: &DagSpacetimeLocation,
+        loc2_meta: &DagSpacetimeLocation,
+        dem: &mut DetectorErrorModel,
+        direct_source_family: Option<DirectSourceFamily>,
+    ) {
+        let effect = &effects[p1 as usize][p2 as usize];
+        if effect.is_empty() {
+            return;
+        }
+
+        let e1 = &effects[p1 as usize][0];
+        let e2 = &effects[0][p2 as usize];
+
+        let graphlike_decomposable = effect.num_detectors() == 2
+            && effect.dem_outputs.is_empty()
+            && !e1.is_empty()
+            && !e2.is_empty()
+            && e1.num_detectors() <= 2
+            && e2.num_detectors() <= 2;
+        if graphlike_decomposable {
+            dem.mark_graphlike_decomposable(effect.detectors[0], effect.detectors[1]);
+        }
+
+        let source_locations = [loc1, loc2];
+        let source_paulis = [Pauli::from_u8(p1), Pauli::from_u8(p2)];
+        let source_gate_types = [loc1_meta.gate_type, loc2_meta.gate_type];
+        let source_before_flags = [loc1_meta.before, loc2_meta.before];
+
+        let source_frame_components = if direct_source_family.is_none() {
+            Self::two_qubit_clifford_source_frame_components(loc1_meta.gate_type, p1, p2, effects)
+        } else {
+            None
+        };
+        if let Some(parts) = source_frame_components.as_ref() {
+            dem.add_direct_contribution_with_source_components(
+                effect.clone(),
+                prob,
+                SourceMetadata::new(
+                    &source_locations,
+                    &source_paulis,
+                    &source_gate_types,
+                    &source_before_flags,
+                ),
+                DirectSourceComponents::from_slice(parts.as_slice()),
+            );
+            return;
+        }
+
+        if let Some((a1, a2, b1, b2)) = get_y_decomposition(p1, p2) {
+            let e_a = &effects[a1 as usize][a2 as usize];
+            let e_b = &effects[b1 as usize][b2 as usize];
+            let mut source = SourceMetadata::new(
+                &source_locations,
+                &source_paulis,
+                &source_gate_types,
+                &source_before_flags,
+            );
+            if direct_source_family.is_some() {
+                source = source.with_replacement_branch();
+            }
+            dem.add_y_decomposed_contribution_with_source(e_a, e_b, prob, source);
+        } else {
+            let mut source = SourceMetadata::new(
+                &source_locations,
+                &source_paulis,
+                &source_gate_types,
+                &source_before_flags,
+            );
+            if let Some(family) = direct_source_family {
+                source = source
+                    .with_direct_source_family(family)
+                    .with_replacement_branch();
+            }
+
+            dem.add_direct_contribution_with_source_components(
+                effect.clone(),
+                prob,
+                source,
+                DirectSourceComponents::new(e1, e2),
+            );
+        }
+    }
+
+    /// Builds exact source-frame components for ordinary post-gate Pauli noise
+    /// on supported two-qubit Clifford gates.
+    ///
+    /// A post-gate Pauli can be pulled back through the Clifford into a pre-gate
+    /// Pauli. Decomposing that pre-gate Pauli into X/Z generators often exposes
+    /// the graphlike source pieces that were hidden by the native gate frame.
+    /// Each generator is then pushed forward again and looked up in the existing
+    /// post-gate effect table, so the XOR of returned components is exactly the
+    /// original post-gate effect.
+    fn two_qubit_clifford_source_frame_components(
+        gate_type: GateType,
+        post_p1: u8,
+        post_p2: u8,
+        effects: &[[FaultMechanism; 4]; 4],
+    ) -> Option<SmallVec<[FaultMechanism; 4]>> {
+        let images = two_qubit_pre_generator_post_images(gate_type)?;
+        let (pre_p1, pre_p2) = invert_two_qubit_clifford_post_pauli(images, (post_p1, post_p2))?;
+
+        let mut components = SmallVec::new();
+        for image in two_qubit_pre_pauli_generator_images(images, pre_p1, pre_p2) {
+            toggle_source_component(
+                &mut components,
+                effects[image.0 as usize][image.1 as usize].clone(),
+            );
+        }
+
+        if components.is_empty() {
+            return None;
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            let combined = components
+                .iter()
+                .fold(FaultMechanism::new(), |acc, part| acc.xor(part));
+            debug_assert_eq!(combined, effects[post_p1 as usize][post_p2 as usize]);
+        }
+
+        Some(components)
     }
 
     /// Builds mappings from measurement indices to detector/DEM-output IDs.
@@ -1176,26 +2315,34 @@ impl<'a> DemBuilder<'a> {
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
     ) -> FaultMechanism {
+        Self::compute_mechanism_for_map(
+            self.influence_map,
+            loc_idx,
+            pauli,
+            meas_to_detectors,
+            meas_to_observables,
+        )
+    }
+
+    fn compute_mechanism_for_map(
+        influence_map: &DagFaultInfluenceMap,
+        loc_idx: usize,
+        pauli: Pauli,
+        meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
+        meas_to_observables: &BTreeMap<usize, Vec<u32>>,
+    ) -> FaultMechanism {
         // Get the measurement indices that this fault flips
-        let rust_dets = self
-            .influence_map
-            .get_detector_indices(loc_idx, pauli.as_u8());
+        let rust_dets = influence_map.get_detector_indices(loc_idx, pauli.as_u8());
 
         // Convert to pre-defined detector IDs using XOR
         let mut triggered_dets: SmallVec<[u32; 4]> = SmallVec::new();
         let mut triggered_obs: SmallVec<[u32; 2]> = SmallVec::new();
         let mut triggered_tracked_paulis: SmallVec<[u32; 2]> = SmallVec::new();
 
-        for dem_output_idx in self
-            .influence_map
-            .get_observable_indices(loc_idx, pauli.as_u8())
-        {
+        for dem_output_idx in influence_map.get_observable_indices(loc_idx, pauli.as_u8()) {
             xor_toggle_2(&mut triggered_obs, dem_output_idx);
         }
-        for tracked_pauli_idx in self
-            .influence_map
-            .get_tracked_pauli_indices(loc_idx, pauli.as_u8())
-        {
+        for tracked_pauli_idx in influence_map.get_tracked_pauli_indices(loc_idx, pauli.as_u8()) {
             xor_toggle_2(&mut triggered_tracked_paulis, tracked_pauli_idx);
         }
 
@@ -1268,6 +2415,52 @@ fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
     pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
 }
 
+fn two_qubit_label_to_pauli_indices(label: &str) -> Option<(u8, u8)> {
+    let mut chars = label.chars();
+    let p1 = pauli_label_to_index(chars.next()?)?;
+    let p2 = pauli_label_to_index(chars.next()?)?;
+    chars.next().is_none().then_some((p1, p2))
+}
+
+fn two_qubit_label_for_replay(pauli: &pecos_core::PauliString) -> Result<String, DemBuilderError> {
+    let mut label = String::with_capacity(2);
+    for qubit in [0, 1] {
+        label.push(pauli_index_to_label(match pauli.get(qubit) {
+            pecos_core::Pauli::I => 0,
+            pecos_core::Pauli::X => 1,
+            pecos_core::Pauli::Y => 2,
+            pecos_core::Pauli::Z => 3,
+        }));
+    }
+    if pauli.qubits().into_iter().any(|qubit| qubit > 1) {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "exact_branch_replay replacement Pauli {} is not supported by the two-qubit replay path",
+            pauli.to_sparse_str()
+        )));
+    }
+    Ok(label)
+}
+
+fn pauli_index_to_label(index: u8) -> char {
+    match index {
+        0 => 'I',
+        1 => 'X',
+        2 => 'Y',
+        3 => 'Z',
+        _ => unreachable!("Pauli index must be 0-3"),
+    }
+}
+
+fn pauli_label_to_index(label: char) -> Option<u8> {
+    match label {
+        'I' => Some(0),
+        'X' => Some(1),
+        'Y' => Some(2),
+        'Z' => Some(3),
+        _ => None,
+    }
+}
+
 /// Computes the per-error probability for independent error channels.
 ///
 /// For a depolarizing channel with total error probability `p` split among `n`
@@ -1304,6 +2497,133 @@ fn per_channel_probability(total_prob: f64, num_channels: u32) -> f64 {
 // ============================================================================
 // Intra-Channel Decomposition
 // ============================================================================
+
+type TwoQubitPauli = (u8, u8);
+type TwoQubitGeneratorImages = [TwoQubitPauli; 4];
+
+/// Returns post-gate images of the pre-gate generators
+/// `[X1, Z1, X2, Z2]`, ignoring phase.
+#[inline]
+fn two_qubit_pre_generator_post_images(gate_type: GateType) -> Option<TwoQubitGeneratorImages> {
+    match gate_type {
+        GateType::CX => Some([
+            (1, 1), // X1 -> XX
+            (3, 0), // Z1 -> ZI
+            (0, 1), // X2 -> IX
+            (3, 3), // Z2 -> ZZ
+        ]),
+        GateType::CZ => Some([
+            (1, 3), // X1 -> XZ
+            (3, 0), // Z1 -> ZI
+            (3, 1), // X2 -> ZX
+            (0, 3), // Z2 -> IZ
+        ]),
+        GateType::SZZ | GateType::SZZdg => Some([
+            (2, 3), // X1 -> YZ
+            (3, 0), // Z1 -> ZI
+            (3, 2), // X2 -> ZY
+            (0, 3), // Z2 -> IZ
+        ]),
+        _ => None,
+    }
+}
+
+#[inline]
+fn invert_two_qubit_clifford_post_pauli(
+    images: TwoQubitGeneratorImages,
+    post: TwoQubitPauli,
+) -> Option<TwoQubitPauli> {
+    for pre_p1 in 0..4 {
+        for pre_p2 in 0..4 {
+            if forward_two_qubit_pauli(images, pre_p1, pre_p2) == post {
+                return Some((pre_p1, pre_p2));
+            }
+        }
+    }
+    None
+}
+
+fn two_qubit_pre_pauli_generator_images(
+    images: TwoQubitGeneratorImages,
+    pre_p1: u8,
+    pre_p2: u8,
+) -> SmallVec<[TwoQubitPauli; 4]> {
+    let mut out = SmallVec::new();
+    if pauli_has_x(pre_p1) {
+        out.push(images[0]);
+    }
+    if pauli_has_z(pre_p1) {
+        out.push(images[1]);
+    }
+    if pauli_has_x(pre_p2) {
+        out.push(images[2]);
+    }
+    if pauli_has_z(pre_p2) {
+        out.push(images[3]);
+    }
+    out
+}
+
+#[inline]
+fn forward_two_qubit_pauli(
+    images: TwoQubitGeneratorImages,
+    pre_p1: u8,
+    pre_p2: u8,
+) -> TwoQubitPauli {
+    two_qubit_pre_pauli_generator_images(images, pre_p1, pre_p2)
+        .into_iter()
+        .fold((0, 0), xor_two_qubit_pauli)
+}
+
+#[inline]
+fn xor_two_qubit_pauli(a: TwoQubitPauli, b: TwoQubitPauli) -> TwoQubitPauli {
+    (xor_pauli(a.0, b.0), xor_pauli(a.1, b.1))
+}
+
+#[inline]
+fn xor_pauli(a: u8, b: u8) -> u8 {
+    pauli_from_bits(
+        pauli_has_x(a) ^ pauli_has_x(b),
+        pauli_has_z(a) ^ pauli_has_z(b),
+    )
+}
+
+#[inline]
+fn pauli_has_x(pauli: u8) -> bool {
+    matches!(pauli, 1 | 2)
+}
+
+#[inline]
+fn pauli_has_z(pauli: u8) -> bool {
+    matches!(pauli, 2 | 3)
+}
+
+#[inline]
+fn pauli_from_bits(has_x: bool, has_z: bool) -> u8 {
+    match (has_x, has_z) {
+        (false, false) => 0,
+        (true, false) => 1,
+        (true, true) => 2,
+        (false, true) => 3,
+    }
+}
+
+fn toggle_source_component(
+    components: &mut SmallVec<[FaultMechanism; 4]>,
+    component: FaultMechanism,
+) {
+    if component.is_empty() {
+        return;
+    }
+    if let Some(index) = components
+        .iter()
+        .position(|existing| existing == &component)
+    {
+        components.remove(index);
+    } else {
+        components.push(component);
+    }
+}
 
 /// Returns the intra-channel decomposition for Y-containing Pauli cases.
 ///
@@ -1748,6 +3068,208 @@ fn extract_measurement_refs(
     Ok((records, meas_ids))
 }
 
+fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::CX
+            | GateType::CZ
+            | GateType::CY
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SWAP
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+    )
+}
+
+fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[usize; 2]> {
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for (loc_idx, loc) in locations.iter().enumerate() {
+        if is_two_qubit_noise_gate(loc.gate_type) && !loc.before {
+            groups.entry(loc.node).or_default().push(loc_idx);
+        }
+    }
+
+    groups
+        .into_values()
+        .flat_map(|loc_indices| {
+            loc_indices
+                .chunks_exact(2)
+                .map(|pair| [pair[0], pair[1]])
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+impl ExactBranchReplayContext<'_> {
+    fn replacement_branch_requests(
+        self,
+        locations: &[DagSpacetimeLocation],
+    ) -> Result<Vec<ExactBranchReplayRequest>, DemBuilderError> {
+        let mut requests = Vec::new();
+        for [loc1_idx, loc2_idx] in two_qubit_after_location_pairs(locations) {
+            let loc1 = &locations[loc1_idx];
+            let loc2 = &locations[loc2_idx];
+            if loc1.node != loc2.node {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay expected paired two-qubit locations to share a node, got {} and {}",
+                    loc1.node, loc2.node
+                )));
+            }
+            if loc1.gate_type != loc2.gate_type {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay expected paired two-qubit locations at node {} to share a gate type, got {:?} and {:?}",
+                    loc1.node, loc1.gate_type, loc2.gate_type
+                )));
+            }
+            let replacement = self.circuit.gate(loc1.node).ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay expected an original gate at node {}",
+                    loc1.node
+                ))
+            })?;
+            if !loc1
+                .qubits
+                .iter()
+                .chain(loc2.qubits.iter())
+                .all(|qubit| replacement.qubits.contains(qubit))
+            {
+                return Err(DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay location qubits at node {} are not all present in the omitted branch gate",
+                    loc1.node
+                )));
+            }
+            requests.push(ExactBranchReplayRequest {
+                gate_node: loc1.node,
+                gate_type: loc1.gate_type,
+                loc_indices: [loc1_idx, loc2_idx],
+            });
+        }
+        Ok(requests)
+    }
+
+    #[cfg(test)]
+    fn omitted_branch_location_pair(
+        self,
+        request: ExactBranchReplayRequest,
+        original_locations: &[DagSpacetimeLocation],
+    ) -> Result<[usize; 2], DemBuilderError> {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+
+        let branch = circuit_with_omitted_two_qubit_gate(self.circuit, request.gate_node)?;
+        let branch_map = DagFaultAnalyzer::new(&branch).build_influence_map();
+        identity_location_pair_for_request(request, original_locations, &branch_map.locations)
+    }
+}
+
+fn omitted_branch_flips_measurement_parity_from_histories(
+    request: ExactBranchReplayRequest,
+    ideal_history: &MeasurementHistory,
+    branch_history: &MeasurementHistory,
+    measurement_indices: &[usize],
+) -> Result<bool, DemBuilderError> {
+    measurement_parity_differs_from_histories(
+        ideal_history,
+        branch_history,
+        measurement_indices,
+        &format!(
+            "exact_branch_replay omitted gate at node {}",
+            request.gate_node
+        ),
+    )
+}
+
+fn measurement_parity_differs_from_histories(
+    ideal_history: &MeasurementHistory,
+    branch_history: &MeasurementHistory,
+    measurement_indices: &[usize],
+    context: &str,
+) -> Result<bool, DemBuilderError> {
+    let ideal = measurement_parity_expression(ideal_history, measurement_indices, "ideal")?;
+    let branch = measurement_parity_expression(branch_history, measurement_indices, "branch")?;
+    if ideal.dependencies != branch.dependencies {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "{context} changes measurement dependencies for parity {measurement_indices:?}; this branch is not representable as a single deterministic DEM event"
+        )));
+    }
+    Ok(ideal.flip ^ branch.flip)
+}
+
+fn measurement_parity_expression(
+    history: &MeasurementHistory,
+    measurement_indices: &[usize],
+    history_label: &str,
+) -> Result<MeasurementParityExpression, DemBuilderError> {
+    let mut dependencies = BitSet::new();
+    let mut flip = false;
+
+    for &measurement_idx in measurement_indices {
+        let result = history.get(measurement_idx).ok_or_else(|| {
+            DemBuilderError::ConfigurationError(format!(
+                "exact_branch_replay {history_label} history has no measurement {measurement_idx}"
+            ))
+        })?;
+        dependencies.symmetric_difference_update(&result.outcome);
+        flip ^= result.flip;
+    }
+
+    Ok(MeasurementParityExpression { dependencies, flip })
+}
+
+fn identity_location_pair_for_request(
+    request: ExactBranchReplayRequest,
+    original_locations: &[DagSpacetimeLocation],
+    branch_locations: &[DagSpacetimeLocation],
+) -> Result<[usize; 2], DemBuilderError> {
+    let [orig_loc1, orig_loc2] = request.loc_indices;
+    let expected_qubits = [
+        *original_locations
+            .get(orig_loc1)
+            .and_then(|loc| loc.qubits.first())
+            .ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay original location {orig_loc1} has no qubit"
+                ))
+            })?,
+        *original_locations
+            .get(orig_loc2)
+            .and_then(|loc| loc.qubits.first())
+            .ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay original location {orig_loc2} has no qubit"
+                ))
+            })?,
+    ];
+
+    let mut pair = [usize::MAX; 2];
+    for (branch_idx, branch_loc) in branch_locations.iter().enumerate() {
+        if branch_loc.node != request.gate_node
+            || branch_loc.before
+            || branch_loc.gate_type != GateType::I
+        {
+            continue;
+        }
+        if branch_loc.qubits.first() == Some(&expected_qubits[0]) {
+            pair[0] = branch_idx;
+        } else if branch_loc.qubits.first() == Some(&expected_qubits[1]) {
+            pair[1] = branch_idx;
+        }
+    }
+
+    if pair.contains(&usize::MAX) {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "exact_branch_replay could not find identity branch locations for omitted gate node {} on qubits {:?}",
+            request.gate_node, expected_qubits
+        )));
+    }
+    Ok(pair)
+}
+
 // ============================================================================
 // Convenience: build DEM from circuit (free function to handle lifetimes)
 // ============================================================================
@@ -1757,10 +3279,7 @@ fn extract_measurement_refs(
 /// Reads detector/DEM output definitions from circuit metadata attributes.
 fn build_dem_from_circuit(
     circuit: &pecos_quantum::DagCircuit,
-    p1: f64,
-    p2: f64,
-    p_meas: f64,
-    p_prep: f64,
+    noise: NoiseConfig,
 ) -> Result<DetectorErrorModel, DemBuilderError> {
     use crate::fault_tolerance::influence_builder::InfluenceBuilder;
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
@@ -1796,7 +3315,9 @@ fn build_dem_from_circuit(
         }
     });
 
-    let builder = DemBuilder::new(&influence_map).with_noise(p1, p2, p_meas, p_prep);
+    let builder = DemBuilder::new(&influence_map)
+        .with_noise_config(noise)
+        .with_exact_branch_replay_context(circuit);
 
     let builder = if let Some(ref dj) = det_json {
         builder.with_detectors_json(dj)?
@@ -1821,6 +3342,35 @@ fn build_dem_from_circuit(
     };
 
     builder.try_build()
+}
+
+/// Return a branch circuit where one ideal two-qubit gate has been omitted.
+///
+/// Replacement-branch exact replay needs to evaluate "the hardware branch did
+/// not apply this entangler" without disturbing the surrounding DAG wiring.
+/// Replacing the selected node by batched identities preserves the node id,
+/// qubit wires, and topological context while making the operation itself a
+/// no-op on every qubit carried by the original gate.
+fn circuit_with_omitted_two_qubit_gate(
+    circuit: &pecos_quantum::DagCircuit,
+    node: usize,
+) -> Result<pecos_quantum::DagCircuit, DemBuilderError> {
+    let original = circuit.gate(node).ok_or_else(|| {
+        DemBuilderError::ConfigurationError(format!(
+            "cannot omit gate at node {node}: no such gate node exists"
+        ))
+    })?;
+    if !original.gate_type.is_two_qubit() {
+        return Err(DemBuilderError::ConfigurationError(format!(
+            "cannot omit gate at node {node}: {:?} is not a two-qubit gate",
+            original.gate_type
+        )));
+    }
+
+    let mut branch = circuit.clone();
+    let replacement = pecos_core::Gate::simple(GateType::I, original.qubits.clone());
+    *branch.gate_mut(node).expect("gate existed before clone") = replacement;
+    Ok(branch)
 }
 
 fn observable_records_from_annotations(
@@ -2014,12 +3564,15 @@ pub fn resolve_result_tags(
 pub enum DemBuilderError {
     /// JSON parsing error.
     ParseError(String),
+    /// Invalid DEM builder configuration.
+    ConfigurationError(String),
 }
 
 impl std::fmt::Display for DemBuilderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ParseError(msg) => write!(f, "DEM builder parse error: {msg}"),
+            Self::ConfigurationError(msg) => write!(f, "DEM builder configuration error: {msg}"),
         }
     }
 }
@@ -2029,6 +3582,47 @@ impl std::error::Error for DemBuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_szz_source_frame_components_pull_post_error_to_pre_generators() {
+        fn dets(indices: &[u32]) -> FaultMechanism {
+            FaultMechanism::from_unsorted(indices.iter().copied(), std::iter::empty())
+        }
+
+        let a = dets(&[0, 1]);
+        let b = dets(&[2]);
+        let c = dets(&[3, 4]);
+
+        let mut effects: [[FaultMechanism; 4]; 4] = Default::default();
+        effects[2][3] = a.clone(); // SZZ maps pre X1 to post YZ.
+        effects[3][0] = b.clone(); // SZZ maps pre Z1 to post ZI.
+        effects[0][3] = c.clone(); // SZZ maps pre Z2 to post IZ.
+        effects[1][0] = a.xor(&b).xor(&c);
+
+        let parts =
+            DemBuilder::two_qubit_clifford_source_frame_components(GateType::SZZ, 1, 0, &effects)
+                .expect("post XI should pull back through SZZ to pre YZ");
+
+        assert_eq!(parts.len(), 3);
+        assert!(parts.contains(&a));
+        assert!(parts.contains(&b));
+        assert!(parts.contains(&c));
+        assert_eq!(
+            parts
+                .iter()
+                .fold(FaultMechanism::new(), |acc, part| acc.xor(part)),
+            effects[1][0]
+        );
+
+        effects[3][0] = a.clone();
+        effects[1][0] = c.clone();
+
+        let parts =
+            DemBuilder::two_qubit_clifford_source_frame_components(GateType::SZZ, 1, 0, &effects)
+                .expect("duplicate source components should cancel by XOR");
+
+        assert_eq!(parts.as_slice(), &[c]);
+    }
 
     #[test]
     fn test_from_circuit_tracks_tracked_pauli() {
@@ -2634,6 +4228,646 @@ mod tests {
                 .is_ok(),
             "empty influence map must keep the declarative-count escape hatch"
         );
+    }
+
+    #[test]
+    fn test_try_build_rejects_exact_branch_replay_without_provider() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
+        use pecos_core::pauli::Z;
+
+        let influence_map = DagFaultInfluenceMap::with_capacity(0);
+        let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement([], [(Z(0) & Z(1), 1.0)]))
+            .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+
+        let err = DemBuilder::new(&influence_map)
+            .with_noise_config(noise)
+            .try_build()
+            .expect_err("exact branch replay must fail loud without an exact provider");
+
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string()
+                .contains("circuit-aware exact branch provider"),
+            "unexpected error: {err}",
+        );
+    }
+
+    #[test]
+    fn test_from_circuit_exact_branch_replay_emits_omitted_gate_effect() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
+        use pecos_core::PauliString;
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.x(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.mz(&[1]);
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+
+        let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement(
+                [],
+                [(PauliString::identity(), 1.0)],
+            ))
+            .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("exact branch replay should emit representable branch effects");
+
+        let contributions = dem.contributions_for_effect(&[0], &[]);
+        assert_eq!(
+            contributions.len(),
+            1,
+            "all effects:\n{}",
+            dem.all_contribution_effects()
+        );
+        assert!((contributions[0].probability - 0.01).abs() < 1.0e-12);
+        assert!(contributions[0].replacement_branch);
+        assert_eq!(
+            contributions[0].direct_source_family,
+            Some(DirectSourceFamily::TwoLocationExactReplacementBranch)
+        );
+        assert!(
+            contributions[0]
+                .paulis
+                .iter()
+                .all(|pauli| *pauli == Pauli::I),
+            "omission-only replacement branch should be recorded as *II"
+        );
+        let (base_effect, branch_pauli_effect) = contributions[0]
+            .direct_component_effects()
+            .expect("exact branch replay should preserve base/branch components");
+        assert_eq!(
+            base_effect.xor(&branch_pauli_effect),
+            contributions[0].effect
+        );
+        assert_eq!(base_effect.detectors.as_slice(), &[0]);
+        assert!(branch_pauli_effect.is_empty());
+    }
+
+    fn single_qubit_local_crosstalk_circuit(pre_payload_h: bool) -> pecos_quantum::DagCircuit {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        if pre_payload_h {
+            circuit.add_gate_auto_wire(Gate::h(&[QubitId(0)]));
+        }
+        circuit.add_gate_auto_wire(Gate::meas_crosstalk_local_payload(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+        circuit
+    }
+
+    fn single_qubit_no_crosstalk_payload_circuit() -> pecos_quantum::DagCircuit {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+        circuit
+    }
+
+    fn two_qubit_global_crosstalk_circuit() -> pecos_quantum::DagCircuit {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(1)]));
+        circuit.add_gate_auto_wire(Gate::meas_crosstalk_global_payload(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+        circuit
+    }
+
+    fn two_qubit_global_crosstalk_random_victim_circuit() -> pecos_quantum::DagCircuit {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(1)]));
+        circuit.add_gate_auto_wire(Gate::h(&[QubitId(1)]));
+        circuit.add_gate_auto_wire(Gate::meas_crosstalk_global_payload(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+        circuit
+    }
+
+    #[test]
+    fn test_exact_deterministic_local_measurement_crosstalk_emits_dem_source() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_local_crosstalk_circuit(false);
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_local_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("deterministic local measurement crosstalk should be representable");
+
+        let contributions = dem.contributions_for_effect(&[0], &[]);
+        assert_eq!(
+            contributions.len(),
+            1,
+            "all effects:\n{}",
+            dem.all_contribution_effects()
+        );
+        assert!((contributions[0].probability - 0.1).abs() < 1.0e-12);
+        assert_eq!(
+            contributions[0].direct_source_family,
+            Some(DirectSourceFamily::MeasurementCrosstalk)
+        );
+        assert_eq!(
+            contributions[0].source_gate_types.as_slice(),
+            &[GateType::MeasCrosstalkLocalPayload]
+        );
+        assert_eq!(contributions[0].paulis.as_slice(), &[Pauli::X]);
+    }
+
+    #[test]
+    fn test_exact_deterministic_global_measurement_crosstalk_emits_victim_dem_source() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = two_qubit_global_crosstalk_circuit();
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_global_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("deterministic global measurement crosstalk should be representable");
+
+        let contributions = dem.contributions_for_effect(&[0], &[]);
+        assert_eq!(
+            contributions.len(),
+            1,
+            "all effects:\n{}",
+            dem.all_contribution_effects()
+        );
+        assert!((contributions[0].probability - 0.1).abs() < 1.0e-12);
+        assert_eq!(
+            contributions[0].direct_source_family,
+            Some(DirectSourceFamily::MeasurementCrosstalk)
+        );
+        assert_eq!(
+            contributions[0].source_gate_types.as_slice(),
+            &[GateType::MeasCrosstalkGlobalPayload]
+        );
+        assert_eq!(contributions[0].paulis.as_slice(), &[Pauli::X]);
+    }
+
+    #[test]
+    fn test_exact_deterministic_local_measurement_crosstalk_requires_payloads() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_no_crosstalk_payload_circuit();
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_local_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect_err("positive local crosstalk rate without payloads must fail loudly");
+
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string()
+                .contains("no MeasCrosstalkLocalPayload locations"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_exact_deterministic_global_measurement_crosstalk_requires_payloads() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_no_crosstalk_payload_circuit();
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_global_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect_err("positive global crosstalk rate without payloads must fail loudly");
+
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string()
+                .contains("no MeasCrosstalkGlobalPayload locations"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_exact_deterministic_local_measurement_crosstalk_identity_transition_is_empty() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_local_crosstalk_circuit(false);
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_local_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.0, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("identity local measurement crosstalk should be representable");
+
+        assert_eq!(dem.num_contributions(), 0);
+    }
+
+    #[test]
+    fn test_exact_deterministic_local_measurement_crosstalk_rejects_hidden_randomness() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_local_crosstalk_circuit(true);
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_local_rate(0.25)
+            .set_measurement_crosstalk_transition_model(
+                MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+            )
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect_err("nondeterministic hidden measurement must fail loudly");
+
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string()
+                .contains("state-independent hidden MZ result"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_averaged_global_measurement_crosstalk_accepts_hidden_randomness() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = two_qubit_global_crosstalk_random_victim_circuit();
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_global_rate(0.25)
+            .set_measurement_crosstalk_transition_model(MeasurementCrosstalkTransitionModel {
+                p_0_to_1: 0.4,
+                p_0_to_leak: 0.2,
+                p_1_to_0: 0.0,
+                p_1_to_leak: 0.0,
+            })
+            .set_measurement_crosstalk_dem_mode(
+                MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing,
+            );
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("averaged global leak2depolar crosstalk should handle random hidden MZ");
+
+        let contributions = dem.contributions_for_effect(&[0], &[]);
+        assert_eq!(
+            contributions.len(),
+            2,
+            "all effects:\n{}",
+            dem.all_contribution_effects()
+        );
+        assert!(contributions.iter().any(|contribution| {
+            contribution.paulis.as_slice() == [Pauli::X]
+                && (contribution.probability - 0.05625).abs() < 1.0e-12
+        }));
+        assert!(contributions.iter().any(|contribution| {
+            contribution.paulis.as_slice() == [Pauli::Y]
+                && (contribution.probability - 0.00625).abs() < 1.0e-12
+        }));
+        assert!(contributions.iter().all(|contribution| {
+            contribution.direct_source_family == Some(DirectSourceFamily::MeasurementCrosstalk)
+                && contribution.source_gate_types.as_slice()
+                    == [GateType::MeasCrosstalkGlobalPayload]
+        }));
+    }
+
+    #[test]
+    fn test_exact_deterministic_local_measurement_crosstalk_rejects_leakage() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_local_crosstalk_circuit(false);
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_local_rate(0.25)
+            .set_measurement_crosstalk_transition_model(MeasurementCrosstalkTransitionModel {
+                p_0_to_1: 0.4,
+                p_0_to_leak: 0.2,
+                p_1_to_0: 0.0,
+                p_1_to_leak: 0.0,
+            })
+            .set_measurement_crosstalk_dem_mode(MeasurementCrosstalkDemMode::ExactDeterministic);
+
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect_err("plain exact deterministic crosstalk should reject leakage");
+
+        assert!(matches!(err, DemBuilderError::ConfigurationError(_)));
+        assert!(
+            err.to_string().contains("leakage transitions"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_exact_deterministic_local_measurement_crosstalk_leakage_as_depolarizing() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+
+        let circuit = single_qubit_local_crosstalk_circuit(false);
+        let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+            .set_measurement_crosstalk_local_rate(0.25)
+            .set_measurement_crosstalk_transition_model(MeasurementCrosstalkTransitionModel {
+                p_0_to_1: 0.4,
+                p_0_to_leak: 0.2,
+                p_1_to_0: 0.0,
+                p_1_to_leak: 0.0,
+            })
+            .set_measurement_crosstalk_dem_mode(
+                MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing,
+            );
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("deterministic leak2depolar local crosstalk should be representable");
+
+        let contributions = dem.contributions_for_effect(&[0], &[]);
+        assert_eq!(contributions.len(), 2);
+        let total_probability: f64 = contributions
+            .iter()
+            .map(|contribution| contribution.probability)
+            .sum();
+        assert!((total_probability - 0.125).abs() < 1.0e-12);
+        assert!(contributions.iter().any(|contribution| {
+            contribution.paulis.as_slice() == [Pauli::X]
+                && (contribution.probability - 0.1125).abs() < 1.0e-12
+        }));
+        assert!(contributions.iter().any(|contribution| {
+            contribution.paulis.as_slice() == [Pauli::Y]
+                && (contribution.probability - 0.0125).abs() < 1.0e-12
+        }));
+        assert!(contributions.iter().all(|contribution| {
+            contribution.source_gate_types.as_slice() == [GateType::MeasCrosstalkLocalPayload]
+        }));
+    }
+
+    #[test]
+    fn test_from_circuit_exact_branch_replay_skips_empty_replacement_effect() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
+        use pecos_core::pauli::X;
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.x(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.mz(&[1]);
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+
+        let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement([], [(X(1), 1.0)]))
+            .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+
+        let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect("exact branch replay should allow empty representable effects");
+
+        assert_eq!(dem.num_contributions(), 0);
+    }
+
+    #[test]
+    fn test_from_circuit_exact_branch_replay_rejects_dependency_changing_branch() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
+        use pecos_core::PauliString;
+        use pecos_quantum::{Attribute, DagCircuit};
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.h(&[0]);
+        circuit.cx(&[(0, 1)]);
+        circuit.mz(&[1]);
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+        );
+
+        let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement(
+                [],
+                [(PauliString::identity(), 1.0)],
+            ))
+            .set_p2_replacement_approximation(ReplacementBranchApproximation::ExactBranchReplay);
+
+        let err = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+            .expect_err("dependency-changing replacement branches must stay fail-loud");
+
+        assert!(
+            err.to_string().contains("not representable"),
+            "unexpected error: {err}",
+        );
+    }
+
+    #[test]
+    fn test_circuit_with_omitted_two_qubit_gate_preserves_wiring() {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        let prep0 = circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        let prep1 = circuit.add_gate_auto_wire(Gate::pz(&[QubitId(1)]));
+        let entangler = circuit.add_gate_auto_wire(Gate::szz(&[(QubitId(0), QubitId(1))]));
+        let meas0 = circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
+        let meas1 = circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
+
+        let branch = circuit_with_omitted_two_qubit_gate(&circuit, entangler)
+            .expect("two-qubit entangler can be omitted");
+
+        assert_eq!(circuit.gate(entangler).unwrap().gate_type, GateType::SZZ);
+        let replacement = branch.gate(entangler).unwrap();
+        assert_eq!(replacement.gate_type, GateType::I);
+        assert_eq!(replacement.qubits.as_slice(), &[QubitId(0), QubitId(1)]);
+
+        assert_eq!(
+            branch.predecessor_on_qubit(entangler, QubitId(0)),
+            Some(prep0)
+        );
+        assert_eq!(
+            branch.predecessor_on_qubit(entangler, QubitId(1)),
+            Some(prep1)
+        );
+        assert_eq!(
+            branch.successor_on_qubit(entangler, QubitId(0)),
+            Some(meas0)
+        );
+        assert_eq!(
+            branch.successor_on_qubit(entangler, QubitId(1)),
+            Some(meas1)
+        );
+        assert_eq!(branch.topological_order(), circuit.topological_order());
+    }
+
+    #[test]
+    fn test_exact_branch_replay_context_collects_two_qubit_requests() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::pz(&[QubitId(1)]));
+        let entangler = circuit.add_gate_auto_wire(Gate::szz(&[(QubitId(0), QubitId(1))]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(0)]));
+        circuit.add_gate_auto_wire(Gate::mz(&[QubitId(1)]));
+
+        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let requests = ExactBranchReplayContext { circuit: &circuit }
+            .replacement_branch_requests(&influence_map.locations)
+            .expect("two-qubit branch requests should be recoverable");
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].gate_node, entangler);
+        assert_eq!(requests[0].gate_type, GateType::SZZ);
+        let branch_pair = (ExactBranchReplayContext { circuit: &circuit })
+            .omitted_branch_location_pair(requests[0], &influence_map.locations)
+            .expect("omitted branch identity locations should be recoverable");
+        assert_ne!(branch_pair[0], branch_pair[1]);
+
+        let loc_qubits: Vec<_> = requests[0]
+            .loc_indices
+            .iter()
+            .flat_map(|&idx| influence_map.locations[idx].qubits.iter().copied())
+            .collect();
+        assert_eq!(loc_qubits, vec![QubitId(0), QubitId(1)]);
+    }
+
+    #[test]
+    fn test_exact_branch_replay_base_effect_detects_deterministic_omitted_gate_flip() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.x(&[0]);
+        let entangler = circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 1)]));
+        circuit.mz(&[1]);
+
+        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let context = ExactBranchReplayContext { circuit: &circuit };
+        let request = context
+            .replacement_branch_requests(&influence_map.locations)
+            .unwrap()
+            .into_iter()
+            .find(|request| request.gate_node == entangler)
+            .expect("CX request should be present");
+
+        let builder = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
+            .unwrap()
+            .with_num_measurements(1);
+        let effect = builder
+            .exact_omitted_branch_base_effect(context, request)
+            .expect("omitting this CX only flips a deterministic measurement parity");
+
+        assert_eq!(effect.detectors.as_slice(), &[0]);
+        assert!(effect.dem_outputs.is_empty());
+    }
+
+    #[test]
+    fn test_exact_branch_replay_replacement_pauli_combines_with_omitted_gate_effect() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.x(&[0]);
+        let entangler = circuit.add_gate_auto_wire(pecos_core::Gate::cx(&[(0, 1)]));
+        circuit.mz(&[1]);
+
+        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let context = ExactBranchReplayContext { circuit: &circuit };
+        let request = context
+            .replacement_branch_requests(&influence_map.locations)
+            .unwrap()
+            .into_iter()
+            .find(|request| request.gate_node == entangler)
+            .expect("CX request should be present");
+
+        let builder = DemBuilder::new(&influence_map)
+            .with_detectors_json(r#"[{"id":0,"records":[-1]}]"#)
+            .unwrap()
+            .with_num_measurements(1);
+
+        let omitted_only = builder
+            .exact_replacement_branch_effect(context, request, "II")
+            .expect("omission-only branch should be deterministic here");
+        assert_eq!(omitted_only.detectors.as_slice(), &[0]);
+        assert!(builder.exact_ideal_history_cache.borrow().is_some());
+        assert_eq!(builder.exact_branch_cache.borrow().len(), 1);
+
+        let omitted_then_target_x = builder
+            .exact_replacement_branch_effect(context, request, "IX")
+            .expect("replacement X on the target should be deterministic here");
+        assert!(
+            omitted_then_target_x.is_empty(),
+            "target X after omitted CX restores the ideal target measurement"
+        );
+        assert_eq!(builder.exact_branch_cache.borrow().len(), 1);
+
+        let builder = builder.with_detectors_json("[]").unwrap();
+        assert!(builder.exact_branch_cache.borrow().is_empty());
+    }
+
+    #[test]
+    fn test_circuit_with_omitted_two_qubit_gate_rejects_bad_nodes() {
+        use pecos_core::{Gate, QubitId};
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        let prep = circuit.add_gate_auto_wire(Gate::pz(&[QubitId(0)]));
+
+        assert!(matches!(
+            circuit_with_omitted_two_qubit_gate(&circuit, prep),
+            Err(DemBuilderError::ConfigurationError(_))
+        ));
+        assert!(matches!(
+            circuit_with_omitted_two_qubit_gate(&circuit, prep + 1),
+            Err(DemBuilderError::ConfigurationError(_))
+        ));
     }
 
     #[test]

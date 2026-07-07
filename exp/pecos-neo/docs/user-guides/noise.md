@@ -5,7 +5,7 @@
 One-liner on `sim_neo`:
 
 ```rust
-sim_neo(circuit).depolarizing(0.01).shots(1000).run();
+sim_neo(circuit).auto().depolarizing(0.01).sampling(monte_carlo(1000)).run();
 ```
 
 ## Per-Channel Control
@@ -13,12 +13,12 @@ sim_neo(circuit).depolarizing(0.01).shots(1000).run();
 Set different rates for single-qubit, two-qubit, and measurement errors:
 
 ```rust
-sim_neo(circuit)
+sim_neo(circuit).auto()
     .noise(GeneralNoiseModelBuilder::new()
         .with_p1(0.001)
         .with_p2(0.01)
         .with_p_meas_symmetric(0.005))
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .run();
 ```
 

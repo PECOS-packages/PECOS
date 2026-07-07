@@ -11,38 +11,43 @@ the output contract is identical for stabilizer and meas_sampling.
 import pytest
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
-from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer
+from pecos_rslib_exp import depolarizing, meas_sampling, monte_carlo, sim_neo, stabilizer
 
 
 @pytest.fixture
 def d3_results():
-    """Run both backends on the same circuit and return their results."""
+    """Run both backends on the same circuit and return their results.
+
+    The third element is the circuit's declared measurement count, used so the
+    assertions track the actual circuit contract rather than a hard-coded value.
+    """
     patch = SurfacePatch.create(distance=3)
     tc = _build_surface_tick_circuit_for_native_model(patch, 6, "Z", circuit_source="abstract")
+    num_meas = int(tc.get_meta("num_measurements"))
     depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
 
-    stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(100).seed(42).run()
-    meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(100).seed(42).run()
-    return stab_r, meas_r
+    stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(100)).seed(42).run()
+    meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(100)).seed(42).run()
+    return stab_r, meas_r, num_meas
 
 
 class TestCommonProtocol:
     """Both backends return objects with the same interface."""
 
     def test_len(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         assert len(stab_r) == 100
         assert len(meas_r) == 100
 
     def test_indexing(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, num_meas = d3_results
         # r[shot] returns a sequence of u8 values
         s0 = stab_r[0]
         d0 = meas_r[0]
-        assert len(s0) == len(d0) == 57  # d=3 surface code has 57 measurements
+        assert len(s0) == len(d0) == num_meas
 
     def test_item_values(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         # Individual values are 0 or 1
         for val in stab_r[0]:
             assert val in (0, 1)
@@ -50,80 +55,80 @@ class TestCommonProtocol:
             assert val in (0, 1)
 
     def test_list_conversion(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, num_meas = d3_results
         s_row = list(stab_r[0])
         d_row = list(meas_r[0])
         assert all(isinstance(v, int) for v in s_row)
         assert all(isinstance(v, int) for v in d_row)
-        assert len(s_row) == len(d_row) == 57
+        assert len(s_row) == len(d_row) == num_meas
 
     def test_iteration(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, num_meas = d3_results
         stab_count = 0
         for row in stab_r:
             stab_count += 1
-            assert len(row) == 57
+            assert len(row) == num_meas
         assert stab_count == 100
 
         dem_count = 0
         for row in meas_r:
             dem_count += 1
-            assert len(row) == 57
+            assert len(row) == num_meas
         assert dem_count == 100
 
     def test_out_of_range_raises_index_error(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         with pytest.raises(IndexError):
             stab_r[100]
         with pytest.raises(IndexError):
             meas_r[100]
 
     def test_num_shots_property(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         assert stab_r.num_shots == 100
         assert meas_r.num_shots == 100
 
     def test_num_measurements_property(self, d3_results):
-        stab_r, meas_r = d3_results
-        assert stab_r.num_measurements == 57
-        assert meas_r.num_measurements == 57
+        stab_r, meas_r, num_meas = d3_results
+        assert stab_r.num_measurements == num_meas
+        assert meas_r.num_measurements == num_meas
 
     def test_get_method(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         # get(shot, meas) returns 0 or 1
         assert stab_r.get(0, 0) in (0, 1)
         assert meas_r.get(0, 0) in (0, 1)
 
     def test_get_out_of_range(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, num_meas = d3_results
         with pytest.raises(IndexError):
             stab_r.get(100, 0)
         with pytest.raises(IndexError):
-            meas_r.get(0, 57)
+            meas_r.get(0, num_meas)
 
     def test_get_shot_method(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, num_meas = d3_results
         s = stab_r.get_shot(0)
         d = meas_r.get_shot(0)
-        assert len(s) == len(d) == 57
+        assert len(s) == len(d) == num_meas
 
     def test_to_list(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, num_meas = d3_results
         sl = stab_r.to_list()
         dl = meas_r.to_list()
         assert len(sl) == len(dl) == 100
-        assert len(sl[0]) == len(dl[0]) == 57
+        assert len(sl[0]) == len(dl[0]) == num_meas
 
     def test_negative_index_raises_index_error(self, d3_results):
         """Negative indexing raises IndexError, never OverflowError."""
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         with pytest.raises(IndexError):
             stab_r[-1]
         with pytest.raises(IndexError):
             meas_r[-1]
 
     def test_negative_get_raises_index_error(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         # Negative shot
         with pytest.raises(IndexError):
             stab_r.get(-1, 0)
@@ -136,7 +141,7 @@ class TestCommonProtocol:
             meas_r.get(0, -1)
 
     def test_get_shot_negative_raises_index_error(self, d3_results):
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         with pytest.raises(IndexError):
             stab_r.get_shot(-1)
         with pytest.raises(IndexError):
@@ -144,7 +149,7 @@ class TestCommonProtocol:
 
     def test_out_of_range_uses_len(self, d3_results):
         """result[len(result)] raises IndexError."""
-        stab_r, meas_r = d3_results
+        stab_r, meas_r, _ = d3_results
         with pytest.raises(IndexError):
             stab_r[len(stab_r)]
         with pytest.raises(IndexError):
@@ -170,10 +175,10 @@ class TestGenericConsumer:
         patch = SurfacePatch.create(distance=3)
         tc = _build_surface_tick_circuit_for_native_model(patch, 6, "Z", circuit_source="abstract")
         depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
-        result = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(1000).seed(42).run()
+        result = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(1000)).seed(42).run()
 
         means = self.compute_measurement_means(result)
-        assert len(means) == 57
+        assert len(means) == int(tc.get_meta("num_measurements"))
         # Non-det measurements should be ~0.5, det should be ~0
         nondet = sum(1 for m in means if abs(m - 0.5) < 0.15)
         assert nondet > 0
@@ -182,9 +187,9 @@ class TestGenericConsumer:
         patch = SurfacePatch.create(distance=3)
         tc = _build_surface_tick_circuit_for_native_model(patch, 6, "Z", circuit_source="abstract")
         depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
-        result = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(1000).seed(42).run()
+        result = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(1000)).seed(42).run()
 
         means = self.compute_measurement_means(result)
-        assert len(means) == 57
+        assert len(means) == int(tc.get_meta("num_measurements"))
         nondet = sum(1 for m in means if abs(m - 0.5) < 0.15)
         assert nondet > 0

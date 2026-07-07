@@ -10,6 +10,7 @@ pub mod prelude;
 pub mod quantum;
 pub mod quantum_engine_builder;
 pub mod quantum_system;
+pub mod sampling;
 pub mod shot_results;
 pub mod sim_builder;
 
@@ -40,6 +41,7 @@ pub use quantum_engine_builder::{
     state_vector,
 };
 pub use quantum_system::QuantumSystem;
+pub use sampling::MonteCarloBuilder;
 pub use shot_results::data_vec::DataVecType;
 pub use shot_results::{
     BitVecDisplayFormat, Data, DataVec, Shot, ShotMap, ShotMapDisplay, ShotMapDisplayExt,

@@ -5,6 +5,27 @@ use crate::noise::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The plain-Pauli probabilities plus optional angle-dependent two-qubit
+/// scaling and the spontaneous-emission ratios, as returned by
+/// [`GeneralNoiseModelBuilder::pauli_with_angle_scaling`].
+///
+/// Layout:
+/// `(p_prep, p_meas_0, p_meas_1, p1, p2, angle, p1_emission_ratio, p2_emission_ratio)`
+/// where `angle` is `Some((a, b, c, d, power))` when angle scaling is
+/// configured. The emission ratios use the model default (0.5) when unset, and
+/// the emission DISTRIBUTION is required to be the default (uniform Pauli) --
+/// custom emission models keep the config out of this subset.
+pub type PauliWithAngleScaling = (
+    f64,
+    f64,
+    f64,
+    f64,
+    f64,
+    Option<(f64, f64, f64, f64, f64)>,
+    f64,
+    f64,
+);
+
 /// Builder for creating general noise models
 #[derive(Debug, Clone)]
 pub struct GeneralNoiseModelBuilder {
@@ -735,6 +756,194 @@ impl GeneralNoiseModelBuilder {
     }
 
     // ========================================================================================== //
+    /// The simple Pauli-probability subset of this configuration, if the
+    /// physics reduces to it.
+    ///
+    /// Returns `(p_prep, p_meas_0, p_meas_1, p1, p2)`. `p1`/`p2` are in the
+    /// standard depolarizing convention the builder stores internally (the
+    /// `with_average_*` setters convert on the way in). Unset probabilities
+    /// take their `GeneralNoiseModel::default()` values — this model's
+    /// philosophy is realistic defaults, NOT unset-means-off.
+    ///
+    /// Returns `Some` only when the noise shape is plain Pauli noise:
+    ///
+    /// - Knobs whose model defaults are non-neutral must be EXPLICITLY
+    ///   zeroed: emission ratios (default 0.5 — half the errors replace the
+    ///   gate instead of following it), prep leak ratio (default 0.5), and
+    ///   the linear idle rate (default 0.001).
+    /// - Knobs with neutral defaults (crosstalk, quadratic idle, scales,
+    ///   noiseless gates) may be unset or set to their neutral value.
+    /// - Custom Pauli/emission/crosstalk models and angle-dependent
+    ///   two-qubit noise must be unset.
+    ///
+    /// A configured seed is ignored (it selects a random stream, not
+    /// physics). This exists so other simulation stacks can translate the
+    /// common configuration without re-deriving probability conventions.
+    #[must_use]
+    pub fn simple_probabilities(&self) -> Option<(f64, f64, f64, f64, f64)> {
+        let emission_off =
+            self.p1_emission_ratio == Some(0.0) && self.p2_emission_ratio == Some(0.0);
+        if self.is_plain_pauli_except_angle_and_emission()
+            && self.resolved_angle_scaling().is_none()
+            && emission_off
+        {
+            Some(self.resolved_base_probabilities())
+        } else {
+            None
+        }
+    }
+
+    /// Like [`Self::simple_probabilities`], but ALSO permits angle-dependent
+    /// two-qubit scaling and returns it alongside the base probabilities.
+    ///
+    /// Returns `(p_prep, p_meas_0, p_meas_1, p1, p2, angle, p1_emission,
+    /// p2_emission)` where `angle` is `Some((a, b, c, d, power))` when any
+    /// `p2_angle_*` parameter is configured (the unset components take their
+    /// model defaults), and `None` otherwise. This lets other simulation stacks
+    /// translate the common "plain Pauli, plus optional angle-dependent
+    /// two-qubit gate noise" configuration — the angle-dependent error rate is
+    /// `p2 * (coeff * |theta/pi|^power + offset)` with separate
+    /// `(a, b)` for negative and `(c, d)` for positive angles
+    /// (see [`GeneralNoiseModel::p2_angle_error_rate`]).
+    ///
+    /// The two `*_emission` ratios are the resolved spontaneous-emission
+    /// fractions (unset components take the model default). Emission is
+    /// gate-removing in both engines and neo, so a downstream stack can
+    /// reproduce it exactly by carrying these ratios with the default uniform
+    /// emission distribution.
+    ///
+    /// All the OTHER non-angle feature requirements of
+    /// [`Self::simple_probabilities`] still apply (leakage, idle, crosstalk,
+    /// scales, custom samplers including custom emission distributions, and
+    /// noiseless gates must be off).
+    #[must_use]
+    pub fn pauli_with_angle_scaling(&self) -> Option<PauliWithAngleScaling> {
+        if self.is_plain_pauli_except_angle_and_emission() {
+            let (p_prep, p_meas_0, p_meas_1, p1, p2) = self.resolved_base_probabilities();
+            let (p1_emission, p2_emission) = self.resolved_emission_ratios();
+            Some((
+                p_prep,
+                p_meas_0,
+                p_meas_1,
+                p1,
+                p2,
+                self.resolved_angle_scaling(),
+                p1_emission,
+                p2_emission,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// True when every non-Pauli feature is off EXCEPT possibly the
+    /// angle-dependent two-qubit scaling and the spontaneous-emission ratios.
+    /// Shared by `simple_probabilities` (which additionally requires both the
+    /// angle scaling unset and emission explicitly off) and
+    /// `pauli_with_angle_scaling` (which extracts them). The emission DISTRIBUTION
+    /// must still be the default uniform model (`p1/p2_emission_model` unset) --
+    /// custom emission samplers are NOT in this subset.
+    fn is_plain_pauli_except_angle_and_emission(&self) -> bool {
+        let explicitly_zero = |v: Option<f64>| v == Some(0.0);
+        let zero_or_unset = |v: Option<f64>| v.is_none() || v == Some(0.0);
+        let one_or_unset = |v: Option<f64>| v.is_none() || v == Some(1.0);
+
+        // Non-neutral model defaults: unset means the default applies, so
+        // these must be explicitly zeroed for the physics to be plain Pauli.
+        // (Emission ratios are intentionally NOT required off here -- they are
+        // handled separately, since neo now matches engines' gate-removing
+        // emission with the default uniform distribution.)
+        let defaulted_features_off =
+            explicitly_zero(self.p_prep_leak_ratio) && explicitly_zero(self.p_idle_linear_rate);
+
+        // Neutral model defaults: unset is fine.
+        let optional_features_off = zero_or_unset(self.p_idle_quadratic_rate)
+            && zero_or_unset(self.p_prep_crosstalk)
+            && zero_or_unset(self.p2_idle)
+            && zero_or_unset(self.p_meas_crosstalk_global)
+            && zero_or_unset(self.p_meas_crosstalk_local);
+
+        // Custom samplers/models could change the Pauli distribution; the
+        // model defaults are uniform, so unset is standard. (Angle scaling is
+        // intentionally NOT required here — it is handled separately.)
+        let custom_models_off = self.p_idle_linear_model.is_none()
+            && self.p1_emission_model.is_none()
+            && self.p1_pauli_model.is_none()
+            && self.p2_emission_model.is_none()
+            && self.p2_pauli_model.is_none()
+            && self.p_meas_crosstalk_model.is_none();
+
+        let scales_neutral = one_or_unset(self.scale)
+            && one_or_unset(self.idle_scale)
+            && one_or_unset(self.prep_scale)
+            && one_or_unset(self.meas_scale)
+            && one_or_unset(self.p1_scale)
+            && one_or_unset(self.p2_scale)
+            && one_or_unset(self.p_prep_crosstalk_scale)
+            && one_or_unset(self.p_meas_crosstalk_scale)
+            // `emission_scale` multiplies the emission ratios in `build()`
+            // (`scale_parameters`), but the resolved ratios surfaced here are
+            // RAW. Require it neutral so a non-unit scale falls out of the
+            // subset and is rejected, rather than silently mapping the
+            // un-scaled ratio to neo (cross-stack mismatch).
+            && one_or_unset(self.emission_scale);
+
+        let gates_default = self.noiseless_gates.as_ref().is_none_or(BTreeSet::is_empty);
+
+        defaulted_features_off
+            && optional_features_off
+            && custom_models_off
+            && scales_neutral
+            && gates_default
+    }
+
+    /// Resolve the base Pauli probabilities `(p_prep, p_meas_0, p_meas_1, p1,
+    /// p2)`, filling unset values from `GeneralNoiseModel::default()` so they
+    /// cannot drift from the model's own defaults.
+    fn resolved_base_probabilities(&self) -> (f64, f64, f64, f64, f64) {
+        let (d_prep, d_meas_0, d_meas_1, d_p1, d_p2, _) =
+            GeneralNoiseModel::default().probabilities();
+        (
+            self.p_prep.unwrap_or(d_prep),
+            self.p_meas_0.unwrap_or(d_meas_0),
+            self.p_meas_1.unwrap_or(d_meas_1),
+            self.p1.unwrap_or(d_p1),
+            self.p2.unwrap_or(d_p2),
+        )
+    }
+
+    /// The configured angle-dependent two-qubit scaling `(a, b, c, d, power)`,
+    /// or `None` when no `p2_angle_*` parameter is set. Unset components take
+    /// the model default (read from `GeneralNoiseModel::default()` so they
+    /// cannot drift).
+    fn resolved_angle_scaling(&self) -> Option<(f64, f64, f64, f64, f64)> {
+        if self.p2_angle_params.is_none() && self.p2_angle_power.is_none() {
+            return None;
+        }
+        let default = GeneralNoiseModel::default();
+        let (a, b, c, d) = self
+            .p2_angle_params
+            .unwrap_or_else(|| default.p2_angle_params());
+        let power = self
+            .p2_angle_power
+            .unwrap_or_else(|| default.p2_angle_power());
+        Some((a, b, c, d, power))
+    }
+
+    /// The resolved `(p1, p2)` spontaneous-emission ratios, taking the model
+    /// default (read from `GeneralNoiseModel::default()`) for unset values.
+    /// Only meaningful alongside the default uniform emission distribution
+    /// (enforced by [`Self::is_plain_pauli_except_angle_and_emission`]).
+    fn resolved_emission_ratios(&self) -> (f64, f64) {
+        let default = GeneralNoiseModel::default();
+        (
+            self.p1_emission_ratio
+                .unwrap_or_else(|| default.p1_emission_ratio()),
+            self.p2_emission_ratio
+                .unwrap_or_else(|| default.p2_emission_ratio()),
+        )
+    }
+
     // scaling
     // ========================================================================================== //
 
@@ -813,5 +1022,195 @@ impl GeneralNoiseModelBuilder {
 impl crate::noise::IntoNoiseModel for GeneralNoiseModelBuilder {
     fn into_noise_model(self) -> Box<dyn crate::noise::NoiseModel> {
         Box::new(self.build())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_probabilities_requires_explicit_zeros_for_defaulted_features() {
+        // Bare builder: model defaults include emission 0.5, prep leak 0.5,
+        // idle 0.001 — physics beyond the simple Pauli subset.
+        assert!(
+            GeneralNoiseModelBuilder::new()
+                .simple_probabilities()
+                .is_none()
+        );
+        // Setting only a probability does not neutralize the defaults.
+        assert!(
+            GeneralNoiseModelBuilder::new()
+                .with_average_p1_probability(0.2)
+                .simple_probabilities()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn simple_probabilities_returns_stored_convention_values() {
+        let simple = GeneralNoiseModelBuilder::new()
+            .with_average_p1_probability(0.2)
+            .with_average_p2_probability(0.4)
+            .with_prep_probability(0.01)
+            .with_meas_0_probability(0.02)
+            .with_meas_1_probability(0.03)
+            .with_p1_emission_ratio(0.0)
+            .with_p2_emission_ratio(0.0)
+            .with_prep_leak_ratio(0.0)
+            .with_p_idle_linear_rate(0.0)
+            .simple_probabilities()
+            .expect("fully zeroed config is simple");
+
+        let (p_prep, p_meas_0, p_meas_1, p1, p2) = simple;
+        assert!((p_prep - 0.01).abs() < 1e-12);
+        assert!((p_meas_0 - 0.02).abs() < 1e-12);
+        assert!((p_meas_1 - 0.03).abs() < 1e-12);
+        // Stored in standard depolarizing convention: average x 1.5 / x 1.25.
+        assert!((p1 - 0.3).abs() < 1e-12);
+        assert!((p2 - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn simple_probabilities_unset_probabilities_take_model_defaults() {
+        let simple = GeneralNoiseModelBuilder::new()
+            .with_p1_emission_ratio(0.0)
+            .with_p2_emission_ratio(0.0)
+            .with_prep_leak_ratio(0.0)
+            .with_p_idle_linear_rate(0.0)
+            .simple_probabilities()
+            .expect("zeroed features with default probabilities is simple");
+
+        let (d_prep, d_meas_0, d_meas_1, d_p1, d_p2, _) =
+            GeneralNoiseModel::default().probabilities();
+        assert_eq!(simple, (d_prep, d_meas_0, d_meas_1, d_p1, d_p2));
+    }
+
+    /// The angle-aware extractor returns the same base probabilities as
+    /// `simple_probabilities` with `None` angle when no `p2_angle_*` is set.
+    #[test]
+    fn pauli_with_angle_scaling_matches_simple_when_no_angle() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_average_p1_probability(0.2)
+            .with_average_p2_probability(0.4)
+            .with_p1_emission_ratio(0.0)
+            .with_p2_emission_ratio(0.0)
+            .with_prep_leak_ratio(0.0)
+            .with_p_idle_linear_rate(0.0);
+
+        let simple = builder.simple_probabilities().expect("simple config");
+        let (p_prep, p_meas_0, p_meas_1, p1, p2, angle, p1_emission, p2_emission) = builder
+            .pauli_with_angle_scaling()
+            .expect("simple config is also pauli-with-angle");
+        assert_eq!((p_prep, p_meas_0, p_meas_1, p1, p2), simple);
+        assert!(angle.is_none());
+        // Emission was explicitly zeroed to land in the strict simple subset.
+        assert_eq!((p1_emission, p2_emission), (0.0, 0.0));
+    }
+
+    /// Setting angle parameters keeps the config out of the strict simple
+    /// subset but inside the angle-aware subset, with the coefficients and
+    /// power surfaced verbatim.
+    #[test]
+    fn pauli_with_angle_scaling_extracts_configured_angle() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p2_probability(0.3)
+            .with_p2_angle_params(1.5, 0.0, 1.0, 0.0)
+            .with_p2_angle_power(2.0)
+            .with_average_p1_probability(0.0)
+            .with_p1_emission_ratio(0.0)
+            .with_p2_emission_ratio(0.0)
+            .with_prep_leak_ratio(0.0)
+            .with_p_idle_linear_rate(0.0)
+            .with_prep_probability(0.0)
+            .with_meas_0_probability(0.0)
+            .with_meas_1_probability(0.0);
+
+        // Angle scaling is outside the STRICT simple subset.
+        assert!(builder.simple_probabilities().is_none());
+
+        let (_, _, _, _, p2, angle, _, _) = builder
+            .pauli_with_angle_scaling()
+            .expect("plain Pauli plus angle is in the angle-aware subset");
+        assert!((p2 - 0.3).abs() < 1e-12);
+        assert_eq!(angle, Some((1.5, 0.0, 1.0, 0.0, 2.0)));
+    }
+
+    /// An unset power takes the model default rather than dropping the angle.
+    #[test]
+    fn pauli_with_angle_scaling_fills_unset_power_from_default() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p2_probability(0.3)
+            .with_p2_angle_params(1.5, 0.0, 1.0, 0.0)
+            .with_average_p1_probability(0.0)
+            .with_p1_emission_ratio(0.0)
+            .with_p2_emission_ratio(0.0)
+            .with_prep_leak_ratio(0.0)
+            .with_p_idle_linear_rate(0.0)
+            .with_prep_probability(0.0)
+            .with_meas_0_probability(0.0)
+            .with_meas_1_probability(0.0);
+
+        let (_, _, _, _, _, angle, _, _) = builder
+            .pauli_with_angle_scaling()
+            .expect("angle-aware subset");
+        let default_power = GeneralNoiseModel::default().p2_angle_power();
+        assert_eq!(angle, Some((1.5, 0.0, 1.0, 0.0, default_power)));
+    }
+
+    /// Non-angle features beyond the subset still force `None`, even with an
+    /// angle configured.
+    #[test]
+    fn pauli_with_angle_scaling_rejects_non_angle_features() {
+        // Prep-leakage and linear idling keep their (non-zero) model defaults
+        // because they are never explicitly zeroed -> beyond the subset.
+        // (Emission ratios are NOT a blocker -- they are part of the subset.)
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p2_probability(0.3)
+            .with_p2_angle_params(1.5, 0.0, 1.0, 0.0);
+        assert!(builder.pauli_with_angle_scaling().is_none());
+    }
+
+    /// Emission ratios are surfaced verbatim when they are in the subset, so a
+    /// downstream stack can reproduce engines' gate-removing emission channel.
+    #[test]
+    fn pauli_with_angle_scaling_extracts_emission_ratios() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_average_p1_probability(0.2)
+            .with_average_p2_probability(0.4)
+            .with_p1_emission_ratio(0.25)
+            .with_p2_emission_ratio(0.75)
+            .with_prep_leak_ratio(0.0)
+            .with_p_idle_linear_rate(0.0);
+
+        // Non-zero emission is OUTSIDE the strict simple subset...
+        assert!(builder.simple_probabilities().is_none());
+        // ...but inside the angle-aware subset, with the ratios surfaced.
+        let (.., angle, p1_emission, p2_emission) = builder
+            .pauli_with_angle_scaling()
+            .expect("plain Pauli plus emission is in the subset");
+        assert!(angle.is_none());
+        assert!((p1_emission - 0.25).abs() < 1e-12);
+        assert!((p2_emission - 0.75).abs() < 1e-12);
+    }
+
+    /// A non-unit `emission_scale` multiplies the emission ratios at `build()`,
+    /// but the subset surfaces the RAW ratios. It must therefore be rejected
+    /// from the subset rather than silently mapping the un-scaled ratio.
+    #[test]
+    fn pauli_with_angle_scaling_rejects_emission_scale() {
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_average_p1_probability(0.2)
+            .with_p1_emission_ratio(0.25)
+            .with_emission_scale(2.0)
+            .with_prep_leak_ratio(0.0)
+            .with_p_idle_linear_rate(0.0);
+
+        // The built model applies the scale (0.25 * 2.0 = 0.5)...
+        let built = builder.clone().build();
+        assert!((built.p1_emission_ratio() - 0.5).abs() < 1e-12);
+        // ...so surfacing the raw 0.25 would be a cross-stack mismatch: the
+        // subset must refuse it.
+        assert!(builder.pauli_with_angle_scaling().is_none());
     }
 }

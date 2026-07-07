@@ -5,7 +5,7 @@
 //! - **`core`**: Core types and error handling
 //! - **`sim`**: Quantum simulation (includes core + num)
 //! - **`runtime`**: Full simulation with QASM + PHIR support
-//! - **`qis`**: QIS/LLVM IR execution (requires LLVM 14)
+//! - **`qis`**: QIS/LLVM IR execution (requires LLVM 21.1)
 //! - **`hugr`**: HUGR program support
 //! - **`quest`/`qulacs`/`cppsparsestab`**: Simulator backends
 //! - **`num`**: Numerical computing (scipy-like)
@@ -48,7 +48,7 @@ pub mod engines {
 /// Quantum circuit representation and Pauli algebra.
 #[cfg(feature = "quantum")]
 pub mod quantum {
-    #[cfg(feature = "hugr")]
+    #[cfg(feature = "hugr-qis")]
     pub use pecos_hugr_qis::read_hugr_envelope;
     #[cfg(feature = "hugr")]
     pub use pecos_quantum::hugr_convert::{
@@ -194,11 +194,13 @@ pub use engine_type::{DynamicEngineBuilder, EngineType, sim_dynamic};
 #[cfg(feature = "cppsparsestab")]
 pub use pecos_cppsparsestab::CppSparseStab;
 #[cfg(feature = "sim")]
+pub use pecos_engines::sampling::monte_carlo;
+#[cfg(feature = "sim")]
 pub use pecos_engines::{
     BiasedDepolarizingNoise, DepolarizingNoise, GeneralNoiseModelBuilder, PassThroughNoiseModel,
 };
 #[cfg(feature = "sim")]
-pub use pecos_engines::{SimInput, sim_builder};
+pub use pecos_engines::{MonteCarloBuilder, SimInput, sim_builder};
 #[cfg(feature = "sim")]
 pub use pecos_engines::{
     coin_toss, density_matrix, sparse_stab, stab_vec, stabilizer, state_vector,
@@ -225,4 +227,4 @@ pub use pecos_qis::{QisEngineBuilder, qis_engine, setup_qis_engine_with_runtime}
 #[cfg(feature = "wasm")]
 pub use pecos_wasm::{ForeignObject, WasmForeignObject};
 #[cfg(feature = "runtime")]
-pub use unified_sim::{ProgrammedSimBuilder, SimBuilderExt, sim};
+pub use unified_sim::{ProgrammedSimBuilder, SimBuilderExt, SimStack, sim};

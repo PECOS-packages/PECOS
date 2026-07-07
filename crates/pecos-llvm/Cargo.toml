@@ -17,7 +17,6 @@ pecos-core.workspace = true
 # Inkwell for LLVM IR generation
 [dependencies.inkwell]
 workspace = true
-features = ["llvm14-0"]
 
 [features]
 default = []

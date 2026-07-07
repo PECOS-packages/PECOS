@@ -13,7 +13,7 @@ Importance sampling instead:
 
 ## Quick Start with sim_neo
 
-The easiest way to use importance sampling is via the `sim_neo` Tool API with the `importance_sampling()` builder:
+The easiest way to use importance sampling is via the `sim_neo` Tool API with the `importance_sampling(shots)` builder:
 
 ```rust
 use pecos_neo::tool::{sim_neo, importance_sampling};
@@ -27,13 +27,12 @@ let circuit = CommandBuilder::new()
     .build();
 
 // Run with importance sampling
-let results = sim_neo(circuit)
-    .sampling(importance_sampling()
+let results = sim_neo(circuit).auto()
+    .sampling(importance_sampling(10000)
         .with_p1(0.001)      // Single-qubit error rate
         .with_p2(0.01)       // Two-qubit error rate
         .with_p_meas(0.001)  // Measurement error rate
         .with_boost(10.0))   // Boost factor
-    .shots(10000)
     .seed(42)
     .run();
 
@@ -49,11 +48,10 @@ if let Some(error_rate) = results.weighted_mean(|outcome| {
 For uniform error rates, use the `with_uniform_error()` method:
 
 ```rust
-let results = sim_neo(circuit)
-    .sampling(importance_sampling()
+let results = sim_neo(circuit).auto()
+    .sampling(importance_sampling(10000)
         .with_uniform_error(0.001)  // Same rate for all gate types
         .with_boost(10.0))
-    .shots(10000)
     .run();
 ```
 

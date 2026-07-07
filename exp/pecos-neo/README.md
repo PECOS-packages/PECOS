@@ -7,7 +7,7 @@ Composable quantum simulation with event-driven noise modeling.
 The `sim_neo` Tool API is the recommended entry point:
 
 ```rust
-use pecos_neo::tool::sim_neo;
+use pecos_neo::tool::{monte_carlo, sim_neo};
 use pecos_neo::command::CommandBuilder;
 
 let circuit = CommandBuilder::new()
@@ -17,9 +17,9 @@ let circuit = CommandBuilder::new()
     .build();
 
 // Run 1000 shots with depolarizing noise
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .depolarizing(0.01)
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .seed(42)
     .run();
 
@@ -33,8 +33,8 @@ for outcome in &results.outcomes {
 - **Composable Noise**: Event-driven channels that combine freely -- depolarizing, measurement, idle, crosstalk, leakage, and custom channels
 - **Typed Commands**: `GateCommand` and `CommandQueue` with signal support for metadata alongside gates
 - **Plugin System**: ECS-inspired architecture for bundling simulation functionality
-- **Parallel Execution**: Monte Carlo across multiple workers with `.workers(n)`
-- **Advanced Sampling**: Importance sampling and subset simulation for rare event estimation
+- **Parallel Execution**: Monte Carlo across multiple workers with `.sampling(monte_carlo(shots).workers(n))`
+- **Advanced Sampling**: Importance sampling (with parallel workers) and subset simulation for rare event estimation; exhaustive path enumeration for measurement branches
 - **Extensible Gates**: `GateId`-based system with runtime overrides and decomposition
 - **Program Support**: Classical control engines (QASM, HUGR) with mid-circuit measurement and feedback
 - **State Vector**: Non-Clifford gates (T, rotations) via `state_vector()` backend

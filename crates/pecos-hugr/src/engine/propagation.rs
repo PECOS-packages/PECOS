@@ -25,7 +25,7 @@
 use log::debug;
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
-use tket::hugr::ops::OpType;
+use tket::hugr::ops::{OpType, Value};
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
@@ -33,6 +33,12 @@ use crate::engine::analysis::get_container_type;
 use crate::engine::types::{ClassicalValue, ContainerType, QuantumOp, WireKey};
 
 impl HugrEngine {
+    /// Ceiling on flattened-DFG boundary hops when tracing a value or
+    /// qubit backwards. Valid HUGRs bound this by nesting depth (the
+    /// hierarchy is a tree and each region a DAG); the cap keeps a
+    /// malformed graph from recursing without limit.
+    const MAX_DFG_TRACE_DEPTH: usize = 64;
+
     /// Trace through an Input node to find the actual source wire.
     ///
     /// When processing nodes inside containers (DFG, Case, `FuncDefn`, etc.),
@@ -66,19 +72,26 @@ impl HugrEngine {
                 output_port
             }
             ContainerType::Conditional => {
-                // Conditional: Port 0 of Input unpacks Sum fields; subsequent ports are data
-                // This is complex - the Input node outputs come from unpacking the Sum
-                // For now, skip port 0 (Sum unpacking) and map other ports
-                if output_port == 0 {
-                    debug!("Skipping Conditional Sum unpacking (port 0)");
-                    return None;
-                }
-                // Data ports start at container input port 1 (after control)
-                output_port // Actually maps to same port since control is separate
+                // Conditional: the Input row is [sum payload..., other data...]
+                // while the container's port row is [sum, other data...]. A
+                // direct port-N -> port-N mapping is only correct when the
+                // selected variant's payload arity is exactly 1; for any
+                // other arity it silently reads the WRONG container port.
+                // Case expansion populates these Input ports explicitly, so
+                // decline to trace rather than guess.
+                debug!("Conditional Input ports are populated by case expansion; not tracing");
+                return None;
             }
             ContainerType::TailLoop => {
-                // TailLoop is complex - inputs come from both initial values and CONTINUE tag
-                // For simplicity, use direct mapping
+                // Direct mapping reads the loop node's own input wire: the
+                // iteration-0 value. Guppy carries every live value in the
+                // varying row, so past the first Continue this CAN serve a
+                // stale generation for a mutated value -- but the corpus
+                // relies on it for carried-but-invariant values whose
+                // continue propagation gapped on a pending measurement.
+                // The proper fix is completeness of the population paths
+                // (continue repropagation after measurement rounds), not
+                // starving this fallback.
                 output_port
             }
             ContainerType::Call => {
@@ -152,19 +165,31 @@ impl HugrEngine {
     /// Propagate all input values to corresponding output ports.
     ///
     /// This is used for pass-through operations that don't modify values.
-    pub(crate) fn propagate_all_inputs(&mut self, hugr: &Hugr, node: Node) {
+    /// Copy every input wire to the corresponding output wire (pass-through
+    /// ops). Returns false when some port had NEITHER a classical value nor
+    /// a qubit mapping: the caller must DEFER -- marking the op processed
+    /// would permanently drop the late value (pass-throughs have no retry
+    /// of their own).
+    #[must_use]
+    pub(crate) fn propagate_all_inputs(&mut self, hugr: &Hugr, node: Node) -> bool {
         use tket::hugr::ops::OpTrait;
         let op = hugr.get_optype(node);
         let num_outputs = op.dataflow_signature().map_or(0, |sig| sig.output_count());
 
+        let mut complete = true;
         for port in 0..num_outputs {
+            let mut found = false;
             if let Some(value) = self.get_input_value(hugr, node, port) {
                 self.wire_state.classical_values.insert((node, port), value);
+                found = true;
             }
             if let Some(qubit) = self.get_input_qubit(hugr, node, port) {
                 self.wire_state.wire_to_qubit.insert((node, port), qubit);
+                found = true;
             }
+            complete &= found;
         }
+        complete
     }
 
     /// Get a classical value from an input port.
@@ -177,6 +202,20 @@ impl HugrEngine {
         node: Node,
         port: usize,
     ) -> Option<ClassicalValue> {
+        self.get_input_value_depth(hugr, node, port, 0)
+    }
+
+    fn get_input_value_depth(
+        &self,
+        hugr: &Hugr,
+        node: Node,
+        port: usize,
+        depth: usize,
+    ) -> Option<ClassicalValue> {
+        if depth > Self::MAX_DFG_TRACE_DEPTH {
+            debug!("get_input_value({node:?}, {port}): DFG trace depth exceeded");
+            return None;
+        }
         let in_port = IncomingPort::from(port);
         if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
             let wire_key = (src_node, src_port.index());
@@ -190,7 +229,36 @@ impl HugrEngine {
                 wire_key,
                 value
             );
-            value
+            if value.is_some() {
+                return value;
+            }
+            // FLATTENING: classical values cross DFG boundaries
+            // structurally, exactly like qubit tracing does. A DFG node's
+            // outputs live at its Output child's sources; a DFG's Input
+            // node ports live at the DFG node's own input wires. Bounded
+            // by nesting depth (belt-and-braces cap above: a malformed
+            // graph must not recurse unboundedly).
+            match hugr.get_optype(src_node) {
+                OpType::DFG(_) => {
+                    let output_node = hugr.get_io(src_node).map(|[_, o]| o)?;
+                    return self.get_input_value_depth(
+                        hugr,
+                        output_node,
+                        src_port.index(),
+                        depth + 1,
+                    );
+                }
+                OpType::Input(_)
+                    if hugr
+                        .get_parent(src_node)
+                        .is_some_and(|p| matches!(hugr.get_optype(p), OpType::DFG(_))) =>
+                {
+                    let dfg_node = hugr.get_parent(src_node)?;
+                    return self.get_input_value_depth(hugr, dfg_node, src_port.index(), depth + 1);
+                }
+                _ => {}
+            }
+            None
         } else {
             debug!("get_input_value({node:?}, {port}): no linked output");
             None
@@ -200,36 +268,75 @@ impl HugrEngine {
     /// Get a qubit ID from an input port.
     ///
     /// Follows the wire connected to the specified input port and returns
-    /// the qubit ID at the source, if any.
+    /// the qubit ID at the source, if any. Traces across flattened-DFG
+    /// boundaries the same way [`Self::get_input_value`] does, so both
+    /// value kinds resolve identically.
     pub(crate) fn get_input_qubit(&self, hugr: &Hugr, node: Node, port: usize) -> Option<QubitId> {
+        self.get_input_qubit_depth(hugr, node, port, 0)
+    }
+
+    fn get_input_qubit_depth(
+        &self,
+        hugr: &Hugr,
+        node: Node,
+        port: usize,
+        depth: usize,
+    ) -> Option<QubitId> {
+        if depth > Self::MAX_DFG_TRACE_DEPTH {
+            debug!("get_input_qubit({node:?}, {port}): DFG trace depth exceeded");
+            return None;
+        }
         let in_port = IncomingPort::from(port);
         if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
             let wire_key = (src_node, src_port.index());
-            self.wire_state.wire_to_qubit.get(&wire_key).copied()
+            if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&wire_key) {
+                return Some(qubit_id);
+            }
+            match hugr.get_optype(src_node) {
+                OpType::DFG(_) => {
+                    let output_node = hugr.get_io(src_node).map(|[_, o]| o)?;
+                    self.get_input_qubit_depth(hugr, output_node, src_port.index(), depth + 1)
+                }
+                OpType::Input(_)
+                    if hugr
+                        .get_parent(src_node)
+                        .is_some_and(|p| matches!(hugr.get_optype(p), OpType::DFG(_))) =>
+                {
+                    let dfg_node = hugr.get_parent(src_node)?;
+                    self.get_input_qubit_depth(hugr, dfg_node, src_port.index(), depth + 1)
+                }
+                _ => None,
+            }
         } else {
             None
         }
     }
 
-    /// Propagate qubit array from input to output (for pass-through operations).
+    /// Propagate a pass-through operation's input to its output port
+    /// (barriers, `StateResult`).
     ///
-    /// This handles operations like barriers that pass qubit arrays through unchanged.
-    pub(crate) fn propagate_qubit_array(&mut self, hugr: &Hugr, node: Node) {
-        // For now, just propagate qubit wire mappings
-        let in_port = IncomingPort::from(0);
-        if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
-            let src_key = (src_node, src_port.index());
-
-            // Propagate qubit array if present
-            if let Some(qubits) = self.wire_state.qubit_arrays.get(&src_key).cloned() {
-                self.wire_state.qubit_arrays.insert((node, 0), qubits);
+    /// Qubit arrays travel as `ClassicalValue::Array` of `QubitRef`s, so
+    /// the CLASSICAL value is what must pass through; a bare qubit wire
+    /// passes its mapping. Both read through the tracing layer so an input
+    /// produced across a flattened-DFG boundary resolves. Returns false
+    /// when the input carried NEITHER: the caller must DEFER -- marking the
+    /// pass-through processed would permanently drop the late-arriving
+    /// value (these ops have no retry of their own).
+    #[must_use]
+    pub(crate) fn propagate_qubit_array(&mut self, hugr: &Hugr, node: Node) -> bool {
+        let mut found = false;
+        if let Some(value) = self.get_input_value(hugr, node, 0) {
+            if let ClassicalValue::QubitRef(qubit_id) = &value {
+                self.wire_state.wire_to_qubit.insert((node, 0), *qubit_id);
             }
-
-            // Also propagate individual qubit mappings
-            if let Some(qubit_id) = self.wire_state.wire_to_qubit.get(&src_key).copied() {
-                self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
-            }
+            self.wire_state.classical_values.insert((node, 0), value);
+            found = true;
         }
+        if let Some(qubit_id) = self.get_input_qubit(hugr, node, 0) {
+            self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
+            found = true;
+        }
+        found
     }
 
     /// Resolve qubit IDs for an operation by following input wires.
@@ -242,13 +349,13 @@ impl HugrEngine {
         hugr: &Hugr,
         node: Node,
         op: &QuantumOp,
-    ) -> Vec<QubitId> {
+    ) -> Option<Vec<QubitId>> {
         if op.gate_type == GateType::QAlloc {
             // QAlloc creates a new qubit
             let qubit_id = QubitId::from(self.wire_state.next_qubit_id);
             self.wire_state.next_qubit_id += 1;
             self.wire_state.wire_to_qubit.insert((node, 0), qubit_id);
-            return vec![qubit_id];
+            return Some(vec![qubit_id]);
         }
 
         let mut qubits = Vec::with_capacity(op.num_qubit_inputs);
@@ -260,8 +367,14 @@ impl HugrEngine {
                 let mut wire_key = (src_node, src_port.index());
                 let src_op = hugr.get_optype(src_node);
 
-                // Check if the source is an Input node - if so, trace through it
-                if matches!(src_op, OpType::Input(_)) {
+                // Check if the source is an Input node - if so, trace through
+                // it -- UNLESS the Input port itself already carries a qubit
+                // mapping (e.g. a case Input holding a Sum-payload QubitRef):
+                // tracing past it would land on an outer wire with no
+                // mapping and misresolve the gate.
+                if matches!(src_op, OpType::Input(_))
+                    && !self.wire_state.wire_to_qubit.contains_key(&wire_key)
+                {
                     debug!(
                         "Input node detected: {:?}:{}, attempting trace",
                         src_node,
@@ -286,6 +399,26 @@ impl HugrEngine {
                     }
                 }
 
+                // A DFG source executes by FLATTENING: its output qubits
+                // live at its Output child's sources, never at the DFG
+                // node's own wires -- and the DFG node is marked processed
+                // at dispatch, so falling through would hit the implicit-
+                // allocation branch below and run this gate on a PHANTOM
+                // qubit. Trace instead; defer if the interior has not
+                // produced the qubit yet.
+                if matches!(src_op, OpType::DFG(_))
+                    && !self.wire_state.wire_to_qubit.contains_key(&wire_key)
+                {
+                    if let Some(qubit_id) = self.get_input_qubit(hugr, node, port_idx) {
+                        self.wire_state.wire_to_qubit.insert(wire_key, qubit_id);
+                    } else {
+                        debug!(
+                            "resolve_qubits at {node:?}: DFG source {wire_key:?} not resolved, deferring"
+                        );
+                        return None;
+                    }
+                }
+
                 if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&wire_key) {
                     qubits.push(qubit_id);
 
@@ -295,32 +428,42 @@ impl HugrEngine {
                             .wire_to_qubit
                             .insert((node, port_idx), qubit_id);
                     }
+                } else if !self.processed.contains(&wire_key.0)
+                    && !matches!(hugr.get_optype(wire_key.0), OpType::Input(_))
+                {
+                    // No mapping and the producer has NOT run yet (e.g. a
+                    // borrow op or case payload still pending): defer the
+                    // gate -- fabricating here applies it to a phantom qubit
+                    // (observed as gates and measurements landing on
+                    // disjoint qubit sets). The producer's completion
+                    // re-queues this node.
+                    debug!("resolve_qubits at {node:?}: producer {wire_key:?} pending, deferring");
+                    return None;
                 } else {
-                    // Fallback: create a new qubit ID
+                    // The source already ran (or is a structural Input wire)
+                    // and no mapping will ever appear: this is an implicit
+                    // top-level qubit. Allocate it ONCE, keyed to the source
+                    // wire so every consumer of this wire sees the same id.
                     let fallback = QubitId::from(self.wire_state.next_qubit_id);
                     self.wire_state.next_qubit_id += 1;
+                    self.wire_state.wire_to_qubit.insert(wire_key, fallback);
                     qubits.push(fallback);
                     if port_idx < op.num_qubit_outputs {
                         self.wire_state
                             .wire_to_qubit
                             .insert((node, port_idx), fallback);
                     }
-                    debug!(
-                        "Warning: No wire mapping for {wire_key:?}, using fallback {fallback:?}"
-                    );
+                    debug!("resolve_qubits: implicit qubit {fallback:?} for wire {wire_key:?}");
                 }
             } else {
-                // No linked output - create fallback
-                let fallback = QubitId::from(self.wire_state.next_qubit_id);
-                self.wire_state.next_qubit_id += 1;
-                qubits.push(fallback);
                 debug!(
-                    "Warning: No linked output for node {node:?} port {port_idx}, using fallback {fallback:?}"
+                    "resolve_qubits at {node:?}: no linked output for port {port_idx}, deferring"
                 );
+                return None;
             }
         }
 
-        qubits
+        Some(qubits)
     }
 
     /// Try to load a constant value from a `LoadConstant` node.
@@ -329,12 +472,9 @@ impl HugrEngine {
     /// extracts the value from the Const node and returns it as a `ClassicalValue`.
     ///
     /// Supports integer constants (`ConstInt`), float constants (`ConstF64`),
-    /// and boolean constants (`ConstBool`).
+    /// boolean constants (`ConstBool`), and tuple constants of those (e.g.
+    /// guppy's `pi` angle constant lowers to `Const(Tuple(FloatVal))`).
     pub(crate) fn try_load_constant(hugr: &Hugr, node: Node) -> Option<ClassicalValue> {
-        use tket::extension::bool::ConstBool;
-        use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
-        use tket::hugr::std_extensions::arithmetic::int_types::ConstInt;
-
         // LoadConstant has a static edge from a Const node
         for pred_node in hugr.input_neighbours(node) {
             let pred_op = hugr.get_optype(pred_node);
@@ -346,30 +486,105 @@ impl HugrEngine {
                     value.get_type()
                 );
 
-                // Try to extract as ConstInt
-                if let Some(const_int) = value.get_custom_value::<ConstInt>() {
-                    // ConstInt can be signed or unsigned
-                    let int_value = const_int.value_s();
-                    debug!("try_load_constant: found ConstInt with value {int_value}");
-                    return Some(ClassicalValue::Int(int_value));
-                }
-
-                // Try to extract as ConstF64
-                if let Some(const_f64) = value.get_custom_value::<ConstF64>() {
-                    let float_value = const_f64.value();
-                    debug!("try_load_constant: found ConstF64 with value {float_value}");
-                    return Some(ClassicalValue::Float(float_value));
-                }
-
-                // Try to extract as ConstBool
-                if let Some(const_bool) = value.get_custom_value::<ConstBool>() {
-                    let bool_value = const_bool.value();
-                    debug!("try_load_constant: found ConstBool with value {bool_value}");
-                    return Some(ClassicalValue::Bool(bool_value));
+                if let Some(classical) = Self::const_value_to_classical(value) {
+                    return Some(classical);
                 }
 
                 debug!("try_load_constant: unrecognized const type");
             }
+        }
+
+        None
+    }
+
+    /// Convert a HUGR constant `Value` to a runtime `ClassicalValue`.
+    ///
+    /// Tuple constants convert element-wise so a downstream `UnpackTuple`
+    /// can unpack them at runtime exactly like a `MakeTuple`-built tuple.
+    fn const_value_to_classical(value: &Value) -> Option<ClassicalValue> {
+        use tket::extension::bool::ConstBool;
+        use tket::extension::rotation::ConstRotation;
+        use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
+        use tket::hugr::std_extensions::arithmetic::int_types::ConstInt;
+
+        if let Some(const_rot) = value.get_custom_value::<ConstRotation>() {
+            let half_turns = const_rot.half_turns();
+            debug!("const_value_to_classical: found ConstRotation with {half_turns} half-turns");
+            return Some(ClassicalValue::Rotation(half_turns));
+        }
+
+        // ConstInt can be signed or unsigned
+        if let Some(const_int) = value.get_custom_value::<ConstInt>() {
+            let int_value = const_int.value_s();
+            debug!("const_value_to_classical: found ConstInt with value {int_value}");
+            return Some(ClassicalValue::Int(int_value));
+        }
+
+        if let Some(const_usize) =
+            value.get_custom_value::<tket::hugr::extension::prelude::ConstUsize>()
+        {
+            let usize_value = const_usize.value();
+            debug!("const_value_to_classical: found ConstUsize with value {usize_value}");
+            return Some(ClassicalValue::UInt(usize_value));
+        }
+
+        if value
+            .get_custom_value::<tket::hugr::extension::prelude::ConstError>()
+            .is_some()
+        {
+            // Error constants feed prelude.panic (which faults before
+            // reading its input) -- an opaque token keeps the LoadConstant
+            // from deferring forever and stalling instead of panicking.
+            debug!("const_value_to_classical: found ConstError");
+            return Some(ClassicalValue::Tuple(vec![]));
+        }
+
+        if let Some(const_f64) = value.get_custom_value::<ConstF64>() {
+            let float_value = const_f64.value();
+            debug!("const_value_to_classical: found ConstF64 with value {float_value}");
+            return Some(ClassicalValue::Float(float_value));
+        }
+
+        if let Some(const_bool) = value.get_custom_value::<ConstBool>() {
+            let bool_value = const_bool.value();
+            debug!("const_value_to_classical: found ConstBool with value {bool_value}");
+            return Some(ClassicalValue::Bool(bool_value));
+        }
+
+        // Sum constants: a two-variant sum with no payload is a plain HUGR
+        // bool (False=0/True=1); a single-variant tag-0 sum is a tuple; any
+        // other variant shape is a general tagged sum.
+        if let Value::Sum(sum) = value {
+            let num_variants = sum.sum_type.num_variants();
+            if num_variants == 2 && sum.values.is_empty() {
+                debug!(
+                    "const_value_to_classical: found unit-sum bool with tag {}",
+                    sum.tag
+                );
+                return Some(ClassicalValue::Bool(sum.tag == 1));
+            }
+            let elements: Option<Vec<ClassicalValue>> = sum
+                .values
+                .iter()
+                .map(Self::const_value_to_classical)
+                .collect();
+            let elements = elements?;
+            if num_variants == 1 && sum.tag == 0 {
+                debug!(
+                    "const_value_to_classical: found tuple const with {} elements",
+                    elements.len()
+                );
+                return Some(ClassicalValue::Tuple(elements));
+            }
+            debug!(
+                "const_value_to_classical: found sum const with tag {} and {} elements",
+                sum.tag,
+                elements.len()
+            );
+            return Some(ClassicalValue::Sum {
+                tag: sum.tag,
+                values: elements,
+            });
         }
 
         None

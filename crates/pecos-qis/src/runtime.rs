@@ -11,7 +11,7 @@
 //! doesn't perform quantum simulation but manages program execution flow.
 
 use log::trace;
-use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
+use pecos_qis_ffi_types::{LoweredQuantumOp, Operation, OperationCollector, QuantumOp};
 use std::collections::BTreeMap;
 
 /// Result type for runtime operations
@@ -201,6 +201,14 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     /// Get the number of qubits used by the program
     fn num_qubits(&self) -> usize;
 
+    /// Provide an external qubit-count hint before runtime initialization.
+    ///
+    /// Dynamic programs discover qubits while the program runs, but some
+    /// runtime plugins need the total device size during initialization.
+    fn set_num_qubits(&mut self, _num_qubits: usize) {
+        // Default implementation does nothing.
+    }
+
     /// Set the maximum number of operations to batch
     ///
     /// This allows tuning the trade-off between runtime overhead and
@@ -208,6 +216,46 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     fn set_batch_size(&mut self, size: usize) {
         // Default implementation does nothing
         let _ = size;
+    }
+
+    /// Whether this runtime can lower freshly collected program operations.
+    ///
+    /// Dynamic QIS execution yields PECOS `Operation`s from the running program.
+    /// Most runtimes leave those operations for the engine to lower directly.
+    /// Selene runtime plugins opt in here so the operation stream flows through
+    /// the runtime scheduler before it reaches the PECOS quantum/noise stack.
+    fn supports_operation_lowering(&self) -> bool {
+        false
+    }
+
+    /// Lower freshly collected program operations through the runtime.
+    ///
+    /// Implementations that return `true` from `supports_operation_lowering`
+    /// should accept the given operations, drain any runtime-ready scheduled
+    /// operations, and return them as PECOS quantum operations.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot accept or lower the operations.
+    fn lower_operations(&mut self, _operations: &[Operation]) -> Result<Vec<QuantumOp>> {
+        Err(RuntimeError::ExecutionError(
+            "runtime does not support operation lowering".to_string(),
+        ))
+    }
+
+    /// Lower freshly collected program operations through the runtime with provenance.
+    ///
+    /// Runtimes that can preserve source/scheduler metadata should override this
+    /// method. The default preserves the existing `lower_operations` behavior and
+    /// attaches empty metadata to every lowered operation.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot accept or lower the operations.
+    fn lower_operations_with_metadata(
+        &mut self,
+        operations: &[Operation],
+    ) -> Result<Vec<LoweredQuantumOp>> {
+        self.lower_operations(operations)
+            .map(|ops| ops.into_iter().map(LoweredQuantumOp::from).collect())
     }
 
     /// Check if the runtime needs to re-execute with known measurements

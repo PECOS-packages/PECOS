@@ -290,6 +290,8 @@ impl PyLLVMModule {
             function: ll_function.get(), // Get the underlying FunctionValue
             context_ptr: self.context_ptr,
             module_id: self.module_ptr as usize,
+            ret_pointee_type: func_type.ret_pointee_type,
+            param_pointee_types: func_type.param_pointee_types.clone(),
         }
     }
 
@@ -309,6 +311,7 @@ impl PyLLVMModule {
         let global = module.add_global(name, ll_type, init_val);
         PyGlobalVariable {
             global,
+            value_type: ll_type,
             context_ptr: self.context_ptr,
         }
     }
@@ -377,7 +380,12 @@ impl PyModuleContext {
         is_var_arg: Option<bool>,
     ) -> PyFunctionType {
         let context = unsafe { &*self.context_ptr };
+        let ret_pointee_type = return_type.pointer_pointee_type();
         let ret_ty = return_type.to_ll_type(context);
+        let param_pointee_types: Vec<_> = param_types
+            .iter()
+            .map(PyAnyType::pointer_pointee_type)
+            .collect();
         let param_tys: Vec<_> = param_types
             .into_iter()
             .map(|pt| pt.to_ll_type(context))
@@ -385,7 +393,9 @@ impl PyModuleContext {
 
         PyFunctionType {
             ret_type: ret_ty,
+            ret_pointee_type,
             param_types: param_tys,
+            param_pointee_types,
             var_args: is_var_arg.unwrap_or(false),
             context_ptr: self.context_ptr,
         }
@@ -428,6 +438,17 @@ impl PyAnyType {
             PyAnyType::Array(t) => t.ll_type,
         }
     }
+
+    fn pointer_pointee_type(&self) -> Option<LLType<'static>> {
+        match self {
+            PyAnyType::Pointer(t) => t.pointee_type,
+            PyAnyType::Int(_)
+            | PyAnyType::Double(_)
+            | PyAnyType::Void(_)
+            | PyAnyType::Struct(_)
+            | PyAnyType::Array(_) => None,
+        }
+    }
 }
 
 /// Type equality by LLVM `LLVMTypeRef` identity within one `Context`
@@ -462,6 +483,38 @@ fn lltype_hash(a: LLType<'static>) -> u64 {
     std::hash::Hasher::finish(&h)
 }
 
+fn pointer_type_richcmp(
+    py: Python<'_>,
+    this: &PyPointerType,
+    other: &Bound<'_, PyAny>,
+    op: CompareOp,
+) -> Py<PyAny> {
+    match op {
+        CompareOp::Eq | CompareOp::Ne => {
+            let eq = other.extract::<PyAnyType>().is_ok_and(|o| match o {
+                PyAnyType::Pointer(p) => {
+                    this.ll_type == p.ll_type && this.pointee_type == p.pointee_type
+                }
+                _ => this.ll_type == o.ll_type(),
+            });
+            let val = if matches!(op, CompareOp::Eq) { eq } else { !eq };
+            val.into_pyobject(py)
+                .expect("bool -> PyBool is infallible")
+                .to_owned()
+                .into_any()
+                .unbind()
+        }
+        _ => py.NotImplemented(),
+    }
+}
+
+fn pointer_type_hash(pointer: PyPointerType) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&pointer.ll_type, &mut h);
+    std::hash::Hash::hash(&pointer.pointee_type, &mut h);
+    std::hash::Hasher::finish(&h)
+}
+
 /// Python wrapper for struct types
 #[pyclass(name = "StructType", from_py_object)]
 #[derive(Copy, Clone)]
@@ -482,6 +535,7 @@ impl PyStructType {
         let ptr_type = ll_type.as_pointer(context);
         PyPointerType {
             ll_type: ptr_type,
+            pointee_type: Some(ll_type),
             context_ptr: self.context_ptr,
         }
     }
@@ -492,6 +546,7 @@ impl PyStructType {
 #[derive(Copy, Clone)]
 pub struct PyPointerType {
     ll_type: LLType<'static>,
+    pointee_type: Option<LLType<'static>>,
     context_ptr: *mut Context,
 }
 
@@ -501,10 +556,10 @@ unsafe impl Sync for PyPointerType {}
 #[pymethods]
 impl PyPointerType {
     fn __richcmp__(&self, py: Python<'_>, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
-        lltype_richcmp(py, self.ll_type, other, op)
+        pointer_type_richcmp(py, self, other, op)
     }
     fn __hash__(&self) -> u64 {
-        lltype_hash(self.ll_type)
+        pointer_type_hash(*self)
     }
 
     fn as_pointer(&self) -> PyPointerType {
@@ -512,6 +567,7 @@ impl PyPointerType {
         let ptr_type = self.ll_type.as_pointer(context);
         PyPointerType {
             ll_type: ptr_type,
+            pointee_type: Some(self.ll_type),
             context_ptr: self.context_ptr,
         }
     }
@@ -542,6 +598,7 @@ impl PyIntType {
         let ptr_type = self.ll_type.as_pointer(context);
         PyPointerType {
             ll_type: ptr_type,
+            pointee_type: Some(self.ll_type),
             context_ptr: self.context_ptr,
         }
     }
@@ -581,6 +638,7 @@ impl PyDoubleType {
         let ptr_type = self.ll_type.as_pointer(context);
         PyPointerType {
             ll_type: ptr_type,
+            pointee_type: Some(self.ll_type),
             context_ptr: self.context_ptr,
         }
     }
@@ -642,6 +700,7 @@ impl PyArrayType {
         let ptr_type = self.ll_type.as_pointer(context);
         PyPointerType {
             ll_type: ptr_type,
+            pointee_type: Some(self.ll_type),
             context_ptr: self.context_ptr,
         }
     }
@@ -902,9 +961,18 @@ impl PyIRBuilder {
         let result = builder
             .call(function.function, &arg_values, name)
             .map_err(|e| PyRuntimeError::new_err(format!("call failed: {e}")))?;
-        Ok(result.map(|value| PyLLValue {
-            value,
-            context_ptr: self.context_ptr,
+        Ok(result.map(|value| {
+            let value = match value {
+                LLValue::Pointer(pointer) => LLValue::Pointer(LLPointerValue::new(
+                    pointer.value(),
+                    function.ret_pointee_type,
+                )),
+                LLValue::Int(_) | LLValue::Float(_) | LLValue::Array(_) => value,
+            };
+            PyLLValue {
+                value,
+                context_ptr: self.context_ptr,
+            }
         }))
     }
 
@@ -945,7 +1013,7 @@ impl PyIRBuilder {
         })
     }
 
-    /// Load from a pointer (`load`; LLVM-14 typed-pointer pointee).
+    /// Load from a pointer (`load`; uses the tracked pointee type for opaque pointers).
     #[pyo3(signature = (ptr, name=""))]
     fn load(&mut self, ptr: PyLLValue, name: &str) -> PyResult<PyLLValue> {
         let builder = unsafe { &mut *self.builder_ptr };
@@ -1275,6 +1343,8 @@ pub struct PyFunction {
     context_ptr: *mut Context,
     /// Module ID for comment tracking
     module_id: usize,
+    ret_pointee_type: Option<LLType<'static>>,
+    param_pointee_types: Vec<Option<LLType<'static>>>,
 }
 
 unsafe impl Send for PyFunction {}
@@ -1300,11 +1370,17 @@ impl PyFunction {
         // Get function parameters and wrap in PyLLValue
         self.function
             .get_param_iter()
-            .map(|param| {
+            .enumerate()
+            .map(|(index, param)| {
                 // Convert BasicValueEnum to LLValue - only supporting types in LLValue enum
                 let value = match param {
                     inkwell::values::BasicValueEnum::IntValue(v) => LLValue::Int(v),
-                    inkwell::values::BasicValueEnum::PointerValue(v) => LLValue::Pointer(v),
+                    inkwell::values::BasicValueEnum::PointerValue(v) => {
+                        LLValue::Pointer(LLPointerValue::new(
+                            v,
+                            self.param_pointee_types.get(index).copied().flatten(),
+                        ))
+                    }
                     inkwell::values::BasicValueEnum::ArrayValue(v) => LLValue::Array(v),
                     _ => panic!("Unsupported parameter type (float values not in LLValue enum)"),
                 };
@@ -1335,7 +1411,9 @@ unsafe impl Sync for PyBasicBlock {}
 #[derive(Clone)]
 pub struct PyFunctionType {
     ret_type: LLType<'static>,
+    ret_pointee_type: Option<LLType<'static>>,
     param_types: Vec<LLType<'static>>,
+    param_pointee_types: Vec<Option<LLType<'static>>>,
     var_args: bool,
     #[allow(dead_code)]
     context_ptr: *mut Context,
@@ -1363,7 +1441,12 @@ impl PyFunctionType {
         };
 
         let context = unsafe { &*context_ptr };
+        let ret_pointee_type = return_type.pointer_pointee_type();
         let ret_ty = return_type.to_ll_type(context);
+        let param_pointee_types: Vec<_> = param_types
+            .iter()
+            .map(PyAnyType::pointer_pointee_type)
+            .collect();
         let param_tys: Vec<_> = param_types
             .into_iter()
             .map(|pt| pt.to_ll_type(context))
@@ -1371,7 +1454,9 @@ impl PyFunctionType {
 
         Self {
             ret_type: ret_ty,
+            ret_pointee_type,
             param_types: param_tys,
+            param_pointee_types,
             var_args,
             context_ptr,
         }
@@ -1402,7 +1487,9 @@ impl PyLLValue {
         };
 
         // Get the pointer type from PyPointerType
-        let LLType::Pointer(target_ptr_type) = ptr_type.ll_type else {
+        let (LLType::Pointer(target_ptr_type) | LLType::TypedPointer(target_ptr_type, _)) =
+            ptr_type.ll_type
+        else {
             return Err(PyRuntimeError::new_err("Target must be a pointer type"));
         };
 
@@ -1410,7 +1497,7 @@ impl PyLLValue {
         let ptr_val = int_val.const_to_pointer(target_ptr_type);
 
         Ok(Self {
-            value: LLValue::Pointer(ptr_val),
+            value: LLValue::Pointer(LLPointerValue::new(ptr_val, ptr_type.pointee_type)),
             context_ptr: self.context_ptr,
         })
     }
@@ -1428,10 +1515,20 @@ impl PyLLValue {
                 ll_type: LLType::Float(v.get_type()),
                 context_ptr: self.context_ptr,
             }),
-            LLValue::Pointer(v) => PyAnyType::Pointer(PyPointerType {
-                ll_type: LLType::Pointer(v.get_type()),
-                context_ptr: self.context_ptr,
-            }),
+            LLValue::Pointer(v) => {
+                let pointee_type = v.pointee_type();
+                let ll_type = pointee_type
+                    .and_then(|pointee_type| {
+                        LLType::typed_pointer(v.value().get_type(), pointee_type)
+                    })
+                    .unwrap_or_else(|| LLType::Pointer(v.value().get_type()));
+
+                PyAnyType::Pointer(PyPointerType {
+                    ll_type,
+                    pointee_type,
+                    context_ptr: self.context_ptr,
+                })
+            }
             LLValue::Array(v) => PyAnyType::Array(PyArrayType {
                 ll_type: LLType::Array(v.get_type()),
                 context_ptr: self.context_ptr,
@@ -1448,6 +1545,7 @@ impl PyLLValue {
 #[pyclass(name = "GlobalVariable")]
 pub struct PyGlobalVariable {
     global: inkwell::values::GlobalValue<'static>,
+    value_type: LLType<'static>,
     context_ptr: *mut Context,
 }
 
@@ -1467,6 +1565,7 @@ impl PyGlobalVariable {
         let global = module_ref.add_global(name, ll_type, None);
         Self {
             global,
+            value_type: ll_type,
             context_ptr: module.context_ptr,
         }
     }
@@ -1477,7 +1576,7 @@ impl PyGlobalVariable {
         match &value.value {
             LLValue::Int(v) => self.global.set_initializer(v),
             LLValue::Float(v) => self.global.set_initializer(v),
-            LLValue::Pointer(v) => self.global.set_initializer(v),
+            LLValue::Pointer(v) => self.global.set_initializer(&v.value()),
             LLValue::Array(v) => self.global.set_initializer(v),
         }
     }
@@ -1516,11 +1615,20 @@ impl PyGlobalVariable {
             .collect();
         let int_indices = int_indices?;
 
+        let basic_ty = self
+            .value_type
+            .to_basic_metadata_type()
+            .ok_or_else(|| PyRuntimeError::new_err("Cannot GEP into a void global"))?;
         // Use const_gep for global variables
-        let gep_val = unsafe { self.global.as_pointer_value().const_gep(&int_indices) };
+        let gep_val = unsafe {
+            self.global
+                .as_pointer_value()
+                .const_gep(basic_ty, &int_indices)
+        };
+        let pointee_type = gep_result_pointee_type(self.value_type, &int_indices);
 
         Ok(PyLLValue {
-            value: LLValue::Pointer(gep_val),
+            value: LLValue::Pointer(LLPointerValue::new(gep_val, pointee_type)),
             context_ptr: self.context_ptr,
         })
     }
@@ -1528,7 +1636,10 @@ impl PyGlobalVariable {
     /// Get the pointer value of this global
     fn as_pointer_value(&self) -> PyLLValue {
         PyLLValue {
-            value: LLValue::Pointer(self.global.as_pointer_value()),
+            value: LLValue::Pointer(LLPointerValue::new(
+                self.global.as_pointer_value(),
+                Some(self.value_type),
+            )),
             context_ptr: self.context_ptr,
         }
     }
@@ -1827,9 +1938,12 @@ impl PyModuleRef {
                 })
             })?;
 
-        // Write module to bitcode
+        // `MemoryBuffer::as_slice()` includes LLVM's trailing C-string NUL;
+        // that byte is not part of the bitcode stream and strict readers
+        // reject it.
         let bitcode_buffer = module.write_bitcode_to_memory();
-        Ok(bitcode_buffer.as_slice().to_vec())
+        let bitcode = bitcode_buffer.as_slice();
+        Ok(bitcode[..bitcode.len().saturating_sub(1)].to_vec())
     }
 }
 

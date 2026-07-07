@@ -10,6 +10,7 @@ on the same qubit support. Stabilizers are colored red, green, and blue.
 import importlib.util
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
@@ -22,7 +23,7 @@ class _ModuleState:
     """Container for module-level mutable state."""
 
     temp_dir: ClassVar[Path | None] = None
-    module_cache: ClassVar[dict[int, dict]] = {}
+    module_cache: ClassVar[dict[tuple[int, int | None], dict]] = {}
 
 
 _state = _ModuleState()
@@ -339,17 +340,21 @@ def generate_color_code_source(code: "ColorCode488") -> str:
     return "\n".join(lines)
 
 
-def _load_color_code_module(d: int) -> dict:
+def _load_color_code_module(d: int, *, num_rounds: int | None = None) -> dict:
     """Load a color code module for distance d, using caching.
 
     Args:
         d: Code distance
+        num_rounds: Optional memory-round count. When supplied, the generated
+            module name is round-scoped so Guppy's module-qualified function
+            names cannot reuse a stale factory-local comptime body.
 
     Returns:
         Module dictionary with generated functions
     """
-    if d in _state.module_cache:
-        return _state.module_cache[d]
+    cache_key = (d, None if num_rounds is None else int(num_rounds))
+    if cache_key in _state.module_cache:
+        return _state.module_cache[cache_key]
 
     from pecos.qec.color import ColorCode488
 
@@ -358,11 +363,12 @@ def _load_color_code_module(d: int) -> dict:
 
     # Write to temp file
     temp_dir = _get_temp_dir()
-    temp_file = temp_dir / f"color_d{d}.py"
+    round_suffix = "" if num_rounds is None else f"_r{int(num_rounds)}"
+    temp_file = temp_dir / f"color_d{d}{round_suffix}.py"
     temp_file.write_text(source)
 
     # Load module
-    module_name = f"pecos._generated.color_d{d}"
+    module_name = f"pecos._generated.color_d{d}{round_suffix}"
     spec = importlib.util.spec_from_file_location(module_name, temp_file)
     if spec is None or spec.loader is None:
         msg = f"Failed to create module spec for {temp_file}"
@@ -372,12 +378,35 @@ def _load_color_code_module(d: int) -> dict:
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
 
-    _state.module_cache[d] = vars(module)
-    return _state.module_cache[d]
+    _state.module_cache[cache_key] = vars(module)
+    return _state.module_cache[cache_key]
+
+
+def _round_scoped_color_memory_factory(d: int, basis: str) -> Callable[[int], object]:
+    """Memory factory that scopes each call to a round-specific Guppy module.
+
+    Backs :func:`get_color_code_module`: each ``factory(n)`` re-enters
+    :func:`_load_color_code_module` with the concrete ``num_rounds`` so it lands
+    in a distinct ``pecos._generated.color_d{d}_r{n}`` module, preventing a
+    cross-round guppy module-qualified-name collision.
+    """
+
+    def factory(num_rounds: int) -> object:
+        scoped = _load_color_code_module(d, num_rounds=int(num_rounds))
+        return scoped[f"make_memory_{basis}"](num_rounds)
+
+    return factory
 
 
 def get_color_code_module(d: int) -> dict:
     """Get a loaded color code module for distance d.
+
+    The returned ``make_memory_z``/``make_memory_x`` factories scope each call to
+    a round-specific module: ``factory(n)`` always produces the experiment in a
+    distinct ``pecos._generated.color_d{d}_r{n}`` module. The round count comes
+    solely from the factory argument, so building experiments at several round
+    counts in one process stays isolated (guppylang caches compiled functions by
+    module-qualified name).
 
     Args:
         d: Code distance (must be odd >= 3)
@@ -395,6 +424,16 @@ def get_color_code_module(d: int) -> dict:
         module["distance"] = d
         module["num_data"] = code.num_data
         module["num_stab"] = code.num_stabilizers
+
+    # Scope each factory call to a round-specific module (see
+    # _round_scoped_color_memory_factory). Copy first so the cached
+    # _load_color_code_module namespace keeps its real factories for the
+    # round-scoped re-entry.
+    module = dict(module)
+    for basis in ("z", "x"):
+        key = f"make_memory_{basis}"
+        if key in module:
+            module[key] = _round_scoped_color_memory_factory(d, basis)
 
     return module
 
@@ -429,7 +468,7 @@ def make_color_code(distance: int, num_rounds: int, basis: str) -> object:
         msg = f"basis must be 'Z' or 'X', got {basis!r}"
         raise ValueError(msg)
 
-    module = get_color_code_module(distance)
+    module = _load_color_code_module(distance, num_rounds=num_rounds)
 
     factory = module["make_memory_z"] if basis.upper() == "Z" else module["make_memory_x"]
 

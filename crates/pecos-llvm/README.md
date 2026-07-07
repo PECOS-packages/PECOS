@@ -16,12 +16,12 @@ Provides Rust types for generating LLVM IR, designed to be compatible with Pytho
 
 ## Relationship to pecos-build
 
-- **pecos-build**: Manages LLVM 14 *installation* (downloading, finding)
-- **pecos-llvm**: *Uses* LLVM 14 (via inkwell) for IR generation
+- **pecos-build**: Manages LLVM 21.1 *installation* (downloading, finding)
+- **pecos-llvm**: *Uses* LLVM 21.1 (via inkwell) for IR generation
 
 ## Requirements
 
-Requires LLVM 14. Install with:
+Requires LLVM 21.1. Install with:
 ```bash
 cargo run -p pecos -- install llvm
 ```

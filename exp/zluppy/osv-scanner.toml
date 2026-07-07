@@ -1,0 +1,12 @@
+# OSV-Scanner configuration for exp/zluppy (config discovery is per-directory:
+# the root osv-scanner.toml does not apply to this uv.lock).
+# Same ignore-list policy as the root osv-scanner.toml: only entries we cannot
+# fix from this repo, each documenting crate@version, chain, and upstream owner.
+
+[[IgnoredVulns]]
+id = "PYSEC-2026-151"
+# wasmtime (PyPI) 38.0.0 -- Wasmtime stack-overflow bug class; the advisory
+# lists NO fixed release (last_affected 43.0.0, the latest).
+# Chain: zluppy dev/test group -> quantum-pecos -> guppylang -> guppylang-internals -> wasmtime.
+# Upstream owner: https://github.com/bytecodealliance/wasmtime-py.
+reason = "Transitive via guppylang; no fixed wasmtime-py release exists yet. PECOS only runs trusted, locally-generated Wasm through it. Re-check on guppylang bumps."

@@ -193,12 +193,10 @@ attributes #0 = { "EntryPoint" }
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
         assert isinstance(hugr_bytes, bytes), "Should return bytes"
 
-        # Check for HUGR format markers
-        hugr_str = hugr_bytes.decode("utf-8")
-        is_hugr_envelope = hugr_str.startswith("HUGRiHJv")
-        is_json = hugr_str.startswith("{") or "{" in hugr_str[:100]
+        # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
+        import pecos_rslib
 
-        assert is_hugr_envelope or is_json, "HUGR output should be envelope format or JSON"
+        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "HUGR bytes should load as a valid HUGR"
 
 
 class TestLLVMIRPatterns:

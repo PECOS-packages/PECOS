@@ -11,9 +11,11 @@ default:
     @echo "Quick start:"
     @echo "  just install-cli    # Optional: install pecos CLI for direct use"
     @echo "  just setup          # First time: detect and install dependencies"
+    @echo "  just setup-env      # Configure LLVM 21.1 for local development"
+    @echo "  just dev-preflight  # Check LLVM before the longer dev workflow"
     @echo "  just build          # Build PECOS (runs setup if needed)"
     @echo "  just test           # Run all tests"
-    @echo "  just dev            # Build + test (daily workflow)"
+    @echo "  just dev            # Build + test (runs dev-preflight first)"
     @echo "  just lint           # Check formatting and linting"
     @echo "  just security-check # Check dependency/security policy"
     @echo "  just doctor         # Diagnose environment problems"
@@ -53,22 +55,15 @@ setup: _msvc-bootstrap
 setup-ci: _msvc-bootstrap
     {{pecos}} setup --yes
 
+# Install/configure local LLVM 21.1 build environment
+[group('setup')]
+setup-env: ensure-local-build-env
+    @echo "Development environment is configured. Run: just doctor"
+
 # Ensure CI has a runtime-valid LLVM and export PECOS build env files
 [group('setup')]
-ci-env: _msvc-bootstrap
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export CARGO_NET_RETRY=10
-    for attempt in 1 2 3; do
-        if {{pecos}} llvm ensure --managed --no-configure && {{pecos}} env --github-actions; then
-            exit 0
-        fi
-        if [ "$attempt" -eq 3 ]; then
-            exit 1
-        fi
-        echo "ci-env failed on attempt $attempt; retrying..."
-        sleep 5
-    done
+ci-env: ensure-ci-build-env
+    {{pecos}} env --github-actions
 
 # Check development environment for common problems
 [group('setup')]
@@ -79,17 +74,18 @@ doctor: _msvc-bootstrap
     ok()   { echo "  [OK] $1: $2"; }
     fail() { echo "  [!!] $1: $2"; PROBLEMS=$((PROBLEMS + 1)); }
 
-    echo "LLVM 14:"
+    echo "LLVM 21.1:"
     if LLVM_DIR=$({{pecos}} llvm find 2>/dev/null); then
         VERSION=$("$LLVM_DIR/bin/llvm-config" --version 2>/dev/null || {{pecos}} llvm version 2>/dev/null | head -1 || echo "unknown")
-        ok "installed" "$VERSION at $LLVM_DIR"
+        LINK_MODE=$("$LLVM_DIR/bin/llvm-config" --shared-mode 2>/dev/null || echo "unknown")
+        ok "installed" "$VERSION ($LINK_MODE LLVM) at $LLVM_DIR"
     else
         fail "installed" "not found (run: just setup)"
     fi
-    if [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_140_PREFIX" .cargo/config.toml 2>/dev/null; then
-        ok ".cargo/config.toml" "LLVM_SYS_140_PREFIX configured"
+    if [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_211_PREFIX" .cargo/config.toml 2>/dev/null; then
+        ok ".cargo/config.toml" "LLVM_SYS_211_PREFIX configured"
     else
-        fail ".cargo/config.toml" "LLVM_SYS_140_PREFIX not set (run: pecos llvm configure)"
+        fail ".cargo/config.toml" "LLVM_SYS_211_PREFIX not set (run: pecos llvm configure)"
     fi
     echo ""
 
@@ -438,9 +434,51 @@ bench profile="release" features="" pattern="": _msvc-bootstrap (validate-bench-
 # Dev Workflows
 # =============================================================================
 
+# Check local prerequisites before the longer dev workflow
+[group('dev')]
+dev-preflight: _msvc-bootstrap
+    #!/usr/bin/env bash
+    set -euo pipefail
+    print_llvm_hint() {
+        echo "Run: just setup-env"
+        echo "Or configure your own LLVM 21.1 install:"
+        echo "  cargo run --locked -p pecos-cli -- llvm configure /path/to/llvm"
+    }
+
+    if ! LLVM_CHECK_OUTPUT=$({{pecos}} llvm check 2>&1); then
+        echo "$LLVM_CHECK_OUTPUT"
+        echo ""
+        echo "PECOS dev preflight failed: LLVM 21.1 is not ready."
+        print_llvm_hint
+        exit 1
+    fi
+
+    if [ ! -f .cargo/config.toml ] || ! grep -q "LLVM_SYS_211_PREFIX" .cargo/config.toml 2>/dev/null; then
+        echo "PECOS dev preflight failed: .cargo/config.toml does not set LLVM_SYS_211_PREFIX."
+        print_llvm_hint
+        exit 1
+    fi
+
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*|Windows*) ;;
+        *)
+            LLVM_DIR=$({{pecos}} llvm find 2>/dev/null || true)
+            if [ -n "$LLVM_DIR" ] && [ -x "$LLVM_DIR/bin/llvm-config" ]; then
+                LINK_MODE=$("$LLVM_DIR/bin/llvm-config" --shared-mode 2>/dev/null || echo "unknown")
+                if [ "$LINK_MODE" != "shared" ]; then
+                    echo "PECOS dev preflight failed: LLVM at $LLVM_DIR reports '$LINK_MODE' link mode."
+                    echo "Full workspace HUGR tests need shared LLVM 21.1 to avoid high-memory static links."
+                    print_llvm_hint
+                    exit 1
+                fi
+            fi
+            ;;
+    esac
+    echo "PECOS dev preflight passed."
+
 # Fast dev cycle: build + test only (lang: all, rust, python, julia, go)
 [group('dev')]
-dev lang="all": (validate-dev-lang lang)
+dev lang="all": (validate-dev-lang lang) dev-preflight
     #!/usr/bin/env bash
     set -euo pipefail
     DEV_LANG="{{lang}}"
@@ -527,7 +565,7 @@ docs-test:
 # Deps Management (prefer `just setup` or `pecos install <target>`)
 # =============================================================================
 
-# Install LLVM 14
+# Install PECOS-managed LLVM 21.1 where supported
 [group('deps')]
 install-llvm: _msvc-bootstrap
     {{pecos}} install llvm
@@ -542,7 +580,7 @@ install-cuda: _msvc-bootstrap
 configure-llvm: _msvc-bootstrap
     {{pecos}} llvm configure
 
-# Check LLVM 14 installation status
+# Check LLVM 21.1 installation status
 [group('deps')]
 check-llvm: _msvc-bootstrap
     -{{pecos}} llvm check
@@ -707,10 +745,9 @@ go-lint profile="release": (validate-profile "go-lint" profile) (go-build profil
 pytest-perf: build-release
     uv run --frozen --group numpy-compat pytest python/pecos-rslib/tests -m "performance" -v
 
-# Run tests for optional dependencies
+# Run tests for optional dependencies (only quantum-pecos carries the marker)
 [group('test')]
 pytest-dep:
-    uv run --frozen pytest python/pecos-rslib/tests -m "optional_dependency"
     uv run --frozen pytest python/quantum-pecos/tests -m "optional_dependency"
 
 # Run the slower integration lane (excluded from the default fast lane)
@@ -853,6 +890,62 @@ setup-quiet:
     #!/usr/bin/env bash
     set -euo pipefail
     {{pecos}} setup --quiet
+
+[private]
+ensure-local-build-env: _msvc-bootstrap
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    has_llvm_config() {
+        [ -f .cargo/config.toml ] && grep -q "LLVM_SYS_211_PREFIX" .cargo/config.toml 2>/dev/null
+    }
+
+    if {{pecos}} llvm check >/dev/null 2>&1 && has_llvm_config; then
+        exit 0
+    fi
+
+    if {{pecos}} llvm find >/dev/null 2>&1; then
+        {{pecos}} llvm configure
+        exit 0
+    fi
+
+    just install-build-llvm
+
+[private]
+ensure-ci-build-env: install-build-llvm
+
+[private]
+install-build-llvm: _msvc-bootstrap
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LLVM_RELEASE_VERSION="${LLVM_RELEASE_VERSION:-21.1.8}"
+    case "${RUNNER_OS:-$(uname -s)}" in
+        Linux)
+            {{pecos}} llvm ensure --managed --no-configure || bash scripts/ci/install-llvm-21-conda-linux.sh
+            {{pecos}} llvm configure
+            ;;
+        macOS|Darwin)
+            if ! command -v brew >/dev/null 2>&1; then
+                echo "PECOS-managed LLVM is not available on macOS yet." >&2
+                echo "Install Homebrew LLVM 21 or configure your own shared LLVM 21.1:" >&2
+                echo "  brew install llvm@21" >&2
+                echo "  cargo run --locked -p pecos-cli -- llvm configure /path/to/llvm" >&2
+                exit 1
+            fi
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
+            {{pecos}} llvm configure "$(brew --prefix llvm@21)"
+            ;;
+        Windows*|MINGW*|MSYS*|CYGWIN*)
+            LLVM_ENV_ROOT="${USERPROFILE:-$HOME}\\.pecos\\deps\\llvm-21.1"
+            LLVM_PREFIX="${LLVM_ENV_ROOT}\\Library"
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/ci/install-llvm-21-windows.ps1 -InstallDir "$LLVM_ENV_ROOT" -Version "$LLVM_RELEASE_VERSION"
+            {{pecos}} llvm configure "$LLVM_PREFIX"
+            ;;
+        *)
+            {{pecos}} llvm ensure --managed --no-configure
+            {{pecos}} llvm configure
+            ;;
+    esac
 
 # Sync Python deps (fast if already installed, skips maturin rebuilds)
 [private]

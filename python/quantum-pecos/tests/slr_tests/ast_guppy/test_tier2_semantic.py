@@ -44,10 +44,8 @@ deeper *semantic* proof for the load-bearing CReg shapes):
      bitcode via the bundled `selene_helios_qis_plugin` (+ Helios
      QIR runtime) -- `selene_sim.build(BitcodeString(...)) ->
      run_shots(Stim)`. So the direct `qir_to_qis -> Selene`
-     differential long claimed "blocked" (an
-     alleged LLVM 14<->21 / opaque-vs-typed bridge) is in fact
-     available with zero PECOS LLVM work: PECOS-Rust stays LLVM-14;
-     the LLVM-21 capability lives entirely in the qir-qis +
+     differential long claimed "blocked" by LLVM version or pointer
+     representation differences is available through the qir-qis +
      selene_sim *Python* deps. Layer D
      (`test_tier2_executable_differential`) lands the
      **representative** executable differential (deterministic
@@ -85,17 +83,25 @@ from .audit_runner import _curated_cases  # noqa: TID252
 _SHOTS = 8
 _SEED = 42
 _BESPOKE = re.compile(r"create_creg|get_creg_bit|set_creg_bit|get_int_from_creg|set_creg_to_int|mz_to_creg_bit")
-# Ordered mz/read_result events (slot in g1 for mz, g2 for read_result) so
+# Ordered mz/read_result events (slot arg in g1 for mz, g2 for read_result) so
 # we can pin per-measurement slot correspondence, not just set membership.
+# QIR uses LLVM opaque pointers: a result-slot constant is
+# `ptr inttoptr (i64 N to ptr)`, except slot 0 which is `ptr null`.
 _MZ_RR_EVENT = re.compile(
-    r"@__quantum__qis__mz__body\(%Qubit\* [^,]+, "
-    r"%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)"
-    r"|@__quantum__rt__read_result\(%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)",
+    r"@__quantum__qis__mz__body\(ptr [^,]+, "
+    r"ptr (null|inttoptr \(i64 \d+ to ptr\))\)"
+    r"|@__quantum__rt__read_result\(ptr (null|inttoptr \(i64 \d+ to ptr\))\)",
 )
 
 
+def _slot(arg: str) -> int:
+    """Decode a `ptr` result-slot constant (`null` is slot 0)."""
+    m = re.search(r"i64 (\d+)", arg)
+    return int(m.group(1)) if m else 0
+
+
 def _assert_mz_rr_pairing(label: str, ir: str) -> None:
-    """Per-measurement slot correspondence: mz `%Result*` slots are
+    """Per-measurement slot correspondence: mz result slots are
     monotonic 0..n-1, and EVERY `read_result` is immediately preceded
     (in emission order) by the `mz__body` of the SAME slot -- i.e. a
     read_result reuses *its own* measurement's static slot, not merely
@@ -103,11 +109,26 @@ def _assert_mz_rr_pairing(label: str, ir: str) -> None:
     events: list[tuple[str, int]] = []
     for m in _MZ_RR_EVENT.finditer(ir):
         if m.group(1) is not None:
-            events.append(("mz", int(m.group(1))))
+            events.append(("mz", _slot(m.group(1))))
         else:
-            events.append(("rr", int(m.group(2))))
+            events.append(("rr", _slot(m.group(2))))
+    # Tripwire: if the emitted pointer syntax ever drifts away from EITHER
+    # half of the event regex, fail loud instead of vacuously passing.
+    # Count raw call sites (the `declare` preamble lines do not contain
+    # "call") and require the regex to have matched every one of them.
+    mz_calls = ir.count("call void @__quantum__qis__mz__body")
+    rr_calls = ir.count("call i1 @__quantum__rt__read_result")
+    mz_events = sum(1 for kind, _ in events if kind == "mz")
+    rr_events = sum(1 for kind, _ in events if kind == "rr")
+    assert (
+        mz_events == mz_calls
+    ), f"{label}: _MZ_RR_EVENT matched {mz_events} of {mz_calls} mz calls; pattern out of sync with emitted IR"
+    assert rr_events == rr_calls, (
+        f"{label}: _MZ_RR_EVENT matched {rr_events} of {rr_calls} read_result calls; "
+        f"pattern out of sync with emitted IR"
+    )
     mz_slots = [s for kind, s in events if kind == "mz"]
-    assert mz_slots == list(range(len(mz_slots))), f"{label}: mz %Result* slots not monotonic 0..n-1: {mz_slots}"
+    assert mz_slots == list(range(len(mz_slots))), f"{label}: mz result slots not monotonic 0..n-1: {mz_slots}"
     for i, (kind, slot) in enumerate(events):
         if kind != "rr":
             continue
@@ -124,6 +145,15 @@ def _case(label: str) -> Main:
             return c.factory()
     msg = f"audit case {label!r} not found"
     raise KeyError(msg)
+
+
+def _creg_storage_operand(size: int, name: str) -> str:
+    """Match LLVM 21 opaque `ptr %c` and legacy typed `[N x i1]* %c` IR."""
+    return rf"(?:ptr|\[{size} x i1\]\*) %{re.escape(name)}"
+
+
+def _creg_gep_pattern(size: int, name: str, index: int) -> str:
+    return rf"getelementptr \[{size} x i1\], {_creg_storage_operand(size, name)}, i64 0, i64 {index}"
 
 
 # --- extra programs not in the corpus (plan amendment 8 coverage) ---
@@ -190,8 +220,9 @@ def _layer_b_structural(prog: Main, label: str, *, creg_sizes: dict[str, int]) -
 
     for name, size in creg_sizes.items():
         assert f"%{name} = alloca [{size} x i1]" in ir, f"{label}: missing entry-block alloca for CReg {name!r}"
-        assert (
-            f"store [{size} x i1] zeroinitializer, [{size} x i1]* %{name}" in ir
+        assert re.search(
+            rf"store \[{size} x i1\] zeroinitializer, {_creg_storage_operand(size, name)}",
+            ir,
         ), f"{label}: missing zeroinitializer for CReg {name!r} (unset bits must read 0, not undef)"
 
     _assert_mz_rr_pairing(label, ir)
@@ -212,10 +243,7 @@ def _assert_set_int_unpack(label: str, ir: str, *, name: str, size: int, value: 
     """
     for i in range(size):
         bit = (value >> i) & 1
-        pat = (
-            rf"getelementptr \[{size} x i1\], \[{size} x i1\]\* %{name}, "
-            rf"i64 0, i64 {i}\n\s*store i1 {bit}, i1\* %[.\w]+"
-        )
+        pat = rf"{_creg_gep_pattern(size, name, i)}\n\s*store i1 {bit}, (?:ptr|i1\*) %[.\w]+"
         assert re.search(
             pat,
             ir,
@@ -232,11 +260,12 @@ def _assert_zero_init_predicate(label: str, ir: str, *, name: str) -> None:
     """`If(c[i])` before any write must branch on a `load` of the
     zero-initialised buffer (so the predicate is deterministically 0,
     never `undef`)."""
-    assert (
-        f"store [1 x i1] zeroinitializer, [1 x i1]* %{name}" in ir
+    assert re.search(
+        rf"store \[1 x i1\] zeroinitializer, {_creg_storage_operand(1, name)}",
+        ir,
     ), f"{label}: missing zeroinitializer for the pre-read CReg {name!r}"
     assert re.search(
-        rf"getelementptr \[1 x i1\], \[1 x i1\]\* %{name}, i64 0, i64 0\n\s*%[.\w]+ = load i1",
+        rf"{_creg_gep_pattern(1, name, 0)}\n\s*%[.\w]+ = load i1",
         ir,
     ), f"{label}: If(c[0]) predicate is not a load of the zero-inited buffer"
 

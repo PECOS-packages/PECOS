@@ -1,0 +1,523 @@
+/// Standard library: Mathematical functions
+///
+/// For constants (pi, tau, e, etc.), use std.f64:
+///   std := @import("std");
+///   angle := std.f64.pi / 4.0;
+///
+/// For angle constants, use std.a64:
+///   theta := std.a64.quarter_turn;
+
+// =============================================================================
+// Functions
+// =============================================================================
+
+/// Absolute value
+pub fn abs_i32(x: i32) -> i32 {
+    if x < 0 {
+        return -x;
+    }
+    return x;
+}
+
+/// Absolute value for i64
+pub fn abs_i64(x: i64) -> i64 {
+    if x < 0 {
+        return -x;
+    }
+    return x;
+}
+
+/// Absolute value for f64
+pub fn abs_f64(x: f64) -> f64 {
+    if x < 0.0 {
+        return -x;
+    }
+    return x;
+}
+
+/// Minimum of two i32 values
+pub fn min_i32(a: i32, b: i32) -> i32 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+/// Minimum of two u32 values
+pub fn min_u32(a: u32, b: u32) -> u32 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+/// Minimum of two f64 values
+pub fn min_f64(a: f64, b: f64) -> f64 {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+/// Maximum of two i32 values
+pub fn max_i32(a: i32, b: i32) -> i32 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+/// Maximum of two u32 values
+pub fn max_u32(a: u32, b: u32) -> u32 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+/// Maximum of two f64 values
+pub fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b {
+        return a;
+    }
+    return b;
+}
+
+/// Clamp value to range [lo, hi]
+pub fn clamp_i32(x: i32, lo: i32, hi: i32) -> i32 {
+    if x < lo {
+        return lo;
+    }
+    if x > hi {
+        return hi;
+    }
+    return x;
+}
+
+/// Clamp value to range [lo, hi]
+pub fn clamp_u32(x: u32, lo: u32, hi: u32) -> u32 {
+    if x < lo {
+        return lo;
+    }
+    if x > hi {
+        return hi;
+    }
+    return x;
+}
+
+/// Clamp value to range [lo, hi]
+pub fn clamp_f64(x: f64, lo: f64, hi: f64) -> f64 {
+    if x < lo {
+        return lo;
+    }
+    if x > hi {
+        return hi;
+    }
+    return x;
+}
+
+/// Sign of a number: -1, 0, or 1
+pub fn sign_i32(x: i32) -> i32 {
+    if x < 0 {
+        return -1;
+    }
+    if x > 0 {
+        return 1;
+    }
+    return 0;
+}
+
+/// Sign of a number: -1.0, 0.0, or 1.0
+pub fn sign_f64(x: f64) -> f64 {
+    if x < 0.0 {
+        return -1.0;
+    }
+    if x > 0.0 {
+        return 1.0;
+    }
+    return 0.0;
+}
+
+/// Integer division (floor division for positive numbers)
+pub fn div_floor_i32(a: i32, b: i32) -> i32 {
+    result := a / b;
+    // Adjust for negative results to get floor behavior
+    if (a < 0) != (b < 0) and a % b != 0 {
+        return result - 1;
+    }
+    return result;
+}
+
+/// Modulo operation (always non-negative for positive divisor)
+pub fn mod_i32(a: i32, b: i32) -> i32 {
+    result := a % b;
+    if result < 0 {
+        return result + b;
+    }
+    return result;
+}
+
+/// Check if integer is power of 2
+pub fn is_power_of_2_u32(x: u32) -> bool {
+    if x == 0 {
+        return false;
+    }
+    return (x & (x - 1)) == 0;
+}
+
+/// Check if integer is power of 2
+pub fn is_power_of_2_u64(x: u64) -> bool {
+    if x == 0 {
+        return false;
+    }
+    return (x & (x - 1)) == 0;
+}
+
+/// Next power of 2 greater than or equal to x
+pub fn next_power_of_2_u32(x: u32) -> u32 {
+    if x == 0 {
+        return 1;
+    }
+    mut n := x - 1;
+    n = n | (n >> 1);
+    n = n | (n >> 2);
+    n = n | (n >> 4);
+    n = n | (n >> 8);
+    n = n | (n >> 16);
+    return n + 1;
+}
+
+// =============================================================================
+// GCD and LCM
+// =============================================================================
+
+/// Greatest common divisor (Euclidean algorithm)
+pub fn gcd_u32(a: u32, b: u32) -> u32 {
+    mut x := a;
+    mut y := b;
+    for _ in 0..32 {
+        if y == 0 {
+            return x;
+        }
+        t := y;
+        y = x % y;
+        x = t;
+    }
+    return x;
+}
+
+/// Greatest common divisor for u64
+pub fn gcd_u64(a: u64, b: u64) -> u64 {
+    mut x := a;
+    mut y := b;
+    for _ in 0..64 {
+        if y == 0 {
+            return x;
+        }
+        t := y;
+        y = x % y;
+        x = t;
+    }
+    return x;
+}
+
+/// Least common multiple
+pub fn lcm_u32(a: u32, b: u32) -> u32 {
+    if a == 0 or b == 0 {
+        return 0;
+    }
+    return (a / gcd_u32(a, b)) * b;
+}
+
+/// Least common multiple for u64
+pub fn lcm_u64(a: u64, b: u64) -> u64 {
+    if a == 0 or b == 0 {
+        return 0;
+    }
+    return (a / gcd_u64(a, b)) * b;
+}
+
+// =============================================================================
+// Integer Square Root
+// =============================================================================
+
+/// Integer square root (floor of sqrt)
+/// Uses Newton-Raphson iteration
+pub fn isqrt_u32(x: u32) -> u32 {
+    if x == 0 {
+        return 0;
+    }
+    if x == 1 {
+        return 1;
+    }
+
+    // Initial guess (half the bit width)
+    mut r := x / 2;
+
+    // Newton-Raphson: r = (r + x/r) / 2
+    for _ in 0..16 {
+        new_r := (r + x / r) / 2;
+        if new_r >= r {
+            return r;
+        }
+        r = new_r;
+    }
+    return r;
+}
+
+/// Integer square root for u64
+pub fn isqrt_u64(x: u64) -> u64 {
+    if x == 0 {
+        return 0;
+    }
+    if x == 1 {
+        return 1;
+    }
+
+    mut r := x / 2;
+
+    for _ in 0..32 {
+        new_r := (r + x / r) / 2;
+        if new_r >= r {
+            return r;
+        }
+        r = new_r;
+    }
+    return r;
+}
+
+// =============================================================================
+// Integer Logarithm
+// =============================================================================
+
+/// Floor of log base 2 (position of highest set bit)
+/// Returns 0 for x=0 or x=1
+pub fn log2_u32(x: u32) -> u32 {
+    if x <= 1 {
+        return 0;
+    }
+
+    mut n: u32 = 0;
+    mut val := x;
+
+    if val >= 65536 { n = n + 16; val = val >> 16; }
+    if val >= 256 { n = n + 8; val = val >> 8; }
+    if val >= 16 { n = n + 4; val = val >> 4; }
+    if val >= 4 { n = n + 2; val = val >> 2; }
+    if val >= 2 { n = n + 1; }
+
+    return n;
+}
+
+/// Floor of log base 2 for u64
+pub fn log2_u64(x: u64) -> u64 {
+    if x <= 1 {
+        return 0;
+    }
+
+    mut n: u64 = 0;
+    mut val := x;
+
+    if val >= 4294967296 { n = n + 32; val = val >> 32; }
+    if val >= 65536 { n = n + 16; val = val >> 16; }
+    if val >= 256 { n = n + 8; val = val >> 8; }
+    if val >= 16 { n = n + 4; val = val >> 4; }
+    if val >= 4 { n = n + 2; val = val >> 2; }
+    if val >= 2 { n = n + 1; }
+
+    return n;
+}
+
+/// Ceiling of log base 2
+pub fn log2_ceil_u32(x: u32) -> u32 {
+    if x <= 1 {
+        return 0;
+    }
+    floor := log2_u32(x);
+    one: u32 = 1;
+    if (one << floor) == x {
+        return floor;
+    }
+    return floor + 1;
+}
+
+/// Ceiling of log base 2 for u64
+pub fn log2_ceil_u64(x: u64) -> u64 {
+    if x <= 1 {
+        return 0;
+    }
+    floor := log2_u64(x);
+    one: u64 = 1;
+    if (one << floor) == x {
+        return floor;
+    }
+    return floor + 1;
+}
+
+// =============================================================================
+// Factorial and Binomial (Small Numbers)
+// =============================================================================
+
+/// Factorial for small n (n <= 12 for u32, n <= 20 for u64)
+/// Returns 0 on overflow
+pub fn factorial_u32(n: u32) -> u32 {
+    if n > 12 {
+        return 0; // Overflow
+    }
+    mut result: u32 = 1;
+    mut i: u32 = 2;
+    for _ in 0..12 {
+        if i > n {
+            break;
+        }
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+
+/// Factorial for small n (max n=20)
+pub fn factorial_u64(n: u64) -> u64 {
+    if n > 20 {
+        return 0; // Overflow
+    }
+    mut result: u64 = 1;
+    mut i: u64 = 2;
+    for _ in 0..20 {
+        if i > n {
+            break;
+        }
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+
+/// Binomial coefficient C(n, k) = n! / (k! * (n-k)!)
+/// Uses multiplicative formula to avoid large intermediate values
+pub fn binomial_u32(n: u32, k: u32) -> u32 {
+    if k > n {
+        return 0;
+    }
+    if k == 0 or k == n {
+        return 1;
+    }
+
+    // Use smaller k for efficiency: C(n,k) = C(n, n-k)
+    mut kk := k;
+    if k > n - k {
+        kk = n - k;
+    }
+
+    mut result: u32 = 1;
+    mut i: u32 = 0;
+    for _ in 0..16 {
+        if i >= kk {
+            break;
+        }
+        result = result * (n - i);
+        result = result / (i + 1);
+        i = i + 1;
+    }
+    return result;
+}
+
+/// Binomial coefficient for u64
+pub fn binomial_u64(n: u64, k: u64) -> u64 {
+    if k > n {
+        return 0;
+    }
+    if k == 0 or k == n {
+        return 1;
+    }
+
+    mut kk := k;
+    if k > n - k {
+        kk = n - k;
+    }
+
+    mut result: u64 = 1;
+    mut i: u64 = 0;
+    for _ in 0..32 {
+        if i >= kk {
+            break;
+        }
+        result = result * (n - i);
+        result = result / (i + 1);
+        i = i + 1;
+    }
+    return result;
+}
+
+// =============================================================================
+// Exponentiation
+// =============================================================================
+
+/// Integer power (exponentiation by squaring)
+pub fn pow_u32(base: u32, exp: u32) -> u32 {
+    if exp == 0 {
+        return 1;
+    }
+
+    mut result: u32 = 1;
+    mut b := base;
+    mut e := exp;
+
+    for _ in 0..32 {
+        if e == 0 {
+            break;
+        }
+        if (e & 1) == 1 {
+            result = result * b;
+        }
+        e = e >> 1;
+        if e != 0 {
+            b = b * b;
+        }
+    }
+    return result;
+}
+
+/// Integer power for u64
+pub fn pow_u64(base: u64, exp: u64) -> u64 {
+    if exp == 0 {
+        return 1;
+    }
+
+    mut result: u64 = 1;
+    mut b := base;
+    mut e := exp;
+
+    for _ in 0..64 {
+        if e == 0 {
+            break;
+        }
+        if (e & 1) == 1 {
+            result = result * b;
+        }
+        e = e >> 1;
+        if e != 0 {
+            b = b * b;
+        }
+    }
+    return result;
+}
+
+// =============================================================================
+// Distance Functions
+// =============================================================================
+
+/// Manhattan distance in 2D
+pub fn manhattan_i32(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
+    return abs_i32(x2 - x1) + abs_i32(y2 - y1);
+}
+
+/// Chebyshev distance in 2D (max of absolute differences)
+pub fn chebyshev_i32(x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
+    dx := abs_i32(x2 - x1);
+    dy := abs_i32(y2 - y1);
+    if dx > dy {
+        return dx;
+    }
+    return dy;
+}

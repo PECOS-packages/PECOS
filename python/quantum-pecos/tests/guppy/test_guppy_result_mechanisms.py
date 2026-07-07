@@ -7,11 +7,11 @@ This test explores:
 4. What we should expect in Selene's result stream
 """
 
-import json
 import tempfile
 from pathlib import Path
 
 import pytest
+from hugr.package import Package
 
 
 class TestGuppyResultMechanisms:
@@ -90,24 +90,11 @@ class TestGuppyResultMechanisms:
             assert hugr_bytes is not None, f"{name} should compile to HUGR bytes"
             assert len(hugr_bytes) > 0, f"{name} HUGR bytes should not be empty"
 
-            # Parse HUGR to verify structure
-            hugr_str = hugr_bytes.decode("utf-8")
-
-            # Handle HUGR envelope format
-            if hugr_str.startswith("HUGRiHJv"):
-                json_start = hugr_str.find("{", 9)
-                assert json_start != -1, "HUGR envelope should contain JSON"
-                hugr_str = hugr_str[json_start:]
-
-            # Verify it's valid JSON
-            try:
-                hugr_json = json.loads(hugr_str)
-            except json.JSONDecodeError as e:
-                pytest.fail(f"{name} HUGR is not valid JSON: {e}")
-
-            # Verify basic HUGR structure
-            assert isinstance(hugr_json, dict), "HUGR should be a JSON object"
-            assert "nodes" in hugr_json or "modules" in hugr_json, "HUGR should contain nodes or modules"
+            # Load the binary Model envelope and verify basic structure
+            pkg = Package.from_bytes(hugr_bytes)
+            assert len(pkg.modules) >= 1, f"{name} HUGR should contain at least one module"
+            total_nodes = sum(1 for module in pkg.modules for _ in module.nodes())
+            assert total_nodes > 0, f"{name} HUGR should contain at least one node"
 
     def test_hugr_contains_operations(self, guppy_functions: dict) -> None:
         """Test that HUGR contains expected quantum and result operations."""
@@ -118,37 +105,23 @@ class TestGuppyResultMechanisms:
 
         for name, func in guppy_functions.items():
             hugr_bytes = compile_guppy_to_hugr(func)
-            hugr_str = hugr_bytes.decode("utf-8")
+            pkg = Package.from_bytes(hugr_bytes)
 
-            # Handle HUGR envelope format
-            if hugr_str.startswith("HUGRiHJv"):
-                json_start = hugr_str.find("{", 9)
-                hugr_str = hugr_str[json_start:]
+            # Map of ExtOp gate name -> count across all modules.
+            ops = self._count_operations(pkg)
 
-            hugr_json = json.loads(hugr_str)
+            # Every fixture builds a Bell pair, so the compiled HUGR must contain
+            # the concrete Hadamard and CX gate ops plus a measurement -- not
+            # merely "some" nodes.
+            assert ops.get("H", 0) >= 1, f"{name} HUGR should contain an H gate, got {ops}"
+            assert ops.get("CX", 0) >= 1, f"{name} HUGR should contain a CX gate, got {ops}"
+            assert ops.get("MeasureFree", 0) >= 1, f"{name} HUGR should contain a measurement, got {ops}"
 
-            # Count different types of operations
-            ops = self._count_operations(hugr_json)
-
-            # Check if HUGR contains any operations at all
-            total_ops = sum(ops.values())
-
-            # If we found operations but no quantum ops, it might be a format issue
-            # The important thing is that the HUGR compiles and has structure
-            if total_ops == 0:
-                # Try to check if the HUGR has nodes which indicates it has content
-                has_nodes = "nodes" in hugr_json and len(hugr_json.get("nodes", [])) > 0
-                has_modules = "modules" in hugr_json and len(str(hugr_json.get("modules", ""))) > 100
-
-                if not (has_nodes or has_modules):
-                    pytest.fail(
-                        f"{name} HUGR seems empty - no operations or nodes found",
-                    )
-
-            # Functions with result() should have result/output operations
+            # Functions that tag outputs via result() must keep the result ops
+            # (guppy lowers result() to tket.result `result_bool`/`result_int`).
             if "result_tags" in name or "mixed" in name:
-                # We're being more lenient here since format may vary
-                pass  # Just verify compilation succeeded above
+                result_ops = sum(count for op_name, count in ops.items() if op_name.startswith("result"))
+                assert result_ops >= 1, f"{name} HUGR should retain result() ops, got {ops}"
 
     def test_compile_to_llvm(self, guppy_functions: dict) -> None:
         """Test that HUGR compiles to LLVM successfully."""
@@ -276,39 +249,16 @@ class TestGuppyResultMechanisms:
             for type_name in format_info["expected_types"]:
                 assert type_name in valid_types, f"{func_name} has invalid type: {type_name}"
 
-    def _count_operations(self, hugr_json: dict) -> dict[str, int]:
-        """Count different types of operations in HUGR JSON."""
-        counts = {
-            "quantum": 0,
-            "result": 0,
-            "output": 0,
-            "io": 0,
-        }
-
-        def search(obj: object) -> None:
-            if isinstance(obj, dict):
-                if "op" in obj:
-                    op_str = str(obj["op"]).lower()
-
-                    # Count quantum operations
-                    if any(q in op_str for q in ["quantum", "h", "cx", "measure"]):
-                        counts["quantum"] += 1
-
-                    # Count result/output operations
-                    if "result" in op_str:
-                        counts["result"] += 1
-                    if "output" in op_str:
-                        counts["output"] += 1
-                    if "io" in op_str or "print" in op_str:
-                        counts["io"] += 1
-
-                for value in obj.values():
-                    search(value)
-            elif isinstance(obj, list):
-                for item in obj:
-                    search(item)
-
-        search(hugr_json)
+    def _count_operations(self, pkg: Package) -> dict[str, int]:
+        """Count ExtOp gate names across all modules in the HUGR package."""
+        counts: dict[str, int] = {}
+        for module in pkg.modules:
+            for node in module.nodes():
+                n = node[0] if isinstance(node, tuple) else node
+                op = module[n].op
+                op_def = getattr(op, "_op_def", None)
+                if op_def is not None:
+                    counts[op_def.name] = counts.get(op_def.name, 0) + 1
         return counts
 
 

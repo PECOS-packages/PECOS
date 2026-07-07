@@ -137,6 +137,27 @@ def test_selene_engine_python_exports() -> None:
     assert isinstance(named_builder, pecos.QisEngineBuilder)
 
 
+def test_selene_engine_accepts_generic_runtime_plugin_shape() -> None:
+    """A downstream Selene runtime plugin object is sufficient; PECOS does not need to know its package."""
+    from pathlib import Path
+
+    import pecos
+
+    class RuntimePlugin:
+        def __init__(self) -> None:
+            self.library_file = Path("libcustom_selene_runtime.so")
+            self.library_search_dirs = [Path("custom-selene-libs")]
+
+        def get_init_args(self) -> list[str]:
+            return ["--hardware-profile=custom"]
+
+    builder = pecos.qis_engine().selene_runtime(RuntimePlugin())
+    assert isinstance(builder, pecos.QisEngineBuilder)
+
+    engine_builder = pecos.selene_engine(RuntimePlugin())
+    assert isinstance(engine_builder, pecos.QisEngineBuilder)
+
+
 def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
     """Test that sim(Guppy(...)).classical(selene_engine()) routes HUGR through the QIS path."""
     import pecos

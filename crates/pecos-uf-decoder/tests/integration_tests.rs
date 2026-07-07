@@ -37,7 +37,7 @@ fn test_real_dem_construction() {
         graph.edges.len()
     );
 
-    let dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
     assert_eq!(dec.num_detectors(), graph.num_detectors);
     assert_eq!(dec.num_edges(), graph.edges.len());
 }
@@ -46,7 +46,7 @@ fn test_real_dem_construction() {
 #[test]
 fn test_real_dem_no_errors() {
     let graph = DemMatchingGraph::from_dem_str(D3_SURFACE_CODE_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
     let syndrome = vec![0u8; graph.num_detectors];
     assert_eq!(dec.decode_syndrome(&syndrome), 0);
 }
@@ -56,7 +56,7 @@ fn test_real_dem_no_errors() {
 #[test]
 fn test_real_dem_single_defects() {
     let graph = DemMatchingGraph::from_dem_str(D3_SURFACE_CODE_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
 
     for d in 0..graph.num_detectors {
         let mut syndrome = vec![0u8; graph.num_detectors];
@@ -75,7 +75,7 @@ fn test_real_dem_single_defects() {
 #[test]
 fn test_real_dem_adjacent_pairs() {
     let graph = DemMatchingGraph::from_dem_str(D3_SURFACE_CODE_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
 
     for edge in &graph.edges {
         let mut syndrome = vec![0u8; graph.num_detectors];
@@ -93,7 +93,7 @@ fn test_real_dem_adjacent_pairs() {
 #[test]
 fn test_real_dem_random_syndromes() {
     let graph = DemMatchingGraph::from_dem_str(D3_SURFACE_CODE_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
     let mut rng = fastrand::Rng::with_seed(42);
 
     for _ in 0..1000 {
@@ -121,7 +121,7 @@ fn test_real_dem_random_syndromes() {
 #[test]
 fn test_observable_decoder_trait_real_dem() {
     let graph = DemMatchingGraph::from_dem_str(D3_SURFACE_CODE_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
     let syndrome = vec![0u8; graph.num_detectors];
     let result = dec.decode_to_observables(&syndrome);
     assert!(result.is_ok());
@@ -133,7 +133,7 @@ fn test_observable_decoder_trait_real_dem() {
 fn test_matching_decoder_trait_real_dem() {
     use pecos_decoder_core::correlated_decoder::MatchingDecoder;
     let graph = DemMatchingGraph::from_dem_str(D3_SURFACE_CODE_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
 
     // Two adjacent defects.
     let edge = &graph.edges[0];
@@ -154,7 +154,7 @@ fn test_matching_decoder_trait_real_dem() {
 #[test]
 fn test_buffer_reuse_correctness() {
     let graph = DemMatchingGraph::from_dem_str(D3_SURFACE_CODE_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
     let zero_syndrome = vec![0u8; graph.num_detectors];
 
     let mut defect_syndrome = vec![0u8; graph.num_detectors];
@@ -170,4 +170,39 @@ fn test_buffer_reuse_correctness() {
         // Defect syndrome should give a consistent result.
         let _ = dec.decode_syndrome(&defect_syndrome);
     }
+}
+
+/// A DEM line with an error prior p > 0.5 produces a negative edge weight
+/// (`ln((1-p)/p) < 0`), which the predecoder's optimality proofs do not admit.
+/// The DEM-text constructors must reject it as an error, not mis-decode.
+#[test]
+fn test_from_dem_rejects_negative_weight_priors() {
+    let dem = "error(0.6) D0 L0\nerror(0.01) D0 D1\n";
+    assert!(UfDecoder::from_dem(dem, UfDecoderConfig::balanced()).is_err());
+    assert!(
+        pecos_uf_decoder::BpUfDecoder::from_dem(dem, pecos_uf_decoder::BpUfConfig::balanced())
+            .is_err()
+    );
+    assert!(
+        pecos_uf_decoder::CssUfDecoder::from_dems(dem, dem, UfDecoderConfig::balanced()).is_err()
+    );
+}
+
+/// The graph-level constructor asserts the same premise loudly for callers
+/// that build graphs directly (contract violation, not user input).
+#[test]
+#[should_panic(expected = "non-negative edge weights")]
+fn test_from_matching_graph_asserts_non_negative_weights() {
+    let dem = "error(0.6) D0 L0\n";
+    let graph = DemMatchingGraph::from_dem_str(dem).unwrap();
+    let _ = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::balanced()).unwrap();
+}
+
+/// Weight-zero edges (p = 0.5) are benign: the shortcut proofs hold as ties.
+#[test]
+fn test_from_dem_accepts_weight_zero_edges() {
+    let dem = "error(0.5) D0 L0\nerror(0.01) D0 D1\n";
+    let mut dec = UfDecoder::from_dem(dem, UfDecoderConfig::balanced()).unwrap();
+    let syndrome = vec![0u8; dec.num_detectors()];
+    assert_eq!(dec.decode_syndrome(&syndrome), 0);
 }

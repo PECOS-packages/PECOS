@@ -37,6 +37,20 @@ def test_pointer_types(qir_module) -> None:
     _ = qubit_ptr, result_ptr
 
 
+def test_inttoptr_accepts_typed_pointer_targets(qir_module) -> None:
+    from pecos_rslib_llvm import ir
+
+    module, ctx = qir_module
+
+    i64 = ctx.int_type(64)
+    qubit_ty = module.context.get_identified_type("Qubit")
+    qubit_ptr = qubit_ty.as_pointer()
+
+    ptr = ir.Constant(i64, 0).inttoptr(qubit_ptr)
+
+    assert ptr.type == qubit_ptr
+
+
 def test_array_types(qir_module) -> None:
     _, ctx = qir_module
 
@@ -66,6 +80,46 @@ def test_function_creation(qir_module) -> None:
 
     # Verify functions can be added without raising
     _ = main_func, h_gate, mz_func
+
+
+def test_load_pointer_function_argument(qir_module) -> None:
+    from pecos_rslib_llvm import ir
+
+    module, ctx = qir_module
+
+    i32 = ctx.int_type(32)
+    void = ctx.void_type()
+    func_type = ctx.function_type(void, [i32.as_pointer()], False)
+    test_func = module.add_function("load_arg", func_type)
+    entry = test_func.append_basic_block("entry")
+    builder = ir.IRBuilder(entry)
+
+    loaded = builder.load(test_func.args[0], "loaded")
+    builder.ret_void()
+
+    _ = loaded
+
+
+def test_load_pointer_return_value(qir_module) -> None:
+    from pecos_rslib_llvm import ir
+
+    module, ctx = qir_module
+
+    i32 = ctx.int_type(32)
+    callee_type = ctx.function_type(i32.as_pointer(), [], False)
+    callee = module.add_function("returns_i32_ptr", callee_type)
+
+    void = ctx.void_type()
+    caller_type = ctx.function_type(void, [], False)
+    caller = module.add_function("load_call_result", caller_type)
+    entry = caller.append_basic_block("entry")
+    builder = ir.IRBuilder(entry)
+
+    ptr = builder.call(callee, [], "ptr")
+    loaded = builder.load(ptr, "loaded")
+    builder.ret_void()
+
+    _ = loaded
 
 
 def test_global_variables(qir_module) -> None:

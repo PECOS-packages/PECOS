@@ -11,6 +11,11 @@ use crate::gate_type::GateType;
 /// Type alias -- all comparisons use 64-bit fixed-point angles.
 type A64 = Angle<u64>;
 
+/// Numerical lowering pipelines can produce angles that are a few fixed-point
+/// units away from canonical Clifford quarter-turns. Snap only within a tiny
+/// tolerance so genuine non-Clifford rotations still fail loudly.
+const R1XY_CLIFFORD_EPSILON_TURNS: f64 = 1e-9;
+
 /// Eighth-turn (pi/4): `QUARTER_TURN` / 2.
 fn eighth_turn() -> A64 {
     A64::QUARTER_TURN / 2u64
@@ -94,10 +99,12 @@ pub fn try_simplify_rotation(gate: GateType, angle: A64) -> Option<GateType> {
 /// quarter-turn sqrt gates.
 #[must_use]
 pub fn try_simplify_r1xy(theta: A64, phi: A64) -> Option<GateType> {
+    let theta = snap_r1xy_clifford_angle(theta)?;
     if theta == A64::ZERO {
         return Some(GateType::I);
     }
 
+    let phi = snap_r1xy_clifford_angle(phi)?;
     match phi {
         A64::ZERO => simplify_rx(theta),
         A64::HALF_TURN => simplify_rx(-theta),
@@ -110,6 +117,17 @@ pub fn try_simplify_r1xy(theta: A64, phi: A64) -> Option<GateType> {
 // -------------------------------------------------------------------------
 // Internal helpers
 // -------------------------------------------------------------------------
+
+fn snap_r1xy_clifford_angle(angle: A64) -> Option<A64> {
+    [
+        A64::ZERO,
+        A64::QUARTER_TURN,
+        A64::HALF_TURN,
+        A64::THREE_QUARTERS_TURN,
+    ]
+    .into_iter()
+    .find(|target| angle.abs_diff_eq_turns(target, R1XY_CLIFFORD_EPSILON_TURNS))
+}
 
 /// Negate an angle.
 fn neg(a: A64) -> A64 {
@@ -450,6 +468,17 @@ mod tests {
         // theta=pi/2, phi=3pi/2: rotation about -Y is SYdg
         assert_eq!(
             try_simplify_r1xy(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN),
+            Some(GateType::SYdg)
+        );
+    }
+
+    #[test]
+    fn r1xy_near_quarter_turn_sqrt_gates() {
+        assert_eq!(
+            try_simplify_r1xy(
+                Angle64::from_turns(0.25 + 1e-12),
+                Angle64::from_turns(0.75 - 1e-12),
+            ),
             Some(GateType::SYdg)
         );
     }

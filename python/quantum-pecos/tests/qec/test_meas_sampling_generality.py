@@ -11,7 +11,7 @@ import json
 
 import pytest
 from pecos.quantum import TickCircuit
-from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer, statevec
+from pecos_rslib_exp import depolarizing, meas_sampling, monte_carlo, sim_neo, stabilizer, statevec
 
 
 def build_two_round_x_check():
@@ -75,8 +75,8 @@ class TestMeasurementFaultIndependence:
         depol = depolarizing().p1(0).p2(0).p_meas(0.01).p_prep(0)
         shots = 50000
 
-        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(42).run()
-        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(shots).seed(42).run()
+        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
+        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
 
         # Extract detector rate
         def det_rate(results):
@@ -101,8 +101,8 @@ class TestPrepFaultAbsorption:
         depol = depolarizing().p1(0).p2(0).p_meas(0).p_prep(0.01)
         shots = 50000
 
-        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(42).run()
-        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(shots).seed(42).run()
+        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
+        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
 
         def det_rate(results):
             return sum(s[0] ^ s[1] for s in results) / len(results)
@@ -122,8 +122,8 @@ class TestPrepFaultAbsorption:
         depol = depolarizing().p1(0).p2(0).p_meas(0).p_prep(0.01)
         shots = 50000
 
-        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(42).run()
-        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(shots).seed(42).run()
+        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
+        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
 
         # Extract detector 0 (m0 XOR m1) rate
         def det_rate(results, d):
@@ -149,8 +149,8 @@ class TestMultiRoundNonSurface:
         depol = depolarizing().p1(0.001).p2(0.005).p_meas(0.005).p_prep(0.005)
         shots = 50000
 
-        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(42).run()
-        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(shots).seed(42).run()
+        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
+        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(shots)).seed(42).run()
 
         def det_rate(results, d):
             num_meas = 3
@@ -172,14 +172,14 @@ class TestZeroNoise:
     def test_two_round_x_check_zero_noise(self):
         tc = build_two_round_x_check()
         depol = depolarizing().p1(0).p2(0).p_meas(0).p_prep(0)
-        r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(1000).seed(42).run()
+        r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(1000)).seed(42).run()
         det_fires = sum(s[0] ^ s[1] for s in r)
         assert det_fires == 0, f"Zero-noise detector fired {det_fires}/1000 times"
 
     def test_three_round_z_check_zero_noise(self):
         tc = build_three_round_z_check()
         depol = depolarizing().p1(0).p2(0).p_meas(0).p_prep(0)
-        r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(1000).seed(42).run()
+        r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(1000)).seed(42).run()
         for d in [0, 1]:
             num_meas = 3
             recs = [{"records": [-2, -3]}, {"records": [-1, -2]}][d]["records"]
@@ -206,8 +206,8 @@ class TestZeroNoise:
 
         depol = depolarizing().p1(0).p2(0).p_meas(0).p_prep(0)
         shots = 32
-        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(shots).seed(11).run()
-        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(shots).seed(99).run()
+        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(shots)).seed(11).run()
+        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(shots)).seed(99).run()
 
         assert len(meas_r) == len(stab_r) == shots
         for shot in range(shots):
@@ -234,7 +234,7 @@ class TestCYGateSupport:
 
         depol = depolarizing().p1(0).p2(0).p_meas(0).p_prep(0)
         for backend in (stabilizer(), statevec()):
-            result = sim_neo(tc).quantum(backend).noise(depol).shots(32).seed(123).run()
+            result = sim_neo(tc).quantum(backend).noise(depol).sampling(monte_carlo(32)).seed(123).run()
             for shot in range(result.num_shots):
                 row = list(result[shot])
                 assert row[0] ^ row[1] == 1
@@ -253,7 +253,7 @@ class TestCYGateSupport:
         tc.set_meta("observables", "[]")
 
         depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
-        result = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(100).seed(42).run()
+        result = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(100)).seed(42).run()
 
         assert len(result) == 100
         assert len(result[0]) == 2
@@ -276,8 +276,8 @@ class TestCYGateSupport:
 
         depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
 
-        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(100).seed(42).run()
-        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(100).seed(42).run()
+        meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(100)).seed(42).run()
+        stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(100)).seed(42).run()
 
         assert len(meas_r) == len(stab_r) == 100
         assert meas_r.num_measurements == stab_r.num_measurements == 2

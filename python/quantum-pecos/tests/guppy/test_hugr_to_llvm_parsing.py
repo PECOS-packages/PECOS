@@ -8,7 +8,7 @@ def test_hugr_to_llvm_compilation() -> None:
     try:
         from guppylang import guppy
         from guppylang.std.quantum import cx, h, measure, qubit
-        from pecos_rslib import compile_hugr_to_qis
+        from pecos_rslib_llvm import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
@@ -40,7 +40,7 @@ def test_simple_hadamard_circuit() -> None:
     try:
         from guppylang import guppy
         from guppylang.std.quantum import h, measure, qubit
-        from pecos_rslib import compile_hugr_to_qis
+        from pecos_rslib_llvm import compile_hugr_to_qis
     except ImportError as e:
         pytest.skip(f"Required imports not available: {e}")
 
@@ -61,3 +61,60 @@ def test_simple_hadamard_circuit() -> None:
     assert "@___qalloc()" in llvm_ir, "Should have Selene qubit allocation"
     assert "@___rxy" in llvm_ir or "@___rz" in llvm_ir, "Should have Selene rotation gates for H"
     assert "@___lazy_measure" in llvm_ir, "Should have Selene measurement"
+
+
+def test_trace_metadata_helper_uses_public_symbol() -> None:
+    """Test that declared trace metadata helpers compile to the public FFI symbol."""
+    try:
+        from guppylang import guppy
+        from guppylang.std.builtins import owned
+        from guppylang.std.quantum import h, measure, qubit
+        from pecos_rslib_llvm import compile_hugr_to_qis
+    except ImportError as e:
+        pytest.skip(f"Required imports not available: {e}")
+
+    @guppy.declare
+    def pecos_qis_trace_metadata_qubit_hugr(q: qubit @ owned, key: str, value: str) -> qubit: ...
+
+    @guppy
+    def metadata_probe() -> None:
+        q = qubit()
+        q = pecos_qis_trace_metadata_qubit_hugr(q, "source_kind", "szz_host")
+        h(q)
+        _ = measure(q)
+
+    llvm_ir = compile_hugr_to_qis(metadata_probe.compile().to_bytes())
+
+    assert "@pecos_qis_trace_metadata_qubit_hugr" in llvm_ir
+    assert "@__hugr__.pecos_qis_trace_metadata_qubit_hugr" not in llvm_ir
+
+
+def test_runtime_barrier_pair_helper_uses_public_symbol() -> None:
+    """Test that two-qubit runtime-barrier helpers compile to the public FFI symbol."""
+    try:
+        from guppylang import guppy
+        from guppylang.std.builtins import owned
+        from guppylang.std.quantum import cx, h, measure, qubit
+        from pecos_rslib_llvm import compile_hugr_to_qis
+    except ImportError as e:
+        pytest.skip(f"Required imports not available: {e}")
+
+    @guppy.declare
+    def pecos_qis_runtime_barrier_qubits2_hugr(
+        q0: qubit @ owned,
+        q1: qubit @ owned,
+    ) -> tuple[qubit, qubit]: ...
+
+    @guppy
+    def barrier_pair_probe() -> tuple[bool, bool]:
+        q0 = qubit()
+        q1 = qubit()
+        h(q0)
+        q0, q1 = pecos_qis_runtime_barrier_qubits2_hugr(q0, q1)
+        cx(q0, q1)
+        return measure(q0), measure(q1)
+
+    llvm_ir = compile_hugr_to_qis(barrier_pair_probe.compile().to_bytes())
+
+    assert "@pecos_qis_runtime_barrier_qubits2_hugr" in llvm_ir
+    assert "@__hugr__.pecos_qis_runtime_barrier_qubits2_hugr" not in llvm_ir

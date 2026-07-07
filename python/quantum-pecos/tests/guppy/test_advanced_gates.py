@@ -1,6 +1,7 @@
 """Test suite for advanced quantum gates (Toffoli, CRz, etc.)."""
 
 import pecos_rslib
+import pecos_rslib_llvm
 import pytest
 from guppylang import guppy
 from guppylang.std.quantum import h, measure, pi, qubit
@@ -40,7 +41,7 @@ class TestThreeQubitGates:
             return measure(q0), measure(q1), measure(q2)
 
         hugr = test_toffoli.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Toffoli should decompose into multiple gates
         assert "___rxy" in output
@@ -68,7 +69,7 @@ class TestControlledRotations:
             return measure(q0), measure(q1)
 
         hugr = test_crz.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # CRz should use RZZ and RZ gates
         assert "___rzz" in output
@@ -88,7 +89,7 @@ class TestCompilerFeatures:
             return measure(q)
 
         hugr = simple.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully
         assert "qmain" in output
@@ -114,7 +115,7 @@ class TestCompilerFeatures:
             return measure(q0), measure(q1), measure(q2)
 
         hugr = complex_circuit.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have all operation types
         assert "___rxy" in output
@@ -136,7 +137,7 @@ class TestCompilerFeatures:
             return measure(q0), measure(q1)
 
         hugr = only_cnot.compile()
-        output = pecos_rslib.compile_hugr_to_qis(hugr.to_bytes())
+        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should declare the operations we use
         assert "declare" in output

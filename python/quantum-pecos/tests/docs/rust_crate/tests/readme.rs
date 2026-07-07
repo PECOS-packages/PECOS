@@ -18,7 +18,7 @@ fn test_readme_rust_1() -> Result<(), Box<dyn std::error::Error>> {
     "#);
 
     // Run 10 shots
-    let results = sim(circuit).seed(42).run(10)?;
+    let results = sim(circuit).seed(42).shots(10).run()?;
     println!("{:?}", results);
     // 0 = both |0⟩, 3 = both |1⟩ (always correlated!)
     Ok(())

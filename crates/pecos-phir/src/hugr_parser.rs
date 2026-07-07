@@ -155,6 +155,13 @@ impl HugrToPhirConverter {
 
     /// Top-level conversion: HUGR -> PHIR Module.
     fn convert(&mut self, hugr: &Hugr) -> Result<ModuleOp> {
+        // This converter is straight-line only. `find_operations_container`
+        // keeps just the FIRST `DataflowBlock` of a CFG, so a HUGR with real
+        // control flow would silently lose every other block (commonly
+        // dropping the measurements -> empty results). Reject it up front so
+        // callers fall back to `HugrEngine` instead of getting wrong output.
+        Self::reject_control_flow(hugr)?;
+
         let mut module = ModuleOp::new("hugr_module");
 
         // Find the container node (DFG or DataflowBlock) holding operations
@@ -239,6 +246,34 @@ impl HugrToPhirConverter {
 
         module.add_function(func);
         Ok(module)
+    }
+
+    /// Reject HUGR that uses classical control flow (loops, conditionals).
+    ///
+    /// Guppy compiles a straight-line body to a CFG with a single
+    /// `DataflowBlock` (plus an `ExitBlock`). More than one `DataflowBlock`
+    /// under any CFG means real control flow, which this straight-line
+    /// converter cannot represent: it keeps only the first block. Returning an
+    /// error here turns that silent data loss into a clean failure.
+    fn reject_control_flow(hugr: &Hugr) -> Result<()> {
+        for node in hugr.nodes() {
+            if matches!(hugr.get_optype(node), OpType::CFG(_)) {
+                let blocks = hugr
+                    .children(node)
+                    .filter(|&child| matches!(hugr.get_optype(child), OpType::DataflowBlock(_)))
+                    .count();
+                if blocks > 1 {
+                    return Err(PhirError::Parse(Box::new(
+                        crate::error::ParseError::Unsupported {
+                            feature: format!("classical control flow ({blocks} basic blocks)"),
+                            format: "HUGR".to_string(),
+                            location: crate::error::SourceLocation::unknown(),
+                        },
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Find the container node whose children are the quantum operations.

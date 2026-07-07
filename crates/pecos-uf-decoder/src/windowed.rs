@@ -120,7 +120,10 @@ impl WindowedDecoder {
 }
 
 impl ObservableDecoder for WindowedDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let mut obs_mask = 0u64;
         for window in &mut self.windows {
             let mut window_syn = vec![0u8; window.num_local];
@@ -132,7 +135,7 @@ impl ObservableDecoder for WindowedDecoder {
             }
             obs_mask ^= window.decoder.decode_to_observables(&window_syn)?;
         }
-        Ok(obs_mask)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(obs_mask))
     }
 }
 
@@ -227,7 +230,10 @@ impl<D: EdgeTrackingDecoder> OverlappingWindowedDecoder<D> {
 }
 
 impl<D: EdgeTrackingDecoder> ObservableDecoder for OverlappingWindowedDecoder<D> {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let mut obs_mask = 0u64;
 
         for window in &mut self.windows {
@@ -258,7 +264,7 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for OverlappingWindowedDecoder<D>
             }
         }
 
-        Ok(obs_mask)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(obs_mask))
     }
 }
 
@@ -450,7 +456,10 @@ impl<D: EdgeTrackingDecoder> SandwichWindowedDecoder<D> {
 }
 
 impl<D: EdgeTrackingDecoder> ObservableDecoder for SandwichWindowedDecoder<D> {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let mut obs_mask = 0u64;
         let mut correction_effect = vec![0u8; self.num_detectors];
         let commit_weight_max = self.commit_weight_max;
@@ -504,7 +513,7 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for SandwichWindowedDecoder<D> {
         }
         obs_mask ^= self.residual_decoder.decode_to_observables(&residual_syn)?;
 
-        Ok(obs_mask)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(obs_mask))
     }
 }
 
@@ -1033,7 +1042,10 @@ impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
 }
 
 impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let k = self.beam_width;
         let commit_weight_max = self.commit_weight_max;
 
@@ -1123,7 +1135,7 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> 
         // Each hypothesis may have a different Phase-1 obs_mask; we also run
         // Phase-2 on each to get the complete observable prediction.
         if beam.is_empty() {
-            return Ok(0);
+            return Ok(pecos_decoder_core::obs_mask::ObsMask::new());
         }
 
         // Collect final observable predictions from each hypothesis.
@@ -1155,7 +1167,7 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> 
                 result |= mask;
             }
         }
-        Ok(result)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(result))
     }
 }
 

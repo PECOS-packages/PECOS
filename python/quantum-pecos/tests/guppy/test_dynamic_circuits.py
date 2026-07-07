@@ -47,7 +47,7 @@ class TestDynamicCircuitExecution:
 
         # Extract the return value (last measurement in each shot)
         # Results format: [[m1, m2], [m1, m2], ...] where m2 is the return value
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         return_values = [shot[-1] for shot in measurements]
 
         # All results should be False since q1 is |0>, so X is never applied to q2
@@ -78,13 +78,14 @@ class TestDynamicCircuitExecution:
         # Run the circuit
         results = sim(Guppy(conditional_x_from_one)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
-        # Extract measurements
-        measurements = results.get("measurements", [])
-        if not measurements and "measurement_0" in results:
-            measurements = results["measurement_0"]
+        # Extract the return value (last measurement in each shot) -- each
+        # row is a per-shot LIST, which is always truthy: counting rows
+        # instead of values made this assertion unable to fail.
+        measurements = results["measurements"]
+        return_values = [shot[-1] for shot in measurements]
 
         # All results should be True since q1 is |1>, so X is always applied to q2
-        ones_count = sum(1 for m in measurements if m)
+        ones_count = sum(1 for m in return_values if m)
         assert ones_count == 100, f"Conditional X from |1> should always trigger, but got {ones_count}/100 ones"
 
     def test_measurement_feedback_entanglement(self) -> None:
@@ -116,18 +117,16 @@ class TestDynamicCircuitExecution:
         # Run the circuit
         results = sim(Guppy(measurement_feedback)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
-        # Extract measurements - should have two measurements per shot
-        # Need to decode the results
-        measurements = []
-        if "measurement_0" in results and "measurement_1" in results:
-            m0 = results["measurement_0"]
-            m1 = results["measurement_1"]
-            measurements = list(zip(m0, m1, strict=False))
-        elif "measurements" in results:
-            measurements = results["measurements"]
+        # Extract measurements - one (m0, m1) row per shot
+        measurements = results["measurements"]
+        assert len(measurements) == 100, "should have one measurement row per shot"
 
         # Both measurements should always match
         mismatches = sum(1 for (a, b) in measurements if a != b)
+        # A zero-gate engine also produces zero mismatches (all (0,0)):
+        # require BOTH outcomes to actually occur across 100 shots.
+        firsts = {a for (a, _b) in measurements}
+        assert firsts == {0, 1}, f"expected both outcomes over 100 shots, got {firsts}"
         assert (
             mismatches == 0
         ), f"Measurement feedback should create perfect correlation, but got {mismatches}/100 mismatches"
@@ -177,7 +176,7 @@ class TestDynamicCircuitExecution:
 
         # Extract the return value (last measurement in each shot)
         # Results format: [[m0, m1, m2], ...] where m2 is the return value
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         return_values = [shot[-1] for shot in measurements]
 
         # The teleported state should be |1>, so we expect all True

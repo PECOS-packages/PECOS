@@ -6,7 +6,7 @@
 //! ~/.pecos/
 //! ├── cache/          # Downloaded archives (tar.gz, 7z, etc.)
 //! ├── deps/           # All dependencies, versioned by name
-//! │   ├── llvm-14/
+//! │   ├── llvm-21.1/
 //! │   ├── cuda-12.6.3/
 //! │   ├── quest-v4.2.0/
 //! │   ├── stim-bd60b73525fd/
@@ -159,8 +159,8 @@ pub fn resolve_dep_path(name: &str, version: &str) -> Result<PathBuf> {
     Ok(versioned)
 }
 
-/// LLVM major version used by PECOS
-pub const LLVM_VERSION: &str = "14";
+/// LLVM version used by PECOS
+pub const LLVM_VERSION: &str = crate::llvm::REQUIRED_VERSION;
 
 /// Get the vendored cmake installation directory path (without creating it)
 ///
@@ -339,12 +339,31 @@ pub fn print_legacy_warning(name: &str, old_path: &Path) {
 
 /// Description of a single legacy dep that can be migrated.
 pub struct LegacyDep {
-    /// Human-readable name (e.g. "LLVM 14")
+    /// Human-readable name (e.g. "LLVM 21.1")
     pub name: &'static str,
     /// Old path
     pub old: PathBuf,
     /// New path
     pub new: PathBuf,
+}
+
+/// Description of a legacy dep that cannot be migrated safely.
+pub struct IncompatibleLegacyDep {
+    /// Human-readable name (e.g. "LLVM")
+    pub name: &'static str,
+    /// Legacy path
+    pub old: PathBuf,
+    /// Why the dependency cannot be migrated
+    pub reason: String,
+}
+
+/// Result of scanning legacy dependency paths.
+#[derive(Default)]
+pub struct LegacyDepStatus {
+    /// Legacy dependencies that can be moved to versioned paths.
+    pub migratable: Vec<LegacyDep>,
+    /// Legacy dependencies that need user action instead of migration.
+    pub incompatible: Vec<IncompatibleLegacyDep>,
 }
 
 /// Check for legacy top-level installs that should be migrated.
@@ -355,9 +374,22 @@ pub struct LegacyDep {
 ///
 /// Returns an error if unable to determine paths.
 pub fn find_legacy_deps() -> Result<Vec<LegacyDep>> {
-    let mut found = Vec::new();
-    let deps_dir = get_deps_dir_path()?;
+    Ok(find_legacy_dep_status()?.migratable)
+}
 
+/// Check legacy installs and report both migratable and incompatible entries.
+///
+/// # Errors
+///
+/// Returns an error if unable to determine paths.
+pub fn find_legacy_dep_status() -> Result<LegacyDepStatus> {
+    let deps_dir = get_deps_dir_path()?;
+    let home = get_pecos_home_path()?;
+    Ok(find_legacy_dep_status_at(&home, &deps_dir))
+}
+
+fn find_legacy_dep_status_at(home: &Path, deps_dir: &Path) -> LegacyDepStatus {
+    let mut status = LegacyDepStatus::default();
     let checks: &[(&str, &str)] = &[
         ("LLVM", LLVM_VERSION),
         ("CUDA", crate::cuda::CUDA_VERSION),
@@ -367,33 +399,64 @@ pub fn find_legacy_deps() -> Result<Vec<LegacyDep>> {
     for &(name, version) in checks {
         let lower = name.to_lowercase();
         let versioned = deps_dir.join(format!("{lower}-{version}"));
-        if versioned.exists() {
-            continue; // Already at versioned path
-        }
+        let versioned_exists = versioned.exists();
+        let mut migration_queued = false;
 
         // Check unversioned deps/ path (e.g. deps/llvm/)
         let unversioned = deps_dir.join(&lower);
         if unversioned.exists() {
-            found.push(LegacyDep {
-                name,
-                old: unversioned,
-                new: versioned.clone(),
-            });
-            continue;
+            if let Some(reason) = legacy_incompatibility_reason(name, &unversioned) {
+                status.incompatible.push(IncompatibleLegacyDep {
+                    name,
+                    old: unversioned,
+                    reason,
+                });
+            } else if !versioned_exists {
+                status.migratable.push(LegacyDep {
+                    name,
+                    old: unversioned,
+                    new: versioned.clone(),
+                });
+                migration_queued = true;
+            }
         }
 
         // Check top-level legacy path (e.g. ~/.pecos/llvm/)
-        if let Ok(top_level) = get_pecos_home_path().map(|h| h.join(&lower))
-            && top_level.exists()
-        {
-            found.push(LegacyDep {
-                name,
-                old: top_level,
-                new: versioned,
-            });
+        let top_level = home.join(&lower);
+        if top_level.exists() {
+            if let Some(reason) = legacy_incompatibility_reason(name, &top_level) {
+                status.incompatible.push(IncompatibleLegacyDep {
+                    name,
+                    old: top_level,
+                    reason,
+                });
+                continue;
+            }
+            if !versioned_exists && !migration_queued {
+                status.migratable.push(LegacyDep {
+                    name,
+                    old: top_level,
+                    new: versioned,
+                });
+            }
         }
     }
-    Ok(found)
+    status
+}
+
+fn legacy_incompatibility_reason(name: &str, old_path: &Path) -> Option<String> {
+    if name != "LLVM" {
+        return None;
+    }
+
+    if crate::llvm::is_valid_llvm(old_path) {
+        None
+    } else {
+        Some(format!(
+            "not a valid LLVM {} installation; it may be an older LLVM 14 install",
+            crate::llvm::REQUIRED_VERSION
+        ))
+    }
 }
 
 /// Migrate a single legacy dep by renaming old -> new.
@@ -406,6 +469,16 @@ pub fn migrate_legacy_dep(dep: &LegacyDep) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::rename(&dep.old, &dep.new)?;
+    Ok(())
+}
+
+/// Remove an incompatible legacy dependency path.
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be removed.
+pub fn remove_incompatible_legacy_dep(dep: &IncompatibleLegacyDep) -> Result<()> {
+    fs::remove_dir_all(&dep.old)?;
     Ok(())
 }
 
@@ -467,6 +540,26 @@ mod tests {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
         let pid = std::process::id();
         std::env::temp_dir().join(format!("pecos_test_{prefix}_{pid}_{id}"))
+    }
+
+    #[cfg(unix)]
+    fn create_fake_llvm_config(llvm_dir: &Path, version: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let bin_dir = llvm_dir.join("bin");
+        fs::create_dir_all(&bin_dir).expect("Should create fake llvm bin dir");
+        let llvm_config = bin_dir.join("llvm-config");
+        fs::write(
+            &llvm_config,
+            format!("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"{version}\"; fi\n"),
+        )
+        .expect("Should write fake llvm-config");
+        let mut permissions = fs::metadata(&llvm_config)
+            .expect("Should stat fake llvm-config")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&llvm_config, permissions)
+            .expect("Should make fake llvm-config executable");
     }
 
     #[test]
@@ -542,6 +635,99 @@ mod tests {
         assert!(home.exists(), "Directory should be created");
 
         // Cleanup
+        let _ = std::fs::remove_dir_all(&test_home);
+    }
+
+    #[test]
+    fn legacy_migration_skips_invalid_llvm() {
+        let test_home = unique_test_dir("legacy_invalid_llvm");
+        let deps = test_home.join("deps");
+        let legacy_llvm = test_home.join("llvm");
+        fs::create_dir_all(&legacy_llvm).expect("Should create legacy llvm dir");
+
+        let status = find_legacy_dep_status_at(&test_home, &deps);
+        assert!(
+            status.migratable.iter().all(|dep| dep.name != "LLVM"),
+            "invalid legacy LLVM must not migrate into llvm-21.1"
+        );
+        assert_eq!(status.incompatible.len(), 1);
+        assert_eq!(status.incompatible[0].name, "LLVM");
+        assert_eq!(status.incompatible[0].old, legacy_llvm);
+
+        let _ = std::fs::remove_dir_all(&test_home);
+    }
+
+    #[test]
+    fn legacy_migration_reports_invalid_unversioned_llvm() {
+        let test_home = unique_test_dir("legacy_invalid_unversioned_llvm");
+        let deps = test_home.join("deps");
+        let legacy_llvm = deps.join("llvm");
+        fs::create_dir_all(&legacy_llvm).expect("Should create legacy llvm dir");
+
+        let status = find_legacy_dep_status_at(&test_home, &deps);
+        assert!(
+            status.migratable.iter().all(|dep| dep.name != "LLVM"),
+            "invalid unversioned LLVM must not migrate into llvm-21.1"
+        );
+        assert_eq!(status.incompatible.len(), 1);
+        assert_eq!(status.incompatible[0].name, "LLVM");
+        assert_eq!(status.incompatible[0].old, legacy_llvm);
+
+        let _ = std::fs::remove_dir_all(&test_home);
+    }
+
+    #[test]
+    fn legacy_migration_reports_invalid_llvm_when_versioned_path_exists() {
+        let test_home = unique_test_dir("legacy_invalid_llvm_with_current");
+        let deps = test_home.join("deps");
+        let legacy_llvm = test_home.join("llvm");
+        let versioned_llvm = deps.join(format!("llvm-{LLVM_VERSION}"));
+        fs::create_dir_all(&legacy_llvm).expect("Should create legacy llvm dir");
+        fs::create_dir_all(&versioned_llvm).expect("Should create versioned llvm dir");
+
+        let status = find_legacy_dep_status_at(&test_home, &deps);
+        assert!(status.migratable.is_empty());
+        assert_eq!(status.incompatible.len(), 1);
+        assert_eq!(status.incompatible[0].name, "LLVM");
+        assert_eq!(status.incompatible[0].old, legacy_llvm);
+
+        let _ = std::fs::remove_dir_all(&test_home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_migration_reports_top_level_invalid_llvm_when_unversioned_can_migrate() {
+        let test_home = unique_test_dir("legacy_invalid_top_level_with_unversioned");
+        let deps = test_home.join("deps");
+        let unversioned_llvm = deps.join("llvm");
+        let top_level_llvm = test_home.join("llvm");
+        create_fake_llvm_config(&unversioned_llvm, crate::llvm::REQUIRED_VERSION);
+        fs::create_dir_all(&top_level_llvm).expect("Should create top-level llvm dir");
+
+        let status = find_legacy_dep_status_at(&test_home, &deps);
+        assert_eq!(status.migratable.len(), 1);
+        assert_eq!(status.migratable[0].name, "LLVM");
+        assert_eq!(status.migratable[0].old, unversioned_llvm);
+        assert_eq!(status.incompatible.len(), 1);
+        assert_eq!(status.incompatible[0].name, "LLVM");
+        assert_eq!(status.incompatible[0].old, top_level_llvm);
+
+        let _ = std::fs::remove_dir_all(&test_home);
+    }
+
+    #[test]
+    fn legacy_migration_still_finds_non_llvm_deps() {
+        let test_home = unique_test_dir("legacy_cuda");
+        let deps = test_home.join("deps");
+        let legacy_cuda = test_home.join("cuda");
+        fs::create_dir_all(&legacy_cuda).expect("Should create legacy cuda dir");
+
+        let status = find_legacy_dep_status_at(&test_home, &deps);
+        assert_eq!(status.migratable.len(), 1);
+        assert_eq!(status.incompatible.len(), 0);
+        assert_eq!(status.migratable[0].name, "CUDA");
+        assert_eq!(status.migratable[0].old, legacy_cuda);
+
         let _ = std::fs::remove_dir_all(&test_home);
     }
 }

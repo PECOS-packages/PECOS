@@ -46,10 +46,12 @@
 //!
 //! # Error Decomposition
 //!
-//! When using decomposed DEM output, hyperedge errors (affecting 3+
-//! detectors) are decomposed into combinations of graphlike errors (affecting
-//! 1-2 detectors). This is necessary for MWPM decoders which only work on
-//! graphs, not hypergraphs.
+//! When using decomposed DEM output, PECOS decomposes only through component
+//! structure carried by the original fault source (for example `Y = X ^ Z` or
+//! recorded per-location components for multi-qubit sources). Residual
+//! hyperedges remain hyperedges. Graphlike decoders should consume this output
+//! only after checking that no residual hyperedge components remain; hypergraph
+//! decoders can consume the faithful hypergraph model directly.
 //!
 //! # Comparison with Python Implementation
 //!
@@ -98,8 +100,10 @@ pub use sampler::{
 pub use types::{
     ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,
     ContributionRenderSummary, DecomposedFault, DemOutput, DetectorDef, DetectorErrorModel,
-    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType, MeasurementMechanism,
+    DirectSourceFamily, FaultContribution, FaultMechanism, FaultSourceType,
+    MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, MeasurementMechanism,
     MeasurementNoiseModel, NoiseConfig, PAULI_1Q_ORDER, PAULI_2Q_ORDER, PauliProbs, PauliWeights,
-    PecosDemMetadataError, PerGateTypeNoise, TwoDetectorDirectRenderPolicy, combine_probabilities,
-    record_offset_to_absolute_index,
+    PecosDemMetadataError, PerGateTypeNoise, ReplacementBranchApproximation,
+    ReplacementBranchImpact, TwoDetectorDirectRenderPolicy, combine_probabilities,
+    omitted_two_qubit_gate_pauli_twirl, record_offset_to_absolute_index,
 };

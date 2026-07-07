@@ -43,7 +43,7 @@ def run_circuit(
 
 def get_measurements(results: dict) -> list:
     """Extract measurements from results."""
-    return results.get("measurements", [])
+    return results["measurements"]
 
 
 class TestSingleQubitGates:

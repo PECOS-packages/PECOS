@@ -87,9 +87,9 @@ impl EnsembleDecoder {
 }
 
 impl ObservableDecoder for EnsembleDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         if self.decoders.is_empty() {
-            return Ok(0);
+            return Ok(crate::obs_mask::ObsMask::new());
         }
 
         // Collect predictions from all decoders.
@@ -135,7 +135,7 @@ impl ObservableDecoder for EnsembleDecoder {
             }
         }
 
-        Ok(result)
+        Ok(crate::obs_mask::ObsMask::from_u64(result))
     }
 }
 
@@ -168,11 +168,11 @@ impl ParallelEnsembleDecoder {
 }
 
 impl ObservableDecoder for ParallelEnsembleDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         use rayon::prelude::*;
 
         if self.decoders.is_empty() {
-            return Ok(0);
+            return Ok(crate::obs_mask::ObsMask::new());
         }
 
         // Decode all members in parallel.
@@ -193,7 +193,7 @@ impl ObservableDecoder for ParallelEnsembleDecoder {
                 result |= mask;
             }
         }
-        Ok(result)
+        Ok(crate::obs_mask::ObsMask::from_u64(result))
     }
 }
 
@@ -205,8 +205,11 @@ mod tests {
     struct FixedDecoder(u64);
 
     impl ObservableDecoder for FixedDecoder {
-        fn decode_to_observables(&mut self, _syndrome: &[u8]) -> Result<u64, DecoderError> {
-            Ok(self.0)
+        fn decode_obs(
+            &mut self,
+            _syndrome: &[u8],
+        ) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+            Ok(crate::obs_mask::ObsMask::from_u64(self.0))
         }
     }
 

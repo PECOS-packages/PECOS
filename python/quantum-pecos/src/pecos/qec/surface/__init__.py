@@ -18,6 +18,18 @@ Functions:
 """
 
 # Circuit generation from geometry (unified abstraction)
+from pecos.qec.surface._clifford_deformation import (
+    LocalCliffordFrame,
+    ResolvedPauliCheck,
+    ResolvedPauliLogical,
+    ResolvedSurfaceCliffordFrame,
+    SignedPauli,
+    global_surface_frame,
+    normalize_surface_frame_policy,
+    resolve_surface_clifford_frame,
+)
+from pecos.qec.surface._detection_events import extract_detection_events_and_observables
+from pecos.qec.surface._twirl_config import GuppyRngMaskConfig, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     DagCircuitRenderer,
     GuppyRenderer,
@@ -54,12 +66,17 @@ from pecos.qec.surface.decode import (
     SurfaceDecoder,
     build_memory_circuit,
     build_native_sampler,
+    build_native_sampler_from_dem,
     build_stim_circuit_from_patch,
+    decode_native_samples,
+    demask_pauli_frame_records,
     generate_circuit_level_dem,
     generate_dem_from_patch,
     generate_repetition_code_dem,
     generate_surface_code_dem,
     run_noisy_memory_experiment,
+    sample_pauli_activations_from_guppy,
+    sample_pauli_masks_from_guppy,
     surface_code_memory,
     syndromes_to_detection_events,
 )
@@ -107,6 +124,18 @@ from pecos.qec.surface.schedule import (
 )
 
 __all__ = [
+    # Twirling config (Pauli-frame randomization)
+    "GuppyRngMaskConfig",
+    "TwirlConfig",
+    # Clifford-deformed surface-code metadata
+    "LocalCliffordFrame",
+    "ResolvedPauliCheck",
+    "ResolvedPauliLogical",
+    "ResolvedSurfaceCliffordFrame",
+    "SignedPauli",
+    "global_surface_frame",
+    "normalize_surface_frame_policy",
+    "resolve_surface_clifford_frame",
     # Rotated lattice (most common, default)
     "compute_rotated_x_stabilizers",
     "compute_rotated_z_stabilizers",
@@ -144,12 +173,18 @@ __all__ = [
     "SurfaceDecoder",
     "build_memory_circuit",
     "build_native_sampler",
+    "build_native_sampler_from_dem",
     "build_stim_circuit_from_patch",
+    "decode_native_samples",
+    "demask_pauli_frame_records",
+    "extract_detection_events_and_observables",
     "generate_circuit_level_dem",
     "generate_dem_from_patch",
     "generate_repetition_code_dem",
     "generate_surface_code_dem",
     "run_noisy_memory_experiment",
+    "sample_pauli_activations_from_guppy",
+    "sample_pauli_masks_from_guppy",
     "surface_code_memory",
     "syndromes_to_detection_events",
     # Visualization

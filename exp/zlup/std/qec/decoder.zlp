@@ -1,0 +1,151 @@
+/// Standard library: Simple decoders for small codes
+///
+/// For production decoders (MWPM, Union-Find, ML), use Rust via FFI.
+/// These are for small codes, testing, and educational purposes.
+
+// =============================================================================
+// 3-Qubit Bit-Flip Code
+// =============================================================================
+
+/// Decode 3-qubit bit-flip code
+/// Syndrome (2 bits) -> which qubit to flip (0, 1, 2, or 3 for none)
+pub fn bit_flip_3_decode(syndrome: u8) -> u8 {
+    s := syndrome & 3;
+    if s == 0 {
+        return 3;  // No error
+    }
+    if s == 1 {
+        return 2;  // Flip qubit 2
+    }
+    if s == 2 {
+        return 0;  // Flip qubit 0
+    }
+    return 1;  // s == 3: Flip qubit 1
+}
+
+/// Get correction bitmask for 3-qubit bit-flip code
+/// Returns a u8 with the bit set for the qubit to correct
+pub fn bit_flip_3_correction(syndrome: u8) -> u8 {
+    s := syndrome & 3;
+    if s == 0 {
+        return 0;  // No correction
+    }
+    if s == 1 {
+        return 4;  // Correct qubit 2 (bit 2)
+    }
+    if s == 2 {
+        return 1;  // Correct qubit 0 (bit 0)
+    }
+    return 2;  // s == 3: Correct qubit 1 (bit 1)
+}
+
+// =============================================================================
+// Majority Vote
+// =============================================================================
+
+/// Majority vote decoder
+/// Returns 1 if more than half the bits in syndrome are set
+pub fn majority_vote(syndrome: u64, num_bits: u64) -> u64 {
+    mut count: u64 = 0;
+    mut s := syndrome;
+    for _ in 0..64 {
+        if s == 0 {
+            break;
+        }
+        if (s & 1) == 1 {
+            count = count + 1;
+        }
+        s = s >> 1;
+    }
+
+    threshold := (num_bits / 2) + 1;
+    if count >= threshold {
+        return 1;
+    }
+    return 0;
+}
+
+// =============================================================================
+// Parity Check
+// =============================================================================
+
+/// Compute single syndrome bit from error and parity check
+/// check is a bitmask indicating which qubits participate
+pub fn compute_check(err: u64, check: u64) -> u64 {
+    overlap := err & check;
+    // Compute parity
+    mut p := overlap;
+    p = p ^ (p >> 32);
+    p = p ^ (p >> 16);
+    p = p ^ (p >> 8);
+    p = p ^ (p >> 4);
+    p = p ^ (p >> 2);
+    p = p ^ (p >> 1);
+    return p & 1;
+}
+
+/// Compute full syndrome from error using check matrix
+/// checks is an array of bitmasks (one per syndrome bit)
+/// This version handles up to 8 checks
+pub fn compute_syndrome_8(err: u64, c0: u64, c1: u64, c2: u64, c3: u64, c4: u64, c5: u64, c6: u64, c7: u64, num_checks: u64) -> u64 {
+    mut syndrome: u64 = 0;
+
+    if num_checks > 0 {
+        syndrome = syndrome | (compute_check(err, c0) << 0);
+    }
+    if num_checks > 1 {
+        syndrome = syndrome | (compute_check(err, c1) << 1);
+    }
+    if num_checks > 2 {
+        syndrome = syndrome | (compute_check(err, c2) << 2);
+    }
+    if num_checks > 3 {
+        syndrome = syndrome | (compute_check(err, c3) << 3);
+    }
+    if num_checks > 4 {
+        syndrome = syndrome | (compute_check(err, c4) << 4);
+    }
+    if num_checks > 5 {
+        syndrome = syndrome | (compute_check(err, c5) << 5);
+    }
+    if num_checks > 6 {
+        syndrome = syndrome | (compute_check(err, c6) << 6);
+    }
+    if num_checks > 7 {
+        syndrome = syndrome | (compute_check(err, c7) << 7);
+    }
+
+    return syndrome;
+}
+
+// =============================================================================
+// Simple Lookup (8-bit syndrome)
+// =============================================================================
+
+/// Lookup table decode for 4-entry table (2-bit syndrome)
+pub fn lookup_2bit(syndrome: u8, t0: u64, t1: u64, t2: u64, t3: u64) -> u64 {
+    s := syndrome & 3;
+    if s == 0 {
+        return t0;
+    }
+    if s == 1 {
+        return t1;
+    }
+    if s == 2 {
+        return t2;
+    }
+    return t3;
+}
+
+/// Lookup table decode for 8-entry table (3-bit syndrome)
+pub fn lookup_3bit(syndrome: u8, t0: u64, t1: u64, t2: u64, t3: u64, t4: u64, t5: u64, t6: u64, t7: u64) -> u64 {
+    s := syndrome & 7;
+    if s == 0 { return t0; }
+    if s == 1 { return t1; }
+    if s == 2 { return t2; }
+    if s == 3 { return t3; }
+    if s == 4 { return t4; }
+    if s == 5 { return t5; }
+    if s == 6 { return t6; }
+    return t7;
+}

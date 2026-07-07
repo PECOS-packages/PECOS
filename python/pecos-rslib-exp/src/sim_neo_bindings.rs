@@ -17,7 +17,7 @@
 //! results = (sim_neo(tc)
 //!     .quantum(stab_mps().lazy_measure().max_bond_dim(128))
 //!     .noise(depolarizing().p1(0.003).p2(0.003).p_meas(0.003).p_prep(0.003).idle_rz(0.05))
-//!     .shots(5000)
+//!     .sampling(monte_carlo(5000))
 //!     .seed(42)
 //!     .run())
 //! ```
@@ -60,6 +60,13 @@ fn measurement_record_index(record: i32, num_measurements: usize) -> Option<usiz
 #[pyclass(name = "RawMeasurementResult", module = "pecos_rslib_exp")]
 pub struct PyRawMeasurementResult {
     storage: RawMeasurementStorage,
+    /// Per-row weights (path probabilities for path enumeration,
+    /// importance weights for importance sampling). None for plain
+    /// Monte Carlo runs.
+    weights: Option<Vec<f64>>,
+    /// Rare-event estimate (subset simulation only; rows are empty for
+    /// subset runs). Mirrors Rust `SimulationResults::subset`.
+    subset: Option<Py<PySubsetResult>>,
 }
 
 enum RawMeasurementStorage {
@@ -135,6 +142,8 @@ impl PyRawMeasurementResult {
     pub fn from_columnar(result: SampleResult) -> Self {
         Self {
             storage: RawMeasurementStorage::Columnar(result),
+            weights: None,
+            subset: None,
         }
     }
 
@@ -146,7 +155,23 @@ impl PyRawMeasurementResult {
                 rows,
                 num_measurements,
             },
+            weights: None,
+            subset: None,
         }
+    }
+
+    /// Construct from row-major data with per-row weights.
+    pub fn from_rows_weighted(rows: Vec<Vec<u8>>, weights: Vec<f64>) -> Self {
+        let mut result = Self::from_rows(rows);
+        result.weights = Some(weights);
+        result
+    }
+
+    /// Construct a subset-simulation result (no rows; estimate only).
+    pub fn from_subset(subset: Py<PySubsetResult>) -> Self {
+        let mut result = Self::from_rows(Vec::new());
+        result.subset = Some(subset);
+        result
     }
 }
 
@@ -162,6 +187,21 @@ impl PyRawMeasurementResult {
     #[getter]
     fn num_measurements(&self) -> usize {
         self.storage.num_measurements()
+    }
+
+    /// Per-row weights, or None for plain Monte Carlo runs.
+    ///
+    /// Path enumeration: exact path probabilities (sum to 1 for complete
+    /// enumeration).
+    #[getter]
+    fn weights(&self) -> Option<Vec<f64>> {
+        self.weights.clone()
+    }
+
+    /// Rare-event estimate, or None unless run with subset simulation.
+    #[getter]
+    fn subset(&self, py: Python<'_>) -> Option<Py<PySubsetResult>> {
+        self.subset.as_ref().map(|s| s.clone_ref(py))
     }
 
     /// Get a single measurement bit (0 or 1).
@@ -308,7 +348,7 @@ pub fn depolarizing() -> PyNoiseModelBuilder {
 /// Pass to `.quantum()` to select the stabilizer simulator.
 ///
 /// Example:
-///     sim_neo(tc).quantum(stabilizer()).noise(depolarizing().p2(0.01)).shots(10000).run()
+///     sim_neo(tc).quantum(stabilizer()).noise(depolarizing().p2(0.01)).sampling(monte_carlo(10000)).run()
 #[pyclass(
     name = "StabilizerBuilder",
     skip_from_py_object,
@@ -331,7 +371,7 @@ impl PyStabilizerBuilder {
 /// Supports arbitrary gates including non-Clifford (T, RZ, etc.).
 ///
 /// Example:
-///     sim_neo(tc).quantum(statevec()).noise(depolarizing().idle_rz(0.05)).shots(10000).run()
+///     sim_neo(tc).quantum(statevec()).noise(depolarizing().idle_rz(0.05)).sampling(monte_carlo(10000)).run()
 #[pyclass(
     name = "StateVecBuilder",
     skip_from_py_object,
@@ -351,7 +391,7 @@ impl PyStateVecBuilder {
 /// Create a state vector backend builder.
 ///
 /// Example:
-///     sim_neo(tc).quantum(statevec()).noise(...).shots(10000).run()
+///     sim_neo(tc).quantum(statevec()).noise(...).sampling(monte_carlo(10000)).run()
 #[pyfunction]
 pub fn statevec() -> PyStateVecBuilder {
     PyStateVecBuilder
@@ -360,7 +400,7 @@ pub fn statevec() -> PyStateVecBuilder {
 /// Create a stabilizer (SparseStab) backend builder.
 ///
 /// Example:
-///     sim_neo(tc).quantum(stabilizer()).noise(...).shots(10000).run()
+///     sim_neo(tc).quantum(stabilizer()).noise(...).sampling(monte_carlo(10000)).run()
 #[pyfunction]
 pub fn stabilizer() -> PyStabilizerBuilder {
     PyStabilizerBuilder
@@ -460,6 +500,249 @@ pub fn meas_sampling(method: &str) -> PyMeasSamplingBuilder {
     PyMeasSamplingBuilder::new(method)
 }
 
+/// Monte Carlo sampling strategy builder. Mirrors Rust `monte_carlo(shots)`.
+///
+/// Example:
+///     sim_neo(tc).sampling(monte_carlo(1000).workers(4)).run()
+#[pyclass(
+    name = "MonteCarloBuilder",
+    skip_from_py_object,
+    module = "pecos_rslib_exp"
+)]
+#[derive(Clone)]
+pub struct PyMonteCarloBuilder {
+    pub(crate) shots: usize,
+    pub(crate) workers: usize,
+}
+
+#[pymethods]
+impl PyMonteCarloBuilder {
+    /// Set the number of parallel workers (1 = sequential).
+    fn workers(&self, n: usize) -> Self {
+        let mut c = self.clone();
+        c.workers = n;
+        c
+    }
+}
+
+/// Create a Monte Carlo sampling strategy running `shots` shots.
+///
+/// Sequential by default; chain `.workers(n)` for parallel execution.
+#[pyfunction]
+pub fn monte_carlo(shots: usize) -> PyMonteCarloBuilder {
+    PyMonteCarloBuilder { shots, workers: 1 }
+}
+
+/// Path enumeration strategy builder. Mirrors Rust `path_enumeration(k)`.
+///
+/// Exhaustively enumerates the measurement branches of a noiseless Clifford
+/// circuit. Each distinct realized path becomes one result row; exact path
+/// probabilities are exposed via `result.weights`.
+///
+/// Example:
+///     result = sim_neo(tc).quantum(stabilizer()).sampling(path_enumeration(2)).run()
+///     for row, p in zip(result, result.weights): ...
+#[pyclass(
+    name = "PathEnumerationBuilder",
+    skip_from_py_object,
+    module = "pecos_rslib_exp"
+)]
+#[derive(Clone)]
+pub struct PyPathEnumerationBuilder {
+    pub(crate) max_measurements: usize,
+}
+
+/// Create a path enumeration strategy covering up to `max_measurements`
+/// random measurement branches.
+#[pyfunction]
+pub fn path_enumeration(max_measurements: usize) -> PyPathEnumerationBuilder {
+    PyPathEnumerationBuilder { max_measurements }
+}
+
+/// Subset simulation strategy builder. Mirrors Rust `subset_simulation(n)`.
+///
+/// Estimates rare event probabilities by decomposing them into conditional
+/// probabilities across adaptive levels. Requires a `.score(fn)` (how close
+/// is this outcome to failure?) and a `.failure(fn)` predicate; both receive
+/// the measurement bits of one sample as `list[int]` and are called once per
+/// sample (Python-callable cost applies).
+///
+/// Example:
+///     result = (sim_neo(tc)
+///         .quantum(stabilizer())
+///         .sampling(subset_simulation(1000)
+///             .score(lambda bits: float(sum(bits)))
+///             .failure(lambda bits: all(bits)))
+///         .seed(42)
+///         .run())
+///     print(result.subset.probability)
+#[pyclass(
+    name = "SubsetSimulationBuilder",
+    skip_from_py_object,
+    module = "pecos_rslib_exp"
+)]
+pub struct PySubsetSimulationBuilder {
+    samples_per_level: usize,
+    threshold_fraction: f64,
+    max_levels: usize,
+    min_conditional_prob: f64,
+    allow_biased_multilevel: bool,
+    score: Option<Py<PyAny>>,
+    failure: Option<Py<PyAny>>,
+}
+
+impl Clone for PySubsetSimulationBuilder {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            samples_per_level: self.samples_per_level,
+            threshold_fraction: self.threshold_fraction,
+            max_levels: self.max_levels,
+            min_conditional_prob: self.min_conditional_prob,
+            allow_biased_multilevel: self.allow_biased_multilevel,
+            score: self.score.as_ref().map(|f| f.clone_ref(py)),
+            failure: self.failure.as_ref().map(|f| f.clone_ref(py)),
+        })
+    }
+}
+
+#[pymethods]
+impl PySubsetSimulationBuilder {
+    /// Set the score function: bits (`list[int]`) -> float.
+    ///
+    /// Higher scores advance to the next level; failing outcomes should
+    /// score at least as high as any non-failing outcome.
+    fn score(&self, f: Py<PyAny>) -> Self {
+        let mut c = self.clone();
+        c.score = Some(f);
+        c
+    }
+
+    /// Set the failure predicate: bits (`list[int]`) -> bool.
+    fn failure(&self, f: Py<PyAny>) -> Self {
+        let mut c = self.clone();
+        c.failure = Some(f);
+        c
+    }
+
+    /// Fraction of samples that advances past each threshold (default 0.1).
+    fn threshold_fraction(&self, fraction: f64) -> Self {
+        let mut c = self.clone();
+        c.threshold_fraction = fraction;
+        c
+    }
+
+    /// Maximum number of levels before giving up.
+    ///
+    /// Defaults to 1 (a single, unbiased direct-Monte-Carlo level).
+    /// Setting more than one level engages the multi-level estimator,
+    /// which is currently biased upward, and therefore also requires an
+    /// explicit `.allow_biased_multilevel()` acknowledgment, or `.run()`
+    /// raises.
+    fn max_levels(&self, levels: usize) -> Self {
+        let mut c = self.clone();
+        c.max_levels = levels;
+        c
+    }
+
+    /// Acknowledge and accept the known upward bias of the multi-level
+    /// subset estimator, enabling `max_levels > 1`. Without it, subset
+    /// simulation runs a single unbiased level (direct Monte Carlo).
+    fn allow_biased_multilevel(&self) -> Self {
+        let mut c = self.clone();
+        c.allow_biased_multilevel = true;
+        c
+    }
+
+    /// Minimum conditional probability before declaring the failure event
+    /// unreachable (default 1e-6).
+    fn min_conditional_prob(&self, p: f64) -> Self {
+        let mut c = self.clone();
+        c.min_conditional_prob = p;
+        c
+    }
+}
+
+/// Create a subset simulation strategy running `samples_per_level` samples
+/// at each level. `.score(..)` and `.failure(..)` are required.
+#[pyfunction]
+pub fn subset_simulation(samples_per_level: usize) -> PySubsetSimulationBuilder {
+    let defaults = pecos_neo::sampling::subset::SubsetConfig::default();
+    PySubsetSimulationBuilder {
+        samples_per_level,
+        threshold_fraction: defaults.threshold_fraction,
+        // Default to a single, unbiased level; the biased multi-level path
+        // requires an explicit .allow_biased_multilevel() opt-in.
+        max_levels: 1,
+        min_conditional_prob: defaults.min_conditional_prob,
+        allow_biased_multilevel: false,
+        score: None,
+        failure: None,
+    }
+}
+
+/// Rare-event estimate from subset simulation. Mirrors Rust `SubsetResult`.
+#[pyclass(name = "SubsetResult", module = "pecos_rslib_exp")]
+pub struct PySubsetResult {
+    inner: pecos_neo::sampling::subset::SubsetResult,
+}
+
+#[pymethods]
+impl PySubsetResult {
+    /// Overall probability estimate.
+    #[getter]
+    fn probability(&self) -> f64 {
+        self.inner.probability()
+    }
+
+    /// Coefficient of variation (standard error / estimate).
+    #[getter]
+    fn coefficient_of_variation(&self) -> f64 {
+        self.inner.coefficient_of_variation
+    }
+
+    /// Total number of samples run across all levels.
+    #[getter]
+    fn total_samples(&self) -> usize {
+        self.inner.total_samples
+    }
+
+    /// Number of failures observed directly.
+    #[getter]
+    fn direct_failures(&self) -> usize {
+        self.inner.direct_failures
+    }
+
+    /// 95% confidence interval (assuming log-normal): (lower, upper).
+    fn confidence_interval_95(&self) -> (f64, f64) {
+        self.inner.confidence_interval_95()
+    }
+
+    /// Per-level statistics as a list of dicts.
+    fn levels<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        use pyo3::types::{PyDict, PyList};
+        let list = PyList::empty(py);
+        for level in &self.inner.levels {
+            let d = PyDict::new(py);
+            d.set_item("level", level.level)?;
+            d.set_item("threshold", level.threshold)?;
+            d.set_item("num_samples", level.num_samples)?;
+            d.set_item("num_exceeded", level.num_exceeded)?;
+            d.set_item("conditional_prob", level.conditional_prob)?;
+            d.set_item("num_failures", level.num_failures)?;
+            list.append(d)?;
+        }
+        Ok(list)
+    }
+}
+
+/// Sampling strategy selected on the Python builder.
+#[derive(Clone)]
+enum PySampling {
+    MonteCarlo { shots: usize, workers: usize },
+    PathEnumeration { max_measurements: usize },
+    SubsetSimulation { config: PySubsetSimulationBuilder },
+}
+
 /// Builder for sim_neo simulations. Mirrors the Rust-side `SimNeoBuilder`.
 #[pyclass(
     name = "SimNeoBuilder",
@@ -472,10 +755,18 @@ pub struct PySimNeoBuilder {
     /// Original Rust TickCircuit for meas_sampling (avoids reconstruction).
     /// Wrapped in Arc for Clone compatibility with pyo3.
     tick_circuit: std::sync::Arc<pecos_quantum::TickCircuit>,
-    shots: usize,
-    seed: u64,
+    /// Sampling strategy. None until `.sampling()`.
+    sampling: Option<PySampling>,
+    /// Shot count from the deprecated top-level `.shots()` forwarder.
+    legacy_shots: Option<usize>,
+    /// Random seed. None = nondeterministic, mirroring the Rust builder.
+    seed: Option<u64>,
+    /// Backend auto-selection opt-in from `.auto()`.
+    auto: bool,
     noise_config: Option<PyNoiseModelBuilder>,
-    backend: String,
+    /// Backend name. None until `.quantum()` is called; `.auto()` opts into
+    /// automatic selection at run time.
+    backend: Option<String>,
     stabmps_config: Option<crate::stabmps_builder::StabMpsBuilder>,
     meas_sampling_method: Option<String>,
 }
@@ -497,20 +788,20 @@ impl PySimNeoBuilder {
         let mut c = self.clone();
         if builder.is_instance_of::<PyMeasSamplingBuilder>() {
             let b: PyRef<'_, PyMeasSamplingBuilder> = builder.extract()?;
-            c.backend = "meas_sampling".to_string();
+            c.backend = Some("meas_sampling".to_string());
             c.meas_sampling_method = Some(b.method.clone());
             c.stabmps_config = None;
         } else if builder.is_instance_of::<PyStabMpsBuilder>() {
             let b: PyRef<'_, PyStabMpsBuilder> = builder.extract()?;
-            c.backend = "stabmps".to_string();
+            c.backend = Some("stabmps".to_string());
             c.stabmps_config = Some(b.inner.clone());
             c.meas_sampling_method = None;
         } else if builder.is_instance_of::<PyStabilizerBuilder>() {
-            c.backend = "stabilizer".to_string();
+            c.backend = Some("stabilizer".to_string());
             c.stabmps_config = None;
             c.meas_sampling_method = None;
         } else if builder.is_instance_of::<PyStateVecBuilder>() {
-            c.backend = "statevec".to_string();
+            c.backend = Some("statevec".to_string());
             c.stabmps_config = None;
             c.meas_sampling_method = None;
         } else {
@@ -521,6 +812,20 @@ impl PySimNeoBuilder {
         Ok(c)
     }
 
+    /// Opt into automatic selection of unset components.
+    ///
+    /// Mirrors the Rust builder's `.auto()`: explicit-about-being-implicit.
+    /// If `.quantum()` was not called, the backend is selected automatically
+    /// (the stabilizer backend; circuits with inline channel operations route
+    /// to the density-matrix path instead, since the stabilizer cannot
+    /// execute arbitrary channels). The sampling strategy is never
+    /// auto-selected: `.sampling(monte_carlo(shots))` is always required.
+    fn auto(&self) -> Self {
+        let mut c = self.clone();
+        c.auto = true;
+        c
+    }
+
     /// Set the noise model.
     fn noise(&self, noise_builder: &PyNoiseModelBuilder) -> Self {
         let mut c = self.clone();
@@ -528,17 +833,57 @@ impl PySimNeoBuilder {
         c
     }
 
-    /// Set number of shots.
-    fn shots(&self, n: usize) -> Self {
+    /// Set the sampling strategy (shots and workers live on the sampler).
+    ///
+    /// Accepts `monte_carlo(shots)` or `path_enumeration(max_measurements)`.
+    ///
+    /// Example:
+    ///     sim_neo(tc).sampling(monte_carlo(1000).workers(4)).run()
+    ///     sim_neo(tc).sampling(path_enumeration(2)).run()
+    fn sampling(&self, sampler: &Bound<'_, PyAny>) -> PyResult<Self> {
         let mut c = self.clone();
-        c.shots = n;
-        c
+        if sampler.is_instance_of::<PyMonteCarloBuilder>() {
+            let s: PyRef<'_, PyMonteCarloBuilder> = sampler.extract()?;
+            c.sampling = Some(PySampling::MonteCarlo {
+                shots: s.shots,
+                workers: s.workers,
+            });
+        } else if sampler.is_instance_of::<PyPathEnumerationBuilder>() {
+            let s: PyRef<'_, PyPathEnumerationBuilder> = sampler.extract()?;
+            c.sampling = Some(PySampling::PathEnumeration {
+                max_measurements: s.max_measurements,
+            });
+        } else if sampler.is_instance_of::<PySubsetSimulationBuilder>() {
+            let s: PyRef<'_, PySubsetSimulationBuilder> = sampler.extract()?;
+            c.sampling = Some(PySampling::SubsetSimulation { config: s.clone() });
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "sampling() expects monte_carlo(shots), path_enumeration(max_measurements), \
+                 or subset_simulation(samples_per_level)",
+            ));
+        }
+        Ok(c)
+    }
+
+    /// Set number of shots.
+    ///
+    /// Deprecated: use `.sampling(monte_carlo(shots))` instead.
+    fn shots(&self, py: Python<'_>, n: usize) -> PyResult<Self> {
+        PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"sim_neo(...).shots(n) is deprecated; use .sampling(monte_carlo(n))",
+            1,
+        )?;
+        let mut c = self.clone();
+        c.legacy_shots = Some(n);
+        Ok(c)
     }
 
     /// Set random seed.
     fn seed(&self, s: u64) -> Self {
         let mut c = self.clone();
-        c.seed = s;
+        c.seed = Some(s);
         c
     }
 
@@ -546,14 +891,26 @@ impl PySimNeoBuilder {
     ///
     /// All backends return `RawMeasurementResult` which supports:
     /// `result[shot]`, `result.get(shot, meas)`, `len(result)`, iteration.
-    fn run(&self) -> PyResult<PyRawMeasurementResult> {
+    fn run(&self, py: Python<'_>) -> PyResult<PyRawMeasurementResult> {
         if self.tick_circuit.has_channel_operations() {
             return self.run_inline_channel_circuit();
         }
 
-        if self.backend == "meas_sampling" {
+        let backend = self.resolved_backend()?;
+        if backend == "meas_sampling" {
             return self.run_meas_sampling();
         }
+
+        match self.resolved_sampling()? {
+            PySampling::PathEnumeration { max_measurements } => {
+                return self.run_path_enumeration(&backend, max_measurements);
+            }
+            PySampling::SubsetSimulation { config } => {
+                return self.run_subset_simulation(py, &backend, &config);
+            }
+            PySampling::MonteCarlo { .. } => {}
+        }
+        let (shots, workers) = self.resolved_monte_carlo("this backend")?;
 
         let noise = self
             .noise_config
@@ -561,14 +918,17 @@ impl PySimNeoBuilder {
             .and_then(PyNoiseModelBuilder::build_noise);
 
         let mut builder = sim_neo(self.commands.clone())
-            .shots(self.shots)
-            .seed(self.seed);
+            .sampling(pecos_neo::tool::monte_carlo(shots).workers(workers));
+
+        if let Some(seed) = self.seed {
+            builder = builder.seed(seed);
+        }
 
         if let Some(n) = noise {
             builder = builder.noise(n);
         }
 
-        match self.backend.as_str() {
+        match backend.as_str() {
             "stabmps" => {
                 let config = self.stabmps_config.clone().unwrap_or_default();
                 builder = builder.quantum(pecos_neo::tool::custom_backend_from_factory(config));
@@ -581,8 +941,7 @@ impl PySimNeoBuilder {
             }
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Unknown backend: {}",
-                    self.backend
+                    "Unknown backend: {backend}"
                 )));
             }
         }
@@ -590,7 +949,7 @@ impl PySimNeoBuilder {
         let mut sim = builder.build();
         let results = sim.run();
 
-        let mut all_shots = Vec::with_capacity(self.shots);
+        let mut all_shots = Vec::with_capacity(shots);
         for shot_outcomes in &results.outcomes {
             let meas: Vec<u8> = shot_outcomes.iter().map(|o| u8::from(o.outcome)).collect();
             all_shots.push(meas);
@@ -601,43 +960,334 @@ impl PySimNeoBuilder {
 }
 
 impl PySimNeoBuilder {
+    /// Path enumeration: exhaustively enumerate measurement branches.
+    ///
+    /// Pre-validates with ValueError mirroring the Rust builder's
+    /// build-time checks, then runs through the Rust sim_neo builder.
+    fn run_path_enumeration(
+        &self,
+        backend: &str,
+        max_measurements: usize,
+    ) -> PyResult<PyRawMeasurementResult> {
+        if backend != "stabilizer" {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Path enumeration currently supports only the stabilizer() backend \
+                 (or .auto()).",
+            ));
+        }
+        if self.noise_config.is_some() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Path enumeration enumerates measurement branches of the noiseless \
+                 circuit; remove .noise().",
+            ));
+        }
+        if max_measurements > 24 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Path enumeration covers 2^max_measurements paths; \
+                 max_measurements = {max_measurements} would enumerate more than 16M paths."
+            )));
+        }
+
+        let results = sim_neo(self.commands.clone())
+            .quantum(pecos_neo::tool::sparse_stab())
+            .sampling(pecos_neo::tool::path_enumeration(max_measurements))
+            .build()
+            .run();
+
+        let rows: Vec<Vec<u8>> = results
+            .outcomes
+            .iter()
+            .map(|shot| shot.iter().map(|o| u8::from(o.outcome)).collect())
+            .collect();
+        let weights: Vec<f64> = results
+            .weights
+            .as_ref()
+            .map(|ws| {
+                ws.iter()
+                    .map(pecos_neo::sampling::weight::SampleWeight::weight)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(PyRawMeasurementResult::from_rows_weighted(rows, weights))
+    }
+
+    /// Subset simulation with Python score/failure callables.
+    ///
+    /// Each callable receives the sample's measurement bits as `list[int]`
+    /// and is invoked once per sample on the calling thread. The first
+    /// Python exception raised by a callable aborts the run and propagates.
+    fn run_subset_simulation(
+        &self,
+        py: Python<'_>,
+        backend: &str,
+        config: &PySubsetSimulationBuilder,
+    ) -> PyResult<PyRawMeasurementResult> {
+        use pecos_neo::outcome::MeasurementOutcomes;
+        use pecos_neo::sampling::subset::{SubsetConfig, SubsetSimulation};
+        use std::sync::{Arc, Mutex};
+
+        if backend != "stabilizer" {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Subset simulation currently supports only the stabilizer() backend \
+                 (or .auto()).",
+            ));
+        }
+        let (Some(score), Some(failure)) = (&config.score, &config.failure) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Subset simulation requires both .score(..) and .failure(..) on the \
+                 subset_simulation(..) builder; neither has a sensible default.",
+            ));
+        };
+        if config.max_levels > 1 && !config.allow_biased_multilevel {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "subset_simulation with max_levels > 1 engages the multi-level estimator, \
+                 which is currently biased upward (the resample is unconditioned). Either \
+                 keep a single level (an unbiased direct-Monte-Carlo failure-fraction \
+                 estimate) or call .allow_biased_multilevel() to accept the documented bias.",
+            ));
+        }
+
+        let noise = self
+            .noise_config
+            .as_ref()
+            .and_then(PyNoiseModelBuilder::build_noise);
+
+        let num_qubits = self
+            .commands
+            .iter()
+            .flat_map(|cmd| cmd.qubits.iter())
+            .map(|q| q.0)
+            .max()
+            .map_or(1, |max| max + 1);
+
+        // Bridge Python callables into Fn closures. Errors cannot propagate
+        // through the closure signature, so capture the first one and check
+        // after the run. After an error, the closures stop calling Python
+        // and report every sample as a failure, which trips the algorithm's
+        // all-samples-failed termination at the end of the current level —
+        // bounding the wasted work without changing the library API.
+        let captured_err: Arc<Mutex<Option<PyErr>>> = Arc::new(Mutex::new(None));
+        let bits_of = |outcomes: &MeasurementOutcomes| -> Vec<u8> {
+            outcomes.iter().map(|o| u8::from(o.outcome)).collect()
+        };
+        let has_err = |slot: &Arc<Mutex<Option<PyErr>>>| {
+            slot.lock()
+                .expect("subset callable error slot poisoned")
+                .is_some()
+        };
+
+        let score_fn = score.clone_ref(py);
+        let score_err = Arc::clone(&captured_err);
+        let score_closure = move |outcomes: &MeasurementOutcomes| -> f64 {
+            if has_err(&score_err) {
+                return 0.0;
+            }
+            Python::attach(|py| {
+                match score_fn
+                    .call1(py, (bits_of(outcomes),))
+                    .and_then(|v| v.extract::<f64>(py))
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        score_err
+                            .lock()
+                            .expect("subset callable error slot poisoned")
+                            .get_or_insert(e);
+                        0.0
+                    }
+                }
+            })
+        };
+
+        let failure_fn = failure.clone_ref(py);
+        let failure_err = Arc::clone(&captured_err);
+        let failure_closure = move |outcomes: &MeasurementOutcomes| -> bool {
+            if has_err(&failure_err) {
+                // Steer the run to its all-failed termination condition.
+                return true;
+            }
+            Python::attach(|py| {
+                match failure_fn
+                    .call1(py, (bits_of(outcomes),))
+                    .and_then(|v| v.extract::<bool>(py))
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        failure_err
+                            .lock()
+                            .expect("subset callable error slot poisoned")
+                            .get_or_insert(e);
+                        true
+                    }
+                }
+            })
+        };
+
+        let subset_config = SubsetConfig {
+            samples_per_level: config.samples_per_level,
+            threshold_fraction: config.threshold_fraction,
+            max_levels: config.max_levels,
+            min_conditional_prob: config.min_conditional_prob,
+            seed: self.seed,
+        };
+
+        let result = SubsetSimulation::new(
+            self.commands.clone(),
+            num_qubits,
+            score_closure,
+            failure_closure,
+        )
+        .with_noise_builder(move || noise.clone())
+        .with_config(subset_config)
+        .run();
+
+        if let Some(err) = captured_err
+            .lock()
+            .expect("subset callable error slot poisoned")
+            .take()
+        {
+            return Err(err);
+        }
+
+        let subset = Py::new(py, PySubsetResult { inner: result })?;
+        Ok(PyRawMeasurementResult::from_subset(subset))
+    }
+
+    /// Resolve the sampling strategy, mirroring the Rust builder's rules
+    /// and error messages.
+    fn resolved_sampling(&self) -> PyResult<PySampling> {
+        match (&self.sampling, self.legacy_shots) {
+            (Some(sampling), None) => Ok(sampling.clone()),
+            (Some(_), Some(_)) => Err(pyo3::exceptions::PyValueError::new_err(
+                "Conflicting sampling configuration: deprecated .shots() cannot be combined \
+                 with .sampling(). Set shots on the sampler builder, e.g. \
+                 .sampling(monte_carlo(1000)).",
+            )),
+            (None, Some(shots)) => Ok(PySampling::MonteCarlo { shots, workers: 1 }),
+            (None, None) => Err(pyo3::exceptions::PyValueError::new_err(
+                "No sampling strategy set. Use .sampling(monte_carlo(shots)).",
+            )),
+        }
+    }
+
+    /// Resolve to (shots, workers) for execution paths that only support
+    /// Monte Carlo sampling.
+    fn resolved_monte_carlo(&self, path_name: &str) -> PyResult<(usize, usize)> {
+        match self.resolved_sampling()? {
+            PySampling::MonteCarlo { shots, workers } => Ok((shots, workers)),
+            PySampling::PathEnumeration { .. } => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "{path_name} does not support path enumeration; use \
+                     .sampling(monte_carlo(shots)) instead."
+                )))
+            }
+            PySampling::SubsetSimulation { .. } => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "{path_name} does not support subset simulation; use \
+                     .sampling(monte_carlo(shots)) instead."
+                )))
+            }
+        }
+    }
+
+    /// Resolve the quantum backend, mirroring the Rust builder's rules:
+    /// explicit `.quantum()` wins; `.auto()` opts into automatic selection;
+    /// otherwise fail fast. Auto selects the stabilizer backend, except for
+    /// circuits with inline channel operations, which route to the
+    /// density-matrix path (the stabilizer cannot execute arbitrary
+    /// channels).
+    fn resolved_backend(&self) -> PyResult<String> {
+        if let Some(backend) = &self.backend {
+            return Ok(backend.clone());
+        }
+        if self.auto {
+            let auto_backend = if self.tick_circuit.has_channel_operations() {
+                "statevec"
+            } else {
+                "stabilizer"
+            };
+            return Ok(auto_backend.to_string());
+        }
+        Err(pyo3::exceptions::PyValueError::new_err(
+            "No quantum backend set. Use .quantum(stabilizer()) or .quantum(statevec()), \
+             or call .auto() to let sim_neo choose.",
+        ))
+    }
+
+    /// Concrete seed for execution paths that require one. Unset seed means
+    /// nondeterministic (mirroring the Rust builder), so draw fresh entropy.
+    fn resolved_seed_u64(&self) -> u64 {
+        use std::hash::{BuildHasher, Hasher};
+        self.seed.unwrap_or_else(|| {
+            std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish()
+        })
+    }
+
     fn run_inline_channel_circuit(&self) -> PyResult<PyRawMeasurementResult> {
         if self.noise_config.is_some() {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "sim_neo received a TickCircuit with inline channel operations; do not also pass .noise()",
             ));
         }
+        let backend = self.resolved_backend()?;
+        match backend.as_str() {
+            "statevec" | "stabilizer" => {}
+            "stabmps" => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "stab_mps backend does not support inline channel operations; use statevec() for density-matrix execution",
+                ));
+            }
+            "meas_sampling" => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "meas_sampling backend builds its own measurement model and does not consume inline channel operations",
+                ));
+            }
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Unknown backend: {other}"
+                )));
+            }
+        }
+        let (shots, workers) = self.resolved_monte_carlo("inline-channel execution")?;
+        if workers > 1 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "inline-channel execution does not support parallel workers; use monte_carlo(shots) without .workers()",
+            ));
+        }
+        let seed = self.resolved_seed_u64();
 
-        match self.backend.as_str() {
-            "statevec" => self.run_inline_channel_density_matrix(),
-            "stabilizer" => self.run_inline_pauli_channel_stabilizer(),
-            "stabmps" => Err(pyo3::exceptions::PyValueError::new_err(
-                "stab_mps backend does not support inline channel operations; use statevec()/default for density-matrix execution",
-            )),
-            "meas_sampling" => Err(pyo3::exceptions::PyValueError::new_err(
-                "meas_sampling backend builds its own measurement model and does not consume inline channel operations",
-            )),
-            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Unknown backend: {other}"
-            ))),
+        match backend.as_str() {
+            "statevec" => self.run_inline_channel_density_matrix(shots, seed),
+            _ => self.run_inline_pauli_channel_stabilizer(shots, seed),
         }
     }
 
-    fn run_inline_channel_density_matrix(&self) -> PyResult<PyRawMeasurementResult> {
+    fn run_inline_channel_density_matrix(
+        &self,
+        shots: usize,
+        seed: u64,
+    ) -> PyResult<PyRawMeasurementResult> {
         let rows = pecos_neo::inline_channel::run_inline_channels_density_matrix(
             &self.tick_circuit,
-            self.shots,
-            self.seed,
+            shots,
+            seed,
         )
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(PyRawMeasurementResult::from_rows(rows))
     }
 
-    fn run_inline_pauli_channel_stabilizer(&self) -> PyResult<PyRawMeasurementResult> {
+    fn run_inline_pauli_channel_stabilizer(
+        &self,
+        shots: usize,
+        seed: u64,
+    ) -> PyResult<PyRawMeasurementResult> {
         let rows = pecos_neo::inline_channel::run_inline_pauli_channels_stabilizer(
             &self.tick_circuit,
-            self.shots,
-            self.seed,
+            shots,
+            seed,
         )
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(PyRawMeasurementResult::from_rows(rows))
@@ -645,6 +1295,12 @@ impl PySimNeoBuilder {
 
     /// DEM sampling backend: dispatches to stochastic or coherent path based on method.
     fn run_meas_sampling(&self) -> PyResult<PyRawMeasurementResult> {
+        let (_, workers) = self.resolved_monte_carlo("meas_sampling")?;
+        if workers > 1 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "meas_sampling does its own batch sampling and does not support parallel workers; use monte_carlo(shots) without .workers()",
+            ));
+        }
         let noise_config = self.noise_config.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err("DEM sampling requires .noise() to be set")
         })?;
@@ -704,7 +1360,8 @@ impl PySimNeoBuilder {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         let plan = RawMeasurementPlan::new(&history, mechanisms);
-        let result = plan.sample(self.shots, self.seed);
+        let (shots, _) = self.resolved_monte_carlo("meas_sampling")?;
+        let result = plan.sample(shots, self.resolved_seed_u64());
 
         Ok(PyRawMeasurementResult::from_columnar(result))
     }
@@ -781,13 +1438,14 @@ impl PySimNeoBuilder {
         let gates = commands_to_gates(&self.commands);
         let generator = select_generator(method, noise_config.idle_rz_angle);
 
+        let (shots, _) = self.resolved_monte_carlo("meas_sampling")?;
         let result = run_dem_simulation(
             &gates,
             &noise,
             &meta,
             generator.as_ref(),
-            self.shots,
-            self.seed,
+            shots,
+            self.resolved_seed_u64(),
         );
         Ok(result.measurements)
     }
@@ -825,11 +1483,16 @@ fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_c
 
 /// Create a sim_neo simulation builder from a TickCircuit.
 ///
+/// Explicit-by-default, mirroring the Rust builder: a quantum backend
+/// (`.quantum(..)` or `.auto()`) and a sampling strategy
+/// (`.sampling(monte_carlo(shots))`) are required; missing either is an
+/// error at `.run()`. The seed is optional; unset means nondeterministic.
+///
 /// Example:
 ///     results = (sim_neo(tc)
 ///         .quantum(stab_mps().lazy_measure().max_bond_dim(128))
 ///         .noise(depolarizing().p1(0.003).p2(0.003).p_meas(0.003).idle_rz(0.05))
-///         .shots(5000)
+///         .sampling(monte_carlo(5000))
 ///         .seed(42)
 ///         .run())
 #[pyfunction]
@@ -847,10 +1510,12 @@ pub fn py_sim_neo(tick_circuit: &Bound<'_, PyAny>) -> PyResult<PySimNeoBuilder> 
     Ok(PySimNeoBuilder {
         commands,
         tick_circuit: std::sync::Arc::new(tc),
-        shots: 1,
-        seed: 42,
+        sampling: None,
+        legacy_shots: None,
+        seed: None,
+        auto: false,
         noise_config: None,
-        backend: "statevec".to_string(),
+        backend: None,
         stabmps_config: None,
         meas_sampling_method: None,
     })
@@ -925,6 +1590,7 @@ fn build_rust_tick_circuit_from_gates(
                 "QAlloc" | "PZ" | "Prep" => {
                     pz_qubits.extend(qubit_ids);
                 }
+                "TrackedPauli" | "TrackedPauliMeta" => {}
                 _ => {
                     let core_gate = build_gate_from_python(gate, &gate_name, &qubit_ids)?;
                     other_gates.push(core_gate);
@@ -1295,7 +1961,11 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                 "Tdg" => {
                     cb = cb.tdg(&qubits);
                 }
-                "MZ" => {
+                "MZ" | "Measure" | "MeasureFree" => {
+                    // Z-basis measurement; ``MeasureFree`` additionally frees the
+                    // qubit, which is a no-op for the fixed-width simulator. Kept
+                    // consistent with build_rust_tick_circuit_from_gates and the
+                    // surface DEM path, which treat all three as Z measurements.
                     cb = cb.mz(&qubits);
                 }
                 "RX" => {
@@ -1350,8 +2020,8 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                         cb = cb.ryy(&pairs, Angle64::from_radians(angle));
                     }
                 }
-                "I" | "Idle" => {
-                    // Identity/Idle gates: skip (no-op for simulation)
+                "I" | "Idle" | "TrackedPauli" | "TrackedPauliMeta" => {
+                    // Identity/Idle and tracked-Pauli metadata gates: skip (no-op for simulation)
                 }
                 _ => {
                     return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(

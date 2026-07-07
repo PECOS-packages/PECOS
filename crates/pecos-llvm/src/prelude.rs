@@ -17,6 +17,6 @@
 //! This module re-exports the main public API for LLVM IR generation.
 
 pub use crate::llvm_compat::{
-    LLConstant, LLContext, LLFunction, LLFunctionType, LLIRBuilder, LLModule, LLResult, LLType,
-    LLValue,
+    LLConstant, LLContext, LLFunction, LLFunctionType, LLIRBuilder, LLModule, LLPointerValue,
+    LLResult, LLType, LLValue, gep_result_pointee_type,
 };

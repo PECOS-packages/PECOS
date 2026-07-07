@@ -37,11 +37,12 @@ impl Decoder for FusionBlossomDecoder {
 ///
 /// Uses the fast decode path with pre-computed observable bitmasks.
 impl pecos_decoder_core::ObservableDecoder for FusionBlossomDecoder {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         self.decode_to_obs_mask(syndrome)
+            .map(pecos_decoder_core::obs_mask::ObsMask::from_u64)
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))
     }
 }

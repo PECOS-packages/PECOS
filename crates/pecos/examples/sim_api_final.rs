@@ -30,7 +30,8 @@ fn main() -> Result<(), PecosError> {
         .noise(DepolarizingNoise { p: 0.01 })
         .seed(42)
         .workers(4)
-        .run(1000)?;
+        .shots(1000)
+        .run()?;
 
     println!(
         "   Bell state simulation: {} shots completed",
@@ -101,7 +102,8 @@ fn main() -> Result<(), PecosError> {
     let results = sim(qasm_prog)
         .classical(qis_engine().program(llvm_prog))
         .qubits(1)
-        .run(10)?;
+        .shots(10)
+        .run()?;
 
     println!("   Override engine: {} shots", results.len());
 

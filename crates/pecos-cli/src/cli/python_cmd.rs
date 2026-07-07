@@ -23,11 +23,16 @@ pub fn run(command: &super::PythonCommands) -> Result<()> {
 
 /// Decide whether to install CUDA Python packages for this build.
 ///
-/// Resolution order:
-/// - `--cuda`     -> always on (caller knows what they want)
-/// - `--no-cuda`  -> always off (caller opts out)
-/// - neither      -> auto-detect: include CUDA Python packages when both the
-///   toolkit and an NVIDIA GPU are present, otherwise skip
+/// Decide whether `pecos python build` builds the CUDA (Rust) backend crate
+/// (`pecos-rslib-cuda`).
+///
+/// - `--cuda`    -> build it. The caller opted in and is responsible for CUDA
+///   setup first (e.g. `just build-cuda` runs `setup-quiet`, which installs the
+///   cuQuantum SDK that crate's build needs).
+/// - `--no-cuda` -> skip it.
+/// - neither     -> do NOT build it. The auto-detect path (e.g. `just build-lite`)
+///   does no CUDA setup, so building the backend here could fail or be slow. When a
+///   toolkit + GPU are present, just print a notice on how to enable CUDA.
 fn resolve_cuda_choice(cuda: bool, no_cuda: bool) -> bool {
     if cuda {
         return true;
@@ -35,14 +40,16 @@ fn resolve_cuda_choice(cuda: bool, no_cuda: bool) -> bool {
     if no_cuda {
         return false;
     }
-    let detected = super::cuda_cmd::should_install_cuda_python();
-    if detected {
+    if super::cuda_cmd::should_install_cuda_python() {
         println!(
-            "CUDA toolkit + NVIDIA GPU detected -- including CUDA Python packages \
-             (cupy, cuquantum, pytket-cutensornet). Pass --no-cuda to skip."
+            "CUDA toolkit + NVIDIA GPU detected, but `pecos python build` only builds the \
+             CUDA (Rust) backend when you pass --cuda. To enable CUDA: run \
+             `pecos python build --cuda` (or `just build-cuda`) for the `pecos-rslib-cuda` \
+             backend, and `uv sync --group cuda12|cuda13` (or `pecos cuda setup-python`) for \
+             the CUDA Python packages."
         );
     }
-    detected
+    false
 }
 
 /// Get the repository root
@@ -168,23 +175,21 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     }
 
     // Build all rslib crates via maturin (incremental — cargo inside maturin
-    // handles change detection, skips recompilation when nothing changed)
-    let crates = ["pecos-rslib", "pecos-rslib-llvm"];
+    // handles change detection, skips recompilation when nothing changed).
+    // The CUDA (Rust) backend is its own crate, built only on an explicit --cuda
+    // (`cuda` is true only then -- see resolve_cuda_choice); the auto-detect path
+    // does no CUDA setup, so it must not pull in pecos-rslib-cuda.
+    let mut crates = vec!["pecos-rslib", "pecos-rslib-llvm"];
+    if cuda {
+        crates.push("pecos-rslib-cuda");
+    }
     for crate_name in crates {
         let crate_dir = repo_root.join(format!("python/{crate_name}"));
         if !crate_dir.exists() {
             continue;
         }
 
-        println!(
-            "Building {crate_name} ({}{})...",
-            profile,
-            if cuda && crate_name == "pecos-rslib" {
-                " +cuda"
-            } else {
-                ""
-            }
-        );
+        println!("Building {crate_name} ({profile})...");
 
         remove_stale_extension_artifacts(&repo_root, profile, crate_name)?;
 
@@ -258,11 +263,14 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     let mut pip_cmd = Command::new("uv");
     pip_cmd.args(["pip", "install", "--no-deps", "-e"]);
 
-    if cuda {
-        pip_cmd.arg("./python/quantum-pecos[all,cuda]");
-    } else {
-        pip_cmd.arg("./python/quantum-pecos[all]");
-    }
+    // `--no-deps` (above) means this editable install pulls no dependencies, so
+    // naming a CUDA extra here would be inert: the CUDA Python stack
+    // (cupy/cuquantum/pytket-cutensornet) is installed separately via
+    // `uv sync --group cuda12|cuda13` (`just build`'s sync-deps, `pecos setup`, or
+    // `pecos cuda setup-python`), not by this command. Request the dependency-free
+    // `[all]` extra, which exists regardless of CUDA toolkit major and avoids an
+    // unknown-extra warning.
+    pip_cmd.arg("./python/quantum-pecos[all]");
 
     pip_cmd.current_dir(&repo_root);
     pip_cmd.env_remove("CONDA_PREFIX");

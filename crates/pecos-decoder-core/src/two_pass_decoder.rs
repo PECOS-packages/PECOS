@@ -59,11 +59,11 @@ impl<D: MatchingDecoder> TwoPassDecoder<D> {
 }
 
 impl<D: MatchingDecoder> crate::ObservableDecoder for TwoPassDecoder<D> {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         if !self.correlation_table.has_correlations() {
             // No correlations: single-pass decode (no overhead)
             let (mask, _) = self.inner.decode_with_matching(syndrome)?;
-            return Ok(mask);
+            return Ok(crate::obs_mask::ObsMask::from_u64(mask));
         }
 
         // First pass: decode to get matched edges
@@ -87,7 +87,7 @@ impl<D: MatchingDecoder> crate::ObservableDecoder for TwoPassDecoder<D> {
         let (mask, _) = self
             .inner
             .decode_with_weights(syndrome, &self.adjusted_weights)?;
-        Ok(mask)
+        Ok(crate::obs_mask::ObsMask::from_u64(mask))
     }
 }
 

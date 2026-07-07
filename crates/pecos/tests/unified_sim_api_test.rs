@@ -102,14 +102,16 @@ mod tests {
             let _results2 = sim(Qasm::from_string("OPENQASM 2.0; qreg q[1];"))
                 .seed(42)
                 .quantum(sparse_stab())
-                .run(100);
+                .shots(100)
+                .run();
 
             // Pattern 3: Override auto-selection with explicit .classical()
             let _results3 = sim(Qis::from_string("define void @main() { ret void }"))
                 .classical(
                     qis_engine().program(Qis::from_string("define void @main() { ret void }")),
                 )
-                .run(100);
+                .shots(100)
+                .run();
 
             // Pattern 4: Various configuration options work with new API
             let _results4 = sim(Qasm::from_string("OPENQASM 2.0; qreg q[2];"))
@@ -119,7 +121,8 @@ mod tests {
                 .verbose(true)
                 .qubits(2)
                 .quantum(state_vector())
-                .run(1000);
+                .shots(1000)
+                .run();
         };
     }
 
@@ -134,18 +137,21 @@ mod tests {
             // QASM -> QASM engine
             let _qasm_results = sim(Qasm::from_string("OPENQASM 2.0; qreg q[1];"))
                 .quantum(state_vector())
-                .run(10);
+                .shots(10)
+                .run();
 
             // LLVM -> LLVM engine
             let _llvm_results = sim(Qis::from_string("define void @main() { ret void }"))
                 .quantum(state_vector())
-                .run(10);
+                .shots(10)
+                .run();
 
             // HUGR -> Selene engine
             let _hugr_results = sim(Hugr::from_bytes(vec![0x00, 0x01, 0x02]))
                 .quantum(state_vector())
                 .qubits(1)
-                .run(10);
+                .shots(10)
+                .run();
         };
     }
 }

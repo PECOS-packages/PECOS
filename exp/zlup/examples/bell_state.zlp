@@ -1,0 +1,27 @@
+/// Bell State Example
+/// Creates the maximally entangled Bell state: (|00⟩ + |11⟩) / sqrt(2)
+///
+/// When measured, both qubits will always give the same result:
+/// either both 0 or both 1, with 50% probability each.
+
+pub fn main() -> unit {
+    // Allocate two qubits
+    q := qalloc(2);
+
+    // Prepare both qubits to |0⟩
+    pz q;
+
+    // Create superposition on first qubit: |0⟩ -> (|0⟩ + |1⟩) / sqrt(2)
+    h q[0];
+
+    // Entangle with CNOT: (|0⟩ + |1⟩)|0⟩ -> |00⟩ + |11⟩
+    cx (q[0], q[1]);
+
+    // Measure both qubits
+    result_0: u1 = mz(u1) q[0];
+    result_1: u1 = mz(u1) q[1];
+
+    // result_0 and result_1 will always be equal due to entanglement
+
+    return unit;
+}

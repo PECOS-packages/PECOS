@@ -151,7 +151,9 @@ impl BpUfDecoder {
         let dcm = DemCheckMatrix::from_dem_str(dem)
             .map_err(|e| DecoderError::InvalidConfiguration(e.to_string()))?;
         let graph = DemMatchingGraph::from_dem_str(dem)?;
-        let uf = UfDecoder::from_matching_graph(&graph, config.uf_config);
+        graph.ensure_observables_fit_u64()?;
+        UfDecoder::check_non_negative_weights(&graph)?;
+        let uf = UfDecoder::from_matching_graph(&graph, config.uf_config)?;
 
         // Build mechanism → edge mapping.
         // Each mechanism in the check matrix corresponds to a column.
@@ -252,7 +254,9 @@ impl BpUfDecoder {
 
         // Matching graph and UF from the decomposed DEM.
         let match_graph = DemMatchingGraph::from_dem_str(matching_dem)?;
-        let uf = UfDecoder::from_matching_graph(&match_graph, config.uf_config);
+        match_graph.ensure_observables_fit_u64()?;
+        UfDecoder::check_non_negative_weights(&match_graph)?;
+        let uf = UfDecoder::from_matching_graph(&match_graph, config.uf_config)?;
 
         // Map BP mechanisms (non-decomposed) → matching graph edges (decomposed).
         let mut mechanism_to_edge = vec![None; bp_dcm.num_mechanisms];
@@ -453,16 +457,28 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
     }
 
     fn is_trivial(&self, syndrome: &[u8]) -> Option<u64> {
+        if !self.uf.config.predecoder {
+            return None;
+        }
         self.uf.predecode_clusters(syndrome)
     }
 }
 
 impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         // Fast path: cluster predecoder handles isolated cases without BP.
-        // This catches 0 defects, single defects, and isolated pairs.
-        if let Some(obs) = self.uf.predecode_clusters(syndrome) {
-            return Ok(obs);
+        // This catches 0 defects, single defects, and isolated pairs. Gated on
+        // the UF config like the plain `UfDecoder` paths. It deliberately runs
+        // on construction-time weights, bypassing BP: the cases it accepts are
+        // provably min-weight under the prior weights, and BP reweighting is
+        // only consulted for the larger clusters that fall through.
+        if self.uf.config.predecoder
+            && let Some(obs) = self.uf.predecode_clusters(syndrome)
+        {
+            return Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(obs));
         }
 
         let num_defects = syndrome.iter().filter(|&&v| v != 0).count();
@@ -560,10 +576,10 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
             let (mask2, _) = self
                 .uf
                 .decode_with_weights(syndrome, &self.adjusted_weights)?;
-            return Ok(mask2);
+            return Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(mask2));
         }
 
-        Ok(mask)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(mask))
     }
 }
 

@@ -1832,6 +1832,12 @@ impl DagCircuit {
         self.annotations.push(ann);
     }
 
+    /// Add a pre-built annotation when the corresponding tracked-Pauli meta
+    /// gate has already been inserted into the DAG.
+    pub(crate) fn add_annotation_without_meta_gate(&mut self, ann: PauliAnnotation) {
+        self.annotations.push(ann);
+    }
+
     /// Get detector annotations.
     pub fn detectors(&self) -> impl Iterator<Item = &PauliAnnotation> {
         self.annotations

@@ -65,3 +65,52 @@ id = "RUSTSEC-2021-0139"
 # Chain: mwpf -> slp -> structopt 0.3 -> clap 2.34.
 # Upstream owner: https://github.com/yuewuo/mwpf.
 reason = "Transitive via mwpf -> slp -> clap2; unmaintained-crate warning, terminal-color path unused."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2022-0104"
+# structopt@0.3.26 -- maintenance mode.
+# Chain: pecos-mwpf -> mwpf -> slp -> structopt 0.3.
+# Upstream owner: https://github.com/yuewuo/mwpf.
+reason = "Transitive via mwpf -> slp -> structopt; maintenance-mode warning for upstream CLI parser, no direct PECOS use."
+
+[[IgnoredVulns]]
+id = "PYSEC-2026-151"
+# wasmtime (PyPI) 42.0.0 (uv.lock) / 38.0.0 (exp/zluppy/uv.lock) -- Wasmtime
+# stack-overflow bug class; the advisory lists NO fixed release (last_affected
+# 43.0.0, the latest).
+# Chain: quantum-pecos -> guppylang -> guppylang-internals -> wasmtime.
+# Upstream owner: https://github.com/bytecodealliance/wasmtime-py.
+reason = "Transitive via guppylang; no fixed wasmtime-py release exists yet. PECOS only runs trusted, locally-generated Wasm through it. Re-check on guppylang bumps."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0075"
+# unic-char-range@0.9.0 -- unmaintained (whole unic project dormant).
+# Chain: guppy-zlup -> rustpython-parser 0.4 -> unic-*.
+# Upstream owner: https://github.com/RustPython/Parser (itself archived; the
+# long-term fix is guppy-zlup moving off rustpython-parser).
+reason = "Transitive via rustpython-parser in the experimental zlup frontend; unmaintained-crate warning, parser-internal Unicode tables, no exploit path."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0080"
+# unic-common@0.9.0 -- unmaintained. Same chain/owner as RUSTSEC-2025-0075.
+reason = "Transitive via rustpython-parser in the experimental zlup frontend; unmaintained-crate warning, parser-internal Unicode tables, no exploit path."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0081"
+# unic-char-property@0.9.0 -- unmaintained. Same chain/owner as RUSTSEC-2025-0075.
+reason = "Transitive via rustpython-parser in the experimental zlup frontend; unmaintained-crate warning, parser-internal Unicode tables, no exploit path."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0090"
+# unic-emoji-char@0.9.0 -- unmaintained. Same chain/owner as RUSTSEC-2025-0075.
+reason = "Transitive via rustpython-parser in the experimental zlup frontend; unmaintained-crate warning, parser-internal Unicode tables, no exploit path."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0098"
+# unic-ucd-version@0.9.0 -- unmaintained. Same chain/owner as RUSTSEC-2025-0075.
+reason = "Transitive via rustpython-parser in the experimental zlup frontend; unmaintained-crate warning, parser-internal Unicode tables, no exploit path."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0100"
+# unic-ucd-ident@0.9.0 -- unmaintained. Same chain/owner as RUSTSEC-2025-0075.
+reason = "Transitive via rustpython-parser in the experimental zlup frontend; unmaintained-crate warning, parser-internal Unicode tables, no exploit path."

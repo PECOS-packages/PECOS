@@ -187,6 +187,131 @@ class TestSurfaceDecoder:
         d3 = SurfaceDecoder(patch, decoder_type="bp_osd", noise=noise)
         assert d3.decoder_type.value == "bp_osd"
 
+        # Explicit PyMatching DEM-correlation modes
+        d4 = SurfaceDecoder(patch, decoder_type="pymatching_correlated", noise=noise)
+        assert d4.decoder_type.value == "pymatching_correlated"
+
+        d5 = SurfaceDecoder(patch, decoder_type="pymatching_uncorrelated", noise=noise)
+        assert d5.decoder_type.value == "pymatching_uncorrelated"
+
+    def test_circuit_level_pymatching_uses_correlations_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The production circuit-level PyMatching path should consume DEM correlation metadata."""
+        import pecos.decoders as decoders_module
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **_kwargs: object) -> str:
+            return "error(0.01) D0 ^ D1 L0\n"
+
+        class DummyPyMatchingDecoder:
+            @classmethod
+            def from_dem_with_correlations(cls, dem: str, *, enable_correlations: bool) -> object:
+                seen["method"] = "from_dem_with_correlations"
+                seen["dem"] = dem
+                seen["enable_correlations"] = enable_correlations
+                return object()
+
+            @classmethod
+            def from_dem(cls, _dem: str) -> object:
+                raise AssertionError
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+        monkeypatch.setattr(decoders_module, "PyMatchingDecoder", DummyPyMatchingDecoder)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            decoder_type="pymatching",
+            circuit_level_dem_mode="native_decomposed",
+        )
+
+        assert decoder._get_z_decoder() is not None
+        assert seen == {
+            "method": "from_dem_with_correlations",
+            "dem": "error(0.01) D0 ^ D1 L0\n",
+            "enable_correlations": True,
+        }
+
+    def test_circuit_level_uncorrelated_pymatching_uses_plain_dem(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The explicit uncorrelated option remains available for A/B diagnostics."""
+        import pecos.decoders as decoders_module
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **_kwargs: object) -> str:
+            return "error(0.01) D0 ^ D1 L0\n"
+
+        class DummyPyMatchingDecoder:
+            @classmethod
+            def from_dem_with_correlations(cls, _dem: str, **_kwargs: object) -> object:
+                raise AssertionError
+
+            @classmethod
+            def from_dem(cls, dem: str) -> object:
+                seen["method"] = "from_dem"
+                seen["dem"] = dem
+                return object()
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+        monkeypatch.setattr(decoders_module, "PyMatchingDecoder", DummyPyMatchingDecoder)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            decoder_type="pymatching_uncorrelated",
+            circuit_level_dem_mode="native_decomposed",
+        )
+
+        assert decoder._get_z_decoder() is not None
+        assert seen == {
+            "method": "from_dem",
+            "dem": "error(0.01) D0 ^ D1 L0\n",
+        }
+
+    def test_correlated_pymatching_requires_circuit_level_dem(self) -> None:
+        """The correlated option needs DEM metadata and should fail without it."""
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        decoder = SurfaceDecoder(
+            patch,
+            decoder_type="pymatching_correlated",
+            noise=noise,
+            use_circuit_level_dem=False,
+        )
+
+        with pytest.raises(ValueError, match="requires circuit-level DEM"):
+            decoder._get_z_decoder()
+
+    def test_correlated_pymatching_requires_decomposed_dem_mode(self) -> None:
+        """The explicit correlated option needs decomposed DEM metadata."""
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        decoder = SurfaceDecoder(
+            patch,
+            decoder_type="pymatching_correlated",
+            noise=noise,
+            circuit_level_dem_mode="native_full",
+        )
+
+        with pytest.raises(ValueError, match="requires a decomposed"):
+            decoder._get_z_decoder()
+
+    def test_recommended_memory_workflow_uses_terminal_graphlike_for_pymatching(self) -> None:
+        """The high-level memory helper should use the best measured graphlike projection."""
+        import pecos.qec.surface.decode as decode_module
+
+        for decoder_type in ["pymatching", "pymatching_correlated", "pymatching_uncorrelated"]:
+            assert decode_module._recommended_graphlike_decomposition_for_decoder(decoder_type) == "terminal_graphlike"
+        assert decode_module._recommended_graphlike_decomposition_for_decoder("tesseract") == "source_graphlike"
+
     def test_get_dem(self) -> None:
         """Test DEM generation via decoder."""
         patch = SurfacePatch.create(distance=3)
@@ -223,10 +348,10 @@ class TestSurfaceDecoder:
         real_generate = decode_module.generate_circuit_level_dem_from_builder
         calls = 0
 
-        def wrapped_generate(*args: object, **kwargs: object) -> str:
+        def wrapped_generate(*_args: object, **kwargs: object) -> str:
             nonlocal calls
             calls += 1
-            return real_generate(*args, **kwargs)
+            return real_generate(*_args, **kwargs)
 
         monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
 
@@ -235,6 +360,63 @@ class TestSurfaceDecoder:
 
         assert dem_1 == dem_2
         assert calls == 1
+
+    def test_get_dem_passes_interaction_basis_to_native_builder(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Decoder DEM generation should use the requested interaction basis."""
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **kwargs: object) -> str:
+            seen["interaction_basis"] = kwargs.get("interaction_basis")
+            return "error(0.01) D0\n"
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            circuit_level_dem_mode="native_decomposed",
+            interaction_basis="SZZ",
+        )
+
+        assert decoder.interaction_basis == "szz"
+        assert decoder.get_dem("Z", circuit_level=True) == "error(0.01) D0\n"
+        assert seen["interaction_basis"] == "szz"
+
+    def test_get_dem_passes_terminal_graphlike_mode_to_native_builder(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The terminal graphlike mode should select the terminal DEM projection."""
+        import pecos.qec.surface.decode as decode_module
+
+        patch = SurfacePatch.create(distance=3)
+        noise = NoiseModel(p2=0.01, p_meas=0.01)
+        seen: dict[str, object] = {}
+
+        def wrapped_generate(*_args: object, **kwargs: object) -> str:
+            seen["decompose_errors"] = kwargs.get("decompose_errors")
+            seen["dem_decomposition"] = kwargs.get("dem_decomposition")
+            return "error(0.01) D0\n"
+
+        monkeypatch.setattr(decode_module, "generate_circuit_level_dem_from_builder", wrapped_generate)
+
+        decoder = SurfaceDecoder(
+            patch,
+            num_rounds=3,
+            noise=noise,
+            circuit_level_dem_mode="native_terminal_graphlike",
+        )
+
+        assert decoder.get_dem("Z", circuit_level=True) == "error(0.01) D0\n"
+        assert seen == {
+            "decompose_errors": True,
+            "dem_decomposition": "terminal_graphlike",
+        }
 
     def test_decode_trivial_syndrome_z(self) -> None:
         """Decode trivial Z syndrome (no errors)."""
@@ -249,8 +431,14 @@ class TestSurfaceDecoder:
         synx_list = [np.zeros(num_x_stab, dtype=np.uint8)]
         synz_list = [np.zeros(num_z_stab, dtype=np.uint8)]
         final = np.zeros(patch.num_data, dtype=np.uint8)
+        init_synx = np.zeros(num_x_stab, dtype=np.uint8)
 
-        is_error, _result = decoder.decode_memory_z(synx_list, synz_list, final)
+        is_error, _result = decoder.decode_memory_z(
+            synx_list,
+            synz_list,
+            final,
+            init_synx=init_synx,
+        )
 
         # No errors should be detected
         assert not is_error
@@ -267,11 +455,79 @@ class TestSurfaceDecoder:
         synx_list = [np.zeros(num_x_stab, dtype=np.uint8)]
         synz_list = [np.zeros(num_z_stab, dtype=np.uint8)]
         final = np.zeros(patch.num_data, dtype=np.uint8)
+        init_synz = np.zeros(num_z_stab, dtype=np.uint8)
 
-        is_error, _result = decoder.decode_memory_x(synx_list, synz_list, final)
+        is_error, _result = decoder.decode_memory_x(
+            synx_list,
+            synz_list,
+            final,
+            init_synz=init_synz,
+        )
 
         # No errors should be detected
         assert not is_error
+
+    def test_dem_detection_events_require_prep_baseline(self) -> None:
+        """Circuit-level DEM event construction should fail loudly without prep baselines."""
+        patch = SurfacePatch.create(distance=3)
+        decoder = SurfaceDecoder(patch, num_rounds=2)
+        num_x_stab = len(patch.geometry.x_stabilizers)
+        num_z_stab = len(patch.geometry.z_stabilizers)
+        synx_list = [np.zeros(num_x_stab, dtype=np.uint8) for _ in range(2)]
+        synz_list = [np.zeros(num_z_stab, dtype=np.uint8) for _ in range(2)]
+        final = np.zeros(patch.num_data, dtype=np.uint8)
+
+        with pytest.raises(ValueError, match="requires init_synx"):
+            decoder._compute_dem_detection_events_z(synx_list, synz_list, final)
+        with pytest.raises(ValueError, match="requires init_synz"):
+            decoder._compute_dem_detection_events_x(synx_list, synz_list, final)
+
+    def test_dem_detection_events_count_only_syndrome_rounds_as_duration(self) -> None:
+        """Prep baselines and destructive readout should not add counted syndrome rounds."""
+        patch = SurfacePatch.create(distance=3)
+        rounds = 2
+        decoder = SurfaceDecoder(patch, num_rounds=rounds)
+        num_x_stab = len(patch.geometry.x_stabilizers)
+        num_z_stab = len(patch.geometry.z_stabilizers)
+        synx_list = [np.zeros(num_x_stab, dtype=np.uint8) for _ in range(rounds)]
+        synz_list = [np.zeros(num_z_stab, dtype=np.uint8) for _ in range(rounds)]
+        final = np.zeros(patch.num_data, dtype=np.uint8)
+
+        z_events = decoder._compute_dem_detection_events_z(
+            synx_list,
+            synz_list,
+            final,
+            init_synx=np.zeros(num_x_stab, dtype=np.uint8),
+        )
+        x_events = decoder._compute_dem_detection_events_x(
+            synx_list,
+            synz_list,
+            final,
+            init_synz=np.zeros(num_z_stab, dtype=np.uint8),
+        )
+
+        assert z_events.shape == (rounds * (num_x_stab + num_z_stab) + num_z_stab,)
+        assert x_events.shape == (rounds * (num_x_stab + num_z_stab) + num_x_stab,)
+
+    def test_zero_round_dem_events_use_readout_against_prep_boundary(self) -> None:
+        """r=0 still has terminal detectors from final readout versus prep signs."""
+        patch = SurfacePatch.create(distance=3)
+        decoder = SurfaceDecoder(patch, num_rounds=0)
+        num_x_stab = len(patch.geometry.x_stabilizers)
+        num_z_stab = len(patch.geometry.z_stabilizers)
+
+        z_final = np.zeros(patch.num_data, dtype=np.uint8)
+        z_final[patch.geometry.z_stabilizers[0].data_qubits[0]] = 1
+        x_final = np.zeros(patch.num_data, dtype=np.uint8)
+        x_final[patch.geometry.x_stabilizers[0].data_qubits[0]] = 1
+
+        z_events = decoder._compute_dem_detection_events_z([], [], z_final)
+        x_events = decoder._compute_dem_detection_events_x([], [], x_final)
+
+        assert z_events.shape == (num_z_stab,)
+        assert x_events.shape == (num_x_stab,)
+        assert z_events[0] == 1
+        assert x_events[0] == 1
 
 
 class TestDemGeneration:
@@ -369,7 +625,11 @@ class TestDemGeneration:
         DEM built fresh from the corresponding TickCircuit, for both the
         ``abstract`` and ``traced_qis`` sources -- pinning that caching is
         sound for constrained budgets, not just unconstrained ones."""
-        from pecos.qec.surface.circuit_builder import generate_dem_from_tick_circuit, generate_tick_circuit_from_patch
+        from pecos.qec.surface.circuit_builder import (
+            generate_dem_from_tick_circuit,
+            generate_tick_circuit_from_patch,
+            normalize_traced_qis_tick_circuit,
+        )
         from pecos.qec.surface.decode import (
             _build_surface_tick_circuit_for_native_model,
             generate_circuit_level_dem_from_builder,
@@ -399,6 +659,10 @@ class TestDemGeneration:
             ancilla_budget=2,
             circuit_source="traced_qis",
         )
+        # The native topology path normalizes traced-QIS circuits (Clifford-rotation
+        # lowering + single-qubit Clifford-chain simplification) before DEM
+        # construction; the fresh comparison must apply the same normalization.
+        normalize_traced_qis_tick_circuit(traced_tc, context="constrained budget cache test")
         cached_traced = generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=2,
@@ -473,6 +737,45 @@ class TestDemGeneration:
             )
             assert sampler.num_detectors == expected_detectors
 
+    def test_constrained_budget_dem_remains_strictly_decodable(self) -> None:
+        """Constrained ancilla reuse should not produce ungraphlike DEM artifacts.
+
+        This pins a regression where DAG fault propagation grouped measurements
+        by physical ancilla slot. That shortcut is invalid when the same slot is
+        reused for different stabilizers and produced high-degree mechanisms
+        that strict PyMatching could not parse.
+        """
+        from pecos.qec import ParsedDem
+
+        patch = SurfacePatch.create(distance=5)
+        params = {
+            "p1": 0.0,
+            "p2": 0.001,
+            "p_meas": 0.0,
+            "p_prep": 0.0,
+            "decompose_errors": True,
+        }
+
+        for basis in ("X", "Z"):
+            tc = generate_tick_circuit_from_patch(
+                patch,
+                num_rounds=5,
+                basis=basis,
+                ancilla_budget=8,
+            )
+            dem = generate_dem_from_tick_circuit(tc, **params)
+            sampler = ParsedDem.from_string(dem).to_dem_sampler()
+
+            assert (
+                sampler.sample_decode_count(
+                    dem,
+                    16,
+                    decoder_type="pymatching",
+                    seed=1234,
+                )
+                >= 0
+            )
+
     def test_traced_qis_traces_the_given_patch_not_its_distance(self) -> None:
         """A non-rotated patch must be traced from its OWN Guppy program, not
         the default rotated patch of the same distance. Before the patch-
@@ -491,6 +794,30 @@ class TestDemGeneration:
             return generate_dem_from_tick_circuit(tc, **params, decompose_errors=False)
 
         assert traced_dem(rotated=True) != traced_dem(rotated=False)
+
+    def test_traced_qis_native_topology_lowers_clifford_rotations(self) -> None:
+        """Surface native topology should match from_guppy's traced-QIS normalization."""
+        from pecos.qec.surface.decode import _surface_native_topology, _surface_patch_cache_key
+
+        _require_selene_runtime()
+
+        patch = SurfacePatch.create(distance=3)
+        topology = _surface_native_topology(
+            _surface_patch_cache_key(patch),
+            2,
+            "Z",
+            None,
+            "traced_qis",
+            False,
+        )
+        gate_names = {
+            topology.dag_circuit.gate(node).gate_type.name
+            for node in topology.dag_circuit.nodes()
+            if topology.dag_circuit.gate(node) is not None
+        }
+
+        assert "RZZ" not in gate_names
+        assert "SZZ" in gate_names
 
     def test_guppy_module_cache_keys_on_full_patch_identity(self) -> None:
         """Rotated and non-rotated patches of the same dx/dz/budget must NOT

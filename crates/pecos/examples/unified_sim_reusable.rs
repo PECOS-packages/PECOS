@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Direct run (builds each time)
     let start = Instant::now();
     for _ in 0..5 {
-        let _ = sim(qasm3.clone()).run(100)?;
+        let _ = sim(qasm3.clone()).shots(100).run()?;
     }
     let direct_time = start.elapsed();
     println!("  Direct run 5 times: {direct_time:?}");

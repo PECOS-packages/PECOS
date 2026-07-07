@@ -139,8 +139,8 @@ impl AdaptiveDecoder {
 }
 
 impl ObservableDecoder for AdaptiveDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        self.decoder.decode_to_observables(syndrome)
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+        self.decoder.decode_obs(syndrome)
     }
 }
 
@@ -153,8 +153,11 @@ mod tests {
         let dec = AdaptiveDecoder::new("error(0.1) D0\n", |_dem| {
             struct Zero;
             impl ObservableDecoder for Zero {
-                fn decode_to_observables(&mut self, _: &[u8]) -> Result<u64, DecoderError> {
-                    Ok(0)
+                fn decode_obs(
+                    &mut self,
+                    _: &[u8],
+                ) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+                    Ok(crate::obs_mask::ObsMask::new())
                 }
             }
             Ok(Box::new(Zero))
@@ -170,8 +173,11 @@ mod tests {
         let mut dec = AdaptiveDecoder::new("error(0.1) D0\n", |_dem| {
             struct Zero;
             impl ObservableDecoder for Zero {
-                fn decode_to_observables(&mut self, _: &[u8]) -> Result<u64, DecoderError> {
-                    Ok(0)
+                fn decode_obs(
+                    &mut self,
+                    _: &[u8],
+                ) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+                    Ok(crate::obs_mask::ObsMask::new())
                 }
             }
             Ok(Box::new(Zero))

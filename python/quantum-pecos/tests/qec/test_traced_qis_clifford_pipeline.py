@@ -3,9 +3,12 @@
 
 """Smoke tests for the traced-QIS surface-code route after Clifford lowering."""
 
+import math
 import random
 
+import pytest
 from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 from pecos.quantum import TickCircuit
 from pecos_rslib_exp import (
@@ -14,6 +17,7 @@ from pecos_rslib_exp import (
     depolarizing,
     fault_catalog,
     meas_sampling,
+    monte_carlo,
     sim_neo,
     stabilizer,
     statevec,
@@ -79,7 +83,7 @@ TICK_2Q_METHODS = {
 def build_lowered_traced_qis_surface_code(rounds=3):
     patch = SurfacePatch.create(distance=3)
     tc = _build_surface_tick_circuit_for_native_model(patch, rounds, "Z", circuit_source="traced_qis")
-    tc.lower_clifford_rotations()
+    normalize_traced_qis_tick_circuit(tc, context="test traced-QIS surface code")
     return tc
 
 
@@ -179,7 +183,7 @@ def test_meas_sampling_runs_on_lowered_traced_qis_surface_code():
     tc = build_lowered_traced_qis_surface_code()
     shots = 8
 
-    result = sim_neo(tc).quantum(meas_sampling()).noise(traced_qis_noise()).shots(shots).seed(123).run()
+    result = sim_neo(tc).quantum(meas_sampling()).noise(traced_qis_noise()).sampling(monte_carlo(shots)).seed(123).run()
 
     assert result.num_shots == shots
     assert result.num_measurements == int(tc.get_meta("num_measurements"))
@@ -202,7 +206,7 @@ def test_lowered_traced_qis_pipeline_sampling_and_catalog_smoke():
     tc = build_lowered_traced_qis_surface_code(rounds=2)
     noise = traced_qis_noise()
 
-    result = sim_neo(tc).quantum(meas_sampling()).noise(noise).shots(3).seed(321).run()
+    result = sim_neo(tc).quantum(meas_sampling()).noise(noise).sampling(monte_carlo(3)).seed(321).run()
     catalog = fault_catalog(tc, noise)
     first_fault = next(catalog.fault_configurations(1))
 
@@ -213,11 +217,111 @@ def test_lowered_traced_qis_pipeline_sampling_and_catalog_smoke():
     assert len(first_fault.faults) == 1
 
 
+def test_normalize_traced_qis_tick_circuit_lowers_clifford_rzz():
+    tc = TickCircuit()
+    tc.tick().rzz(math.pi / 2, [(0, 1)])
+
+    normalize_traced_qis_tick_circuit(tc, context="test Clifford RZZ normalization")
+
+    gate_names = [
+        gate.gate_type.name for tick_index in range(tc.num_ticks()) for gate in tc.get_tick(tick_index).gate_batches()
+    ]
+    assert "RZZ" not in gate_names
+    assert "SZZ" in gate_names
+
+
+def test_normalize_traced_qis_tick_circuit_rejects_raw_rzz_after_lowering():
+    tc = TickCircuit()
+    tc.tick().rzz(math.pi / 4, [(0, 1)])
+
+    with pytest.raises(ValueError, match="still contains raw RZZ"):
+        normalize_traced_qis_tick_circuit(tc, context="test non-Clifford RZZ normalization")
+
+
+def _gate_names(tc):
+    return [
+        gate.gate_type.name for tick_index in range(tc.num_ticks()) for gate in tc.get_tick(tick_index).gate_batches()
+    ]
+
+
+def test_tick_circuit_pass_bindings_cancel_and_remove_simple_gates():
+    tc = TickCircuit()
+    tc.tick().h([0])
+    tc.tick().h([0])
+    tc.tick().i([1])
+
+    tc.cancel_inverses()
+    tc.remove_identity()
+
+    assert _gate_names(tc) == []
+
+
+def test_tick_circuit_pass_bindings_merge_and_lower_rotations():
+    tc = TickCircuit()
+    tc.tick().rz(math.pi / 4, [0])
+    tc.tick().rz(math.pi / 4, [0])
+
+    tc.merge_adjacent_rotations()
+    tc.lower_clifford_rotations()
+
+    assert _gate_names(tc) == ["SZ"]
+
+
+def test_tick_circuit_pass_bindings_absorb_basis_and_peephole():
+    absorbed = TickCircuit()
+    absorbed.tick().pz([0])
+    absorbed.tick().sz([0])
+    absorbed.tick().mz([0])
+    absorbed.absorb_basis_gates()
+    assert _gate_names(absorbed) == ["PZ", "MZ"]
+
+    optimized = TickCircuit()
+    optimized.tick().h([1])
+    optimized.tick().cx([(0, 1)])
+    optimized.tick().h([1])
+    optimized.peephole_optimize()
+    assert _gate_names(optimized) == ["CZ"]
+
+
+def test_tick_circuit_pass_bindings_simplify_single_qubit_clifford_chains():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    tc.simplify_single_qubit_clifford_chains()
+
+    assert _gate_names(tc) == ["F"]
+
+
+def test_normalize_traced_qis_tick_circuit_simplifies_single_qubit_clifford_chains():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    normalize_traced_qis_tick_circuit(tc, context="test one-qubit Clifford normalization")
+
+    assert _gate_names(tc) == ["F"]
+
+
+def test_normalize_traced_qis_tick_circuit_can_skip_single_qubit_clifford_simplification():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    normalize_traced_qis_tick_circuit(
+        tc,
+        context="test one-qubit Clifford normalization",
+        simplify_single_qubit_clifford_chains=False,
+    )
+
+    assert _gate_names(tc) == ["SX", "SZ"]
+
+
 def test_explicit_python_gate_names_map_to_rust_clifford_gates():
     tc = build_explicit_clifford_gate_circuit()
     noise = depolarizing().p1(0.03).p2(0.15).p_meas(0).p_prep(0)
 
-    result = sim_neo(tc).quantum(meas_sampling()).noise(noise).shots(3).seed(123).run()
+    result = sim_neo(tc).quantum(meas_sampling()).noise(noise).sampling(monte_carlo(3)).seed(123).run()
     assert result.num_shots == 3
     assert result.num_measurements == 2
 
@@ -239,7 +343,7 @@ def test_sim_neo_native_backends_accept_face_gates():
     tc.set_meta("observables", "[]")
 
     for backend in (stabilizer(), statevec()):
-        result = sim_neo(tc).quantum(backend).noise(zero_noise()).shots(2).seed(123).run()
+        result = sim_neo(tc).quantum(backend).noise(zero_noise()).sampling(monte_carlo(2)).seed(123).run()
         assert result.num_measurements == 1
         assert all(result[shot][0] == 0 for shot in range(result.num_shots))
 
@@ -280,7 +384,7 @@ def test_random_mirrored_standard_clifford_circuits_match_across_backends():
 
         backend_results = {}
         for name, backend in (("stabilizer", stabilizer()), ("statevec", statevec())):
-            result = sim_neo(tc).quantum(backend).noise(zero_noise()).shots(4).seed(seed).run()
+            result = sim_neo(tc).quantum(backend).noise(zero_noise()).sampling(monte_carlo(4)).seed(seed).run()
             backend_results[name] = [list(row) for row in result.to_list()]
 
         backend_results["StabMps"] = [run_direct_wrapper_mirrored_circuit(StabMps(3, seed=seed), sequence)]

@@ -16,6 +16,8 @@ permissions:
 
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
@@ -29,12 +31,26 @@ on:
       - master
     tags:
       - 'jl-*'  # Trigger on Julia-specific tags
+    paths:
+      - 'julia/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/julia-release.yml'
   pull_request:
     branches:
       - main
       - dev
       - development
       - master
+    paths:
+      - 'julia/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/**'
+      - '.github/workflows/julia-release.yml'
   workflow_dispatch:
     inputs:
       sha:
@@ -126,35 +142,48 @@ jobs:
       - name: Set up Rust
         run: rustup show
 
-      - name: Install LLVM 14.0.6 using pecos-llvm (Unix)
+      - name: Install LLVM 21.1 (Unix)
         if: runner.os != 'Windows'
         run: |
-          echo "Installing LLVM using pecos..."
-          cargo run --locked -p pecos-cli --release -- install llvm
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            echo "Installing LLVM 21 with Homebrew..."
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
+            LLVM_PREFIX="$(brew --prefix llvm@21)"
+          else
+            echo "Installing LLVM 21.1 using PECOS-managed packages..."
+            cargo run --locked -p pecos-cli --release -- llvm ensure --managed --no-configure || bash scripts/ci/install-llvm-21-conda-linux.sh
+            LLVM_PREFIX="$HOME/.pecos/deps/llvm-21.1"
+          fi
 
           echo "Setting LLVM environment variables..."
-          export PECOS_LLVM=$(cargo run --locked -p pecos-cli --release -- llvm find 2>/dev/null)
-          export LLVM_SYS_140_PREFIX="$PECOS_LLVM"
+          cargo run --locked -p pecos-cli --release -- llvm configure "$LLVM_PREFIX"
+          export PECOS_LLVM="$LLVM_PREFIX"
+          export LLVM_SYS_211_PREFIX="$LLVM_PREFIX"
 
           echo "PECOS_LLVM=$PECOS_LLVM" >> $GITHUB_ENV
-          echo "LLVM_SYS_140_PREFIX=$LLVM_SYS_140_PREFIX" >> $GITHUB_ENV
+          echo "LLVM_SYS_211_PREFIX=$LLVM_SYS_211_PREFIX" >> $GITHUB_ENV
 
           echo "Verifying LLVM installation..."
           cargo run --locked -p pecos-cli --release -- llvm check
 
-      - name: Install LLVM 14.0.6 using pecos-llvm (Windows)
+      - name: Install LLVM 21.1 (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Write-Host "Installing LLVM using pecos..."
-          cargo run --locked -p pecos-cli --release -- install llvm
+          $llvmRoot = Join-Path $env:USERPROFILE ".pecos\deps\llvm-21.1"
+          $llvmPrefix = Join-Path $llvmRoot "Library"
+          Write-Host "Installing conda-forge LLVM 21.1..."
+          ./scripts/ci/install-llvm-21-windows.ps1 -InstallDir $llvmRoot -Version ${{ env.LLVM_RELEASE_VERSION }}
 
           Write-Host "Setting LLVM environment variables..."
-          $env:PECOS_LLVM = (cargo run --locked -p pecos-cli --release -- llvm find 2>$null)
-          $env:LLVM_SYS_140_PREFIX = $env:PECOS_LLVM
+          $env:PECOS_LLVM = $llvmPrefix
+          $env:LLVM_SYS_211_PREFIX = $env:PECOS_LLVM
+          $env:LIBCLANG_PATH = Join-Path $llvmPrefix "bin"
+          cargo run --locked -p pecos-cli --release -- llvm configure "$env:PECOS_LLVM"
 
           "PECOS_LLVM=$env:PECOS_LLVM" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LLVM_SYS_140_PREFIX=$env:LLVM_SYS_140_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LLVM_SYS_211_PREFIX=$env:LLVM_SYS_211_PREFIX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "LIBCLANG_PATH=$env:LIBCLANG_PATH" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "Verifying LLVM installation..."
           cargo run --locked -p pecos-cli --release -- llvm check
@@ -256,6 +285,7 @@ jobs:
         with:
           name: julia-binary-${{ matrix.os }}-${{ matrix.architecture }}
           path: pecos_julia-*.tar.gz
+          if-no-files-found: error
 
   test_binaries:
     needs: build_julia_binaries
@@ -492,6 +522,7 @@ jobs:
         with:
           name: pecos-julia-distribution
           path: dist/
+          if-no-files-found: error
 
   create_release_bundle:
     needs: [build_julia_binaries, test_binaries]
@@ -650,6 +681,7 @@ jobs:
         with:
           name: pecos-julia-release-bundle
           path: pecos-julia-release-bundle-*.tar.gz
+          if-no-files-found: error
           retention-days: 30  # Keep for 30 days
 
       - name: Determine if pre-release

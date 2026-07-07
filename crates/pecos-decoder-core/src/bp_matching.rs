@@ -79,7 +79,7 @@ impl<M: MatchingDecoder, B: BpWeightProvider> BpMatchingDecoder<M, B> {
 }
 
 impl<M: MatchingDecoder, B: BpWeightProvider> crate::ObservableDecoder for BpMatchingDecoder<M, B> {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         // Predecoder fast path: only for zero-defect syndromes.
         // At d>=5, always use full MWPM (predecoder can be suboptimal).
         // At d=3, BP + predecoder is actually better than MWPM for simple
@@ -87,7 +87,7 @@ impl<M: MatchingDecoder, B: BpWeightProvider> crate::ObservableDecoder for BpMat
         // predecoder and let MWPM handle everything for consistency.
         let num_defects = syndrome.iter().filter(|&&v| v != 0).count();
         if num_defects == 0 {
-            return Ok(0);
+            return Ok(crate::obs_mask::ObsMask::new());
         }
 
         // Compute BP-adjusted weights.
@@ -117,11 +117,11 @@ impl<M: MatchingDecoder, B: BpWeightProvider> crate::ObservableDecoder for BpMat
             let (obs, _) = self
                 .matching
                 .decode_with_weights(syndrome, &self.adjusted_weights)?;
-            return Ok(obs);
+            return Ok(crate::obs_mask::ObsMask::from_u64(obs));
         }
 
         // Single-pass belief-matching.
         let (obs, _) = self.matching.decode_with_weights(syndrome, &bp_weights)?;
-        Ok(obs)
+        Ok(crate::obs_mask::ObsMask::from_u64(obs))
     }
 }

@@ -2,10 +2,14 @@
 
 use super::LlvmCommands;
 use pecos_build::Result;
-use pecos_build::llvm::config::{auto_configure_llvm, validate_llvm_config};
+use pecos_build::llvm::config::{auto_configure_llvm, validate_llvm_config, write_cargo_config};
 use pecos_build::llvm::{
-    find_llvm_14, find_tool, get_llvm_version, get_pecos_command, get_repo_root_from_manifest,
+    LLVM_SYS_PREFIX_ENV, REQUIRED_VERSION, find_cargo_project_root,
+    find_configured_or_detected_llvm, find_llvm, find_tool, get_llvm_shared_libraries,
+    get_llvm_shared_mode, get_llvm_version, get_pecos_command, get_repo_root_from_manifest,
+    is_valid_llvm,
 };
+use std::path::Path;
 
 /// Run an LLVM subcommand
 pub fn run(command: LlvmCommands) -> Result<()> {
@@ -18,7 +22,7 @@ pub fn run(command: LlvmCommands) -> Result<()> {
             managed,
             no_configure,
         } => run_ensure(managed, no_configure),
-        LlvmCommands::Configure => run_configure(),
+        LlvmCommands::Configure { path } => run_configure(path),
         LlvmCommands::Find { export } => {
             run_find(export);
             Ok(())
@@ -34,12 +38,13 @@ pub fn run(command: LlvmCommands) -> Result<()> {
 
 fn run_check(quiet: bool) {
     let repo_root = get_repo_root_from_manifest();
-    if let Some(llvm_path) = find_llvm_14(repo_root) {
+    if let Some(llvm_path) = find_configured_or_detected_llvm(repo_root) {
         if !quiet {
-            println!("LLVM 14 found at: {}", llvm_path.display());
+            println!("LLVM 21.1 found at: {}", llvm_path.display());
             if let Ok(version) = get_llvm_version(&llvm_path) {
                 println!("Version: {version}");
             }
+            print_link_info(&llvm_path);
 
             // Validate configuration
             let validation = validate_llvm_config();
@@ -53,9 +58,17 @@ fn run_check(quiet: bool) {
     } else {
         if !quiet {
             let cmd = get_pecos_command();
-            eprintln!("LLVM 14 not found");
+            eprintln!("LLVM 21.1 not found");
             eprintln!();
-            eprintln!("Install with: `{cmd} install llvm`");
+            if let Some(reason) = pecos_build::llvm::installer::managed_install_unavailable_reason()
+            {
+                eprintln!("{reason}");
+                eprintln!();
+                eprintln!("After installing LLVM 21, configure it with:");
+                eprintln!("  {cmd} llvm configure /path/to/llvm");
+            } else {
+                eprintln!("Install with: `{cmd} install llvm`");
+            }
         }
         std::process::exit(1);
     }
@@ -64,7 +77,7 @@ fn run_check(quiet: bool) {
 fn run_ensure(managed: bool, no_configure: bool) -> Result<()> {
     let llvm_path = if managed {
         ensure_managed_llvm(no_configure)?
-    } else if let Some(path) = find_llvm_14(get_repo_root_from_manifest()) {
+    } else if let Some(path) = find_llvm(get_repo_root_from_manifest()) {
         if !no_configure {
             auto_configure_llvm(None)?;
         }
@@ -99,8 +112,33 @@ fn ensure_managed_llvm(no_configure: bool) -> Result<std::path::PathBuf> {
     Ok(llvm_path)
 }
 
-fn run_configure() -> Result<()> {
-    let llvm_path = auto_configure_llvm(None)?;
+fn run_configure(path: Option<String>) -> Result<()> {
+    let llvm_path = if let Some(path) = path {
+        let input_path = std::path::PathBuf::from(&path);
+        let llvm_path = input_path.canonicalize().map_err(|e| {
+            pecos_build::errors::Error::Llvm(format!(
+                "Could not resolve LLVM path {}: {e}",
+                input_path.display()
+            ))
+        })?;
+        if !is_valid_llvm(&llvm_path) {
+            return Err(pecos_build::errors::Error::Llvm(format!(
+                "{} is not a valid LLVM {REQUIRED_VERSION} installation",
+                llvm_path.display()
+            )));
+        }
+
+        let project_root = get_repo_root_from_manifest()
+            .or_else(find_cargo_project_root)
+            .ok_or_else(|| {
+                pecos_build::errors::Error::Config("Could not find Cargo project root".into())
+            })?;
+        write_cargo_config(&project_root, &llvm_path, true)?;
+        llvm_path
+    } else {
+        auto_configure_llvm(None)?
+    };
+
     println!("Configured LLVM path: {}", llvm_path.display());
     println!("Updated .cargo/config.toml");
     Ok(())
@@ -108,27 +146,27 @@ fn run_configure() -> Result<()> {
 
 fn run_find(export: bool) {
     let repo_root = get_repo_root_from_manifest();
-    if let Some(llvm_path) = find_llvm_14(repo_root) {
+    if let Some(llvm_path) = find_configured_or_detected_llvm(repo_root) {
         if export {
-            println!("export LLVM_SYS_140_PREFIX=\"{}\"", llvm_path.display());
+            println!("export {LLVM_SYS_PREFIX_ENV}=\"{}\"", llvm_path.display());
         } else {
             println!("{}", llvm_path.display());
         }
     } else {
-        eprintln!("LLVM 14 not found");
+        eprintln!("LLVM 21.1 not found");
         std::process::exit(1);
     }
 }
 
 fn run_version() -> Result<()> {
     let repo_root = get_repo_root_from_manifest();
-    if let Some(llvm_path) = find_llvm_14(repo_root) {
+    if let Some(llvm_path) = find_configured_or_detected_llvm(repo_root) {
         let version = get_llvm_version(&llvm_path)?;
         println!("LLVM version: {version}");
         println!("Location: {}", llvm_path.display());
         Ok(())
     } else {
-        eprintln!("LLVM 14 not found");
+        eprintln!("LLVM 21.1 not found");
         std::process::exit(1);
     }
 }
@@ -138,9 +176,9 @@ fn run_validate(path: Option<String>) -> Result<()> {
         std::path::PathBuf::from(p)
     } else {
         let repo_root = get_repo_root_from_manifest();
-        find_llvm_14(repo_root).ok_or_else(|| {
+        find_configured_or_detected_llvm(repo_root).ok_or_else(|| {
             pecos_build::errors::Error::Llvm(
-                "LLVM 14 not found. Specify a path or install first.".into(),
+                "LLVM 21.1 not found. Specify a path or install first.".into(),
             )
         })?
     };
@@ -172,16 +210,19 @@ fn run_validate(path: Option<String>) -> Result<()> {
     // Check version
     println!();
     if let Ok(version) = get_llvm_version(&llvm_path) {
-        if version.starts_with("14.") {
+        if pecos_build::llvm::is_required_llvm_version(&version) {
             println!("Version: {version} [OK]");
         } else {
-            println!("Version: {version} [WARNING: expected 14.x]");
+            println!("Version: {version} [WARNING: expected {REQUIRED_VERSION}]");
             all_present = false;
         }
     } else {
         println!("Version: could not determine [ERROR]");
         all_present = false;
     }
+
+    print_link_info(&llvm_path);
+    println!();
 
     println!();
     if all_present {
@@ -200,5 +241,17 @@ fn run_tool(name: &str) {
     } else {
         eprintln!("Tool '{name}' not found");
         std::process::exit(1);
+    }
+}
+
+fn print_link_info(llvm_path: &Path) {
+    if let Ok(mode) = get_llvm_shared_mode(llvm_path) {
+        println!("Link mode: {mode}");
+    }
+
+    if let Some(libraries) = get_llvm_shared_libraries(llvm_path) {
+        println!("Shared library: {libraries}");
+    } else {
+        println!("Shared library: unavailable");
     }
 }

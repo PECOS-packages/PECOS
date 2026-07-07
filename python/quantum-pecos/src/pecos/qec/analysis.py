@@ -580,16 +580,31 @@ def empirical_correlation_table(
     """
     from pecos_rslib_exp import (
         meas_sampling,
+        monte_carlo,
         sim_neo,
         stabilizer,
         statevec,
     )
 
     if backend == "meas_sampling":
-        results = sim_neo(tick_circuit).quantum(meas_sampling()).noise(noise_builder).shots(shots).seed(seed).run()
+        results = (
+            sim_neo(tick_circuit)
+            .quantum(meas_sampling())
+            .noise(noise_builder)
+            .sampling(monte_carlo(shots))
+            .seed(seed)
+            .run()
+        )
     elif backend in ("stabilizer", "statevec"):
         backend_obj = stabilizer() if backend == "stabilizer" else statevec()
-        results = sim_neo(tick_circuit).quantum(backend_obj).noise(noise_builder).shots(shots).seed(seed).run()
+        results = (
+            sim_neo(tick_circuit)
+            .quantum(backend_obj)
+            .noise(noise_builder)
+            .sampling(monte_carlo(shots))
+            .seed(seed)
+            .run()
+        )
     else:
         supported = "'stabilizer', 'statevec', 'meas_sampling'"
         msg = f"Unknown backend {backend!r}. Supported: {supported}."
@@ -699,6 +714,7 @@ def fit_dem_from_simulation(
     )
     from pecos_rslib_exp import (
         meas_sampling,
+        monte_carlo,
         sim_neo,
         stabilizer,
         statevec,
@@ -736,10 +752,24 @@ def fit_dem_from_simulation(
     num_dets = len(det_json)
 
     if backend == "meas_sampling":
-        results = sim_neo(tick_circuit).quantum(meas_sampling()).noise(noise_builder).shots(shots).seed(seed).run()
+        results = (
+            sim_neo(tick_circuit)
+            .quantum(meas_sampling())
+            .noise(noise_builder)
+            .sampling(monte_carlo(shots))
+            .seed(seed)
+            .run()
+        )
     elif backend in ("stabilizer", "statevec"):
         backend_obj = stabilizer() if backend == "stabilizer" else statevec()
-        results = sim_neo(tick_circuit).quantum(backend_obj).noise(noise_builder).shots(shots).seed(seed).run()
+        results = (
+            sim_neo(tick_circuit)
+            .quantum(backend_obj)
+            .noise(noise_builder)
+            .sampling(monte_carlo(shots))
+            .seed(seed)
+            .run()
+        )
     else:
         supported = "'stabilizer', 'statevec', 'meas_sampling'"
         msg = f"Unknown backend {backend!r}. Supported: {supported}."

@@ -27,4 +27,5 @@
 pub mod call;
 pub mod cfg;
 pub mod conditional;
+pub mod scan;
 pub mod tailloop;

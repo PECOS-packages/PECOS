@@ -79,7 +79,9 @@ use pecos_core::{PauliString, QuarterPhase, QubitId};
 use pecos_quantum::DagCircuit;
 use pecos_simulators::PauliProp;
 use smallvec::SmallVec;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::hash::{Hash, Hasher};
 
 /// Reusable work buffers for propagation, avoiding per-call allocation.
 pub struct PropagationBuffers {
@@ -113,6 +115,8 @@ pub struct FaultLocations {
     pub before: Vec<bool>,
     /// Gate type at each location.
     pub gate_types: Vec<GateType>,
+    /// Idle duration at each location. 0.0 for non-idle gates.
+    pub idle_durations: Vec<f64>,
     /// Reverse index: node -> list of location IDs at that node.
     pub node_to_locations: Vec<SmallVec<[usize; 4]>>,
 }
@@ -132,6 +136,7 @@ impl FaultLocations {
             qubits: Vec::with_capacity(num_locations),
             before: Vec::with_capacity(num_locations),
             gate_types: Vec::with_capacity(num_locations),
+            idle_durations: Vec::with_capacity(num_locations),
             node_to_locations: vec![SmallVec::new(); max_node + 1],
         }
     }
@@ -157,12 +162,14 @@ impl FaultLocations {
         qubits: SmallVec<[usize; 2]>,
         before: bool,
         gate_type: GateType,
+        idle_duration: f64,
     ) -> usize {
         let loc_id = self.nodes.len();
         self.nodes.push(node);
         self.qubits.push(qubits);
         self.before.push(before);
         self.gate_types.push(gate_type);
+        self.idle_durations.push(idle_duration);
 
         // Update reverse index
         if node < self.node_to_locations.len() {
@@ -206,7 +213,7 @@ impl FaultLocations {
                 qubits: self.qubits[i].iter().map(|&q| QubitId::from(q)).collect(),
                 before: self.before[i],
                 gate_type: self.gate_types[i],
-                idle_duration: 0,
+                idle_duration: self.idle_durations[i],
             })
             .collect()
     }
@@ -220,7 +227,7 @@ impl FaultLocations {
 ///
 /// Unlike `SpacetimeLocation` which uses tick indices, this uses DAG node indices
 /// for more efficient sparse propagation.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone)]
 pub struct DagSpacetimeLocation {
     /// The node index in the DAG.
     pub node: usize,
@@ -230,8 +237,47 @@ pub struct DagSpacetimeLocation {
     pub before: bool,
     /// The type of gate at this location.
     pub gate_type: GateType,
-    /// Duration for idle gates (in abstract time units). 0 for non-idle gates.
-    pub idle_duration: u64,
+    /// Duration for idle gates. 0.0 for non-idle gates.
+    pub idle_duration: f64,
+}
+
+impl PartialEq for DagSpacetimeLocation {
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node
+            && self.qubits == other.qubits
+            && self.before == other.before
+            && self.gate_type == other.gate_type
+            && self.idle_duration.to_bits() == other.idle_duration.to_bits()
+    }
+}
+
+impl Eq for DagSpacetimeLocation {}
+
+impl PartialOrd for DagSpacetimeLocation {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DagSpacetimeLocation {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.node
+            .cmp(&other.node)
+            .then_with(|| self.qubits.cmp(&other.qubits))
+            .then_with(|| self.before.cmp(&other.before))
+            .then_with(|| self.gate_type.cmp(&other.gate_type))
+            .then_with(|| self.idle_duration.total_cmp(&other.idle_duration))
+    }
+}
+
+impl Hash for DagSpacetimeLocation {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.node.hash(state);
+        self.qubits.hash(state);
+        self.before.hash(state);
+        self.gate_type.hash(state);
+        self.idle_duration.to_bits().hash(state);
+    }
 }
 
 // ============================================================================
@@ -1765,6 +1811,7 @@ impl<'a> DagFaultAnalyzer<'a> {
         let estimated_locations = topo_order.len() * 4;
         let mut locations =
             FaultLocations::with_capacity(estimated_locations, propagator.max_node());
+        let mut prepared_qubits: BTreeSet<usize> = BTreeSet::new();
 
         for &node in &topo_order {
             if let Some(gate) = propagator.gate(node) {
@@ -1785,9 +1832,28 @@ impl<'a> DagFaultAnalyzer<'a> {
                 // Idle gates on non-active qubits provide the missing "before"
                 // coverage that would otherwise require before-gate locations.
                 let before = is_measurement;
-                for &q in &qubits {
+                let idle_duration = if gate.gate_type == GateType::Idle {
+                    gate.idle_duration()
+                } else {
+                    0.0
+                };
+                let location_qubits: Vec<usize> =
+                    if gate.gate_type == GateType::MeasCrosstalkGlobalPayload {
+                        for &q in &qubits {
+                            prepared_qubits.remove(&q);
+                        }
+                        let victims = prepared_qubits.iter().copied().collect();
+                        prepared_qubits.extend(qubits.iter().copied());
+                        victims
+                    } else {
+                        qubits.iter().copied().collect()
+                    };
+                for q in location_qubits {
                     let single_qubit: SmallVec<[usize; 2]> = smallvec::smallvec![q];
-                    locations.push(node, single_qubit, before, gate.gate_type);
+                    locations.push(node, single_qubit, before, gate.gate_type, idle_duration);
+                }
+                if matches!(gate.gate_type, GateType::PZ | GateType::QAlloc) {
+                    prepared_qubits.extend(qubits.iter().copied());
                 }
             }
         }
@@ -1840,8 +1906,11 @@ impl<'a> DagFaultAnalyzer<'a> {
             map.detectors.push(DetectorId::single(measurement_id));
         }
 
-        // Use forest propagation: per-ancilla Phase 1/Phase 2 split.
-        let recorder = self.propagate_all_forest();
+        // Use the generic per-measurement path for correctness with physical
+        // qubit reuse. The forest shortcut groups by measured qubit ID and is
+        // only valid when that physical qubit represents one fixed measurement
+        // stream, not a reusable ancilla slot.
+        let recorder = self.propagate_all_parallel();
 
         // Convert buckets to SoA format (O(n) flattening)
         map.influences = recorder.into_soa();
@@ -2285,9 +2354,14 @@ impl<'a> DagFaultAnalyzer<'a> {
         }
     }
 
-    /// Parallel forest propagation: groups measurements by ancilla qubit,
-    /// propagates the latest measurement fully with capture, replays the
-    /// shared tail prefix for earlier measurements.
+    /// Parallel forest propagation for fixed ancilla streams.
+    ///
+    /// This groups measurements by physical ancilla qubit, propagates the latest
+    /// measurement fully with capture, and replays the shared tail prefix for
+    /// earlier measurements. It is an optimization for circuits where each
+    /// measured physical qubit represents one fixed logical measurement stream.
+    /// It must not be used for circuits that reuse one physical measurement
+    /// qubit for multiple logical checks.
     #[must_use]
     pub fn propagate_all_forest(&self) -> BucketRecorder {
         use rayon::prelude::*;
@@ -2491,6 +2565,71 @@ mod tests {
         dag
     }
 
+    /// Reuses one physical ancilla slot for two different checks that share a data qubit.
+    fn reused_physical_ancilla_circuit() -> DagCircuit {
+        let mut dag = DagCircuit::new();
+        for _ in 0..2 {
+            dag.qalloc(&[10]);
+            dag.cx(&[(0, 10)]);
+            dag.cx(&[(1, 10)]);
+            dag.mz_free(&[10]);
+
+            dag.qalloc(&[10]);
+            dag.cx(&[(1, 10)]);
+            dag.cx(&[(2, 10)]);
+            dag.mz_free(&[10]);
+        }
+        dag
+    }
+
+    fn build_parallel_map(analyzer: &DagFaultAnalyzer<'_>) -> DagFaultInfluenceMap {
+        build_map_with_influences(analyzer, analyzer.propagate_all_parallel().into_soa())
+    }
+
+    fn build_forest_map(analyzer: &DagFaultAnalyzer<'_>) -> DagFaultInfluenceMap {
+        build_map_with_influences(analyzer, analyzer.propagate_all_forest().into_soa())
+    }
+
+    fn build_map_with_influences(
+        analyzer: &DagFaultAnalyzer<'_>,
+        influences: InfluencesSoA,
+    ) -> DagFaultInfluenceMap {
+        let mut map = DagFaultInfluenceMap::with_capacity(analyzer.locations.len());
+        map.locations = analyzer.locations.to_dag_spacetime_locations();
+
+        let (measurements, meas_ids) = analyzer.extract_measurements();
+        map.measurements.clone_from(&measurements);
+        map.meas_ids = meas_ids;
+
+        for &(node, qubit, basis) in &measurements {
+            map.detectors.push(DetectorId::single(MeasurementId {
+                tick: node,
+                qubit,
+                basis,
+            }));
+        }
+
+        map.influences = influences;
+        map
+    }
+
+    fn detector_fingerprint(map: &DagFaultInfluenceMap) -> Vec<(Vec<u32>, Vec<u32>)> {
+        vec![
+            (
+                map.influences.detectors_x.offsets.clone(),
+                map.influences.detectors_x.data.clone(),
+            ),
+            (
+                map.influences.detectors_y.offsets.clone(),
+                map.influences.detectors_y.data.clone(),
+            ),
+            (
+                map.influences.detectors_z.offsets.clone(),
+                map.influences.detectors_z.data.clone(),
+            ),
+        ]
+    }
+
     /// Circuit with CZ gates for testing multi-qubit symmetric faults
     fn cz_syndrome_circuit() -> DagCircuit {
         let mut dag = DagCircuit::new();
@@ -2638,6 +2777,26 @@ mod tests {
     }
 
     #[test]
+    fn test_build_influence_map_uses_generic_propagation_for_reused_physical_ancilla_slots() {
+        let dag = reused_physical_ancilla_circuit();
+        let analyzer = DagFaultAnalyzer::new(&dag);
+
+        let built = analyzer.build_influence_map();
+        let parallel = build_parallel_map(&analyzer);
+        let forest = build_forest_map(&analyzer);
+
+        assert_eq!(
+            detector_fingerprint(&built),
+            detector_fingerprint(&parallel)
+        );
+        assert_ne!(
+            detector_fingerprint(&forest),
+            detector_fingerprint(&parallel),
+            "this regression circuit should distinguish physical-slot reuse from fixed-ancilla reuse"
+        );
+    }
+
+    #[test]
     fn test_dag_spacetime_location_ordering() {
         // Verify that DagSpacetimeLocation has consistent ordering
         let loc1 = DagSpacetimeLocation {
@@ -2645,14 +2804,14 @@ mod tests {
             qubits: vec![QubitId::from(0)],
             before: true,
             gate_type: GateType::H,
-            idle_duration: 0,
+            idle_duration: 0.0,
         };
         let loc2 = DagSpacetimeLocation {
             node: 1,
             qubits: vec![QubitId::from(0)],
             before: true,
             gate_type: GateType::H,
-            idle_duration: 0,
+            idle_duration: 0.0,
         };
         assert!(loc1 < loc2);
     }
@@ -2764,7 +2923,7 @@ mod tests {
             qubits: vec![QubitId(0)],
             before: false,
             gate_type: GateType::H,
-            idle_duration: 0,
+            idle_duration: 0.0,
         });
         map.dem_output_metadata = vec![
             DemOutputMetadata::tracked_pauli(pecos_core::PauliString::xs(&[0])),

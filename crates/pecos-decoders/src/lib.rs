@@ -21,10 +21,9 @@ pub use pecos_decoder_core::{
 };
 
 // Re-export observable subgraph decoder (for transversal gates)
-pub use pecos_decoder_core::observable_subgraph::{
-    DetectorGroup, ObservableSubgraph, ObservableSubgraphDecoder,
-    ParallelObservableSubgraphDecoder, QubitStabCoords, StabCoords, StabType,
-    partition_dem_by_observable,
+pub use pecos_decoder_core::logical_subgraph::{
+    DetectorGroup, LogicalSubgraph, LogicalSubgraphDecoder, ParallelLogicalSubgraphDecoder,
+    QubitStabCoords, StabCoords, StabType, partition_dem_by_logical,
 };
 
 // Re-export LDPC decoders when feature is enabled
@@ -103,7 +102,7 @@ pub use pecos_uf_decoder::{
     AStarConfig, AStarDecoder, BeamSearchConfig, BeamSearchWindowedDecoder,
     BpSchedule as UfBpSchedule, BpUfConfig, BpUfDecoder, CssUfDecoder, OverlappingWindowedDecoder,
     QubitEdgeMapping, SandwichWindowedDecoder, StreamingWindowedDecoder, UfDecoder,
-    UfDecoderConfig, WindowedConfig, WindowedDecoder,
+    UfDecoderConfig, WindowedConfig, WindowedDecoder, WindowedLogicalSubgraphDecoder,
 };
 
 // Re-export Relay BP decoder when feature is enabled

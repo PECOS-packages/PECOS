@@ -1,0 +1,45 @@
+/// Grover's Algorithm: 2-Qubit Search
+/// Searches for the marked state |11⟩ among 4 possibilities.
+///
+/// For N=4 states, a single Grover iteration gives optimal result.
+/// The algorithm amplifies the amplitude of the marked state.
+
+pub fn main() -> unit {
+    q := qalloc(2);
+    pz q;
+
+    // === Initialize superposition ===
+    // Creates equal superposition: (|00⟩ + |01⟩ + |10⟩ + |11⟩) / 2
+    h {q[0], q[1]};
+
+    // === Grover Iteration ===
+    // For 2 qubits, one iteration is optimal
+
+    // --- Oracle: Mark |11⟩ ---
+    // Applies phase flip to |11⟩: CZ gate
+    cz (q[0], q[1]);
+
+    // --- Diffusion operator ---
+    // Reflects about the average amplitude
+
+    // Apply H to both qubits
+    h {q[0], q[1]};
+
+    // Apply X to both qubits
+    x {q[0], q[1]};
+
+    // Apply CZ (controlled-Z)
+    cz (q[0], q[1]);
+
+    // Apply X to both qubits
+    x {q[0], q[1]};
+
+    // Apply H to both qubits
+    h {q[0], q[1]};
+
+    // === Measure ===
+    // Should find |11⟩ with high probability
+    results: [2]u1 = mz([2]u1) [q[0], q[1]];
+
+    return unit;
+}

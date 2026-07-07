@@ -90,6 +90,7 @@ nav:
   - AST Infrastructure: development/ast-infrastructure.md
   - Foreign Language Plugins: development/foreign-plugins.md
   - Parallel Blocks: development/parallel-blocks-and-optimization.md
+  - Noise Event Replay: development/noise-event-replay.md
 - Experimental:
   - experimental/index.md
   - Composable Noise (pecos-neo): experimental/composable-noise.md

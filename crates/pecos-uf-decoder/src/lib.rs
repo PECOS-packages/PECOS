@@ -33,6 +33,7 @@ pub mod astar;
 pub mod bp_uf;
 pub mod css_decoder;
 pub mod decoder;
+pub mod logical_subgraph_windowed;
 pub mod mini_bp;
 
 pub mod windowed;
@@ -45,6 +46,7 @@ pub use astar::{AStarConfig, AStarDecoder};
 pub use bp_uf::{BpSchedule, BpUfConfig, BpUfDecoder};
 pub use css_decoder::{CssUfDecoder, QubitEdgeMapping};
 pub use decoder::{UfDecoder, UfDecoderConfig};
+pub use logical_subgraph_windowed::WindowedLogicalSubgraphDecoder;
 pub use windowed::{
     BeamSearchConfig, BeamSearchWindowedDecoder, OverlappingWindowedDecoder,
     SandwichWindowedDecoder, StreamingWindowedDecoder, WindowedConfig, WindowedDecoder,

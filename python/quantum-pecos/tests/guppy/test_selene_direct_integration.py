@@ -4,7 +4,6 @@ This test helps us understand how Selene works in isolation before integrating
 it with PECOS's ClassicalControlEngine infrastructure.
 """
 
-import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -296,35 +295,10 @@ class TestGuppyToHUGRCompilation:
         assert hugr_bytes is not None, "Should produce HUGR bytes"
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
-        # Try to understand HUGR format
-        hugr_str = hugr_bytes.decode("utf-8")
+        # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
+        import pecos_rslib
 
-        # Check if it's envelope format or JSON
-        is_envelope = hugr_str.startswith("HUGRiHJv")
-        is_json = hugr_str.startswith("{")
-
-        assert is_envelope or is_json, "HUGR should be in envelope or JSON format"
-
-        if is_json:
-            # Direct JSON format
-            try:
-                hugr_json = json.loads(hugr_str)
-                assert isinstance(hugr_json, dict), "HUGR JSON should be a dictionary"
-                assert len(hugr_json) > 0, "HUGR JSON should not be empty"
-            except json.JSONDecodeError as e:
-                pytest.fail(f"HUGR should be valid JSON: {e}")
-
-        elif is_envelope:
-            # Envelope format - find JSON part
-            json_start = hugr_str.find("{", 9)
-            assert json_start != -1, "Envelope should contain JSON"
-
-            json_part = hugr_str[json_start:]
-            try:
-                hugr_json = json.loads(json_part)
-                assert isinstance(hugr_json, dict), "HUGR JSON should be a dictionary"
-            except json.JSONDecodeError as e:
-                pytest.fail(f"Envelope JSON should be valid: {e}")
+        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "Should load as a valid HUGR"
 
     def test_multi_qubit_compilation(self) -> None:
         """Test compiling a multi-qubit program."""
@@ -342,15 +316,10 @@ class TestGuppyToHUGRCompilation:
         assert hugr_bytes is not None, "Should produce HUGR bytes"
         assert len(hugr_bytes) > 100, "Multi-qubit HUGR should be substantial"
 
-        # Verify it contains quantum operations
-        hugr_str = hugr_bytes.decode("utf-8")
+        # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
+        import pecos_rslib
 
-        # Look for quantum operation indicators (might be in the JSON)
-        # These patterns might appear in operation names or types
-        quantum_indicators = ["quantum", "Quantum", "h", "cx", "measure"]
-
-        found_quantum = any(indicator in hugr_str for indicator in quantum_indicators)
-        assert found_quantum, "HUGR should contain quantum operation indicators"
+        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "Should load as a valid HUGR"
 
     def test_conditional_compilation(self) -> None:
         """Test compiling a program with conditional logic."""
@@ -369,13 +338,7 @@ class TestGuppyToHUGRCompilation:
         assert hugr_bytes is not None, "Should produce HUGR bytes"
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
-        # Check that the HUGR represents control flow
-        hugr_str = hugr_bytes.decode("utf-8")
+        # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
+        import pecos_rslib
 
-        # Control flow might appear as specific operation types
-        # Look for indicators of branching or conditionals
-
-        # At least check it's valid HUGR
-        assert "HUGRiHJv" in hugr_str or hugr_str.startswith(
-            "{",
-        ), "Should be valid HUGR format"
+        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "Should load as a valid HUGR"

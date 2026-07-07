@@ -33,10 +33,100 @@
 //! - [`jackknife_weighted`] - Jackknife resampling for weighted/grouped data (full workflow)
 //! - [`weighted_mean`] - Calculate weighted mean from (value, weight) pairs
 //!
+//! ## Binomial Proportions
+//! - [`jeffreys_interval`] - Jeffreys credible interval for a binomial proportion
+//!
 //! The slice functions are fast and simple for 1D data. The axis functions
 //! provide idiomatic Rust API for multi-dimensional arrays.
 
+use crate::special::betainc_inv;
 use ndarray::{Array, ArrayView, Axis, Dimension, RemoveAxis};
+
+/// Jeffreys credible interval for a binomial proportion.
+///
+/// Computes the equal-tailed interval of the Beta(k + 1/2, n - k + 1/2)
+/// posterior arising from the Jeffreys prior Beta(1/2, 1/2), following
+/// Brown, Cai & `DasGupta`, "Interval Estimation for a Binomial
+/// Proportion", Statistical Science 16(2), 2001. Per that paper's
+/// standard modification, the lower bound is 0 when `successes == 0` and
+/// the upper bound is 1 when `successes == trials`.
+///
+/// # Arguments
+///
+/// * `successes` - Number of observed successes (k)
+/// * `trials` - Number of trials (n), must be nonzero
+/// * `confidence` - Interval mass, e.g. 0.95; must be in (0, 1)
+///
+/// # Returns
+///
+/// `(lower, upper)` bounds on the proportion.
+///
+/// # Panics
+///
+/// Panics if `trials == 0`, `trials > 10^12`, `successes > trials`, or
+/// `confidence` is not in (0, 1). The first three are contract
+/// violations; the trials cap marks the scale beyond which the
+/// underlying incomplete-beta continued fraction has not been validated
+/// (it can converge spuriously for extreme shape parameters, returning a
+/// nonsense interval without warning). Also panics if the computed
+/// bounds come back inverted — a numeric-breakdown trip-wire that should
+/// be unreachable within the supported scales.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::stats::jeffreys_interval;
+///
+/// let (lo, hi) = jeffreys_interval(50, 200, 0.95);
+/// assert!(lo < 0.25 && 0.25 < hi);
+///
+/// // Zero successes: lower bound is exactly 0.
+/// let (lo, hi) = jeffreys_interval(0, 100, 0.95);
+/// assert_eq!(lo, 0.0);
+/// assert!(hi < 0.05);
+/// ```
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+// Cast is safe: the trials cap keeps counts far below f64 mantissa precision
+pub fn jeffreys_interval(successes: u64, trials: u64, confidence: f64) -> (f64, f64) {
+    const MAX_TRIALS: u64 = 1_000_000_000_000;
+
+    assert!(trials > 0, "jeffreys_interval requires trials > 0");
+    assert!(
+        trials <= MAX_TRIALS,
+        "jeffreys_interval supports at most {MAX_TRIALS} trials (got {trials}); the \
+         incomplete-beta evaluation is not validated beyond that scale"
+    );
+    assert!(
+        successes <= trials,
+        "jeffreys_interval requires successes ({successes}) <= trials ({trials})"
+    );
+    assert!(
+        confidence > 0.0 && confidence < 1.0,
+        "jeffreys_interval requires confidence in (0, 1), got {confidence}"
+    );
+
+    let alpha = 1.0 - confidence;
+    let a = successes as f64 + 0.5;
+    let b = (trials - successes) as f64 + 0.5;
+
+    let lower = if successes == 0 {
+        0.0
+    } else {
+        betainc_inv(a, b, alpha / 2.0)
+    };
+    let upper = if successes == trials {
+        1.0
+    } else {
+        betainc_inv(a, b, 1.0 - alpha / 2.0)
+    };
+    assert!(
+        lower <= upper,
+        "jeffreys_interval produced inverted bounds ({lower} > {upper}) for k={successes}, \
+         n={trials}; this indicates incomplete-beta breakdown and is a bug"
+    );
+    (lower, upper)
+}
 
 /// Calculate the arithmetic mean of a slice of values.
 ///
@@ -601,6 +691,94 @@ pub fn jackknife_weighted(data: &[(f64, f64)]) -> (f64, f64) {
 mod tests {
     use super::*;
     use ndarray::Axis;
+
+    // Reference values generated with:
+    //   uv run python -c "from scipy import stats;
+    //     print(stats.beta.ppf(q, k + 0.5, n - k + 0.5))"
+    #[test]
+    fn jeffreys_interval_matches_scipy_beta_quantiles() {
+        let cases: [(u64, u64, f64, f64, f64); 6] = [
+            (0, 100, 0.95, 0.0, 0.024_745_270_015_269_89),
+            (100, 100, 0.95, 0.975_254_729_984_730_1, 1.0),
+            (
+                3,
+                1000,
+                0.95,
+                0.000_845_634_801_829_834_8,
+                0.007_984_367_358_403_443,
+            ),
+            (
+                50,
+                200,
+                0.95,
+                0.193_872_680_411_726_73,
+                0.313_302_662_892_847_86,
+            ),
+            // High-confidence intervals at LER-study scales.
+            (
+                7,
+                20_000,
+                0.99999,
+                3.838_996_822_347_517e-5,
+                1.307_358_543_951_447_7e-3,
+            ),
+            (
+                1234,
+                20_000,
+                0.99999,
+                0.054_475_933_954_188_78,
+                0.069_508_522_504_658_04,
+            ),
+        ];
+        for (k, n, conf, lo_expected, hi_expected) in cases {
+            let (lo, hi) = jeffreys_interval(k, n, conf);
+            let lo_scale = lo_expected.abs().max(1e-12);
+            let hi_scale = hi_expected.abs().max(1e-12);
+            assert!(
+                (lo - lo_expected).abs() / lo_scale < 1e-6,
+                "lower bound for k={k}, n={n}: expected {lo_expected:.12e}, got {lo:.12e}"
+            );
+            assert!(
+                (hi - hi_expected).abs() / hi_scale < 1e-6,
+                "upper bound for k={k}, n={n}: expected {hi_expected:.12e}, got {hi:.12e}"
+            );
+        }
+    }
+
+    #[test]
+    fn jeffreys_interval_brackets_the_point_estimate() {
+        let (lo, hi) = jeffreys_interval(50, 200, 0.95);
+        assert!(lo < 0.25 && 0.25 < hi);
+        // Wider confidence gives a wider interval.
+        let (lo99, hi99) = jeffreys_interval(50, 200, 0.99);
+        assert!(lo99 < lo && hi < hi99);
+    }
+
+    #[test]
+    #[should_panic(expected = "trials > 0")]
+    fn jeffreys_interval_rejects_zero_trials() {
+        let _ = jeffreys_interval(0, 0, 0.95);
+    }
+
+    #[test]
+    #[should_panic(expected = "at most")]
+    fn jeffreys_interval_rejects_unvalidated_trial_scales() {
+        // Beyond ~1e12 trials the incomplete-beta continued fraction can
+        // converge spuriously (observed at 2e15: inverted bounds).
+        let _ = jeffreys_interval(1_000_000_000_000_000, 2_000_000_000_000_000, 0.95);
+    }
+
+    #[test]
+    #[should_panic(expected = "successes")]
+    fn jeffreys_interval_rejects_successes_above_trials() {
+        let _ = jeffreys_interval(11, 10, 0.95);
+    }
+
+    #[test]
+    #[should_panic(expected = "confidence")]
+    fn jeffreys_interval_rejects_bad_confidence() {
+        let _ = jeffreys_interval(5, 10, 1.0);
+    }
 
     // Allow exact float comparisons in tests - we're testing mathematically exact results
     // that are exactly representable in IEEE 754 (e.g., 3.0, 42.0, 0.4)

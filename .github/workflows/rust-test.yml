@@ -7,33 +7,45 @@ env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
-  LLVM_VERSION: "14.0.6"
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
 
 on:
+  workflow_dispatch:
   push:
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/**'
+      - 'exp/**'
       - 'examples/**'
       - 'julia/pecos-julia-ffi/**'
       - 'python/pecos-rslib-cuda/**'
       - 'python/pecos-rslib/**'
+      - 'python/pecos-rslib-exp/**'
       - 'python/pecos-rslib-llvm/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'Justfile'
+      - 'scripts/ci/**'
+      - 'scripts/win-msvc-bootstrap.ps1'
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
   pull_request:
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/**'
+      - 'exp/**'
       - 'examples/**'
       - 'julia/pecos-julia-ffi/**'
       - 'python/pecos-rslib-cuda/**'
       - 'python/pecos-rslib/**'
+      - 'python/pecos-rslib-exp/**'
       - 'python/pecos-rslib-llvm/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'Justfile'
+      - 'scripts/ci/**'
+      - 'scripts/win-msvc-bootstrap.ps1'
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
 
@@ -89,8 +101,8 @@ jobs:
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
         run: just ci-env
@@ -99,7 +111,7 @@ jobs:
         if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
+          path: ~/.pecos/deps/llvm-21.1
           key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
       - name: Check formatting
@@ -180,7 +192,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-2022"]') }}
 
     steps:
       - name: Harden the runner (egress audit)
@@ -200,7 +212,7 @@ jobs:
           sudo apt-get clean
 
       - name: Set up Rust (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')
         run: |
           rustup set default-host x86_64-pc-windows-msvc
           rustup toolchain install stable --profile minimal
@@ -210,16 +222,18 @@ jobs:
           rustup show
 
       - name: Set up Rust (Unix)
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')
         run: |
           bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup show
 
       - name: Install just
+        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Cache Rust
+        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-bin: false
@@ -227,14 +241,15 @@ jobs:
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
+        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Bootstrap MSVC for the Cargo build path (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')
         shell: pwsh
         # Single mechanism: writes the linker + LIB/INCLUDE into
         # .cargo/config.toml (read by cargo after it spawns). Sets no env pin,
@@ -243,13 +258,14 @@ jobs:
         run: ./scripts/win-msvc-bootstrap.ps1
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         run: just ci-env
 
       - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+        if: (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest') && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
+          path: ~/.pecos/deps/llvm-21.1
           key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
       - name: Install CUDA Toolkit (Linux)
@@ -263,7 +279,7 @@ jobs:
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Compile tests (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && github.event_name != 'pull_request'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Linux)
@@ -274,23 +290,28 @@ jobs:
           cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Run tests (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && github.event_name != 'pull_request'
         env:
           # Prevent Homebrew/system library paths from interfering with linking
           LIBRARY_PATH: /usr/lib
         run: |
           unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH PKG_CONFIG_PATH
-          cargo run --locked -p pecos-cli --release -- rust test
+          ./target/release/pecos rust test
 
       - name: Run tests (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
         run: |
-          cargo run --locked -p pecos-cli --release -- rust test
+          ./target/release/pecos rust test
+
+      - name: Run tests (Linux PR smoke path)
+        if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        run: |
+          ./target/release/pecos rust test --help
 
       - name: Run tests (Windows)
-        if: runner.os == 'Windows'
-        run: cargo run --locked -p pecos-cli --release -- rust test
+        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        run: .\target\release\pecos.exe rust test

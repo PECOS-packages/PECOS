@@ -70,20 +70,28 @@ def test_register_measurement_permutation_qasm(
 # every qubit/classical-bit lowering (the bespoke
 # @create_creg/@set_creg_bit/@mz_to_creg_bit helpers the old tests
 # pinned were removed by the static CReg model; measurement is the standard 2-arg
-# `@__quantum__qis__mz__body(%Qubit*, %Result*)` + read_result +
+# `@__quantum__qis__mz__body(ptr, ptr)` + read_result +
 # store-into-creg-buffer). Pin the realized measurement targeting.
+#
+# QIR uses LLVM opaque pointers: a qubit/result constant is
+# `ptr inttoptr (i64 N to ptr)`, except index 0 which is `ptr null`.
 
 
-def _mz_then_store(qir: str) -> list[tuple[str, str, str]]:
+def _mz_then_store(qir: str) -> list[tuple[int, str, int]]:
     """(qubit_idx, creg_name, creg_idx) for each measure+store."""
     pat = (
-        r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
-        r"%Result\* inttoptr \(i64 (\d+) to %Result\*\)\)\n"
-        r"\s*%(?:\.\d+) = call i1 @__quantum__rt__read_result\(%Result\* inttoptr \(i64 \2 to %Result\*\)\)\n"
-        r"\s*%(\.\d+) = getelementptr \[\d+ x i1\], \[\d+ x i1\]\* %(\w+), i64 0, i64 (\d+)"
+        r"call void @__quantum__qis__mz__body\(ptr (null|inttoptr \(i64 \d+ to ptr\)), "
+        r"(ptr (?:null|inttoptr \(i64 \d+ to ptr\)))\)\n"
+        r"\s*%(?:\.\d+) = call i1 @__quantum__rt__read_result\(\2\)\n"
+        r"\s*%(\.\d+) = getelementptr \[\d+ x i1\], (?:ptr|\[\d+ x i1\]\*) %(\w+), i64 0, i64 (\d+)"
     )
-    # groups: 1=qubit, 2=result idx, 3=gep var, 4=creg name, 5=creg idx
-    return [(m[0], m[3], m[4]) for m in re.findall(pat, qir)]
+    # groups: 1=qubit arg, 2=result arg (backreferenced into read_result),
+    # 3=gep var, 4=creg name, 5=creg idx
+    out = []
+    for qubit_arg, _result_arg, _gep, creg_name, creg_idx in re.findall(pat, qir):
+        idx = re.search(r"i64 (\d+)", qubit_arg)
+        out.append((int(idx.group(1)) if idx else 0, creg_name, int(creg_idx)))
+    return out
 
 
 @pytest.mark.optional_dependency
@@ -99,7 +107,7 @@ def test_individual_measurement_permutation_qir(
     # Qubits a=0,1 b=2,3. Measure(a[0]) -> b[0]=q2, result -> m[0]
     # which is relabelled to n[0]. Measure(a[1]) -> q1 (unpermuted),
     # result -> m[1] (unpermuted).
-    assert _mz_then_store(qir) == [("2", "n", "0"), ("1", "m", "1")], qir
+    assert _mz_then_store(qir) == [(2, "n", 0), (1, "m", 1)], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
@@ -116,6 +124,6 @@ def test_register_measurement_permutation_qir(
     assert "; Permutation: m[0] -> n[0], n[0] -> m[0]" in qir, qir
     # Measure(a) unrolls: a[0]->b[0]=q2 (-> m[0] relabelled to n[0]),
     # a[1]->q1 (-> m[1] unpermuted).
-    assert _mz_then_store(qir) == [("2", "n", "0"), ("1", "m", "1")], qir
+    assert _mz_then_store(qir) == [(2, "n", 0), (1, "m", 1)], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"

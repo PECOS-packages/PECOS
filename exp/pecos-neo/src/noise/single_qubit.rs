@@ -37,7 +37,8 @@ use super::{
     NoiseChannel, NoiseContext, NoiseEvent, NoiseResponse, PauliWeights, SingleQubitEmissionResult,
     SingleQubitEmissionWeights,
 };
-use crate::command::GateCommand;
+use crate::command::{GateCommand, GateType};
+use pecos_core::Angle64;
 use pecos_random::PecosRng;
 use rand::RngExt;
 use smallvec::SmallVec;
@@ -245,13 +246,16 @@ impl NoiseChannel for SingleQubitChannel {
                 Self::handle_before_gate(qubits, ctx, rng)
             }
             NoiseEvent::AfterGate {
-                gate_type, qubits, ..
+                gate_type,
+                qubits,
+                angles,
+                ..
             } => {
                 // Skip noise for noiseless gates
                 if ctx.is_noiseless(*gate_type) {
                     return NoiseResponse::None;
                 }
-                self.handle_after_gate(qubits, ctx, rng)
+                self.handle_after_gate(*gate_type, qubits, angles, ctx, rng)
             }
             _ => NoiseResponse::None,
         }
@@ -284,7 +288,10 @@ impl NoiseChannel for SingleQubitChannel {
                 Some(Self::handle_before_gate(qubits, ctx, rng))
             }
             NoiseEvent::AfterGate {
-                gate_type, qubits, ..
+                gate_type,
+                qubits,
+                angles,
+                ..
             } => {
                 if !gate_type.is_single_qubit() || !gate_type.is_unitary_gate() {
                     return None;
@@ -293,7 +300,7 @@ impl NoiseChannel for SingleQubitChannel {
                 if ctx.is_noiseless(*gate_type) {
                     return Some(NoiseResponse::None);
                 }
-                Some(self.handle_after_gate(qubits, ctx, rng))
+                Some(self.handle_after_gate(*gate_type, qubits, angles, ctx, rng))
             }
             _ => None,
         }
@@ -329,9 +336,15 @@ impl SingleQubitChannel {
     }
 
     /// Handle `AfterGate` event - apply Pauli or emission errors.
+    ///
+    /// `gate_type`/`angles` describe the gate just applied; an emission error
+    /// undoes it (applies its dagger) before the emission error, matching
+    /// engines' gate-replacing emission semantics.
     fn handle_after_gate(
         &self,
+        gate_type: GateType,
         qubits: &[pecos_core::QubitId],
+        angles: &[Angle64],
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
@@ -362,6 +375,18 @@ impl SingleQubitChannel {
             if rng.check_probability(self.error_threshold) {
                 // Determine if this is an emission or Pauli error
                 if self.emission_ratio > 0.0 && rng.check_probability(self.emission_threshold) {
+                    // Emission REPLACES the gate: undo it (apply its dagger) so
+                    // the net effect is the gate removed, then apply the
+                    // emission error. (Matches engines' apply_sq_faults, which
+                    // drops the original gate on a spontaneous-emission fault.)
+                    let original = GateCommand::with_angles(
+                        gate_type,
+                        smallvec::smallvec![qubit],
+                        angles.iter().copied().collect::<SmallVec<[Angle64; 2]>>(),
+                    );
+                    if let Some(dagger) = original.dagger() {
+                        gates.push(dagger);
+                    }
                     // Emission error - sample from emission weights
                     match self.emission_weights.sample(rng.random::<f64>()) {
                         SingleQubitEmissionResult::Pauli(pauli) => {
@@ -458,8 +483,29 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         let response = channel.apply(&event, &mut ctx, &mut rng);
-        // With emission_ratio=1.0 and leakage_probability=1.0, should cause leakage
-        assert!(matches!(response, NoiseResponse::MarkLeaked(_)));
+        // emission_ratio=1.0 + leakage=1.0 marks the qubit leaked. Emission also
+        // REPLACES the gate, so the response now also injects the gate's dagger
+        // (H dagger = H) -> the combined response is `Multiple`. Assert it both
+        // marks the qubit leaked AND undoes the gate.
+        let (marks_leaked, undoes_gate) = match &response {
+            NoiseResponse::MarkLeaked(_) => (true, false),
+            NoiseResponse::Multiple(rs) => (
+                rs.iter().any(|r| matches!(r, NoiseResponse::MarkLeaked(_))),
+                rs.iter().any(|r| {
+                    matches!(r, NoiseResponse::InjectGates(gs)
+                    if gs.iter().any(|g| g.gate_type == GateType::H))
+                }),
+            ),
+            _ => (false, false),
+        };
+        assert!(
+            marks_leaked,
+            "emission with leakage should mark the qubit leaked, got {response:?}"
+        );
+        assert!(
+            undoes_gate,
+            "emission should undo the gate (inject its dagger), got {response:?}"
+        );
     }
 
     #[test]

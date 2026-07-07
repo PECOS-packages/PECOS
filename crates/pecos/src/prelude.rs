@@ -32,7 +32,8 @@
 //! let results = sim(program)
 //!     .quantum(sparse_stab())
 //!     .seed(42)
-//!     .run(1000)?;
+//!     .shots(1000)
+//!     .run()?;
 //! # Ok::<(), pecos_core::errors::PecosError>(())
 //! ```
 //!
@@ -94,7 +95,7 @@ pub use pecos_random::prelude::*;
 pub use pecos_num::prelude::*;
 
 // Re-export HUGR compiler prelude
-#[cfg(feature = "hugr")]
+#[cfg(feature = "hugr-qis")]
 pub use pecos_hugr_qis::prelude::*;
 
 // Re-export Guppy HUGR direct interpreter (HugrEngine)

@@ -1,0 +1,198 @@
+{
+  "type": "Program",
+  "name": "main",
+  "allocator": {
+    "type": "AllocatorDecl",
+    "name": "q",
+    "capacity": 3
+  },
+  "declarations": [
+    {
+      "type": "AllocatorDecl",
+      "name": "q",
+      "capacity": 3
+    }
+  ],
+  "body": [
+    {
+      "type": "PrepareOp",
+      "allocator": "q"
+    },
+    {
+      "type": "GateOp",
+      "gate": "X",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 0
+        }
+      ]
+    },
+    {
+      "type": "GateOp",
+      "gate": "X",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 2
+        }
+      ]
+    },
+    {
+      "type": "GateOp",
+      "gate": "H",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 0
+        }
+      ]
+    },
+    {
+      "type": "GateOp",
+      "gate": "RZZ",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 1
+        },
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 0
+        }
+      ],
+      "params": [
+        {
+          "type": "VarExpr",
+          "name": "pi_2"
+        }
+      ]
+    },
+    {
+      "type": "GateOp",
+      "gate": "RZZ",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 2
+        },
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 0
+        }
+      ],
+      "params": [
+        {
+          "type": "VarExpr",
+          "name": "pi_4"
+        }
+      ]
+    },
+    {
+      "type": "GateOp",
+      "gate": "H",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 1
+        }
+      ]
+    },
+    {
+      "type": "GateOp",
+      "gate": "RZZ",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 2
+        },
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 1
+        }
+      ],
+      "params": [
+        {
+          "type": "VarExpr",
+          "name": "pi_2"
+        }
+      ]
+    },
+    {
+      "type": "GateOp",
+      "gate": "H",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 2
+        }
+      ]
+    },
+    {
+      "type": "GateOp",
+      "gate": "SWAP",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 0
+        },
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 2
+        }
+      ]
+    },
+    {
+      "type": "MeasureOp",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 0
+        },
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 1
+        },
+        {
+          "type": "SlotRef",
+          "allocator": "q",
+          "index": 2
+        }
+      ],
+      "results": [
+        {
+          "type": "BitRef",
+          "register": "c0",
+          "index": 0
+        },
+        {
+          "type": "BitRef",
+          "register": "c1",
+          "index": 0
+        },
+        {
+          "type": "BitRef",
+          "register": "c2",
+          "index": 0
+        }
+      ],
+      "result_type": "u1"
+    }
+  ],
+  "returns": []
+}

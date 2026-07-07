@@ -166,7 +166,10 @@ def test_basic_permutation_qir(basic_permutation_program: tuple) -> None:
 
     assert "; Permutation: a[0] -> b[1], b[1] -> a[0]" in qir, qir
     # a[0].set(1) after the swap writes b[1]'s slot, not a[0]'s.
-    m = re.search(r"%(\.\d+) = getelementptr \[2 x i1\], \[2 x i1\]\* %b, i64 0, i64 1\n\s*store i1 1, i1\* %\1", qir)
+    m = re.search(
+        r"%(\.\d+) = getelementptr \[2 x i1\], (?:ptr|\[2 x i1\]\*) %b, i64 0, i64 1\n\s*store i1 1, (?:ptr|i1\*) %\1",
+        qir,
+    )
     assert m, f"Expected a[0].set(1) to store into b[1] (relabelled):\n{qir}"
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
@@ -185,8 +188,8 @@ def test_same_register_permutation_qir(
     # a[0].set(1)->a[2], a[1].set(0)->a[0], a[2].set(1)->a[1].
     def _stored(slot: int, val: int) -> bool:
         pat = (
-            rf"%(\.\d+) = getelementptr \[3 x i1\], \[3 x i1\]\* %a, i64 0, i64 {slot}\n"
-            rf"\s*store i1 {val}, i1\* %\1"
+            rf"%(\.\d+) = getelementptr \[3 x i1\], (?:ptr|\[3 x i1\]\*) %a, i64 0, i64 {slot}\n"
+            rf"\s*store i1 {val}, (?:ptr|i1\*) %\1"
         )
         return bool(
             re.search(

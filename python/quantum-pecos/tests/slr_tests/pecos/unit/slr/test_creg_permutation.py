@@ -71,8 +71,8 @@ def test_creg_permutation_qir() -> None:
     # a[0].set(1) after Permute(a, b) -> stores into register b's
     # `[1 x i1]` buffer (a[0] now resolves to b[0]); register a's
     # buffer is never the store target for that set.
-    assert re.search(r"store i1 1, i1\* %\.\d+", qir), qir
-    b_slot = re.search(r"%(\.\d+) = getelementptr \[1 x i1\], \[1 x i1\]\* %b, i64 0, i64 0", qir)
+    assert re.search(r"store i1 1, (?:ptr|i1\*) %\.\d+", qir), qir
+    b_slot = re.search(r"%(\.\d+) = getelementptr \[1 x i1\], (?:ptr|\[1 x i1\]\*) %b, i64 0, i64 0", qir)
     assert b_slot, f"Expected a[0].set(1) to target register b's buffer (relabelled):\n{qir}"
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"

@@ -102,10 +102,8 @@ impl LookupDecoder {
                     .locations
                     .iter()
                     .find(|l| l.node == loc.node && l.before == loc.before)
-                    .map_or(1, |l| l.idle_duration.max(1));
-                // Duration values are small integers; precision loss is not a concern.
-                #[allow(clippy::cast_precision_loss)]
-                Some(noise.idle_pauli_probs(duration as f64))
+                    .map_or(0.0, |l| l.idle_duration.max(0.0));
+                Some(noise.idle_pauli_probs(duration))
             } else {
                 None
             };

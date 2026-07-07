@@ -45,6 +45,7 @@ pub mod optimize;
 pub mod polynomial;
 pub mod prelude;
 pub mod random;
+pub mod special;
 pub mod stats;
 pub mod z2_linalg;
 
@@ -56,4 +57,5 @@ pub use graph::Graph;
 pub use linalg::{matrix_exp, matrix_log};
 pub use optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 pub use polynomial::{Poly1d, PolynomialError, polyfit};
-pub use stats::mean;
+pub use special::{betainc_inv, betainc_reg, ln_gamma};
+pub use stats::{jeffreys_interval, mean};

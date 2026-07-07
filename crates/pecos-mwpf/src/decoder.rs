@@ -182,6 +182,10 @@ impl MwpfDecoder {
     pub fn from_dem(dem_str: &str, config: MwpfConfig) -> Result<Self> {
         let dem = DemCheckMatrix::from_dem_str(dem_str)
             .map_err(|e| MwpfError::InvalidDem(e.to_string()))?;
+        // Matching decoders pack observable flips into a u64; reject >64-observable
+        // DEMs as an error rather than overflow-panicking in the `1 << o` loop below.
+        dem.ensure_observables_fit_u64()
+            .map_err(|e| MwpfError::InvalidDem(e.to_string()))?;
 
         // Build hyperedges from the check matrix. Each mechanism (column) becomes
         // one HyperEdge with all its incident detectors.

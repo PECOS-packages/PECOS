@@ -19,6 +19,8 @@ pecos-num.workspace = true
 pecos-quantum.workspace = true
 pecos-simulators.workspace = true
 pecos-random.workspace = true
+# Optional: PerGateTypeNoise -> neo PerGatePauliChannel conversion
+pecos-neo = { workspace = true, optional = true }
 rand.workspace = true
 rand_core.workspace = true
 rayon.workspace = true
@@ -26,6 +28,15 @@ serde_json.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 wide.workspace = true
+
+[features]
+# Convert PerGateTypeNoise to the pecos-neo noise channel for
+# circuit-level Monte Carlo with the same noise that drives DEM export.
+neo = ["dep:pecos-neo"]
+
+[[test]]
+name = "per_gate_neo_mapping_tests"
+required-features = ["neo"]
 
 [[example]]
 name = "surface_d3_fault_catalog_lookup"

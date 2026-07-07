@@ -15,7 +15,7 @@
 #![cfg(feature = "hugr")]
 
 use pecos_core::QubitId;
-use pecos_neo::tool::sim_neo;
+use pecos_neo::tool::{monte_carlo, sim_neo};
 use pecos_programs::Hugr;
 use std::path::PathBuf;
 
@@ -37,7 +37,7 @@ fn test_hugr_bell_state_auto() {
     let results = sim_neo(load_hugr("bell_state.hugr"))
         .auto()
         .seed(42)
-        .shots(100)
+        .sampling(monte_carlo(100))
         .build()
         .run();
 
@@ -55,7 +55,7 @@ fn test_hugr_single_hadamard_auto() {
     let results = sim_neo(load_hugr("single_hadamard.hugr"))
         .auto()
         .seed(42)
-        .shots(200)
+        .sampling(monte_carlo(200))
         .build()
         .run();
 
@@ -77,9 +77,10 @@ fn test_hugr_explicit_engine() {
     let hugr = load_hugr("bell_state.hugr");
     let source = String::from_utf8_lossy(&hugr.hugr).into_owned();
     let results = sim_neo(source)
+        .auto()
         .classical(pecos_hugr::hugr_engine())
         .seed(42)
-        .shots(10)
+        .sampling(monte_carlo(10))
         .build()
         .run();
 
@@ -89,7 +90,12 @@ fn test_hugr_explicit_engine() {
 #[test]
 fn test_hugr_via_program_enum_auto() {
     let program = pecos_programs::Program::Hugr(load_hugr("bell_state.hugr"));
-    let results = sim_neo(program).auto().seed(42).shots(10).build().run();
+    let results = sim_neo(program)
+        .auto()
+        .seed(42)
+        .sampling(monte_carlo(10))
+        .build()
+        .run();
     assert_eq!(results.len(), 10);
 }
 
@@ -98,14 +104,14 @@ fn test_hugr_seeded_reproducibility() {
     let results1 = sim_neo(load_hugr("single_hadamard.hugr"))
         .auto()
         .seed(123)
-        .shots(50)
+        .sampling(monte_carlo(50))
         .build()
         .run();
 
     let results2 = sim_neo(load_hugr("single_hadamard.hugr"))
         .auto()
         .seed(123)
-        .shots(50)
+        .sampling(monte_carlo(50))
         .build()
         .run();
 
@@ -124,14 +130,14 @@ fn test_hugr_different_seeds_differ() {
     let results1 = sim_neo(load_hugr("single_hadamard.hugr"))
         .auto()
         .seed(42)
-        .shots(50)
+        .sampling(monte_carlo(50))
         .build()
         .run();
 
     let results2 = sim_neo(load_hugr("single_hadamard.hugr"))
         .auto()
         .seed(99)
-        .shots(50)
+        .sampling(monte_carlo(50))
         .build()
         .run();
 

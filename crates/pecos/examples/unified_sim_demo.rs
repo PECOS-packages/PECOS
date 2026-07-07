@@ -52,7 +52,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .seed(123)
         .workers(4)
         .quantum(sparse_stab())
-        .run(500)?;
+        .shots(500)
+        .run()?;
 
     println!("  Ran {} shots", results2.len());
 
@@ -74,7 +75,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let results3 = sim(qasm3.clone())
         .classical(qasm_engine().program(qasm3))
         .verbose(true)
-        .run(100)?;
+        .shots(100)
+        .run()?;
 
     println!("  Ran {} shots", results3.len());
 

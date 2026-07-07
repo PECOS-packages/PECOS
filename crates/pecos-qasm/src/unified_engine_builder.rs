@@ -162,6 +162,19 @@ impl QasmEngineBuilder {
         self.source.is_some()
     }
 
+    /// Check if this builder has a WASM foreign-function program configured
+    #[must_use]
+    pub fn has_wasm(&self) -> bool {
+        #[cfg(feature = "wasm")]
+        {
+            self.wasm_program.is_some()
+        }
+        #[cfg(not(feature = "wasm"))]
+        {
+            false
+        }
+    }
+
     /// Get the `Qasm` from this builder (if any)
     #[must_use]
     pub fn get_program(&self) -> Option<pecos_programs::Qasm> {

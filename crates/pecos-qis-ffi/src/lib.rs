@@ -66,6 +66,10 @@ pub struct ExecutionContext {
     pub measurement_results: Mutex<Vec<Option<bool>>>,
     /// Storage for named results from `print_bool`/`print_bool_arr` (e.g., "synx", "final")
     pub named_results: Mutex<BTreeMap<String, Vec<bool>>>,
+    /// Runtime provenance for each `result(...)` output call.
+    pub named_result_traces: Mutex<Vec<NamedResultTrace>>,
+    /// Result IDs read since the last named output consumed them.
+    pub pending_result_reads: Mutex<Vec<usize>>,
 }
 
 impl ExecutionContext {
@@ -80,6 +84,8 @@ impl ExecutionContext {
             pending_ops: Mutex::new(Vec::new()),
             measurement_results: Mutex::new(Vec::new()),
             named_results: Mutex::new(BTreeMap::new()),
+            named_result_traces: Mutex::new(Vec::new()),
+            pending_result_reads: Mutex::new(Vec::new()),
         }
     }
 
@@ -100,6 +106,53 @@ impl ExecutionContext {
         }
         if let Ok(mut named) = self.named_results.lock() {
             named.clear();
+        }
+        if let Ok(mut traces) = self.named_result_traces.lock() {
+            traces.clear();
+        }
+        if let Ok(mut reads) = self.pending_result_reads.lock() {
+            reads.clear();
+        }
+    }
+
+    /// Record that program execution read a runtime measurement result.
+    pub fn record_result_read(&self, result_id: usize) {
+        if let Ok(mut reads) = self.pending_result_reads.lock() {
+            reads.push(result_id);
+        } else {
+            log::error!("ExecutionContext::record_result_read failed to acquire lock");
+        }
+    }
+
+    fn take_result_reads(&self, count: usize) -> Vec<usize> {
+        if count == 0 {
+            return Vec::new();
+        }
+        let Ok(mut reads) = self.pending_result_reads.lock() else {
+            log::error!("ExecutionContext::take_result_reads failed to acquire lock");
+            return Vec::new();
+        };
+        if reads.len() < count {
+            log::warn!(
+                "Named result output expected {count} result read(s), but only {} were recorded",
+                reads.len()
+            );
+            return Vec::new();
+        }
+        reads.drain(..count).collect()
+    }
+
+    fn store_named_result_trace(&self, name: &str, values: &[bool], result_ids: Vec<usize>) {
+        if let Ok(mut traces) = self.named_result_traces.lock() {
+            traces.push(NamedResultTrace {
+                name: name.to_string(),
+                values: values.to_vec(),
+                result_ids,
+            });
+        } else {
+            log::error!(
+                "ExecutionContext::store_named_result_trace failed to acquire lock for '{name}'"
+            );
         }
     }
 
@@ -122,6 +175,8 @@ impl ExecutionContext {
                 "ExecutionContext::store_named_bool: thread {thread_id:?} failed to acquire lock for '{name}'"
             );
         }
+        let result_ids = self.take_result_reads(1);
+        self.store_named_result_trace(name, &[value], result_ids);
     }
 
     /// Store a named result array (multiple bool values)
@@ -130,12 +185,23 @@ impl ExecutionContext {
             let entry = named.entry(name.to_string()).or_default();
             entry.extend_from_slice(values);
         }
+        let result_ids = self.take_result_reads(values.len());
+        self.store_named_result_trace(name, values, result_ids);
     }
 
     /// Get all named results (returns a clone)
     #[must_use]
     pub fn get_named_results(&self) -> BTreeMap<String, Vec<bool>> {
         self.named_results
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    /// Get all named result provenance records (returns a clone)
+    #[must_use]
+    pub fn get_named_result_traces(&self) -> Vec<NamedResultTrace> {
+        self.named_result_traces
             .lock()
             .map(|guard| guard.clone())
             .unwrap_or_default()
@@ -201,7 +267,9 @@ fn get_execution_context() -> Option<*mut ExecutionContext> {
 }
 
 // Re-export all types from pecos-qis-ffi-types
-pub use pecos_qis_ffi_types::{Operation, OperationCollector, OperationList, QuantumOp};
+pub use pecos_qis_ffi_types::{
+    NamedResultTrace, Operation, OperationCollector, OperationList, QuantumOp, TraceMetadata,
+};
 
 /// Type alias for the quantum executor callback
 ///
@@ -538,18 +606,24 @@ pub fn wait_for_result_ready(result_id: u64, timeout_ms: u64) -> bool {
     }
     ctx.sync_condvar.notify_all();
 
-    // Wait for result to be ready
+    // Wait for result to be ready. Condition variables may wake spuriously, so
+    // keep waiting until the predicate changes or the timeout expires.
     let timeout = Duration::from_millis(timeout_ms);
-    let Ok(mut state) = ctx.sync_state.lock() else {
+    let Ok(state) = ctx.sync_state.lock() else {
         return false;
     };
 
-    if !state.result_ready {
-        let result = ctx.sync_condvar.wait_timeout(state, timeout);
-        state = match result {
-            Ok((s, _)) => s,
-            Err(_) => return false,
-        };
+    let result = ctx
+        .sync_condvar
+        .wait_timeout_while(state, timeout, |state| {
+            !state.result_ready && !state.worker_complete
+        });
+    let Ok((state, timed_out)) = result else {
+        return false;
+    };
+
+    if timed_out.timed_out() && !state.result_ready {
+        log::debug!("wait_for_result_ready: timeout");
     }
 
     log::debug!("wait_for_result_ready: result_ready={}", state.result_ready);
@@ -745,10 +819,49 @@ pub extern "C" fn pecos_get_named_results_json() -> *mut std::ffi::c_char {
     }
 }
 
+/// Get named result runtime provenance from execution context as JSON.
+///
+/// Returns a pointer to a heap-allocated null-terminated JSON string containing
+/// records of `result(...)` calls with the measurement result IDs used to
+/// produce each output value.
+///
+/// The caller must free the returned string using `pecos_free_named_results_json`.
+/// Returns null if no context is registered or traces are empty.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_get_named_result_traces_json() -> *mut std::ffi::c_char {
+    let Some(ctx) = get_execution_context() else {
+        return std::ptr::null_mut();
+    };
+
+    // SAFETY: Context is valid for duration of execution
+    let ctx = unsafe { &*ctx };
+    let traces = ctx.get_named_result_traces();
+    if traces.is_empty() {
+        return std::ptr::null_mut();
+    }
+
+    let json = match serde_json::to_string(&traces) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("pecos_get_named_result_traces_json: serialization error: {e}");
+            return std::ptr::null_mut();
+        }
+    };
+
+    match std::ffi::CString::new(json) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(e) => {
+            log::error!("pecos_get_named_result_traces_json: CString error: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Free a JSON string allocated by `pecos_get_named_results_json`
 ///
 /// # Safety
-/// The pointer must have been allocated by `pecos_get_named_results_json`.
+/// The pointer must have been allocated by `pecos_get_named_results_json` or
+/// `pecos_get_named_result_traces_json`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_free_named_results_json(ptr: *mut std::ffi::c_char) {
     if !ptr.is_null() {
@@ -762,6 +875,8 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::thread;
+
+    const TEST_SYNC_TIMEOUT_MS: u64 = 5_000;
 
     /// Helper to create and register an execution context for tests
     fn setup_context() -> *mut ExecutionContext {
@@ -1014,7 +1129,7 @@ mod tests {
         barrier.wait();
 
         // Now worker has definitely set need_result
-        let needed_id = pecos_wait_for_need_result(500);
+        let needed_id = pecos_wait_for_need_result(TEST_SYNC_TIMEOUT_MS);
         assert_eq!(needed_id, 5);
 
         // Provide the result
@@ -1224,7 +1339,7 @@ mod tests {
             worker_barrier.wait();
 
             // Wait for main thread to signal it needs a result
-            let needed_id = pecos_wait_for_need_result(500);
+            let needed_id = pecos_wait_for_need_result(TEST_SYNC_TIMEOUT_MS);
             assert_eq!(needed_id, 5);
             pecos_signal_result_ready();
 
@@ -1234,7 +1349,7 @@ mod tests {
         barrier.wait();
 
         // Wait for result - this should export operations to context storage
-        let result = wait_for_result_ready(5, 500);
+        let result = wait_for_result_ready(5, TEST_SYNC_TIMEOUT_MS);
         assert!(result);
 
         // Verify operations were exported to context storage
@@ -1272,7 +1387,7 @@ mod tests {
 
             worker_barrier.wait();
 
-            let result = wait_for_result_ready(42, 500);
+            let result = wait_for_result_ready(42, TEST_SYNC_TIMEOUT_MS);
 
             unsafe { pecos_register_execution_context(std::ptr::null_mut()) };
             result
@@ -1281,7 +1396,7 @@ mod tests {
         barrier.wait();
 
         // Main thread: wait for worker to signal it needs result
-        let needed = pecos_wait_for_need_result(500);
+        let needed = pecos_wait_for_need_result(TEST_SYNC_TIMEOUT_MS);
         assert_eq!(needed, 42);
 
         // Signal result ready
@@ -1323,7 +1438,7 @@ mod tests {
             worker_barrier.wait();
 
             // This will export ops and wait for result
-            let result = if wait_for_result_ready(0, 500) {
+            let result = if wait_for_result_ready(0, TEST_SYNC_TIMEOUT_MS) {
                 get_measurement_result(0)
             } else {
                 None
@@ -1336,7 +1451,7 @@ mod tests {
         barrier.wait();
 
         // Main thread: wait for worker to need result
-        let needed_id = pecos_wait_for_need_result(500);
+        let needed_id = pecos_wait_for_need_result(TEST_SYNC_TIMEOUT_MS);
         assert_eq!(needed_id, 0);
 
         // Verify operations were exported
@@ -1383,7 +1498,7 @@ mod tests {
 
             worker_barrier.wait();
 
-            assert!(wait_for_result_ready(0, 500));
+            assert!(wait_for_result_ready(0, TEST_SYNC_TIMEOUT_MS));
 
             with_interface(|iface| {
                 assert!(iface.operations.is_empty());
@@ -1393,7 +1508,7 @@ mod tests {
                 iface.queue_operation(Operation::Quantum(QuantumOp::H(0)));
             });
 
-            assert!(wait_for_result_ready(1, 500));
+            assert!(wait_for_result_ready(1, TEST_SYNC_TIMEOUT_MS));
 
             with_interface(|iface| {
                 assert!(iface.operations.is_empty());
@@ -1404,7 +1519,7 @@ mod tests {
 
         barrier.wait();
 
-        let needed_id = pecos_wait_for_need_result(500);
+        let needed_id = pecos_wait_for_need_result(TEST_SYNC_TIMEOUT_MS);
         assert_eq!(needed_id, 0);
         let ops_ptr = pecos_get_pending_operations();
         // SAFETY: see `pecos_get_pending_operations` -- null-or-leaked-Box invariant.
@@ -1413,7 +1528,7 @@ mod tests {
         unsafe { pecos_free_operations(ops_ptr) };
         pecos_signal_result_ready();
 
-        let needed_id = pecos_wait_for_need_result(500);
+        let needed_id = pecos_wait_for_need_result(TEST_SYNC_TIMEOUT_MS);
         assert_eq!(needed_id, 1);
         let ops_ptr = pecos_get_pending_operations();
         // SAFETY: see `pecos_get_pending_operations` -- null-or-leaked-Box invariant.

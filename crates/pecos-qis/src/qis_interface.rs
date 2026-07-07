@@ -19,6 +19,21 @@ pub enum ProgramFormat {
     QisBitcode,
 }
 
+impl ProgramFormat {
+    /// A stable identifier for persistent-cache keys and manifests, independent
+    /// of the `Debug` representation (which would change if a variant is renamed,
+    /// silently invalidating or, worse, colliding cached objects).
+    #[must_use]
+    pub fn cache_tag(self) -> &'static str {
+        match self {
+            Self::LlvmIrText => "llvm-ir-text",
+            Self::LlvmBitcode => "llvm-bitcode",
+            Self::HugrBytes => "hugr-bytes",
+            Self::QisBitcode => "qis-bitcode",
+        }
+    }
+}
+
 /// Error type for interface operations
 ///
 /// This is kept minimal to avoid circular dependencies with pecos-core.
@@ -273,6 +288,17 @@ pub trait DynamicSyncHandle: Send + Sync {
     fn get_named_results(
         &self,
     ) -> Result<std::collections::BTreeMap<String, Vec<bool>>, InterfaceError>;
+
+    /// Get named result provenance from the execution context.
+    ///
+    /// Returns one record per `result(...)` output call, including the runtime
+    /// measurement result IDs read to produce that output.
+    ///
+    /// # Errors
+    /// Returns an error if the FFI call fails or JSON parsing fails.
+    fn get_named_result_traces(
+        &self,
+    ) -> Result<Vec<pecos_qis_ffi_types::NamedResultTrace>, InterfaceError>;
 }
 
 /// Box type for interface implementations

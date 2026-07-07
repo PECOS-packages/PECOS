@@ -37,7 +37,7 @@ let handlers = EventHandlers::new()
         NoiseResponse::None
     });
 
-sim_neo(circuit).event_handlers(handlers).shots(1000).run();
+sim_neo(circuit).auto().event_handlers(handlers).sampling(monte_carlo(1000)).run();
 ```
 
 Handlers return `NoiseResponse` to modify execution -- not just observe it:

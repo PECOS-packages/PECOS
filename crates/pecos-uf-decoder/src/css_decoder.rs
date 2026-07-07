@@ -113,13 +113,17 @@ impl CssUfDecoder {
     ) -> Result<Self, DecoderError> {
         let x_graph = DemMatchingGraph::from_dem_str(x_dem)?;
         let z_graph = DemMatchingGraph::from_dem_str(z_dem)?;
+        x_graph.ensure_observables_fit_u64()?;
+        z_graph.ensure_observables_fit_u64()?;
+        UfDecoder::check_non_negative_weights(&x_graph)?;
+        UfDecoder::check_non_negative_weights(&z_graph)?;
 
         // Auto-detect qubit-edge mapping from detector coordinates.
         let qubit_map = Self::build_qubit_mapping(&x_graph, &z_graph);
 
         let x_num_detectors = x_graph.num_detectors;
-        let x_decoder = UfDecoder::from_matching_graph(&x_graph, config);
-        let z_decoder = UfDecoder::from_matching_graph(&z_graph, config);
+        let x_decoder = UfDecoder::from_matching_graph(&x_graph, config)?;
+        let z_decoder = UfDecoder::from_matching_graph(&z_graph, config)?;
 
         Ok(Self {
             x_decoder,
@@ -295,7 +299,10 @@ impl pecos_decoder_core::ObservableDecoder for CssUfDecoder {
     ///
     /// The syndrome is split at `x_num_detectors` into X and Z parts.
     /// Returns the XOR of both observable masks.
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let split = self.x_num_detectors;
         if syndrome.len() < split {
             return Err(DecoderError::DecodingFailed(format!(
@@ -307,7 +314,9 @@ impl pecos_decoder_core::ObservableDecoder for CssUfDecoder {
         let x_syn = &syndrome[..split];
         let z_syn = &syndrome[split..];
         let (x_obs, z_obs) = self.decode_css(x_syn, z_syn)?;
-        Ok(x_obs ^ z_obs)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
+            x_obs ^ z_obs,
+        ))
     }
 }
 

@@ -17,19 +17,54 @@ instead of 1/P total samples.
 
 ## Quick Start
 
+Subset simulation is a sampling strategy on `sim_neo()`, like
+`monte_carlo()` and `importance_sampling()`. It needs two functions:
+a score (how close is this outcome to failure?) and a failure predicate.
+Both are required; the result arrives in `results.subset` (per-shot
+`outcomes` are empty for subset runs).
+
+```rust
+use pecos_neo::tool::{sim_neo, sparse_stab, subset_simulation};
+
+let results = sim_neo(circuit)
+    .quantum(sparse_stab())   // currently the only supported backend
+    .noise(noise)
+    .sampling(
+        subset_simulation(1000)  // samples per level
+            // Higher score = closer to failure
+            .score(|outcomes| count_syndrome_errors(outcomes) as f64)
+            // What counts as failure?
+            .failure(|outcomes| is_logical_error(outcomes)),
+    )
+    .seed(42)
+    .run();
+
+let subset = results.subset.expect("subset strategy returns an estimate");
+println!("P(failure) = {:.2e}", subset.probability());
+println!("95% CI: {:?}", subset.confidence_interval_95());
+```
+
+Requires a static circuit on the `sparse_stab()` backend; checked at
+`.build()`.
+
+## Configuration
+
+```rust
+subset_simulation(1000)             // Samples per level (more = slower but more precise)
+    .score(score_fn)                // Required: distance-to-failure metric
+    .failure(failure_fn)            // Required: rare event predicate
+    .threshold_fraction(0.1)        // Top 10% advance each level
+    .max_levels(20)                 // Safety limit on levels
+    .min_conditional_prob(1e-6)     // Give up below this conditional probability
+```
+
+## Direct library API
+
+For lower-level control (custom noise factories, checkpoint-continuation
+variants like `ProperSubsetSimulation`), use the sampling module directly:
+
 ```rust
 use pecos_neo::sampling::subset::{SubsetSimulation, SubsetConfig};
-
-// Define: what does "closer to failure" mean?
-let score_fn = |outcomes: &MeasurementOutcomes| -> f64 {
-    // Higher score = closer to failure
-    count_syndrome_errors(outcomes) as f64
-};
-
-// Define: what counts as failure?
-let is_failure = |outcomes: &MeasurementOutcomes| -> bool {
-    is_logical_error(outcomes)
-};
 
 let config = SubsetConfig::new()
     .with_samples_per_level(1000)
@@ -39,19 +74,6 @@ let result = SubsetSimulation::new(circuit, num_qubits, score_fn, is_failure)
     .with_noise_builder(|| Some(noise.clone()))
     .with_config(config)
     .run();
-
-println!("P(failure) = {:.2e}", result.probability());
-println!("95% CI: [{:.2e}, {:.2e}]", result.confidence_interval_95());
-```
-
-## Configuration
-
-```rust
-SubsetConfig::new()
-    .with_samples_per_level(1000)   // Samples per level (more = slower but more precise)
-    .with_threshold_fraction(0.1)   // Top 10% advance each level
-    .with_max_levels(20)            // Safety limit on levels
-    .with_seed(42)                  // For reproducibility
 ```
 
 ## When to Use

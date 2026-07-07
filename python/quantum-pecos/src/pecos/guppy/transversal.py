@@ -744,9 +744,19 @@ def _add_color_transversal_factory_functions(
     )
 
 
-def _load_css_transversal_module(code_type: CSSCodeType, d: int) -> dict:
-    """Load a transversal module for the given code type and distance."""
-    cache_key = f"{code_type.value}_d{d}"
+def _load_css_transversal_module(code_type: CSSCodeType, d: int, *, num_rounds: int | None = None) -> dict:
+    """Load a transversal module for the given code type and distance.
+
+    The generated experiment factories (``make_transversal_cnot`` etc.) close
+    over ``num_rounds`` as a Guppy ``comptime`` value baked into a factory-local
+    ``@guppy`` function whose qualified name is constant across round counts.
+    guppylang keys compiled functions by ``__module__ + __qualname__`` in a
+    process-global store, so the module identity must encode ``num_rounds`` --
+    otherwise a second round count reuses the first's compiled body (the same
+    cross-``num_rounds`` leak fixed for the surface/color memory modules).
+    """
+    round_suffix = "" if num_rounds is None else f"_r{int(num_rounds)}"
+    cache_key = f"{code_type.value}_d{d}{round_suffix}"
 
     if cache_key in _state.css_transversal_cache:
         return _state.css_transversal_cache[cache_key]
@@ -809,7 +819,7 @@ def make_css_transversal_cnot(
         msg = f"Distance must be odd >= 3, got {distance}"
         raise ValueError(msg)
 
-    module = _load_css_transversal_module(code_type, distance)
+    module = _load_css_transversal_module(code_type, distance, num_rounds=num_rounds)
     return module["make_transversal_cnot"](num_rounds)
 
 
@@ -837,7 +847,7 @@ def make_css_transversal_cnot_with_x(
         msg = f"Distance must be odd >= 3, got {distance}"
         raise ValueError(msg)
 
-    module = _load_css_transversal_module(code_type, distance)
+    module = _load_css_transversal_module(code_type, distance, num_rounds=num_rounds)
     return module["make_transversal_cnot_with_x"](num_rounds)
 
 

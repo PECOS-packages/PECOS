@@ -15,4 +15,7 @@ This package provides a Matrix Product State simulator using the PyTKET library.
 # specific language governing permissions and limitations under the License.
 
 from pecos.simulators.mps_pytket import bindings
+from pecos.simulators.mps_pytket._nvmath_compat import patch_nvmath_cupy_external_stream
 from pecos.simulators.mps_pytket.state import MPS
+
+patch_nvmath_cupy_external_stream()

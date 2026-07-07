@@ -2,7 +2,7 @@
 
 import pytest
 from guppylang import guppy
-from guppylang.std.quantum import h, measure, qubit
+from guppylang.std.quantum import h, measure, qubit, x
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
 
@@ -24,7 +24,7 @@ def test_integer_arithmetic() -> None:
 
     results = sim(Guppy(quantum_add)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     # For single bool return, measurements is [[1], [0], ...]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert len(measurements) == 10
@@ -47,7 +47,7 @@ def test_boolean_operations() -> None:
 
     results = sim(Guppy(quantum_bool_logic)).qubits(2).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert len(measurements) == 10
 
@@ -68,7 +68,7 @@ def test_integer_comparisons() -> None:
 
     results = sim(Guppy(quantum_compare)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert len(measurements) == 10
     assert 0 in measurements
@@ -93,7 +93,7 @@ def test_arithmetic_in_loop() -> None:
 
     results = sim(Guppy(quantum_loop)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert len(measurements) == 10
     assert 0 in measurements
@@ -117,7 +117,7 @@ def test_chained_comparisons() -> None:
 
     results = sim(Guppy(quantum_chain)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert len(measurements) == 10
     assert 0 in measurements
@@ -149,7 +149,113 @@ def test_arithmetic_with_measurements() -> None:
 
     results = sim(Guppy(quantum_measure_math)).qubits(3).quantum(state_vector()).seed(42).run(20).to_dict()
 
-    raw_measurements = results.get("measurements", [])
+    raw_measurements = results["measurements"]
     measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
     assert len(measurements) == 20
     # Should have mix unless both m1 and m2 are 0 (25% chance)
+
+
+def test_euclidean_division_semantics() -> None:
+    """Negative-operand division follows the HUGR spec (Euclidean).
+
+    idivmod_s is defined as q*m+r=n with 0<=r<m, so -3 % 2 == 1 and
+    -3 // 2 == -2 (matching Python). The engine used Rust truncating
+    division until this was pinned; the X gate fires only if the engine
+    computes the spec'd value, so a wrong result measures 0.
+    """
+
+    @guppy
+    def euclid_mod() -> bool:
+        q = qubit()
+        a = -3
+        if a % 2 == 1:
+            x(q)
+        return measure(q)
+
+    @guppy
+    def euclid_div() -> bool:
+        q = qubit()
+        a = -3
+        if a // 2 == -2:
+            x(q)
+        return measure(q)
+
+    for prog in (euclid_mod, euclid_div):
+        results = sim(Guppy(prog)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
+        raw_measurements = results["measurements"]
+        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+        assert measurements == [1, 1, 1], f"Euclidean semantics violated: {measurements}"
+
+
+def test_shift_semantics() -> None:
+    """Left/right shifts on positive values, X-anchored."""
+
+    @guppy
+    def shifts() -> bool:
+        q = qubit()
+        a = 1
+        b = 16
+        if (a << 3) == 8 and (b >> 2) == 4:
+            x(q)
+        return measure(q)
+
+    results = sim(Guppy(shifts)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
+    raw_measurements = results["measurements"]
+    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    assert measurements == [1, 1, 1], f"shift semantics violated: {measurements}"
+
+
+def test_zero_iteration_loop() -> None:
+    """A range(0) loop must run zero iterations and fall through cleanly."""
+
+    @guppy
+    def zero_iters() -> bool:
+        q = qubit()
+        count = 0
+        for _i in range(0):
+            count = count + 1
+        if count == 0:
+            x(q)
+        return measure(q)
+
+    results = sim(Guppy(zero_iters)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
+    raw_measurements = results["measurements"]
+    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    assert measurements == [1, 1, 1], f"zero-iteration loop misbehaved: {measurements}"
+
+
+def test_division_by_zero_panics() -> None:
+    """Division by zero is a runtime error per the HUGR spec (m=0 panics)."""
+
+    @guppy
+    def div_zero() -> bool:
+        q = qubit()
+        a = 5
+        b = 0
+        if a // b == 0:
+            x(q)
+        return measure(q)
+
+    with pytest.raises(RuntimeError, match="division by zero"):
+        sim(Guppy(div_zero)).qubits(1).quantum(state_vector()).seed(1).run(1).to_dict()
+
+
+def test_recursion_rejected_loudly() -> None:
+    """Recursive guppy functions must produce a clear engine error, not a
+    hang or silent truncation."""
+
+    @guppy
+    def recurse(n: int) -> int:
+        if n <= 0:
+            return 0
+        return recurse(n - 1)
+
+    @guppy
+    def recursive_main() -> bool:
+        q = qubit()
+        if recurse(3) == 0:
+            x(q)
+        return measure(q)
+
+    with pytest.raises(RuntimeError, match="recursion is not supported"):
+        sim(Guppy(recursive_main)).qubits(1).quantum(state_vector()).seed(1).run(1).to_dict()

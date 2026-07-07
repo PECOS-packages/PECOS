@@ -86,8 +86,8 @@ pub use dag_circuit::{
     TraversalWorkBuffers,
 };
 pub use tick_circuit::{
-    CustomGateError, GateSignatureMismatchError, QubitConflictError, Tick, TickCircuit,
-    TickGateError, TickHandle, TickMeasRef, TickMeasureHandle, TickPrepHandle,
+    CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,
+    Tick, TickCircuit, TickGateError, TickHandle, TickMeasRef, TickMeasureHandle, TickPrepHandle,
 };
 
 // Re-export commonly used types from dependencies

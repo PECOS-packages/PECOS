@@ -102,6 +102,13 @@ ignore = [
 [lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # imported but unused - Expected for __init__.py re-exports
 
+# Standalone offline oracle-fixture generators inside Rust crate test dirs -
+# scripts run via uv, not an importable package
+"crates/*/tests/fixtures/*.py" = [
+    "INP001",   # Implicit namespace package - standalone scripts, not a package
+    "S311",     # Standard pseudo-random - fixed-seed case sampling, not crypto
+]
+
 # Main pecos __init__.py - special case for module initialization
 "python/quantum-pecos/src/pecos/__init__.py" = [
     "A004",     # Import shadows builtin - intentional numpy-like API (abs, all, any, max, min, sum, round)

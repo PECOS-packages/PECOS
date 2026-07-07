@@ -44,6 +44,7 @@ RESIDUAL_LIMIT = mpf("1e-24")
 
 
 def log_density(a: mpf, b: mpf, x: mpf) -> mpf:
+    """Log of the Beta(a, b) density at x, in arbitrary precision."""
     return (a - 1) * mp.log(x) + (b - 1) * mp.log1p(-x) - mp.log(mp.beta(a, b))
 
 
@@ -70,6 +71,7 @@ def beta_cdf(a: mpf, b: mpf, x: mpf) -> mpf:
 
 
 def quantile_lower_side(a: float, b: float, p: mpf, seed: float) -> mpf:
+    """Solve I_x(a, b) = p for x on the well-conditioned lower side."""
     # Bracket-guarded Newton on the quadrature CDF: the float64 scipy seed is
     # already ~1e-16 relative, so 2-3 quadratically-converging steps reach far
     # below RESIDUAL_LIMIT with only a handful of expensive quadrature calls.
@@ -97,6 +99,7 @@ def quantile_lower_side(a: float, b: float, p: mpf, seed: float) -> mpf:
 
 
 def quantile(a: float, b: float, p: float) -> mpf:
+    """Beta(a, b) quantile at p, solved on whichever side is well conditioned."""
     # Root-find on whichever side of the distribution is well conditioned:
     # near x = 1 the CDF derivative vanishes, so solve the mirrored problem
     # I_y(b, a) = 1 - p for the small complement y instead (same complement
@@ -108,6 +111,7 @@ def quantile(a: float, b: float, p: float) -> mpf:
 
 
 def emit(k: int, n: int, alpha: float) -> str:
+    """Format one CSV row of mpmath-oracle interval bounds and median."""
     a = k + 0.5
     b = n - k + 0.5
     lo = mpf(0) if k == 0 else quantile(a, b, alpha / 2)
@@ -117,6 +121,7 @@ def emit(k: int, n: int, alpha: float) -> str:
 
 
 def k_patterns(rng: random.Random, n: int) -> list[int]:
+    """Return the structured + random success counts probed for one n."""
     picks = {0, n, min(1, n), max(n - 1, 0), n // 2}
     picks.add(max(1, round(n * 0.001)))  # typical logical-error-rate count
     picks.add(rng.randint(0, n))
@@ -124,6 +129,7 @@ def k_patterns(rng: random.Random, n: int) -> list[int]:
 
 
 def main() -> None:
+    """Print the randomized second-oracle CSV to stdout."""
     rng = random.Random(20260707)
     print("k,n,alpha,lo,hi,median")
     seen: set[tuple[int, int, float]] = set()

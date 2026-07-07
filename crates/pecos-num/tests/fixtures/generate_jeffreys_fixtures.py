@@ -32,6 +32,7 @@ from scipy.stats import beta
 
 
 def jeffreys_row(k: int, n: int, alpha: float) -> str:
+    """Format one CSV row of scipy-oracle interval bounds and median."""
     a = k + 0.5
     b = n - k + 0.5
     lo = 0.0 if k == 0 else float(beta.ppf(alpha / 2, a, b))
@@ -41,11 +42,11 @@ def jeffreys_row(k: int, n: int, alpha: float) -> str:
 
 
 def cases() -> list[tuple[int, int, float]]:
+    """Return the adversarial (k, n, alpha) case grid, deduplicated in order."""
     out: list[tuple[int, int, float]] = []
     # Minimum and smallest non-trivial experiments
     for n in (1, 2):
-        for k in range(n + 1):
-            out.append((k, n, 0.05))
+        out.extend((k, n, 0.05) for k in range(n + 1))
     # Endpoint boundaries k=0 and k=n across the full supported regime
     for n in (100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000):
         for alpha in (0.01, 0.05, 0.1):
@@ -58,11 +59,9 @@ def cases() -> list[tuple[int, int, float]]:
     # n=1e8 boundary band (v3 addition), all in-regime alphas
     n8 = 100_000_000
     for k in (0, 1, 10, n8 - 10, n8 - 1, n8):
-        for alpha in (0.01, 0.05, 0.1, 1e-6):
-            out.append((k, n8, alpha))
+        out.extend((k, n8, alpha) for alpha in (0.01, 0.05, 0.1, 1e-6))
     # Typical logical-error-rate working regime
-    for n in (1_000, 10_000, 100_000, 1_000_000):
-        out.append((max(1, n // 1000), n, 0.05))
+    out.extend((max(1, n // 1000), n, 0.05) for n in (1_000, 10_000, 100_000, 1_000_000))
     # Wide-CI alpha extreme and best-conditioned symmetric peak
     for n in (1_000, 1_000_000):
         out.append((n // 2, n, 1e-6))
@@ -70,22 +69,19 @@ def cases() -> list[tuple[int, int, float]]:
     # Asymmetric Gauss-Legendre-region shapes (both Beta shapes > 3000), including
     # the k=3016, n=1e6 tail-orientation regression and a large-n asymmetric case
     for k in (3000, 3016, 3100, 5000, 10_000):
-        for alpha in (0.01, 0.05, 1e-6):
-            out.append((k, 1_000_000, alpha))
+        out.extend((k, 1_000_000, alpha) for alpha in (0.01, 0.05, 1e-6))
     out.append((15_881, 20_000, 0.05))
     out.append((10_000, 100_000_000, 0.05))
     out.append((67_867_393, 100_000_000, 0.05))
     # Continued-fraction accuracy band: moderate a with huge b, straddling the
     # asymptotic-branch gate at a = 64.5
     for k in (63, 64, 65, 100, 300, 1_000, 3_000):
-        for alpha in (0.01, 0.05):
-            out.append((k, 100_000_000, alpha))
+        out.extend((k, 100_000_000, alpha) for alpha in (0.01, 0.05))
     # Mid-band b in [1e7, 5e7): small-a upper bounds routed through the CF path
     # missed the first asymptotic gate (round-2 review); mirrors pin the lo side
     for n in (10_000_000, 20_000_000, 40_000_000, 49_999_990):
         for k in (10, 64, 300):
-            for alpha in (0.01, 0.05):
-                out.append((k, n, alpha))
+            out.extend((k, n, alpha) for alpha in (0.01, 0.05))
         out.append((n - 64, n, 0.05))
     # Median-shortcut gate edges (min posterior shape near 1e5 and 1e6)
     out.append((100_000, 1_000_000, 0.05))
@@ -95,8 +91,7 @@ def cases() -> list[tuple[int, int, float]]:
     # CF served hi endpoints here at up to 1.1e-10; rows span the candidate
     # boundary region so both sides of wherever the final gate lands are pinned
     for n in (1_000_000, 3_000_000, 6_000_000, 8_900_002, 8_999_990):
-        for k in (2, 5, 20, 64):
-            out.append((k, n, 0.05))
+        out.extend((k, n, 0.05) for k in (2, 5, 20, 64))
         out.append((n - 2, n, 0.05))
     # Deduplicate, preserving order
     seen: set[tuple[int, int, float]] = set()
@@ -109,6 +104,7 @@ def cases() -> list[tuple[int, int, float]]:
 
 
 def main() -> None:
+    """Print the full oracle CSV to stdout."""
     print("k,n,alpha,lo,hi,median")
     for k, n, alpha in cases():
         print(jeffreys_row(k, n, alpha))

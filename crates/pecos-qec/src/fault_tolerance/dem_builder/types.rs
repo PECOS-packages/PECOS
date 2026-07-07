@@ -3643,6 +3643,145 @@ impl PerGateTypeNoise {
         }
         self.rate_2q(gate, pair_idx)
     }
+
+    /// Convert this QEC per-gate noise model into the event-driven NEO
+    /// [`pecos_neo::noise::PerGatePauliChannel`].
+    ///
+    /// Idle noise is intentionally rejected here: this Pauli channel represents
+    /// gate/prep/measurement faults and cannot carry duration-dependent idle
+    /// models without changing the simulated physics.
+    #[cfg(feature = "neo")]
+    #[must_use]
+    pub fn to_neo_channel(&self) -> pecos_neo::noise::PerGatePauliChannel {
+        assert!(
+            !self.base.uses_dedicated_idle_noise()
+                && !self.rates_1q.contains_key(&GateType::Idle)
+                && !self
+                    .rates_1q_per_qubit
+                    .keys()
+                    .any(|(gate, _)| *gate == GateType::Idle),
+            "PerGateTypeNoise::to_neo_channel cannot carry idle noise; compose an idle channel separately"
+        );
+
+        let mut channel = pecos_neo::noise::PerGatePauliChannel::new()
+            .with_base(self.base.p1, self.base.p2)
+            .with_meas_init(self.p_meas, self.p_init);
+
+        for (&gate, &total) in &self.base.p1_gate_rates {
+            if self.rates_1q.contains_key(&gate) {
+                continue;
+            }
+            channel = channel.with_1q_rates(core_gate_to_neo(gate), [total / 3.0; 3]);
+        }
+        for (&gate, &rates) in &self.rates_1q {
+            channel = channel.with_1q_rates(core_gate_to_neo(gate), rates);
+        }
+        for (&(gate, qubit), &rates) in &self.rates_1q_per_qubit {
+            channel = channel.with_1q_rates_for_qubit(core_gate_to_neo(gate), qubit, rates);
+        }
+
+        for (&gate, &total) in &self.base.p2_gate_rates {
+            if self.rates_2q.contains_key(&gate) {
+                continue;
+            }
+            channel = channel.with_2q_rates(
+                core_gate_to_neo(gate),
+                qec_2q_rates_to_neo([total / 15.0; 15]),
+            );
+        }
+        for (&gate, &rates) in &self.rates_2q {
+            channel = channel.with_2q_rates(core_gate_to_neo(gate), qec_2q_rates_to_neo(rates));
+        }
+        for (&(gate, first, second), &rates) in &self.rates_2q_per_qubits {
+            channel = channel.with_2q_rates_for_qubits(
+                core_gate_to_neo(gate),
+                first,
+                second,
+                qec_2q_rates_to_neo(rates),
+            );
+        }
+
+        for (&qubit, &p) in &self.measurement_rates {
+            channel = channel.with_meas_rate_for_qubit(qubit, p);
+        }
+        for (&qubit, &p) in &self.init_rates {
+            channel = channel.with_init_rate_for_qubit(qubit, p);
+        }
+
+        channel
+    }
+}
+
+#[cfg(feature = "neo")]
+fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
+    match gate {
+        GateType::I => pecos_neo::GateType::I,
+        GateType::X => pecos_neo::GateType::X,
+        GateType::Y => pecos_neo::GateType::Y,
+        GateType::Z => pecos_neo::GateType::Z,
+        GateType::SX => pecos_neo::GateType::SX,
+        GateType::SXdg => pecos_neo::GateType::SXdg,
+        GateType::SY => pecos_neo::GateType::SY,
+        GateType::SYdg => pecos_neo::GateType::SYdg,
+        GateType::SZ => pecos_neo::GateType::SZ,
+        GateType::SZdg => pecos_neo::GateType::SZdg,
+        GateType::H => pecos_neo::GateType::H,
+        GateType::F => pecos_neo::GateType::F,
+        GateType::Fdg => pecos_neo::GateType::Fdg,
+        GateType::RX => pecos_neo::GateType::RX,
+        GateType::RY => pecos_neo::GateType::RY,
+        GateType::RZ => pecos_neo::GateType::RZ,
+        GateType::T => pecos_neo::GateType::T,
+        GateType::Tdg => pecos_neo::GateType::Tdg,
+        GateType::U => pecos_neo::GateType::U,
+        GateType::R1XY => pecos_neo::GateType::R1XY,
+        GateType::CX => pecos_neo::GateType::CX,
+        GateType::CY => pecos_neo::GateType::CY,
+        GateType::CZ => pecos_neo::GateType::CZ,
+        GateType::SXX => pecos_neo::GateType::SXX,
+        GateType::SXXdg => pecos_neo::GateType::SXXdg,
+        GateType::SYY => pecos_neo::GateType::SYY,
+        GateType::SYYdg => pecos_neo::GateType::SYYdg,
+        GateType::SZZ => pecos_neo::GateType::SZZ,
+        GateType::SZZdg => pecos_neo::GateType::SZZdg,
+        GateType::SWAP => pecos_neo::GateType::SWAP,
+        GateType::CRZ => pecos_neo::GateType::CRZ,
+        GateType::RXX => pecos_neo::GateType::RXX,
+        GateType::RYY => pecos_neo::GateType::RYY,
+        GateType::RZZ => pecos_neo::GateType::RZZ,
+        GateType::CCX => pecos_neo::GateType::CCX,
+        GateType::MZ => pecos_neo::GateType::MZ,
+        GateType::MeasureLeaked => pecos_neo::GateType::MeasureLeaked,
+        GateType::MeasureFree => pecos_neo::GateType::MeasureFree,
+        GateType::PZ => pecos_neo::GateType::PZ,
+        GateType::QAlloc => pecos_neo::GateType::QAlloc,
+        GateType::QFree => pecos_neo::GateType::QFree,
+        GateType::Idle => pecos_neo::GateType::Idle,
+        unsupported => {
+            panic!("unsupported gate type for NEO per-gate noise conversion: {unsupported:?}")
+        }
+    }
+}
+
+#[cfg(feature = "neo")]
+fn qec_2q_rates_to_neo(qec: [f64; 15]) -> [f64; 15] {
+    [
+        qec[3],  // XI
+        qec[7],  // YI
+        qec[11], // ZI
+        qec[0],  // IX
+        qec[1],  // IY
+        qec[2],  // IZ
+        qec[4],  // XX
+        qec[5],  // XY
+        qec[6],  // XZ
+        qec[8],  // YX
+        qec[9],  // YY
+        qec[10], // YZ
+        qec[12], // ZX
+        qec[13], // ZY
+        qec[14], // ZZ
+    ]
 }
 
 // ============================================================================

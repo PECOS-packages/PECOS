@@ -18,6 +18,17 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
         // Default implementation does nothing.
     }
 
+    /// Whether this engine's qubit count is only known after execution because it
+    /// allocates qubits dynamically.
+    ///
+    /// For such engines, [`Self::num_qubits`] returning 0 before execution means
+    /// "not yet known", not "genuinely zero qubits". Static engines that parse
+    /// their whole program up front know their exact count and return `false`
+    /// (the default); dynamic runtimes return `true`.
+    fn has_dynamic_qubit_count(&self) -> bool {
+        false
+    }
+
     /// Generate a `ByteMessage` containing the next batch of quantum commands to execute.
     /// An empty message indicates no more commands are available.
     ///
@@ -108,6 +119,10 @@ impl ClassicalEngine for Box<dyn ClassicalControlEngine> {
 
     fn set_num_qubits_hint(&mut self, num_qubits: usize) {
         (**self).set_num_qubits_hint(num_qubits);
+    }
+
+    fn has_dynamic_qubit_count(&self) -> bool {
+        (**self).has_dynamic_qubit_count()
     }
 
     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {

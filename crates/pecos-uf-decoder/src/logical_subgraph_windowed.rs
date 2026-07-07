@@ -39,6 +39,7 @@ use pecos_decoder_core::logical_subgraph::window_plan::LogicalSubgraphWindowPlan
 use pecos_decoder_core::logical_subgraph::{
     MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
 };
+use pecos_decoder_core::obs_mask::ObsMask;
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
 use crate::windowed::{OverlappingWindowedDecoder, WindowedConfig};
@@ -129,7 +130,7 @@ impl WindowedLogicalSubgraphDecoder {
 }
 
 impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
         let mut obs_mask = 0u64;
         for sg in &mut self.subgraphs {
             let n = sg.num_local;
@@ -154,6 +155,6 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
                 obs_mask |= 1u64 << sg.observable_idx;
             }
         }
-        Ok(obs_mask)
+        Ok(ObsMask::from_u64(obs_mask))
     }
 }

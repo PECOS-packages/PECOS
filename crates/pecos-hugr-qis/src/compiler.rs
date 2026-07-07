@@ -44,6 +44,7 @@ use tket::hugr::llvm::inkwell::passes::PassBuilderOptions;
 use tket::hugr::llvm::inkwell::targets::{
     CodeModel, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
+use tket::hugr::llvm::inkwell::values::FunctionValue;
 use tket::hugr::llvm::utils::fat::FatExt as _;
 use tket::hugr::llvm::{
     CodegenExtsBuilder,
@@ -53,13 +54,14 @@ use tket::hugr::llvm::{
 use tket::hugr::ops::DataflowParent;
 use tket::hugr::{Hugr, HugrView, Node};
 use tket::llvm::rotation::RotationCodegenExtension;
-use tket_qsystem::QSystemPass;
+use tket::passes::ComposablePass;
 use tket_qsystem::llvm::array_utils::ArrayLowering;
 use tket_qsystem::llvm::futures::FuturesCodegenExtension;
 use tket_qsystem::llvm::{
     debug::DebugCodegenExtension, prelude::QISPreludeCodegen, qsystem::QSystemCodegenExtension,
     random::RandomCodegenExtension, result::ResultsCodegenExtension, utils::UtilsCodegenExtension,
 };
+use tket_qsystem::{QSystemPass, QSystemPlatform};
 
 // Import read_hugr_envelope from utils module
 use crate::utils::read_hugr_envelope;
@@ -71,6 +73,16 @@ const TRACE_METADATA_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_hugr";
 const TRACE_METADATA_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_qubit_hugr";
 const RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubit_hugr";
 const RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubits2_hugr";
+
+const PECOS_HELPER_ABIS: &[(&str, &str)] = &[
+    (TRACE_METADATA_HUGR_SYMBOL, "void (ptr, ptr)"),
+    (TRACE_METADATA_QUBIT_HUGR_SYMBOL, "i64 (i64, ptr, ptr)"),
+    (RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL, "i64 (i64)"),
+    (
+        RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL,
+        "{ i64, i64 } (i64, i64)",
+    ),
+];
 
 // Extension registry is defined in the parent module
 
@@ -87,6 +99,8 @@ pub struct CompileArgs {
     pub target_triple: Option<String>,
     /// Optimization level
     pub opt_level: OptimizationLevel,
+    /// Target QSystem platform
+    pub platform: QSystemPlatform,
 }
 
 impl Default for CompileArgs {
@@ -97,6 +111,7 @@ impl Default for CompileArgs {
             save_hugr: None,
             target_triple: None,
             opt_level: OptimizationLevel::Default,
+            platform: QSystemPlatform::Helios,
         }
     }
 }
@@ -105,13 +120,13 @@ impl Default for CompileArgs {
 ///
 /// Note: `QSystemPass` internally calls `inline_constant_functions` when the
 /// `llvm` feature is enabled, so we don't need to call it separately.
-fn process_hugr(hugr: &mut Hugr) -> Result<()> {
-    QSystemPass::default().run(hugr)?;
+fn process_hugr(hugr: &mut Hugr, platform: QSystemPlatform) -> Result<()> {
+    QSystemPass::defaults(platform).run(hugr)?;
     Ok(())
 }
 
 /// Build codegen extensions for LLVM generation
-fn codegen_extensions() -> CodegenExtsMap<'static, Hugr> {
+fn codegen_extensions(platform: QSystemPlatform) -> CodegenExtsMap<'static, Hugr> {
     use crate::array::SeleneHeapArrayCodegen;
     let pcg = QISPreludeCodegen;
 
@@ -125,7 +140,7 @@ fn codegen_extensions() -> CodegenExtsMap<'static, Hugr> {
         .add_default_static_array_extensions()
         .add_default_borrow_array_extensions(pcg.clone())
         .add_extension(FuturesCodegenExtension)
-        .add_extension(QSystemCodegenExtension::from(pcg.clone()))
+        .add_extension(QSystemCodegenExtension::from((platform, pcg.clone())))
         .add_extension(RandomCodegenExtension)
         .add_extension(ResultsCodegenExtension::new(
             SeleneHeapArrayCodegen::LOWERING,
@@ -197,7 +212,7 @@ fn get_module_with_std_exts<'c>(
     namer: Rc<Namer>,
     hugr: &'c mut Hugr,
 ) -> Result<Module<'c>> {
-    process_hugr(hugr)?;
+    process_hugr(hugr, args.platform)?;
 
     if let Some(filename) = &args.save_hugr {
         let file = fs::File::create(filename)?;
@@ -209,7 +224,7 @@ fn get_module_with_std_exts<'c>(
         namer,
         hugr,
         &args.name,
-        Rc::new(codegen_extensions()),
+        Rc::new(codegen_extensions(args.platform)),
     )
 }
 
@@ -329,6 +344,92 @@ fn optimize_module(
     Ok(())
 }
 
+fn pecos_helper_public_name(symbol: &str) -> Option<&'static str> {
+    if PECOS_HELPER_ABIS.iter().any(|(name, _)| *name == symbol) {
+        return Some(match symbol {
+            TRACE_METADATA_HUGR_SYMBOL => TRACE_METADATA_HUGR_SYMBOL,
+            TRACE_METADATA_QUBIT_HUGR_SYMBOL => TRACE_METADATA_QUBIT_HUGR_SYMBOL,
+            RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL => RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL,
+            RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL => RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL,
+            _ => unreachable!("checked helper symbol must be mapped"),
+        });
+    }
+
+    let rest = symbol.strip_prefix(HUGR_SYMBOL_PREFIX)?;
+    let mut parts = rest.rsplit('.');
+    let _suffix = parts.next()?;
+    let helper_name = parts.next()?;
+    PECOS_HELPER_ABIS
+        .iter()
+        .find_map(|(name, _)| (*name == helper_name).then_some(*name))
+}
+
+fn expected_helper_abi(public_name: &str) -> &'static str {
+    PECOS_HELPER_ABIS
+        .iter()
+        .find_map(|(name, abi)| (*name == public_name).then_some(*abi))
+        .expect("recognized helper must have ABI")
+}
+
+fn function_abi_string(function: FunctionValue<'_>) -> String {
+    function.get_type().print_to_string().to_string()
+}
+
+fn validate_pecos_helper_abi(function: FunctionValue<'_>, public_name: &str) -> Result<()> {
+    let actual = function_abi_string(function);
+    let expected = expected_helper_abi(public_name);
+    if actual != expected {
+        return Err(anyhow!(
+            "PECOS helper '{public_name}' has LLVM type '{actual}', but pecos-qis-ffi ABI expects '{expected}'"
+        ));
+    }
+    Ok(())
+}
+
+/// Normalize PECOS-owned helper declarations inside the LLVM module before
+/// verification/bitcode emission, so both text and bitcode expose the runtime
+/// ABI symbols exported by pecos-qis-ffi.
+fn normalize_pecos_helper_symbols_in_module(module: &Module) -> Result<()> {
+    for &(public_name, _) in PECOS_HELPER_ABIS {
+        let candidates = module
+            .get_functions()
+            .filter_map(|function| {
+                let name = function.get_name().to_str().ok()?;
+                (pecos_helper_public_name(name) == Some(public_name)).then_some(function)
+            })
+            .collect::<Vec<_>>();
+
+        if candidates.is_empty() {
+            continue;
+        }
+
+        for &candidate in &candidates {
+            validate_pecos_helper_abi(candidate, public_name)?;
+        }
+
+        let canonical = candidates
+            .iter()
+            .copied()
+            .find(|function| function.get_name().to_str().ok() == Some(public_name))
+            .unwrap_or(candidates[0]);
+
+        if canonical.get_name().to_str().ok() != Some(public_name) {
+            canonical.as_global_value().set_name(public_name);
+        }
+
+        for candidate in candidates {
+            if candidate == canonical {
+                continue;
+            }
+            candidate.replace_all_uses_with(canonical);
+            // SAFETY: all uses were rewired to the canonical declaration above.
+            unsafe { candidate.delete() };
+        }
+    }
+
+    Ok(())
+}
+
 /// Compile the given HUGR to an LLVM module
 /// This function is the primary entry point for the compiler
 fn compile<'c, 'hugr: 'c>(
@@ -373,6 +474,8 @@ fn compile<'c, 'hugr: 'c>(
             .add_global_metadata(key, &node)
             .map_err(|e| anyhow!("Failed to add metadata: {e}"))?;
     }
+
+    normalize_pecos_helper_symbols_in_module(&module)?;
 
     // Optimize
     optimize_module(&module, &target_machine, args.opt_level)?;

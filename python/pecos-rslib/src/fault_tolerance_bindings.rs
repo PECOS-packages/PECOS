@@ -5929,9 +5929,7 @@ impl PyLogicalAlgorithmDecoder {
 
         // Parse stab_coords from the first segment (original orientation)
         let first_seg = seg_list.first().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "algorithm descriptor has no segments",
-            )
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("algorithm descriptor has no segments")
         })?;
         let sc_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = first_seg
             .get_item("stab_coords")?
@@ -6184,9 +6182,7 @@ impl PyLogicalCircuitDecoder {
 
         // Parse stab_coords from first segment
         let first_seg = seg_list.first().ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "algorithm descriptor has no segments",
-            )
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("algorithm descriptor has no segments")
         })?;
         let sc_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = first_seg
             .get_item("stab_coords")?

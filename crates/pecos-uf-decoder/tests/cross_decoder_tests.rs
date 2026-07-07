@@ -30,11 +30,13 @@ const D3_DEM: &str =
 fn test_ensemble_of_identical_decoders_matches_single() {
     let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
 
-    let mut single = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
+    let mut single = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
     let members: Vec<Box<dyn ObservableDecoder>> = (0..3)
         .map(|_| {
-            Box::new(UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap())
-                as Box<dyn ObservableDecoder>
+            Box::new(UfDecoder::from_matching_graph(
+                &graph,
+                UfDecoderConfig::default(),
+            )) as Box<dyn ObservableDecoder>
         })
         .collect();
     let mut ensemble = EnsembleDecoder::new(members);
@@ -62,8 +64,8 @@ fn test_ensemble_of_identical_decoders_matches_single() {
 fn test_deterministic_results() {
     let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
 
-    let mut dec1 = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
-    let mut dec2 = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
+    let mut dec1 = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
+    let mut dec2 = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
 
     let mut rng = fastrand::Rng::with_seed(999);
     for _ in 0..200 {
@@ -87,7 +89,7 @@ fn test_matching_agrees_with_observable() {
     use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 
     let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default()).unwrap();
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::default());
 
     let mut rng = fastrand::Rng::with_seed(777);
     for _ in 0..200 {

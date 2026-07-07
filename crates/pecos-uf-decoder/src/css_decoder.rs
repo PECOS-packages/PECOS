@@ -297,7 +297,10 @@ impl pecos_decoder_core::ObservableDecoder for CssUfDecoder {
     ///
     /// The syndrome is split at `x_num_detectors` into X and Z parts.
     /// Returns the XOR of both observable masks.
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let split = self.x_num_detectors;
         if syndrome.len() < split {
             return Err(DecoderError::DecodingFailed(format!(
@@ -309,7 +312,9 @@ impl pecos_decoder_core::ObservableDecoder for CssUfDecoder {
         let x_syn = &syndrome[..split];
         let z_syn = &syndrome[split..];
         let (x_obs, z_obs) = self.decode_css(x_syn, z_syn)?;
-        Ok(x_obs ^ z_obs)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
+            x_obs ^ z_obs,
+        ))
     }
 }
 

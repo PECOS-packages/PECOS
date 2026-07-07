@@ -463,7 +463,10 @@ impl pecos_decoder_core::bp_matching::BpWeightProvider for BpUfDecoder {
 }
 
 impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         // Fast path: cluster predecoder handles isolated cases without BP.
         // This catches 0 defects, single defects, and isolated pairs. Gated on
         // the UF config like the plain `UfDecoder` paths. It deliberately runs
@@ -473,7 +476,7 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
         if self.uf.config.predecoder
             && let Some(obs) = self.uf.predecode_clusters(syndrome)
         {
-            return Ok(obs);
+            return Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(obs));
         }
 
         let num_defects = syndrome.iter().filter(|&&v| v != 0).count();
@@ -571,10 +574,10 @@ impl pecos_decoder_core::ObservableDecoder for BpUfDecoder {
             let (mask2, _) = self
                 .uf
                 .decode_with_weights(syndrome, &self.adjusted_weights)?;
-            return Ok(mask2);
+            return Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(mask2));
         }
 
-        Ok(mask)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(mask))
     }
 }
 

@@ -222,6 +222,7 @@ python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
+    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # Build the extra experimental bindings exercised by the fast Python core test lane.
 [group('build')]
@@ -998,7 +999,7 @@ python-ci-sync-test:
 python-ci-sync-docs:
     #!/usr/bin/env bash
     set -euo pipefail
-    just python-ci-sync
+    just python-ci-sync-test
 
 [group('setup')]
 python-ci-sync-lint:

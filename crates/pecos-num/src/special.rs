@@ -259,7 +259,7 @@ impl Default for InverseBetaOptions {
 
 /// Inverse-beta quantile and its complement.
 ///
-/// For roots at or below `0.5`, [`invbetai`] solves directly for [`Self::x`]
+/// For roots at or below `0.5`, [`betainc_inv`] solves directly for [`Self::x`]
 /// and derives [`Self::complement`]. For roots above `0.5`, it solves the
 /// swapped complement problem directly for [`Self::complement`] and derives
 /// [`Self::x`]. This reconciles the design-note requirement to avoid losing the
@@ -331,13 +331,13 @@ pub fn ln_gamma(x: f64) -> Result<f64, SpecialError> {
 /// # Examples
 ///
 /// ```
-/// use pecos_num::special::betai;
+/// use pecos_num::special::betainc_reg;
 ///
-/// let value = betai(2.0, 2.0, 0.5).unwrap();
+/// let value = betainc_reg(2.0, 2.0, 0.5).unwrap();
 /// assert!((value - 0.5).abs() < 1e-14);
 /// ```
-pub fn betai(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
-    Ok(betai_pair(a, b, x)?.lower)
+pub fn betainc_reg(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
+    Ok(betainc_reg_pair(a, b, x)?.lower)
 }
 
 /// Inverse regularized incomplete beta function.
@@ -358,13 +358,13 @@ pub fn betai(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
 /// # Examples
 ///
 /// ```
-/// use pecos_num::special::invbetai;
+/// use pecos_num::special::betainc_inv;
 ///
-/// let quantile = invbetai(0.5, 2.0, 2.0).unwrap();
+/// let quantile = betainc_inv(0.5, 2.0, 2.0).unwrap();
 /// assert!((quantile.x - 0.5).abs() < 1e-14);
 /// ```
-pub fn invbetai(p: f64, a: f64, b: f64) -> Result<BetaQuantile, SpecialError> {
-    invbetai_with_options(p, a, b, InverseBetaOptions::default())
+pub fn betainc_inv(p: f64, a: f64, b: f64) -> Result<BetaQuantile, SpecialError> {
+    betainc_inv_with_options(p, a, b, InverseBetaOptions::default())
 }
 
 /// Inverse regularized incomplete beta function with explicit iteration options.
@@ -376,7 +376,7 @@ pub fn invbetai(p: f64, a: f64, b: f64) -> Result<BetaQuantile, SpecialError> {
 ///
 /// Returns an error if the inputs or options are invalid, a non-finite value is
 /// encountered, or the configured iteration budget is exhausted.
-pub fn invbetai_with_options(
+pub fn betainc_inv_with_options(
     p: f64,
     a: f64,
     b: f64,
@@ -404,19 +404,19 @@ pub fn invbetai_with_options(
         return Ok(quantile);
     }
 
-    let half = betai_pair(a, b, 0.5)?;
+    let half = betainc_reg_pair(a, b, 0.5)?;
     if p > half.lower {
-        let complement = invbetai_lower_tail(1.0 - p, b, a, options)?;
+        let complement = betainc_inv_lower_tail(1.0 - p, b, a, options)?;
         return Ok(BetaQuantile {
             x: complement.complement,
             complement: complement.x,
         });
     }
 
-    invbetai_lower_tail(p, a, b, options)
+    betainc_inv_lower_tail(p, a, b, options)
 }
 
-fn invbetai_lower_tail(
+fn betainc_inv_lower_tail(
     p: f64,
     a: f64,
     b: f64,
@@ -425,14 +425,14 @@ fn invbetai_lower_tail(
     let total_iterations = options.max_newton + options.max_bisect;
     if total_iterations == 0 {
         return Err(SpecialError::MaxIterations {
-            function: "invbetai",
+            function: "betainc_inv",
             iterations: 0,
         });
     }
 
     let mut lo = 0.0;
     let mut hi = 1.0;
-    let mut x = initial_invbetai_guess(p, a, b);
+    let mut x = initial_betainc_inv_guess(p, a, b);
     if !is_strictly_inside(x, lo, hi) {
         x = midpoint(lo, hi);
     }
@@ -444,7 +444,7 @@ fn invbetai_lower_tail(
     let effective_probability_tolerance = effective_probability_tolerance(options, a, b);
 
     for iteration in 0..total_iterations {
-        let residual = invbetai_residual(p, a, b, x)?;
+        let residual = betainc_inv_residual(p, a, b, x)?;
         let abs_residual = residual.abs();
 
         if same_float(abs_residual, 0.0) {
@@ -491,7 +491,7 @@ fn invbetai_lower_tail(
                     return Ok(direct_quantile(bisected));
                 }
                 return Err(SpecialError::MaxIterations {
-                    function: "invbetai",
+                    function: "betainc_inv",
                     iterations: iteration + 1,
                 });
             }
@@ -500,7 +500,7 @@ fn invbetai_lower_tail(
 
         if same_float(candidate, x) {
             return Err(SpecialError::MaxIterations {
-                function: "invbetai",
+                function: "betainc_inv",
                 iterations: iteration + 1,
             });
         }
@@ -511,7 +511,7 @@ fn invbetai_lower_tail(
     }
 
     Err(SpecialError::MaxIterations {
-        function: "invbetai",
+        function: "betainc_inv",
         iterations: total_iterations,
     })
 }
@@ -584,7 +584,7 @@ fn same_float(left: f64, right: f64) -> bool {
     left.to_bits() == right.to_bits()
 }
 
-fn betai_pair(a: f64, b: f64, x: f64) -> Result<TailPair, SpecialError> {
+fn betainc_reg_pair(a: f64, b: f64, x: f64) -> Result<TailPair, SpecialError> {
     ensure_positive("a", a)?;
     ensure_positive("b", b)?;
     ensure_unit_interval("x", x)?;
@@ -606,7 +606,7 @@ fn betai_pair(a: f64, b: f64, x: f64) -> Result<TailPair, SpecialError> {
         return Ok(cdf);
     }
     if a > BETA_GAUSS_LEGENDRE_SWITCH && b > BETA_GAUSS_LEGENDRE_SWITCH {
-        return betai_gauss_legendre_pair(a, b, x);
+        return betainc_reg_gauss_legendre_pair(a, b, x);
     }
 
     let prefactor = beta_prefactor(a, b, x)?;
@@ -669,7 +669,7 @@ fn beta_power_series(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
     })
 }
 
-fn betai_gauss_legendre_pair(a: f64, b: f64, x: f64) -> Result<TailPair, SpecialError> {
+fn betainc_reg_gauss_legendre_pair(a: f64, b: f64, x: f64) -> Result<TailPair, SpecialError> {
     let a1 = a - 1.0;
     let b1 = b - 1.0;
     let mu = a / (a + b);
@@ -1066,8 +1066,8 @@ fn betacf(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
     })
 }
 
-fn invbetai_residual(p: f64, a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
-    let cdf = betai_pair(a, b, x)?;
+fn betainc_inv_residual(p: f64, a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
+    let cdf = betainc_reg_pair(a, b, x)?;
     if p <= 0.5 {
         Ok(cdf.lower - p)
     } else {
@@ -1175,7 +1175,7 @@ fn stirling_correction(x: f64) -> f64 {
         + inverse13 / 156.0
 }
 
-fn initial_invbetai_guess(p: f64, a: f64, b: f64) -> f64 {
+fn initial_betainc_inv_guess(p: f64, a: f64, b: f64) -> f64 {
     if a >= 1.0 && b >= 1.0 {
         let pp = if p < 0.5 { p } else { 1.0 - p };
         let t = libm::sqrt(-2.0 * libm::log(pp));
@@ -1297,7 +1297,7 @@ fn usize_to_f64(value: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{betai, invbetai, ln_gamma};
+    use super::{betainc_inv, betainc_reg, ln_gamma};
 
     #[test]
     fn ln_gamma_matches_factorial_case() {
@@ -1306,19 +1306,19 @@ mod tests {
     }
 
     #[test]
-    fn betai_uses_reflection_symmetry() {
+    fn betainc_reg_uses_reflection_symmetry() {
         let a = 2.5;
         let b = 7.5;
         let x = 0.8;
-        let left = betai(a, b, x).unwrap();
-        let right = 1.0 - betai(b, a, 1.0 - x).unwrap();
+        let left = betainc_reg(a, b, x).unwrap();
+        let right = 1.0 - betainc_reg(b, a, 1.0 - x).unwrap();
         assert!((left - right).abs() < 1.0e-13);
     }
 
     #[test]
-    fn invbetai_round_trips() {
-        let quantile = invbetai(0.025, 10.5, 90.5).unwrap();
-        let probability = betai(10.5, 90.5, quantile.x).unwrap();
+    fn betainc_inv_round_trips() {
+        let quantile = betainc_inv(0.025, 10.5, 90.5).unwrap();
+        let probability = betainc_reg(10.5, 90.5, quantile.x).unwrap();
         assert!((probability - 0.025).abs() < 1.0e-14);
     }
 }

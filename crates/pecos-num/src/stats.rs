@@ -40,7 +40,7 @@ use crate::special::{self, SpecialError};
 use ndarray::{Array, ArrayView, Axis, Dimension, RemoveAxis};
 use std::fmt;
 
-const JEFFREYS_MAX_TRIALS: usize = 100_000_000;
+const JEFFREYS_MAX_TRIALS: u64 = 100_000_000;
 
 /// Posterior point estimator for a Jeffreys binomial model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,16 +72,16 @@ pub enum JeffreysError {
     /// The number of trials exceeded the verified numerical regime.
     TrialsExceedSupported {
         /// Number of trials.
-        n: usize,
+        n: u64,
         /// Maximum supported number of trials.
-        max: usize,
+        max: u64,
     },
     /// The number of successes exceeded the number of trials.
     SuccessesExceedTrials {
         /// Number of successes.
-        k: usize,
+        k: u64,
         /// Number of trials.
-        n: usize,
+        n: u64,
     },
     /// The interval tail probability was outside `(0, 1)`.
     InvalidAlpha {
@@ -136,7 +136,7 @@ impl From<SpecialError> for JeffreysError {
 /// The posterior is `Beta(k + 1/2, n - k + 1/2)`. The interval endpoints are
 /// the `alpha/2` and `1 - alpha/2` posterior quantiles, with the PECOS endpoint
 /// rule `k = 0 -> lo = 0` and `k = n -> hi = 1`. The endpoint rule is applied
-/// at this caller level; non-endpoint limits use [`special::invbetai`], whose
+/// at this caller level; non-endpoint limits use [`special::betainc_inv`], whose
 /// reflected complement solve avoids losing the directly solved tail to
 /// arithmetic `1 - x` cancellation.
 ///
@@ -160,11 +160,7 @@ impl From<SpecialError> for JeffreysError {
 /// assert!((interval.point - 0.5).abs() < 1e-15);
 /// assert!(interval.lo < interval.point && interval.point < interval.hi);
 /// ```
-pub fn jeffreys_interval(
-    k: usize,
-    n: usize,
-    alpha: f64,
-) -> Result<JeffreysInterval, JeffreysError> {
+pub fn jeffreys_interval(k: u64, n: u64, alpha: f64) -> Result<JeffreysInterval, JeffreysError> {
     validate_jeffreys_inputs(k, n)?;
     validate_alpha(alpha)?;
 
@@ -175,12 +171,12 @@ pub fn jeffreys_interval(
     let lo = if k == 0 {
         0.0
     } else {
-        special::invbetai(tail, a, b)?.x
+        special::betainc_inv(tail, a, b)?.x
     };
     let hi = if k == n {
         1.0
     } else {
-        special::invbetai(1.0 - tail, a, b)?.x
+        special::betainc_inv(1.0 - tail, a, b)?.x
     };
     let point = jeffreys_point(k, n, JeffreysEstimator::Mean)?;
     validate_interval_postcondition(lo, hi)?;
@@ -208,11 +204,7 @@ pub fn jeffreys_interval(
 /// let point = jeffreys_point(3, 10, JeffreysEstimator::Mean).unwrap();
 /// assert_eq!(point, 3.5 / 11.0);
 /// ```
-pub fn jeffreys_point(
-    k: usize,
-    n: usize,
-    estimator: JeffreysEstimator,
-) -> Result<f64, JeffreysError> {
+pub fn jeffreys_point(k: u64, n: u64, estimator: JeffreysEstimator) -> Result<f64, JeffreysError> {
     validate_jeffreys_inputs(k, n)?;
 
     match estimator {
@@ -220,12 +212,12 @@ pub fn jeffreys_point(
         JeffreysEstimator::Median => {
             let a = count_to_f64(k) + 0.5;
             let b = count_to_f64(n - k) + 0.5;
-            Ok(special::invbetai(0.5, a, b)?.x)
+            Ok(special::betainc_inv(0.5, a, b)?.x)
         }
     }
 }
 
-fn validate_jeffreys_inputs(k: usize, n: usize) -> Result<(), JeffreysError> {
+fn validate_jeffreys_inputs(k: u64, n: u64) -> Result<(), JeffreysError> {
     if n == 0 {
         return Err(JeffreysError::ZeroTrials);
     }
@@ -258,7 +250,7 @@ fn validate_interval_postcondition(lo: f64, hi: f64) -> Result<(), JeffreysError
 }
 
 #[allow(clippy::cast_precision_loss)] // Jeffreys support is n <= 1e8, exactly representable as f64
-fn count_to_f64(value: usize) -> f64 {
+fn count_to_f64(value: u64) -> f64 {
     value as f64
 }
 

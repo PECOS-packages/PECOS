@@ -20,8 +20,8 @@ const U01_BITS: u64 = 0x3ff0_0000_0000_0000;
 
 #[derive(Debug, Clone, Copy)]
 struct FixtureRow {
-    k: usize,
-    n: usize,
+    k: u64,
+    n: u64,
     alpha: f64,
     lo: f64,
     hi: f64,
@@ -31,8 +31,8 @@ struct FixtureRow {
 #[derive(Debug, Clone, Copy)]
 struct WorstError {
     relative_error: f64,
-    k: usize,
-    n: usize,
+    k: u64,
+    n: u64,
     alpha: f64,
     bound: &'static str,
 }
@@ -40,8 +40,8 @@ struct WorstError {
 #[derive(Debug, Clone, Copy)]
 struct WorstResidual {
     residual: f64,
-    k: usize,
-    n: usize,
+    k: u64,
+    n: u64,
     alpha: f64,
     bound: &'static str,
 }
@@ -101,9 +101,9 @@ fn fixture_table_matches_scipy() {
 }
 
 #[test]
-fn forward_betai_near_one_saturation_matches_scipy() {
+fn forward_betainc_reg_near_one_saturation_matches_scipy() {
     // Quantile fixtures never evaluate the forward CDF in the near-1 saturation
-    // band inside the asymptotic gate: invbetai converges in the tail that stays
+    // band inside the asymptotic gate: betainc_inv converges in the tail that stays
     // cleanly below 1, so a forward-side defect there is invisible to every
     // interval test (a boundary-snap ordering bug survived four review rounds
     // this way, collapsing I_x ~ 1 to 0.0). Oracle: scipy.special.betainc.
@@ -115,18 +115,18 @@ fn forward_betai_near_one_saturation_matches_scipy() {
         (44.6, 20_000.0, 0.006, 0.999_999_999_999_999_3),
     ];
     for (a, b, x, expected) in cases {
-        let value = special::betai(a, b, x)
-            .unwrap_or_else(|err| panic!("betai({a}, {b}, {x}) failed: {err}"));
+        let value = special::betainc_reg(a, b, x)
+            .unwrap_or_else(|err| panic!("betainc_reg({a}, {b}, {x}) failed: {err}"));
         let relative = (value - expected).abs() / expected;
         assert!(
             relative <= 1.0e-12,
-            "betai({a}, {b}, {x}) = {value}, expected {expected}, rel {relative}"
+            "betainc_reg({a}, {b}, {x}) = {value}, expected {expected}, rel {relative}"
         );
     }
 }
 
 #[test]
-fn forward_betai_residual_at_fixture_quantiles_is_bounded() {
+fn forward_betainc_reg_residual_at_fixture_quantiles_is_bounded() {
     let mut worst = WorstResidual::default();
 
     for row in fixture_rows() {
@@ -146,12 +146,12 @@ fn forward_betai_residual_at_fixture_quantiles_is_bounded() {
     }
 
     eprintln!(
-        "max forward betai fixture residual: {} at k={}, n={}, alpha={}, bound={}",
+        "max forward betainc_reg fixture residual: {} at k={}, n={}, alpha={}, bound={}",
         worst.residual, worst.k, worst.n, worst.alpha, worst.bound
     );
     assert!(
         worst.residual <= 5.0e-9,
-        "forward betai residual too large: {worst:?}"
+        "forward betainc_reg residual too large: {worst:?}"
     );
 }
 
@@ -275,13 +275,13 @@ fn large_b_floor_side_sweeps_are_ordered() {
 
 #[test]
 fn large_b_saturation_keeps_inverse_orientation() {
-    let cdf_at_half = special::betai(5.5, 2_999_995.5, 0.5).unwrap();
+    let cdf_at_half = special::betainc_reg(5.5, 2_999_995.5, 0.5).unwrap();
     assert!(
         cdf_at_half > 1.0 - 1.0e-15,
         "large-b half CDF should saturate high, got {cdf_at_half}"
     );
 
-    let cdf_at_guard = special::betai(5.5, 2_999_995.5, 1.0e-3).unwrap();
+    let cdf_at_guard = special::betainc_reg(5.5, 2_999_995.5, 1.0e-3).unwrap();
     assert!(
         cdf_at_guard > 1.0 - 1.0e-15,
         "large-b guard CDF should saturate high, got {cdf_at_guard}"
@@ -358,9 +358,9 @@ fn typed_errors_are_returned() {
         ..InverseBetaOptions::default()
     };
     assert!(matches!(
-        special::invbetai_with_options(0.5, 2.0, 2.0, options),
+        special::betainc_inv_with_options(0.5, 2.0, 2.0, options),
         Err(SpecialError::MaxIterations {
-            function: "invbetai",
+            function: "betainc_inv",
             iterations: 0
         })
     ));
@@ -374,8 +374,10 @@ fn deterministic_randomized_grid_matches_puruspe_dev_check() {
     let mut rng = Lcg::new(0x4a45_4646_5245_5953);
 
     for _ in 0..200 {
-        let n = rng.next_usize(1_000) + 2;
-        let k = rng.next_usize(n - 2) + 1;
+        let n_usize = rng.next_usize(1_000) + 2;
+        let k_usize = rng.next_usize(n_usize - 2) + 1;
+        let n = usize_to_u64(n_usize);
+        let k = usize_to_u64(k_usize);
         let alpha = 1.0e-4 + rng.next_unit_f64() * (0.25 - 1.0e-4);
         let interval = jeffreys_interval(k, n, alpha).unwrap();
         let median = jeffreys_point(k, n, JeffreysEstimator::Median).unwrap();
@@ -459,9 +461,9 @@ fn check_forward_residual(
     x: f64,
     target: f64,
 ) {
-    let actual = special::betai(a, b, x).unwrap_or_else(|err| {
+    let actual = special::betainc_reg(a, b, x).unwrap_or_else(|err| {
         panic!(
-            "forward betai failed for {bound}, k={}, n={}, alpha={}: {err}",
+            "forward betainc_reg failed for {bound}, k={}, n={}, alpha={}: {err}",
             row.k, row.n, row.alpha
         )
     });
@@ -502,14 +504,14 @@ fn assert_close(actual: f64, expected: f64, relative_tolerance: f64, label: &str
 }
 
 fn check_k_sweep_monotone(k_start: usize, k_end: usize, n: usize, alpha: f64) {
-    let first = jeffreys_interval(k_start, n, alpha).unwrap();
-    assert_interval_ordered(first, k_start, n, alpha);
+    let first = jeffreys_interval(usize_to_u64(k_start), usize_to_u64(n), alpha).unwrap();
+    assert_interval_ordered(first, usize_to_u64(k_start), usize_to_u64(n), alpha);
     let mut previous_lo = first.lo;
     let mut previous_hi = first.hi;
 
     for k in (k_start + 1)..=k_end {
-        let interval = jeffreys_interval(k, n, alpha).unwrap();
-        assert_interval_ordered(interval, k, n, alpha);
+        let interval = jeffreys_interval(usize_to_u64(k), usize_to_u64(n), alpha).unwrap();
+        assert_interval_ordered(interval, usize_to_u64(k), usize_to_u64(n), alpha);
         assert!(
             interval.lo + 1.0e-14 >= previous_lo,
             "lo not monotone across gate at k={k}, n={n}, alpha={alpha}"
@@ -525,8 +527,8 @@ fn check_k_sweep_monotone(k_start: usize, k_end: usize, n: usize, alpha: f64) {
 
 fn assert_interval_ordered(
     interval: pecos_num::stats::JeffreysInterval,
-    k: usize,
-    n: usize,
+    k: u64,
+    n: u64,
     alpha: f64,
 ) {
     assert!(
@@ -540,8 +542,12 @@ fn uses_large_shape_median_shortcut(a: f64, b: f64) -> bool {
 }
 
 #[allow(clippy::cast_precision_loss)] // Test counts are <= 1e8, exactly representable as f64
-fn usize_to_f64(value: usize) -> f64 {
+fn usize_to_f64(value: u64) -> f64 {
     value as f64
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap()
 }
 
 struct Lcg {

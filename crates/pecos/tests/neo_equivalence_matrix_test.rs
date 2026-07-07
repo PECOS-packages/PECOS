@@ -254,27 +254,30 @@ fn check_cell(name: &str, qasm: &str, cell: &NoiseCell, targets: &[&str], analyt
     let engines = count_targets(&cell.run(qasm, SimStack::Engines), targets);
     let neo = count_targets(&cell.run(qasm, SimStack::Neo), targets);
 
-    let engines_ci = jeffreys_interval(engines, SHOTS as u64, CONFIDENCE);
-    let neo_ci = jeffreys_interval(neo, SHOTS as u64, CONFIDENCE);
+    let alpha = 1.0 - CONFIDENCE;
+    let engines_ci = jeffreys_interval(engines, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for engines k and SHOTS n");
+    let neo_ci = jeffreys_interval(neo, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for neo k and SHOTS n");
     println!(
         "{name}: engines {engines}/{SHOTS} CI [{:.5}, {:.5}], \
          neo {neo}/{SHOTS} CI [{:.5}, {:.5}], analytic {analytic:?}",
-        engines_ci.0, engines_ci.1, neo_ci.0, neo_ci.1
+        engines_ci.lo, engines_ci.hi, neo_ci.lo, neo_ci.hi
     );
 
     assert!(
-        engines_ci.0 <= neo_ci.1 && neo_ci.0 <= engines_ci.1,
+        engines_ci.lo <= neo_ci.hi && neo_ci.lo <= engines_ci.hi,
         "{name}: stack rates are statistically incompatible: \
          engines {engines}/{SHOTS} vs neo {neo}/{SHOTS}"
     );
 
     if let Some(truth) = analytic {
         assert!(
-            engines_ci.0 <= truth && truth <= engines_ci.1,
+            engines_ci.lo <= truth && truth <= engines_ci.hi,
             "{name}: engines rate {engines}/{SHOTS} excludes the analytic value {truth}"
         );
         assert!(
-            neo_ci.0 <= truth && truth <= neo_ci.1,
+            neo_ci.lo <= truth && truth <= neo_ci.hi,
             "{name}: neo rate {neo}/{SHOTS} excludes the analytic value {truth}"
         );
     }

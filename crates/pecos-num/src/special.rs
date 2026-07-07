@@ -14,9 +14,9 @@
 
 //! Special functions used by PECOS numerical routines.
 //!
-//! The incomplete-beta implementation follows the Numerical Recipes-style
-//! `ln_gamma` / continued-fraction / regularized-beta / inverse-beta chain,
-//! with the reflection branch selected before forming complements.
+//! The incomplete-beta implementation uses DLMF/Abramowitz-Stegun continued
+//! fractions, public asymptotic expansions, and bracketed inverse solves with
+//! the reflection branch selected before forming complements.
 
 use std::fmt;
 
@@ -55,7 +55,12 @@ const BETA_ASYMPTOTIC_NORMALIZER_MIN: f64 = 100_000.0;
 const BETA_MEDIAN_ASYMPTOTIC_MIN: f64 = 1_000_000.0;
 const GAMMA_HALF_INTEGER_MAX_X: f64 = 700.0;
 const GAMMA_HALF_INTEGER_MAX_STEPS: usize = 128;
-const FPMIN: f64 = f64::MIN_POSITIVE / f64::EPSILON;
+/// Positive floor used by the modified Lentz continued-fraction recurrence.
+///
+/// Lentz's algorithm evaluates continued fractions through paired forward and
+/// backward recurrences; Thompson-Barnett style implementations replace a
+/// denominator whose magnitude underflows with a tiny nonzero value.
+const LENTZ_TINY: f64 = f64::MIN_POSITIVE / f64::EPSILON;
 const HALF_LN_TWO_PI: f64 = 0.918_938_533_204_672_8;
 const LN_EPSILON: f64 = -36.043_653_389_117_15;
 const LN_MIN_POSITIVE: f64 = -708.396_418_532_264_1;
@@ -959,16 +964,19 @@ fn regularized_gamma_half_integer_pq(a: f64, x: f64) -> Result<Option<TailPair>,
 }
 
 fn regularized_gamma_p_series(a: f64, x: f64) -> Result<f64, SpecialError> {
-    let mut ap = a;
-    let mut delta = 1.0 / a;
-    let mut sum = delta;
+    // DLMF 8.7.1 gives the lower incomplete-gamma power series. After
+    // multiplying by exp(-x) x^a / Gamma(a), the summand recurrence is
+    // x / (a + n) times the previous term.
+    let mut shifted_shape = a;
+    let mut term = 1.0 / shifted_shape;
+    let mut series = term;
 
     for _iteration in 1..=GAMMA_MAX_ITERATIONS {
-        ap += 1.0;
-        delta *= x / ap;
-        sum += delta;
-        if delta.abs() <= sum.abs() * GAMMA_EPSILON {
-            let value = sum * libm::exp(-x + a * libm::log(x) - ln_gamma(a)?);
+        shifted_shape += 1.0;
+        term *= x / shifted_shape;
+        series += term;
+        if term.abs() <= series.abs() * GAMMA_EPSILON {
+            let value = series * libm::exp(-x + a * libm::log(x) - ln_gamma(a)?);
             ensure_finite("regularized gamma lower series", value)?;
             return Ok(value);
         }
@@ -981,89 +989,125 @@ fn regularized_gamma_p_series(a: f64, x: f64) -> Result<f64, SpecialError> {
 }
 
 fn regularized_gamma_q_fraction(a: f64, x: f64) -> Result<f64, SpecialError> {
-    let mut b = x + 1.0 - a;
-    let mut c = 1.0 / FPMIN;
-    let mut d = 1.0 / b;
-    let mut h = d;
-
-    for iteration in 1..=GAMMA_MAX_ITERATIONS {
-        let i = usize_to_f64(iteration);
-        let an = -i * (i - a);
-        b += 2.0;
-        d = an * d + b;
-        if d.abs() < FPMIN {
-            d = FPMIN;
-        }
-        c = b + an / c;
-        if c.abs() < FPMIN {
-            c = FPMIN;
-        }
-        d = 1.0 / d;
-        let delta = d * c;
-        h *= delta;
-        if (delta - 1.0).abs() <= GAMMA_EPSILON {
-            let value = libm::exp(-x + a * libm::log(x) - ln_gamma(a)?) * h;
-            ensure_finite("regularized gamma upper fraction", value)?;
-            return Ok(value);
-        }
-    }
-
-    Err(SpecialError::MaxIterations {
-        function: "regularized_gamma_q_fraction",
-        iterations: GAMMA_MAX_ITERATIONS,
-    })
+    // DLMF 8.9.2 / A&S 6.5.31 express Gamma(a, x) as
+    // exp(-x) x^a times the reciprocal of a continued fraction. The reciprocal
+    // is evaluated with the modified Lentz algorithm (Lentz 1976; Thompson and
+    // Barnett 1986 underflow guard).
+    let fraction = modified_lentz_reciprocal(
+        x + 1.0 - a,
+        LentzProblem {
+            max_terms: GAMMA_MAX_ITERATIONS,
+            reported_iterations: GAMMA_MAX_ITERATIONS,
+            epsilon: GAMMA_EPSILON,
+            quantity_name: "regularized gamma upper fraction",
+            function_name: "regularized_gamma_q_fraction",
+            convergence_checkpoint: |_| true,
+            numerator: |term_index| {
+                let n = usize_to_f64(term_index);
+                n * (a - n)
+            },
+            denominator: |term_index| x + usize_to_f64(2 * term_index + 1) - a,
+        },
+    )?;
+    let value = libm::exp(-x + a * libm::log(x) - ln_gamma(a)?) * fraction;
+    ensure_finite("regularized gamma upper fraction", value)?;
+    Ok(value)
 }
 
 fn betacf(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
-    let qab = a + b;
-    let qap = a + 1.0;
-    let qam = a - 1.0;
-    let mut c = 1.0;
-    let mut d = 1.0 - qab * x / qap;
-    if d.abs() < FPMIN {
-        d = FPMIN;
-    }
-    d = 1.0 / d;
-    let mut h = d;
+    // DLMF 8.17.22 writes the regularized-beta factor as the reciprocal of
+    // 1 + d_1/(1 + d_2/(1 + ...)), with d_{2m} and d_{2m+1} given in DLMF
+    // 8.17.23. The continued fraction is evaluated by modified Lentz updates
+    // (Lentz 1976; Thompson and Barnett 1986 underflow guard).
+    let even_coefficient = |m: f64| m * (b - m) * x / ((a + 2.0 * m - 1.0) * (a + 2.0 * m));
+    let odd_coefficient =
+        |m: f64| -((a + m) * (a + b + m) * x) / ((a + 2.0 * m) * (a + 2.0 * m + 1.0));
+    modified_lentz_reciprocal(
+        1.0,
+        LentzProblem {
+            max_terms: 2 * BETACF_MAX_ITERATIONS + 1,
+            reported_iterations: BETACF_MAX_ITERATIONS,
+            epsilon: BETACF_EPSILON,
+            quantity_name: "regularized beta continued fraction",
+            function_name: "betacf",
+            convergence_checkpoint: |term_index| term_index > 1 && term_index % 2 == 1,
+            numerator: |term_index| {
+                if term_index % 2 == 0 {
+                    even_coefficient(usize_to_f64(term_index / 2))
+                } else {
+                    odd_coefficient(usize_to_f64((term_index - 1) / 2))
+                }
+            },
+            denominator: |_| 1.0,
+        },
+    )
+}
 
-    for iteration in 1..=BETACF_MAX_ITERATIONS {
-        let m = usize_to_f64(iteration);
-        let m2 = 2.0 * m;
-        let mut aa = m * (b - m) * x / ((qam + m2) * (a + m2));
-        d = 1.0 + aa * d;
-        if d.abs() < FPMIN {
-            d = FPMIN;
-        }
-        c = 1.0 + aa / c;
-        if c.abs() < FPMIN {
-            c = FPMIN;
-        }
-        d = 1.0 / d;
-        h *= d * c;
+struct LentzProblem<N, D, C> {
+    max_terms: usize,
+    reported_iterations: usize,
+    epsilon: f64,
+    quantity_name: &'static str,
+    function_name: &'static str,
+    convergence_checkpoint: C,
+    numerator: N,
+    denominator: D,
+}
 
-        aa = -((a + m) * (qab + m) * x) / ((a + m2) * (qap + m2));
-        d = 1.0 + aa * d;
-        if d.abs() < FPMIN {
-            d = FPMIN;
-        }
-        c = 1.0 + aa / c;
-        if c.abs() < FPMIN {
-            c = FPMIN;
-        }
-        d = 1.0 / d;
-        let delta = d * c;
-        h *= delta;
+fn modified_lentz_reciprocal<N, D, C>(
+    initial_denominator: f64,
+    problem: LentzProblem<N, D, C>,
+) -> Result<f64, SpecialError>
+where
+    N: Fn(usize) -> f64,
+    D: Fn(usize) -> f64,
+    C: Fn(usize) -> bool,
+{
+    let LentzProblem {
+        max_terms,
+        reported_iterations,
+        epsilon,
+        quantity_name,
+        function_name,
+        convergence_checkpoint,
+        numerator,
+        denominator,
+    } = problem;
+    let mut backward_denominator_inverse = 1.0 / lentz_nonzero(initial_denominator);
+    let mut forward_denominator = 1.0 / LENTZ_TINY;
+    let mut reciprocal = backward_denominator_inverse;
 
-        ensure_finite("regularized beta continued fraction", h)?;
-        if (delta - 1.0).abs() <= BETACF_EPSILON {
-            return Ok(h);
+    for term_index in 1..=max_terms {
+        let partial_numerator = numerator(term_index);
+        let partial_denominator = denominator(term_index);
+
+        let next_backward_denominator =
+            partial_denominator + partial_numerator * backward_denominator_inverse;
+        backward_denominator_inverse = 1.0 / lentz_nonzero(next_backward_denominator);
+        forward_denominator =
+            lentz_nonzero(partial_denominator + partial_numerator / forward_denominator);
+
+        let correction = forward_denominator * backward_denominator_inverse;
+        reciprocal *= correction;
+        ensure_finite(quantity_name, reciprocal)?;
+
+        if convergence_checkpoint(term_index) && (correction - 1.0).abs() <= epsilon {
+            return Ok(reciprocal);
         }
     }
 
     Err(SpecialError::MaxIterations {
-        function: "betacf",
-        iterations: BETACF_MAX_ITERATIONS,
+        function: function_name,
+        iterations: reported_iterations,
     })
+}
+
+fn lentz_nonzero(value: f64) -> f64 {
+    if value.abs() < LENTZ_TINY {
+        LENTZ_TINY
+    } else {
+        value
+    }
 }
 
 fn betainc_inv_residual(p: f64, a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
@@ -1177,27 +1221,37 @@ fn stirling_correction(x: f64) -> f64 {
 
 fn initial_betainc_inv_guess(p: f64, a: f64, b: f64) -> f64 {
     if a >= 1.0 && b >= 1.0 {
-        let pp = if p < 0.5 { p } else { 1.0 - p };
-        let t = libm::sqrt(-2.0 * libm::log(pp));
-        let mut x = (2.307_53 + t * 0.270_61) / (1.0 + t * (0.992_29 + t * 0.044_81)) - t;
+        // A&S 26.2.23 supplies the rational approximation to the normal
+        // quantile; A&S 26.5.22 maps that deviate to an incomplete-beta
+        // quantile seed before the bracketed Newton/bisection solve.
+        let smaller_tail = if p < 0.5 { p } else { 1.0 - p };
+        let tail_radius = libm::sqrt(-2.0 * libm::log(smaller_tail));
+        let normal_correction = (2.307_53 + tail_radius * 0.270_61)
+            / (1.0 + tail_radius * (0.992_29 + tail_radius * 0.044_81));
+        let mut normal_deviate = normal_correction - tail_radius;
         if p < 0.5 {
-            x = -x;
+            normal_deviate = -normal_deviate;
         }
-        let al = (x * x - 3.0) / 6.0;
-        let h = 2.0 / (1.0 / (2.0 * a - 1.0) + 1.0 / (2.0 * b - 1.0));
-        let w = x * libm::sqrt(al + h) / h
-            - (1.0 / (2.0 * b - 1.0) - 1.0 / (2.0 * a - 1.0)) * (al + 5.0 / 6.0 - 2.0 / (3.0 * h));
-        interiorize(a / (a + b * libm::exp(2.0 * w)))
+        let normal_curvature = (normal_deviate * normal_deviate - 3.0) / 6.0;
+        let adjusted_shape = 2.0 / (1.0 / (2.0 * a - 1.0) + 1.0 / (2.0 * b - 1.0));
+        let shape_skew = 1.0 / (2.0 * b - 1.0) - 1.0 / (2.0 * a - 1.0);
+        let logit_half_shift = normal_deviate * libm::sqrt(normal_curvature + adjusted_shape)
+            / adjusted_shape
+            - shape_skew * (normal_curvature + 5.0 / 6.0 - 2.0 / (3.0 * adjusted_shape));
+        interiorize(a / (a + b * libm::exp(2.0 * logit_half_shift)))
     } else {
-        let lna = libm::log(a / (a + b));
-        let lnb = libm::log(b / (a + b));
-        let t = libm::exp(a * lna) / a;
-        let u = libm::exp(b * lnb) / b;
-        let w = t + u;
-        let x = if p < t / w {
-            libm::exp(libm::log(a * w * p) / a)
+        // A&S 26.5.22 also gives a small-shape branch based on the endpoint
+        // weights of the two beta tails.
+        let total_shape = a + b;
+        let left_log_share = libm::log(a / total_shape);
+        let right_log_share = libm::log(b / total_shape);
+        let left_endpoint_weight = libm::exp(a * left_log_share) / a;
+        let right_endpoint_weight = libm::exp(b * right_log_share) / b;
+        let endpoint_weight_sum = left_endpoint_weight + right_endpoint_weight;
+        let x = if p < left_endpoint_weight / endpoint_weight_sum {
+            libm::exp(libm::log(a * endpoint_weight_sum * p) / a)
         } else {
-            1.0 - libm::exp(libm::log(b * w * (1.0 - p)) / b)
+            1.0 - libm::exp(libm::log(b * endpoint_weight_sum * (1.0 - p)) / b)
         };
         interiorize(x)
     }

@@ -339,24 +339,13 @@ impl PhirClassicalInterpreter {
                         );
                     }
                 } else {
-                    // Match Python: format(cval, '0{size}b')
-                    //
-                    // Python stores values in PECOS signed dtypes. When the value
-                    // is negative (determined by the TYPE's sign interpretation),
-                    // format() shows "-" prefix + magnitude. We use as_i64() which
-                    // sign-extends from the register's bit width -- this matches
-                    // Python behavior because Python stores the sign-extended value
-                    // in the full-width dtype.
-                    let signed_val = val.as_i64();
-                    let bits = if info.data_type.is_signed() && signed_val < 0 {
-                        format!(
-                            "-{:0>width$b}",
-                            signed_val.unsigned_abs(),
-                            width = info.size
-                        )
-                    } else {
-                        format!("{:0>width$b}", val.as_u64(), width = info.size)
-                    };
+                    // Render the raw two's-complement bit pattern rather than
+                    // sign-and-magnitude (which prints a leading "-" for
+                    // negative values). `as_u64()` already holds the value
+                    // masked to the register, so a negative value becomes its
+                    // full-width two's-complement string and the sign bit shows
+                    // up as a "1"/"0" like every other bit.
+                    let bits = format!("{:0>width$b}", val.as_u64(), width = info.size);
                     result.insert(info.name.clone(), ResultValue::BitString(bits));
                 }
             }
@@ -910,6 +899,34 @@ mod tests {
         match m_val {
             ResultValue::Int(v, _) => assert_eq!(*v, 1), // bit 0 = 1, bit 1 = 0 -> value = 1
             _ => panic!("Expected Int"),
+        }
+    }
+
+    #[test]
+    fn test_negative_signed_register_is_twos_complement() {
+        // A full-width signed register (size == type width) can hold a
+        // negative value. Its bit string must be the two's-complement pattern
+        // (sign bit as "1"/"0"), never a sign-and-magnitude "-...".
+        let mut interp = PhirClassicalInterpreter::new();
+        interp.init(SIMPLE_PROGRAM, None).unwrap();
+
+        interp.add_cvar("w", DataType::I32, 32).unwrap();
+        interp.add_cvar("n", DataType::I32, 32).unwrap();
+        // -1 stored as its 32-bit two's-complement pattern.
+        interp.environment.set("w", 0xFFFF_FFFF).unwrap();
+        interp.environment.set("n", 5).unwrap();
+
+        let results = interp.results(false);
+        match results.get("w").unwrap() {
+            ResultValue::BitString(s) => {
+                assert_eq!(s, &"1".repeat(32));
+                assert!(!s.contains('-'));
+            }
+            other => panic!("Expected BitString, got {other:?}"),
+        }
+        match results.get("n").unwrap() {
+            ResultValue::BitString(s) => assert_eq!(s, "00000000000000000000000000000101"),
+            other => panic!("Expected BitString, got {other:?}"),
         }
     }
 

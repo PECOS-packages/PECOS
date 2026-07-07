@@ -120,3 +120,37 @@ def test_setting_mixed() -> None:
     assert results_dict["b"].count("011") == len(results_dict["b"])
     assert results_dict["c"].count("010") == len(results_dict["c"])
     assert results_dict["d"].count("100") == len(results_dict["d"])
+
+
+def test_negative_signed_register_is_twos_complement() -> None:
+    """Negative signed registers print two's-complement bits, not a "-" sign.
+
+    A full-width signed register (size == the backing type width) can hold a
+    negative value. Its bit string must show the sign bit as "1"/"0" and stay
+    exactly `size` characters wide -- never Python's sign-and-magnitude "-...".
+    """
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "cvar_define", "data_type": "i32", "variable": "w", "size": 32},
+            {"data": "cvar_define", "data_type": "i64", "variable": "d", "size": 64},
+            # w = d = 0 - 1  ->  -1  ->  all ones in two's complement
+            {
+                "cop": "=",
+                "returns": ["w", "d"],
+                "args": [
+                    {"cop": "-", "args": [0, 1]},
+                    {"cop": "-", "args": [0, 1]},
+                ],
+            },
+        ],
+    }
+
+    results = HybridEngine(qsim="stabilizer").run(program=phir, shots=3)
+
+    for bits in results["w"]:
+        assert bits == "1" * 32
+    for bits in results["d"]:
+        assert bits == "1" * 64
+    assert not any("-" in bits for bits in results["w"] + results["d"])

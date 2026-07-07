@@ -424,9 +424,14 @@ class PhirClassicalInterpreter:
         for csym, cid in self.csym2id.items():
             cval = self.cenv[cid]
             if not return_int:
-                size = self.cvar_meta[cid].size
-                # Use native __format__() implementation from Rust scalars
-                cval = "{:0{width}b}".format(cval, width=size)
+                width = self.cvar_meta[cid].size
+                # Render the raw two's-complement bit pattern rather than
+                # Python's sign-and-magnitude form (which prints a leading "-"
+                # for negative values). Masking to `width` bits turns a
+                # negative value into its full-width two's-complement string,
+                # so the sign bit shows up as a "1"/"0" like every other bit.
+                raw = int(cval) & ((1 << width) - 1)
+                cval = format(raw, f"0{width}b")
             result[csym] = cval
 
         return result

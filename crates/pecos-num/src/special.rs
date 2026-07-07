@@ -20,8 +20,8 @@
 
 use std::fmt;
 
-const BETACF_MAX_ITERATIONS: usize = 10_000;
-const BETACF_EPSILON: f64 = f64::EPSILON;
+const BETA_CONTINUED_FRACTION_MAX_ITERATIONS: usize = 10_000;
+const BETA_CONTINUED_FRACTION_EPSILON: f64 = f64::EPSILON;
 const BETA_POWER_SERIES_MAX_ITERATIONS: usize = 10_000;
 const BETA_POWER_SERIES_EPSILON: f64 = f64::EPSILON;
 const GAMMA_MAX_ITERATIONS: usize = 10_000;
@@ -637,7 +637,7 @@ fn lower_beta_tail(a: f64, b: f64, x: f64, prefactor: f64) -> Result<f64, Specia
     if b * x <= 1.0 && x <= 0.95 {
         beta_power_series(a, b, x)
     } else {
-        Ok(prefactor * betacf(a, b, x)? / a)
+        Ok(prefactor * beta_continued_fraction(a, b, x)? / a)
     }
 }
 
@@ -1014,7 +1014,7 @@ fn regularized_gamma_q_fraction(a: f64, x: f64) -> Result<f64, SpecialError> {
     Ok(value)
 }
 
-fn betacf(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
+fn beta_continued_fraction(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
     // DLMF 8.17.22 writes the regularized-beta factor as the reciprocal of
     // 1 + d_1/(1 + d_2/(1 + ...)), with d_{2m} and d_{2m+1} given in DLMF
     // 8.17.23. The continued fraction is evaluated by modified Lentz updates
@@ -1025,11 +1025,11 @@ fn betacf(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
     modified_lentz_reciprocal(
         1.0,
         LentzProblem {
-            max_terms: 2 * BETACF_MAX_ITERATIONS + 1,
-            reported_iterations: BETACF_MAX_ITERATIONS,
-            epsilon: BETACF_EPSILON,
+            max_terms: 2 * BETA_CONTINUED_FRACTION_MAX_ITERATIONS + 1,
+            reported_iterations: BETA_CONTINUED_FRACTION_MAX_ITERATIONS,
+            epsilon: BETA_CONTINUED_FRACTION_EPSILON,
             quantity_name: "regularized beta continued fraction",
-            function_name: "betacf",
+            function_name: "beta_continued_fraction",
             convergence_checkpoint: |term_index| term_index > 1 && term_index % 2 == 1,
             numerator: |term_index| {
                 if term_index % 2 == 0 {

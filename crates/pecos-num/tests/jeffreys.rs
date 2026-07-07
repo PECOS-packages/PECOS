@@ -506,7 +506,12 @@ fn check_fixture_value(
     // The design tolerance is expressed as
     // max(1e-12, 5e-15 / max(p, 1-p)) on relative x error. The fixture columns
     // are x-values, so this test interprets p as x_oracle and uses
-    // max(x_oracle, 1 - x_oracle).
+    // max(x_oracle, 1 - x_oracle). Note the second term never binds: with
+    // max(x, 1-x) >= 0.5 it is at most 1e-14, so the effective tolerance is a
+    // flat 1e-12 everywhere; the formula is kept verbatim from the design note.
+    // Property tests elsewhere use ~1e-9 tolerances because they compound two
+    // independent inverse solves plus a subtraction; these fixture rows are
+    // the accuracy pins.
     let relative_error = relative_x_error(actual, expected);
     let tolerance = fixture_relative_tolerance(expected);
     if relative_error > worst.relative_error {

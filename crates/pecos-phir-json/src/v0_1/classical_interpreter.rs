@@ -339,13 +339,27 @@ impl PhirClassicalInterpreter {
                         );
                     }
                 } else {
+                    // A signed register carries a sign bit on top of its `size`
+                    // data bits, so a size-n register prints n+1 bits -- capped
+                    // at the backing type width, since an i32-backed register
+                    // cannot exceed 32 bits. Unsigned registers stay at `size`.
+                    let width = if info.data_type.is_signed() {
+                        (info.size + 1).min(info.data_type.bit_width())
+                    } else {
+                        info.size
+                    };
                     // Render the raw two's-complement bit pattern rather than
                     // sign-and-magnitude (which prints a leading "-" for
                     // negative values). `as_u64()` already holds the value
-                    // masked to the register, so a negative value becomes its
-                    // full-width two's-complement string and the sign bit shows
-                    // up as a "1"/"0" like every other bit.
-                    let bits = format!("{:0>width$b}", val.as_u64(), width = info.size);
+                    // masked to the register, so reinterpreting it at `width`
+                    // bits makes the sign bit print as a "1"/"0" like every
+                    // other bit.
+                    let mask = if width >= 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << width) - 1
+                    };
+                    let bits = format!("{:0>width$b}", val.as_u64() & mask, width = width);
                     result.insert(info.name.clone(), ResultValue::BitString(bits));
                 }
             }
@@ -912,9 +926,13 @@ mod tests {
 
         interp.add_cvar("w", DataType::I32, 32).unwrap();
         interp.add_cvar("n", DataType::I32, 32).unwrap();
+        // A size-31 signed register adds a sign bit -> 32 bits total, and is
+        // non-negative (data masked to 31 bits) so the sign bit is "0".
+        interp.add_cvar("s", DataType::I32, 31).unwrap();
         // -1 stored as its 32-bit two's-complement pattern.
         interp.environment.set("w", 0xFFFF_FFFF).unwrap();
         interp.environment.set("n", 5).unwrap();
+        interp.environment.set("s", 5).unwrap();
 
         let results = interp.results(false);
         match results.get("w").unwrap() {
@@ -926,6 +944,13 @@ mod tests {
         }
         match results.get("n").unwrap() {
             ResultValue::BitString(s) => assert_eq!(s, "00000000000000000000000000000101"),
+            other => panic!("Expected BitString, got {other:?}"),
+        }
+        match results.get("s").unwrap() {
+            ResultValue::BitString(s) => {
+                assert_eq!(s, "00000000000000000000000000000101");
+                assert_eq!(s.len(), 32); // 31 data bits + 1 sign bit
+            }
             other => panic!("Expected BitString, got {other:?}"),
         }
     }

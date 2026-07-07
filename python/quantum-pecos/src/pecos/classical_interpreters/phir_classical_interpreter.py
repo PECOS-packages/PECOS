@@ -424,12 +424,19 @@ class PhirClassicalInterpreter:
         for csym, cid in self.csym2id.items():
             cval = self.cenv[cid]
             if not return_int:
-                width = self.cvar_meta[cid].size
+                meta = self.cvar_meta[cid]
+                width = meta.size
+                if meta.data_type in signed_data_types:
+                    # A signed register carries a sign bit on top of its `size`
+                    # data bits, so a size-n register prints n+1 bits -- capped
+                    # at the backing type width, since an i32-backed register
+                    # cannot exceed 32 bits.
+                    width = min(width + 1, self.cid2dtype[cid].itemsize * 8)
                 # Render the raw two's-complement bit pattern rather than
                 # Python's sign-and-magnitude form (which prints a leading "-"
                 # for negative values). Masking to `width` bits turns a
-                # negative value into its full-width two's-complement string,
-                # so the sign bit shows up as a "1"/"0" like every other bit.
+                # negative value into its two's-complement string, so the sign
+                # bit shows up as a "1"/"0" like every other bit.
                 raw = int(cval) & ((1 << width) - 1)
                 cval = format(raw, f"0{width}b")
             result[csym] = cval

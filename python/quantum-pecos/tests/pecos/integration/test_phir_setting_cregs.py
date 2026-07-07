@@ -126,8 +126,8 @@ def test_negative_signed_register_is_twos_complement() -> None:
     """Negative signed registers print two's-complement bits, not a "-" sign.
 
     A full-width signed register (size == the backing type width) can hold a
-    negative value. Its bit string must show the sign bit as "1"/"0" and stay
-    exactly `size` characters wide -- never Python's sign-and-magnitude "-...".
+    negative value. Its bit string must show the sign bit as "1"/"0" -- never
+    Python's sign-and-magnitude "-..." -- and stays at the backing width.
     """
     phir = {
         "format": "PHIR/JSON",
@@ -154,3 +154,30 @@ def test_negative_signed_register_is_twos_complement() -> None:
     for bits in results["d"]:
         assert bits == "1" * 64
     assert not any("-" in bits for bits in results["w"] + results["d"])
+
+
+def test_signed_register_prints_sign_bit_width() -> None:
+    """A signed size-n register prints n+1 bits: n data bits plus a sign bit.
+
+    A size-31 i32-backed register is non-negative (its data bits are masked to
+    31 bits), so it prints 32 bits with a leading "0" sign bit. An unsigned
+    register has no sign bit and stays exactly `size` wide.
+    """
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "cvar_define", "data_type": "i32", "variable": "s", "size": 31},
+            {"data": "cvar_define", "data_type": "u32", "variable": "u", "size": 31},
+            {"cop": "=", "returns": ["s", "u"], "args": [5, 5]},
+        ],
+    }
+
+    results = HybridEngine(qsim="stabilizer").run(program=phir, shots=3)
+
+    for bits in results["s"]:
+        assert bits == "0" + "0" * 26 + "00101"  # 32 bits: sign "0" + 31 data bits
+        assert len(bits) == 32
+    for bits in results["u"]:
+        assert bits == "0" * 26 + "00101"  # 31 bits, no sign bit
+        assert len(bits) == 31

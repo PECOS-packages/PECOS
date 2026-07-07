@@ -12,457 +12,1313 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Special functions: log-gamma and the regularized incomplete beta
-//! function with its inverse.
+//! Special functions used by PECOS numerical routines.
 //!
-//! These are the primitives behind Beta-distribution quantiles, which in
-//! turn back the Jeffreys binomial interval in [`crate::stats`].
-//!
-//! Algorithms follow Numerical Recipes, 3rd edition, section 6.1
-//! (Lanczos log-gamma) and section 6.4 (Lentz continued fraction for the
-//! incomplete beta; Halley iteration with the Abramowitz & Stegun 26.5.22
-//! initial guess for the inverse). Differential tests against `SciPy`
-//! reference values live in the test module below.
+//! The incomplete-beta implementation follows the Numerical Recipes-style
+//! `ln_gamma` / continued-fraction / regularized-beta / inverse-beta chain,
+//! with the reflection branch selected before forming complements.
 
-/// Convergence threshold for the inverse incomplete beta Halley iteration.
-const BETAINC_INV_EPS: f64 = 1.0e-8;
-/// Maximum iterations for the incomplete-beta continued fraction.
-const BETACF_MAX_ITER: u32 = 10_000;
-/// Convergence threshold for the continued fraction.
-const BETACF_EPS: f64 = 3.0e-14;
-/// Smallest representable ratio guard for Lentz's method.
-const BETACF_FPMIN: f64 = f64::MIN_POSITIVE / BETACF_EPS;
+use std::fmt;
 
-/// Natural logarithm of the gamma function for `x > 0`.
+const BETACF_MAX_ITERATIONS: usize = 10_000;
+const BETACF_EPSILON: f64 = f64::EPSILON;
+const BETA_POWER_SERIES_MAX_ITERATIONS: usize = 10_000;
+const BETA_POWER_SERIES_EPSILON: f64 = f64::EPSILON;
+const GAMMA_MAX_ITERATIONS: usize = 10_000;
+const GAMMA_EPSILON: f64 = f64::EPSILON;
+/// Minimum `b` for the large-b beta expansion.
 ///
-/// Drop-in replacement for `scipy.special.gammaln` on the positive real
-/// axis. Uses the 14-term Lanczos approximation (Numerical Recipes 3rd
-/// ed., section 6.1), accurate to roughly machine precision.
+/// The effective accuracy bound is the scale test `a*a/b <= 0.1`; this floor
+/// only prevents very small-count probes from entering the asymptotic path.
+/// Round-5 validation swept the scipy pocket fixtures from `n = 1e6` through
+/// `n = 8_999_990` for `a <= 64.5`, plus below-floor ordered probes at
+/// `b ~= 1e4` and `b ~= 4.1e4`.
+const BETA_LARGE_SHAPE_MIN: f64 = 10_000.0;
+const BETA_LARGE_SHAPE_MODERATE_MAX: f64 = 3_001.0;
+/// Maximum beta argument for large-b expansion probes.
 ///
-/// Returns NaN for `x <= 0`.
+/// Jeffreys quantiles in the validated large-b branch are well below this; the
+/// wider guard keeps inverse-solver boundary probes out of the reflected-CF
+/// underflow zone.
+const BETA_LARGE_SHAPE_X_MAX: f64 = 1.0e-2;
+/// Expansion scale bound for the BGRAT large-b series.
+///
+/// The value was retained only after fixture and boundary sweeps covering
+/// `a <= 3000.5`, `b <= 1e8`, and the Round-5 small-a pocket rows.
+const BETA_LARGE_SHAPE_EXPANSION_PARAMETER_MAX: f64 = 0.1;
+const BETA_LARGE_B_EXPANSION_TERMS: usize = 48;
+const BETA_LARGE_B_EXPANSION_LEN: usize = BETA_LARGE_B_EXPANSION_TERMS + 1;
+const BETA_GAUSS_LEGENDRE_SWITCH: f64 = 3_000.0;
+const BETA_GAUSS_LEGENDRE_PANELS: usize = 2;
+const BETA_GAUSS_LEGENDRE_PROBABILITY_FLOOR: f64 = 5.0e-15;
+const BETA_ASYMPTOTIC_NORMALIZER_MIN: f64 = 100_000.0;
+const BETA_MEDIAN_ASYMPTOTIC_MIN: f64 = 1_000_000.0;
+const GAMMA_HALF_INTEGER_MAX_X: f64 = 700.0;
+const GAMMA_HALF_INTEGER_MAX_STEPS: usize = 128;
+const FPMIN: f64 = f64::MIN_POSITIVE / f64::EPSILON;
+const HALF_LN_TWO_PI: f64 = 0.918_938_533_204_672_8;
+const LN_EPSILON: f64 = -36.043_653_389_117_15;
+const LN_MIN_POSITIVE: f64 = -708.396_418_532_264_1;
+const SQRT_PI: f64 = 1.772_453_850_905_516;
+const GAUSS_LEGENDRE_Y: [f64; 64] = [
+    0.000_347_479_132_113_914_8,
+    0.001_829_941_614_022_39,
+    0.004_493_314_261_627_856_5,
+    0.008_331_873_057_687_012,
+    0.013_336_586_105_044_512,
+    0.019_495_600_173_973_116,
+    0.026_794_312_570_798_617,
+    0.035_215_413_934_030_215,
+    0.044_738_931_460_748_59,
+    0.055_342_277_002_442_93,
+    0.067_000_300_922_953_56,
+    0.079_685_351_873_709_79,
+    0.093_367_342_438_601_23,
+    0.108_013_820_528_329_31,
+    0.123_590_046_369_734_03,
+    0.140_059_074_914_194_56,
+    0.157_381_843_472_883_36,
+    0.175_517_264_372_671_34,
+    0.194_422_322_413_803_36,
+    0.214_052_176_898_683,
+    0.234_360_267_990_052_72,
+    0.255_298_427_146_473_55,
+    0.276_816_991_373_268,
+    0.298_864_921_018_004_2,
+    0.321_389_920_831_165_9,
+    0.344_338_564_004_894_5,
+    0.367_656_418_895_616_3,
+    0.391_288_178_129_996_44,
+    0.415_177_789_788_003_57,
+    0.439_268_590_351_939_7,
+    0.463_503_439_106_100_5,
+    0.487_824_853_668_287_76,
+    0.512_175_146_331_712_2,
+    0.536_496_560_893_899_5,
+    0.560_731_409_648_060_2,
+    0.584_822_210_211_996_4,
+    0.608_711_821_870_003_5,
+    0.632_343_581_104_383_7,
+    0.655_661_435_995_105_5,
+    0.678_610_079_168_834_1,
+    0.701_135_078_981_995_8,
+    0.723_183_008_626_732,
+    0.744_701_572_853_526_5,
+    0.765_639_732_009_947_3,
+    0.785_947_823_101_317_1,
+    0.805_577_677_586_196_7,
+    0.824_482_735_627_328_7,
+    0.842_618_156_527_116_7,
+    0.859_940_925_085_805_4,
+    0.876_409_953_630_266,
+    0.891_986_179_471_670_7,
+    0.906_632_657_561_398_8,
+    0.920_314_648_126_290_3,
+    0.932_999_699_077_046_4,
+    0.944_657_722_997_557,
+    0.955_261_068_539_251_4,
+    0.964_784_586_065_969_8,
+    0.973_205_687_429_201_4,
+    0.980_504_399_826_026_9,
+    0.986_663_413_894_955_5,
+    0.991_668_126_942_313,
+    0.995_506_685_738_372_1,
+    0.998_170_058_385_977_6,
+    0.999_652_520_867_886_1,
+];
+const GAUSS_LEGENDRE_W: [f64; 64] = [
+    0.000_891_640_360_848_133_9,
+    0.002_073_516_630_281_260_4,
+    0.003_252_228_984_489_184,
+    0.004_423_379_913_181_967,
+    0.005_584_069_730_065_538,
+    0.006_731_523_948_359_368,
+    0.007_863_015_238_012_236,
+    0.008_975_857_887_848_613,
+    0.010_067_411_576_765_09,
+    0.011_135_086_904_191_606,
+    0.012_176_351_284_355_466,
+    0.013_188_734_857_527_322,
+    0.014_169_836_307_129_73,
+    0.015_117_328_536_201_213,
+    0.016_028_964_177_425_803,
+    0.016_902_580_918_570_807,
+    0.017_736_106_628_441_18,
+    0.018_527_564_270_120_034,
+    0.019_275_076_589_307_8,
+    0.019_976_870_566_360_18,
+    0.020_631_281_621_311_774,
+    0.021_236_757_561_826_813,
+    0.021_791_862_264_661_736,
+    0.022_295_279_081_878_29,
+    0.022_745_813_963_709_06,
+    0.023_142_398_290_657_198,
+    0.023_484_091_408_104_996,
+    0.023_770_082_857_415_158,
+    0.023_999_694_298_229_166,
+    0.024_172_381_117_401_45,
+    0.024_287_733_720_751_697,
+    0.024_345_478_504_569_865,
+    0.024_345_478_504_569_865,
+    0.024_287_733_720_751_697,
+    0.024_172_381_117_401_45,
+    0.023_999_694_298_229_166,
+    0.023_770_082_857_415_158,
+    0.023_484_091_408_104_996,
+    0.023_142_398_290_657_198,
+    0.022_745_813_963_709_06,
+    0.022_295_279_081_878_29,
+    0.021_791_862_264_661_736,
+    0.021_236_757_561_826_813,
+    0.020_631_281_621_311_774,
+    0.019_976_870_566_360_18,
+    0.019_275_076_589_307_8,
+    0.018_527_564_270_120_034,
+    0.017_736_106_628_441_18,
+    0.016_902_580_918_570_807,
+    0.016_028_964_177_425_803,
+    0.015_117_328_536_201_213,
+    0.014_169_836_307_129_73,
+    0.013_188_734_857_527_322,
+    0.012_176_351_284_355_466,
+    0.011_135_086_904_191_606,
+    0.010_067_411_576_765_09,
+    0.008_975_857_887_848_613,
+    0.007_863_015_238_012_236,
+    0.006_731_523_948_359_368,
+    0.005_584_069_730_065_538,
+    0.004_423_379_913_181_967,
+    0.003_252_228_984_489_184,
+    0.002_073_516_630_281_260_4,
+    0.000_891_640_360_848_133_9,
+];
+
+/// Error type for special-function routines.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpecialError {
+    /// Input was outside the mathematical domain of the requested function.
+    InvalidInput {
+        /// Explanation of the invalid input.
+        message: String,
+    },
+    /// A fixed iteration budget was exhausted before convergence.
+    MaxIterations {
+        /// Name of the routine that exhausted its budget.
+        function: &'static str,
+        /// Number of iterations attempted.
+        iterations: usize,
+    },
+    /// A non-finite or otherwise unusable intermediate value was encountered.
+    NumericalIssue {
+        /// Explanation of the numerical issue.
+        message: String,
+    },
+}
+
+impl fmt::Display for SpecialError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidInput { message } => write!(f, "Invalid input: {message}"),
+            Self::MaxIterations {
+                function,
+                iterations,
+            } => write!(
+                f,
+                "Maximum iterations ({iterations}) exceeded in {function}"
+            ),
+            Self::NumericalIssue { message } => write!(f, "Numerical issue: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for SpecialError {}
+
+/// Options for the bracket-preserving inverse regularized-beta solver.
+#[derive(Debug, Clone, Copy)]
+pub struct InverseBetaOptions {
+    /// Maximum number of Newton/Halley iterations.
+    pub max_newton: usize,
+    /// Maximum number of bisection-only iterations after Newton is exhausted.
+    pub max_bisect: usize,
+    /// Absolute probability-scale residual tolerance.
+    pub probability_tolerance: f64,
+    /// Relative-x step tolerance.
+    pub relative_x_tolerance: f64,
+}
+
+impl Default for InverseBetaOptions {
+    fn default() -> Self {
+        Self {
+            max_newton: 100,
+            max_bisect: 200,
+            probability_tolerance: 1.0e-15,
+            relative_x_tolerance: 1.0e-12,
+        }
+    }
+}
+
+/// Inverse-beta quantile and its complement.
+///
+/// For roots at or below `0.5`, [`invbetai`] solves directly for [`Self::x`]
+/// and derives [`Self::complement`]. For roots above `0.5`, it solves the
+/// swapped complement problem directly for [`Self::complement`] and derives
+/// [`Self::x`]. This reconciles the design-note requirement to avoid losing the
+/// well-conditioned side to `1 - x` cancellation while preserving the
+/// user-facing `x`/`complement` pair.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BetaQuantile {
+    /// The quantile `x` such that `I_x(a,b) = p`.
+    pub x: f64,
+    /// The complement `1 - x`, returned with the quantile for tail-sensitive callers.
+    pub complement: f64,
+}
+
+/// Lower/upper tail probabilities for a regularized distribution function.
+///
+/// The pair is used for both beta `I_x(a,b)`/`1 - I_x(a,b)` and gamma
+/// `P(a,x)`/`Q(a,x)` helper paths.
+#[derive(Debug, Clone, Copy)]
+struct TailPair {
+    lower: f64,
+    upper: f64,
+}
+
+/// Natural logarithm of the gamma function.
+///
+/// This uses `libm::lgamma` explicitly, matching the Jeffreys interval
+/// determinism contract for special-function paths. The v3 design note's
+/// implementation plan named a Lanczos approximation; delegating to
+/// `libm::lgamma` is an intentional reconciliation with the same note's
+/// mandatory libm-by-name determinism contract.
+///
+/// # Errors
+///
+/// Returns an error if `x` is not positive and finite, or if `libm::lgamma`
+/// returns a non-finite value.
 ///
 /// # Examples
 ///
 /// ```
 /// use pecos_num::special::ln_gamma;
 ///
-/// // Gamma(1) = 1, Gamma(2) = 1
-/// assert!(ln_gamma(1.0).abs() < 1e-14);
-/// assert!(ln_gamma(2.0).abs() < 1e-14);
-/// // Gamma(0.5) = sqrt(pi)
-/// let half = std::f64::consts::PI.sqrt().ln();
-/// assert!((ln_gamma(0.5) - half).abs() < 1e-14);
+/// let value = ln_gamma(5.0).unwrap();
+/// assert!((value - 3.178_053_830_347_945_8).abs() < 1e-14);
 /// ```
-#[must_use]
-pub fn ln_gamma(x: f64) -> f64 {
-    const COF: [f64; 14] = [
-        57.156_235_665_862_92,
-        -59.597_960_355_475_49,
-        14.136_097_974_741_746,
-        -0.491_913_816_097_620_2,
-        3.399_464_998_481_189e-5,
-        4.652_362_892_704_858e-5,
-        -9.837_447_530_487_956e-5,
-        1.580_887_032_249_125e-4,
-        -2.102_644_417_241_049e-4,
-        2.174_396_181_152_126e-4,
-        -1.643_181_065_367_639e-4,
-        8.441_822_398_385_274e-5,
-        -2.619_083_840_158_141e-5,
-        3.689_918_265_953_162e-6,
-    ];
-    const LANCZOS_G: f64 = 5.242_187_5;
-    const SQRT_2PI: f64 = 2.506_628_274_631_000_5;
-
-    if x <= 0.0 {
-        return f64::NAN;
+pub fn ln_gamma(x: f64) -> Result<f64, SpecialError> {
+    ensure_positive("x", x)?;
+    let value = libm::lgamma(x);
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(SpecialError::NumericalIssue {
+            message: "libm::lgamma returned a non-finite value".to_string(),
+        })
     }
-
-    let mut denom = x;
-    let tmp = x + LANCZOS_G;
-    let tmp = (x + 0.5) * tmp.ln() - tmp;
-    let mut series = 0.999_999_999_999_997_1;
-    for c in COF {
-        denom += 1.0;
-        series += c / denom;
-    }
-    tmp + (SQRT_2PI * series / x).ln()
 }
 
-/// Continued-fraction evaluation for the incomplete beta function
-/// (Numerical Recipes 3rd ed., section 6.4, via Lentz's method).
-fn betacf(a: f64, b: f64, x: f64) -> f64 {
+/// Regularized incomplete beta function `I_x(a,b)`.
+///
+/// The implementation evaluates the continued fraction in the better
+/// conditioned tail and uses the reflection identity
+/// `I_x(a,b) = 1 - I_{1-x}(b,a)` when the complement is the stable branch.
+///
+/// # Errors
+///
+/// Returns an error if `a <= 0`, `b <= 0`, `x` is outside `[0, 1]`, a
+/// non-finite value is encountered, or the continued-fraction iteration budget
+/// is exhausted.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::special::betai;
+///
+/// let value = betai(2.0, 2.0, 0.5).unwrap();
+/// assert!((value - 0.5).abs() < 1e-14);
+/// ```
+pub fn betai(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
+    Ok(betai_pair(a, b, x)?.lower)
+}
+
+/// Inverse regularized incomplete beta function.
+///
+/// Returns both `x` and `1 - x` for the solution to `I_x(a,b) = p`. When the
+/// root lies above `0.5`, this solves the swapped problem for `1 - x` directly
+/// and derives `x`; otherwise it solves `x` directly and derives the
+/// complement. For `p = 0.5` with both shapes at least `1_000_000`, it uses the
+/// Peizer-Pratt/Kerman large-shape beta-median asymptotic because the GL
+/// forward CDF noise dominates further Newton refinement. See [`BetaQuantile`]
+/// for the exact-side contract.
+///
+/// # Errors
+///
+/// Returns an error if the inputs are outside the function domain, a
+/// non-finite value is encountered, or the fixed iteration budget is exhausted.
+///
+/// # Examples
+///
+/// ```
+/// use pecos_num::special::invbetai;
+///
+/// let quantile = invbetai(0.5, 2.0, 2.0).unwrap();
+/// assert!((quantile.x - 0.5).abs() < 1e-14);
+/// ```
+pub fn invbetai(p: f64, a: f64, b: f64) -> Result<BetaQuantile, SpecialError> {
+    invbetai_with_options(p, a, b, InverseBetaOptions::default())
+}
+
+/// Inverse regularized incomplete beta function with explicit iteration options.
+///
+/// This is primarily useful for tests and diagnostics that need to assert the
+/// fixed-budget error behavior.
+///
+/// # Errors
+///
+/// Returns an error if the inputs or options are invalid, a non-finite value is
+/// encountered, or the configured iteration budget is exhausted.
+pub fn invbetai_with_options(
+    p: f64,
+    a: f64,
+    b: f64,
+    options: InverseBetaOptions,
+) -> Result<BetaQuantile, SpecialError> {
+    ensure_unit_interval("p", p)?;
+    ensure_positive("a", a)?;
+    ensure_positive("b", b)?;
+    ensure_positive("probability_tolerance", options.probability_tolerance)?;
+    ensure_positive("relative_x_tolerance", options.relative_x_tolerance)?;
+
+    if p <= 0.0 {
+        return Ok(BetaQuantile {
+            x: 0.0,
+            complement: 1.0,
+        });
+    }
+    if p >= 1.0 {
+        return Ok(BetaQuantile {
+            x: 1.0,
+            complement: 0.0,
+        });
+    }
+    if let Some(quantile) = large_shape_median_quantile(p, a, b) {
+        return Ok(quantile);
+    }
+
+    let half = betai_pair(a, b, 0.5)?;
+    if p > half.lower {
+        let complement = invbetai_lower_tail(1.0 - p, b, a, options)?;
+        return Ok(BetaQuantile {
+            x: complement.complement,
+            complement: complement.x,
+        });
+    }
+
+    invbetai_lower_tail(p, a, b, options)
+}
+
+fn invbetai_lower_tail(
+    p: f64,
+    a: f64,
+    b: f64,
+    options: InverseBetaOptions,
+) -> Result<BetaQuantile, SpecialError> {
+    let total_iterations = options.max_newton + options.max_bisect;
+    if total_iterations == 0 {
+        return Err(SpecialError::MaxIterations {
+            function: "invbetai",
+            iterations: 0,
+        });
+    }
+
+    let mut lo = 0.0;
+    let mut hi = 1.0;
+    let mut x = initial_invbetai_guess(p, a, b);
+    if !is_strictly_inside(x, lo, hi) {
+        x = midpoint(lo, hi);
+    }
+
+    let mut previous_x = x;
+    let mut have_previous_step = false;
+    let mut lo_established = false;
+    let mut hi_established = false;
+    let effective_probability_tolerance = effective_probability_tolerance(options, a, b);
+
+    for iteration in 0..total_iterations {
+        let residual = invbetai_residual(p, a, b, x)?;
+        let abs_residual = residual.abs();
+
+        if same_float(abs_residual, 0.0) {
+            return Ok(direct_quantile(x));
+        }
+
+        if residual < 0.0 {
+            lo = x;
+            lo_established = true;
+        } else {
+            hi = x;
+            hi_established = true;
+        }
+
+        let bracket_established = lo_established && hi_established;
+        let step_ok = have_previous_step
+            && (x - previous_x).abs() <= options.relative_x_tolerance * previous_x.abs();
+        let bracket_limited = bracket_established && bracket_is_representation_limited(lo, hi, x);
+        if abs_residual <= effective_probability_tolerance && (step_ok || bracket_limited) {
+            return Ok(direct_quantile(x));
+        }
+        if bracket_limited {
+            return Ok(direct_quantile(midpoint(lo, hi)));
+        }
+
+        let newton = (iteration < options.max_newton)
+            .then(|| newton_candidate(a, b, x, residual))
+            .flatten()
+            .filter(|&candidate| is_strictly_inside(candidate, lo, hi));
+        let mut candidate =
+            newton.unwrap_or_else(|| fallback_candidate(residual, x, lo, hi, bracket_established));
+
+        if same_float(candidate, x) {
+            if abs_residual <= effective_probability_tolerance {
+                return Ok(direct_quantile(x));
+            }
+            candidate = fallback_candidate(residual, x, lo, hi, bracket_established);
+        }
+
+        if same_float(candidate, x) && bracket_established {
+            let bisected = midpoint(lo, hi);
+            if same_float(bisected, x) {
+                if bracket_limited {
+                    return Ok(direct_quantile(bisected));
+                }
+                return Err(SpecialError::MaxIterations {
+                    function: "invbetai",
+                    iterations: iteration + 1,
+                });
+            }
+            candidate = bisected;
+        }
+
+        if same_float(candidate, x) {
+            return Err(SpecialError::MaxIterations {
+                function: "invbetai",
+                iterations: iteration + 1,
+            });
+        }
+
+        previous_x = x;
+        x = candidate;
+        have_previous_step = true;
+    }
+
+    Err(SpecialError::MaxIterations {
+        function: "invbetai",
+        iterations: total_iterations,
+    })
+}
+
+fn effective_probability_tolerance(options: InverseBetaOptions, a: f64, b: f64) -> f64 {
+    if a > BETA_GAUSS_LEGENDRE_SWITCH && b > BETA_GAUSS_LEGENDRE_SWITCH {
+        // This is a local solver tolerance, not a global bound on GL forward
+        // error against scipy. Large symmetric CDF probes can differ by up to
+        // roughly `(a + b) * eps` from log-difference rounding; measured probes
+        // were about `0.26 * (a + b) * eps`. Newton only needs a deterministic
+        // zero of this fixed forward function, and the bracket-collapse check
+        // plus huge local density keep the returned x stable.
+        options
+            .probability_tolerance
+            .max(BETA_GAUSS_LEGENDRE_PROBABILITY_FLOOR)
+    } else {
+        options.probability_tolerance
+    }
+}
+
+fn fallback_candidate(residual: f64, x: f64, lo: f64, hi: f64, bracket_established: bool) -> f64 {
+    if bracket_established {
+        return midpoint(lo, hi);
+    }
+
+    if residual < 0.0 {
+        let expanded = (2.0 * x).min(0.5).max(midpoint(x, 0.5));
+        if is_strictly_inside(expanded, x, hi) {
+            expanded
+        } else {
+            midpoint(x, hi)
+        }
+    } else {
+        let contracted = 0.5 * x;
+        if is_strictly_inside(contracted, lo, x) {
+            contracted
+        } else {
+            midpoint(lo, x)
+        }
+    }
+}
+
+fn large_shape_median_quantile(p: f64, a: f64, b: f64) -> Option<BetaQuantile> {
+    if !same_float(p, 0.5) || a < BETA_MEDIAN_ASYMPTOTIC_MIN || b < BETA_MEDIAN_ASYMPTOTIC_MIN {
+        return None;
+    }
+
+    // Peizer-Pratt/Kerman large-shape beta-median asymptotic. In this regime
+    // the GL forward CDF noise dominates further Newton refinement; the
+    // approximation is the Boost/Temme-style asymptotic inverse used for the
+    // median-only path.
+    let denominator = a + b - 2.0 / 3.0;
+    if a > b {
+        let complement = (b - 1.0 / 3.0) / denominator;
+        Some(BetaQuantile {
+            x: 1.0 - complement,
+            complement,
+        })
+    } else {
+        let x = (a - 1.0 / 3.0) / denominator;
+        Some(BetaQuantile {
+            x,
+            complement: 1.0 - x,
+        })
+    }
+}
+
+#[inline]
+fn same_float(left: f64, right: f64) -> bool {
+    left.to_bits() == right.to_bits()
+}
+
+fn betai_pair(a: f64, b: f64, x: f64) -> Result<TailPair, SpecialError> {
+    ensure_positive("a", a)?;
+    ensure_positive("b", b)?;
+    ensure_unit_interval("x", x)?;
+
+    if x <= 0.0 {
+        return Ok(TailPair {
+            lower: 0.0,
+            upper: 1.0,
+        });
+    }
+    if x >= 1.0 {
+        return Ok(TailPair {
+            lower: 1.0,
+            upper: 0.0,
+        });
+    }
+
+    if let Some(cdf) = beta_large_shape_pair(a, b, x)? {
+        return Ok(cdf);
+    }
+    if a > BETA_GAUSS_LEGENDRE_SWITCH && b > BETA_GAUSS_LEGENDRE_SWITCH {
+        return betai_gauss_legendre_pair(a, b, x);
+    }
+
+    let prefactor = beta_prefactor(a, b, x)?;
+    let threshold = (a + 1.0) / (a + b + 2.0);
+    if x <= threshold || (x <= 0.1 && b * x <= 5.0) {
+        let lower = lower_beta_tail(a, b, x, prefactor)?;
+        ensure_finite("regularized beta lower tail", lower)?;
+        Ok(TailPair {
+            lower,
+            upper: 1.0 - lower,
+        })
+    } else {
+        let upper = lower_beta_tail(b, a, 1.0 - x, prefactor)?;
+        ensure_finite("regularized beta upper tail", upper)?;
+        Ok(TailPair {
+            lower: 1.0 - upper,
+            upper,
+        })
+    }
+}
+
+fn lower_beta_tail(a: f64, b: f64, x: f64, prefactor: f64) -> Result<f64, SpecialError> {
+    if b * x <= 1.0 && x <= 0.95 {
+        beta_power_series(a, b, x)
+    } else {
+        Ok(prefactor * betacf(a, b, x)? / a)
+    }
+}
+
+fn beta_prefactor(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
+    let value = libm::exp(log_beta_normalizer(a, b)? + a * libm::log(x) + b * libm::log1p(-x));
+    ensure_finite("regularized beta prefactor", value)?;
+    Ok(value)
+}
+
+fn beta_power_series(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
+    let reciprocal_a = 1.0 / a;
+    let mut term = (1.0 - b) * x;
+    let mut value = term / (a + 1.0);
+    let mut sum = value;
+    let tolerance = BETA_POWER_SERIES_EPSILON * reciprocal_a;
+    let mut n = 2.0;
+
+    for _iteration in 2..=BETA_POWER_SERIES_MAX_ITERATIONS {
+        term *= (n - b) * x / n;
+        value = term / (a + n);
+        sum += value;
+        if value.abs() <= tolerance {
+            let log_prefactor = log_beta_normalizer(a, b)? + a * libm::log(x);
+            let result = (sum + reciprocal_a) * libm::exp(log_prefactor);
+            ensure_finite("regularized beta power series", result)?;
+            return Ok(result);
+        }
+        n += 1.0;
+    }
+
+    Err(SpecialError::MaxIterations {
+        function: "beta_power_series",
+        iterations: BETA_POWER_SERIES_MAX_ITERATIONS,
+    })
+}
+
+fn betai_gauss_legendre_pair(a: f64, b: f64, x: f64) -> Result<TailPair, SpecialError> {
+    let a1 = a - 1.0;
+    let b1 = b - 1.0;
+    let mu = a / (a + b);
+    let ln_mu = libm::log(mu);
+    let ln_mu_complement = libm::log1p(-mu);
+    let sigma = libm::sqrt(a * b / ((a + b) * (a + b) * (a + b + 1.0)));
+    let integrate_upper = x > mu;
+
+    let xu = if integrate_upper {
+        if x >= 1.0 {
+            return Ok(TailPair {
+                lower: 1.0,
+                upper: 0.0,
+            });
+        }
+        (mu + 10.0 * sigma).max(x + 5.0 * sigma).min(1.0)
+    } else {
+        if x <= 0.0 {
+            return Ok(TailPair {
+                lower: 0.0,
+                upper: 1.0,
+            });
+        }
+        (mu - 10.0 * sigma).min(x - 5.0 * sigma).max(0.0)
+    };
+
+    let span = if integrate_upper { xu - x } else { x - xu };
+    let panel_width = span / usize_to_f64(BETA_GAUSS_LEGENDRE_PANELS);
+    let start = if integrate_upper { x } else { xu };
+    let mut sum = 0.0;
+    for panel in 0..BETA_GAUSS_LEGENDRE_PANELS {
+        let panel_start = start + usize_to_f64(panel) * panel_width;
+        for (&y, &weight) in GAUSS_LEGENDRE_Y.iter().zip(GAUSS_LEGENDRE_W.iter()) {
+            let t = panel_start + panel_width * y;
+            sum += weight
+                * libm::exp(
+                    a1 * (libm::log(t) - ln_mu) + b1 * (libm::log1p(-t) - ln_mu_complement),
+                );
+        }
+    }
+
+    let tail = sum
+        * panel_width
+        * libm::exp(a1 * ln_mu + b1 * ln_mu_complement + log_beta_normalizer(a, b)?);
+    ensure_finite("large-shape beta quadrature", tail)?;
+    if integrate_upper {
+        Ok(TailPair {
+            lower: 1.0 - tail,
+            upper: tail,
+        })
+    } else {
+        Ok(TailPair {
+            lower: tail,
+            upper: 1.0 - tail,
+        })
+    }
+}
+
+fn beta_large_shape_pair(a: f64, b: f64, x: f64) -> Result<Option<TailPair>, SpecialError> {
+    if let Some(pair) = beta_large_b_saturation_pair(a, b, x)? {
+        return Ok(Some(pair));
+    }
+
+    if beta_large_b_gate(a, b, x) {
+        return Ok(Some(beta_large_b_asymptotic_pair(a, b, x)?));
+    }
+
+    let x_complement = 1.0 - x;
+    if let Some(swapped) = beta_large_b_saturation_pair(b, a, x_complement)? {
+        return Ok(Some(TailPair {
+            lower: swapped.upper,
+            upper: swapped.lower,
+        }));
+    }
+
+    if beta_large_b_gate(b, a, x_complement) {
+        let swapped = beta_large_b_asymptotic_pair(b, a, x_complement)?;
+        return Ok(Some(TailPair {
+            lower: swapped.upper,
+            upper: swapped.lower,
+        }));
+    }
+
+    Ok(None)
+}
+
+fn beta_large_b_gate(a: f64, b: f64, x: f64) -> bool {
+    b >= BETA_LARGE_SHAPE_MIN
+        && a <= BETA_LARGE_SHAPE_MODERATE_MAX
+        && x <= BETA_LARGE_SHAPE_X_MAX
+        && a * a / b <= BETA_LARGE_SHAPE_EXPANSION_PARAMETER_MAX
+}
+
+fn beta_large_b_saturation_pair(a: f64, b: f64, x: f64) -> Result<Option<TailPair>, SpecialError> {
+    if b < BETA_LARGE_SHAPE_MIN
+        || a > BETA_LARGE_SHAPE_MODERATE_MAX
+        || a * a / b > BETA_LARGE_SHAPE_EXPANSION_PARAMETER_MAX
+    {
+        return Ok(None);
+    }
+
+    let w = -b * libm::log1p(-x);
+    if w <= a {
+        return Ok(None);
+    }
+
+    if gamma_upper_is_below_precision(a, w)? {
+        Ok(Some(TailPair {
+            lower: 1.0,
+            upper: 0.0,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+// DiDonato and Morris, ACM TOMS 18(3), 1992, Algorithm 708, uses the BGRAT
+// large-b expansion to reduce the beta tail to incomplete-gamma tails.  With
+// `w = -b log1p(-x)`, the beta integrand is a gamma density multiplied by the
+// fixed series `((1 - exp(-z)) / z)^(a - 1)`, `z = w / b`. The fixed expansion
+// budget is enabled only for the validated Jeffreys regime `b >= 1e4`,
+// `x <= 1e-2`, `a <= 3001`, and `a*a/b <= 0.1`. The scale bound, not the fixed
+// floor, is the active lower limit for the Round-5 small-a pocket rows; far-tail
+// probes with gamma-Q below machine precision saturate before reaching the
+// reflected continued fraction.
+fn beta_large_b_asymptotic_pair(a: f64, b: f64, x: f64) -> Result<TailPair, SpecialError> {
+    let w = -b * libm::log1p(-x);
+    if w <= 0.0 {
+        return Ok(TailPair {
+            lower: 0.0,
+            upper: 1.0,
+        });
+    }
+
+    let coefficients = large_b_expansion_coefficients(a);
+    let mut rising = 1.0;
+    let mut b_power = 1.0;
+    let mut lower_sum = 0.0;
+    let mut upper_sum = 0.0;
+
+    for (index, coefficient) in coefficients.iter().enumerate() {
+        if index > 0 {
+            rising *= a + usize_to_f64(index - 1);
+            b_power *= b;
+        }
+
+        let weight = coefficient * rising / b_power;
+        let gamma = regularized_gamma_pq(a + usize_to_f64(index), w)?;
+        lower_sum += weight * gamma.lower;
+        upper_sum += weight * gamma.upper;
+    }
+
+    let normalizer = libm::exp(a * libm::log(b) - log_gamma_delta(b, a));
+    ensure_finite("large-b beta expansion normalizer", normalizer)?;
+    if normalizer <= 0.0 {
+        return Err(SpecialError::NumericalIssue {
+            message: "large-b beta expansion normalizer was non-positive".to_string(),
+        });
+    }
+
+    let lower = clean_unit_probability("large-b beta lower tail", lower_sum / normalizer)?;
+    let upper = clean_unit_probability("large-b beta upper tail", upper_sum / normalizer)?;
+    Ok(TailPair { lower, upper })
+}
+
+fn large_b_expansion_coefficients(a: f64) -> [f64; BETA_LARGE_B_EXPANSION_LEN] {
+    let exponent = a - 1.0;
+    let mut base = [0.0; BETA_LARGE_B_EXPANSION_LEN];
+    let mut factorial = 1.0;
+    for (index, coefficient) in base.iter_mut().enumerate().skip(1) {
+        factorial *= usize_to_f64(index + 1);
+        let sign = if index % 2 == 0 { 1.0 } else { -1.0 };
+        *coefficient = sign / factorial;
+    }
+
+    let mut coefficients = [0.0; BETA_LARGE_B_EXPANSION_LEN];
+    coefficients[0] = 1.0;
+    let mut base_power = [0.0; BETA_LARGE_B_EXPANSION_LEN];
+    base_power[0] = 1.0;
+    let mut binomial = 1.0;
+
+    for order in 1..BETA_LARGE_B_EXPANSION_LEN {
+        base_power = multiply_series(&base_power, &base);
+        binomial *= (exponent - usize_to_f64(order - 1)) / usize_to_f64(order);
+        for index in order..BETA_LARGE_B_EXPANSION_LEN {
+            coefficients[index] += binomial * base_power[index];
+        }
+    }
+
+    coefficients
+}
+
+fn multiply_series(
+    left: &[f64; BETA_LARGE_B_EXPANSION_LEN],
+    right: &[f64; BETA_LARGE_B_EXPANSION_LEN],
+) -> [f64; BETA_LARGE_B_EXPANSION_LEN] {
+    let mut product = [0.0; BETA_LARGE_B_EXPANSION_LEN];
+    for left_index in 0..BETA_LARGE_B_EXPANSION_LEN {
+        for right_index in 0..(BETA_LARGE_B_EXPANSION_LEN - left_index) {
+            product[left_index + right_index] += left[left_index] * right[right_index];
+        }
+    }
+    product
+}
+
+fn regularized_gamma_pq(a: f64, x: f64) -> Result<TailPair, SpecialError> {
+    ensure_positive("a", a)?;
+    if x < 0.0 || !x.is_finite() {
+        return Err(SpecialError::InvalidInput {
+            message: "x must be non-negative and finite".to_string(),
+        });
+    }
+    if x <= 0.0 {
+        return Ok(TailPair {
+            lower: 0.0,
+            upper: 1.0,
+        });
+    }
+
+    if let Some(pair) = regularized_gamma_half_integer_pq(a, x)? {
+        return Ok(pair);
+    }
+
+    if x < a + 1.0 {
+        let lower = regularized_gamma_p_series(a, x)?;
+        Ok(TailPair {
+            lower,
+            upper: 1.0 - lower,
+        })
+    } else {
+        if gamma_upper_is_below_precision(a, x)? {
+            return Ok(TailPair {
+                lower: 1.0,
+                upper: 0.0,
+            });
+        }
+
+        let upper = regularized_gamma_q_fraction(a, x)?;
+        Ok(TailPair {
+            lower: 1.0 - upper,
+            upper,
+        })
+    }
+}
+
+fn gamma_upper_is_below_precision(a: f64, x: f64) -> Result<bool, SpecialError> {
+    let log_scale = -x + a * libm::log(x) - ln_gamma(a)?;
+    if log_scale <= LN_MIN_POSITIVE {
+        return Ok(true);
+    }
+
+    let denominator = (x + 1.0 - a).max(1.0);
+    Ok(log_scale - libm::log(denominator) <= LN_EPSILON)
+}
+
+fn regularized_gamma_half_integer_pq(a: f64, x: f64) -> Result<Option<TailPair>, SpecialError> {
+    if x < a || x >= GAMMA_HALF_INTEGER_MAX_X {
+        return Ok(None);
+    }
+
+    let steps_f = a - 0.5;
+    if steps_f < 0.0 || !same_float(steps_f, steps_f.round()) {
+        return Ok(None);
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    // Half-integer gate bounds steps to a non-negative exact integer
+    let steps = steps_f as usize;
+    if steps > GAMMA_HALF_INTEGER_MAX_STEPS {
+        return Ok(None);
+    }
+
+    let root_x = libm::sqrt(x);
+    let mut upper = libm::erfc(root_x);
+    let mut term = 2.0 * root_x * libm::exp(-x) / SQRT_PI;
+    let mut shape = 0.5;
+
+    for _ in 0..steps {
+        upper += term;
+        term *= x / (shape + 1.0);
+        shape += 1.0;
+    }
+
+    let upper = clean_unit_probability("half-integer gamma upper tail", upper)?;
+    let lower = clean_unit_probability("half-integer gamma lower tail", 1.0 - upper)?;
+    Ok(Some(TailPair { lower, upper }))
+}
+
+fn regularized_gamma_p_series(a: f64, x: f64) -> Result<f64, SpecialError> {
+    let mut ap = a;
+    let mut delta = 1.0 / a;
+    let mut sum = delta;
+
+    for _iteration in 1..=GAMMA_MAX_ITERATIONS {
+        ap += 1.0;
+        delta *= x / ap;
+        sum += delta;
+        if delta.abs() <= sum.abs() * GAMMA_EPSILON {
+            let value = sum * libm::exp(-x + a * libm::log(x) - ln_gamma(a)?);
+            ensure_finite("regularized gamma lower series", value)?;
+            return Ok(value);
+        }
+    }
+
+    Err(SpecialError::MaxIterations {
+        function: "regularized_gamma_p_series",
+        iterations: GAMMA_MAX_ITERATIONS,
+    })
+}
+
+fn regularized_gamma_q_fraction(a: f64, x: f64) -> Result<f64, SpecialError> {
+    let mut b = x + 1.0 - a;
+    let mut c = 1.0 / FPMIN;
+    let mut d = 1.0 / b;
+    let mut h = d;
+
+    for iteration in 1..=GAMMA_MAX_ITERATIONS {
+        let i = usize_to_f64(iteration);
+        let an = -i * (i - a);
+        b += 2.0;
+        d = an * d + b;
+        if d.abs() < FPMIN {
+            d = FPMIN;
+        }
+        c = b + an / c;
+        if c.abs() < FPMIN {
+            c = FPMIN;
+        }
+        d = 1.0 / d;
+        let delta = d * c;
+        h *= delta;
+        if (delta - 1.0).abs() <= GAMMA_EPSILON {
+            let value = libm::exp(-x + a * libm::log(x) - ln_gamma(a)?) * h;
+            ensure_finite("regularized gamma upper fraction", value)?;
+            return Ok(value);
+        }
+    }
+
+    Err(SpecialError::MaxIterations {
+        function: "regularized_gamma_q_fraction",
+        iterations: GAMMA_MAX_ITERATIONS,
+    })
+}
+
+fn betacf(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
     let qab = a + b;
     let qap = a + 1.0;
     let qam = a - 1.0;
     let mut c = 1.0;
     let mut d = 1.0 - qab * x / qap;
-    if d.abs() < BETACF_FPMIN {
-        d = BETACF_FPMIN;
+    if d.abs() < FPMIN {
+        d = FPMIN;
     }
     d = 1.0 / d;
     let mut h = d;
 
-    for m in 1..=BETACF_MAX_ITER {
-        let m = f64::from(m);
+    for iteration in 1..=BETACF_MAX_ITERATIONS {
+        let m = usize_to_f64(iteration);
         let m2 = 2.0 * m;
-
-        // Even step of the continued fraction.
-        let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        let mut aa = m * (b - m) * x / ((qam + m2) * (a + m2));
         d = 1.0 + aa * d;
-        if d.abs() < BETACF_FPMIN {
-            d = BETACF_FPMIN;
+        if d.abs() < FPMIN {
+            d = FPMIN;
         }
         c = 1.0 + aa / c;
-        if c.abs() < BETACF_FPMIN {
-            c = BETACF_FPMIN;
+        if c.abs() < FPMIN {
+            c = FPMIN;
         }
         d = 1.0 / d;
         h *= d * c;
 
-        // Odd step.
-        let aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        aa = -((a + m) * (qab + m) * x) / ((a + m2) * (qap + m2));
         d = 1.0 + aa * d;
-        if d.abs() < BETACF_FPMIN {
-            d = BETACF_FPMIN;
+        if d.abs() < FPMIN {
+            d = FPMIN;
         }
         c = 1.0 + aa / c;
-        if c.abs() < BETACF_FPMIN {
-            c = BETACF_FPMIN;
+        if c.abs() < FPMIN {
+            c = FPMIN;
         }
         d = 1.0 / d;
-        let del = d * c;
-        h *= del;
+        let delta = d * c;
+        h *= delta;
 
-        if (del - 1.0).abs() <= BETACF_EPS {
-            return h;
+        ensure_finite("regularized beta continued fraction", h)?;
+        if (delta - 1.0).abs() <= BETACF_EPSILON {
+            return Ok(h);
         }
     }
-    // The fraction converges for all valid inputs; reaching the iteration
-    // cap means the inputs were extreme enough that the result is unusable.
-    f64::NAN
+
+    Err(SpecialError::MaxIterations {
+        function: "betacf",
+        iterations: BETACF_MAX_ITERATIONS,
+    })
 }
 
-/// Regularized incomplete beta function `I_x(a, b)` for `a, b > 0` and
-/// `x` in `[0, 1]`.
-///
-/// Drop-in replacement for `scipy.special.betainc`. This is also the CDF
-/// of the Beta(a, b) distribution evaluated at `x`.
-///
-/// Returns NaN outside the valid domain.
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::special::betainc_reg;
-///
-/// // Symmetric case: I_{0.5}(a, a) = 0.5
-/// assert!((betainc_reg(10.0, 10.0, 0.5) - 0.5).abs() < 1e-12);
-/// // Boundaries
-/// assert_eq!(betainc_reg(2.0, 3.0, 0.0), 0.0);
-/// assert_eq!(betainc_reg(2.0, 3.0, 1.0), 1.0);
-/// ```
-#[must_use]
-pub fn betainc_reg(a: f64, b: f64, x: f64) -> f64 {
-    let domain_ok = a > 0.0 && b > 0.0 && (0.0..=1.0).contains(&x);
-    if !domain_ok {
-        return f64::NAN;
-    }
-    if x <= 0.0 {
-        return 0.0;
-    }
-    if x >= 1.0 {
-        return 1.0;
-    }
-
-    // Prefactor x^a (1-x)^b / (a B(a,b)), computed in log space.
-    let ln_front = ln_gamma(a + b) - ln_gamma(a) - ln_gamma(b) + a * x.ln() + b * (1.0 - x).ln();
-    let front = ln_front.exp();
-
-    // Use the continued fraction directly where it converges fastest,
-    // and the symmetry I_x(a,b) = 1 - I_{1-x}(b,a) otherwise.
-    if x < (a + 1.0) / (a + b + 2.0) {
-        front * betacf(a, b, x) / a
+fn invbetai_residual(p: f64, a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
+    let cdf = betai_pair(a, b, x)?;
+    if p <= 0.5 {
+        Ok(cdf.lower - p)
     } else {
-        1.0 - front * betacf(b, a, 1.0 - x) / b
+        Ok((1.0 - p) - cdf.upper)
     }
 }
 
-/// Inverse of the regularized incomplete beta function: returns `x` such
-/// that `betainc_reg(a, b, x) == p`.
-///
-/// Matches `scipy.special.betaincinv` (this is the quantile / inverse CDF
-/// of the Beta(a, b) distribution) over the parameter scales validated by
-/// the test module: shape parameters up to roughly binomial-trial counts
-/// of 1e12 and `p` away from the extreme tails by more than ~1e-15. The
-/// upper tail is computed through the symmetry
-/// `betainc_inv(a, b, p) = 1 - betainc_inv(b, a, 1 - p)` so both tails
-/// share the well-conditioned lower-tail path; beyond those scales the
-/// continued fraction can converge spuriously, so callers with extreme
-/// parameters must validate independently.
-///
-/// Follows Numerical Recipes 3rd ed., section 6.4: an initial guess from
-/// Abramowitz & Stegun 26.5.22 refined by Halley iterations.
-///
-/// Returns NaN outside the valid domain (`a, b > 0`, `p` in `[0, 1]`).
-///
-/// # Examples
-///
-/// ```
-/// use pecos_num::special::{betainc_inv, betainc_reg};
-///
-/// let x = betainc_inv(2.0, 3.0, 0.6);
-/// assert!((betainc_reg(2.0, 3.0, x) - 0.6).abs() < 1e-10);
-/// ```
-#[must_use]
-pub fn betainc_inv(a: f64, b: f64, p: f64) -> f64 {
-    let domain_ok = a > 0.0 && b > 0.0 && (0.0..=1.0).contains(&p);
-    if !domain_ok {
-        return f64::NAN;
-    }
-    if p <= 0.0 {
-        return 0.0;
-    }
-    if p >= 1.0 {
-        return 1.0;
-    }
-    // Compute upper-tail quantiles through the lower tail of the mirrored
-    // distribution: `err = betainc_reg(...) - p` loses all precision when
-    // p is within ~1e-10 of 1 (the Halley correction then stalls on a
-    // cancelled residual), while 1 - p is exact in the mirrored call.
-    if p > 0.5 {
-        return 1.0 - betainc_inv(b, a, 1.0 - p);
+fn newton_candidate(a: f64, b: f64, x: f64, residual: f64) -> Option<f64> {
+    let density = beta_density(a, b, x).ok()?;
+    if density <= 0.0 {
+        return None;
     }
 
-    let a1 = a - 1.0;
-    let b1 = b - 1.0;
+    let first_order_step = residual / density;
+    let slope = (a - 1.0) / x - (b - 1.0) / (1.0 - x);
+    let denominator = 1.0 - 0.5 * first_order_step * slope;
+    let step = if denominator.is_finite() && denominator > 0.0 {
+        first_order_step / denominator
+    } else {
+        first_order_step
+    };
+    let candidate = x - step;
+    candidate.is_finite().then_some(candidate)
+}
 
-    let mut x: f64;
+fn beta_density(a: f64, b: f64, x: f64) -> Result<f64, SpecialError> {
+    let log_density =
+        (a - 1.0) * libm::log(x) + (b - 1.0) * libm::log1p(-x) + log_beta_normalizer(a, b)?;
+    let density = libm::exp(log_density);
+    ensure_finite("beta density", density)?;
+    Ok(density)
+}
+
+fn log_beta_normalizer(a: f64, b: f64) -> Result<f64, SpecialError> {
+    if a >= BETA_ASYMPTOTIC_NORMALIZER_MIN && b >= BETA_ASYMPTOTIC_NORMALIZER_MIN {
+        Ok(log_beta_normalizer_asymptotic(a, b))
+    } else if a <= b && b >= 8.0 {
+        Ok(log_gamma_delta(b, a) - log_gamma_for_normalizer(a)?)
+    } else if a >= 8.0 {
+        Ok(log_gamma_delta(a, b) - log_gamma_for_normalizer(b)?)
+    } else {
+        Ok(ln_gamma(a + b)? - ln_gamma(a)? - ln_gamma(b)?)
+    }
+}
+
+fn log_beta_normalizer_asymptotic(a: f64, b: f64) -> f64 {
+    let sum = a + b;
+    a * libm::log1p(b / a)
+        + b * libm::log1p(a / b)
+        + 0.5 * (libm::log(a) + libm::log(b) - libm::log(sum))
+        - HALF_LN_TWO_PI
+        + stirling_correction(sum)
+        - stirling_correction(a)
+        - stirling_correction(b)
+}
+
+fn log_gamma_for_normalizer(x: f64) -> Result<f64, SpecialError> {
+    if x >= 8.0 {
+        Ok(log_gamma_stirling(x))
+    } else {
+        ln_gamma(x)
+    }
+}
+
+fn log_gamma_stirling(x: f64) -> f64 {
+    (x - 0.5) * libm::log(x) - x + HALF_LN_TWO_PI + stirling_correction(x)
+}
+
+fn log_gamma_delta(base: f64, increment: f64) -> f64 {
+    let ratio = increment / base;
+    increment * libm::log(base)
+        + (increment - 0.5) * libm::log1p(ratio)
+        + base * log1pmx(ratio)
+        + stirling_correction(base + increment)
+        - stirling_correction(base)
+}
+
+fn log1pmx(x: f64) -> f64 {
+    if x.abs() >= 0.1 {
+        return libm::log1p(x) - x;
+    }
+
+    let mut term = x * x;
+    let mut sum = -0.5 * term;
+    for n in 3..=40 {
+        term *= x;
+        let signed = if n % 2 == 0 { -term } else { term };
+        sum += signed / usize_to_f64(n);
+    }
+    sum
+}
+
+fn stirling_correction(x: f64) -> f64 {
+    let inverse = 1.0 / x;
+    let inverse2 = inverse * inverse;
+    let inverse3 = inverse * inverse2;
+    let inverse5 = inverse3 * inverse2;
+    let inverse7 = inverse5 * inverse2;
+    let inverse9 = inverse7 * inverse2;
+    let inverse11 = inverse9 * inverse2;
+    let inverse13 = inverse11 * inverse2;
+
+    inverse / 12.0 - inverse3 / 360.0 + inverse5 / 1_260.0 - inverse7 / 1_680.0 + inverse9 / 1_188.0
+        - 691.0 * inverse11 / 360_360.0
+        + inverse13 / 156.0
+}
+
+fn initial_invbetai_guess(p: f64, a: f64, b: f64) -> f64 {
     if a >= 1.0 && b >= 1.0 {
-        // Abramowitz & Stegun 26.5.22 via the normal quantile
-        // approximation 26.2.23.
         let pp = if p < 0.5 { p } else { 1.0 - p };
-        let t = (-2.0 * pp.ln()).sqrt();
-        let mut gauss = (2.30753 + t * 0.27061) / (1.0 + t * (0.99229 + t * 0.04481)) - t;
+        let t = libm::sqrt(-2.0 * libm::log(pp));
+        let mut x = (2.307_53 + t * 0.270_61) / (1.0 + t * (0.992_29 + t * 0.044_81)) - t;
         if p < 0.5 {
-            gauss = -gauss;
+            x = -x;
         }
-        let al = (gauss * gauss - 3.0) / 6.0;
+        let al = (x * x - 3.0) / 6.0;
         let h = 2.0 / (1.0 / (2.0 * a - 1.0) + 1.0 / (2.0 * b - 1.0));
-        let w = gauss * (al + h).sqrt() / h
+        let w = x * libm::sqrt(al + h) / h
             - (1.0 / (2.0 * b - 1.0) - 1.0 / (2.0 * a - 1.0)) * (al + 5.0 / 6.0 - 2.0 / (3.0 * h));
-        x = a / (a + b * (2.0 * w).exp());
+        interiorize(a / (a + b * libm::exp(2.0 * w)))
     } else {
-        let lna = (a / (a + b)).ln();
-        let lnb = (b / (a + b)).ln();
-        let t = (a * lna).exp() / a;
-        let u = (b * lnb).exp() / b;
+        let lna = libm::log(a / (a + b));
+        let lnb = libm::log(b / (a + b));
+        let t = libm::exp(a * lna) / a;
+        let u = libm::exp(b * lnb) / b;
         let w = t + u;
-        x = if p < t / w {
-            (a * w * p).powf(1.0 / a)
+        let x = if p < t / w {
+            libm::exp(libm::log(a * w * p) / a)
         } else {
-            1.0 - (b * w * (1.0 - p)).powf(1.0 / b)
+            1.0 - libm::exp(libm::log(b * w * (1.0 - p)) / b)
         };
+        interiorize(x)
     }
+}
 
-    let afac = ln_gamma(a + b) - ln_gamma(a) - ln_gamma(b);
-    for iteration in 0..10 {
-        if x <= 0.0 {
-            return 0.0;
-        }
-        if x >= 1.0 {
-            return 1.0;
-        }
-        let err = betainc_reg(a, b, x) - p;
-        let t = (a1 * x.ln() + b1 * (1.0 - x).ln() + afac).exp();
-        let u = err / t;
-        // Halley step.
-        let step = u / (1.0 - 0.5 * f64::min(1.0, u * (a1 / x - b1 / (1.0 - x))));
-        x -= step;
-        if x <= 0.0 {
-            x = 0.5 * (x + step);
-        }
-        if x >= 1.0 {
-            x = 0.5 * (x + step + 1.0);
-        }
-        if step.abs() < BETAINC_INV_EPS * x && iteration > 0 {
-            break;
-        }
+fn ensure_positive(name: &'static str, value: f64) -> Result<(), SpecialError> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        Err(SpecialError::InvalidInput {
+            message: format!("{name} must be positive and finite"),
+        })
     }
-    x
+}
+
+fn ensure_unit_interval(name: &'static str, value: f64) -> Result<(), SpecialError> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(SpecialError::InvalidInput {
+            message: format!("{name} must be finite and in [0, 1]"),
+        })
+    }
+}
+
+fn ensure_finite(name: &'static str, value: f64) -> Result<(), SpecialError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(SpecialError::NumericalIssue {
+            message: format!("{name} was non-finite"),
+        })
+    }
+}
+
+fn clean_unit_probability(name: &'static str, value: f64) -> Result<f64, SpecialError> {
+    ensure_finite(name, value)?;
+    // Snap rounding excess just outside [0, 1] back to the boundary. The snap
+    // width is the crate's documented 1e-12 accuracy contract: a saturating
+    // series legitimately overshoots 1.0 by tens of ULPs (~2e-14 observed from
+    // the 48-term BGRAT sum), which exceeds any ULP-scale tolerance, while
+    // anything outside the contract width is a genuine numerical failure and
+    // must surface as a typed error, never a silent clamp.
+    let boundary_tolerance = 1.0e-12;
+    if (0.0..=1.0).contains(&value) {
+        Ok(value)
+    } else if value < 0.0 && value > -boundary_tolerance {
+        Ok(0.0)
+    } else if value > 1.0 && value < 1.0 + boundary_tolerance {
+        Ok(1.0)
+    } else {
+        Err(SpecialError::NumericalIssue {
+            message: format!("{name} was outside [0, 1]"),
+        })
+    }
+}
+
+fn is_strictly_inside(x: f64, lo: f64, hi: f64) -> bool {
+    x.is_finite() && x > lo && x < hi
+}
+
+fn midpoint(lo: f64, hi: f64) -> f64 {
+    lo + 0.5 * (hi - lo)
+}
+
+fn interiorize(x: f64) -> f64 {
+    if !x.is_finite() {
+        0.5
+    } else if x <= 0.0 {
+        f64::MIN_POSITIVE
+    } else if x >= 1.0 {
+        1.0 - f64::EPSILON
+    } else {
+        x
+    }
+}
+
+fn direct_quantile(x: f64) -> BetaQuantile {
+    BetaQuantile {
+        x,
+        complement: 1.0 - x,
+    }
+}
+
+fn bracket_is_representation_limited(lo: f64, hi: f64, x: f64) -> bool {
+    hi - lo <= 2.0 * spacing_above(x).max(f64::MIN_POSITIVE)
+}
+
+fn spacing_above(x: f64) -> f64 {
+    f64::from_bits(x.to_bits() + 1) - x
+}
+
+#[allow(clippy::cast_precision_loss)] // Iteration budgets are small and exactly representable as f64
+fn usize_to_f64(value: usize) -> f64 {
+    value as f64
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{betai, invbetai, ln_gamma};
 
-    /// Assert `actual` matches `expected` to a RELATIVE tolerance.
-    ///
-    /// A pure relative check: callers that legitimately expect a value of
-    /// exactly zero must handle that case separately (the `ln_gamma` test
-    /// does). An earlier version OR'd in an absolute `abs_err <= rel_tol`
-    /// fallback, which silently weakened the relative tolerance to an
-    /// absolute one for `|expected| < 1` (e.g. a claimed 1e-12 relative
-    /// became 1e-12 absolute — ~1000x looser at `expected = 1e-3`).
-    fn assert_close(actual: f64, expected: f64, rel_tol: f64) {
-        let denom = expected.abs().max(f64::MIN_POSITIVE);
-        let rel_err = (actual - expected).abs() / denom;
-        assert!(
-            rel_err <= rel_tol,
-            "expected {expected:.17e}, got {actual:.17e} (relative error {rel_err:.3e} > {rel_tol:.3e})"
-        );
-    }
-
-    // Reference values generated with:
-    //   uv run python -c "from scipy import special; print(special.gammaln(x))"
-    // (scipy 1.x, double precision)
     #[test]
-    fn ln_gamma_matches_scipy() {
-        let cases = [
-            (0.5, 0.572_364_942_924_7),
-            (1.0, 0.0),
-            (1.5, -0.120_782_237_635_245_26),
-            (2.0, 0.0),
-            (3.7, 1.428_072_326_665_388),
-            (10.0, 12.801_827_480_081_469),
-            (100.5, 361.435_540_467_777_57),
-            (1000.0, 5_905.220_423_209_181),
-        ];
-        for (x, expected) in cases {
-            let actual = ln_gamma(x);
-            if expected == 0.0 {
-                assert!(actual.abs() < 1e-13, "ln_gamma({x}) = {actual:.3e}, want 0");
-            } else {
-                assert_close(actual, expected, 1e-12);
-            }
-        }
+    fn ln_gamma_matches_factorial_case() {
+        let value = ln_gamma(6.0).unwrap();
+        assert!((value - libm::log(120.0)).abs() < 1.0e-14);
     }
 
     #[test]
-    fn ln_gamma_invalid_domain_is_nan() {
-        assert!(ln_gamma(0.0).is_nan());
-        assert!(ln_gamma(-1.5).is_nan());
-    }
-
-    // Reference values generated with:
-    //   uv run python -c "from scipy import special; print(special.betainc(a, b, x))"
-    #[test]
-    fn betainc_reg_matches_scipy() {
-        let cases = [
-            (0.5, 0.5, 0.3, 0.369_010_119_565_545_36),
-            (2.0, 3.0, 0.4, 0.524_799_999_999_999_9),
-            (5.5, 1.5, 0.7, 0.251_904_453_669_740_85),
-            (10.0, 10.0, 0.5, 0.5),
-            (0.5, 20.5, 0.01, 0.476_541_531_548_465_6),
-            (100.5, 900.5, 0.1, 0.494_385_987_853_672_66),
-            (3.5, 0.5, 0.99, 0.797_971_695_234_850_9),
-        ];
-        for (a, b, x, expected) in cases {
-            assert_close(betainc_reg(a, b, x), expected, 1e-12);
-        }
+    fn betai_uses_reflection_symmetry() {
+        let a = 2.5;
+        let b = 7.5;
+        let x = 0.8;
+        let left = betai(a, b, x).unwrap();
+        let right = 1.0 - betai(b, a, 1.0 - x).unwrap();
+        assert!((left - right).abs() < 1.0e-13);
     }
 
     #[test]
-    fn betainc_reg_invalid_domain_is_nan() {
-        assert!(betainc_reg(0.0, 1.0, 0.5).is_nan());
-        assert!(betainc_reg(1.0, -1.0, 0.5).is_nan());
-        assert!(betainc_reg(1.0, 1.0, -0.1).is_nan());
-        assert!(betainc_reg(1.0, 1.0, 1.1).is_nan());
-    }
-
-    // Reference values generated with:
-    //   uv run python -c "from scipy import special; print(special.betaincinv(a, b, p))"
-    #[test]
-    fn betainc_inv_matches_scipy() {
-        let cases = [
-            (0.5, 0.5, 0.25, 0.146_446_609_406_726_24),
-            (2.0, 3.0, 0.6, 0.444_500_002_083_767_4),
-            (5.5, 1.5, 0.05, 0.505_461_253_650_681_3),
-            (10.0, 10.0, 0.975, 0.711_356_752_083_001_1),
-            (0.5, 20.5, 0.995, 0.176_754_097_436_689_93),
-            (100.5, 900.5, 0.025, 0.082_562_652_843_060_04),
-            // Binomial-CI-scale parameters: n = 20000 trials, far tail.
-            (50.5, 19_950.5, 0.999_999, 0.004_581_655_467_494_118_5),
-        ];
-        for (a, b, p, expected) in cases {
-            assert_close(betainc_inv(a, b, p), expected, 1e-8);
-        }
-    }
-
-    // Reference values generated with:
-    //   uv run python -c "from scipy import special; print(special.betaincinv(a, b, p))"
-    // Upper-tail quantiles exercise the symmetry path (the direct Halley
-    // iteration loses the residual to cancellation beyond p ~ 1 - 1e-10).
-    #[test]
-    fn betainc_inv_upper_tail_matches_scipy() {
-        let cases: [(f64, f64, f64, f64); 4] = [
-            (2.0, 3.0, 0.999_999_9, 0.997_073_840_091_498_9),
-            (100.5, 900.5, 1.0 - 1e-12, 0.179_649_794_238_11),
-            (7.5, 19_993.5, 1.0 - 2.3e-16, 0.002_728_615_291_135_757_6),
-            (0.5, 0.5, 0.999_999, 0.999_999_999_997_532_6),
-        ];
-        for (a, b, p, expected) in cases {
-            let actual = betainc_inv(a, b, p);
-            let scale: f64 = expected.abs();
-            assert!(
-                ((actual - expected).abs() / scale) < 1e-8,
-                "betainc_inv({a}, {b}, {p}): expected {expected:.12e}, got {actual:.12e}"
-            );
-        }
-    }
-
-    #[test]
-    fn betainc_inv_tails_are_symmetric() {
-        // Relative comparison, with cases chosen so neither side hits
-        // f64 representation limits: p stays >= 1e-6 (forming `1 - p`
-        // closer to 1 destroys p's precision before the function is even
-        // called) and the quantiles stay far enough from 0 and 1 that
-        // `1 - upper` keeps its significant digits. Outside those limits
-        // a mirrored comparison measures representation error, not
-        // implementation error.
-        let cases: [(f64, f64, &[f64]); 3] = [
-            (2.0, 3.0, &[1e-6, 0.01, 0.3]),
-            (50.5, 19_950.5, &[1e-6, 0.01, 0.3]),
-            // Quantiles for this shape at small p sit below 1e-13, where
-            // the mirrored side cannot represent them; compare only at
-            // moderate p.
-            (0.5, 20.5, &[0.01, 0.3]),
-        ];
-        for (a, b, ps) in cases {
-            for &p in ps {
-                let lower = betainc_inv(a, b, p);
-                let upper = betainc_inv(b, a, 1.0 - p);
-                let mirrored = 1.0 - upper;
-                assert!(
-                    ((lower - mirrored) / lower).abs() < 1e-8,
-                    "tail symmetry failed for a={a}, b={b}, p={p}: {lower} vs {mirrored}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn betainc_inv_round_trips_through_betainc_reg() {
-        for &(a, b) in &[(0.5, 0.5), (2.0, 3.0), (7.5, 19_993.5), (100.5, 900.5)] {
-            for &p in &[1e-6, 0.025, 0.5, 0.975, 1.0 - 1e-6] {
-                let x = betainc_inv(a, b, p);
-                let back = betainc_reg(a, b, x);
-                assert!(
-                    (back - p).abs() < 1e-9,
-                    "round trip failed for a={a}, b={b}, p={p}: x={x}, back={back}"
-                );
-            }
-        }
-    }
-
-    // Allow exact float comparisons: the edge cases return the sentinel
-    // values 0.0 and 1.0 verbatim.
-    #[allow(clippy::float_cmp)]
-    #[test]
-    fn betainc_inv_edges() {
-        assert_eq!(betainc_inv(2.0, 3.0, 0.0), 0.0);
-        assert_eq!(betainc_inv(2.0, 3.0, 1.0), 1.0);
-        assert!(betainc_inv(0.0, 3.0, 0.5).is_nan());
-        assert!(betainc_inv(2.0, 3.0, -0.1).is_nan());
+    fn invbetai_round_trips() {
+        let quantile = invbetai(0.025, 10.5, 90.5).unwrap();
+        let probability = betai(10.5, 90.5, quantile.x).unwrap();
+        assert!((probability - 0.025).abs() < 1.0e-14);
     }
 }

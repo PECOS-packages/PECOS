@@ -1,0 +1,344 @@
+/// Standard library: Simple algorithms
+///
+/// Fixed-size algorithms for common operations.
+/// All bounds are explicit and checked.
+
+// =============================================================================
+// Swap Operations
+// =============================================================================
+
+/// Swap two u32 values (returns (b, a) as packed u64)
+/// To unpack: a = result >> 32, b = result & 0xFFFFFFFF
+pub fn swap_u32_packed(a: u32, b: u32) -> u64 {
+    high: u64 = b;
+    low: u64 = a;
+    return (high << 32) | low;
+}
+
+// =============================================================================
+// Linear Search (Fixed-Size Arrays)
+// =============================================================================
+
+/// Search for value in 4-element array
+/// Returns index (0-3) if found, 4 if not found
+pub fn linear_search_4_u32(v0: u32, v1: u32, v2: u32, v3: u32, target: u32) -> u32 {
+    if v0 == target { return 0; }
+    if v1 == target { return 1; }
+    if v2 == target { return 2; }
+    if v3 == target { return 3; }
+    return 4;
+}
+
+/// Search for value in 8-element array
+pub fn linear_search_8_u32(v0: u32, v1: u32, v2: u32, v3: u32,
+                           v4: u32, v5: u32, v6: u32, v7: u32, target: u32) -> u32 {
+    if v0 == target { return 0; }
+    if v1 == target { return 1; }
+    if v2 == target { return 2; }
+    if v3 == target { return 3; }
+    if v4 == target { return 4; }
+    if v5 == target { return 5; }
+    if v6 == target { return 6; }
+    if v7 == target { return 7; }
+    return 8;
+}
+
+// =============================================================================
+// Min/Max in Fixed-Size Arrays
+// =============================================================================
+
+/// Find minimum of 4 values
+pub fn min4_u32(v0: u32, v1: u32, v2: u32, v3: u32) -> u32 {
+    mut m := v0;
+    if v1 < m { m = v1; }
+    if v2 < m { m = v2; }
+    if v3 < m { m = v3; }
+    return m;
+}
+
+/// Find maximum of 4 values
+pub fn max4_u32(v0: u32, v1: u32, v2: u32, v3: u32) -> u32 {
+    mut m := v0;
+    if v1 > m { m = v1; }
+    if v2 > m { m = v2; }
+    if v3 > m { m = v3; }
+    return m;
+}
+
+/// Find minimum of 8 values
+pub fn min8_u32(v0: u32, v1: u32, v2: u32, v3: u32,
+                v4: u32, v5: u32, v6: u32, v7: u32) -> u32 {
+    m0 := min4_u32(v0, v1, v2, v3);
+    m1 := min4_u32(v4, v5, v6, v7);
+    if m0 < m1 { return m0; }
+    return m1;
+}
+
+/// Find maximum of 8 values
+pub fn max8_u32(v0: u32, v1: u32, v2: u32, v3: u32,
+                v4: u32, v5: u32, v6: u32, v7: u32) -> u32 {
+    m0 := max4_u32(v0, v1, v2, v3);
+    m1 := max4_u32(v4, v5, v6, v7);
+    if m0 > m1 { return m0; }
+    return m1;
+}
+
+/// Find index of minimum in 4 values
+pub fn argmin4_u32(v0: u32, v1: u32, v2: u32, v3: u32) -> u32 {
+    mut idx: u32 = 0;
+    mut m := v0;
+    if v1 < m { m = v1; idx = 1; }
+    if v2 < m { m = v2; idx = 2; }
+    if v3 < m { idx = 3; }
+    return idx;
+}
+
+/// Find index of maximum in 4 values
+pub fn argmax4_u32(v0: u32, v1: u32, v2: u32, v3: u32) -> u32 {
+    mut idx: u32 = 0;
+    mut m := v0;
+    if v1 > m { m = v1; idx = 1; }
+    if v2 > m { m = v2; idx = 2; }
+    if v3 > m { idx = 3; }
+    return idx;
+}
+
+// =============================================================================
+// Sum and Product
+// =============================================================================
+
+/// Sum of 4 values
+pub fn sum4_u32(v0: u32, v1: u32, v2: u32, v3: u32) -> u32 {
+    return v0 + v1 + v2 + v3;
+}
+
+/// Sum of 8 values
+pub fn sum8_u32(v0: u32, v1: u32, v2: u32, v3: u32,
+                v4: u32, v5: u32, v6: u32, v7: u32) -> u32 {
+    return v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7;
+}
+
+/// Product of 4 values
+pub fn prod4_u32(v0: u32, v1: u32, v2: u32, v3: u32) -> u32 {
+    return v0 * v1 * v2 * v3;
+}
+
+// =============================================================================
+// Counting
+// =============================================================================
+
+/// Count values equal to target in 4 elements
+pub fn count4_eq_u32(v0: u32, v1: u32, v2: u32, v3: u32, target: u32) -> u32 {
+    mut c: u32 = 0;
+    if v0 == target { c = c + 1; }
+    if v1 == target { c = c + 1; }
+    if v2 == target { c = c + 1; }
+    if v3 == target { c = c + 1; }
+    return c;
+}
+
+/// Count values less than threshold in 4 elements
+pub fn count4_lt_u32(v0: u32, v1: u32, v2: u32, v3: u32, threshold: u32) -> u32 {
+    mut c: u32 = 0;
+    if v0 < threshold { c = c + 1; }
+    if v1 < threshold { c = c + 1; }
+    if v2 < threshold { c = c + 1; }
+    if v3 < threshold { c = c + 1; }
+    return c;
+}
+
+/// Count values greater than threshold in 4 elements
+pub fn count4_gt_u32(v0: u32, v1: u32, v2: u32, v3: u32, threshold: u32) -> u32 {
+    mut c: u32 = 0;
+    if v0 > threshold { c = c + 1; }
+    if v1 > threshold { c = c + 1; }
+    if v2 > threshold { c = c + 1; }
+    if v3 > threshold { c = c + 1; }
+    return c;
+}
+
+// =============================================================================
+// All/Any Predicates
+// =============================================================================
+
+/// Check if all 4 values equal target
+pub fn all4_eq_u32(v0: u32, v1: u32, v2: u32, v3: u32, target: u32) -> bool {
+    return v0 == target and v1 == target and v2 == target and v3 == target;
+}
+
+/// Check if any of 4 values equals target
+pub fn any4_eq_u32(v0: u32, v1: u32, v2: u32, v3: u32, target: u32) -> bool {
+    return v0 == target or v1 == target or v2 == target or v3 == target;
+}
+
+/// Check if all 4 values are less than threshold
+pub fn all4_lt_u32(v0: u32, v1: u32, v2: u32, v3: u32, threshold: u32) -> bool {
+    return v0 < threshold and v1 < threshold and v2 < threshold and v3 < threshold;
+}
+
+/// Check if any of 4 values is less than threshold
+pub fn any4_lt_u32(v0: u32, v1: u32, v2: u32, v3: u32, threshold: u32) -> bool {
+    return v0 < threshold or v1 < threshold or v2 < threshold or v3 < threshold;
+}
+
+// =============================================================================
+// Sorting Networks (Fixed-Size)
+// =============================================================================
+
+/// Compare-and-swap: returns (min, max) packed as (min << 32) | max
+fn cas_u32(a: u32, b: u32) -> u64 {
+    if a <= b {
+        high: u64 = a;
+        low: u64 = b;
+        return (high << 32) | low;
+    }
+    high: u64 = b;
+    low: u64 = a;
+    return (high << 32) | low;
+}
+
+/// Sort 2 values ascending, returns (min << 32) | max
+pub fn sort2_u32(a: u32, b: u32) -> u64 {
+    return cas_u32(a, b);
+}
+
+/// Sort 3 values ascending
+/// Returns packed: (v0 << 42) | (v1 << 21) | v2 (21 bits each, assumes values < 2M)
+/// For full range, use sort3_u32_to_array or successive extractions
+pub fn sort3_u32_packed(a: u32, b: u32, c: u32) -> u64 {
+    // Sorting network for 3 elements
+    // Compare a,b
+    r1 := cas_u32(a, b);
+    lo1: u32 = (r1 & 0xFFFFFFFF);
+    hi1: u32 = (r1 >> 32);
+
+    // Compare hi1,c
+    r2 := cas_u32(hi1, c);
+    mid: u32 = (r2 & 0xFFFFFFFF);
+    hi2: u32 = (r2 >> 32);
+
+    // Compare lo1,mid
+    r3 := cas_u32(lo1, mid);
+    v0: u32 = (r3 >> 32);
+    v1: u32 = (r3 & 0xFFFFFFFF);
+    v2: u32 = hi2;
+
+    // Pack as 21-bit values (assuming values fit)
+    result: u64 = 0;
+    x0: u64 = v0;
+    x1: u64 = v1;
+    x2: u64 = v2;
+    result = (x0 << 42) | (x1 << 21) | x2;
+    return result;
+}
+
+/// Median of 3 values
+pub fn median3_u32(a: u32, b: u32, c: u32) -> u32 {
+    // Using sorting network approach
+    if a <= b {
+        if b <= c {
+            return b;  // a <= b <= c
+        }
+        if a <= c {
+            return c;  // a <= c < b
+        }
+        return a;      // c < a <= b
+    }
+    // b < a
+    if a <= c {
+        return a;      // b < a <= c
+    }
+    if b <= c {
+        return c;      // b <= c < a
+    }
+    return b;          // c < b < a
+}
+
+// =============================================================================
+// Bit Counting in Multiple Values
+// =============================================================================
+
+/// Count total set bits across 4 u8 values
+pub fn total_bits_4_u8(v0: u8, v1: u8, v2: u8, v3: u8) -> u32 {
+    // Inline popcount for each
+    mut total: u32 = 0;
+
+    mut n := v0;
+    for _ in 0..8 {
+        if n == 0 { break; }
+        n = n & (n - 1);
+        total = total + 1;
+    }
+
+    n = v1;
+    for _ in 0..8 {
+        if n == 0 { break; }
+        n = n & (n - 1);
+        total = total + 1;
+    }
+
+    n = v2;
+    for _ in 0..8 {
+        if n == 0 { break; }
+        n = n & (n - 1);
+        total = total + 1;
+    }
+
+    n = v3;
+    for _ in 0..8 {
+        if n == 0 { break; }
+        n = n & (n - 1);
+        total = total + 1;
+    }
+
+    return total;
+}
+
+// =============================================================================
+// Prefix Sum (Scan)
+// =============================================================================
+
+/// Exclusive prefix sum of 4 values
+/// Returns packed: (s0 << 48) | (s1 << 32) | (s2 << 16) | s3
+/// where s0=0, s1=v0, s2=v0+v1, s3=v0+v1+v2
+pub fn prefix_sum4_u16(v0: u16, v1: u16, v2: u16, v3: u16) -> u64 {
+    s0: u64 = 0;
+    s1: u64 = v0;
+    s2: u64 = v0 + v1;
+    s3: u64 = v0 + v1 + v2;
+    return (s0 << 48) | (s1 << 32) | (s2 << 16) | s3;
+}
+
+// =============================================================================
+// Hamming Distance
+// =============================================================================
+
+/// Hamming distance between two u32 values (count of differing bits)
+pub fn hamming_u32(a: u32, b: u32) -> u32 {
+    diff := a ^ b;
+    mut count: u32 = 0;
+    mut n := diff;
+    for _ in 0..32 {
+        if n == 0 {
+            break;
+        }
+        n = n & (n - 1);
+        count = count + 1;
+    }
+    return count;
+}
+
+/// Hamming distance between two u64 values
+pub fn hamming_u64(a: u64, b: u64) -> u64 {
+    diff := a ^ b;
+    mut count: u64 = 0;
+    mut n := diff;
+    for _ in 0..64 {
+        if n == 0 {
+            break;
+        }
+        n = n & (n - 1);
+        count = count + 1;
+    }
+    return count;
+}

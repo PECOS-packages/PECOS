@@ -28,7 +28,7 @@ use tket::TketOp;
 use tket::extension::rotation::ConstRotation;
 use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
 use tket::hugr::extension::prelude::qb_t;
-use tket::hugr::ops::OpType;
+use tket::hugr::ops::{OpTrait, OpType};
 use tket::hugr::types::Signature;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, NodeIndex, PortIndex, Wire};
 
@@ -458,6 +458,21 @@ fn trace_back_for_const(hugr: &Hugr, node: Node, depth: usize) -> Option<(f64, b
     if let OpType::Tag(_) = op {
         // Skip Tag nodes
     } else if format!("{op:?}").contains("UnpackTuple") {
+        let input_port = IncomingPort::from(0);
+        if let Some((src_node, _)) = hugr.single_linked_output(node, input_port) {
+            return trace_back_for_const(hugr, src_node, depth + 1);
+        }
+    } else if format!("{op:?}").contains("MakeTuple")
+        && op
+            .dataflow_signature()
+            .is_some_and(|sig| sig.input_count() == 1)
+    {
+        // Guppy wraps a rotation angle in a 1-tuple between the constant and
+        // `from_halfturns_unchecked` (Const -> LoadConstant -> MakeTuple ->
+        // UnpackTuple -> from_halfturns_unchecked), so trace through the
+        // single element. Multi-element tuples are ambiguous here (the
+        // element index is not tracked), so those fall through to the
+        // runtime value path.
         let input_port = IncomingPort::from(0);
         if let Some((src_node, _)) = hugr.single_linked_output(node, input_port) {
             return trace_back_for_const(hugr, src_node, depth + 1);

@@ -1,0 +1,96 @@
+{
+  "version": "0.1.0",
+  "functions": [
+    {
+      "name": "nested_cond",
+      "params": [
+        {
+          "name": "a",
+          "type": {
+            "kind": "primitive",
+            "name": "int"
+          }
+        },
+        {
+          "name": "b",
+          "type": {
+            "kind": "primitive",
+            "name": "int"
+          }
+        }
+      ],
+      "return_type": {
+        "kind": "primitive",
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "if",
+          "condition": {
+            "kind": "binary",
+            "op": "gt",
+            "left": {
+              "kind": "ident",
+              "name": "a"
+            },
+            "right": {
+              "kind": "literal",
+              "value": 0
+            }
+          },
+          "then_body": [
+            {
+              "kind": "if",
+              "condition": {
+                "kind": "binary",
+                "op": "gt",
+                "left": {
+                  "kind": "ident",
+                  "name": "b"
+                },
+                "right": {
+                  "kind": "literal",
+                  "value": 0
+                }
+              },
+              "then_body": [
+                {
+                  "kind": "return",
+                  "return_value": {
+                    "kind": "literal",
+                    "value": 1
+                  }
+                }
+              ],
+              "else_body": [
+                {
+                  "kind": "return",
+                  "return_value": {
+                    "kind": "literal",
+                    "value": 2
+                  }
+                }
+              ]
+            }
+          ],
+          "else_body": [
+            {
+              "kind": "return",
+              "return_value": {
+                "kind": "literal",
+                "value": 3
+              }
+            }
+          ]
+        }
+      ],
+      "location": {
+        "line": 1,
+        "column": 1,
+        "end_line": 8,
+        "end_column": 17
+      }
+    }
+  ],
+  "source_file": "/tmp/test_nested_if.py"
+}

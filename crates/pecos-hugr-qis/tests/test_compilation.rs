@@ -135,3 +135,129 @@ fn test_optimization_levels() {
         );
     }
 }
+
+#[test]
+fn function_local_helper_lowers_to_public_symbol_in_text_and_bitcode() {
+    // A Guppy program (captured from `barrier_pair_probe`) that declares and calls a
+    // function-local PECOS helper. guppylang qualifies the helper with a `<locals>`
+    // segment under the private `__hugr__.*` namespace; BOTH the text IR and the
+    // bitcode must expose the public `pecos_qis_runtime_barrier_qubits2_hugr` ABI
+    // symbol that pecos-qis-ffi exports, not the private name. (Regression guard for
+    // the bitcode path, which a text-only normalization would miss.)
+    let hugr = include_bytes!("fixtures/szz_barrier_probe.hugr");
+
+    let text = compile_hugr_bytes_to_string(hugr).expect("text compilation should succeed");
+    assert!(
+        text.contains("@pecos_qis_runtime_barrier_qubits2_hugr("),
+        "text IR is missing the public helper symbol"
+    );
+    assert!(
+        !text.contains("<locals>.pecos_qis_runtime_barrier_qubits2_hugr"),
+        "text IR still carries the private helper symbol"
+    );
+
+    let bitcode = compile_hugr_bytes_to_bitcode(hugr).expect("bitcode compilation should succeed");
+    // LLVM stores symbol names contiguously in the bitcode string table, so a byte
+    // scan is reliable. The private form embeds the helper under `<locals>.`; the
+    // entry function `barrier_pair_probe` is also function-local but does not match
+    // this needle, so it is a clean discriminator.
+    let private = b"<locals>.pecos_qis_runtime_barrier_qubits2_hugr";
+    let public = b"pecos_qis_runtime_barrier_qubits2_hugr";
+    assert!(
+        !bitcode.windows(private.len()).any(|w| w == private),
+        "bitcode still carries the private helper symbol"
+    );
+    assert!(
+        bitcode.windows(public.len()).any(|w| w == public),
+        "bitcode is missing the public helper symbol"
+    );
+}
+
+#[test]
+fn duplicate_helper_declarations_merge_to_one_public_symbol() {
+    // A HUGR with two declarations of the same helper -- one module-level and one
+    // function-local wrapper -- both normalize to
+    // `pecos_qis_runtime_barrier_qubits2_hugr`. A blind rename would let LLVM uniquify
+    // the second declaration to `...hugr.1`, which pecos-qis-ffi does not export; the
+    // merge must collapse them into one unsuffixed public symbol. (Regression guard
+    // for the module-level rename collision.)
+    let hugr = include_bytes!("fixtures/szz_barrier_collision.hugr");
+
+    let text = compile_hugr_bytes_to_string(hugr).expect("text compilation should succeed");
+    assert!(
+        text.contains("@pecos_qis_runtime_barrier_qubits2_hugr("),
+        "text IR is missing the public helper symbol"
+    );
+    // The helper name is never followed by a dot: no `.1` collision suffix and no
+    // private `__hugr__...pecos_qis_runtime_barrier_qubits2_hugr.<id>` residue.
+    assert!(
+        !text.contains("pecos_qis_runtime_barrier_qubits2_hugr."),
+        "text IR has a suffixed or private helper symbol"
+    );
+
+    let bitcode = compile_hugr_bytes_to_bitcode(hugr).expect("bitcode compilation should succeed");
+    let suffixed_or_private = b"pecos_qis_runtime_barrier_qubits2_hugr.";
+    let public = b"pecos_qis_runtime_barrier_qubits2_hugr";
+    assert!(
+        !bitcode
+            .windows(suffixed_or_private.len())
+            .any(|w| w == suffixed_or_private),
+        "bitcode has a suffixed or private helper symbol"
+    );
+    assert!(
+        bitcode.windows(public.len()).any(|w| w == public),
+        "bitcode is missing the public helper symbol"
+    );
+}
+
+#[test]
+fn conflicting_helper_signatures_fail_loud() {
+    // Two declarations that normalize to `pecos_qis_runtime_barrier_qubit_hugr`, one
+    // with the wrong signature (`i64 -> { i64, i64 }` vs the ABI `i64 -> i64`). The
+    // wrong declaration must be rejected against the fixed pecos-qis-ffi ABI -- LLVM 21
+    // opaque pointers + `module.verify()` do not catch a call that disagrees with the
+    // export -- so compilation must fail loud instead of shipping ABI-broken IR.
+    let hugr = include_bytes!("fixtures/szz_barrier_wrong_signature.hugr");
+
+    let text = compile_hugr_bytes_to_string(hugr);
+    assert!(
+        text.is_err(),
+        "text compilation should fail on a wrong-ABI helper declaration"
+    );
+    let msg = text.unwrap_err().to_string();
+    assert!(
+        msg.contains("pecos-qis-ffi ABI") && msg.contains("pecos_qis_runtime_barrier_qubit_hugr"),
+        "unexpected error message: {msg}"
+    );
+
+    assert!(
+        compile_hugr_bytes_to_bitcode(hugr).is_err(),
+        "bitcode compilation should fail on a wrong-ABI helper declaration"
+    );
+}
+
+#[test]
+fn single_wrong_helper_signature_fails_loud() {
+    // A SINGLE declaration of a recognized helper with a self-consistent but wrong ABI
+    // (`pecos_qis_runtime_barrier_qubits2_hugr` declared `i64 -> i64` instead of the
+    // exported `(i64, i64) -> { i64, i64 }`). There is no sibling to compare against,
+    // so this is caught only by validating the lone declaration against the fixed
+    // pecos-qis-ffi ABI. Both text IR and bitcode compilation must fail loud.
+    let hugr = include_bytes!("fixtures/szz_barrier_single_wrong_abi.hugr");
+
+    let text = compile_hugr_bytes_to_string(hugr);
+    assert!(
+        text.is_err(),
+        "text compilation should fail on a lone wrong-ABI helper declaration"
+    );
+    let msg = text.unwrap_err().to_string();
+    assert!(
+        msg.contains("pecos-qis-ffi ABI") && msg.contains("pecos_qis_runtime_barrier_qubits2_hugr"),
+        "unexpected error message: {msg}"
+    );
+
+    assert!(
+        compile_hugr_bytes_to_bitcode(hugr).is_err(),
+        "bitcode compilation should fail on a lone wrong-ABI helper declaration"
+    );
+}

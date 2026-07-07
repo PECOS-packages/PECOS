@@ -1,0 +1,54 @@
+/// Simple QEC Example: 3-Qubit Bit-Flip Code
+/// Encodes a single logical qubit into 3 physical qubits.
+/// Can detect and correct single bit-flip (X) errors.
+///
+/// Encoding: |0⟩_L = |000⟩, |1⟩_L = |111⟩
+/// Stabilizers: Z₀Z₁, Z₁Z₂
+
+pub fn main() -> unit {
+    // Allocate: 3 data qubits + 2 ancillas for syndrome measurement
+    mut q := qalloc(5);
+    data := q.child(3);    // Data qubits [0, 1, 2]
+    ancilla := q.child(2); // Ancilla qubits for syndrome
+
+    pz q;
+
+    // === Encode logical |0⟩ ===
+    // Starting from |000⟩, this is already the logical |0⟩
+    // To encode |+⟩_L instead, uncomment:
+    // h data[0];
+    // cx (data[0], data[1]);
+    // cx (data[0], data[2]);
+
+    // === Syndrome Measurement Round ===
+    tick syndrome_round {
+        // Measure Z₀Z₁ (parity of qubits 0 and 1)
+        h ancilla[0];
+        cx (ancilla[0], data[0]);
+        cx (ancilla[0], data[1]);
+        h ancilla[0];
+
+        // Measure Z₁Z₂ (parity of qubits 1 and 2)
+        h ancilla[1];
+        cx (ancilla[1], data[1]);
+        cx (ancilla[1], data[2]);
+        h ancilla[1];
+    }
+
+    // Read syndrome
+    s: [2]u1 = mz([2]u1) [ancilla[0], ancilla[1]];
+
+    // Decode syndrome to find error location:
+    // s = [0,0]: No error
+    // s = [1,0]: Error on qubit 0
+    // s = [1,1]: Error on qubit 1
+    // s = [0,1]: Error on qubit 2
+
+    // Syndrome interpretation:
+    // s = [0,0]: No error
+    // s = [1,0]: Error on qubit 0
+    // s = [1,1]: Error on qubit 1
+    // s = [0,1]: Error on qubit 2
+
+    return unit;
+}

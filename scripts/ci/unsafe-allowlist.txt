@@ -7,6 +7,7 @@ crates/pecos-cuquantum
 crates/pecos-cuquantum-sys
 crates/pecos-foreign
 crates/pecos-gpu-sims
+crates/pecos-hugr-qis
 crates/pecos-ldpc-decoders
 crates/pecos-llvm
 crates/pecos-pymatching
@@ -15,6 +16,10 @@ crates/pecos-qis-ffi
 crates/pecos-simulators
 crates/pecos-tesseract
 exp/pecos-experimental
+# zlup revival (experimental): zlup contains one reviewed `unsafe fn new_unchecked`
+# invariant constructor; zlup-ffi is a C-ABI boundary crate (Box::from_raw / slices).
+exp/zlup
+exp/zlup/ffi/zlup-ffi
 go/pecos-go-ffi
 julia/pecos-julia-ffi
 python/pecos-rslib

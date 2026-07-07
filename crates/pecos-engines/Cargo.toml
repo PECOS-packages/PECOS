@@ -27,6 +27,7 @@ num-bigint.workspace = true
 bitvec.workspace = true
 
 pecos-core.workspace = true
+pecos-results.workspace = true
 pecos-simulators.workspace = true
 pecos-random.workspace = true
 

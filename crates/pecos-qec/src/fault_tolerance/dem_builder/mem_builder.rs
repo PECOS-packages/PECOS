@@ -128,8 +128,7 @@ impl<'a> MemBuilder<'a> {
                 }
                 GateType::Idle if !loc.before => {
                     if self.noise.uses_dedicated_idle_noise() {
-                        #[allow(clippy::cast_precision_loss)]
-                        let duration = loc.idle_duration.max(1) as f64;
+                        let duration = loc.idle_duration.max(0.0);
                         let probs = self.noise.idle_pauli_probs(duration);
                         if probs.px > 0.0 {
                             self.process_single_pauli_fault(loc_idx, Pauli::X, probs.px, &mut mem);

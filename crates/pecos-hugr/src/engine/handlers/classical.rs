@@ -27,15 +27,43 @@
 //! Also handles `tket.bool` extension operations.
 
 use log::debug;
-use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
+use tket::hugr::ops::OpType;
+use tket::hugr::{Hugr, HugrView, IncomingPort, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::{ClassicalOutcome, HandlerOutcome};
 use crate::engine::types::{ClassicalOp, ClassicalOpType, ClassicalValue};
 
+/// Mask for the low `2^log_width` bits (`log_width` >= 6 means full `i64`).
+pub(crate) fn width_mask(log_width: u8) -> u64 {
+    if log_width >= 6 {
+        u64::MAX
+    } else {
+        (1u64 << (1u32 << log_width)) - 1
+    }
+}
+
+/// Canonicalize a value to the op's width: mask to `2^log_width` bits and
+/// sign-extend, so the stored i64 is the two's-complement value the width
+/// implies (e.g. `int<5>` `0xFFFF_FFFF` stores as -1). Matches `ConstInt`
+/// parsing, which stores `value_s()` (sign-extended) for every width.
+#[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+pub(crate) fn canonicalize_width(value: i64, log_width: u8) -> i64 {
+    if log_width >= 6 {
+        return value;
+    }
+    let bits = 1u32 << log_width;
+    let masked = (value as u64) & width_mask(log_width);
+    ((masked << (64 - bits)) as i64) >> (64 - bits)
+}
+
 impl HugrEngine {
-    /// Execute a classical operation and return the output values.
+    /// Execute a classical operation.
     ///
-    /// Returns a vector of (`port_index`, value) pairs for output ports.
+    /// Returns [`ClassicalOutcome::Outputs`] with (`port_index`, value)
+    /// pairs on success, `Defer` when an input is missing or
+    /// unconvertible, and `Fault` for unrecoverable spec-defined errors
+    /// (e.g. unchecked division by zero).
     #[allow(
         clippy::too_many_lines,
         clippy::float_cmp, // Exact float comparison is intentional for feq/fne operations
@@ -44,464 +72,627 @@ impl HugrEngine {
         clippy::cast_sign_loss // shift amounts are clamped to 0-63 before cast to u32
     )]
     pub(crate) fn handle_classical_op(
-        &self,
+        &mut self,
         hugr: &Hugr,
         node: Node,
         op: &ClassicalOp,
-    ) -> Vec<(usize, ClassicalValue)> {
-        // Collect input values
+    ) -> ClassicalOutcome {
+        // Collect input values. get_input_value (not a raw wire read) so
+        // values are found across flattened-DFG boundaries -- the executor
+        // must see exactly what the tracing layer sees, or a classical op
+        // fed by a nested DFG defers forever.
         let mut inputs = Vec::with_capacity(op.num_inputs);
         for port_idx in 0..op.num_inputs {
             let in_port = IncomingPort::from(port_idx);
-            if let Some((src_node, src_port)) = hugr.single_linked_output(node, in_port) {
-                let wire_key = (src_node, src_port.index());
-                if let Some(value) = self.wire_state.classical_values.get(&wire_key) {
-                    inputs.push(value.clone());
-                } else {
-                    debug!(
-                        "Classical op {node:?}: missing input value for port {port_idx} from {wire_key:?}"
-                    );
-                    return vec![];
-                }
-            } else {
+            if hugr.single_linked_output(node, in_port).is_none() {
                 debug!("Classical op {node:?}: no source for input port {port_idx}");
-                return vec![];
+                return ClassicalOutcome::Defer;
+            }
+            if let Some(value) = self.get_input_value(hugr, node, port_idx) {
+                inputs.push(value);
+            } else if matches!(op.op_type, ClassicalOpType::TagSum)
+                && let Some(qubit_id) = self.get_input_qubit(hugr, node, port_idx)
+            {
+                // A Tag may carry linear payload elements (e.g. an
+                // iterator's Option over (qubit, state)): represent the
+                // qubit as a QubitRef so the Sum value materializes.
+                // Scoped to TagSum only -- a qubit input to an
+                // arithmetic op is a semantic error, not a value.
+                inputs.push(ClassicalValue::QubitRef(qubit_id));
+            } else {
+                debug!("Classical op {node:?}: missing input value for port {port_idx}");
+                return ClassicalOutcome::Defer;
             }
         }
 
-        // Execute the operation
-        let result = match op.op_type {
-            // Logic operations
-            ClassicalOpType::And => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                ClassicalValue::Bool(a && b)
-            }
-            ClassicalOpType::Or => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                ClassicalValue::Bool(a || b)
-            }
-            ClassicalOpType::Not => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                ClassicalValue::Bool(!a)
-            }
-            ClassicalOpType::Xor => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                ClassicalValue::Bool(a ^ b)
-            }
-            ClassicalOpType::Eq => {
-                // Eq can work on bools
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_bool)
-                    .unwrap_or(false);
-                ClassicalValue::Bool(a == b)
-            }
-
-            // Integer arithmetic
-            ClassicalOpType::Iadd => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(a.wrapping_add(b))
-            }
-            ClassicalOpType::Isub => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(a.wrapping_sub(b))
-            }
-            ClassicalOpType::Imul => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(a.wrapping_mul(b))
-            }
-            ClassicalOpType::Idiv => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(1);
-                if b == 0 {
-                    ClassicalValue::Int(0) // Avoid division by zero
-                } else {
-                    ClassicalValue::Int(a.wrapping_div(b))
-                }
-            }
-            ClassicalOpType::Imod => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(1);
-                if b == 0 {
-                    ClassicalValue::Int(0)
-                } else {
-                    ClassicalValue::Int(a.wrapping_rem(b))
-                }
-            }
-            ClassicalOpType::Ineg => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(a.wrapping_neg())
-            }
-            ClassicalOpType::Iabs => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(a.wrapping_abs())
-            }
-
-            // Integer comparisons
-            ClassicalOpType::Ieq => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Bool(a == b)
-            }
-            ClassicalOpType::Ine => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Bool(a != b)
-            }
-            ClassicalOpType::Ilt => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Bool(a < b)
-            }
-            ClassicalOpType::Ile => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Bool(a <= b)
-            }
-            ClassicalOpType::Igt => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Bool(a > b)
-            }
-            ClassicalOpType::Ige => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Bool(a >= b)
-            }
-
-            // Integer bitwise operations
-            ClassicalOpType::Iand => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(a & b)
-            }
-            ClassicalOpType::Ior => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(a | b)
-            }
-            ClassicalOpType::Ixor => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(a ^ b)
-            }
-            ClassicalOpType::Inot => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Int(!a)
-            }
-            ClassicalOpType::Ishl => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                // Clamp shift amount to valid range (0-63 for i64)
-                let shift = b.clamp(0, 63) as u32;
-                ClassicalValue::Int(a.wrapping_shl(shift))
-            }
-            ClassicalOpType::Ishr => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                let b = inputs.get(1).and_then(ClassicalValue::as_int).unwrap_or(0);
-                // Clamp shift amount to valid range (0-63 for i64)
-                let shift = b.clamp(0, 63) as u32;
-                ClassicalValue::Int(a.wrapping_shr(shift))
-            }
-
-            // Float arithmetic
-            ClassicalOpType::Fadd => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Float(a + b)
-            }
-            ClassicalOpType::Fsub => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Float(a - b)
-            }
-            ClassicalOpType::Fmul => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Float(a * b)
-            }
-            ClassicalOpType::Fdiv => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(1.0);
-                ClassicalValue::Float(a / b)
-            }
-            ClassicalOpType::Fneg => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Float(-a)
-            }
-            ClassicalOpType::Fabs => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Float(a.abs())
-            }
-            ClassicalOpType::Ffloor => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Float(a.floor())
-            }
-            ClassicalOpType::Fceil => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Float(a.ceil())
-            }
-
-            // Float comparisons
-            ClassicalOpType::Feq => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Bool(a == b)
-            }
-            ClassicalOpType::Fne => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Bool(a != b)
-            }
-            ClassicalOpType::Flt => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Bool(a < b)
-            }
-            ClassicalOpType::Fle => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Bool(a <= b)
-            }
-            ClassicalOpType::Fgt => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Bool(a > b)
-            }
-            ClassicalOpType::Fge => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                let b = inputs
-                    .get(1)
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                ClassicalValue::Bool(a >= b)
-            }
-
-            // Conversions
-            ClassicalOpType::ConvertIntToFloat => {
-                let a = inputs.first().and_then(ClassicalValue::as_int).unwrap_or(0);
-                ClassicalValue::Float(a as f64)
-            }
-            ClassicalOpType::ConvertFloatToInt => {
-                let a = inputs
-                    .first()
-                    .and_then(ClassicalValue::as_float)
-                    .unwrap_or(0.0);
-                // Truncate toward zero, matching standard float-to-int semantics
-                ClassicalValue::Int(a.trunc() as i64)
-            }
-
+        // Multi-output / special arms first (they return whole port lists).
+        match op.op_type {
             // Constants (shouldn't be processed as operations, but handle anyway)
             ClassicalOpType::ConstInt
             | ClassicalOpType::ConstFloat
             | ClassicalOpType::ConstBool => {
-                if let Some(value) = &op.const_value {
-                    value.clone()
-                } else {
-                    return vec![];
-                }
+                return op
+                    .const_value
+                    .as_ref()
+                    .map_or(ClassicalOutcome::Defer, |value| {
+                        ClassicalOutcome::Outputs(vec![(0, value.clone())])
+                    });
             }
-
-            // Tuple operations - these have special return handling
             ClassicalOpType::MakeTuple => {
                 // MakeTuple combines all inputs into a single tuple
-                // inputs already collected above
-                return vec![(0, ClassicalValue::Tuple(inputs))];
+                return ClassicalOutcome::Outputs(vec![(0, ClassicalValue::Tuple(inputs))]);
             }
             ClassicalOpType::UnpackTuple => {
-                // UnpackTuple takes a single tuple input and produces multiple outputs
+                // UnpackTuple takes a single tuple input and produces multiple
+                // outputs. A tuple is a 1-variant sum, so accept a Sum payload
+                // the same way (e.g. a tuple that crossed a CFG/Call boundary
+                // as a tagged value).
                 let tuple_value = inputs.into_iter().next();
-                if let Some(ClassicalValue::Tuple(elements)) = tuple_value {
-                    // Return each element on its respective output port
-                    return elements.into_iter().enumerate().collect();
-                } else if let Some(value) = tuple_value {
-                    // If it's a single non-tuple value, just pass it through on port 0
-                    return vec![(0, value)];
+                match tuple_value {
+                    Some(
+                        ClassicalValue::Tuple(elements)
+                        | ClassicalValue::Sum {
+                            values: elements, ..
+                        },
+                    ) => {
+                        // Return each element on its respective output port
+                        return ClassicalOutcome::Outputs(
+                            elements.into_iter().enumerate().collect(),
+                        );
+                    }
+                    Some(value) => {
+                        // If it's a single non-tuple value, just pass it through on port 0
+                        return ClassicalOutcome::Outputs(vec![(0, value)]);
+                    }
+                    None => return ClassicalOutcome::Defer,
                 }
-                return vec![];
             }
-        };
+            ClassicalOpType::LoadFunc => {
+                // Resolve the static FuncDefn target into a function value,
+                // carrying the instantiation's type args (generic functions
+                // executed through scan resolve type-level naturals from
+                // them, symmetric with Call frames).
+                let Some(func_defn) = hugr.static_source(node) else {
+                    return ClassicalOutcome::Fault(format!(
+                        "LoadFunction at {node:?} has no static source"
+                    ));
+                };
+                let type_args = match hugr.get_optype(node) {
+                    OpType::LoadFunction(lf) => lf.type_args.clone(),
+                    _ => Vec::new(),
+                };
+                return ClassicalOutcome::Outputs(vec![(
+                    0,
+                    ClassicalValue::FuncRef(func_defn, type_args),
+                )]);
+            }
+            ClassicalOpType::TagSum => {
+                // Tag wraps its inputs into the given variant of a sum.
+                let OpType::Tag(tag_op) = hugr.get_optype(node) else {
+                    // Classified as TagSum but not a Tag op: an engine
+                    // invariant violation that no retry can repair.
+                    return ClassicalOutcome::Fault(format!(
+                        "node {node:?} classified as TagSum is not a Tag op"
+                    ));
+                };
+                return ClassicalOutcome::Outputs(vec![(
+                    0,
+                    ClassicalValue::Sum {
+                        tag: tag_op.tag,
+                        values: inputs,
+                    },
+                )]);
+            }
+            ClassicalOpType::Idivmod => {
+                // Combined Euclidean division+remainder, TWO outputs (q, r);
+                // m=0 panics per the spec, like Idiv/Imod.
+                let int_at = |i: usize| inputs.get(i).and_then(ClassicalValue::as_int);
+                let uint_at = |i: usize| match inputs.get(i) {
+                    Some(ClassicalValue::UInt(u)) => Some(*u),
+                    #[allow(clippy::cast_sign_loss)]
+                    other => other.and_then(ClassicalValue::as_int).map(|v| v as u64),
+                };
+                let signed = op.int_info.is_none_or(|(_, is_signed)| is_signed);
+                let qr = if signed {
+                    let (Some(n), Some(m)) = (int_at(0), uint_at(1)) else {
+                        debug!("idivmod at {node:?}: inputs not ready, deferring");
+                        return ClassicalOutcome::Defer;
+                    };
+                    let (n, m) = (i128::from(n), i128::from(m));
+                    if m == 0 {
+                        None
+                    } else {
+                        #[allow(clippy::cast_possible_truncation)]
+                        Some((n.div_euclid(m) as i64, n.rem_euclid(m) as i64))
+                    }
+                } else {
+                    let (Some(a), Some(b)) = (uint_at(0), uint_at(1)) else {
+                        debug!("idivmod at {node:?}: inputs not ready, deferring");
+                        return ClassicalOutcome::Defer;
+                    };
+                    #[allow(clippy::cast_possible_wrap)]
+                    (b != 0).then(|| ((a / b) as i64, (a % b) as i64))
+                };
+                let Some((q, r)) = qr else {
+                    return ClassicalOutcome::Fault(format!(
+                        "division by zero at {node:?} (the HUGR spec defines m=0 as a panic)"
+                    ));
+                };
+                return ClassicalOutcome::Outputs(vec![
+                    (0, ClassicalValue::Int(q)),
+                    (1, ClassicalValue::Int(r)),
+                ]);
+            }
+            ClassicalOpType::IdivmodChecked => {
+                // sum_with_error(tuple(q, r)): error = tag 0, value = tag 1.
+                let int_at = |i: usize| inputs.get(i).and_then(ClassicalValue::as_int);
+                let uint_at = |i: usize| match inputs.get(i) {
+                    Some(ClassicalValue::UInt(u)) => Some(*u),
+                    #[allow(clippy::cast_sign_loss)]
+                    other => other.and_then(ClassicalValue::as_int).map(|v| v as u64),
+                };
+                let signed = op.int_info.is_none_or(|(_, is_signed)| is_signed);
+                let qr = if signed {
+                    let (Some(n), Some(m)) = (int_at(0), uint_at(1)) else {
+                        debug!("idivmod_checked at {node:?}: inputs not ready, deferring");
+                        return ClassicalOutcome::Defer;
+                    };
+                    let (n, m) = (i128::from(n), i128::from(m));
+                    #[allow(clippy::cast_possible_truncation)]
+                    (m != 0).then(|| (n.div_euclid(m) as i64, n.rem_euclid(m) as i64))
+                } else {
+                    let (Some(a), Some(b)) = (uint_at(0), uint_at(1)) else {
+                        debug!("idivmod_checked at {node:?}: inputs not ready, deferring");
+                        return ClassicalOutcome::Defer;
+                    };
+                    #[allow(clippy::cast_possible_wrap)]
+                    (b != 0).then(|| ((a / b) as i64, (a % b) as i64))
+                };
+                let value = match qr {
+                    Some((q, r)) => ClassicalValue::Sum {
+                        tag: 1,
+                        values: vec![ClassicalValue::Tuple(vec![
+                            ClassicalValue::Int(q),
+                            ClassicalValue::Int(r),
+                        ])],
+                    },
+                    None => ClassicalValue::Sum {
+                        // The error variant of sum_with_error carries an
+                        // error payload; an opaque token keeps the case
+                        // Input port arity correct for propagation.
+                        tag: 0,
+                        values: vec![ClassicalValue::Tuple(vec![])],
+                    },
+                };
+                return ClassicalOutcome::Outputs(vec![(0, value)]);
+            }
+            _ => {}
+        }
 
-        // Return output on port 0
-        vec![(0, result)]
+        // Typed extraction for the scalar arms below: a PRESENT but
+        // unconvertible input is the same hazard as a missing one --
+        // defaulting (the old unwrap_or(0/false/0.0)) silently computes on
+        // fabricated operands, so extraction failure defers the whole op.
+        // Extraction is width-aware: the op's declared width (int_info)
+        // masks unsigned reads and canonicalizes signed ones, so narrow
+        // ints (int<5> = 32-bit etc.) compute exactly.
+        let log_width = op.int_info.map_or(6, |(lw, _)| lw);
+        let int = |i: usize| {
+            inputs
+                .get(i)
+                .and_then(ClassicalValue::as_int)
+                .map(|v| canonicalize_width(v, log_width))
+        };
+        // Unsigned ops reinterpret the stored i64 bit pattern: wrapping
+        // arithmetic stores results through Int, so as_uint (which rejects
+        // negatives) would spuriously defer on e.g. u64::MAX.
+        #[allow(clippy::cast_sign_loss)]
+        let uint = |i: usize| {
+            match inputs.get(i) {
+                Some(ClassicalValue::UInt(u)) => Some(*u),
+                other => other.and_then(ClassicalValue::as_int).map(|v| v as u64),
+            }
+            .map(|v| v & width_mask(log_width))
+        };
+        let boolean = |i: usize| inputs.get(i).and_then(ClassicalValue::as_bool);
+        let float = |i: usize| inputs.get(i).and_then(ClassicalValue::as_float);
+        // Classified arithmetic.int ops carry their signedness; ops without
+        // int_info (logic/float/etc.) never consult it.
+        let signed = op.int_info.is_none_or(|(_, is_signed)| is_signed);
+
+        // Execute the operation
+        let mut div_by_zero = false;
+        #[allow(clippy::cast_possible_wrap)]
+        let result: Option<ClassicalValue> = (|| {
+            Some(match op.op_type {
+                // Logic operations
+                ClassicalOpType::And => ClassicalValue::Bool(boolean(0)? && boolean(1)?),
+                ClassicalOpType::Or => ClassicalValue::Bool(boolean(0)? || boolean(1)?),
+                ClassicalOpType::Not => ClassicalValue::Bool(!boolean(0)?),
+                ClassicalOpType::Xor => ClassicalValue::Bool(boolean(0)? ^ boolean(1)?),
+                ClassicalOpType::Eq => ClassicalValue::Bool(boolean(0)? == boolean(1)?),
+
+                // Integer arithmetic (add/sub/mul are sign-agnostic modulo 2^64)
+                ClassicalOpType::Iadd => ClassicalValue::Int(int(0)?.wrapping_add(int(1)?)),
+                ClassicalOpType::Isub => ClassicalValue::Int(int(0)?.wrapping_sub(int(1)?)),
+                ClassicalOpType::Imul => ClassicalValue::Int(int(0)?.wrapping_mul(int(1)?)),
+                ClassicalOpType::Idiv => {
+                    // Division by zero panics per the spec ("m=0 will call
+                    // panic"); raised as a fatal execution fault. Signed
+                    // division is EUCLIDEAN per the HUGR spec (idivmod_s:
+                    // q*m+r=n with 0<=r<m, unsigned divisor) -- computed in
+                    // i128 so a divisor above i64::MAX is exact.
+                    if signed {
+                        let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
+                        if m == 0 {
+                            div_by_zero = true;
+                            return None;
+                        }
+                        ClassicalValue::Int(n.div_euclid(m) as i64)
+                    } else {
+                        let (a, b) = (uint(0)?, uint(1)?);
+                        let Some(q) = a.checked_div(b) else {
+                            div_by_zero = true;
+                            return None;
+                        };
+                        ClassicalValue::Int(q as i64)
+                    }
+                }
+                ClassicalOpType::Imod => {
+                    // Euclidean remainder for signed (0 <= r < m), see Idiv;
+                    // modulo by zero panics per the spec.
+                    if signed {
+                        let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
+                        if m == 0 {
+                            div_by_zero = true;
+                            return None;
+                        }
+                        ClassicalValue::Int(n.rem_euclid(m) as i64)
+                    } else {
+                        let (a, b) = (uint(0)?, uint(1)?);
+                        let Some(r) = a.checked_rem(b) else {
+                            div_by_zero = true;
+                            return None;
+                        };
+                        ClassicalValue::Int(r as i64)
+                    }
+                }
+                // Checked variants return sum_with_error(int): tag 1 wraps
+                // the value, tag 0 is the error variant. The error payload
+                // (a prelude error value) is not modeled -- correct programs
+                // never take that branch, and one that does stalls loudly on
+                // the missing payload instead of computing on a fabricated
+                // value.
+                ClassicalOpType::IdivChecked => {
+                    // Signed checked division is Euclidean, like Idiv.
+                    let ok = if signed {
+                        let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
+                        (m != 0).then(|| n.div_euclid(m) as i64)
+                    } else {
+                        let (a, b) = (uint(0)?, uint(1)?);
+                        a.checked_div(b).map(|q| q as i64)
+                    };
+                    match ok {
+                        Some(q) => ClassicalValue::Sum {
+                            tag: 1,
+                            values: vec![ClassicalValue::Int(q)],
+                        },
+                        None => ClassicalValue::Sum {
+                            // sum_with_error error variants carry a payload
+                            tag: 0,
+                            values: vec![ClassicalValue::Tuple(vec![])],
+                        },
+                    }
+                }
+                ClassicalOpType::ImodChecked => {
+                    // Euclidean remainder (0 <= r < m), like Imod.
+                    let ok = if signed {
+                        let (n, m) = (i128::from(int(0)?), i128::from(uint(1)?));
+                        (m != 0).then(|| n.rem_euclid(m) as i64)
+                    } else {
+                        let (a, b) = (uint(0)?, uint(1)?);
+                        a.checked_rem(b).map(|r| r as i64)
+                    };
+                    match ok {
+                        Some(r) => ClassicalValue::Sum {
+                            tag: 1,
+                            values: vec![ClassicalValue::Int(r)],
+                        },
+                        None => ClassicalValue::Sum {
+                            // sum_with_error error variants carry a payload
+                            tag: 0,
+                            values: vec![ClassicalValue::Tuple(vec![])],
+                        },
+                    }
+                }
+                ClassicalOpType::Ineg => ClassicalValue::Int(int(0)?.wrapping_neg()),
+                ClassicalOpType::Iabs => ClassicalValue::Int(int(0)?.wrapping_abs()),
+
+                // Integer comparisons (ordering is signedness-sensitive)
+                ClassicalOpType::Ieq => ClassicalValue::Bool(int(0)? == int(1)?),
+                ClassicalOpType::Ine => ClassicalValue::Bool(int(0)? != int(1)?),
+                ClassicalOpType::Ilt => ClassicalValue::Bool(if signed {
+                    int(0)? < int(1)?
+                } else {
+                    uint(0)? < uint(1)?
+                }),
+                ClassicalOpType::Ile => ClassicalValue::Bool(if signed {
+                    int(0)? <= int(1)?
+                } else {
+                    uint(0)? <= uint(1)?
+                }),
+                ClassicalOpType::Igt => ClassicalValue::Bool(if signed {
+                    int(0)? > int(1)?
+                } else {
+                    uint(0)? > uint(1)?
+                }),
+                ClassicalOpType::Ige => ClassicalValue::Bool(if signed {
+                    int(0)? >= int(1)?
+                } else {
+                    uint(0)? >= uint(1)?
+                }),
+
+                // Integer bitwise operations (sign-agnostic)
+                ClassicalOpType::Iand => ClassicalValue::Int(int(0)? & int(1)?),
+                ClassicalOpType::Ior => ClassicalValue::Int(int(0)? | int(1)?),
+                ClassicalOpType::Ixor => ClassicalValue::Int(int(0)? ^ int(1)?),
+                ClassicalOpType::Inot => ClassicalValue::Int(!int(0)?),
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+                ClassicalOpType::Ishl => {
+                    // "leftmost bits dropped, rightmost bits set to zero":
+                    // shifting by k >= N drops every bit.
+                    let k = uint(1)?;
+                    let bits = u64::from(1u32 << log_width);
+                    if k >= bits {
+                        return Some(ClassicalValue::Int(0));
+                    }
+                    #[allow(clippy::cast_possible_truncation)]
+                    ClassicalValue::Int((uint(0)? << (k as u32)) as i64)
+                }
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+                ClassicalOpType::Ishr => {
+                    // LOGICAL shift per the spec ("rightmost bits dropped,
+                    // leftmost bits set to zero") -- ishr has no signed
+                    // variant, and shifting by k >= N drops every bit.
+                    let k = uint(1)?;
+                    let bits = u64::from(1u32 << log_width);
+                    if k >= bits {
+                        return Some(ClassicalValue::Int(0));
+                    }
+                    #[allow(clippy::cast_possible_truncation)]
+                    ClassicalValue::Int((uint(0)? >> (k as u32)) as i64)
+                }
+                ClassicalOpType::Ipow => {
+                    // "raise first input to the power of second input, the
+                    // exponent is treated as an unsigned integer"; wrapping
+                    // square-and-multiply so huge exponents stay exact under
+                    // two's-complement wrap.
+                    let (mut base, mut exp) = (int(0)?, uint(1)?);
+                    let mut result: i64 = 1;
+                    while exp > 0 {
+                        if exp & 1 == 1 {
+                            result = result.wrapping_mul(base);
+                        }
+                        base = base.wrapping_mul(base);
+                        exp >>= 1;
+                    }
+                    ClassicalValue::Int(result)
+                }
+                ClassicalOpType::ItoBool => {
+                    // itobool: int<1> -> bool (1 is true, 0 is false)
+                    ClassicalValue::Bool(int(0)? != 0)
+                }
+                ClassicalOpType::IfromBool => {
+                    // ifrombool: bool -> int<1>
+                    ClassicalValue::Int(i64::from(boolean(0)?))
+                }
+
+                // Float arithmetic
+                ClassicalOpType::Fadd => ClassicalValue::Float(float(0)? + float(1)?),
+                ClassicalOpType::Fsub => ClassicalValue::Float(float(0)? - float(1)?),
+                ClassicalOpType::Fmul => ClassicalValue::Float(float(0)? * float(1)?),
+                ClassicalOpType::Fdiv => ClassicalValue::Float(float(0)? / float(1)?),
+                ClassicalOpType::Fneg => ClassicalValue::Float(-float(0)?),
+                ClassicalOpType::Fabs => ClassicalValue::Float(float(0)?.abs()),
+                ClassicalOpType::Ffloor => ClassicalValue::Float(float(0)?.floor()),
+                ClassicalOpType::Fceil => ClassicalValue::Float(float(0)?.ceil()),
+
+                // Float comparisons (exact comparison is intentional)
+                ClassicalOpType::Feq => ClassicalValue::Bool(float(0)? == float(1)?),
+                ClassicalOpType::Fne => ClassicalValue::Bool(float(0)? != float(1)?),
+                ClassicalOpType::Flt => ClassicalValue::Bool(float(0)? < float(1)?),
+                ClassicalOpType::Fle => ClassicalValue::Bool(float(0)? <= float(1)?),
+                ClassicalOpType::Fgt => ClassicalValue::Bool(float(0)? > float(1)?),
+                ClassicalOpType::Fge => ClassicalValue::Bool(float(0)? >= float(1)?),
+
+                #[allow(clippy::cast_precision_loss)]
+                ClassicalOpType::ConvertIntToFloat => ClassicalValue::Float(if signed {
+                    int(0)? as f64
+                } else {
+                    uint(0)? as f64
+                }),
+                #[allow(clippy::cast_possible_truncation)]
+                ClassicalOpType::ConvertFloatToInt => {
+                    // Truncate toward zero, matching standard float-to-int semantics
+                    ClassicalValue::Int(float(0)?.trunc() as i64)
+                }
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                ClassicalOpType::ConvertFloatToIntChecked => {
+                    // trunc_s/trunc_u: sum_with_error(int<N>) -- error (tag
+                    // 0) for NaN/infinite/out-of-range AT THE OP'S WIDTH,
+                    // value (tag 1) otherwise. The spec folds through
+                    // ConstInt::new_s/new_u(log_width, ..), which rejects
+                    // values that do not fit the declared width.
+                    let f = float(0)?;
+                    let t = f.trunc();
+                    // Strict upper bounds: the width's MAX as f64 can round
+                    // UP to 2^bits (e.g. i64::MAX -> 2^63), so `<= MAX`
+                    // would accept one out-of-range value and saturate
+                    // instead of taking the error branch. The signed MIN
+                    // (-2^(bits-1)) is exactly representable, so >= holds.
+                    let bits_width = 1u32 << log_width.min(6);
+                    let (lo, hi) = if signed {
+                        let half = 2f64.powi(bits_width as i32 - 1);
+                        (-half, half)
+                    } else {
+                        (0.0, 2f64.powi(bits_width as i32))
+                    };
+                    let in_range = t.is_finite() && (lo..hi).contains(&t);
+                    if in_range {
+                        let bits = if signed { t as i64 } else { (t as u64) as i64 };
+                        ClassicalValue::Sum {
+                            tag: 1,
+                            values: vec![ClassicalValue::Int(canonicalize_width(bits, log_width))],
+                        }
+                    } else {
+                        ClassicalValue::Sum {
+                            // sum_with_error error variants carry a payload
+                            tag: 0,
+                            values: vec![ClassicalValue::Tuple(vec![])],
+                        }
+                    }
+                }
+
+                // Handled by the early match above
+                ClassicalOpType::ConstInt
+                | ClassicalOpType::ConstFloat
+                | ClassicalOpType::ConstBool
+                | ClassicalOpType::MakeTuple
+                | ClassicalOpType::UnpackTuple
+                | ClassicalOpType::TagSum
+                | ClassicalOpType::Idivmod
+                | ClassicalOpType::IdivmodChecked
+                | ClassicalOpType::LoadFunc => return None,
+            })
+        })();
+
+        if let Some(value) = result {
+            // Results of width-carrying ops store CANONICAL: masked to the
+            // op's width and sign-extended (so wrapping at int<5> etc. is
+            // exact, and every consumer sees the value the width implies).
+            let value = match value {
+                ClassicalValue::Int(v) if op.int_info.is_some() => {
+                    ClassicalValue::Int(canonicalize_width(v, log_width))
+                }
+                other => other,
+            };
+            ClassicalOutcome::Outputs(vec![(0, value)])
+        } else if div_by_zero {
+            // The spec says unchecked division/modulo by zero panics.
+            ClassicalOutcome::Fault(format!(
+                "division by zero at {node:?} (the HUGR spec defines m=0 as a panic)"
+            ))
+        } else {
+            debug!("Classical op {node:?}: input type mismatch, deferring");
+            ClassicalOutcome::Defer
+        }
     }
 
     /// Handle `tket.bool` operations.
     #[allow(clippy::too_many_lines)] // Boolean operation dispatch is inherently large
-    pub(crate) fn handle_bool_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_bool_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.bool operation: {op_name} at {node:?}");
 
         match op_name {
+            // Binary/unary bool ops defer on missing or non-bool inputs
+            // instead of fabricating `false`: a fabricated operand commits a
+            // wrong branch value downstream (silent misexecution).
             "and" => {
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.bool.and at {node:?}: deferring - input not ready");
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
+                };
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a && b));
                 debug!("tket.bool.and: {a} && {b} = {}", a && b);
-                true
+                HandlerOutcome::Processed
             }
             "or" => {
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.bool.or at {node:?}: deferring - input not ready");
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
+                };
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a || b));
                 debug!("tket.bool.or: {a} || {b} = {}", a || b);
-                true
+                HandlerOutcome::Processed
             }
             "xor" => {
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.bool.xor at {node:?}: deferring - input not ready");
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
+                };
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a ^ b));
                 debug!("tket.bool.xor: {a} ^ {b} = {}", a ^ b);
-                true
+                HandlerOutcome::Processed
             }
             "not" => {
-                let a = self
+                let Some(a) = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                else {
+                    debug!("tket.bool.not at {node:?}: deferring - input not ready");
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
+                };
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(!a));
                 debug!("tket.bool.not: !{a} = {}", !a);
-                true
+                HandlerOutcome::Processed
             }
             "eq" => {
                 let a = self
                     .get_input_value(hugr, node, 0)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
                 let b = self
                     .get_input_value(hugr, node, 1)
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .and_then(|v| v.as_bool());
+                let (Some(a), Some(b)) = (a, b) else {
+                    debug!("tket.bool.eq at {node:?}: deferring - input not ready");
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
+                };
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(a == b));
                 debug!("tket.bool.eq: {a} == {b} = {}", a == b);
-                true
+                HandlerOutcome::Processed
             }
             "make_opaque" => {
                 // make_opaque: Sum<bool> -> tket.bool
@@ -513,19 +704,25 @@ impl HugrEngine {
                 let Some(input_val) = input_value else {
                     debug!("tket.bool.make_opaque at {node:?}: deferring - input not ready");
                     // Track this node so it can be retried when input becomes available
-                    self.pending_bool_reads.insert(node);
-                    return false;
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
+                };
+
+                // A present but non-bool value is the same hazard as a
+                // missing one: fabricating `false` commits a wrong value.
+                let Some(value) = input_val.as_bool() else {
+                    debug!("tket.bool.make_opaque at {node:?}: deferring - input not a bool");
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
                 };
 
                 // Successfully resolved - remove from pending if it was there
-                self.pending_bool_reads.remove(&node);
-
-                let value = input_val.as_bool().unwrap_or(false);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
                 debug!("tket.bool.make_opaque: {value}");
-                true
+                HandlerOutcome::Processed
             }
             "read" => {
                 // read: tket.bool -> Sum<bool>
@@ -539,23 +736,27 @@ impl HugrEngine {
                 let Some(input_val) = input_value else {
                     debug!("tket.bool.read at {node:?}: deferring - input not ready");
                     // Track this node so it can be retried when measurement results arrive
-                    self.pending_bool_reads.insert(node);
-                    return false;
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
+                };
+
+                let Some(value) = input_val.as_bool() else {
+                    debug!("tket.bool.read at {node:?}: deferring - input not a bool");
+                    self.deferred_nodes.insert(node);
+                    return HandlerOutcome::Defer;
                 };
 
                 // Successfully resolved - remove from pending if it was there
-                self.pending_bool_reads.remove(&node);
-
-                let value = input_val.as_bool().unwrap_or(false);
+                self.deferred_nodes.remove(&node);
                 self.wire_state
                     .classical_values
                     .insert((node, 0), ClassicalValue::Bool(value));
                 debug!("tket.bool.read: {value}");
-                true
+                HandlerOutcome::Processed
             }
             _ => {
                 debug!("Unknown tket.bool operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }

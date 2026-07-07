@@ -25,12 +25,18 @@ use log::debug;
 use tket::hugr::{Hugr, HugrView, Node, NodeIndex};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 use crate::engine::types::{CapturedResult, ClassicalValue, ResultValue};
 
 impl HugrEngine {
     /// Handle tket.result operations for capturing output values.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn handle_result_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_result_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.result operation: {op_name} at {node:?}");
 
         // Get the label from the first input port (typically the operation has a label parameter)
@@ -48,11 +54,11 @@ impl HugrEngine {
                         label,
                         value: ResultValue::Bool(b),
                     });
-                    true
+                    HandlerOutcome::Processed
                 } else {
                     // Input not ready - defer processing
                     debug!("result_bool at {node:?}: deferring - input not ready");
-                    false
+                    HandlerOutcome::Defer
                 }
             }
             "result_int" => {
@@ -64,20 +70,33 @@ impl HugrEngine {
                         value: ResultValue::Int(i),
                     });
                     debug!("Captured result_int: {i}");
+                    HandlerOutcome::Processed
+                } else {
+                    // Marking the node processed without capturing would
+                    // silently drop the result; defer until the value arrives.
+                    debug!("result_int at {node:?}: deferring - input not ready");
+                    HandlerOutcome::Defer
                 }
-                true
             }
             "result_uint" => {
+                // Reinterpret the canonical (sign-extended) bit pattern:
+                // as_uint REJECTS negative storage, but a canonical u64
+                // >= 2^63 stores negative -- rejecting it defers the result
+                // op forever and kills the shot in the stall report.
+                #[allow(clippy::cast_sign_loss)]
                 if let Some(value) = self.get_input_value(hugr, node, 0)
-                    && let Some(u) = value.as_uint()
+                    && let Some(u) = value.as_int().map(|v| v as u64)
                 {
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::UInt(u),
                     });
                     debug!("Captured result_uint: {u}");
+                    HandlerOutcome::Processed
+                } else {
+                    debug!("result_uint at {node:?}: deferring - input not ready");
+                    HandlerOutcome::Defer
                 }
-                true
             }
             "result_f64" => {
                 if let Some(value) = self.get_input_value(hugr, node, 0)
@@ -88,80 +107,112 @@ impl HugrEngine {
                         value: ResultValue::Float(f),
                     });
                     debug!("Captured result_f64: {f}");
+                    HandlerOutcome::Processed
+                } else {
+                    debug!("result_f64 at {node:?}: deferring - input not ready");
+                    HandlerOutcome::Defer
                 }
-                true
             }
             "result_array_bool" => {
+                // Elements are converted with map (not filter_map): a single
+                // unconvertible element defers the whole capture instead of
+                // silently shortening the array.
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
+                    && let Some(bools) = arr
+                        .iter()
+                        .map(ClassicalValue::as_bool)
+                        .collect::<Option<Vec<bool>>>()
                 {
-                    let bools: Vec<bool> = arr.iter().filter_map(ClassicalValue::as_bool).collect();
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::ArrayBool(bools),
                     });
+                    HandlerOutcome::Processed
+                } else {
+                    debug!("result_array_bool at {node:?}: deferring - input not ready");
+                    HandlerOutcome::Defer
                 }
-                true
             }
             "result_array_int" => {
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
+                    && let Some(ints) = arr
+                        .iter()
+                        .map(ClassicalValue::as_int)
+                        .collect::<Option<Vec<i64>>>()
                 {
-                    let ints: Vec<i64> = arr.iter().filter_map(ClassicalValue::as_int).collect();
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::ArrayInt(ints),
                     });
+                    HandlerOutcome::Processed
+                } else {
+                    debug!("result_array_int at {node:?}: deferring - input not ready");
+                    HandlerOutcome::Defer
                 }
-                true
             }
             "result_array_uint" => {
+                // Bit-reinterpret canonical storage; see result_uint.
+                #[allow(clippy::cast_sign_loss)]
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
+                    && let Some(uints) = arr
+                        .iter()
+                        .map(|v| v.as_int().map(|i| i as u64))
+                        .collect::<Option<Vec<u64>>>()
                 {
-                    let uints: Vec<u64> = arr.iter().filter_map(ClassicalValue::as_uint).collect();
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::ArrayUInt(uints),
                     });
+                    HandlerOutcome::Processed
+                } else {
+                    debug!("result_array_uint at {node:?}: deferring - input not ready");
+                    HandlerOutcome::Defer
                 }
-                true
             }
             "result_array_f64" => {
                 if let Some(value) = self.get_input_value(hugr, node, 0)
                     && let Some(arr) = value.as_array()
+                    && let Some(floats) = arr
+                        .iter()
+                        .map(ClassicalValue::as_float)
+                        .collect::<Option<Vec<f64>>>()
                 {
-                    let floats: Vec<f64> =
-                        arr.iter().filter_map(ClassicalValue::as_float).collect();
                     self.captured_results.push(CapturedResult {
                         label,
                         value: ResultValue::ArrayFloat(floats),
                     });
+                    HandlerOutcome::Processed
+                } else {
+                    debug!("result_array_f64 at {node:?}: deferring - input not ready");
+                    HandlerOutcome::Defer
                 }
-                true
             }
             _ => {
                 debug!("Unknown tket.result operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }
 
-    /// Extract result label from operation parameters.
+    /// Extract the result label from the op's TYPED String arg.
+    ///
+    /// tket.result ops carry the user label as a String type arg; reading
+    /// it directly replaces the old Debug-output scrape, whose quote
+    /// heuristics also rejected legitimate labels containing "result",
+    /// "Op", or "Report".
     #[allow(clippy::unused_self)] // Consistent with other handler methods; may use self in future
     pub(crate) fn extract_result_label(&self, hugr: &Hugr, node: Node, op_name: &str) -> String {
-        // Try to extract label from the ExtensionOp's debug representation
-        // The debug format typically includes the label as a string parameter
         let op = hugr.get_optype(node);
         if let Some(ext_op) = op.as_extension_op() {
-            let debug_str = format!("{ext_op:?}");
-            // Look for quoted string patterns that might be labels
-            // Common patterns: "label", label="value", or ("label", ...)
-            if let Some(label) = Self::extract_string_from_debug(&debug_str)
-                && !label.is_empty()
-                && label != op_name
-            {
-                return label;
+            for arg in ext_op.args() {
+                if let tket::hugr::types::TypeArg::String(label) = arg
+                    && !label.is_empty()
+                {
+                    return label.clone();
+                }
             }
         }
         // Fallback: use node ID as label

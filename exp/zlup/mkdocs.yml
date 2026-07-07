@@ -1,0 +1,73 @@
+site_name: Zlup Documentation
+site_description: Quantum programming language with Zig semantics and Rust/Python syntax
+site_url: https://pecos.dev/zlup/
+
+repo_name: PECOS/zlup
+repo_url: https://github.com/PECOS-packages/PECOS
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      extend_pygments_lang:
+        - name: zlup
+          lang: zig
+        - name: zlup_fragment
+          lang: zig
+        - name: zlup_nocheck
+          lang: zig
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Tutorial: tutorial.md
+    - CLI Reference: cli.md
+    - IDE Setup: ide-setup.md
+  - Reference:
+    - Language Syntax: syntax.md
+    - Standard Library: stdlib.md
+    - Error Messages: errors.md
+  - Advanced:
+    - Design Philosophy: design.md
+    - Rust Integration: rust-integration.md
+  - Contributing:
+    - Development Notes: dev-notes.md
+  - Future:
+    - Build System: future/build-system.md
+    - Guppy Compatibility: future/guppy-compat.md
+    - Stdlib Design: future/stdlib-design.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/PECOS-packages/PECOS

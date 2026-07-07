@@ -188,6 +188,17 @@ pub trait DecodeStrategy: Send + Sync {
     /// which portion to decode based on its internal state and budget.
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError>;
 
+    /// Decode and return a wide [`ObsMask`](crate::obs_mask::ObsMask) (supports
+    /// more than 64 observables). Default-bridges [`Self::decode`]; strategies
+    /// that aggregate more than 64 observables override this.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if decoding fails.
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+        Ok(crate::obs_mask::ObsMask::from_u64(self.decode(syndrome)?))
+    }
+
     /// Commit corrections for a detector region.
     ///
     /// After commitment, detectors in this region are excluded from

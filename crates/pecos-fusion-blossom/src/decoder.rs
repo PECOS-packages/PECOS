@@ -282,6 +282,11 @@ impl FusionBlossomDecoder {
     ///
     /// Returns error if the graph is empty or construction fails.
     pub fn from_matching_graph(graph: &pecos_decoder_core::dem::DemMatchingGraph) -> Result<Self> {
+        // Matching decoders pack observable flips into a u64; reject >64-observable
+        // DEMs as an error rather than overflow-panicking in the `1 << o` loop below.
+        graph
+            .ensure_observables_fit_u64()
+            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
         let config = FusionBlossomConfig {
             num_nodes: Some(graph.num_detectors),
             num_observables: graph.num_observables,
@@ -368,6 +373,16 @@ impl FusionBlossomDecoder {
         parsed: &ParsedCorrelatedDem,
         weight_factors: Option<&[f64]>,
     ) -> Result<Self> {
+        // Matching decoders pack observable flips into a u64; reject >64-observable
+        // DEMs as an error rather than overflow-panicking in build_obs_masks.
+        if parsed.num_observables > 64 {
+            return Err(FusionBlossomError::Configuration(format!(
+                "this matching decoder packs observables into a u64 and supports at most 64 \
+                 observables, but the DEM has {}; use the 'pymatching' decoder or \
+                 LogicalSubgraphDecoder for wider observable sets",
+                parsed.num_observables
+            )));
+        }
         let config = FusionBlossomConfig {
             num_nodes: Some(parsed.num_detectors),
             num_observables: parsed.num_observables,
@@ -446,6 +461,10 @@ impl FusionBlossomDecoder {
         dcm: &pecos_decoder_core::dem::DemCheckMatrix,
         weight_factors: Option<&[f64]>,
     ) -> Result<Self> {
+        // Matching decoders pack observable flips into a u64; reject >64-observable
+        // DEMs as an error rather than overflow-panicking in build_obs_masks.
+        dcm.ensure_observables_fit_u64()
+            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
         // Use Legacy solver which tolerates duplicate edges (no assertion).
         let config = FusionBlossomConfig {
             num_nodes: Some(dcm.num_detectors),
@@ -510,6 +529,10 @@ impl FusionBlossomDecoder {
         use pecos_decoder_core::dem::DemCheckMatrix;
 
         let dcm = DemCheckMatrix::from_dem_str(dem)
+            .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
+        // Matching decoders pack observable flips into a u64; reject >64-observable
+        // DEMs as an error rather than overflow-panicking in build_obs_masks.
+        dcm.ensure_observables_fit_u64()
             .map_err(|e| FusionBlossomError::Configuration(e.to_string()))?;
 
         let config = FusionBlossomConfig {
@@ -659,6 +682,20 @@ impl FusionBlossomDecoder {
         Ok(decoder)
     }
 
+    /// Fail loud if any observable index is `>= 64`: this decoder packs
+    /// observable flips into a `u64` (`1 << index`) in `build_obs_masks`, so a
+    /// wider index would overflow-panic. Reject it where observables enter the
+    /// decoder (every edge-construction path) rather than at the later shift.
+    fn check_observable_indices(observables: &[usize]) -> Result<()> {
+        if let Some(&o) = observables.iter().find(|&&o| o >= 64) {
+            return Err(FusionBlossomError::InvalidGraph(format!(
+                "observable index {o} exceeds the 64 this decoder packs into a u64; use the \
+                 'pymatching' decoder or LogicalSubgraphDecoder for wider observable sets"
+            )));
+        }
+        Ok(())
+    }
+
     /// Add an edge to the graph
     ///
     /// # Errors
@@ -666,6 +703,7 @@ impl FusionBlossomDecoder {
     /// Returns [`FusionBlossomError::InvalidGraph`] if:
     /// - Either node index is out of bounds
     /// - The weight is negative
+    /// - Any observable index is `>= 64`
     pub fn add_edge(
         &mut self,
         node1: usize,
@@ -681,6 +719,7 @@ impl FusionBlossomDecoder {
                 self.num_nodes - 1
             )));
         }
+        Self::check_observable_indices(observables)?;
 
         let weight_int = if let Some(w) = weight {
             if w < 0.0 {
@@ -731,6 +770,7 @@ impl FusionBlossomDecoder {
                 self.num_nodes - 1
             )));
         }
+        Self::check_observable_indices(observables)?;
 
         // Create a virtual boundary node if not already created
         if self.boundary_node.is_none() {

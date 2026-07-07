@@ -7,10 +7,14 @@ env:
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
+  # Force the MWPF decoder feature on in CI so we exercise the cmake-dependent
+  # build path and catch regressions. GitHub-hosted runners ship cmake.
+  PECOS_BUILD_MWPF: "1"
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
-  LLVM_VERSION: "14.0.6"
 
 on:
   push:
@@ -112,8 +116,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -122,7 +126,7 @@ jobs:
       if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Sync Python dependencies
@@ -198,8 +202,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       if: github.event_name != 'pull_request'
@@ -209,7 +213,7 @@ jobs:
       if: github.event_name != 'pull_request' && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Run core Python tests (post-merge)
@@ -262,6 +266,14 @@ jobs:
         tool-cache: false
         swap-storage: true
 
+    - name: Free Disk Space (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "C:\hostedtoolcache\CodeQL" -Recurse -Force -ErrorAction SilentlyContinue
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
       with:
@@ -313,8 +325,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -323,7 +335,7 @@ jobs:
       if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Install Python build tooling
@@ -444,8 +456,8 @@ jobs:
       if: matrix.include-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       if: matrix.include-llvm
@@ -455,7 +467,7 @@ jobs:
       if: matrix.include-llvm && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Download Python compatibility smoke artifacts
@@ -501,8 +513,15 @@ jobs:
           fi
         fi
 
+  # Post-merge lanes excluded from the PR fast path: the slow integration
+  # tests and the optional-dependency suite (guppy/selene/QIR runtime tests
+  # marked `optional_dependency`).
   python-slow-postmerge:
-    if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+    # workflow_dispatch escape hatch: the optional-dependency suite
+    # (guppy/selene/QIR) otherwise has NO pre-merge path -- a branch whose
+    # risk lives in that suite could only get its first CI signal after
+    # landing. Dispatch is manual-only; the PR fast path is unaffected.
+    if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -566,8 +585,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -576,11 +595,19 @@ jobs:
       if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Build core Python packages
-      run: just python-ci-build
+      # python-ci-build-test, not python-ci-build: pytest COLLECTION imports
+      # every module under tests/, and tests/qec imports pecos_rslib_exp at
+      # module level -- without the exp wheel the whole lane dies in
+      # collection (it has failed this way on dev since the qec tests
+      # landed).
+      run: just python-ci-build-test
+
+    - name: Run optional-dependency Python tests
+      run: just pytest-dep
 
     - name: Run slow Python tests
       run: just pytest-slow
@@ -617,6 +644,11 @@ jobs:
             exit 1
           }
 
+      # pecos-build (where the toml_edit work lives) and pecos-core are
+      # publishable and need no LLVM/FFI/external toolchain -- the right
+      # minimal canary. LLVM-needing crates additionally require the upstream
+      # llvm-sys LLVM_SYS_211_PREFIX (a universal llvm-sys requirement, not a
+      # PECOS workaround) and are out of scope for this contract lane.
       - name: Vanilla cargo check (publishable crates, no just/bootstrap)
         shell: pwsh
         run: |

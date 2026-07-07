@@ -69,6 +69,13 @@ from collections.abc import Sequence as SequenceABC
 from typing import TYPE_CHECKING
 
 from pecos.quantum import commute, gate_groups
+from pecos.quantum.hosted import (
+    HOST_ID_META_KEY,
+    LOCAL_ROLE_META_KEY,
+    HostedGateRecord,
+    HostedOperationBinding,
+    validate_hosted_operations,
+)
 from pecos.typing import INTEGER_TYPES
 
 if TYPE_CHECKING:
@@ -92,6 +99,7 @@ try:
         H5,
         H6,
         ISWAP,
+        PHYSICAL_DURATION_META_KEY,
         SWAP,
         SX,
         SXX,
@@ -268,7 +276,10 @@ __all__ = [
     "H4",
     "H5",
     "H6",
+    "HOST_ID_META_KEY",
     "ISWAP",
+    "LOCAL_ROLE_META_KEY",
+    "PHYSICAL_DURATION_META_KEY",
     "SWAP",
     "SX",
     "SXX",
@@ -291,6 +302,8 @@ __all__ = [
     "GateRegistry",
     "GateType",
     "H",
+    "HostedGateRecord",
+    "HostedOperationBinding",
     "HugrConversionError",
     "Pauli",
     "PauliSequence",
@@ -323,4 +336,5 @@ __all__ = [
     "is_quantum_operation",
     "pauli_string",
     "sparse_stab",
+    "validate_hosted_operations",
 ]

@@ -24,7 +24,7 @@ pecos python build --profile release  # Release build
 pecos python build --profile native   # Release + native-CPU codegen (Rust and C++)
 
 # Dependency installation
-pecos install llvm            # Install LLVM 14 to ~/.pecos/deps/llvm-14/
+pecos install llvm            # Install managed LLVM 21.1 where supported
 pecos install cuda            # Install CUDA Toolkit to ~/.pecos/deps/cuda/
 pecos install cuquantum       # Install cuQuantum SDK to ~/.pecos/deps/cuquantum/
 pecos install --all           # Install all optional dependencies
@@ -33,7 +33,8 @@ pecos upgrade llvm            # Upgrade (force reinstall) LLVM
 
 # Inspection
 pecos llvm check              # Check LLVM installation status
-pecos llvm configure          # Configure .cargo/config.toml
+pecos llvm configure          # Configure .cargo/config.toml using detected LLVM
+pecos llvm configure /path/to/llvm  # Configure an explicit user-managed LLVM
 pecos cuda check              # Check CUDA availability
 pecos sys-info                # Show toolchain and environment info
 
@@ -100,8 +101,11 @@ Run `just --list` to see all available commands.
 ### Install LLVM
 
 ```bash
-# Automated installation (downloads pre-built binaries)
+# Automated installation where PECOS can provide shared LLVM
 pecos install llvm
+
+# Accept the managed-install prompt
+pecos install llvm --yes
 
 # Force reinstall
 pecos install llvm --force
@@ -110,7 +114,21 @@ pecos install llvm --force
 pecos install llvm --no-configure
 ```
 
-This downloads and installs LLVM 14 to `~/.pecos/deps/llvm-14/`.
+On Debian/Ubuntu-compatible Linux systems this downloads apt.llvm.org shared
+LLVM packages into `~/.pecos/deps/llvm-21.1/` without `sudo`. The managed
+install is the preferred developer path where it is available, but it is a
+large toolchain install. `pecos install llvm` prints what it is about to install
+and asks for confirmation before downloading.
+
+On macOS, install Homebrew LLVM 21 (`brew install llvm@21`) and run
+`pecos llvm configure`. On native Windows MSVC, use
+`scripts\ci\install-llvm-21-windows.ps1` to install the conda-forge LLVM 21.1
+toolchain, then configure `~\.pecos\deps\llvm-21.1\Library`.
+
+`pecos rust test` requires shared LLVM for the workspace HUGR test lane. LLVM
+21.1 static test links can use multiple GB of RAM each, so PECOS fails early
+instead of letting `just dev` spawn enough concurrent linkers to overwhelm a
+normal development machine.
 
 ### Check LLVM Status
 
@@ -125,9 +143,15 @@ pecos llvm check --quiet
 
 ```bash
 pecos llvm configure
+
+# Or explicitly use a system/Homebrew/apt LLVM instead of the managed install
+pecos llvm configure /path/to/llvm
 ```
 
-Updates `.cargo/config.toml` with the correct `LLVM_SYS_140_PREFIX` environment variable.
+Updates `.cargo/config.toml` with the correct `LLVM_SYS_211_PREFIX` environment variable.
+Explicit paths are canonicalized, so configuring a symlink records the resolved
+LLVM directory. Re-run `pecos llvm configure /path/to/llvm` after repointing the
+symlink.
 
 ### Find LLVM Path
 
@@ -188,7 +212,7 @@ Use `just check-all` before a broad PR; it runs the build, tests, lint gate, and
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PECOS_HOME` | PECOS cache and data directory | `~/.pecos` |
-| `LLVM_SYS_140_PREFIX` | LLVM 14 installation path | auto-detected |
+| `LLVM_SYS_211_PREFIX` | LLVM 21.1 installation path | auto-detected |
 | `RUST_LOG` | Log level for build output (`info` shows download progress) | `warn` |
 
 ## Typical Workflows
@@ -199,12 +223,16 @@ Use `just check-all` before a broad PR; it runs the build, tests, lint gate, and
 # 1. Check if LLVM is already available
 pecos llvm check
 
-# 2. If not, install it
+# 2. If not, install it where managed shared LLVM is supported
 pecos install llvm
 
 # 3. Now you can build with LLVM support
 cargo build -p pecos --features llvm
 ```
+
+On macOS use `brew install llvm@21 && pecos llvm configure`. On native Windows
+MSVC, use `scripts\ci\install-llvm-21-windows.ps1` and configure
+`~\.pecos\deps\llvm-21.1\Library`.
 
 Or using Justfile:
 ```bash

@@ -23,12 +23,17 @@ struct ConfigurableDecoder {
 }
 
 impl ObservableDecoder for ConfigurableDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         let has_defects = syndrome.iter().any(|&v| v != 0);
         if has_defects {
-            Ok(self.defect_mask)
+            Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
+                self.defect_mask,
+            ))
         } else {
-            Ok(0)
+            Ok(pecos_decoder_core::obs_mask::ObsMask::new())
         }
     }
 }
@@ -37,7 +42,10 @@ impl ObservableDecoder for ConfigurableDecoder {
 struct FailingDecoder;
 
 impl ObservableDecoder for FailingDecoder {
-    fn decode_to_observables(&mut self, _syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(
+        &mut self,
+        _syndrome: &[u8],
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
         Err(DecoderError::DecodingFailed("always fails".into()))
     }
 }

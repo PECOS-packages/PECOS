@@ -18,13 +18,14 @@
 //!
 //! # Decoding Modes
 //!
-//! - **Full-circuit**: Uses the full DEM's OSD for maximum accuracy.
-//!   Equivalent to `ObservableSubgraphDecoder` on the full circuit.
+//! - **Full-circuit**: Uses the full DEM's logical-subgraph decoder for maximum accuracy.
+//!   Equivalent to `LogicalSubgraphDecoder` on the full circuit.
 //! - **Per-segment** (future streaming): Each segment decoded independently
 //!   with buffer overlap at gate boundaries.
 
 use crate::ObservableDecoder;
 use crate::errors::DecoderError;
+use crate::obs_mask::ObsMask;
 
 /// One segment of a logical algorithm.
 pub struct SegmentDescriptor {
@@ -77,6 +78,32 @@ impl BoundaryGate {
     pub fn is_decision_point(&self) -> bool {
         matches!(self, Self::TGateInjection { .. })
     }
+
+    /// All observable-frame bit indices this gate references. Each must be < 64
+    /// (they index a `u64` frame). Used to assert that invariant at apply time.
+    #[must_use]
+    pub fn obs_bits(&self) -> Vec<u32> {
+        match self {
+            Self::Hadamard {
+                x_obs_bit,
+                z_obs_bit,
+            }
+            | Self::SGate {
+                x_obs_bit,
+                z_obs_bit,
+            } => vec![*x_obs_bit, *z_obs_bit],
+            Self::Cnot {
+                ctrl_x_bit,
+                ctrl_z_bit,
+                tgt_x_bit,
+                tgt_z_bit,
+            } => vec![*ctrl_x_bit, *ctrl_z_bit, *tgt_x_bit, *tgt_z_bit],
+            Self::TGateInjection {
+                z_obs_bit,
+                ancilla_z_bit,
+            } => vec![*z_obs_bit, *ancilla_z_bit],
+        }
+    }
 }
 
 /// Full description of a logical algorithm for decoding.
@@ -91,17 +118,17 @@ pub struct AlgorithmDescriptor {
 
 /// Decoder for logical quantum algorithms.
 ///
-/// Wraps a full-circuit decoder (OSD) with segment metadata. The
+/// Wraps a full-circuit decoder (logical-subgraph decoder) with segment metadata. The
 /// segment structure enables:
 /// - Tracking which gates occur at which point in the circuit
 /// - Pauli frame propagation for T-gate/measurement corrections
 /// - Future streaming mode with per-segment windowed decoding
 ///
 /// In the current implementation, `decode_shot` delegates to the
-/// full-circuit OSD for maximum accuracy. The segment structure is
+/// full-circuit logical-subgraph decoder for maximum accuracy. The segment structure is
 /// metadata for frame tracking and streaming (step 5).
 pub struct LogicalAlgorithmDecoder {
-    /// Full-circuit decoder (OSD on the complete DEM).
+    /// Full-circuit decoder (logical-subgraph decoder on the complete DEM).
     full_decoder: Box<dyn ObservableDecoder + Send + Sync>,
     /// Segment metadata for streaming/frame tracking.
     segments: Vec<SegmentDescriptor>,
@@ -114,7 +141,7 @@ pub struct LogicalAlgorithmDecoder {
 impl LogicalAlgorithmDecoder {
     /// Build from a full-circuit decoder and algorithm descriptor.
     ///
-    /// The `full_decoder` is typically an `ObservableSubgraphDecoder`
+    /// The `full_decoder` is typically an `LogicalSubgraphDecoder`
     /// built from the full circuit DEM.
     #[must_use]
     pub fn new(
@@ -148,7 +175,18 @@ impl LogicalAlgorithmDecoder {
 
     /// Apply boundary gate to a Pauli frame.
     /// Used when consuming the frame at logical operations.
-    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) {
+    ///
+    /// # Errors
+    /// Returns [`DecoderError::ObservableBitOutOfRange`] if any of the gate's
+    /// observable bits is `>= 64`. All bits index the `u64` observable frame, so
+    /// each must be `< 64`; the Python descriptor binding rejects this at
+    /// construction, and this runtime check guards the same invariant for direct
+    /// Rust callers (a shift by `>= 64` is otherwise an overflow panic in debug /
+    /// unspecified in release).
+    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) -> Result<(), DecoderError> {
+        if let Some(&bit) = gate.obs_bits().iter().find(|&&b| b >= 64) {
+            return Err(DecoderError::ObservableBitOutOfRange { bit });
+        }
         match gate {
             BoundaryGate::Hadamard {
                 x_obs_bit,
@@ -198,12 +236,17 @@ impl LogicalAlgorithmDecoder {
                 }
             }
         }
+        Ok(())
     }
 }
 
 impl ObservableDecoder for LogicalAlgorithmDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_shot(syndrome)
+    }
+
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.full_decoder.decode_obs(syndrome)
     }
 }
 
@@ -213,7 +256,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 
 /// Streaming wrapper for `LogicalAlgorithmDecoder`.
 ///
-/// Buffers syndrome data round-by-round. The full-circuit OSD decodes
+/// Buffers syndrome data round-by-round. The full-circuit logical-subgraph decoder decodes
 /// the entire accumulated syndrome at `flush()` for maximum accuracy.
 ///
 /// The segment structure tracks which rounds belong to which segment.
@@ -224,6 +267,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 ///
 /// ```
 /// use pecos_decoder_core::{DecoderError, ObservableDecoder};
+/// use pecos_decoder_core::obs_mask::ObsMask;
 /// use pecos_decoder_core::logical_algorithm::{
 ///     AlgorithmDescriptor, LogicalAlgorithmDecoder, SegmentDescriptor, StreamingLogicalDecoder,
 /// };
@@ -231,8 +275,8 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 /// struct AnyDetectionDecoder;
 ///
 /// impl ObservableDecoder for AnyDetectionDecoder {
-///     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-///         Ok(u64::from(syndrome.iter().any(|&bit| bit != 0)))
+///     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+///         Ok(ObsMask::from_u64(u64::from(syndrome.iter().any(|&bit| bit != 0))))
 ///     }
 /// }
 ///
@@ -257,7 +301,7 @@ impl ObservableDecoder for LogicalAlgorithmDecoder {
 /// assert_eq!(obs, 1);
 /// ```
 pub struct StreamingLogicalDecoder {
-    /// The underlying batch decoder (full-circuit OSD).
+    /// The underlying batch decoder (full-circuit logical-subgraph decoder).
     inner: LogicalAlgorithmDecoder,
     /// Accumulated syndrome buffer (full circuit size).
     syndrome: Vec<u8>,
@@ -305,7 +349,7 @@ impl StreamingLogicalDecoder {
         self.rounds_fed += 1;
     }
 
-    /// Decode the accumulated syndrome using the full-circuit OSD.
+    /// Decode the accumulated syndrome using the full-circuit logical-subgraph decoder.
     ///
     /// Returns the observable correction mask. This is the final
     /// correction to apply to raw measurement outcomes.
@@ -313,6 +357,18 @@ impl StreamingLogicalDecoder {
         let obs = self.inner.decode_shot(&self.syndrome)?;
         self.accumulated_obs = obs;
         Ok(obs)
+    }
+
+    /// Wide variant of [`Self::flush`]: returns an [`ObsMask`] supporting more
+    /// than 64 observables (no truncation).
+    pub fn flush_obs(&mut self) -> Result<ObsMask, DecoderError> {
+        self.inner.decode_obs(&self.syndrome)
+    }
+
+    /// Wide variant of [`Self::decode_shot`]: feed + flush as an [`ObsMask`].
+    pub fn decode_shot_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.feed_dense(syndrome);
+        self.flush_obs()
     }
 
     /// Decode a full syndrome at once (convenience for batch mode).
@@ -346,8 +402,11 @@ impl StreamingLogicalDecoder {
     }
 
     /// Apply boundary gate to a Pauli frame (delegates to inner).
-    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) {
-        LogicalAlgorithmDecoder::apply_boundary_gate(frame, gate);
+    ///
+    /// # Errors
+    /// Propagates [`DecoderError::ObservableBitOutOfRange`] from the inner apply.
+    pub fn apply_boundary_gate(frame: &mut u64, gate: &BoundaryGate) -> Result<(), DecoderError> {
+        LogicalAlgorithmDecoder::apply_boundary_gate(frame, gate)
     }
 
     /// Reset for the next shot.
@@ -395,7 +454,7 @@ use crate::decode_budget::{DecodeBudget, DecodeStrategy, DetectorRegion};
 ///
 /// - **Offline** (ion trap / simulation): `FullCircuitStrategy` — buffer
 ///   everything, decode at end. Maximum accuracy.
-/// - **Streaming** (neutral atom): `CommittedOsdStrategy` — decode and
+/// - **Streaming** (neutral atom): `CommittedLogicalSubgraphStrategy` — decode and
 ///   commit at segment boundaries. Bounded memory.
 /// - **Real-time** (superconducting): windowed UF with ghost protocol
 ///   (future).
@@ -457,7 +516,7 @@ impl LogicalCircuitDecoder {
 
     /// Decode a full shot (batch mode).
     ///
-    /// For offline/ion trap budgets: equivalent to full-circuit OSD.
+    /// For offline/ion trap budgets: equivalent to full-circuit logical-subgraph decoder.
     /// For streaming budgets: decodes and commits each segment.
     pub fn decode_shot(&mut self, full_syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.reset();
@@ -545,6 +604,13 @@ impl ObservableDecoder for LogicalCircuitDecoder {
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.decode_shot(syndrome)
     }
+
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.reset();
+        let len = syndrome.len().min(self.total_detectors);
+        self.syndrome[..len].copy_from_slice(&syndrome[..len]);
+        self.strategy.decode_obs(&self.syndrome)
+    }
 }
 
 // ============================================================================
@@ -561,7 +627,7 @@ pub struct FullCircuitStrategy {
 }
 
 impl FullCircuitStrategy {
-    /// Wrap any `ObservableDecoder` (typically OSD).
+    /// Wrap any `ObservableDecoder` (typically logical-subgraph decoder).
     #[must_use]
     pub fn new(decoder: Box<dyn ObservableDecoder + Send + Sync>) -> Self {
         Self { inner: decoder }
@@ -571,6 +637,10 @@ impl FullCircuitStrategy {
 impl DecodeStrategy for FullCircuitStrategy {
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
         self.inner.decode_to_observables(syndrome)
+    }
+
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.inner.decode_obs(syndrome)
     }
 
     fn commit(&mut self, _region: &DetectorRegion) -> Result<u64, DecoderError> {
@@ -588,49 +658,70 @@ impl DecodeStrategy for FullCircuitStrategy {
 }
 
 // ============================================================================
-// Strategy: Windowed OSD (neutral atom / medium budget)
+// Strategy: Windowed logical-subgraph decoding (neutral atom / medium budget)
 // ============================================================================
 
-/// Windowed OSD strategy: per-observable subgraph windowed decoding.
+/// Windowed logical-subgraph strategy: per-logical-operator subgraph windowed decoding.
 ///
 /// Each observable's subgraph is graphlike (no hyperedges). A windowed
 /// decoder (sandwich or plain PM) runs inside each subgraph with bounded
 /// latency. The full matching graph is pre-built; only syndrome routing
 /// and per-window matching are per-shot work.
 ///
-/// This achieves bounded-latency streaming with OSD-level accuracy.
-pub struct WindowedOsdStrategy {
+/// This achieves bounded-latency streaming with logical-subgraph decoder-level accuracy.
+pub struct WindowedLogicalSubgraphStrategy {
     /// Per-subgraph decoders (windowed or plain).
     subgraph_decoders: Vec<Box<dyn ObservableDecoder + Send + Sync>>,
     /// Per-subgraph detector maps: `subgraph_detector_maps`[i][local] = global.
     detector_maps: Vec<Vec<usize>>,
+    /// Global observable (logical) index each subgraph decodes. Required because
+    /// callers may pass only the non-empty subgraphs (empty-region observables
+    /// dropped), so the subgraph's list position is NOT its observable index.
+    observable_indices: Vec<usize>,
     /// Per-subgraph sub-syndrome buffers (reusable).
     sub_syndromes: Vec<Vec<u8>>,
-    /// Number of observables.
-    _num_observables: usize,
 }
 
-impl WindowedOsdStrategy {
-    /// Build from pre-extracted subgraph DEMs and detector maps.
+impl WindowedLogicalSubgraphStrategy {
+    /// Build from pre-extracted subgraph DEMs, detector maps, and the global
+    /// observable index each subgraph decodes.
     ///
-    /// `subgraph_dems`: per-observable DEM strings (graphlike).
-    /// `detector_maps`: per-observable local→global detector index maps.
+    /// `subgraph_dems`: per-subgraph DEM strings (graphlike).
+    /// `detector_maps`: per-subgraph local→global detector index maps.
+    /// `observable_indices`: the global observable bit each subgraph flips
+    ///   (each subgraph reports its observable as local bit 0). MUST line up
+    ///   with `subgraph_dems` — when empty-region observables are filtered out,
+    ///   pass the surviving observables' true indices, not `0..n`.
     /// `factory`: creates the inner decoder for each subgraph DEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if the factory fails, if the three input vectors
+    /// disagree in length, or if any observable index is >= 64 (the u64
+    /// observable mask cannot hold it).
     pub fn new<F>(
         subgraph_dems: Vec<String>,
         detector_maps: Vec<Vec<usize>>,
+        observable_indices: Vec<usize>,
         mut factory: F,
     ) -> Result<Self, DecoderError>
     where
         F: FnMut(&str) -> Result<Box<dyn ObservableDecoder + Send + Sync>, DecoderError>,
     {
-        let num_observables = subgraph_dems.len();
-        let mut decoders = Vec::with_capacity(num_observables);
-        let mut sub_syndromes = Vec::with_capacity(num_observables);
-
+        let num = subgraph_dems.len();
+        if detector_maps.len() != num || observable_indices.len() != num {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "WindowedLogicalSubgraphStrategy: mismatched inputs (dems={num}, \
+                 maps={}, obs={})",
+                detector_maps.len(),
+                observable_indices.len(),
+            )));
+        }
+        let mut decoders = Vec::with_capacity(num);
+        let mut sub_syndromes = Vec::with_capacity(num);
         for (i, dem_str) in subgraph_dems.iter().enumerate() {
             let dec = factory(dem_str)?;
-            let n = detector_maps.get(i).map_or(0, std::vec::Vec::len);
+            let n = detector_maps[i].len();
             sub_syndromes.push(vec![0u8; n]);
             decoders.push(dec);
         }
@@ -638,15 +729,24 @@ impl WindowedOsdStrategy {
         Ok(Self {
             subgraph_decoders: decoders,
             detector_maps,
+            observable_indices,
             sub_syndromes,
-            _num_observables: num_observables,
         })
     }
 }
 
-impl DecodeStrategy for WindowedOsdStrategy {
+impl DecodeStrategy for WindowedLogicalSubgraphStrategy {
+    /// Narrowing wrapper over [`Self::decode_obs`]; errors above 64 observables.
     fn decode(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        let mut obs_mask = 0u64;
+        self.decode_obs(syndrome)?.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
+            )
+        })
+    }
+
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        let mut obs_mask = ObsMask::new();
 
         for (i, (dec, dmap)) in self
             .subgraph_decoders
@@ -669,10 +769,12 @@ impl DecodeStrategy for WindowedOsdStrategy {
                 };
             }
 
-            // Decode this subgraph
+            // Decode this subgraph: it reports its observable as local bit 0;
+            // map that to the subgraph's *global* observable bit (not its list
+            // position `i`, which differs once empty observables are filtered).
             let sub_obs = dec.decode_to_observables(&buf[..n])?;
             if sub_obs & 1 != 0 {
-                obs_mask |= 1 << i;
+                obs_mask.set(self.observable_indices[i]);
             }
         }
 
@@ -680,7 +782,13 @@ impl DecodeStrategy for WindowedOsdStrategy {
     }
 
     fn commit(&mut self, _region: &DetectorRegion) -> Result<u64, DecoderError> {
-        // Commitment is handled internally by the windowed inner decoders
+        // NOTE (abstraction caveat): this strategy is currently a *batch* decoder
+        // exposed through the streaming `DecodeStrategy` trait. It decodes the
+        // whole syndrome in one `decode()` call; per-observable subgraph windowing
+        // (when enabled) is handled inside each inner decoder, not via incremental
+        // region commits. So `commit()` is intentionally a no-op and
+        // `committed_obs()` returns 0. Real streaming commit semantics are a
+        // follow-up (see the windowed logical-subgraph proper-solution design).
         Ok(0)
     }
 
@@ -701,8 +809,8 @@ mod tests {
 
     struct FixedDecoder(u64);
     impl ObservableDecoder for FixedDecoder {
-        fn decode_to_observables(&mut self, _: &[u8]) -> Result<u64, DecoderError> {
-            Ok(self.0)
+        fn decode_obs(&mut self, _: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+            Ok(crate::obs_mask::ObsMask::from_u64(self.0))
         }
     }
 
@@ -721,6 +829,57 @@ mod tests {
     }
 
     #[test]
+    fn windowed_strategy_maps_to_global_observable_index() {
+        // Two surviving subgraphs whose true (global) observable indices are
+        // NON-contiguous -- as happens when earlier observables had empty
+        // regions and were filtered out. Each reports its observable as local
+        // bit 0; the strategy must flip the GLOBAL bit, not the list position.
+        // (The pre-fix `1 << i` would have produced bits {0,1} = 0b0011.)
+        let mut strategy = WindowedLogicalSubgraphStrategy::new(
+            vec![
+                "error(0.1) D0 L0".to_string(),
+                "error(0.1) D0 L0".to_string(),
+            ],
+            vec![vec![0usize], vec![1usize]],
+            vec![1usize, 3usize],
+            |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
+        )
+        .unwrap();
+        let obs = strategy.decode(&[1, 1]).unwrap();
+        assert_eq!(obs, (1u64 << 1) | (1u64 << 3));
+    }
+
+    #[test]
+    fn windowed_strategy_supports_observable_index_over_63() {
+        use crate::decode_budget::DecodeStrategy;
+        // Observable index 64 was previously rejected; it now constructs and the
+        // wide `decode_obs` represents bit 64 with no truncation.
+        let mut s = WindowedLogicalSubgraphStrategy::new(
+            vec!["error(0.1) D0 L0".to_string()],
+            vec![vec![0usize]],
+            vec![64usize],
+            |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
+        )
+        .unwrap();
+        let wide = s.decode_obs(&[1]).unwrap();
+        assert!(wide.get(64));
+        assert_eq!(wide.to_u64(), None);
+        // The narrowing u64 path errors rather than truncating.
+        assert!(s.decode(&[1]).is_err());
+    }
+
+    #[test]
+    fn windowed_strategy_rejects_mismatched_input_lengths() {
+        let r = WindowedLogicalSubgraphStrategy::new(
+            vec!["error(0.1) D0 L0".to_string()],
+            vec![vec![0usize], vec![1usize]], // 2 maps for 1 dem
+            vec![0usize],
+            |_dem| Ok(Box::new(FixedDecoder(1)) as Box<dyn ObservableDecoder + Send + Sync>),
+        );
+        assert!(r.is_err());
+    }
+
+    #[test]
     fn test_hadamard_frame() {
         let mut frame = 0b01u64; // X correction on bit 0
         LogicalAlgorithmDecoder::apply_boundary_gate(
@@ -729,8 +888,71 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b10); // X became Z
+    }
+
+    #[test]
+    fn test_apply_boundary_gate_rejects_obs_bit_ge_64() {
+        // A boundary bit >= 64 cannot index the u64 frame; apply must fail loud
+        // (not panic in debug / shift-overflow in release) for direct Rust callers.
+        let mut frame = 0u64;
+        let result = LogicalAlgorithmDecoder::apply_boundary_gate(
+            &mut frame,
+            &BoundaryGate::Hadamard {
+                x_obs_bit: 64,
+                z_obs_bit: 1,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(DecoderError::ObservableBitOutOfRange { bit: 64 })
+        ));
+        assert_eq!(
+            frame, 0,
+            "frame must be untouched when the gate is rejected"
+        );
+    }
+
+    #[test]
+    fn test_boundary_gate_obs_bits_cover_all_fields() {
+        // The apply-time `< 64` assert relies on obs_bits() listing EVERY bit a
+        // gate references -- a missed field would let an out-of-range shift slip.
+        assert_eq!(
+            BoundaryGate::Hadamard {
+                x_obs_bit: 2,
+                z_obs_bit: 5
+            }
+            .obs_bits(),
+            vec![2, 5]
+        );
+        assert_eq!(
+            BoundaryGate::Cnot {
+                ctrl_x_bit: 1,
+                ctrl_z_bit: 2,
+                tgt_x_bit: 3,
+                tgt_z_bit: 4
+            }
+            .obs_bits(),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            BoundaryGate::SGate {
+                x_obs_bit: 7,
+                z_obs_bit: 9
+            }
+            .obs_bits(),
+            vec![7, 9]
+        );
+        assert_eq!(
+            BoundaryGate::TGateInjection {
+                z_obs_bit: 6,
+                ancilla_z_bit: 8
+            }
+            .obs_bits(),
+            vec![6, 8]
+        );
     }
 
     #[test]
@@ -744,7 +966,8 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b0101); // X propagated to target
     }
 
@@ -788,7 +1011,8 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b1010); // Z propagated back to control Z (bit 1)
     }
 
@@ -804,7 +1028,8 @@ mod tests {
                 tgt_x_bit: 2,
                 tgt_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         // X ctrl -> X tgt (bit 2), Z tgt -> Z ctrl (bit 1)
         assert_eq!(frame, 0b1111);
     }
@@ -819,7 +1044,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b11); // X stays, Z also set
     }
 
@@ -833,7 +1059,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b10); // Z stays, no X induced
     }
 
@@ -846,7 +1073,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0); // No correction, no change
     }
 
@@ -860,7 +1088,8 @@ mod tests {
                 z_obs_bit: 1,     // data Z
                 ancilla_z_bit: 3, // ancilla Z
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b1010); // data Z (bit 1) flipped
     }
 
@@ -874,7 +1103,8 @@ mod tests {
                 z_obs_bit: 1,
                 ancilla_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b1000); // data Z cancelled, ancilla unchanged
     }
 
@@ -888,7 +1118,8 @@ mod tests {
                 z_obs_bit: 1,
                 ancilla_z_bit: 3,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b0010); // unchanged
     }
 
@@ -902,7 +1133,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b11); // Swap of (1,1) is still (1,1)
     }
 
@@ -915,7 +1147,8 @@ mod tests {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
-        );
+        )
+        .expect("boundary observable bits < 64");
         assert_eq!(frame, 0b01); // Z became X
     }
 

@@ -30,10 +30,11 @@ Need to run a quantum circuit simulation?
 ├─► Estimating rare event probabilities?
 │   │
 │   ├─► P ~ 10^-3 to 10^-6?
-│   │   └─► Use sim_neo() with importance_sampling()
+│   │   └─► Use sim_neo() with importance_sampling(shots)
 │   │
 │   └─► P ~ 10^-6 or smaller?
-│       └─► Use SubsetSimulation or ProperSubsetSimulation
+│       └─► Use sim_neo() with subset_simulation(samples).score(..).failure(..)
+│           (or ProperSubsetSimulation directly for checkpoint continuation)
 │
 └─► Need population-based simulation (splitting, cloning)?
     └─► Use World<S> with ECS components
@@ -52,58 +53,55 @@ Need to run a quantum circuit simulation?
 ### sim_neo() - The Recommended Entry Point
 
 ```rust
-use pecos_neo::tool::{sim_neo, importance_sampling};
+use pecos_neo::tool::{importance_sampling, monte_carlo, sim_neo};
 
 // Simple case
-let results = sim_neo(circuit)
-    .shots(1000)
+let results = sim_neo(circuit).auto()
+    .sampling(monte_carlo(1000))
     .seed(42)
     .run();
 
 // With noise
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .depolarizing(0.01)
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .run();
 
 // With importance sampling
-let results = sim_neo(circuit)
-    .sampling(importance_sampling()
+let results = sim_neo(circuit).auto()
+    .sampling(importance_sampling(10000)
         .with_p1(0.001)
         .with_boost(10.0))
-    .shots(10000)
     .run();
 
 // Parallel execution
-let results = sim_neo(circuit)
-    .workers(4)
-    .shots(1000)
+let results = sim_neo(circuit).auto()
+    .sampling(monte_carlo(1000).workers(4))
     .run();
 
 // Parallel execution with noise
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .depolarizing(0.01)
-    .workers(4)
-    .shots(1000)
+    .sampling(monte_carlo(1000).workers(4))
     .run();
 
 // With custom gate definitions
 let defs = GateDefinitions::new();
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .gate_definitions(defs)
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .run();
 
 // State vector with non-Clifford gates (rotations auto-enabled)
 let results = sim_neo(circuit)
     .quantum(state_vector())
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .run();
 
 // Control decomposition depth for deeply nested custom gates
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .max_decomp_depth(20)
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .run();
 
 // Gate overrides (swap gate implementations at runtime)
@@ -112,9 +110,9 @@ let overrides = GateOverrides::<SparseStab>::new()
         // Custom implementation
         true
     });
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .gate_overrides(overrides)
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .run();
 ```
 
@@ -125,7 +123,7 @@ Event handlers (gate and signal handlers) can be passed through `sim_neo()` usin
 
 ```rust
 use pecos_neo::prelude::*;
-use pecos_neo::tool::sim_neo;
+use pecos_neo::tool::{monte_carlo, sim_neo};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -138,10 +136,9 @@ let handlers = EventHandlers::new()
         NoiseResponse::None
     });
 
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .event_handlers(handlers)
-    .workers(4)  // handlers are cloned per worker
-    .shots(1000)
+    .sampling(monte_carlo(1000).workers(4))  // handlers are cloned per worker
     .run();
 ```
 
@@ -224,14 +221,13 @@ Complex configuration uses nested builders that compose naturally:
 ```rust
 // Top-level builder accepts nested builders
 sim_neo(circuit)
-    .sampling(importance_sampling()  // Nested builder
+    .sampling(importance_sampling(10000)  // Nested builder
         .with_p1(0.001)
         .with_boost(10.0))
     .quantum(sparse_stab())              // Another nested builder
     .noise(GeneralNoiseModelBuilder::new()  // And another
         .with_p1(0.001)
         .with_p2(0.01))
-    .shots(1000)
     .run();
 ```
 
@@ -239,9 +235,9 @@ sim_neo(circuit)
 
 | Parameters | Pattern | Example |
 |------------|---------|---------|
-| 0-2 simple | Convenience method | `.shots(1000)`, `.seed(42)` |
+| 0-2 simple | Convenience method | `.seed(42)`, `.qubits(5)` |
 | 0-2 with type | Free function → method | `.quantum(sparse_stab())` |
-| 3+ related | Builder struct | `importance_sampling().with_p1().with_boost()` |
+| 3+ related | Builder struct | `importance_sampling(shots).with_p1().with_boost()` |
 | Complex tree | Nested builders | Multiple levels of composition |
 
 ### Implementing New Builders
@@ -388,10 +384,9 @@ trait objects. This enables parallel Monte Carlo execution for noisy circuits --
 each worker gets an independent clone of the noise model:
 
 ```rust
-sim_neo(circuit)
+sim_neo(circuit).auto()
     .depolarizing(0.01)
-    .workers(4)     // Each worker clones the noise model
-    .shots(10000)
+    .sampling(monte_carlo(10000).workers(4))     // Each worker clones the noise model
     .run();
 ```
 
@@ -474,7 +469,8 @@ Entry-point builders use lowercase snake_case functions:
 
 ```rust
 pub fn sim_neo(input: impl SimNeoInput) -> SimNeoBuilder
-pub fn importance_sampling() -> ImportanceSamplingBuilder
+pub fn monte_carlo(shots: usize) -> MonteCarloBuilder
+pub fn importance_sampling(shots: usize) -> ImportanceSamplingBuilder
 pub fn sparse_stab() -> SparseStabBuilder
 pub fn state_vector() -> StateVecBuilder
 ```

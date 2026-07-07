@@ -21,6 +21,19 @@ def loop_with_measure() -> int:
     return count
 
 
+def test_for_loop_with_measurements() -> None:
+    """The loop must run exactly 3 iterations (3 measurements per shot), and
+    with H per iteration both outcomes must occur across 20 seeded shots --
+    a zero-iteration or frozen loop cannot satisfy either."""
+    results = sim(Guppy(loop_with_measure)).qubits(10).quantum(state_vector()).seed(42).run(20).to_dict()
+    measurements = results["measurements"]
+    assert len(measurements) == 20
+    for shot in measurements:
+        assert len(shot) == 3, f"expected 3 loop measurements, got {shot}"
+    outcomes = {m for shot in measurements for m in shot}
+    assert outcomes == {0, 1}, f"H per iteration must yield both outcomes, got {outcomes}"
+
+
 if __name__ == "__main__":
     os.environ["RUST_LOG"] = "pecos_hugr::engine=debug"
     print("Testing for-loop with measurements...")

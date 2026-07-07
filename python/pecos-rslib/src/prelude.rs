@@ -25,7 +25,6 @@ pub use pecos_num::prelude::*;
 pub use pecos_qis::prelude::*;
 
 // HUGR compilation
-pub use pecos_hugr_qis::prelude::*;
 
 // PHIR-JSON format
 pub use pecos_phir_json::prelude::*;

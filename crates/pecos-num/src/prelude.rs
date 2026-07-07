@@ -31,9 +31,12 @@ pub use crate::random;
 
 // Re-export statistical functions
 pub use crate::stats::{
-    jackknife_resamples, jackknife_stats, jackknife_stats_axis, jackknife_weighted, mean,
-    mean_axis, std, std_axis, weighted_mean,
+    jackknife_resamples, jackknife_stats, jackknife_stats_axis, jackknife_weighted,
+    jeffreys_interval, mean, mean_axis, std, std_axis, weighted_mean,
 };
+
+// Re-export special functions
+pub use crate::special::{betainc_inv, betainc_reg, ln_gamma};
 
 // Re-export mathematical traits (use these for polymorphism!)
 pub use crate::math::{

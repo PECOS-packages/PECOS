@@ -22,7 +22,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     "#,
     );
 
-    let results = sim(qasm_prog).seed(42).quantum(state_vector()).run(100)?;
+    let results = sim(qasm_prog)
+        .seed(42)
+        .quantum(state_vector())
+        .shots(100)
+        .run()?;
 
     println!("  Ran {} shots for QASM program", results.len());
 
@@ -63,7 +67,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .workers(2)
         .verbose(false)
         .quantum(sparse_stab())
-        .run(200)?;
+        .shots(200)
+        .run()?;
 
     println!("  Ran {} shots with custom configuration", results4.len());
 

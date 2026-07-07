@@ -136,7 +136,7 @@ impl<D: MatchingDecoder> CorrelatedDecoder<D> {
 }
 
 impl<D: MatchingDecoder> crate::ObservableDecoder for CorrelatedDecoder<D> {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         self.shots_decoded += 1;
 
         // During training: decode normally, record matchings
@@ -149,7 +149,7 @@ impl<D: MatchingDecoder> crate::ObservableDecoder for CorrelatedDecoder<D> {
                 self.base_weights = self.tracker.aligned_weights();
             }
 
-            return Ok(mask);
+            return Ok(crate::obs_mask::ObsMask::from_u64(mask));
         }
 
         // After training: two-pass decode with correlation adjustment
@@ -163,7 +163,7 @@ impl<D: MatchingDecoder> crate::ObservableDecoder for CorrelatedDecoder<D> {
         self.tracker.record_matching(&first_matching);
 
         if !self.config.use_correlation {
-            return Ok(first_mask);
+            return Ok(crate::obs_mask::ObsMask::from_u64(first_mask));
         }
 
         // Build matched-edge flags for correlation adjustment
@@ -184,7 +184,7 @@ impl<D: MatchingDecoder> crate::ObservableDecoder for CorrelatedDecoder<D> {
             .inner
             .decode_with_weights(syndrome, &adjusted_weights)?;
 
-        Ok(second_mask)
+        Ok(crate::obs_mask::ObsMask::from_u64(second_mask))
     }
 }
 

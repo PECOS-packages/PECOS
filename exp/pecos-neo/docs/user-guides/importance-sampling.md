@@ -8,12 +8,11 @@ reweighting the results. Much more efficient than brute-force Monte Carlo.
 ```rust
 use pecos_neo::tool::{sim_neo, importance_sampling};
 
-let results = sim_neo(circuit)
-    .sampling(importance_sampling()
+let results = sim_neo(circuit).auto()
+    .sampling(importance_sampling(10000)
         .with_p1(0.001)      // Single-qubit error rate
         .with_p2(0.01)       // Two-qubit error rate
         .with_boost(10.0))   // Sample 10x more errors
-    .shots(10000)
     .seed(42)
     .run();
 ```
@@ -21,11 +20,22 @@ let results = sim_neo(circuit)
 For uniform rates across all gate types:
 
 ```rust
-sim_neo(circuit)
-    .sampling(importance_sampling()
+sim_neo(circuit).auto()
+    .sampling(importance_sampling(10000)
         .with_uniform_error(0.001)
         .with_boost(10.0))
-    .shots(10000)
+    .run();
+```
+
+Trials parallelize across workers; seeding is per global shot index, so
+results are identical for any worker count:
+
+```rust
+sim_neo(circuit).auto()
+    .sampling(importance_sampling(10000)
+        .with_uniform_error(0.001)
+        .with_boost(10.0)
+        .workers(8))
     .run();
 ```
 

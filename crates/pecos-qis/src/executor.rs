@@ -43,6 +43,19 @@ static QIS_FFI_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock
 /// By making it a singleton, we load it once and keep it for the process lifetime.
 static SHIM_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::new();
 
+/// Pinned selected library paths, resolved once at first use.
+///
+/// The QIS FFI and selene shim libraries are discovered at runtime (library
+/// search order, and for the shim the `PECOS_SELENE_SHIM_PATH` override). Both
+/// the program-cache key (which hashes the selected library identity) and the
+/// `dlopen` singletons must agree on WHICH library is selected; if discovery
+/// re-ran independently and the environment changed in between, the key could be
+/// computed for one library while another was loaded. Pinning the discovery
+/// result the first time either path is needed keeps them consistent for the
+/// process lifetime.
+static QIS_FFI_LIB_PATH: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+static SHIM_LIB_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+
 /// Process-wide cache for program libraries (keyed by file path).
 ///
 /// When engines are cloned for parallel shot execution, each clone creates its own
@@ -64,7 +77,7 @@ static PROGRAM_LIB_CACHE: OnceLock<
 /// engines are cloned for parallel execution), this cache ensures they all use
 /// the same compiled shared library file.
 static COMPILED_PROGRAM_CACHE: OnceLock<
-    std::sync::Mutex<std::collections::BTreeMap<u64, PathBuf>>,
+    std::sync::Mutex<std::collections::BTreeMap<String, PathBuf>>,
 > = OnceLock::new();
 
 /// Tracks whether cache cleanup has been performed (once per process).
@@ -95,6 +108,68 @@ fn get_persistent_cache_dir() -> Result<PathBuf, InterfaceError> {
     });
 
     Ok(cache_dir)
+}
+
+/// A fingerprint of the running build, mixed into the persistent compiled-program
+/// cache key so a shared object produced by one build is never reused by a
+/// different build whose QIS/runtime/ABI may differ (the cache directory is a
+/// fixed path shared across worktrees and rebuilds).
+///
+/// Derived from the running executable's identity (path + last-modified time):
+/// stable across processes of the same build, but different whenever the binary
+/// is rebuilt. If the executable cannot be identified, the process id is mixed in
+/// instead so a stale object is never shared across processes with a possibly
+/// different ABI (at the cost of in-build reuse for that process).
+fn build_fingerprint() -> u64 {
+    use std::hash::{Hash, Hasher};
+    static BUILD_FINGERPRINT: OnceLock<u64> = OnceLock::new();
+    *BUILD_FINGERPRINT.get_or_init(|| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        match std::env::current_exe() {
+            Ok(exe) => {
+                exe.hash(&mut hasher);
+                let mtime_nanos = std::fs::metadata(&exe)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|since_epoch| since_epoch.as_nanos());
+                mtime_nanos.hash(&mut hasher);
+            }
+            Err(_) => {
+                std::process::id().hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    })
+}
+
+/// The build target triple (e.g. `x86_64-unknown-linux-gnu`), embedded by the
+/// build script, mixed into the cache key and recorded in the manifest so a
+/// shared object compiled for one target ABI is never reused on another. Using
+/// the full triple distinguishes ABIs a coarse `arch-os` would collapse (e.g.
+/// gnu vs musl).
+fn cache_target() -> String {
+    env!("PECOS_QIS_TARGET").to_string()
+}
+
+/// An auditable record written next to each compiled program object in the
+/// shared cache directory. It is not consulted to validate a load -- the cache
+/// filename is the full SHA-256 of `(program, format, build fingerprint)`, so a
+/// filename match already pins those exactly -- but it lets the shared cache
+/// directory be inspected and each `.so` traced back to the program, format,
+/// build, and toolchain that produced it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct CacheManifest {
+    /// Full SHA-256 (hex) of program bytes + format + build fingerprint.
+    digest: String,
+    /// Program format (stable `Debug` variant name).
+    format: String,
+    /// Build fingerprint of the process that compiled the object.
+    build_fingerprint: u64,
+    /// `pecos-qis` version that compiled the object.
+    pecos_qis_version: String,
+    /// Target arch/os the object was compiled for.
+    target: String,
 }
 
 /// Remove cache files older than the specified age in seconds
@@ -303,6 +378,7 @@ type SetMeasurementResultFn = unsafe extern "C" fn(u64, bool);
 type SignalResultReadyFn = unsafe extern "C" fn();
 type AbortExecutionFn = unsafe extern "C" fn();
 type GetNamedResultsJsonFn = unsafe extern "C" fn() -> *mut std::ffi::c_char;
+type GetNamedResultTracesJsonFn = unsafe extern "C" fn() -> *mut std::ffi::c_char;
 type FreeNamedResultsJsonFn = unsafe extern "C" fn(*mut std::ffi::c_char);
 
 /// Synchronization handle for main thread communication with worker thread
@@ -454,6 +530,55 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         debug!("HeliosSyncHandle: Got {} named results", result.len());
         Ok(result)
     }
+
+    fn get_named_result_traces(
+        &self,
+    ) -> Result<Vec<pecos_qis_ffi_types::NamedResultTrace>, InterfaceError> {
+        let lib = Self::get_lib()?;
+
+        let get_fn: Symbol<GetNamedResultTracesJsonFn> = unsafe {
+            lib.get(b"pecos_get_named_result_traces_json\0")
+                .map_err(|e| {
+                    InterfaceError::ExecutionError(format!(
+                        "Failed to find pecos_get_named_result_traces_json: {e}"
+                    ))
+                })?
+        };
+
+        let ptr = unsafe { get_fn() };
+        if ptr.is_null() {
+            return Ok(Vec::new());
+        }
+
+        let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
+        let json_str = c_str.to_str().map_err(|e| {
+            InterfaceError::ExecutionError(format!(
+                "Invalid UTF-8 in named result traces JSON: {e}"
+            ))
+        })?;
+
+        let result: Vec<pecos_qis_ffi_types::NamedResultTrace> = serde_json::from_str(json_str)
+            .map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to parse named result traces JSON: {e}"
+                ))
+            })?;
+
+        let free_fn: Symbol<FreeNamedResultsJsonFn> = unsafe {
+            lib.get(b"pecos_free_named_results_json\0").map_err(|e| {
+                InterfaceError::ExecutionError(format!(
+                    "Failed to find pecos_free_named_results_json: {e}"
+                ))
+            })?
+        };
+        unsafe { free_fn(ptr) };
+
+        debug!(
+            "HeliosSyncHandle: Got {} named result trace records",
+            result.len()
+        );
+        Ok(result)
+    }
 }
 
 /// Derive the project target directory from the compile-time embedded Helios path.
@@ -593,7 +718,7 @@ fn find_helios_lib() -> Result<PathBuf, InterfaceError> {
 
 /// Find an LLVM tool with the following priority:
 /// 1. Embedded path from build time (`PECOS_LLVM_BIN_PATH`)
-/// 2. Runtime `LLVM_SYS_140_PREFIX` environment variable
+/// 2. Runtime `LLVM_SYS_211_PREFIX` environment variable
 /// 3. Fall back to PATH
 fn find_llvm_tool(tool_name: &str) -> PathBuf {
     let tool_exe = if cfg!(windows) {
@@ -617,13 +742,13 @@ fn find_llvm_tool(tool_name: &str) -> PathBuf {
             }
         })
         .or_else(|| {
-            std::env::var("LLVM_SYS_140_PREFIX")
+            std::env::var("LLVM_SYS_211_PREFIX")
                 .ok()
                 .and_then(|prefix| {
                     let path = PathBuf::from(prefix).join("bin").join(&tool_exe);
                     if path.exists() {
                         debug!(
-                            "Using {} from LLVM_SYS_140_PREFIX: {}",
+                            "Using {} from LLVM_SYS_211_PREFIX: {}",
                             tool_name,
                             path.display()
                         );
@@ -709,6 +834,24 @@ impl QisHeliosInterface {
             temp_files: Vec::new(),
             execution_context: None,
         }
+    }
+
+    /// The selected QIS FFI library path, resolved once and pinned for the
+    /// process lifetime (see [`QIS_FFI_LIB_PATH`]). Both the cache key and the
+    /// `dlopen` singleton use this so they always agree on the selected library.
+    fn pinned_qis_ffi_lib_path() -> Result<PathBuf, String> {
+        QIS_FFI_LIB_PATH
+            .get_or_init(|| Self::find_pecos_qis_lib().map_err(|e| e.to_string()))
+            .clone()
+    }
+
+    /// The selected selene shim library path, resolved once and pinned for the
+    /// process lifetime (see [`SHIM_LIB_PATH`]). Honors `PECOS_SELENE_SHIM_PATH`
+    /// at first resolution only, so the cache key and the loaded shim agree.
+    fn pinned_shim_lib_path() -> Option<PathBuf> {
+        SHIM_LIB_PATH
+            .get_or_init(crate::shim::get_shim_library_path)
+            .clone()
     }
 
     /// Find the `libpecos_qis_ffi` library by searching common locations
@@ -818,7 +961,7 @@ impl QisHeliosInterface {
     ///
     /// Returns a reference to the `SharedLibrary` wrapper for symbol lookups.
     fn get_qis_ffi_lib_singleton() -> Result<&'static SharedLibrary, InterfaceError> {
-        let result = QIS_FFI_LIB_SINGLETON.get_or_init(|| match Self::find_pecos_qis_lib() {
+        let result = QIS_FFI_LIB_SINGLETON.get_or_init(|| match Self::pinned_qis_ffi_lib_path() {
             Ok(lib_path) => {
                 debug!(
                     "Initializing QIS FFI library singleton from: {}",
@@ -839,7 +982,7 @@ impl QisHeliosInterface {
                     Err(e) => Err(e.to_string()),
                 }
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e.clone()),
         });
 
         result
@@ -913,7 +1056,7 @@ impl QisHeliosInterface {
     /// By making it a singleton, we load once and keep it for the process lifetime.
     fn get_shim_lib_singleton() -> Result<&'static SharedLibrary, InterfaceError> {
         let result = SHIM_LIB_SINGLETON.get_or_init(|| {
-            let shim_path = crate::shim::get_shim_library_path().ok_or_else(|| {
+            let shim_path = Self::pinned_shim_lib_path().ok_or_else(|| {
                 "PECOS selene shim library not found - build script may have failed".to_string()
             })?;
 
@@ -1012,11 +1155,13 @@ impl QisHeliosInterface {
         // We use AddDllDirectory to temporarily add the directories containing
         // our FFI DLLs to the search path.
 
-        // Find the directories containing our dependency DLLs
-        let qis_ffi_path = Self::find_pecos_qis_lib().ok();
+        // Find the directories containing our dependency DLLs (use the pinned
+        // paths so dependency search dirs match the libraries hashed in the cache
+        // key and loaded by the singletons).
+        let qis_ffi_path = Self::pinned_qis_ffi_lib_path().ok();
         let qis_ffi_dir = qis_ffi_path.as_ref().and_then(|p| p.parent());
 
-        let shim_path = crate::shim::get_shim_library_path();
+        let shim_path = Self::pinned_shim_lib_path();
         let shim_dir = shim_path.as_ref().and_then(|p| p.parent());
 
         // Combine both directories (they may be different)
@@ -1205,15 +1350,56 @@ impl QisHeliosInterface {
     /// Link the program with Helios interface to create a shared library
     #[allow(clippy::too_many_lines)]
     fn create_shared_library(&mut self) -> Result<PathBuf, InterfaceError> {
-        use std::hash::{Hash, Hasher};
+        use sha2::{Digest, Sha256};
+        use std::fmt::Write as _;
 
-        // Compute content hash for caching
-        // We include the format as a discriminator in case the same bytes could be
-        // interpreted differently (e.g., bitcode vs text IR)
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.program.hash(&mut hasher);
-        std::mem::discriminant(&self.format).hash(&mut hasher);
-        let content_hash = hasher.finish();
+        // Compute a stable content digest for caching.
+        // - SHA-256 (not the std `DefaultHasher`, whose output is not stable
+        //   across toolchains) so the on-disk key is reproducible for a cache
+        //   that persists across processes
+        // - the format discriminates bytes that could be interpreted differently
+        //   (e.g., bitcode vs text IR)
+        // - the build fingerprint scopes the digest to this build, so a shared
+        //   object compiled against a different QIS/runtime ABI in the fixed,
+        //   cross-worktree cache directory is never reused
+        let mut hasher = Sha256::new();
+        hasher.update(&self.program);
+        // Explicit ABI inputs (stable format tag, crate version, target triple)
+        // in addition to the build fingerprint, so the key does not rely on the
+        // running-executable mtime proxy alone to scope reuse.
+        hasher.update(self.format.cache_tag().as_bytes());
+        hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+        hasher.update(cache_target().as_bytes());
+        hasher.update(build_fingerprint().to_le_bytes());
+        // The compiled object resolves `__quantum__rt__*` / `selene_*` symbols at
+        // runtime from the QIS FFI shim and the Selene shim, which are SELECTED at
+        // runtime (library search order + the `PECOS_SELENE_SHIM_PATH` override)
+        // and may differ from the build-embedded libraries that the executable
+        // fingerprint captures. Fold each selected library's identity (path +
+        // last-modified time) into the key so swapping a shim invalidates a cached
+        // object that was compiled against the old one.
+        for lib in [
+            Self::pinned_qis_ffi_lib_path().ok(),
+            Self::pinned_shim_lib_path(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            hasher.update(lib.to_string_lossy().as_bytes());
+            let mtime_nanos = std::fs::metadata(&lib)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos());
+            if let Some(nanos) = mtime_nanos {
+                hasher.update(nanos.to_le_bytes());
+            }
+        }
+        let digest = hasher.finalize();
+        let mut content_hash = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            let _ = write!(content_hash, "{byte:02x}");
+        }
 
         // Check if we already have a compiled library for this content
         let compiled_cache = COMPILED_PROGRAM_CACHE
@@ -1227,7 +1413,7 @@ impl QisHeliosInterface {
 
             if let Some(cached_path) = cache_guard.get(&content_hash) {
                 debug!(
-                    "Using cached compiled library for content hash {content_hash:016x}: {}",
+                    "Using cached compiled library for content hash {content_hash}: {}",
                     cached_path.display()
                 );
                 // Verify the file still exists (might have been cleaned up)
@@ -1257,8 +1443,7 @@ impl QisHeliosInterface {
         } else {
             ".so"
         };
-        let persistent_cache_path =
-            cache_dir.join(format!("program_{content_hash:016x}{lib_suffix}"));
+        let persistent_cache_path = cache_dir.join(format!("program_{content_hash}{lib_suffix}"));
 
         if persistent_cache_path.exists() {
             debug!(
@@ -1274,7 +1459,7 @@ impl QisHeliosInterface {
                             std::sync::Mutex::new(std::collections::BTreeMap::new())
                         });
                         if let Ok(mut cache_guard) = compiled_cache.lock() {
-                            cache_guard.insert(content_hash, persistent_cache_path.clone());
+                            cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
                         }
                     }
                     self.executable_path = Some(persistent_cache_path.clone());
@@ -1306,7 +1491,7 @@ impl QisHeliosInterface {
                     let compiled_cache = COMPILED_PROGRAM_CACHE
                         .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
                     if let Ok(mut cache_guard) = compiled_cache.lock() {
-                        cache_guard.insert(content_hash, persistent_cache_path.clone());
+                        cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
                     }
                     self.executable_path = Some(persistent_cache_path.clone());
                     info!(
@@ -1334,7 +1519,7 @@ impl QisHeliosInterface {
                     let compiled_cache = COMPILED_PROGRAM_CACHE
                         .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
                     if let Ok(mut cache_guard) = compiled_cache.lock() {
-                        cache_guard.insert(content_hash, persistent_cache_path.clone());
+                        cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
                     }
                     self.executable_path = Some(persistent_cache_path.clone());
                     info!(
@@ -1556,26 +1741,9 @@ entry:
             so_path_for_clang.display()
         );
 
-        // Build clang command with platform-specific flags
-        // Try to find clang: first check LLVM_SYS_140_PREFIX, then fall back to PATH
-        let clang_cmd_path = std::env::var("LLVM_SYS_140_PREFIX")
-            .ok()
-            .and_then(|prefix| {
-                let mut path = PathBuf::from(prefix);
-                path.push("bin");
-                path.push(if cfg!(windows) { "clang.exe" } else { "clang" });
-                if path.exists() {
-                    debug!("Using clang from LLVM_SYS_140_PREFIX: {}", path.display());
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| {
-                debug!("Using clang from PATH");
-                PathBuf::from("clang")
-            });
-
+        // Use the same LLVM tool resolver as llvm-as/llvm-link so runtime linking
+        // honors the build-time LLVM prefix embedded in Python wheels.
+        let clang_cmd_path = find_llvm_tool("clang");
         let mut clang_cmd = Command::new(&clang_cmd_path);
 
         // On Windows, we need to be more careful with paths and flags
@@ -1596,8 +1764,10 @@ entry:
                     )
                 })?;
 
-            // Find the pecos_qis_ffi.dll.lib import library
-            let pecos_qis_lib_path = Self::find_pecos_qis_lib()?;
+            // Find the pecos_qis_ffi.dll.lib import library (pinned, so the link
+            // import library matches the FFI library hashed in the cache key).
+            let pecos_qis_lib_path =
+                Self::pinned_qis_ffi_lib_path().map_err(InterfaceError::LoadError)?;
             let qis_ffi_import_lib = pecos_qis_lib_path.with_extension("dll.lib");
 
             if !qis_ffi_import_lib.exists() {
@@ -1743,11 +1913,38 @@ entry:
             let compiled_cache = COMPILED_PROGRAM_CACHE
                 .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
             if let Ok(mut cache_guard) = compiled_cache.lock() {
-                cache_guard.insert(content_hash, so_path.clone());
+                cache_guard.insert(content_hash.clone(), so_path.clone());
                 debug!(
-                    "Cached compiled library for content hash {content_hash:016x}: {}",
+                    "Cached compiled library for content hash {content_hash}: {}",
                     so_path.display()
                 );
+            }
+        }
+
+        // Write an auditable manifest next to the compiled object so the shared
+        // cache directory can be inspected and each library traced back to the
+        // exact program/format/build/toolchain that produced it. Best-effort:
+        // a missing or stale manifest never affects correctness (the filename is
+        // the content+build digest), so a write failure is only logged.
+        {
+            let manifest = CacheManifest {
+                digest: content_hash.clone(),
+                format: self.format.cache_tag().to_string(),
+                build_fingerprint: build_fingerprint(),
+                pecos_qis_version: env!("CARGO_PKG_VERSION").to_string(),
+                target: cache_target(),
+            };
+            let manifest_path = so_path.with_extension("manifest");
+            match serde_json::to_string_pretty(&manifest) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&manifest_path, json) {
+                        debug!(
+                            "Failed to write cache manifest {}: {e}",
+                            manifest_path.display()
+                        );
+                    }
+                }
+                Err(e) => debug!("Failed to serialize cache manifest: {e}"),
             }
         }
 
@@ -2173,7 +2370,7 @@ impl QisInterface for QisHeliosInterface {
     }
 
     fn get_qis_ffi_lib_path(&self) -> Option<std::path::PathBuf> {
-        Self::find_pecos_qis_lib().ok()
+        Self::pinned_qis_ffi_lib_path().ok()
     }
 
     fn get_execution_context_ptr(&self) -> Option<*mut std::ffi::c_void> {

@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from guppylang import guppy
-from pecos_rslib import compile_hugr_to_qis
+from pecos_rslib_llvm import compile_hugr_to_qis
 
 
 def _raise_external_compiler_error() -> None:

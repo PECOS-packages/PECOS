@@ -51,6 +51,8 @@ pecos-num.workspace = true
 pecos-random.workspace = true
 pecos-simulators.workspace = true
 pecos-engines.workspace = true
+# Unified sim() facade with neo-stack routing (strangler-fig: Python .stack("neo"))
+pecos = { workspace = true, default-features = false, features = ["neo", "hugr"] }
 pecos-programs.workspace = true
 
 # Program formats
@@ -59,8 +61,12 @@ pecos-phir = { workspace = true, features = ["hugr"] }
 pecos-phir-json.workspace = true
 
 # QIS / HUGR
-pecos-qis = { workspace = true, features = ["llvm", "hugr"] }
-pecos-hugr-qis.workspace = true
+# pecos-qis WITHOUT its llvm/hugr features, and NO pecos-hugr-qis: those
+# pull inkwell/LLVM link directives into this cdylib, and the base wheel
+# must import cleanly on machines without LLVM's runtime dependencies
+# (LLVM 21's Windows build links zlib.dll). HUGR->QIS compilation lives in
+# pecos-rslib-llvm.
+pecos-qis.workspace = true
 pecos-hugr.workspace = true
 
 # WASM (optional, enabled by default via "wasm" feature)

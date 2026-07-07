@@ -1,0 +1,340 @@
+/// Quantum Error Correction utilities for Zluppy.
+/// Data structures and algorithms commonly used in QEC decoders.
+
+/// Error set for QEC operations.
+pub OverflowError := error { Overflow };
+
+/// Union-Find (Disjoint Set Union) data structure.
+/// Essential for MWPM (Minimum Weight Perfect Matching) decoders.
+///
+/// Example:
+/// ```zlup
+/// uf: UnionFind(256) = .{};
+/// uf.union(0, 1);
+/// uf.union(1, 2);
+/// root := uf.find(2);  // Returns same root as find(0) and find(1)
+/// ```
+pub UnionFind := fn(comptime capacity: usize) -> type {
+    struct {
+        /// Parent pointers (parent[i] == i means i is a root)
+        parent: [capacity]usize = undefined,
+        /// Rank for union-by-rank optimization
+        rank: [capacity]usize = undefined,
+        /// Whether the structure has been initialized
+        initialized: bool = false,
+
+        /// Initialize all elements as separate sets.
+        pub fn init(&mut self) -> unit {
+            inline for i in 0..capacity {
+                self.parent[i] = i;
+                self.rank[i] = 0;
+            }
+            self.initialized = true;
+            return unit;
+        }
+
+        /// Find the representative (root) of the set containing x.
+        /// Uses path compression for efficiency.
+        pub fn find(&mut self, x: usize) -> usize {
+            if (self.parent[x] != x) {
+                self.parent[x] = self.find(self.parent[x]);
+            }
+            return self.parent[x];
+        }
+
+        /// Unite the sets containing x and y.
+        /// Uses union-by-rank for efficiency.
+        /// Returns true if the sets were different (and thus merged).
+        pub fn union(&mut self, x: usize, y: usize) -> bool {
+            root_x := self.find(x);
+            root_y := self.find(y);
+
+            if (root_x == root_y) {
+                return false;  // Already in same set
+            }
+
+            // Union by rank
+            if (self.rank[root_x] < self.rank[root_y]) {
+                self.parent[root_x] = root_y;
+            } else if (self.rank[root_x] > self.rank[root_y]) {
+                self.parent[root_y] = root_x;
+            } else {
+                self.parent[root_y] = root_x;
+                self.rank[root_x] += 1;
+            }
+            return true;
+        }
+
+        /// Check if x and y are in the same set.
+        pub fn connected(&mut self, x: usize, y: usize) -> bool {
+            return self.find(x) == self.find(y);
+        }
+
+        /// Reset element x to its own set.
+        pub fn reset(&mut self, x: usize) -> unit {
+            self.parent[x] = x;
+            self.rank[x] = 0;
+            return unit;
+        }
+
+        /// Reset all elements to separate sets.
+        pub fn reset_all(&mut self) -> unit {
+            self.init();
+            return unit;
+        }
+    }
+};
+
+/// Syndrome storage for stabilizer codes.
+/// Stores syndrome bits from measurement rounds.
+///
+/// Example:
+/// ```zlup
+/// syndrome: SyndromeBuffer(16, 10) = .{};  // 16 ancillas, 10 rounds
+/// syndrome.set(0, 0, true);  // Ancilla 0, round 0
+/// if syndrome.get(0, 0) { ... }
+/// ```
+pub SyndromeBuffer := fn(comptime num_ancillas: usize, comptime max_rounds: usize) -> type {
+    struct {
+        /// Syndrome data: data[round][ancilla]
+        data: [max_rounds][num_ancillas]bool = undefined,
+        /// Number of rounds recorded
+        rounds_recorded: usize = 0,
+
+        /// Clear all syndrome data.
+        pub fn clear(&mut self) -> unit {
+            self.rounds_recorded = 0;
+            return unit;
+        }
+
+        /// Set syndrome bit for given ancilla and round.
+        pub fn set(&mut self, ancilla: usize, round: usize, value: bool) -> unit {
+            self.data[round][ancilla] = value;
+            if (round >= self.rounds_recorded) {
+                self.rounds_recorded = round + 1;
+            }
+            return unit;
+        }
+
+        /// Get syndrome bit for given ancilla and round.
+        pub fn get(&mut self, ancilla: usize, round: usize) -> bool {
+            return self.data[round][ancilla];
+        }
+
+        /// Record a full round of syndrome measurements.
+        pub fn record_round(&mut self, syndromes: [num_ancillas]bool) -> OverflowError!void {
+            if (self.rounds_recorded >= max_rounds) {
+                return error.Overflow;
+            }
+            self.data[self.rounds_recorded] = syndromes;
+            self.rounds_recorded += 1;
+            return unit;
+        }
+
+        /// Get the number of rounds recorded.
+        pub fn num_rounds(&mut self) -> usize {
+            return self.rounds_recorded;
+        }
+
+        /// Check if any syndrome was triggered in a round.
+        pub fn has_error(&mut self, round: usize) -> bool {
+            inline for ancilla in 0..num_ancillas {
+                if (self.data[round][ancilla]) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Count number of triggered syndromes in a round.
+        pub fn count_errors(&mut self, round: usize) -> usize {
+            mut count: usize = 0;
+            inline for ancilla in 0..num_ancillas {
+                if (self.data[round][ancilla]) {
+                    count += 1;
+                }
+            }
+            return count;
+        }
+    }
+};
+
+/// Lookup table decoder for small codes.
+/// Maps syndromes to corrections using a precomputed table.
+///
+/// Example:
+/// ```zlup
+/// decoder: LookupDecoder(u8, u8, 256) = .{};
+/// decoder.add_entry(0b101, 0b001);  // syndrome -> correction
+/// if correction := decoder.decode(0b101) { ... }
+/// ```
+pub LookupDecoder := fn(comptime SyndromeType: type, comptime CorrectionType: type, comptime table_size: usize) -> type {
+    struct {
+        /// Syndrome values
+        syndromes: [table_size]SyndromeType = undefined,
+        /// Corresponding corrections
+        corrections: [table_size]CorrectionType = undefined,
+        /// Number of entries in the table
+        num_entries: usize = 0,
+
+        /// Add an entry to the lookup table.
+        pub fn add_entry(&mut self, syndrome: SyndromeType, correction: CorrectionType) -> OverflowError!void {
+            if (self.num_entries >= table_size) {
+                return error.Overflow;
+            }
+            self.syndromes[self.num_entries] = syndrome;
+            self.corrections[self.num_entries] = correction;
+            self.num_entries += 1;
+            return unit;
+        }
+
+        /// Look up the correction for a syndrome.
+        /// Returns none if the syndrome is not in the table.
+        pub fn decode(&mut self, syndrome: SyndromeType) -> ?CorrectionType {
+            // Linear search with bounded iteration (table_size is comptime)
+            inline for i in 0..table_size {
+                if (i >= self.num_entries) {
+                    break;
+                }
+                if (self.syndromes[i] == syndrome) {
+                    return self.corrections[i];
+                }
+            }
+            return none;
+        }
+
+        /// Clear all entries.
+        pub fn clear(&mut self) -> unit {
+            self.num_entries = 0;
+            return unit;
+        }
+    }
+};
+
+/// Pauli frame tracker for tracking Pauli corrections.
+/// Used in fault-tolerant protocols with deferred corrections.
+///
+/// Example:
+/// ```zlup
+/// frame: PauliFrame(16) = .{};  // 16 logical qubits
+/// frame.apply_x(0);  // Track X correction on qubit 0
+/// frame.apply_z(0);  // Track Z correction on qubit 0
+/// if frame.has_x(0) { ... }
+/// ```
+pub PauliFrame := fn(comptime num_qubits: usize) -> type {
+    struct {
+        /// X corrections (bit i = 1 means X correction pending on qubit i)
+        x_frame: [num_qubits]bool = undefined,
+        /// Z corrections (bit i = 1 means Z correction pending on qubit i)
+        z_frame: [num_qubits]bool = undefined,
+
+        /// Initialize with no corrections.
+        pub fn init(&mut self) -> unit {
+            inline for i in 0..num_qubits {
+                self.x_frame[i] = false;
+                self.z_frame[i] = false;
+            }
+            return unit;
+        }
+
+        /// Apply X correction to qubit i (toggles the X frame).
+        pub fn apply_x(&mut self, i: usize) -> unit {
+            self.x_frame[i] = !self.x_frame[i];
+            return unit;
+        }
+
+        /// Apply Z correction to qubit i (toggles the Z frame).
+        pub fn apply_z(&mut self, i: usize) -> unit {
+            self.z_frame[i] = !self.z_frame[i];
+            return unit;
+        }
+
+        /// Apply Y correction to qubit i (toggles both X and Z frames).
+        pub fn apply_y(&mut self, i: usize) -> unit {
+            self.x_frame[i] = !self.x_frame[i];
+            self.z_frame[i] = !self.z_frame[i];
+            return unit;
+        }
+
+        /// Check if X correction is pending on qubit i.
+        pub fn has_x(&mut self, i: usize) -> bool {
+            return self.x_frame[i];
+        }
+
+        /// Check if Z correction is pending on qubit i.
+        pub fn has_z(&mut self, i: usize) -> bool {
+            return self.z_frame[i];
+        }
+
+        /// Clear all corrections.
+        pub fn clear(&mut self) -> unit {
+            self.init();
+            return unit;
+        }
+
+        /// Get the total weight of pending corrections.
+        pub fn weight(&mut self) -> usize {
+            mut w: usize = 0;
+            inline for i in 0..num_qubits {
+                if (self.x_frame[i]) {
+                    w += 1;
+                }
+                if (self.z_frame[i]) {
+                    w += 1;
+                }
+            }
+            return w;
+        }
+    }
+};
+
+/// Sparse graph representation for decoder graphs.
+/// Useful for representing syndrome graphs in MWPM decoders.
+///
+/// Example:
+/// ```zlup
+/// graph: SparseGraph(64, 256) = .{};  // 64 nodes, 256 edges max
+/// try graph.add_edge(0, 1, 10);  // Edge from 0 to 1 with weight 10
+/// ```
+/// Edge structure for sparse graphs.
+pub Edge := struct {
+    from: usize,
+    to: usize,
+    weight: i32,
+};
+
+pub SparseGraph := fn(comptime max_nodes: usize, comptime max_edges: usize) -> type {
+    struct {
+        /// Edge list
+        edges: [max_edges]Edge = undefined,
+        /// Number of edges
+        num_edges: usize = 0,
+        /// Adjacency list start indices for each node
+        adj_start: [max_nodes + 1]usize = undefined,
+        /// Whether adjacency list is built
+        adj_built: bool = false,
+
+        /// Add an edge to the graph.
+        pub fn add_edge(&mut self, from_node: usize, to_node: usize, weight: i32) -> OverflowError!void {
+            if (self.num_edges >= max_edges) {
+                return error.Overflow;
+            }
+            self.edges[self.num_edges] = .{ from: from_node, to: to_node, weight: weight };
+            self.num_edges += 1;
+            self.adj_built = false;
+            return unit;
+        }
+
+        /// Get the number of edges.
+        pub fn edge_count(&mut self) -> usize {
+            return self.num_edges;
+        }
+
+        /// Clear all edges.
+        pub fn clear(&mut self) -> unit {
+            self.num_edges = 0;
+            self.adj_built = false;
+            return unit;
+        }
+    }
+};

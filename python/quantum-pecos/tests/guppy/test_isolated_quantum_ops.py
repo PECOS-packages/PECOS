@@ -55,7 +55,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        assert len(results.get("measurements", results.get("measurement_0", []))) == 10
+        assert len(results["measurements"]) == 10
 
     def test_single_x_gate(self) -> None:
         """Test just X gate."""
@@ -67,7 +67,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        assert all(r for r in results.get("measurements", results.get("measurement_0", [])))
+        assert all(r for r in results["measurements"])
 
     def test_single_y_gate(self) -> None:
         """Test just Y gate."""
@@ -79,7 +79,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        assert all(r for r in results.get("measurements", results.get("measurement_0", [])))
+        assert all(r for r in results["measurements"])
 
     def test_single_z_gate(self) -> None:
         """Test just Z gate."""
@@ -91,7 +91,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        measurements = results["measurements"]
         # Z on |0> -> |0>, so all measurements should be 0
         assert all(m[0] == 0 for m in measurements)
 
@@ -107,7 +107,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        measurements = results["measurements"]
         # X on |0> -> |1>, S-Sdg is identity, so all measurements should be 1
         assert all(m[0] == 1 for m in measurements)
 
@@ -123,7 +123,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        measurements = results["measurements"]
         # X on |0> -> |1>, T-Tdg is identity, so all measurements should be 1
         assert all(m[0] == 1 for m in measurements)
 
@@ -137,7 +137,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        measurements = results["measurements"]
         # RX(pi) on |0> -> |1>, so all measurements should be 1
         assert all(m[0] == 1 for m in measurements)
 
@@ -151,7 +151,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        measurements = results["measurements"]
         # RY(pi) on |0> -> |1>, so all measurements should be 1
         assert all(m[0] == 1 for m in measurements)
 
@@ -165,7 +165,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        measurements = results["measurements"]
         # RZ on |0> -> |0>, so all measurements should be 0
         assert all(m[0] == 0 for m in measurements)
 
@@ -182,7 +182,7 @@ class TestIsolatedOps:
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Should get [1, 1] for both qubits (X on q1, then CX flips q2)
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         assert all(m == [1, 1] for m in measurements)
 
     def test_two_qubit_cy(self) -> None:
@@ -198,7 +198,7 @@ class TestIsolatedOps:
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # CY with control=1 should flip target
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         assert all(m == [1, 1] for m in measurements)
 
     def test_two_qubit_cz(self) -> None:
@@ -215,7 +215,7 @@ class TestIsolatedOps:
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Both qubits should be |1> (CZ only adds phase, no bit flip)
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         assert all(m == [1, 1] for m in measurements)
 
     def test_two_qubit_ch(self) -> None:
@@ -230,7 +230,7 @@ class TestIsolatedOps:
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # CH with control=0 does nothing, both stay |0>
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         assert all(m == [0, 0] for m in measurements)
 
     def test_toffoli(self) -> None:
@@ -248,7 +248,7 @@ class TestIsolatedOps:
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Both controls at |1>, target flips to |1>
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
         assert all(m == [1, 1, 1] for m in measurements)
 
     def test_reset_operation(self) -> None:
@@ -262,7 +262,7 @@ class TestIsolatedOps:
             return measure(q)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        measurements = results["measurements"]
         # Reset should bring |1> back to |0>
         assert all(m[0] == 0 for m in measurements)
 
@@ -279,7 +279,7 @@ class TestIsolatedOps:
             return measure(q2)
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", results.get("measurement_0", []))
+        measurements = results["measurements"]
         # After discard, X on q2 gives |1>
         assert all(m[0] == 1 for m in measurements)
 
@@ -310,7 +310,7 @@ class TestIsolatedOps:
             return result1, result2, result3, result4
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results.get("measurements", [])
+        measurements = results["measurements"]
 
         for m in measurements:
             # m is now a list like [r1, r2, r3, r4]

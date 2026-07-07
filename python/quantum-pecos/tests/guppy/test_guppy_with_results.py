@@ -4,11 +4,11 @@ This shows how Guppy programs should use result() to tag final outputs
 that Selene can extract from the result stream.
 """
 
-import json
 import tempfile
 from pathlib import Path
 
 import pytest
+from hugr.package import Package
 
 
 class TestGuppyWithResults:
@@ -280,25 +280,12 @@ class TestGuppyWithResults:
 
         hugr_bytes = compile_guppy_to_hugr(test_with_outputs)
 
-        # Parse HUGR to check for output operations
-        hugr_str = hugr_bytes.decode("utf-8")
+        # Load the binary Model envelope and count result() operations
+        pkg = Package.from_bytes(hugr_bytes)
+        output_ops = self._count_output_operations(pkg)
 
-        # Handle HUGR envelope format if present
-        if hugr_str.startswith("HUGRiHJv"):
-            json_start = hugr_str.find("{", 9)
-            if json_start != -1:
-                hugr_str = hugr_str[json_start:]
-
-        try:
-            hugr_json = json.loads(hugr_str)
-        except json.JSONDecodeError as e:
-            pytest.fail(f"HUGR is not valid JSON: {e}")
-
-        # Count output-related operations
-        output_ops = self._count_output_operations(hugr_json)
-
-        # Should have some output/result/io operations
-        assert output_ops > 0, "HUGR should contain output/result operations"
+        # test_with_outputs tags two results, so both tket.result ops must survive.
+        assert output_ops >= 2, f"HUGR should retain the result() ops, found {output_ops}"
 
     def test_save_hugr_artifacts(self, check_guppy_imports: dict) -> None:
         """Test saving HUGR compilation artifacts for inspection."""
@@ -334,47 +321,27 @@ class TestGuppyWithResults:
             assert hugr_file.exists(), "HUGR file should be created"
             assert hugr_file.stat().st_size > 0, "HUGR file should not be empty"
 
-            # Parse and save formatted JSON
-            hugr_str = hugr_bytes.decode("utf-8")
-            if hugr_str.startswith("HUGRiHJv"):
-                json_start = hugr_str.find("{", 9)
-                if json_start != -1:
-                    hugr_str = hugr_str[json_start:]
+            # Load the saved artifact to confirm it is a valid HUGR
+            pkg = Package.from_bytes(hugr_bytes)
+            assert len(pkg.modules) >= 1, "Saved HUGR should contain at least one module"
 
-            try:
-                hugr_json = json.loads(hugr_str)
-                formatted_file = tmpdir_path / "simple_quantum_formatted.json"
-                formatted_file.write_text(json.dumps(hugr_json, indent=2))
+    def _count_output_operations(self, pkg: Package) -> int:
+        """Count ``result()`` operations across all modules in the HUGR package.
 
-                assert formatted_file.exists(), "Formatted JSON should be created"
-                assert formatted_file.stat().st_size > 0, "Formatted JSON should not be empty"
-
-                # Verify JSON structure
-                assert isinstance(hugr_json, dict), "HUGR should be a JSON object"
-
-            except json.JSONDecodeError:
-                # If not JSON, that's okay - just test raw bytes were saved
-                pass
-
-    def _count_output_operations(self, hugr_json: dict) -> int:
-        """Count output-related operations in HUGR JSON."""
+        guppy lowers ``result(tag, value)`` to concrete ``tket.result`` extension
+        ops (``result_bool``, ``result_int``, ...). Counting these -- rather than
+        any output/measurement node -- verifies the ``result()`` tags actually
+        survived compilation, which is the point of these tests.
+        """
         count = 0
-
-        def search(obj: object) -> None:
-            nonlocal count
-            if isinstance(obj, dict):
-                if "op" in obj:
-                    op_str = str(obj["op"]).lower()
-                    if any(term in op_str for term in ["output", "result", "return", "io"]):
-                        count += 1
-
-                for value in obj.values():
-                    search(value)
-            elif isinstance(obj, list):
-                for item in obj:
-                    search(item)
-
-        search(hugr_json)
+        for module in pkg.modules:
+            for node in module.nodes():
+                n = node[0] if isinstance(node, tuple) else node
+                op = module[n].op
+                op_def = getattr(op, "_op_def", None)
+                name = op_def.name if op_def is not None else type(op).__name__
+                if name.startswith("result"):
+                    count += 1
         return count
 
 

@@ -25,12 +25,17 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write as IoWrite;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+use std::ffi::OsString;
 
 use pecos_build::Result;
 use pecos_build::errors::Error;
+use pecos_build::llvm::LLVM_SYS_PREFIX_ENV;
 
 /// Collect the build environment for the current platform.
 ///
@@ -41,10 +46,10 @@ pub fn collect_env() -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
 
     // LLVM
-    if let Some(llvm_path) = pecos_build::llvm::find_llvm_14(None) {
-        let llvm_str = llvm_path.display().to_string();
+    if let Some(llvm_path) = pecos_build::llvm::find_configured_or_detected_llvm(None) {
+        let llvm_str = pecos_build::llvm::path_to_env_string(&llvm_path);
         env.insert("PECOS_LLVM".into(), llvm_str.clone());
-        env.insert("LLVM_SYS_140_PREFIX".into(), llvm_str);
+        env.insert(LLVM_SYS_PREFIX_ENV.into(), llvm_str);
 
         // Add LLVM bin to PATH
         let bin_path = llvm_path.join("bin");
@@ -54,6 +59,21 @@ pub fn collect_env() -> BTreeMap<String, String> {
                 std::iter::once(bin_path).chain(std::env::split_paths(&current_path));
             if let Ok(path) = std::env::join_paths(path_entries) {
                 env.insert("PATH".into(), path.to_string_lossy().into_owned());
+            }
+        }
+
+        if let Ok(libdir) = pecos_build::llvm::get_llvm_libdir(&llvm_path) {
+            if pecos_build::llvm::get_llvm_shared_mode(&llvm_path)
+                .is_ok_and(|mode| mode.trim().eq_ignore_ascii_case("shared"))
+            {
+                add_llvm_runtime_library_path(&mut env, &libdir);
+            }
+
+            if let Some(libclang_dir) = find_libclang_dir(&llvm_path, &libdir) {
+                env.insert(
+                    "LIBCLANG_PATH".into(),
+                    pecos_build::llvm::path_to_env_string(&libclang_dir),
+                );
             }
         }
     }
@@ -120,6 +140,76 @@ pub fn collect_env() -> BTreeMap<String, String> {
     }
 
     env
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn add_llvm_runtime_library_path(env: &mut BTreeMap<String, String>, libdir: &Path) {
+    prepend_path_env(env, "LD_LIBRARY_PATH", libdir);
+}
+
+#[cfg(target_os = "macos")]
+fn add_llvm_runtime_library_path(env: &mut BTreeMap<String, String>, libdir: &Path) {
+    prepend_path_env(env, "DYLD_LIBRARY_PATH", libdir);
+}
+
+#[cfg(target_os = "windows")]
+fn add_llvm_runtime_library_path(_env: &mut BTreeMap<String, String>, _libdir: &Path) {
+    // Windows LLVM DLLs are expected in bin/, which is already prepended to PATH.
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+fn prepend_path_env(env: &mut BTreeMap<String, String>, key: &str, first: &Path) {
+    let current = env
+        .get(key)
+        .map(OsString::from)
+        .or_else(|| std::env::var_os(key));
+    let mut entries = vec![first.to_path_buf()];
+    if let Some(current) = current {
+        entries.extend(std::env::split_paths(&current));
+    }
+
+    if let Ok(joined) = std::env::join_paths(entries) {
+        env.insert(key.to_string(), joined.to_string_lossy().into_owned());
+    }
+}
+
+fn find_libclang_dir(llvm_path: &Path, libdir: &Path) -> Option<PathBuf> {
+    let mut candidates = vec![libdir.to_path_buf()];
+    if cfg!(windows) {
+        candidates.insert(0, llvm_path.join("bin"));
+    }
+
+    candidates
+        .into_iter()
+        .find(|candidate| contains_libclang(candidate))
+}
+
+fn contains_libclang(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+
+    entries
+        .filter_map(std::result::Result::ok)
+        .any(|entry| entry.file_name().to_str().is_some_and(is_libclang_filename))
+}
+
+fn is_libclang_filename(name: &str) -> bool {
+    if cfg!(windows) {
+        return name.eq_ignore_ascii_case("libclang.dll");
+    }
+
+    if cfg!(target_os = "macos") {
+        return name == "libclang.dylib"
+            || (name.starts_with("libclang.")
+                && Path::new(name)
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("dylib")));
+    }
+
+    name == "libclang.so"
+        || name.starts_with("libclang.so.")
+        || name.starts_with("libclang-") && name.contains(".so")
 }
 
 /// Print environment in shell-eval format: `export KEY="VALUE"`
@@ -191,8 +281,12 @@ fn write_github_actions_files(
         .append(true)
         .create(true)
         .open(github_path)?;
-    if let Some(llvm_path) = env.get("LLVM_SYS_140_PREFIX") {
-        writeln!(path_file, "{}", Path::new(llvm_path).join("bin").display())?;
+    if let Some(llvm_path) = env.get(LLVM_SYS_PREFIX_ENV) {
+        writeln!(
+            path_file,
+            "{}",
+            pecos_build::llvm::path_to_env_string(&Path::new(llvm_path).join("bin"))
+        )?;
     }
 
     Ok(())
@@ -226,15 +320,15 @@ mod tests {
         let env_path = std::env::temp_dir().join(format!("pecos-gh-env-{unique}"));
         let path_path = std::env::temp_dir().join(format!("pecos-gh-path-{unique}"));
 
-        let llvm_prefix = Path::new("/opt/pecos/llvm-14");
+        let llvm_prefix = Path::new("/opt/pecos/llvm-21.1");
         let llvm_prefix_str = llvm_prefix.display().to_string();
-        let llvm_bin_str = llvm_prefix.join("bin").display().to_string();
+        let llvm_bin_str = pecos_build::llvm::path_to_env_string(&llvm_prefix.join("bin"));
 
         let mut env = BTreeMap::new();
-        env.insert("LLVM_SYS_140_PREFIX".to_string(), llvm_prefix_str.clone());
+        env.insert(LLVM_SYS_PREFIX_ENV.to_string(), llvm_prefix_str.clone());
         env.insert(
             "PATH".to_string(),
-            "/opt/pecos/llvm-14/bin:/usr/bin".to_string(),
+            "/opt/pecos/llvm-21.1/bin:/usr/bin".to_string(),
         );
         env.insert("PECOS_LLVM".to_string(), llvm_prefix_str.clone());
 
@@ -243,7 +337,7 @@ mod tests {
         let env_file = std::fs::read_to_string(&env_path).unwrap();
         let path_file = std::fs::read_to_string(&path_path).unwrap();
 
-        assert!(env_file.contains(&format!("LLVM_SYS_140_PREFIX={llvm_prefix_str}")));
+        assert!(env_file.contains(&format!("{LLVM_SYS_PREFIX_ENV}={llvm_prefix_str}")));
         assert!(env_file.contains(&format!("PECOS_LLVM={llvm_prefix_str}")));
         assert!(!env_file.contains("PATH="));
         assert_eq!(path_file.trim(), llvm_bin_str);

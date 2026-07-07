@@ -3,7 +3,7 @@
 //! This crate provides build script utilities for managing external dependencies:
 //!
 //! - Downloading and extracting C++ libraries (`QuEST`, Qulacs, Stim, etc.)
-//! - Managing LLVM 14 installation
+//! - Managing LLVM 21.1 installation
 //! - Managing the `~/.pecos/` home directory
 //!
 //! # PECOS Home Directory

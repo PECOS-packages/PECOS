@@ -25,6 +25,7 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, result
 from guppylang.std.quantum import cx, h, measure, measure_array, qubit, x
+from pecos.guppy import variant_scoped
 
 
 @guppy
@@ -42,20 +43,18 @@ def tagged_bits_named_array() -> None:
 def make_repeated_single_bit_results(num_rounds: int) -> object:
     """Create a tiny program that records the same named result repeatedly."""
 
-    @guppy
     def repeated_single_bit_results() -> None:
         for _ in range(comptime(num_rounds)):
             q = qubit()
             bit = measure(q)
             result("synx", array(bit))
 
-    return repeated_single_bit_results
+    return guppy(variant_scoped(repeated_single_bit_results, num_rounds))
 
 
 def make_tiny_x_syndrome_memory(num_rounds: int) -> object:
     """Create a tiny memory-style circuit with fresh ancilla allocation each round."""
 
-    @guppy
     def tiny_x_syndrome_memory() -> None:
         data = qubit()
         h(data)
@@ -72,7 +71,7 @@ def make_tiny_x_syndrome_memory(num_rounds: int) -> object:
         final = measure_array(array(data))
         result("final", final)
 
-    return tiny_x_syndrome_memory
+    return guppy(variant_scoped(tiny_x_syndrome_memory, num_rounds))
 
 
 def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
@@ -82,7 +81,6 @@ def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
     "named result collection is wrong".
     """
 
-    @guppy
     def tiny_x_syndrome_memory_raw() -> None:
         data = qubit()
         h(data)
@@ -97,7 +95,7 @@ def make_tiny_x_syndrome_memory_raw(num_rounds: int) -> object:
         h(data)
         _ = measure(data)
 
-    return tiny_x_syndrome_memory_raw
+    return guppy(variant_scoped(tiny_x_syndrome_memory_raw, num_rounds))
 
 
 @guppy
@@ -176,6 +174,30 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
     assert trace[0]["format"] == "pecos_qis_operation_trace_v1"
     assert trace[0]["num_operations"] > 0
     assert trace[0]["lowered_quantum_ops"]
+
+
+def test_capture_operation_trace_includes_named_result_provenance() -> None:
+    """Trace capture must preserve result(...) -> measurement-id provenance."""
+    import pecos
+    from pecos.qec.surface.decode import named_result_traces_from_operation_trace
+
+    _require_selene_runtime()
+
+    trace = (
+        pecos.sim(make_tiny_x_syndrome_memory(1))
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(2)
+        .seed(123)
+        .capture_operation_trace()
+    )
+
+    named_traces = named_result_traces_from_operation_trace(trace)
+    names = {trace["name"] for trace in named_traces}
+    assert {"synx", "final"} <= names
+    assert any(chunk.get("stage") == "named_results" for chunk in trace)
+    for named_trace in named_traces:
+        assert len(named_trace["result_ids"]) == len(named_trace["values"])
 
 
 def _collect_selene_named_results(
@@ -588,3 +610,39 @@ def test_surface_memory_noiseless_complementary_family_repeats_after_projection(
         )
         for row in results[comp_key]:
             assert _round_blocks_repeat(row, num_rounds)
+
+
+def test_divergent_classical_semantics_match_selene_reference() -> None:
+    """The HUGR engine's spec-derived pins for the Python-divergent regimes
+    (negative divisors under Euclidean division with an unsigned divisor
+    bit pattern; logical right shift on negative operands) must agree with
+    the Selene reference implementation.
+
+    Values are compared as booleans because the local Selene runtime does
+    not link int-result reporting (print_int). Shift-past-width is pinned
+    engine-side only: hugr-core's ishr CONST-FOLDER panics (debug) or
+    mis-folds (release) on constant shifts >= width, so that program cannot
+    compile through the QIS path until the upstream fix lands.
+    """
+    import pecos
+    from guppylang import guppy
+    from guppylang.std.builtins import result
+
+    _require_selene_runtime()
+    _configure_selene_caches()
+
+    @guppy
+    def divergent_agrees() -> None:
+        a = 7
+        b = -3
+        result("div", (a // b) == 0)
+        result("mod", (a % b) == 7)
+        c = -8
+        result("shr", (c >> 1) == 9223372036854775804)
+
+    r = pecos.sim(pecos.Guppy(divergent_agrees)).qubits(1).classical(pecos.selene_engine()).seed(1).run(1).to_dict()
+    assert [int(r["div"][0]), int(r["mod"][0]), int(r["shr"][0])] == [
+        1,
+        1,
+        1,
+    ], f"Selene disagrees with the engine's spec pins: {r}"

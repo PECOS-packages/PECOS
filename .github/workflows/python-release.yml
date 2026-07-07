@@ -5,6 +5,9 @@ permissions:
 
 env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
+  MACOS_WHEEL_DEPLOYMENT_TARGET: "15.0"
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
@@ -160,8 +163,8 @@ jobs:
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
-          path: ~/.pecos/deps/llvm-14
-          key: llvm-14.0.6-${{ runner.os }}-${{ runner.arch }}-v2
+          path: ~/.pecos/deps/llvm-21.1
+          key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Ensure LLVM
         run: just ci-env
@@ -251,20 +254,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64 with CUDA support (uses GCC Toolset 13 for CUDA compatibility)
+          # Linux x86_64 with CUDA support. The manylinux 2.34 image's default
+          # compiler is GCC 14, which emits libstdc++ symbols newer than
+          # auditwheel's manylinux_2_35 policy allows. Install and pin the
+          # AlmaLinux system GCC 11 toolchain in the Linux build environment.
           - os: ubuntu-latest
             architecture: x86_64
             cibw_archs: x86_64
             install_cuda: true
-            # GCC Toolset 13 paths for CUDA compatibility
-            gcc_path_prefix: "/opt/rh/gcc-toolset-13/root/usr/bin:"
-            gcc_ld_path: "/opt/rh/gcc-toolset-13/root/usr/lib64:/opt/rh/gcc-toolset-13/root/usr/lib:"
-            gcc_cc: "/opt/rh/gcc-toolset-13/root/usr/bin/gcc"
-            gcc_cxx: "/opt/rh/gcc-toolset-13/root/usr/bin/g++"
-          # Linux aarch64 - DISABLED: LLVM 14 not available in manylinux_2_28 (AlmaLinux 8)
-          # The prebuilt LLVM 14 binary is incompatible with the container, and
-          # the llvm-toolset module only provides LLVM 13. Re-enable when we have
-          # a solution (custom Docker image, build from source, or inkwell LLVM 13 support)
+          # Linux aarch64 - temporarily disabled while the LLVM 21.1
+          # manylinux_2_34 bootstrap is validated on the primary x86_64 lane.
           # - os: ubuntu-24.04-arm
           #   architecture: aarch64
           #   runner: ubuntu-24.04-arm
@@ -370,54 +369,70 @@ jobs:
           CIBW_BUILD: "cp310-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
-          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
-          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
-          # Linux configuration - GCC Toolset and CUDA paths are conditional via matrix variables
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_34"
+          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_34"
+          # Linux configuration - CUDA paths are conditional via matrix variables
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=${{ matrix.gcc_path_prefix }}$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin:/usr/local/cuda-12.6/bin:$PATH
-            LD_LIBRARY_PATH=${{ matrix.gcc_ld_path }}$LD_LIBRARY_PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin:/usr/local/cuda-12.6/bin:$PATH
+            LLVM_SYS_211_PREFIX=$HOME/.pecos/deps/llvm-21.1
+            LIBCLANG_PATH=$HOME/.pecos/deps/llvm-21.1/lib
             CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/bin/cmake
             CUDA_PATH=/usr/local/cuda-12.6
+            CC=/usr/bin/gcc
+            CXX=/usr/bin/g++
+            CUDAHOSTCXX=/usr/bin/g++
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
             MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_LINUX: |
             bash scripts/ci/ensure-rust.sh stable minimal
             export PATH=$HOME/.cargo/bin:$PATH
-            dnf install libffi-devel -y
+            dnf install -y bzip2 gcc gcc-c++ libffi-devel xz
+            export CC=/usr/bin/gcc
+            export CXX=/usr/bin/g++
+            export CUDAHOSTCXX=/usr/bin/g++
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
             # Install CUDA Toolkit for GPU support on x86_64 (compile-time only, no GPU needed)
             if [ "${{ matrix.install_cuda }}" = "true" ]; then
-              echo "Installing GCC 13 (required for CUDA 12.6 compatibility)..."
-              dnf install -y gcc-toolset-13
-              source /opt/rh/gcc-toolset-13/enable
               echo "Installing CUDA Toolkit from NVIDIA repos..."
-              dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+              . /etc/os-release
+              CUDA_RHEL_MAJOR="${VERSION_ID%%.*}"
+              dnf config-manager --add-repo "https://developer.download.nvidia.com/compute/cuda/repos/rhel${CUDA_RHEL_MAJOR}/x86_64/cuda-rhel${CUDA_RHEL_MAJOR}.repo"
               dnf install -y cuda-nvcc-12-6 cuda-cudart-devel-12-6 libcublas-devel-12-6
               export CUDA_PATH=/usr/local/cuda-12.6
               export PATH=$CUDA_PATH/bin:$PATH
               echo "CUDA installed at $CUDA_PATH"
               nvcc --version
-              gcc --version
             else
               echo "Skipping CUDA installation (GPU support not enabled for this build)"
             fi
-            cargo run --locked --release -p pecos-cli -- install llvm --force
+            "$CC" --version
+            "$CXX" --version
+            bash scripts/ci/install-llvm-21-conda-linux.sh
+            cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             cargo run --locked --release -p pecos-cli -- install cmake --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            auditwheel repair -w {dest_dir} {wheel} &&
+            LD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib:$LD_LIBRARY_PATH
+            auditwheel repair --plat manylinux_2_35_${{ matrix.cibw_archs }} -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           # macOS configuration
           CIBW_ENVIRONMENT_MACOS: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/CMake.app/Contents/bin:$PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/CMake.app/Contents/bin:$PATH
+            LLVM_SYS_211_PREFIX=$HOME/.pecos/deps/llvm-21.1
+            LIBCLANG_PATH=$HOME/.pecos/deps/llvm-21.1/lib
             CMAKE=$HOME/.pecos/deps/cmake-${{ env.PECOS_CMAKE_VERSION }}/CMake.app/Contents/bin/cmake
-            MACOSX_DEPLOYMENT_TARGET=13.2
+            MACOSX_DEPLOYMENT_TARGET=${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}
             SDKROOT=$(xcrun --show-sdk-path)
             MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_MACOS: |
             bash scripts/ci/ensure-rust.sh stable minimal
             export PATH=$HOME/.cargo/bin:$PATH
             rustup update
-            cargo run --locked --release -p pecos-cli -- install llvm --force
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
+            mkdir -p "$HOME/.pecos/deps"
+            ln -sfn "$(brew --prefix llvm@21)" "$HOME/.pecos/deps/llvm-21.1"
+            cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             cargo run --locked --release -p pecos-cli -- install cmake --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
             # crashes on macOS 15 when bundled libc++ conflicts with system libc++
@@ -425,21 +440,23 @@ jobs:
             printf '#!/bin/bash\nunset DYLD_LIBRARY_PATH\nexec /usr/bin/codesign "$@"\n' > $HOME/.pecos/bin/codesign
             chmod +x $HOME/.pecos/bin/codesign
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-14/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
+            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           # Windows configuration - CUDA via Jimver/cuda-toolkit (installed before cibuildwheel)
           CIBW_ENVIRONMENT_WINDOWS: >
-            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin;C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin;$PATH"
-            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
+            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin;C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin;$PATH"
+            LLVM_SYS_211_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library"
+            LIBCLANG_PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin"
             CMAKE="C:\\Users\\runneradmin\\.pecos\\deps\\cmake-${{ env.PECOS_CMAKE_VERSION }}\\bin\\cmake.exe"
             MATURIN_PEP517_ARGS="--locked --features=extension-module,mwpf"
           CIBW_BEFORE_ALL_WINDOWS: >
-            echo "=== Installing LLVM using pecos ===" &&
+            echo "=== Installing conda-forge LLVM 21.1 ===" &&
             rustup update &&
-            cargo run --locked --release -p pecos-cli -- install llvm --force &&
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\ci\install-llvm-21-windows.ps1 -InstallDir "C:\Users\runneradmin\.pecos\deps\llvm-21.1" -Version ${{ env.LLVM_RELEASE_VERSION }} &&
+            cargo run --locked --release -p pecos-cli -- llvm configure "C:\Users\runneradmin\.pecos\deps\llvm-21.1\Library" &&
             cargo run --locked --release -p pecos-cli -- install cmake --force &&
             echo "=== Checking LLVM installation ===" &&
-            (test -d "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14" && echo "LLVM directory exists") || (echo "ERROR: LLVM directory not found!" && exit 1)
+            if exist "C:\Users\runneradmin\.pecos\deps\llvm-21.1\Library\bin\llvm-config.exe" (echo LLVM directory exists) else (echo ERROR: LLVM directory not found! && exit /b 1)
           # Install delvewheel and patch it to ignore ext-ms-win-* API sets
           # (delvewheel ignores api-ms-win-* but not ext-ms-win-* which are also Windows API sets)
           CIBW_BEFORE_BUILD_WINDOWS: >
@@ -448,7 +465,7 @@ jobs:
           # Note: --no-dll excludes Windows system DLLs that should not be bundled
           # combase.dll and rmclient.dll are core Windows components that fail when bundled
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
+            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload pecos-rslib wheels
@@ -468,32 +485,50 @@ jobs:
           CIBW_BUILD: "cp310-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
           CIBW_ARCHS_LINUX: ${{ matrix.cibw_archs }}
-          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
-          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_28"
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_34"
+          CIBW_MANYLINUX_AARCH64_IMAGE: "manylinux_2_34"
           CIBW_ENVIRONMENT_LINUX: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$PATH
+            LD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib:$LD_LIBRARY_PATH
+            LLVM_SYS_211_PREFIX=$HOME/.pecos/deps/llvm-21.1
+            LIBCLANG_PATH=$HOME/.pecos/deps/llvm-21.1/lib
+            CC=/usr/bin/gcc
+            CXX=/usr/bin/g++
+            CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
           CIBW_BEFORE_ALL_LINUX: |
             bash scripts/ci/ensure-rust.sh stable minimal
             export PATH=$HOME/.cargo/bin:$PATH
-            dnf install libffi-devel -y
-            cargo run --locked --release -p pecos-cli -- install llvm --force
+            dnf install -y bzip2 gcc gcc-c++ libffi-devel xz
+            export CC=/usr/bin/gcc
+            export CXX=/usr/bin/g++
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc
+            "$CC" --version
+            "$CXX" --version
+            bash scripts/ci/install-llvm-21-conda-linux.sh
+            cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            auditwheel repair -w {dest_dir} {wheel} &&
+            LD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib:$LD_LIBRARY_PATH
+            auditwheel repair --plat manylinux_2_35_${{ matrix.cibw_archs }} -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           CIBW_ENVIRONMENT_MACOS: >
-            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-14/bin:$PATH
-            LLVM_SYS_140_PREFIX=$HOME/.pecos/deps/llvm-14
-            MACOSX_DEPLOYMENT_TARGET=13.2
+            PATH=$HOME/.cargo/bin:$HOME/.pecos/deps/llvm-21.1/bin:$PATH
+            LLVM_SYS_211_PREFIX=$HOME/.pecos/deps/llvm-21.1
+            LIBCLANG_PATH=$HOME/.pecos/deps/llvm-21.1/lib
+            MACOSX_DEPLOYMENT_TARGET=${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}
             SDKROOT=$(xcrun --show-sdk-path)
           CIBW_BEFORE_ALL_MACOS: |
             if ! command -v cargo >/dev/null 2>&1; then
               bash scripts/ci/ensure-rust.sh stable minimal
               export PATH=$HOME/.cargo/bin:$PATH
             fi
-            if [ ! -d "$HOME/.pecos/deps/llvm-14/bin" ]; then
+            if [ ! -d "$HOME/.pecos/deps/llvm-21.1/bin" ]; then
               rustup update
-              cargo run --locked --release -p pecos-cli -- install llvm --force
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
+              mkdir -p "$HOME/.pecos/deps"
+              ln -sfn "$(brew --prefix llvm@21)" "$HOME/.pecos/deps/llvm-21.1"
+              cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             else
               echo "LLVM already installed from pecos-rslib build, skipping"
             fi
@@ -501,19 +536,21 @@ jobs:
             printf '#!/bin/bash\nunset DYLD_LIBRARY_PATH\nexec /usr/bin/codesign "$@"\n' > $HOME/.pecos/bin/codesign
             chmod +x $HOME/.pecos/bin/codesign
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-14/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
+            PATH=$HOME/.pecos/bin:$PATH DYLD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel} &&
             pipx run abi3audit --strict --report {wheel}
           CIBW_ENVIRONMENT_WINDOWS: >
-            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin;$PATH"
-            LLVM_SYS_140_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14"
+            PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin;$PATH"
+            LLVM_SYS_211_PREFIX="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library"
+            LIBCLANG_PATH="C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin"
           CIBW_BEFORE_ALL_WINDOWS: >
             rustup update &&
-            if not exist "C:\Users\runneradmin\.pecos\deps\llvm-14\bin" (cargo run --locked --release -p pecos-cli -- install llvm --force) else (echo LLVM already installed from pecos-rslib build)
+            if not exist "C:\Users\runneradmin\.pecos\deps\llvm-21.1\Library\bin\llvm-config.exe" (powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\ci\install-llvm-21-windows.ps1 -InstallDir "C:\Users\runneradmin\.pecos\deps\llvm-21.1" -Version ${{ env.LLVM_RELEASE_VERSION }}) else (echo LLVM already installed from pecos-rslib build) &&
+            cargo run --locked --release -p pecos-cli -- llvm configure "C:\Users\runneradmin\.pecos\deps\llvm-21.1\Library"
           CIBW_BEFORE_BUILD_WINDOWS: >
             pip install delvewheel &&
             python -c "import delvewheel._dll_list as d,inspect,re as r;p=inspect.getfile(d);c=open(p).read();n=chr(10);open(p,'w').write(c.replace(r\"re.compile('api-.*'),\",r\"re.compile('api-.*'),\"+n+r\"    re.compile('ext-.*'),\")) if 'ext-.*' not in c else None"
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-14\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
+            delvewheel repair -v --add-path "C:\\Users\\runneradmin\\.pecos\\deps\\llvm-21.1\\Library\\bin" --no-dll "combase.dll;rmclient.dll" -w {dest_dir} {wheel} &&
             pipx run abi3audit --strict --report {wheel}
 
       - name: Upload pecos-rslib-llvm wheels

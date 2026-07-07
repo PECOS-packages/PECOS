@@ -1,0 +1,49 @@
+/// Quantum Teleportation Example
+/// Teleports the state of qubit 0 to qubit 2 using a pre-shared Bell pair.
+///
+/// Protocol:
+/// 1. Alice and Bob share a Bell pair (qubits 1 and 2)
+/// 2. Alice has the state to teleport (qubit 0)
+/// 3. Alice performs Bell measurement on qubits 0 and 1
+/// 4. Alice sends classical bits to Bob
+/// 5. Bob applies corrections based on measurement results
+
+pub fn main() -> unit {
+    q := qalloc(3);
+    pz q;
+
+    // === Prepare the state to teleport on qubit 0 ===
+    // For this example, we'll prepare |+⟩ = (|0⟩ + |1⟩) / sqrt(2)
+    h q[0];
+
+    // === Create Bell pair between qubits 1 and 2 ===
+    // This is the "quantum channel" shared by Alice (q[1]) and Bob (q[2])
+    h q[1];
+    cx (q[1], q[2]);
+
+    // === Alice's Bell measurement ===
+    // Entangle the unknown state with her half of the Bell pair
+    cx (q[0], q[1]);
+    h q[0];
+
+    // Measure Alice's qubits
+    m0: u1 = mz(u1) q[0];
+    m1: u1 = mz(u1) q[1];
+
+    // === Bob's corrections ===
+    // Based on Alice's measurement results, Bob applies corrections
+    // Note: In a real implementation, these would be classically controlled
+
+    // If m1 == 1, apply X gate
+    // if m1 == 1 { x q[2]; }
+
+    // If m0 == 1, apply Z gate
+    // if m0 == 1 { z q[2]; }
+
+    // After corrections, qubit 2 is in the original state of qubit 0
+
+    // Verify by measuring (should match original state statistics)
+    final_result: u1 = mz(u1) q[2];
+
+    return unit;
+}

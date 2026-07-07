@@ -44,8 +44,9 @@ use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
+use crate::engine::activation::{ContainerActivation, QueuePolicy};
 use crate::engine::analysis::find_input_node;
-use crate::engine::types::{ActiveCaseInfo, QuantumOp};
+use crate::engine::types::{ActiveCaseInfo, ClassicalValue, QuantumOp};
 
 impl HugrEngine {
     /// Try to resolve the control value for a Conditional node.
@@ -106,17 +107,30 @@ impl HugrEngine {
 
     /// Try to resolve any pending conditionals that were waiting for measurement results.
     pub(crate) fn try_resolve_pending_conditionals(&mut self) {
+        if self.pending_conditionals.is_empty() {
+            return;
+        }
         let hugr = match &self.hugr {
             Some(h) => h.clone(),
             None => return,
         };
 
-        // Collect conditionals that can now be resolved
+        // Collect conditionals that can now be resolved. A pending entry
+        // whose node is already processed was expanded through the queue
+        // path in the meantime -- expanding it again would re-run its case.
         let mut to_resolve = Vec::new();
-        for &cond_node in self.pending_conditionals.keys() {
-            if let Some(branch_index) = self.try_resolve_conditional_control(&hugr, cond_node) {
+        let mut already_expanded = Vec::new();
+        for &cond_node in &self.pending_conditionals {
+            if self.processed.contains(&cond_node) {
+                already_expanded.push(cond_node);
+            } else if let Some(branch_index) =
+                self.try_resolve_conditional_control(&hugr, cond_node)
+            {
                 to_resolve.push((cond_node, branch_index));
             }
+        }
+        for cond_node in already_expanded {
+            self.pending_conditionals.remove(&cond_node);
         }
 
         // Resolve them
@@ -126,10 +140,13 @@ impl HugrEngine {
             let entry_nodes = self.expand_conditional(&hugr, cond_node, branch_index);
             let num_entry_nodes = entry_nodes.len();
             for entry_node in entry_nodes {
-                if !self.work_queue.contains(&entry_node) && !self.processed.contains(&entry_node) {
+                if !self.work_queue.contains(entry_node) && !self.processed.contains(&entry_node) {
                     self.work_queue.push_back(entry_node);
                 }
             }
+
+            // expand_conditional runs the zero-op-case completion hooks
+            // itself, so nothing more is needed here.
 
             debug!(
                 "Resolved pending Conditional {cond_node:?}, branch {branch_index} selected, added {num_entry_nodes} entry nodes"
@@ -145,11 +162,15 @@ impl HugrEngine {
 
         for (case_node, case_info) in &self.active_cases {
             if case_info.ops_in_case.contains(&processed_node) {
-                // Check if all ops in this Case are now processed
+                // A case is complete only when every tracked op is processed
+                // AND no tracked nested container is still mid-flight: a
+                // nested Conditional is marked processed at EXPANSION (its
+                // outputs exist only once its own case completes), and
+                // active TailLoops/Calls are still producing values.
                 let all_done = case_info
                     .ops_in_case
                     .iter()
-                    .all(|op| self.processed.contains(op));
+                    .all(|op| self.node_settled(*op));
 
                 if all_done {
                     completed_cases.push((*case_node, case_info.conditional_node));
@@ -157,11 +178,34 @@ impl HugrEngine {
             }
         }
 
-        // Propagate outputs for completed cases
+        // Propagate outputs for completed cases. Removing the case UP FRONT
+        // doubles as a re-entrancy guard: the check_case_completion recursion
+        // below can complete a case this loop also collected.
         for (case_node, cond_node) in completed_cases {
+            if self.active_cases.remove(&case_node).is_none() {
+                continue;
+            }
             debug!("Case {case_node:?} complete, propagating outputs to Conditional {cond_node:?}");
             self.propagate_conditional_outputs(hugr, cond_node, case_node);
-            self.active_cases.remove(&case_node);
+
+            // The Conditional's outputs exist only now: re-run the checks
+            // that treat the Conditional as complete (block completion gates
+            // on the case being done) and wake its consumers. The Conditional
+            // may itself be the last op of an ENCLOSING case, so check case
+            // completion too (recursing one nesting level per call).
+            self.check_scan_frame_completion(hugr, cond_node);
+            self.check_case_completion(hugr, cond_node);
+            self.check_cfg_block_completion(hugr, cond_node);
+            self.check_tailloop_body_completion(hugr, cond_node);
+            // A TailLoop whose control Sum rides through this Conditional's
+            // output may have parked in pending_tailloop_control before the
+            // value existed -- re-attempt it here (measurement rounds are
+            // the only other retry point, and a purely classical case
+            // completion may never be followed by one).
+            self.try_resolve_pending_tailloops();
+            self.try_resolve_pending_cfg_branches();
+            self.queue_ready_successors(hugr, cond_node);
+            self.retry_deferred_nodes();
         }
     }
 
@@ -193,72 +237,191 @@ impl HugrEngine {
             let out_in_port = IncomingPort::from(port_idx);
 
             // Find what's connected to this Output node input
-            if let Some((src_node, src_port)) = hugr.single_linked_output(output_node, out_in_port)
+            if let Some((src_node, _src_port)) = hugr.single_linked_output(output_node, out_in_port)
             {
-                let src_wire = (src_node, src_port.index());
-
-                // Check if we have a qubit mapping for this wire
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
+                // Reads go through the tracing layer so a case output
+                // produced inside a flattened DFG resolves.
+                if let Some(qubit_id) = self.get_input_qubit(hugr, output_node, port_idx) {
                     // Map to the Conditional's output port
                     self.wire_state
                         .wire_to_qubit
                         .insert((cond_node, port_idx), qubit_id);
                     debug!(
-                        "Mapped Conditional {cond_node:?} output {port_idx} to qubit {qubit_id:?} (from {src_wire:?})"
+                        "Mapped Conditional {cond_node:?} output {port_idx} to qubit {qubit_id:?}"
                     );
                 }
 
-                // Check if we have a classical value for this wire
-                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                // Check if we have a classical value for this wire. When the
+                // source Tag executed as a classical op this is the real Sum
+                // value -- the structural fallback below must NOT overwrite
+                // it with just the tag number.
+                let has_value = if let Some(value) =
+                    self.get_input_value(hugr, output_node, port_idx)
+                {
+                    debug!(
+                        "Mapped Conditional {cond_node:?} output {port_idx} to classical value {value:?}"
+                    );
                     self.wire_state
                         .classical_values
-                        .insert((cond_node, port_idx), value.clone());
-                    debug!(
-                        "Mapped Conditional {cond_node:?} output {port_idx} to classical value {value:?} (from {src_wire:?})"
-                    );
-                }
+                        .insert((cond_node, port_idx), value);
+                    true
+                } else {
+                    false
+                };
 
-                // Check if the source is a Tag node - store its tag value and payload
+                // Structural fallback: if the source is an unexecuted Tag
+                // node, store its tag value and payload
                 let src_op = hugr.get_optype(src_node);
-                if let OpType::Tag(tag_op) = src_op {
+                if !has_value && let OpType::Tag(tag_op) = src_op {
                     let tag_value = tag_op.tag;
                     #[allow(clippy::cast_possible_wrap)] // Tag indices are small
                     self.wire_state
                         .classical_values
                         .insert((cond_node, port_idx), ClassicalValue::Int(tag_value as i64));
 
-                    // Also extract and store the Tag's inputs (Sum payload values)
-                    // Store them at "virtual" output ports (1, 2, ...) on the Conditional
-                    // These will be used during CFG block transitions
+                    // Also extract and store the Tag's inputs (Sum payload
+                    // values) in the DEDICATED payload map, keyed by this
+                    // output port, for CFG block transitions to consume.
+                    // Whole-vector replace doubles as the stale-run clear
+                    // (a previous, longer payload cannot survive), and a
+                    // not-yet-ready element truncates the vector -- the
+                    // consumer sees exactly the ready prefix, never a stale
+                    // value. Elements read through the tracing layer so a
+                    // payload produced inside a flattened DFG resolves.
                     let num_tag_inputs = hugr.num_inputs(src_node);
+                    let mut payload = Vec::with_capacity(num_tag_inputs);
                     for payload_idx in 0..num_tag_inputs {
-                        let tag_in_port = IncomingPort::from(payload_idx);
-                        if let Some((payload_src_node, payload_src_port)) =
-                            hugr.single_linked_output(src_node, tag_in_port)
+                        if let Some(payload_value) =
+                            self.get_input_value(hugr, src_node, payload_idx)
                         {
-                            let payload_src_wire = (payload_src_node, payload_src_port.index());
-                            if let Some(payload_value) = self
-                                .wire_state
-                                .classical_values
-                                .get(&payload_src_wire)
-                                .cloned()
-                            {
-                                // Store at virtual output port (port_idx + 1 + payload_idx)
-                                // This allows CFG block transitions to find the payload values
-                                let virtual_port = port_idx + 1 + payload_idx;
-                                debug!(
-                                    "Conditional {cond_node:?} Tag payload {payload_idx}: {payload_value:?} at virtual port {virtual_port}"
-                                );
-                                self.wire_state
-                                    .classical_values
-                                    .insert((cond_node, virtual_port), payload_value);
-                            } else {
-                                debug!("No payload value at {payload_src_wire:?}");
-                            }
+                            debug!(
+                                "Conditional {cond_node:?} output {port_idx} Tag payload {payload_idx}: {payload_value:?}"
+                            );
+                            payload.push(payload_value);
+                        } else {
+                            debug!(
+                                "Conditional {cond_node:?} Tag payload {payload_idx} not ready; truncating"
+                            );
+                            break;
                         }
                     }
+                    self.wire_state
+                        .conditional_payloads
+                        .insert((cond_node, port_idx), payload);
                 }
             }
+        }
+    }
+
+    /// Copy the Conditional's control payload and data inputs into the
+    /// selected Case's Input node ports.
+    ///
+    /// Called at expansion and again when measurement results arrive: a case
+    /// can expand as soon as its own control resolves while other data
+    /// inputs (e.g. a later measurement) do not exist yet, and the one-shot
+    /// copy would leave those Case Input ports empty forever.
+    pub(crate) fn propagate_case_inputs(&mut self, hugr: &Hugr, cond_node: Node, input_node: Node) {
+        // The Case's Input row is [selected variant's PAYLOAD] ++
+        // [other inputs]. The payload ARITY comes from the Conditional's
+        // TYPE (sum_rows of the selected variant), never from the control
+        // value: when the branch resolves through the structural Tag
+        // fallback the value is a bare tag with no payload, and deriving
+        // the offset from it would land the data inputs on the payload's
+        // ports.
+        let payload_len = hugr
+            .get_parent(input_node)
+            .and_then(|case_node| {
+                let branch = hugr.children(cond_node).position(|c| c == case_node)?;
+                if let OpType::Conditional(cond_op) = hugr.get_optype(cond_node) {
+                    cond_op
+                        .sum_rows
+                        .get(branch)
+                        .map(tket::hugr::types::TypeRow::len)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+        if let Some((ctrl_src, ctrl_port)) =
+            hugr.single_linked_output(cond_node, IncomingPort::from(0))
+            && let Some(ClassicalValue::Sum { values, .. }) = self
+                .wire_state
+                .classical_values
+                .get(&(ctrl_src, ctrl_port.index()))
+                .cloned()
+        {
+            if values.len() != payload_len {
+                debug!(
+                    "Conditional {cond_node:?}: control payload arity {} != type arity \
+                     {payload_len}; propagating what exists at type offsets",
+                    values.len()
+                );
+            }
+            for (i, value) in values.into_iter().enumerate().take(payload_len) {
+                debug!("Propagated control payload {value:?} to Case Input ({input_node:?}, {i})");
+                if let ClassicalValue::QubitRef(qubit_id) = &value {
+                    self.wire_state
+                        .wire_to_qubit
+                        .insert((input_node, i), *qubit_id);
+                }
+                self.wire_state
+                    .classical_values
+                    .insert((input_node, i), value);
+            }
+        }
+
+        // Propagate ALL wires (qubit and classical) from Conditional inputs to the Case's Input node
+        // Port 0 is the control (Sum type), ports 1+ are data inputs
+        // following the payload values unpacked above.
+        let num_cond_inputs = hugr.num_inputs(cond_node);
+
+        // Start from port 1 (skip control), propagate all inputs. Reads go
+        // through the tracing layer so a data input produced inside a
+        // flattened DFG resolves.
+        for port_idx in 1..num_cond_inputs {
+            let input_output_idx = payload_len + port_idx - 1;
+
+            // Propagate qubit mappings
+            if let Some(qubit_id) = self.get_input_qubit(hugr, cond_node, port_idx) {
+                self.wire_state
+                    .wire_to_qubit
+                    .insert((input_node, input_output_idx), qubit_id);
+                debug!(
+                    "Propagated qubit {qubit_id:?} to Input node {input_node:?} port {input_output_idx}"
+                );
+            }
+
+            // Also propagate classical values (integers, bools, etc.)
+            if let Some(value) = self.get_input_value(hugr, cond_node, port_idx) {
+                debug!(
+                    "Propagated classical value {value:?} to Case Input ({input_node:?}, {input_output_idx})"
+                );
+                self.wire_state
+                    .classical_values
+                    .insert((input_node, input_output_idx), value);
+            }
+        }
+    }
+
+    /// Re-run case-input propagation for every active case (measurement
+    /// results may have landed after the case expanded).
+    pub(crate) fn repropagate_active_case_inputs(&mut self, hugr: &Hugr) {
+        // Unlike the CFG replay path, this writes WITHOUT clearing first:
+        // propagate_case_inputs copies whatever sources exist right now
+        // onto the Case's Input ports, overwriting like-for-like. That is
+        // safe here because a case expands exactly once per conditional
+        // resolution (its Input ports have a single producer -- this copy),
+        // whereas CFG block Inputs are rewritten every iteration and so
+        // need fill-only replay to avoid clobbering live state.
+        let targets: Vec<(Node, Node)> = self
+            .active_cases
+            .iter()
+            .filter_map(|(&case_node, info)| {
+                find_input_node(hugr, case_node).map(|input| (info.conditional_node, input))
+            })
+            .collect();
+        for (cond_node, input_node) in targets {
+            self.propagate_case_inputs(hugr, cond_node, input_node);
         }
     }
 
@@ -276,12 +439,15 @@ impl HugrEngine {
         };
 
         if branch_index >= cond_info.cases.len() {
-            debug!(
-                "Branch index {} out of range for Conditional {:?} with {} cases",
-                branch_index,
-                cond_node,
+            // An out-of-range tag means an upstream Sum-propagation bug;
+            // swallowing it here left the Conditional neither processed nor
+            // pending -- an eventual stall naming innocent starved
+            // consumers. Poison instead, like the CFG branch sites.
+            self.execution_error = Some(format!(
+                "Conditional {cond_node:?}: branch tag {branch_index} out of range \
+                 ({} cases)",
                 cond_info.cases.len()
-            );
+            ));
             return Vec::new();
         }
 
@@ -290,48 +456,36 @@ impl HugrEngine {
             "Expanding Conditional {cond_node:?} branch {branch_index} -> Case {selected_case:?}"
         );
 
+        // This conditional may ALSO be parked in pending_conditionals (it
+        // deferred once, then a loop iteration re-queued it and the queue
+        // path expanded it). Drop the pending entry, or a later retry wave
+        // expands it a second time -- with case quantum ops reset per
+        // expansion that re-allocates and re-measures qubits (observed as
+        // gates and measurements landing on disjoint qubit generations).
+        self.pending_conditionals.remove(&cond_node);
+
         // Find the Input node inside the selected Case
         // Operations inside the Case connect to this Input node, not to the Case node itself
         let input_node = find_input_node(hugr, selected_case);
 
         if let Some(input_node) = input_node {
             debug!("Case {selected_case:?} has Input node {input_node:?}");
-
-            // Propagate ALL wires (qubit and classical) from Conditional inputs to the Case's Input node
-            // Port 0 is the control (Sum type), ports 1+ are data inputs
-            // The Case's Input node outputs correspond to the Conditional's non-control inputs
-            let num_cond_inputs = hugr.num_inputs(cond_node);
-
-            // Start from port 1 (skip control), propagate all inputs
-            for port_idx in 1..num_cond_inputs {
-                let cond_in_port = IncomingPort::from(port_idx);
-                if let Some((src_node, src_port)) =
-                    hugr.single_linked_output(cond_node, cond_in_port)
-                {
-                    let src_wire = (src_node, src_port.index());
-                    let input_output_idx = port_idx - 1;
-
-                    // Propagate qubit mappings
-                    if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
-                        self.wire_state
-                            .wire_to_qubit
-                            .insert((input_node, input_output_idx), qubit_id);
-                        debug!(
-                            "Propagated qubit {qubit_id:?} to Input node {input_node:?} port {input_output_idx}"
-                        );
-                    }
-
-                    // Also propagate classical values (integers, bools, etc.)
-                    if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
-                        debug!(
-                            "Propagated classical value {value:?} from {src_wire:?} to Case Input ({input_node:?}, {input_output_idx})"
-                        );
-                        self.wire_state
-                            .classical_values
-                            .insert((input_node, input_output_idx), value);
-                    }
-                }
+            // Clear the Case Input's previous values first:
+            // propagate_case_inputs only overwrites ports whose source value
+            // currently exists, so a data input that is missing at expansion
+            // time (e.g. a measurement landing later) would otherwise leave
+            // the PREVIOUS iteration's value for consumers to read before
+            // the re-propagation repairs it.
+            let num_outputs = hugr.num_outputs(input_node);
+            for port_idx in 0..num_outputs {
+                self.wire_state
+                    .classical_values
+                    .remove(&(input_node, port_idx));
+                self.wire_state
+                    .wire_to_qubit
+                    .remove(&(input_node, port_idx));
             }
+            self.propagate_case_inputs(hugr, cond_node, input_node);
         } else {
             debug!("No Input node found in Case {selected_case:?}");
         }
@@ -350,11 +504,87 @@ impl HugrEngine {
                 ops_in_case.insert(child);
             }
         }
+        self.executed_containers.insert(selected_case, "Case");
+        // Build the case activation batch through the shared two-phase
+        // mechanism: every processed flag and stale output wire in the case
+        // clears BEFORE any readiness check, so consumers cannot pass
+        // readiness against the previous execution's flags of a
+        // not-yet-cleared producer (same discipline as CFG/TailLoop
+        // re-activation). Quantum ops are queued separately as entry nodes
+        // by the caller, so they only reset and ungate here; a case
+        // re-expanded on a later loop iteration must re-emit its gates.
+        let mut act = ContainerActivation::new();
+        for &node in &ops_in_case {
+            act.reset(node);
+            act.ungate(node);
+        }
+
+        // The Case's classical, bool, and extension ops must also execute
+        // before its outputs propagate (propagating early copies missing
+        // values downstream). Unblock them from the inside-cases guard,
+        // queue the ready ones, and track them all for completion.
+        let case_classical =
+            crate::engine::analysis::find_classical_ops_in_block(hugr, selected_case);
+        let case_bools = crate::engine::analysis::find_bool_ops_in_block(hugr, selected_case);
+        let case_extension: Vec<Node> =
+            crate::engine::analysis::find_extension_ops_in_block(hugr, selected_case)
+                .into_iter()
+                .filter(|n| {
+                    !self.quantum_ops.contains_key(n)
+                        && !case_classical.contains(n)
+                        && !case_bools.contains(n)
+                })
+                .collect();
+        // LoadConstants feeding the Case's Output (e.g. a loop's
+        // continue-flag bool) also count: queue and track them like blocks
+        // do at activation.
+        let case_load_consts: Vec<Node> = hugr
+            .children(selected_case)
+            .filter(|&child| matches!(hugr.get_optype(child), OpType::LoadConstant(_)))
+            .collect();
+        // Nested control-flow containers (Call/TailLoop/Conditional children
+        // of the case) must be tracked too: a case whose only content is a
+        // Call or loop would otherwise register with an empty/completed op
+        // set and propagate outputs before the nested work even starts.
+        let mut case_calls: Vec<Node> = Vec::new();
+        let mut case_containers: Vec<Node> = Vec::new();
+        let mut case_cfgs: Vec<Node> = Vec::new();
+        for child in hugr.children(selected_case) {
+            match hugr.get_optype(child) {
+                OpType::Call(_) => case_calls.push(child),
+                OpType::TailLoop(_) | OpType::Conditional(_) => case_containers.push(child),
+                // CFGs copy their inputs one-shot at activation, so they
+                // queue like Calls: only once their producers ran.
+                OpType::CFG(_) => case_cfgs.push(child),
+                _ => {}
+            }
+        }
+        for &op_node in case_classical
+            .iter()
+            .chain(case_bools.iter())
+            .chain(case_extension.iter())
+            .chain(case_load_consts.iter())
+            .chain(case_calls.iter())
+            .chain(case_cfgs.iter())
+        {
+            act.reset(op_node);
+            act.queue(op_node, QueuePolicy::IfReady);
+            ops_in_case.insert(op_node);
+        }
+        // TailLoops and nested Conditionals defer internally until their
+        // control resolves, so they queue without a readiness check.
+        for &op_node in &case_containers {
+            act.reset(op_node);
+            act.queue(op_node, QueuePolicy::Always);
+            ops_in_case.insert(op_node);
+        }
+        self.run_activation(hugr, &act);
 
         // Register this Case as active so we can propagate outputs when complete
-        if ops_in_case.is_empty() {
+        let case_completed_inline = ops_in_case.is_empty();
+        if case_completed_inline {
             // No ops in this Case - propagate outputs immediately
-            debug!("Case {selected_case:?} has no quantum ops, propagating outputs immediately");
+            debug!("Case {selected_case:?} has no ops, propagating outputs immediately");
             self.propagate_conditional_outputs(hugr, cond_node, selected_case);
         } else {
             self.active_cases.insert(
@@ -375,6 +605,23 @@ impl HugrEngine {
 
         // Mark the Conditional as processed
         self.processed.insert(cond_node);
+
+        // A zero-op case completed inline above with no later completion
+        // event to observe it: check_case_completion never fires for it, so
+        // run the same wake-up sequence here (after the processed mark, or
+        // the readiness checks still see the Conditional as pending). A
+        // consumer gated solely on this Conditional -- e.g. a zero-argument
+        // Call sequenced behind it by an order edge -- otherwise starves.
+        if case_completed_inline {
+            self.check_scan_frame_completion(hugr, cond_node);
+            self.check_case_completion(hugr, cond_node);
+            self.check_cfg_block_completion(hugr, cond_node);
+            self.check_tailloop_body_completion(hugr, cond_node);
+            self.try_resolve_pending_tailloops();
+            self.try_resolve_pending_cfg_branches();
+            self.queue_ready_successors(hugr, cond_node);
+            self.retry_deferred_nodes();
+        }
 
         entry_nodes
     }

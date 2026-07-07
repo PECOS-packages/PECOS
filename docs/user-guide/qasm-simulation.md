@@ -89,10 +89,10 @@ Now, let's run this code using PECOS's unified `sim()` function:
     let program = Qasm::from_string(qasm_code);
 
     // Simple simulation
-    let results = sim(program.clone()).run(1000)?;
+    let results = sim(program.clone()).shots(1000).run()?;
 
     // With configuration
-    let results = sim(program).seed(42).run(1000)?;
+    let results = sim(program).seed(42).shots(1000).run()?;
     ```
 
 ## Using the Builder API
@@ -146,7 +146,7 @@ The `sim()` function returns a builder that provides flexibility through method 
     let program = Qasm::from_string(qasm_code);
 
     // Simple simulation with builder pattern
-    let results = sim(program.clone()).run(1000)?;
+    let results = sim(program.clone()).shots(1000).run()?;
 
     // With more configuration options
     let results = sim(program)
@@ -154,7 +154,7 @@ The `sim()` function returns a builder that provides flexibility through method 
         .noise(DepolarizingNoiseModel::builder().with_uniform_probability(0.01))
         .workers(4)  // Explicitly set number of threads
         // .auto_workers()  // Or use all available CPU cores
-        .run(1000)?;
+        .shots(1000).run()?;
     ```
 
 ## Running Multiple Shots
@@ -302,7 +302,7 @@ For research or to match specific hardware characteristics, you can create detai
         .with_seed(42);                    // Deterministic noise
 
     // Use with sim()
-    let results = sim(program).noise(noise).run(1000)?;
+    let results = sim(program).noise(noise).shots(1000).run()?;
     ```
 
 The builder provides many configuration options including idle noise rates, leakage probabilities,
@@ -357,12 +357,12 @@ PECOS provides different engines optimized for different types of circuits:
     // Sparse stabilizer (default, efficient for Clifford circuits)
     let results = sim(program.clone())
         .quantum(sparse_stab())
-        .run(1000)?;
+        .shots(1000).run()?;
 
     // State vector (for non-Clifford circuits)
     let results = sim(program)
         .quantum(state_vector())
-        .run(1000)?;
+        .shots(1000).run()?;
     ```
 
 ## Understanding Your Results
@@ -419,7 +419,7 @@ Simulation results come back as measurement outcomes for each shot. These can be
     "#;
 
     let program = Qasm::from_string(qasm_code);
-    let results = sim(program).run(1000)?;
+    let results = sim(program).shots(1000).run()?;
 
     // Results come as ShotVec
     println!("Got {} shots", results.len());
@@ -568,7 +568,7 @@ Here's how to simulate a GHZ state with realistic noise:
             .with_seed(12345);                 // Deterministic noise
 
         // Run simulation
-        let results = sim(program).noise(noise).seed(42).run(1000)?;
+        let results = sim(program).noise(noise).seed(42).shots(1000).run()?;
         println!("GHZ state results: {:?}", results);
 
         Ok(())
@@ -624,13 +624,13 @@ For many shots, you can use multiple CPU cores to speed up simulation:
     let program = Qasm::from_string(qasm_code);
 
     // Single threaded (default)
-    let results = sim(program.clone()).workers(1).run(1000)?;
+    let results = sim(program.clone()).workers(1).shots(1000).run()?;
 
     // Explicit thread count
-    let results = sim(program.clone()).workers(4).run(1000)?;
+    let results = sim(program.clone()).workers(4).shots(1000).run()?;
 
     // Automatically use all available cores
-    let results = sim(program).auto_workers().run(1000)?;
+    let results = sim(program).auto_workers().shots(1000).run()?;
     ```
 
 ### Choosing the Right Engine

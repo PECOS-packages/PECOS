@@ -131,6 +131,12 @@ impl ClassicalEngine for PhirEngine {
         self.processor.get_qubit_count()
     }
 
+    fn has_dynamic_qubit_count(&self) -> bool {
+        // PHIR allocates qubits during command generation, so the count is 0
+        // before execution and grows as qalloc operations are discovered.
+        true
+    }
+
     fn generate_commands(&mut self) -> std::result::Result<ByteMessage, PecosError> {
         const MAX_BATCH_SIZE: usize = 100;
 

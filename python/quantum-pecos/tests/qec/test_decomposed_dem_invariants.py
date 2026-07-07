@@ -104,6 +104,20 @@ def xor_effect_rows(left: dict[str, list[int]], right: dict[str, list[int]]) -> 
     )
 
 
+def xor_source_components(row: dict[str, object]) -> tuple[list[int], list[int]]:
+    """XOR a structured row's source component effects."""
+    dets: list[int] = []
+    outputs: list[int] = []
+    for part_dets, part_outputs in zip(
+        row["source_component_detectors"],
+        row["source_component_dem_outputs"],
+        strict=True,
+    ):
+        dets = xor_lists(dets, list(part_dets))
+        outputs = xor_lists(outputs, list(part_outputs))
+    return dets, outputs
+
+
 def parse_dem_error_probabilities(dem_str: str) -> dict[str, float]:
     """Map DEM target strings to their stated error probabilities."""
     out: dict[str, float] = {}
@@ -204,6 +218,7 @@ def _find_gate_attrs(
     phase: str | None = None,
     label_prefix: str | None = None,
     stabilizer: str | None = None,
+    syndrome_round: int | None = None,
 ) -> dict[str, object]:
     """Find the first DAG gate attribute record matching the requested filters."""
     for node in sorted(dag.nodes()):
@@ -217,10 +232,13 @@ def _find_gate_attrs(
             continue
         if stabilizer is not None and attrs.get("stabilizer") != stabilizer:
             continue
+        if syndrome_round is not None and attrs.get("syndrome_round") != syndrome_round:
+            continue
         return attrs
     msg = (
         f"no gate attrs found for gate_type={gate_type!r}, phase={phase!r}, "
-        f"label_prefix={label_prefix!r}, stabilizer={stabilizer!r}"
+        f"label_prefix={label_prefix!r}, stabilizer={stabilizer!r}, "
+        f"syndrome_round={syndrome_round!r}"
     )
     raise AssertionError(msg)
 
@@ -238,18 +256,24 @@ def test_surface_tick_gate_metadata_preserves_phase_round_context_in_dag() -> No
     assert h_pre["syndrome_round"] == 0
     assert "cx_round" not in h_pre
 
-    ancilla_reset = _find_gate_attrs(dag, "PZ", phase="syndrome_prep", label_prefix="ax")
-    assert ancilla_reset["phase"] == "syndrome_prep"
-    assert ancilla_reset["syndrome_round"] == 1
-    assert "cx_round" not in ancilla_reset
-    assert ancilla_reset["stabilizer"] == "X0"
-    assert ancilla_reset["stabilizer_kind"] == "X"
-    assert ancilla_reset["stabilizer_index"] == 0
-    assert ancilla_reset["stabilizer_is_boundary"] is True
-    assert ancilla_reset["stabilizer_region"]
-    assert ancilla_reset["ancilla_qubit"] >= patch.num_data
+    ancilla_prep = _find_gate_attrs(
+        dag,
+        "QAlloc",
+        phase="syndrome_prep",
+        label_prefix="ax",
+        syndrome_round=1,
+    )
+    assert ancilla_prep["phase"] == "syndrome_prep"
+    assert ancilla_prep["syndrome_round"] == 1
+    assert "cx_round" not in ancilla_prep
+    assert ancilla_prep["stabilizer"] == "X0"
+    assert ancilla_prep["stabilizer_kind"] == "X"
+    assert ancilla_prep["stabilizer_index"] == 0
+    assert ancilla_prep["stabilizer_is_boundary"] is True
+    assert ancilla_prep["stabilizer_region"]
+    assert ancilla_prep["ancilla_qubit"] >= patch.num_data
 
-    cx = _find_gate_attrs(dag, "CX", phase="cx_round_1")
+    cx = _find_gate_attrs(dag, "CX", phase="cx_round_1", syndrome_round=0)
     assert cx["phase"] == "cx_round_1"
     assert cx["syndrome_round"] == 0
     assert cx["cx_round"] == 1
@@ -263,7 +287,13 @@ def test_surface_tick_gate_metadata_preserves_phase_round_context_in_dag() -> No
     assert cx["ancilla_qubit"] >= patch.num_data
     assert cx["data_qubit"] < patch.num_data
 
-    ancilla_measure = _find_gate_attrs(dag, "MZ", phase="measure_ancilla", label_prefix="sx")
+    ancilla_measure = _find_gate_attrs(
+        dag,
+        "MeasureFree",
+        phase="measure_ancilla",
+        label_prefix="sx",
+        syndrome_round=0,
+    )
     assert ancilla_measure["phase"] == "measure_ancilla"
     assert ancilla_measure["syndrome_round"] == 0
     assert ancilla_measure["cx_round"] == 4
@@ -284,13 +314,13 @@ def test_surface_tick_gate_metadata_tracks_reused_ancillas_by_label() -> None:
     dag = tc.to_dag_circuit()
 
     first_alloc = _find_gate_attrs(dag, "QAlloc", phase="syndrome_prep", label_prefix="ax0")
-    reused_reset = _find_gate_attrs(dag, "PZ", phase="syndrome_prep", label_prefix="ax1")
+    reused_alloc = _find_gate_attrs(dag, "QAlloc", phase="syndrome_prep", label_prefix="ax1")
     reused_cx = _find_gate_attrs(dag, "CX", phase="cx_round_1", stabilizer="X1")
 
     assert first_alloc["stabilizer"] == "X0"
-    assert reused_reset["stabilizer"] == "X1"
-    assert reused_reset["ancilla_qubit"] == first_alloc["ancilla_qubit"]
-    assert reused_reset["ancilla_qubit"] == patch.num_data
+    assert reused_alloc["stabilizer"] == "X1"
+    assert reused_alloc["ancilla_qubit"] == first_alloc["ancilla_qubit"]
+    assert reused_alloc["ancilla_qubit"] == patch.num_data
     assert reused_cx["stabilizer"] == "X1"
     assert reused_cx["ancilla_qubit"] == patch.num_data
 
@@ -481,20 +511,23 @@ def test_structured_source_tracking_bindings_are_self_consistent(basis: str) -> 
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
-def test_structured_source_tracking_y_decomposed_rows_xor_back_to_effect(basis: str) -> None:
-    """Y-decomposed structured rows should XOR back to their parent effect."""
+def test_structured_source_component_rows_xor_back_to_effect(basis: str) -> None:
+    """Source component rows should XOR back to their parent effect."""
     dem = build_source_tracked_dem(distance=3, basis=basis, rounds=20)
 
-    summaries = [row for row in dem.contribution_effect_summaries() if row["y_decomposed_count"] > 0]
-    assert summaries
+    rows = []
+    for summary in dem.contribution_effect_summaries():
+        for row in dem.contributions_for_effect(summary["detectors"], summary["dem_outputs"]):
+            if "source_component_detectors" not in row:
+                continue
+            rows.append((summary, row))
 
-    for summary in summaries[:20]:
-        contributions = dem.contributions_for_effect(summary["detectors"], summary["dem_outputs"])
-        y_rows = [row for row in contributions if row["source_type"] == "YDecomposed"]
-        assert y_rows
-        for row in y_rows:
-            assert xor_lists(row["x_detectors"], row["z_detectors"]) == summary["detectors"]
-            assert xor_lists(row["x_dem_outputs"], row["z_dem_outputs"]) == summary["dem_outputs"]
+    assert rows
+
+    for summary, row in rows[:100]:
+        dets, outputs = xor_source_components(row)
+        assert dets == summary["detectors"]
+        assert outputs == summary["dem_outputs"]
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -542,20 +575,9 @@ def test_structured_one_sided_direct_component_rows_are_exposed(basis: str) -> N
     assert rows
 
     for summary, row in rows[:100]:
-        left_non_empty = bool(row["component_1_detectors"] or row["component_1_dem_outputs"])
-        right_non_empty = bool(row["component_2_detectors"] or row["component_2_dem_outputs"])
-        assert left_non_empty != right_non_empty
-        assert row["direct_source_family"] == "TwoLocationOneSidedComponent"
-        direct_dets, direct_logs = xor_effect_rows(
-            {
-                "detectors": row["component_1_detectors"],
-                "dem_outputs": row["component_1_dem_outputs"],
-            },
-            {
-                "detectors": row["component_2_detectors"],
-                "dem_outputs": row["component_2_dem_outputs"],
-            },
-        )
+        assert "source_component_detectors" in row
+        assert "source_component_dem_outputs" in row
+        direct_dets, direct_logs = xor_source_components(row)
         assert direct_dets == summary["detectors"]
         assert direct_logs == summary["dem_outputs"]
 
@@ -576,7 +598,8 @@ def test_structured_direct_source_families_are_exposed_for_direct_rows(basis: st
     assert rows
     assert all("direct_source_family" in row for row in rows)
     assert any(row["direct_source_family"] == "SingleLocationY" for row in rows)
-    assert any(row["direct_source_family"] == "TwoLocationOneSidedComponent" for row in rows)
+    assert any(row["direct_source_family"] == "TwoLocationComponent" for row in rows)
+    assert any(row["source_type"] == "DirectOneSidedComponent" for row in rows)
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])
@@ -626,7 +649,7 @@ def test_structured_render_summaries_reproduce_decomposed_regrouping(basis: str)
         assert probability == pytest.approx(decomposed_by_targets[targets], abs=5e-7)
 
     assert all("source_type_counts" in row for row in render_summaries)
-    assert any("YDecomposed" in row["source_type_counts"] for row in render_summaries)
+    assert any("DirectOneSidedComponent" in row["source_type_counts"] for row in render_summaries)
 
 
 @pytest.mark.parametrize("basis", ["X", "Z"])

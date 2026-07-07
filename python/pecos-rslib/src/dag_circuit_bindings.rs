@@ -26,7 +26,8 @@ use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
 use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
 use pecos_quantum::{
-    Attribute, DagCircuit, Gate, GateType, QubitId, Tick, TickCircuit, TickGateError,
+    Attribute, DagCircuit, Gate, GateType, PHYSICAL_DURATION_META_KEY, QubitId, Tick, TickCircuit,
+    TickGateError,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
@@ -610,6 +611,22 @@ impl PyGateType {
     fn tracked_pauli_meta() -> Self {
         Self {
             inner: GateType::TrackedPauliMeta,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "MeasCrosstalkGlobalPayload")]
+    fn meas_crosstalk_global_payload() -> Self {
+        Self {
+            inner: GateType::MeasCrosstalkGlobalPayload,
+        }
+    }
+
+    #[classattr]
+    #[pyo3(name = "MeasCrosstalkLocalPayload")]
+    fn meas_crosstalk_local_payload() -> Self {
+        Self {
+            inner: GateType::MeasCrosstalkLocalPayload,
         }
     }
 
@@ -1783,7 +1800,7 @@ fn tick_gate_error_to_pyerr(err: TickGateError, tick_idx: Option<usize>) -> PyEr
 #[pyfunction]
 #[pyo3(name = "hugr_to_dag_circuit")]
 fn py_hugr_to_dag_circuit(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<PyDagCircuit> {
-    use pecos_hugr_qis::read_hugr_envelope;
+    use pecos_hugr::load_hugr_from_bytes as read_hugr_envelope;
     use pecos_quantum::hugr_convert::hugr_to_dag_circuit;
 
     let bytes = hugr_bytes.as_bytes();
@@ -1825,8 +1842,9 @@ fn py_resolve_result_tags_for_guppy(
     hugr_bytes: &Bound<'_, PyBytes>,
     traced_meas_count: usize,
 ) -> PyResult<(String, String)> {
-    use pecos_hugr_qis::{
-        extract_result_tag_measurements, measurement_op_count, read_hugr_envelope,
+    use pecos_hugr::{
+        extract_result_tag_measurements, load_hugr_from_bytes as read_hugr_envelope,
+        measurement_op_count,
     };
     use pecos_qec::fault_tolerance::dem_builder::resolve_result_tags;
 
@@ -2655,6 +2673,60 @@ impl PyTickCircuit {
         SimplifyRotations.apply_tick(&mut self.inner);
     }
 
+    /// Remove identity gates and zero-angle rotations.
+    ///
+    /// Modifies the circuit in place.
+    fn remove_identity(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, RemoveIdentity};
+        RemoveIdentity.apply_tick(&mut self.inner);
+    }
+
+    /// Cancel adjacent inverse gate pairs.
+    ///
+    /// This removes adjacent inverse pairs such as H-H, SX-SXdg, and SZZ-SZZdg
+    /// when they act on the same qubits with no intervening operation on those
+    /// qubits. Modifies the circuit in place.
+    fn cancel_inverses(&mut self) {
+        use pecos_quantum::pass::{CancelInverses, CircuitPass};
+        CancelInverses.apply_tick(&mut self.inner);
+    }
+
+    /// Merge adjacent same-axis rotation gates.
+    ///
+    /// Consecutive rotations such as RZ(a) followed by RZ(b) on the same qubit
+    /// become one RZ(a+b). Run lower_clifford_rotations() afterwards when
+    /// special-angle rotations should become named Clifford gates.
+    /// Modifies the circuit in place.
+    fn merge_adjacent_rotations(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, MergeAdjacentRotations};
+        MergeAdjacentRotations.apply_tick(&mut self.inner);
+    }
+
+    /// Run PECOS's local peephole optimizer.
+    ///
+    /// Currently recognizes small Clifford patterns such as H-conjugated
+    /// two-qubit gates. Modifies the circuit in place.
+    fn peephole_optimize(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, PeepholeOptimize};
+        PeepholeOptimize.apply_tick(&mut self.inner);
+    }
+
+    /// Absorb redundant Z-diagonal gates next to Z preparations/measurements.
+    ///
+    /// Modifies the circuit in place.
+    fn absorb_basis_gates(&mut self) {
+        use pecos_quantum::pass::{AbsorbBasisGates, CircuitPass};
+        AbsorbBasisGates.apply_tick(&mut self.inner);
+    }
+
+    /// Simplify adjacent single-qubit Clifford chains.
+    ///
+    /// Modifies the circuit in place.
+    fn simplify_single_qubit_clifford_chains(&mut self) {
+        use pecos_quantum::pass::{CircuitPass, SimplifySingleQubitCliffordChains};
+        SimplifySingleQubitCliffordChains.apply_tick(&mut self.inner);
+    }
+
     /// Assign MeasId to measurement gates that don't have them.
     ///
     /// Use on circuits from external sources (QIS trace, Stim import)
@@ -3480,11 +3552,18 @@ impl PyTickHandle {
                     )));
                 }
 
-                // Determine if we need to broadcast (e.g. single-qubit gate on multiple qubits)
-                let needs_broadcast =
-                    arity > 0 && qubits.len() > arity && qubits.len().is_multiple_of(arity);
+                let variable_arity_payload = gate_type.is_crosstalk_payload()
+                    || matches!(gate_type, GateType::Channel | GateType::TrackedPauliMeta);
 
-                if arity > 0 && qubits.len() != arity && !needs_broadcast {
+                // Determine if we need to broadcast (e.g. single-qubit gate on multiple qubits).
+                // Payload/meta gates carry their qubit list as data and must remain a single gate.
+                let needs_broadcast = !variable_arity_payload
+                    && arity > 0
+                    && qubits.len() > arity
+                    && qubits.len().is_multiple_of(arity);
+
+                if !variable_arity_payload && arity > 0 && qubits.len() != arity && !needs_broadcast
+                {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "Gate '{name}' requires {} qubit(s), got {} (not a valid multiple)",
                         arity,
@@ -3800,6 +3879,7 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
     parent_module.add_class::<PyTickHandle>()?;
     parent_module.add_class::<PyTickPrepHandle>()?;
     parent_module.add_class::<PyTickMeasureHandle>()?;
+    parent_module.add("PHYSICAL_DURATION_META_KEY", PHYSICAL_DURATION_META_KEY)?;
 
     // Add exceptions
     parent_module.add(

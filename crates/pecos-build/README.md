@@ -8,9 +8,9 @@ Used by build scripts (`build.rs`) to manage external dependencies. Handles down
 
 ## Key Features
 
-- **LLVM 14 management**: Install, configure, and find LLVM 14
+- **LLVM 21.1 management**: Install where PECOS can provide shared LLVM, configure, and find LLVM 21.1
 - **Dependency downloads**: QuEST, Qulacs, Stim, Eigen, etc.
-- **Tool finding**: `find_tool("llvm-as")`, `find_llvm_14()`
+- **Tool finding**: `find_tool("llvm-as")`, `find_llvm()`
 - **Manifest parsing**: Load `pecos.toml` for dependency versions
 
 ## PECOS Home Directory
@@ -20,8 +20,7 @@ All dependencies managed under `~/.pecos/`:
 ```
 ~/.pecos/
 ├── cache/   # Downloaded archives
-├── deps/    # Extracted source trees
-├── llvm/    # LLVM installation
+├── deps/    # Extracted toolchains and source trees, including llvm-21.1/
 └── tmp/     # Temporary files
 ```
 

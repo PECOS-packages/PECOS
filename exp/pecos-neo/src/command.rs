@@ -248,6 +248,88 @@ impl GateCommand {
         Self::new(GateType::I, smallvec::smallvec![qubit])
     }
 
+    /// The inverse (dagger) of this gate, if it is an invertible unitary;
+    /// `None` otherwise (measurement, prep, idle, resource management).
+    ///
+    /// Used by the gate-removing emission noise model: when a gate suffers a
+    /// spontaneous-emission error, undoing the gate (`G dagger`) and then
+    /// applying the emission error reproduces engines' "the emission replaces
+    /// the gate" semantics, since `G * G_dagger = I`.
+    ///
+    /// Rotation inverses use the standard conventions
+    /// (`RX/RY/RZ(theta)` and `CRZ/RXX/RYY/RZZ(theta)` -> negate `theta`;
+    /// `R1XY(theta, phi)` -> `R1XY(-theta, phi)`; `U(theta, phi, lambda)` ->
+    /// `U(-theta, -lambda, -phi)`).
+    #[must_use]
+    pub fn dagger(&self) -> Option<GateCommand> {
+        let q = self.qubits.clone();
+        let same = |t: GateType| Some(Self::new(t, q.clone()));
+        let neg_first = |t: GateType| -> Option<Self> {
+            let theta = *self.angles.first()?;
+            Some(Self::with_angles(t, q.clone(), smallvec::smallvec![-theta]))
+        };
+        match self.gate_type {
+            // Self-inverse gates (1q, 2q, 3q).
+            GateType::I
+            | GateType::X
+            | GateType::Y
+            | GateType::Z
+            | GateType::H
+            | GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SWAP
+            | GateType::CCX => same(self.gate_type),
+            // Dagger pairs.
+            GateType::F => same(GateType::Fdg),
+            GateType::Fdg => same(GateType::F),
+            GateType::SX => same(GateType::SXdg),
+            GateType::SXdg => same(GateType::SX),
+            GateType::SY => same(GateType::SYdg),
+            GateType::SYdg => same(GateType::SY),
+            GateType::SZ => same(GateType::SZdg),
+            GateType::SZdg => same(GateType::SZ),
+            GateType::T => same(GateType::Tdg),
+            GateType::Tdg => same(GateType::T),
+            GateType::SZZ => same(GateType::SZZdg),
+            GateType::SZZdg => same(GateType::SZZ),
+            GateType::SXX => same(GateType::SXXdg),
+            GateType::SXXdg => same(GateType::SXX),
+            GateType::SYY => same(GateType::SYYdg),
+            GateType::SYYdg => same(GateType::SYY),
+            // Single-angle rotations (1q and 2q): negate the angle.
+            GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::CRZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ => neg_first(self.gate_type),
+            // R1XY(theta, phi) dagger = R1XY(-theta, phi).
+            GateType::R1XY => {
+                let theta = *self.angles.first()?;
+                let phi = *self.angles.get(1)?;
+                Some(Self::with_angles(
+                    GateType::R1XY,
+                    q,
+                    smallvec::smallvec![-theta, phi],
+                ))
+            }
+            // U(theta, phi, lambda) dagger = U(-theta, -lambda, -phi).
+            GateType::U => {
+                let theta = *self.angles.first()?;
+                let phi = *self.angles.get(1)?;
+                let lambda = *self.angles.get(2)?;
+                Some(Self::with_angles(
+                    GateType::U,
+                    q,
+                    smallvec::smallvec![-theta, -lambda, -phi],
+                ))
+            }
+            _ => None,
+        }
+    }
+
     /// Create a Pauli-X gate on a qubit.
     #[must_use]
     pub fn x(qubit: QubitId) -> Self {

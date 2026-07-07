@@ -4,7 +4,6 @@ This test explores how to use Selene's Python build() function to compile
 HUGR from Guppy and create an executable that can be wrapped by SeleneExecutableEngine.
 """
 
-import json
 import tempfile
 import textwrap
 from pathlib import Path
@@ -35,20 +34,10 @@ class TestSeleneBuildProcess:
         assert hugr_bytes is not None, "HUGR compilation should succeed"
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
-        # Parse HUGR to understand structure
-        hugr_str = hugr_bytes.decode("utf-8")
-        if hugr_str.startswith("HUGRiHJv"):
-            # Skip header and find JSON start
-            json_start = hugr_str.find("{", 9)
-            assert json_start != -1, "Should find JSON start in HUGR envelope"
-            hugr_str = hugr_str[json_start:]
+        # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
+        import pecos_rslib
 
-        # Validate JSON structure
-        try:
-            hugr_json = json.loads(hugr_str)
-            assert isinstance(hugr_json, dict), "HUGR should be valid JSON object"
-        except json.JSONDecodeError as e:
-            pytest.fail(f"HUGR should be valid JSON: {e}")
+        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "HUGR should load as a valid HUGR"
 
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir)
@@ -611,27 +600,13 @@ class TestBuildOutputFormats:
             return measure(q)
 
         hugr_bytes = compile_guppy_to_hugr(simple_circuit)
-        hugr_str = hugr_bytes.decode("utf-8")
+        assert hugr_bytes is not None, "Should produce HUGR bytes"
+        assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
-        # Check format detection
-        is_envelope = hugr_str.startswith("HUGRiHJv")
-        is_json = hugr_str.startswith("{")
+        # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
+        import pecos_rslib
 
-        assert is_envelope or is_json, "HUGR should be in envelope or JSON format"
-
-        if is_envelope:
-            # Verify envelope structure
-            assert len(hugr_str) > 9, "Envelope should have header and content"
-            json_start = hugr_str.find("{", 9)
-            assert json_start != -1, "Envelope should contain JSON"
-
-            # Extract and validate JSON
-            json_content = hugr_str[json_start:]
-            try:
-                parsed = json.loads(json_content)
-                assert isinstance(parsed, dict), "Should parse as JSON object"
-            except json.JSONDecodeError as e:
-                pytest.fail(f"Envelope JSON should be valid: {e}")
+        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "HUGR should load as a valid HUGR"
 
     def test_build_artifacts_structure(self) -> None:
         """Test the structure of build artifacts created."""

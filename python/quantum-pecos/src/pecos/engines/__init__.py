@@ -48,13 +48,41 @@ from pecos_rslib import (
     QisControlSimulation,
     QisInterfaceBuilder,
     SimBuilder,
-    compile_hugr_to_qis,
     find_llvm_tool,
-    get_compilation_backends,
     qis_helios_interface,
     qis_selene_helios_interface,
     sim_builder,
 )
+
+# HUGR -> QIS (LLVM IR) compilation lives in the optional pecos-rslib-llvm
+# wheel (the base wheel does not link LLVM). Capability introspection stays
+# callable either way; compilation fails loudly when the wheel is absent.
+try:
+    from pecos_rslib_llvm import compile_hugr_to_qis, get_compilation_backends
+except ImportError:
+
+    def compile_hugr_to_qis(*_args: object, **_kwargs: object) -> str:
+        """Raise: HUGR -> QIS compilation requires pecos-rslib-llvm."""
+        msg = (
+            "HUGR -> QIS compilation requires the pecos-rslib-llvm package "
+            "(the base pecos-rslib wheel does not link LLVM)."
+        )
+        raise RuntimeError(msg)
+
+    def get_compilation_backends() -> dict:
+        """Report available compilation backends (LLVM wheel absent)."""
+        return {
+            "default_backend": None,
+            "backends": {
+                "hugr-llvm": {
+                    "available": False,
+                    "description": "HUGR-LLVM pipeline: install pecos-rslib-llvm to enable",
+                },
+            },
+            "qsystem_platforms": [],
+        }
+
+
 from pecos_rslib.engines import (
     PhirEngineBuilder,
     PhirJsonEngine,

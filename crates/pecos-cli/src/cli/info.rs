@@ -3,7 +3,9 @@
 use pecos_build::cuda::{find_cuda, get_cuda_version};
 use pecos_build::cuquantum::{find_cuquantum, get_cuquantum_version};
 use pecos_build::home::{get_cache_dir, get_deps_dir, get_llvm_dir, get_pecos_home};
-use pecos_build::llvm::{find_llvm_14, get_llvm_version, get_repo_root_from_manifest};
+use pecos_build::llvm::{
+    LLVM_SYS_PREFIX_ENV, find_llvm, get_llvm_version, get_repo_root_from_manifest,
+};
 use std::process::Command;
 
 /// Run the info command
@@ -99,8 +101,8 @@ pub fn run() {
         println!("  PECOS_CACHE_DIR = {val}");
         has_overrides = true;
     }
-    if let Ok(val) = std::env::var("LLVM_SYS_140_PREFIX") {
-        println!("  LLVM_SYS_140_PREFIX = {val}");
+    if let Ok(val) = std::env::var(LLVM_SYS_PREFIX_ENV) {
+        println!("  {LLVM_SYS_PREFIX_ENV} = {val}");
         has_overrides = true;
     }
 
@@ -115,11 +117,11 @@ fn print_toolchain_status() {
 
     // LLVM
     let repo_root = get_repo_root_from_manifest();
-    if let Some(llvm_path) = find_llvm_14(repo_root) {
+    if let Some(llvm_path) = find_llvm(repo_root) {
         let version = get_llvm_version(&llvm_path).unwrap_or_else(|_| "unknown".to_string());
-        println!("  LLVM 14:  {} ({})", version, llvm_path.display());
+        println!("  LLVM 21.1:  {} ({})", version, llvm_path.display());
     } else {
-        println!("  LLVM 14:  not found");
+        println!("  LLVM 21.1:  not found");
     }
 
     // CUDA

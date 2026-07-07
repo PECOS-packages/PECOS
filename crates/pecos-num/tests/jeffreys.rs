@@ -16,6 +16,7 @@ use pecos_num::special::{self, InverseBetaOptions, SpecialError};
 use pecos_num::stats::{JeffreysError, JeffreysEstimator, jeffreys_interval, jeffreys_point};
 
 const FIXTURE_CSV: &str = include_str!("fixtures/jeffreys_scipy.csv");
+const MPMATH_FIXTURE_CSV: &str = include_str!("fixtures/jeffreys_mpmath.csv");
 const U01_BITS: u64 = 0x3ff0_0000_0000_0000;
 
 #[derive(Debug, Clone, Copy)]
@@ -96,6 +97,45 @@ fn fixture_table_matches_scipy() {
 
     eprintln!(
         "max scipy fixture relative error: {} at k={}, n={}, alpha={}, bound={}",
+        worst.relative_error, worst.k, worst.n, worst.alpha, worst.bound
+    );
+}
+
+#[test]
+fn second_oracle_mpmath_fixture_table_cross_check() {
+    // The implementation's contractual oracle of record is scipy (per the
+    // design note), and it matches scipy fixtures to ~4.5e-13. Cross-checking
+    // against arbitrary-precision truth revealed scipy itself deviates from
+    // truth by up to ~3.05e-12 in extreme corners (measured at k=0, n=136980,
+    // alpha=1.8e-6, hi bound). The mpmath test therefore asserts relative
+    // error <= max(design formula, 5.0e-12) per value: its purpose is catching
+    // structural/shared-lineage errors, not last-digit drift that the scipy
+    // table already pins tighter. The design formula is the same scale-aware
+    // max(1e-12, 5e-15/max(x, 1-x)) on relative x error.
+    let mut worst = WorstError::default();
+
+    for row in mpmath_fixture_rows() {
+        let interval = jeffreys_interval(row.k, row.n, row.alpha).unwrap_or_else(|err| {
+            panic!(
+                "interval failed for k={}, n={}, alpha={}: {err}",
+                row.k, row.n, row.alpha
+            )
+        });
+        check_mpmath_fixture_value(&mut worst, row, "lo", interval.lo, row.lo);
+        check_mpmath_fixture_value(&mut worst, row, "hi", interval.hi, row.hi);
+
+        let median =
+            jeffreys_point(row.k, row.n, JeffreysEstimator::Median).unwrap_or_else(|err| {
+                panic!(
+                    "median failed for k={}, n={}, alpha={}: {err}",
+                    row.k, row.n, row.alpha
+                )
+            });
+        check_mpmath_fixture_value(&mut worst, row, "median", median, row.median);
+    }
+
+    eprintln!(
+        "max mpmath fixture relative error: {} at k={}, n={}, alpha={}, bound={}",
         worst.relative_error, worst.k, worst.n, worst.alpha, worst.bound
     );
 }
@@ -407,6 +447,14 @@ fn fixture_rows() -> Vec<FixtureRow> {
     FIXTURE_CSV.lines().skip(1).map(parse_fixture_row).collect()
 }
 
+fn mpmath_fixture_rows() -> Vec<FixtureRow> {
+    MPMATH_FIXTURE_CSV
+        .lines()
+        .skip(1)
+        .map(parse_fixture_row)
+        .collect()
+}
+
 fn parse_fixture_row(line: &str) -> FixtureRow {
     let mut parts = line.split(',');
     let row = FixtureRow {
@@ -419,6 +467,33 @@ fn parse_fixture_row(line: &str) -> FixtureRow {
     };
     assert!(parts.next().is_none(), "too many CSV columns in {line}");
     row
+}
+
+fn check_mpmath_fixture_value(
+    worst: &mut WorstError,
+    row: FixtureRow,
+    bound: &'static str,
+    actual: f64,
+    expected: f64,
+) {
+    let relative_error = relative_x_error(actual, expected);
+    let tolerance = mpmath_fixture_relative_tolerance(expected);
+    if relative_error > worst.relative_error {
+        *worst = WorstError {
+            relative_error,
+            k: row.k,
+            n: row.n,
+            alpha: row.alpha,
+            bound,
+        };
+    }
+    assert!(
+        relative_error <= tolerance,
+        "{bound} mismatch for k={}, n={}, alpha={}: actual={actual}, expected={expected}, rel={relative_error}, tol={tolerance}",
+        row.k,
+        row.n,
+        row.alpha,
+    );
 }
 
 fn check_fixture_value(
@@ -481,6 +556,10 @@ fn check_forward_residual(
 
 fn fixture_relative_tolerance(expected: f64) -> f64 {
     1.0e-12_f64.max(5.0e-15 / expected.max(1.0 - expected))
+}
+
+fn mpmath_fixture_relative_tolerance(expected: f64) -> f64 {
+    fixture_relative_tolerance(expected).max(5.0e-12)
 }
 
 fn relative_x_error(actual: f64, expected: f64) -> f64 {

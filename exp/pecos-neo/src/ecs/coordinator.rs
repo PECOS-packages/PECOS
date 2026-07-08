@@ -72,7 +72,6 @@ use pecos_core::rng::rng_manageable::{RngManageable, derive_seed};
 use pecos_random::PecosRng;
 use pecos_simulators::CliffordGateable;
 use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
 
 /// Configuration for parallel simulation.
 #[derive(Debug, Clone)]
@@ -309,8 +308,6 @@ impl<S: CliffordGateable + Clone + Send + Sync> ParallelCoordinator<S> {
     /// # Returns
     /// Aggregated results from all entities in deterministic order.
     ///
-    /// # Panics
-    /// Panics if an internal mutex is poisoned.
     pub fn run<F, G, T>(&self, make_simulator: F, step: G) -> ParallelResult<T>
     where
         F: Fn() -> S + Send + Sync,
@@ -318,15 +315,9 @@ impl<S: CliffordGateable + Clone + Send + Sync> ParallelCoordinator<S> {
         T: Send,
         S: RngManageable<Rng = PecosRng>,
     {
-        // Collect results with (worker_id, entity_idx, result) for ordering
-        let results: Arc<Mutex<Vec<(usize, usize, T)>>> =
-            Arc::new(Mutex::new(Vec::with_capacity(self.config.total_entities())));
-        let stats: Arc<Mutex<ExecutionStats>> = Arc::new(Mutex::new(ExecutionStats::new()));
-
-        // Execute in parallel
-        (0..self.config.num_workers)
+        let worker_outputs: Vec<(Vec<T>, ExecutionStats)> = (0..self.config.num_workers)
             .into_par_iter()
-            .for_each(|worker_id| {
+            .map(|worker_id| {
                 let mut worker = WorkerState::<S>::new(worker_id, self.config.seed);
 
                 // Spawn entities with simulators
@@ -340,26 +331,16 @@ impl<S: CliffordGateable + Clone + Send + Sync> ParallelCoordinator<S> {
 
                 // Collect stats
                 worker.collect_stats();
+                (worker_results, worker.stats)
+            })
+            .collect();
 
-                // Store results with ordering info
-                let mut all_results = results.lock().expect("results lock poisoned");
-                for (entity_idx, result) in worker_results.into_iter().enumerate() {
-                    all_results.push((worker_id, entity_idx, result));
-                }
-
-                // Merge stats
-                let mut all_stats = stats.lock().expect("stats lock poisoned");
-                all_stats.merge(&worker.stats);
-            });
-
-        // Sort results by (worker_id, entity_idx) for deterministic ordering
-        let mut sorted_results = results.lock().expect("results lock poisoned");
-        sorted_results.sort_by(|(w1, e1, _), (w2, e2, _)| w1.cmp(w2).then(e1.cmp(e2)));
-
-        let final_results: Vec<T> = sorted_results.drain(..).map(|(_, _, r)| r).collect();
-        drop(sorted_results);
-
-        let final_stats = stats.lock().expect("stats lock poisoned").clone();
+        let mut final_stats = ExecutionStats::new();
+        let mut final_results = Vec::with_capacity(self.config.total_entities());
+        for (worker_results, worker_stats) in worker_outputs {
+            final_stats.merge(&worker_stats);
+            final_results.extend(worker_results);
+        }
 
         ParallelResult::new(final_results, final_stats, self.config.seed)
     }
@@ -568,6 +549,38 @@ mod tests {
 
         // Results should be identical
         assert_eq!(results1.results, results2.results);
+    }
+
+    #[test]
+    fn test_parallel_coordinator_preserves_worker_order() {
+        let seed = 42;
+        let workers = 3;
+        let entities_per_worker = 4;
+        let config = ParallelConfig::new()
+            .with_workers(workers)
+            .with_entities_per_worker(entities_per_worker)
+            .with_seed(seed);
+
+        let coordinator: ParallelCoordinator<SparseStab> = ParallelCoordinator::new(config);
+
+        let results = coordinator.run(
+            || SparseStab::new(1),
+            |world| {
+                world
+                    .entities()
+                    .map(|entity| world.base_seed() + entity.0)
+                    .collect()
+            },
+        );
+
+        let expected: Vec<u64> = (0..workers)
+            .flat_map(|worker_id| {
+                let worker_seed = derive_seed(seed, &format!("worker_{worker_id}"));
+                (0..entities_per_worker).map(move |entity_id| worker_seed + entity_id as u64)
+            })
+            .collect();
+
+        assert_eq!(results.results, expected);
     }
 
     #[test]

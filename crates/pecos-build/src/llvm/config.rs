@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 pub struct ConfigValidation {
     /// Path configured in .cargo/config.toml (if any)
     pub configured_path: Option<PathBuf>,
+    /// Stale versioned LLVM env keys that should not be present.
+    pub stale_llvm_prefix_envs: Vec<String>,
     /// Whether the configured path exists
     pub path_exists: bool,
     /// Whether the configured path is the required LLVM version
@@ -27,7 +29,10 @@ impl ConfigValidation {
     /// Check if the configuration is healthy
     #[must_use]
     pub fn is_healthy(&self) -> bool {
-        self.configured_path.is_some() && self.path_exists && self.path_is_valid_llvm
+        self.configured_path.is_some()
+            && self.stale_llvm_prefix_envs.is_empty()
+            && self.path_exists
+            && self.path_is_valid_llvm
     }
 
     /// Print validation warnings if there are issues
@@ -36,6 +41,17 @@ impl ConfigValidation {
         let cmd = get_pecos_command();
 
         if let Some(ref configured) = self.configured_path {
+            if !self.stale_llvm_prefix_envs.is_empty() {
+                eprintln!();
+                eprintln!(
+                    "Warning: .cargo/config.toml contains stale LLVM config: {}",
+                    self.stale_llvm_prefix_envs.join(", ")
+                );
+                eprintln!();
+                eprintln!("To fix this:");
+                eprintln!("  {cmd} llvm configure");
+            }
+
             if !self.path_exists {
                 eprintln!();
                 eprintln!(
@@ -121,12 +137,58 @@ pub fn read_configured_llvm_path() -> Option<PathBuf> {
     None
 }
 
+fn is_versioned_llvm_prefix_env(key: &str) -> bool {
+    let Some(version) = key
+        .strip_prefix("LLVM_SYS_")
+        .and_then(|rest| rest.strip_suffix("_PREFIX"))
+    else {
+        return false;
+    };
+    !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn is_stale_llvm_prefix_env(key: &str) -> bool {
+    is_versioned_llvm_prefix_env(key) && key != LLVM_SYS_PREFIX_ENV
+}
+
+/// Read stale versioned LLVM prefix keys from `.cargo/config.toml`.
+///
+/// PECOS uses `LLVM_SYS_211_PREFIX`. Older entries such as
+/// `LLVM_SYS_140_PREFIX` can still affect transitive build scripts when Cargo
+/// exports forced `[env]` values, so they should be removed.
+#[must_use]
+pub fn read_stale_llvm_prefix_envs(project_root: &Path) -> Vec<String> {
+    let config_path = project_root.join(".cargo").join("config.toml");
+    let Ok(content) = fs::read_to_string(&config_path) else {
+        return Vec::new();
+    };
+    let Ok(table) = content.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let Some(env) = table.get("env").and_then(|env| env.as_table()) else {
+        return Vec::new();
+    };
+
+    let mut stale: Vec<String> = env
+        .keys()
+        .filter(|key| is_stale_llvm_prefix_env(key))
+        .cloned()
+        .collect();
+    stale.sort();
+    stale
+}
+
 /// Validate the current LLVM configuration
 #[must_use]
 pub fn validate_llvm_config() -> ConfigValidation {
+    let project_root = find_cargo_project_root();
     let configured_path = read_configured_llvm_path();
     let repo_root = get_repo_root_from_manifest();
     let detected_path = find_llvm(repo_root);
+    let stale_llvm_prefix_envs = project_root
+        .as_deref()
+        .map(read_stale_llvm_prefix_envs)
+        .unwrap_or_default();
 
     let (path_exists, path_is_valid_llvm) = if let Some(ref path) = configured_path {
         (path.exists(), is_valid_llvm(path))
@@ -142,6 +204,7 @@ pub fn validate_llvm_config() -> ConfigValidation {
 
     ConfigValidation {
         configured_path,
+        stale_llvm_prefix_envs,
         path_exists,
         path_is_valid_llvm,
         detected_path,
@@ -239,7 +302,63 @@ pub fn write_cargo_config(project_root: &Path, llvm_path: &Path, force: bool) ->
     // Forward slashes keep the value backslash-escape-free in TOML.
     let llvm_path_str = path_to_env_string(llvm_path);
     let mut cfg = crate::cargo_config::CargoConfig::open(project_root)?;
+    cfg.remove_env_matching(is_stale_llvm_prefix_env)?;
     cfg.set_env(LLVM_SYS_PREFIX_ENV, &llvm_path_str, force)?;
     cfg.save()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_stale_llvm_prefix_envs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cargo_dir = tmp.path().join(".cargo");
+        fs::create_dir_all(&cargo_dir).unwrap();
+        fs::write(
+            cargo_dir.join("config.toml"),
+            r#"
+[env]
+LLVM_SYS_140_PREFIX = { value = "/old", force = true }
+LLVM_SYS_211_PREFIX = { value = "/current", force = true }
+LLVM_SYS_PREFIX = "/not-versioned"
+FOO = "bar"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_stale_llvm_prefix_envs(tmp.path()),
+            vec!["LLVM_SYS_140_PREFIX"]
+        );
+    }
+
+    #[test]
+    fn write_cargo_config_removes_stale_llvm_prefix_envs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cargo_dir = tmp.path().join(".cargo");
+        fs::create_dir_all(&cargo_dir).unwrap();
+        fs::write(
+            cargo_dir.join("config.toml"),
+            r#"
+[env]
+LLVM_SYS_140_PREFIX = { value = "/old", force = true }
+FOO = "bar"
+"#,
+        )
+        .unwrap();
+
+        write_cargo_config(tmp.path(), Path::new("/llvm"), true).unwrap();
+
+        let text = fs::read_to_string(cargo_dir.join("config.toml")).unwrap();
+        let parsed: toml::Value = toml::from_str(&text).unwrap();
+        assert!(parsed["env"].get("LLVM_SYS_140_PREFIX").is_none());
+        assert_eq!(
+            parsed["env"]["LLVM_SYS_211_PREFIX"]["value"],
+            "/llvm".into()
+        );
+        assert_eq!(parsed["env"]["FOO"].as_str().unwrap(), "bar");
+    }
 }

@@ -978,6 +978,19 @@ fn run_doctor() {
         }
     }
 
+    if llvm_config.stale_llvm_prefix_envs.is_empty() {
+        print_check(".cargo/config.toml stale LLVM keys", true, "none");
+    } else {
+        print_check(
+            ".cargo/config.toml stale LLVM keys",
+            false,
+            &llvm_config.stale_llvm_prefix_envs.join(", "),
+        );
+        problems.push(
+            "Stale LLVM settings found in .cargo/config.toml. Run: pecos llvm configure".into(),
+        );
+    }
+
     if let Ok(env_val) = std::env::var(LLVM_SYS_PREFIX_ENV) {
         let env_path = std::path::Path::new(&env_val);
         if env_path.exists() {

@@ -39,6 +39,7 @@ pub fn run(command: LlvmCommands) -> Result<()> {
 fn run_check(quiet: bool) {
     let repo_root = get_repo_root_from_manifest();
     if let Some(llvm_path) = find_configured_or_detected_llvm(repo_root) {
+        let validation = validate_llvm_config();
         if !quiet {
             println!("LLVM 21.1 found at: {}", llvm_path.display());
             if let Ok(version) = get_llvm_version(&llvm_path) {
@@ -47,13 +48,14 @@ fn run_check(quiet: bool) {
             print_link_info(&llvm_path);
 
             // Validate configuration
-            let validation = validate_llvm_config();
             validation.print_warnings();
+        }
 
-            // Exit with error if config is unhealthy (would cause build failures)
-            if !validation.is_healthy() && validation.configured_path.is_some() {
-                std::process::exit(1);
-            }
+        // Exit with error if config is unhealthy (would cause build failures).
+        // Keep this outside the quiet branch so `pecos llvm check >/dev/null`
+        // still works as a preflight gate.
+        if !validation.is_healthy() && validation.configured_path.is_some() {
+            std::process::exit(1);
         }
     } else {
         if !quiet {

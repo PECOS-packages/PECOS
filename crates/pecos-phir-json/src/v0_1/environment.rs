@@ -73,6 +73,22 @@ impl DataType {
         )
     }
 
+    /// Checks if the data type is one of the fixed-width integer types.
+    #[must_use]
+    pub fn is_integer(&self) -> bool {
+        matches!(
+            self,
+            DataType::I8
+                | DataType::I16
+                | DataType::I32
+                | DataType::I64
+                | DataType::U8
+                | DataType::U16
+                | DataType::U32
+                | DataType::U64
+        )
+    }
+
     /// Returns the maximum value for this data type
     #[must_use]
     pub fn max_value(&self) -> u64 {
@@ -261,9 +277,13 @@ impl BitValue {
 
     /// Create a new value from a raw u64 for the given data type and size.
     ///
-    /// Storage is at the full type width. The value is masked to `size` bits
-    /// for user-assigned values (matching PHIR semantics where `size` limits
-    /// the data bits the user can write, but the underlying register is N bits).
+    /// Storage is at the full type width, holding the register's value as a
+    /// two's-complement pattern. In PHIR a signed size-S register is an
+    /// `i(S+1)` integer -- S data bits plus a sign bit -- so the value wraps to
+    /// `S + 1` bits and is sign-extended into the high bits (so `as_i64` and
+    /// full-width bitwise ops see the correct sign). An unsigned size-S register
+    /// is a `u(S)`: it wraps to S bits with no sign bit. Register widths are
+    /// validated to fit the backing type when the variable is defined.
     #[must_use]
     pub fn from_u64(data_type: &DataType, size: usize, value: u64) -> Self {
         let raw_tw = data_type.bit_width();
@@ -271,17 +291,31 @@ impl BitValue {
             .unwrap_or(64)
             .max(1);
         let s = u16::try_from(size).unwrap_or(tw);
-        // Mask to `size` data bits before storing at type width.
-        // This ensures user-assigned values respect the declared register size,
-        // while the full type-width storage allows bitwise ops on all N bits.
-        let masked = if s < tw {
-            value & ((1u64 << s) - 1)
+        let signed = data_type.is_signed();
+        // Effective width: S+1 for signed (sign bit), S for unsigned. Capped at
+        // the type width defensively (validation already guarantees it fits).
+        let width = if signed {
+            s.saturating_add(1).min(tw)
         } else {
+            s.min(tw)
+        };
+        let stored = if width >= 64 {
+            // Full-width: the value already carries its own sign bit at bit 63.
             value
+        } else {
+            let mask = (1u64 << width) - 1;
+            let masked = value & mask;
+            if signed && (masked >> (width - 1)) & 1 == 1 {
+                // Sign-extend into the high bits; `BitUInt::new` truncates back
+                // to the type width, giving a full-width two's-complement value.
+                masked | !mask
+            } else {
+                masked
+            }
         };
         Self {
-            inner: BitUInt::new(tw, masked),
-            signed: data_type.is_signed(),
+            inner: BitUInt::new(tw, stored),
+            signed,
             type_width: tw,
         }
     }
@@ -298,12 +332,13 @@ impl BitValue {
         self.inner.clone()
     }
 
-    /// Get value as i64, interpreting sign via two's complement using the
-    /// TYPE's bit width (not the register size).
+    /// Get value as i64, interpreting sign via two's complement at the type
+    /// width.
     ///
-    /// This matches Python behavior where `i64(3)` is positive even if stored
-    /// in a 2-bit register, because the sign bit is at position 63 (i64 type
-    /// width), not at position 1 (register size).
+    /// `from_u64` already sign-extends a signed register's `i(S+1)` value into
+    /// the high bits, so reinterpreting at the type width recovers the correct
+    /// signed value (e.g. an `i64` size-4 register assigned -1 reads back as
+    /// -1, and assigned 15 reads back as 15).
     #[must_use]
     #[allow(clippy::cast_possible_wrap)]
     pub fn as_i64(&self) -> i64 {
@@ -486,6 +521,27 @@ impl Environment {
             )));
         }
 
+        // A signed size-S register is an `i(S+1)` integer (S data bits + a sign
+        // bit), so `S + 1` must fit the backing width N. An unsigned size-S
+        // register is a `u(S)` and needs `S <= N`. Fail fast otherwise.
+        if data_type.is_integer() {
+            let tw = data_type.bit_width();
+            let needed = if data_type.is_signed() { size + 1 } else { size };
+            if needed > tw {
+                let kind = if data_type.is_signed() {
+                    "signed"
+                } else {
+                    "unsigned"
+                };
+                let limit = if data_type.is_signed() { tw - 1 } else { tw };
+                return Err(PecosError::Input(format!(
+                    "Register '{name}' declares {kind} type {data_type} with size {size}, \
+                     which does not fit its {tw}-bit backing type. A size-{size} {kind} \
+                     register needs {needed} bits. Use size <= {limit} or a wider integer type."
+                )));
+            }
+        }
+
         let index = self.values.len();
         self.name_to_index.insert(name.to_string(), index);
 
@@ -593,7 +649,12 @@ impl Environment {
         let bool_value = bit_value.into().0;
 
         if let Some(&idx) = self.name_to_index.get(var_name) {
-            self.values[idx] = self.values[idx].with_bit_set(bit_index, bool_value)?;
+            let updated = self.values[idx].with_bit_set(bit_index, bool_value)?;
+            // Re-normalize to the register's declared i(S+1)/u(S) width so that
+            // setting the sign bit -- or a bit above the declared width -- wraps
+            // and sign-extends the same way a whole-value assignment does.
+            let info = &self.metadata[idx];
+            self.values[idx] = BitValue::from_u64(&info.data_type, info.size, updated.as_u64());
             Ok(())
         } else {
             Err(PecosError::Input(format!(
@@ -770,7 +831,7 @@ mod tests {
         let mut env = Environment::new();
 
         // Add variables
-        env.add_variable("x", DataType::I32, 32).unwrap();
+        env.add_variable("x", DataType::I32, 31).unwrap();
         env.add_variable("y", DataType::U8, 8).unwrap();
 
         // Set values
@@ -791,7 +852,7 @@ mod tests {
         let mut env = Environment::new();
 
         // Add variables with different types
-        env.add_variable("i8_var", DataType::I8, 8).unwrap();
+        env.add_variable("i8_var", DataType::I8, 7).unwrap();
         env.add_variable("u8_var", DataType::U8, 8).unwrap();
 
         // Test i8 constraints: 8-bit signed, raw bits stored as BitUInt(8)
@@ -843,7 +904,7 @@ mod tests {
         let mut env = Environment::new();
 
         // Add source variable
-        env.add_variable("source", DataType::I32, 32).unwrap();
+        env.add_variable("source", DataType::I32, 31).unwrap();
         env.set_raw("source", 42).unwrap();
 
         // Copy to destination (creates new variable)

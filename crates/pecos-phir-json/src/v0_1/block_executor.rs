@@ -528,7 +528,7 @@ mod tests {
 
         // Add variables for testing
         executor.add_quantum_variable("q", 2).unwrap();
-        executor.add_classical_variable("c", "i32", 32).unwrap();
+        executor.add_classical_variable("c", "i32", 31).unwrap();
 
         // Execute a simple assignment operation
         let op = Operation::ClassicalOp {
@@ -552,8 +552,8 @@ mod tests {
         let mut executor = BlockExecutor::new();
 
         // Add variables for testing
-        executor.add_classical_variable("x", "i32", 32).unwrap();
-        executor.add_classical_variable("y", "i32", 32).unwrap();
+        executor.add_classical_variable("x", "i32", 31).unwrap();
+        executor.add_classical_variable("y", "i32", 31).unwrap();
 
         // Set initial values
         executor.get_environment_mut().set_raw("x", 10).unwrap();
@@ -607,8 +607,8 @@ mod tests {
         let mut executor = BlockExecutor::new();
 
         // Add variables for testing
-        executor.add_classical_variable("a", "i32", 32).unwrap();
-        executor.add_classical_variable("b", "i32", 32).unwrap();
+        executor.add_classical_variable("a", "i32", 31).unwrap();
+        executor.add_classical_variable("b", "i32", 31).unwrap();
 
         // Create a sequence of operations
         let operations = vec![
@@ -718,8 +718,8 @@ mod tests {
         let mut executor = BlockExecutor::new();
 
         // Add variables for testing
-        executor.add_classical_variable("x", "i32", 32).unwrap();
-        executor.add_classical_variable("y", "i32", 32).unwrap();
+        executor.add_classical_variable("x", "i32", 31).unwrap();
+        executor.add_classical_variable("y", "i32", 31).unwrap();
 
         // Set initial value
         executor.get_environment_mut().set_raw("x", 10).unwrap();
@@ -778,7 +778,7 @@ mod tests {
 
         // Add variables for testing
         executor.add_quantum_variable("q", 2).unwrap();
-        executor.add_classical_variable("m", "i32", 32).unwrap();
+        executor.add_classical_variable("m", "i32", 31).unwrap();
 
         // Create measurement operations for testing
         let operations = vec![Operation::QuantumOp {
@@ -808,8 +808,8 @@ mod tests {
         let mut executor = BlockExecutor::new();
 
         // Add variables for testing
-        executor.add_classical_variable("a", "i32", 32).unwrap();
-        executor.add_classical_variable("b", "i32", 32).unwrap();
+        executor.add_classical_variable("a", "i32", 31).unwrap();
+        executor.add_classical_variable("b", "i32", 31).unwrap();
 
         // Set values
         executor.get_environment_mut().set_raw("a", 10).unwrap();
@@ -838,7 +838,7 @@ mod tests {
                 data: "cvar_define".to_string(),
                 data_type: "i32".to_string(),
                 variable: "x".to_string(),
-                size: Some(32),
+                size: Some(31),
             },
             Operation::ClassicalOp {
                 cop: "=".to_string(),

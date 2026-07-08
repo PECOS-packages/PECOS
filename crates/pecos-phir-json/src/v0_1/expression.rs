@@ -442,7 +442,7 @@ mod tests {
 
     fn setup_environment() -> Environment {
         let mut env = Environment::new();
-        env.add_variable("x", DataType::I32, 32).unwrap();
+        env.add_variable("x", DataType::I32, 31).unwrap();
         env.add_variable("y", DataType::U8, 8).unwrap();
         env.add_variable("z", DataType::Bool, 1).unwrap();
         env.set_raw("x", 42).unwrap();
@@ -539,7 +539,7 @@ mod tests {
     fn test_evaluation_at_64_bit_width() {
         // i32 variable, but arithmetic should happen at 64 bits
         let mut env = Environment::new();
-        env.add_variable("a", DataType::I32, 32).unwrap();
+        env.add_variable("a", DataType::I32, 31).unwrap();
         env.set_raw("a", 1).unwrap();
 
         let mut evaluator = ExpressionEvaluator::new(&env);

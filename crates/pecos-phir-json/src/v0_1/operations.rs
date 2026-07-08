@@ -246,7 +246,7 @@ impl OperationProcessor {
         // Create the variable if it doesn't exist
         if !self.environment.has_variable(name) {
             // Add but allow failure if it already exists
-            match self.environment.add_variable(name, DataType::I32, 32) {
+            match self.environment.add_variable(name, DataType::I32, 31) {
                 Ok(()) => log::debug!("Created new variable: {name} in environment"),
                 Err(e) => log::warn!(
                     "Could not create variable in environment: {name}. Will try to update anyway: {e}"
@@ -839,14 +839,11 @@ impl OperationProcessor {
         if self.environment.has_variable(variable) {
             log::debug!("Variable '{variable}' already exists in environment, skipping creation");
         } else {
-            match self.environment.add_variable(variable, dt, size) {
-                Ok(()) => log::debug!(
-                    "Added classical variable {variable} of type {data_type} and size {size}"
-                ),
-                Err(e) => log::warn!(
-                    "Could not add variable '{variable}' to environment: {e}. Will continue with existing variable."
-                ),
-            }
+            // Propagate definition errors (e.g. a register whose declared width
+            // does not fit its backing integer type) so they fail fast with a
+            // useful message rather than surfacing later as "variable not found".
+            self.environment.add_variable(variable, dt, size)?;
+            log::debug!("Added classical variable {variable} of type {data_type} and size {size}");
         }
 
         Ok(())
@@ -1038,7 +1035,7 @@ impl OperationProcessor {
 
                     // Make sure variable exists in environment and update it
                     if !self.environment.has_variable(&var) {
-                        self.environment.add_variable(&var, DataType::I32, 32)?;
+                        self.environment.add_variable(&var, DataType::I32, 31)?;
                     }
                     // Convert to u64 safely - we're working with raw bit patterns
                     #[allow(clippy::cast_sign_loss)]
@@ -1181,7 +1178,7 @@ impl OperationProcessor {
                                                                         .add_variable(
                                                                             var,
                                                                             DataType::I32,
-                                                                            32,
+                                                                            31,
                                                                         );
                                                                 }
                                                                 let _ = self.environment.set(
@@ -1207,7 +1204,7 @@ impl OperationProcessor {
                                                                         .add_variable(
                                                                             var,
                                                                             DataType::I32,
-                                                                            32,
+                                                                            31,
                                                                         );
                                                                 }
 
@@ -1281,7 +1278,7 @@ impl OperationProcessor {
                                                                             .add_variable(
                                                                                 var,
                                                                                 DataType::I32,
-                                                                                32,
+                                                                                31,
                                                                             );
                                                                     }
                                                                     let _ = self.environment.set(
@@ -1308,7 +1305,7 @@ impl OperationProcessor {
                                                                             .add_variable(
                                                                                 var,
                                                                                 DataType::I32,
-                                                                                32,
+                                                                                31,
                                                                             );
                                                                     }
 
@@ -1385,7 +1382,7 @@ impl OperationProcessor {
                                     // Make sure the variable exists
                                     if !self.environment.has_variable(var) {
                                         // Create if needed
-                                        self.environment.add_variable(var, DataType::I32, 32)?;
+                                        self.environment.add_variable(var, DataType::I32, 31)?;
                                     }
 
                                     // Set value in environment (single source of truth)
@@ -1399,7 +1396,7 @@ impl OperationProcessor {
                                     // Make sure the variable exists
                                     if !self.environment.has_variable(var) {
                                         // Create if needed
-                                        self.environment.add_variable(var, DataType::I32, 32)?;
+                                        self.environment.add_variable(var, DataType::I32, 31)?;
                                     }
 
                                     // Set bit in environment (single source of truth)
@@ -1650,13 +1647,16 @@ impl OperationProcessor {
 
         // Step 1: Ensure the main variable exists in the environment with appropriate size
         if !self.environment.has_variable(var_name) {
-            // Determine appropriate size (at least large enough to hold this bit)
+            // Determine appropriate size (at least large enough to hold this
+            // bit). Measurement registers are unsigned bit collections, so use
+            // an unsigned type -- `u64` is valid for any size up to 64, whereas
+            // a signed `i32` could not hold e.g. bit index 31 (size 32).
             let var_size = std::cmp::max(var_idx + 1, 32);
 
             // Create the variable
             match self
                 .environment
-                .add_variable(var_name, DataType::I32, var_size)
+                .add_variable(var_name, DataType::U64, var_size)
             {
                 Ok(()) => log::debug!("Created variable {var_name} with size {var_size}"),
                 Err(e) => log::warn!(
@@ -1702,7 +1702,7 @@ impl OperationProcessor {
             if !self.environment.has_variable(&prefixed_name)
                 && let Err(e) = self
                     .environment
-                    .add_variable(&prefixed_name, DataType::I32, 32)
+                    .add_variable(&prefixed_name, DataType::I32, 31)
             {
                 log::warn!("Could not create measurement variable: {prefixed_name}. Error: {e}");
             }
@@ -1876,10 +1876,12 @@ impl OperationProcessor {
                         .get_variable_info_opt(&src_name)
                         .map_or_else(
                             || {
+                                // Fallback for an undeclared Result destination:
+                                // an unsigned register wide enough for the bit.
                                 if let Some(idx) = dst_index {
-                                    (DataType::I32, std::cmp::max(idx + 1, 32))
+                                    (DataType::U64, std::cmp::max(idx + 1, 32))
                                 } else {
-                                    (DataType::I32, 32)
+                                    (DataType::U64, 32)
                                 }
                             },
                             |info| (info.data_type.clone(), info.size),
@@ -2014,7 +2016,7 @@ mod tests {
         // Add a test variable to the environment
         processor
             .environment
-            .add_variable("test_var", DataType::I32, 32)
+            .add_variable("test_var", DataType::I32, 31)
             .unwrap();
         processor.environment.set("test_var", 42).unwrap();
 

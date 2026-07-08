@@ -909,12 +909,20 @@ impl ClassicalEngine for PhirJsonEngine {
         );
 
         for (key, value) in &exported_values {
-            // Use add_register with proper width from variable metadata
+            // Use add_register with proper width from variable metadata. A
+            // signed size-S register is an i(S+1) integer, so it renders S+1
+            // bits (the extra sign bit); unsigned registers render S bits.
             let width = self
                 .processor
                 .environment
                 .get_variable_info_opt(key)
-                .map_or(32, |info| info.size);
+                .map_or(32, |info| {
+                    if info.data_type.is_signed() {
+                        info.size + 1
+                    } else {
+                        info.size
+                    }
+                });
             results.add_register(key, *value, width);
             log::debug!("PHIR: Adding mapped register {key} = {value} (width={width})");
         }
@@ -928,7 +936,12 @@ impl ClassicalEngine for PhirJsonEngine {
             for info in self.processor.environment.get_all_variables() {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     log::debug!("PHIR: Adding variable {} = {} to results", info.name, value);
-                    results.add_register(&info.name, value.as_u32(), info.size);
+                    let width = if info.data_type.is_signed() {
+                        info.size + 1
+                    } else {
+                        info.size
+                    };
+                    results.add_register(&info.name, value.as_u32(), width);
                 }
             }
 

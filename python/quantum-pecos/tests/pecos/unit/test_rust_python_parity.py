@@ -153,8 +153,8 @@ def test_classical_binary_ops(cop: str, a: int, b: int, expected: int) -> None:
         "format": "PHIR/JSON",
         "version": "0.1.0",
         "ops": [
-            {"data": "cvar_define", "data_type": "i32", "variable": "x", "size": 32},
-            {"data": "cvar_define", "data_type": "i32", "variable": "r", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "x", "size": 31},
+            {"data": "cvar_define", "data_type": "i32", "variable": "r", "size": 31},
             {"cop": "=", "returns": ["x"], "args": [a]},
             {"cop": "=", "returns": ["r"], "args": [{"cop": cop, "args": ["x", b]}]},
         ],
@@ -170,18 +170,20 @@ def test_classical_binary_ops(cop: str, a: int, b: int, expected: int) -> None:
 @pytest.mark.parametrize(
     ("dtype", "size", "val"),
     [
-        ("i8", 8, 127),
-        ("i8", 8, -128),
+        # A signed size-S register is an i(S+1) integer, so the full range of an
+        # iN backing type is declared with size N-1 (N-1 data bits + sign bit).
+        ("i8", 7, 127),
+        ("i8", 7, -128),
         ("u8", 8, 255),
         ("u8", 8, 0),
-        ("i16", 16, 32767),
-        ("i16", 16, -32768),
+        ("i16", 15, 32767),
+        ("i16", 15, -32768),
         ("u16", 16, 65535),
-        ("i32", 32, 2**31 - 1),
-        ("i32", 32, -(2**31)),
+        ("i32", 31, 2**31 - 1),
+        ("i32", 31, -(2**31)),
         ("u32", 32, 2**32 - 1),
-        ("i64", 64, 2**63 - 1),
-        ("i64", 64, -(2**63)),
+        ("i64", 63, 2**63 - 1),
+        ("i64", 63, -(2**63)),
         ("u64", 64, 2**64 - 1),
     ],
 )
@@ -226,9 +228,9 @@ def test_multi_assign_eval_order() -> None:
         "format": "PHIR/JSON",
         "version": "0.1.0",
         "ops": [
-            {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 32},
-            {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 32},
-            {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 31},
+            {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 31},
+            {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 31},
             {
                 "cop": "=",
                 "returns": ["a", "b", "c"],
@@ -330,7 +332,7 @@ def test_return_int_types() -> None:
         "format": "PHIR/JSON",
         "version": "0.1.0",
         "ops": [
-            {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 31},
             {"data": "cvar_define", "data_type": "u32", "variable": "b", "size": 32},
             {"cop": "=", "returns": ["a"], "args": [42]},
             {"cop": "=", "returns": ["b"], "args": [7]},
@@ -343,7 +345,8 @@ def test_return_int_types() -> None:
 # ── Fuzz testing ─────────────────────────────────────────────────────
 
 FUZZ_DTYPES = ["i32", "u32", "i64", "u64"]
-FUZZ_COPS = ["+", "-", "*", "&", "|", "^", ">>", "<<", "==", "!=", "<", ">", "<=", ">="]
+# Includes / and % so signed (negative) division and modulo are fuzzed for parity.
+FUZZ_COPS = ["+", "-", "*", "&", "|", "^", ">>", "<<", "/", "%", "==", "!=", "<", ">", "<=", ">="]
 
 
 def _make_random_classical_program(rng: random.Random) -> dict:
@@ -354,7 +357,10 @@ def _make_random_classical_program(rng: random.Random) -> dict:
     for i in range(nvars):
         dtype = rng.choice(FUZZ_DTYPES)
         tw = int(dtype[1:])
-        size = rng.randint(1, tw)
+        # A signed size-S register is an i(S+1), so S+1 must fit the backing
+        # width: signed sizes top out at tw-1, unsigned at tw.
+        max_size = tw - 1 if dtype.startswith("i") else tw
+        size = rng.randint(1, max_size)
         name = f"v{i}"
         ops.append({"data": "cvar_define", "data_type": dtype, "variable": name, "size": size})
         vars_info.append((name, dtype, size))
@@ -509,19 +515,21 @@ def _make_classical_program(var_defs: list[tuple[str, str, int]], ops: list[dict
 @pytest.mark.parametrize(
     ("size", "val", "expected"),
     [
-        (2, 3, 3),  # 3 fits in 2 bits -> 3
-        (2, 5, 1),  # 5 = 0b101, masked to 2 bits -> 1
-        (2, 4, 0),  # 4 = 0b100, masked to 2 bits -> 0
-        (2, 7, 3),  # 7 = 0b111, masked to 2 bits -> 3
-        (3, 10, 2),  # 10 = 0b1010, masked to 3 bits -> 2
-        (4, 255, 15),  # 255 = 0xFF, masked to 4 bits -> 15
-        (1, 1, 1),  # 1 fits in 1 bit -> 1
-        (1, 2, 0),  # 2 = 0b10, masked to 1 bit -> 0
-        (1, 3, 1),  # 3 = 0b11, masked to 1 bit -> 1
+        # A signed size-S register is an i(S+1) integer: wrap to S+1 bits and
+        # sign-extend, so a value whose sign bit (bit S) is set is negative.
+        (2, 3, 3),  # i3: 3 = 0b011, sign bit clear -> 3
+        (2, 5, -3),  # i3: 5 = 0b101, sign bit set -> 5 - 8 = -3
+        (2, 4, -4),  # i3: 4 = 0b100 -> 4 - 8 = -4
+        (2, 7, -1),  # i3: 7 = 0b111 -> 7 - 8 = -1
+        (3, 10, -6),  # i4: 10 = 0b1010 -> 10 - 16 = -6
+        (4, 255, -1),  # i5: 255 & 31 = 31 = 0b11111 -> -1
+        (1, 1, 1),  # i2: 1 = 0b01 -> 1
+        (1, 2, -2),  # i2: 2 = 0b10 -> 2 - 4 = -2
+        (1, 3, -1),  # i2: 3 = 0b11 -> 3 - 4 = -1
     ],
 )
 def test_signed_narrow_register_masking(size: int, val: int, expected: int) -> None:
-    """i64 with size < 64 should mask to size bits on assignment."""
+    """A signed i64 size-S register is an i(S+1): assignment wraps and sign-extends."""
     phir = _make_classical_program(
         [("v", "i64", size)],
         [{"cop": "=", "returns": ["v"], "args": [val]}],
@@ -534,15 +542,15 @@ def test_signed_narrow_register_masking(size: int, val: int, expected: int) -> N
 @pytest.mark.parametrize(
     ("dtype", "size", "val", "expected"),
     [
-        ("i32", 2, 5, 1),  # i32 size=2, assign 5 -> mask to 2 bits = 1
-        ("i32", 4, 255, 15),  # i32 size=4, assign 255 -> mask to 4 bits = 15
-        ("u32", 2, 5, 1),  # u32 size=2, assign 5 -> mask to 2 bits = 1
-        ("u64", 3, 10, 2),  # u64 size=3, assign 10 -> mask to 3 bits = 2
-        ("i64", 4, -1, 15),  # -1 in twos complement, masked to 4 bits = 0b1111 = 15
+        ("i32", 2, 5, -3),  # i3: assign 5 -> 0b101 -> -3
+        ("i32", 4, 255, -1),  # i5: assign 255 -> 0b11111 -> -1
+        ("u32", 2, 5, 1),  # u2: assign 5 -> mask to 2 bits = 1
+        ("u64", 3, 10, 2),  # u3: assign 10 -> mask to 3 bits = 2
+        ("i64", 4, -1, -1),  # i5: -1 stays -1 (0b11111)
     ],
 )
 def test_narrow_register_masking_all_types(dtype: str, size: int, val: int, expected: int) -> None:
-    """All integer types should mask to size bits on assignment."""
+    """Signed types wrap to i(S+1); unsigned types mask to S bits on assignment."""
     phir = _make_classical_program(
         [("v", dtype, size)],
         [{"cop": "=", "returns": ["v"], "args": [val]}],
@@ -558,18 +566,18 @@ def test_narrow_register_masking_all_types(dtype: str, size: int, val: int, expe
 @pytest.mark.parametrize(
     ("size", "val", "expected"),
     [
-        # ~val at full 64-bit width, then masked to size bits
-        (4, 5, 10),  # ~5 = ...1111010, masked to 4 bits = 0b1010 = 10
-        (4, 0, 15),  # ~0 = all ones, masked to 4 bits = 15
-        (4, 15, 0),  # ~15 = ...10000, masked to 4 bits = 0
-        (8, 0xAA, 0x55),  # ~0xAA = 0x55...55, masked to 8 bits = 0x55
-        (2, 0, 3),  # ~0 -> all ones, masked to 2 bits = 3
-        (1, 0, 1),  # ~0 -> all ones, masked to 1 bit = 1
-        (1, 1, 0),  # ~1 -> ...1110, masked to 1 bit = 0
+        # ~val at full width, then wrapped/sign-extended into i(S+1).
+        (4, 5, -6),  # ~5 = -6, fits i5 -> -6
+        (4, 0, -1),  # ~0 = -1 -> i5 -> -1
+        (4, 15, -16),  # ~15 = -16 -> i5 -> -16
+        (8, 0xAA, -171),  # ~0xAA = -171 -> i9 -> -171
+        (2, 0, -1),  # ~0 = -1 -> i3 -> -1
+        (1, 0, -1),  # ~0 = -1 -> i2 -> -1
+        (1, 1, -2),  # ~1 = -2 -> i2 -> -2
     ],
 )
 def test_not_narrow_register(size: int, val: int, expected: int) -> None:
-    """~ evaluates at full width, result masked to register size."""
+    """~ evaluates at full width, result wrapped/sign-extended into i(S+1)."""
     phir = _make_classical_program(
         [("v", "i64", size)],
         [
@@ -588,17 +596,17 @@ def test_not_narrow_register(size: int, val: int, expected: int) -> None:
 @pytest.mark.parametrize(
     ("size", "val", "shift", "expected"),
     [
-        (4, 1, 10, 0),  # 1 << 10 = 1024, masked to 4 bits = 0
-        (4, 1, 3, 8),  # 1 << 3 = 8, masked to 4 bits = 8
-        (4, 1, 4, 0),  # 1 << 4 = 16, masked to 4 bits = 0
-        (8, 1, 7, 128),  # 1 << 7 = 128, fits in 8 bits
-        (8, 1, 8, 0),  # 1 << 8 = 256, masked to 8 bits = 0
-        (2, 1, 1, 2),  # 1 << 1 = 2, fits in 2 bits
-        (2, 1, 2, 0),  # 1 << 2 = 4, masked to 2 bits = 0
+        (4, 1, 10, 0),  # 1 << 10 = 1024 -> i5 -> 0
+        (4, 1, 3, 8),  # 1 << 3 = 8 -> i5 -> 8
+        (4, 1, 4, -16),  # 1 << 4 = 16 = 0b10000 -> i5 sign bit -> -16
+        (8, 1, 7, 128),  # 1 << 7 = 128 -> i9 -> 128
+        (8, 1, 8, -256),  # 1 << 8 = 256 = sign bit of i9 -> -256
+        (2, 1, 1, 2),  # 1 << 1 = 2 -> i3 -> 2
+        (2, 1, 2, -4),  # 1 << 2 = 4 = sign bit of i3 -> -4
     ],
 )
 def test_left_shift_with_masking(size: int, val: int, shift: int, expected: int) -> None:
-    """Left shift evaluates at full width, result masked to register size."""
+    """Left shift evaluates at full width, result wrapped/sign-extended into i(S+1)."""
     phir = _make_classical_program(
         [("v", "i64", size)],
         [
@@ -641,20 +649,20 @@ def test_right_shift_with_masking(size: int, val: int, shift: int, expected: int
 @pytest.mark.parametrize(
     ("size", "a_val", "b_val", "cop", "expected"),
     [
-        # Subtraction underflow: 0 - 1 at full width is huge negative, masked to size bits
-        (3, 0, 1, "-", 7),  # 0 - 1 = -1 = ...1111, masked to 3 bits = 7
-        (4, 0, 1, "-", 15),  # 0 - 1 = -1, masked to 4 bits = 15
-        (8, 0, 1, "-", 255),  # 0 - 1 = -1, masked to 8 bits = 255
-        # Addition overflow
-        (4, 15, 1, "+", 0),  # 15 + 1 = 16 = 0b10000, masked to 4 bits = 0
-        (4, 15, 2, "+", 1),  # 15 + 2 = 17 = 0b10001, masked to 4 bits = 1
-        (3, 7, 1, "+", 0),  # 7 + 1 = 8 = 0b1000, masked to 3 bits = 0
+        # Subtraction underflow: 0 - 1 = -1 fits every i(S+1) -> -1
+        (3, 0, 1, "-", -1),  # i4: 0 - 1 = -1
+        (4, 0, 1, "-", -1),  # i5: 0 - 1 = -1
+        (8, 0, 1, "-", -1),  # i9: 0 - 1 = -1
+        # Addition overflow past the sign bit wraps negative
+        (4, 15, 1, "+", -16),  # i5: 15 + 1 = 16 = sign bit -> -16
+        (4, 15, 2, "+", -15),  # i5: 15 + 2 = 17 = 0b10001 -> -15
+        (3, 7, 1, "+", -8),  # i4: 7 + 1 = 8 = sign bit -> -8
         # Multiplication overflow
-        (4, 4, 5, "*", 4),  # 4 * 5 = 20 = 0b10100, masked to 4 bits = 4
+        (4, 4, 5, "*", -12),  # i5: 4 * 5 = 20 = 0b10100 -> -12
     ],
 )
 def test_expression_overflow_narrow(size: int, a_val: int, b_val: int, cop: str, expected: int) -> None:
-    """Arithmetic at full width, overflow masked to register size."""
+    """Arithmetic at full width, overflow wrapped/sign-extended into i(S+1)."""
     phir = _make_classical_program(
         [("v", "i64", size)],
         [
@@ -731,12 +739,121 @@ def test_signed_division_min_by_neg_one() -> None:
     assert py_r == rs_r, f"Parity failure on i64::MIN / -1: py={py_r}, rs={rs_r}"
 
 
+# ── Signed division / modulo with negative operands ─────────────────
+
+
+@pytest.mark.parametrize(
+    ("a_val", "b_val", "cop", "expected"),
+    [
+        # Truncate toward zero (C/Rust), NOT Python floor. Remainder sign
+        # follows the dividend.
+        (-7, 2, "/", -3),
+        (-7, 3, "%", -1),
+        (7, -2, "/", -3),
+        (7, -3, "%", 1),
+        (-7, -2, "/", 3),
+        (-8, 3, "%", -2),
+        (-1, 2, "/", 0),
+        (-10, 3, "/", -3),
+        (-10, 3, "%", -1),
+    ],
+)
+def test_signed_division_modulo_negative(a_val: int, b_val: int, cop: str, expected: int) -> None:
+    """Signed division/modulo truncate toward zero and match Rust for negatives."""
+    phir = _make_classical_program(
+        [("a", "i64", 63), ("r", "i64", 63)],
+        [
+            {"cop": "=", "returns": ["a"], "args": [a_val]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": cop, "args": ["a", b_val]}]},
+        ],
+    )
+    py_r, rs_r = _run_classical(phir)
+    assert py_r == rs_r, f"Parity failure: py={py_r}, rs={rs_r}"
+    assert int(py_r["r"]) == expected, f"{a_val} {cop} {b_val}: expected {expected}, got {int(py_r['r'])}"
+
+
+# ── Full-backing (64-bit) evaluation of intermediate overflow ────────
+
+
+def test_intermediate_overflow_matches_backing_width() -> None:
+    """Intermediate arithmetic wraps at 64 bits before a comparison (not arbitrary precision).
+
+    ``(2**62 * 4)`` overflows 64 bits to 0, so ``== 0`` is true in both
+    interpreters -- Python must evaluate at the backing width, not arbitrary
+    precision.
+    """
+    phir = _make_classical_program(
+        [("a", "i64", 63), ("r", "i64", 63)],
+        [
+            {"cop": "=", "returns": ["a"], "args": [2**62]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": "==", "args": [{"cop": "*", "args": ["a", 4]}, 0]}]},
+        ],
+    )
+    py_r, rs_r = _run_classical(phir)
+    assert py_r == rs_r
+    assert int(py_r["r"]) == 1, f"(2^62*4)==0 should be 1, got {int(py_r['r'])}"
+
+
+def test_unsigned_large_value_comparison() -> None:
+    """A u64 value above 2**63 compares as a large positive (unsigned), matching Rust.
+
+    This is the case a naive "wrap intermediates to i64" would get wrong: the
+    value must stay unsigned, so ``> 10`` is true.
+    """
+    phir = _make_classical_program(
+        [("u", "u64", 64), ("r", "u64", 64)],
+        [
+            {"cop": "=", "returns": ["u"], "args": [2**63 + 5]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": ">", "args": ["u", 10]}]},
+        ],
+    )
+    py_r, rs_r = _run_classical(phir)
+    assert py_r == rs_r
+    assert int(py_r["r"]) == 1, f"u64(2^63+5) > 10 should be 1, got {int(py_r['r'])}"
+
+
+@pytest.mark.parametrize(
+    ("cop", "b", "expected"),
+    [
+        # A literal above i64::MAX is an unsigned operand (Rust ArgItem::UInteger),
+        # so the shift is logical and the comparison is unsigned.
+        (">>", 1, (2**64 - 1) >> 1),
+        ("<", 0, 0),
+        (">", 0, 1),
+    ],
+)
+def test_large_literal_is_unsigned(cop: str, b: int, expected: int) -> None:
+    """Literals in [2**63, 2**64) evaluate as unsigned, matching Rust."""
+    phir = _make_classical_program(
+        [("r", "u64", 64)],
+        [{"cop": "=", "returns": ["r"], "args": [{"cop": cop, "args": [2**64 - 1, b]}]}],
+    )
+    py_r, rs_r = _run_classical(phir)
+    assert py_r == rs_r, f"Parity failure: py={py_r}, rs={rs_r}"
+    assert int(py_r["r"]) == expected
+
+
+@pytest.mark.parametrize("bit", [0, 1])
+def test_not_of_single_bit_is_boolean(bit: int) -> None:
+    """~ of a single bit is a boolean NOT (0<->1), not a full-width bit flip."""
+    phir = _make_classical_program(
+        [("m", "u64", 2), ("r", "u64", 64)],
+        [
+            {"cop": "=", "returns": [["m", 0]], "args": [bit]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": "~", "args": [["m", 0]]}]},
+        ],
+    )
+    py_r, rs_r = _run_classical(phir)
+    assert py_r == rs_r, f"Parity failure: py={py_r}, rs={rs_r}"
+    assert int(py_r["r"]) == (0 if bit else 1)
+
+
 # ── Nested expressions with narrow registers ────────────────────────
 
 
 def test_nested_expression_full_width() -> None:
-    """Nested expressions should evaluate at full width before storing masked."""
-    # (a | b) + c where a=3, b=12, c=1 -> (3|12)+1 = 16, masked to 4 bits = 0
+    """Nested expressions should evaluate at full width before storing."""
+    # (a | b) + c where a=3, b=12, c=1 -> (3|12)+1 = 16 = sign bit of i5 -> -16
     phir = _make_classical_program(
         [("a", "i64", 4), ("b", "i64", 4), ("c", "i64", 4), ("r", "i64", 4)],
         [
@@ -760,7 +877,7 @@ def test_nested_expression_full_width() -> None:
     )
     py_r, rs_r = _run_classical(phir)
     assert py_r == rs_r
-    assert int(py_r["r"]) == 0, f"(3|12)+1 masked to 4 bits: expected 0, got {int(py_r['r'])}"
+    assert int(py_r["r"]) == -16, f"(3|12)+1 in i5: expected -16, got {int(py_r['r'])}"
 
 
 def test_chained_not_narrow() -> None:
@@ -782,7 +899,7 @@ def test_chained_not_narrow() -> None:
 
 
 def test_wide_to_narrow_assignment() -> None:
-    """Assigning a wide-register value to a narrow register should mask."""
+    """Assigning a wide-register value to a narrow register wraps into i(S+1)."""
     phir = _make_classical_program(
         [("wide", "i64", 32), ("narrow", "i64", 4)],
         [
@@ -792,7 +909,7 @@ def test_wide_to_narrow_assignment() -> None:
     )
     py_r, rs_r = _run_classical(phir)
     assert py_r == rs_r
-    assert int(py_r["narrow"]) == 15, f"255 into 4-bit register: expected 15, got {int(py_r['narrow'])}"
+    assert int(py_r["narrow"]) == -1, f"255 into i5 register: expected -1, got {int(py_r['narrow'])}"
 
 
 def test_narrow_to_wide_assignment() -> None:
@@ -827,7 +944,7 @@ def test_cross_size_expression() -> None:
 
 def test_cross_size_expression_overflow() -> None:
     """Cross-size expression that overflows the destination register."""
-    # narrow = 15 (4 bits), wide = 250 (32 bits), result = 265, masked to 8 bits = 9
+    # narrow = 15 (i5 -> +15), wide = 250 (i33 -> +250), sum = 265; i9: 265 - 512 = -247
     phir = _make_classical_program(
         [("narrow", "i64", 4), ("wide", "i64", 32), ("result", "i64", 8)],
         [
@@ -838,7 +955,7 @@ def test_cross_size_expression_overflow() -> None:
     )
     py_r, rs_r = _run_classical(phir)
     assert py_r == rs_r
-    assert int(py_r["result"]) == 9, f"15 + 250 in 8-bit register: expected 9, got {int(py_r['result'])}"
+    assert int(py_r["result"]) == -247, f"15 + 250 in i9 register: expected -247, got {int(py_r['result'])}"
 
 
 # ── Bit-level operations on narrow registers ────────────────────────
@@ -926,11 +1043,12 @@ def test_bit_read_zero() -> None:
         ("|", 0b1010, 0b0101, 4, 0b1111),  # 10 | 5 = 15
         ("^", 0b1010, 0b1111, 4, 0b0101),  # 10 ^ 15 = 5
         ("&", 0xFF, 0x0F, 4, 0x0F),  # 255 & 15, but stored in 4-bit = 15
-        ("|", 0b1010, 0b0101, 2, 0b11),  # 10 | 5 = 15, masked to 2 bits = 3
+        # a=10 -> i3 +2, b=5 -> i3 -3; 2 | -3 = -1; stored i3 -> -1
+        ("|", 0b1010, 0b0101, 2, -1),
     ],
 )
 def test_bitwise_ops_narrow(cop: str, a: int, b: int, size: int, expected: int) -> None:
-    """Bitwise ops evaluate at full width, result masked to register size."""
+    """Bitwise ops evaluate at full width on the signed operands, then wrap into i(S+1)."""
     phir = _make_classical_program(
         [("a", "i64", size), ("b", "i64", size), ("r", "i64", size)],
         [
@@ -973,9 +1091,8 @@ def test_all_ones_register(size: int) -> None:
 
 
 @pytest.mark.parametrize("size", [1, 2, 3, 4, 8, 16, 32, 63])
-def test_overflow_to_all_ones(size: int) -> None:
-    """0 - 1 in narrow register should give all ones (max value for that size)."""
-    max_val = (1 << size) - 1
+def test_overflow_to_negative_one(size: int) -> None:
+    """0 - 1 in a signed i(S+1) register is -1 (all S+1 bits set)."""
     phir = _make_classical_program(
         [("v", "i64", size)],
         [
@@ -985,13 +1102,14 @@ def test_overflow_to_all_ones(size: int) -> None:
     )
     py_r, rs_r = _run_classical(phir)
     assert py_r == rs_r
-    assert int(py_r["v"]) == max_val, f"0-1 in size={size}: expected {max_val}, got {int(py_r['v'])}"
+    assert int(py_r["v"]) == -1, f"0-1 in size={size}: expected -1, got {int(py_r['v'])}"
 
 
 @pytest.mark.parametrize("size", [1, 2, 3, 4, 8, 16, 32, 63])
-def test_overflow_wraps_to_zero(size: int) -> None:
-    """Max value + 1 in narrow register should wrap to 0."""
-    max_val = (1 << size) - 1
+def test_overflow_wraps_to_min(size: int) -> None:
+    """Max value + 1 in a signed i(S+1) register wraps to its minimum, -(2**S)."""
+    max_val = (1 << size) - 1  # i(S+1) max: bit S clear
+    expected = -(1 << size)  # i(S+1) min
     phir = _make_classical_program(
         [("v", "i64", size)],
         [
@@ -1001,4 +1119,4 @@ def test_overflow_wraps_to_zero(size: int) -> None:
     )
     py_r, rs_r = _run_classical(phir)
     assert py_r == rs_r
-    assert int(py_r["v"]) == 0, f"max+1 in size={size}: expected 0, got {int(py_r['v'])}"
+    assert int(py_r["v"]) == expected, f"max+1 in size={size}: expected {expected}, got {int(py_r['v'])}"

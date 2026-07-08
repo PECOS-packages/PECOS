@@ -42,6 +42,22 @@ qsym_conv = {
 }
 
 
+def _classical_register_dtype(size: int) -> str:
+    """Unsigned PHIR integer type that holds ``size`` bits.
+
+    Classical registers are unsigned bit collections, so an unsigned type
+    (valid for any ``size <= N``, and lossless even at 64 bits where a signed
+    ``i(size+1)`` register has no backing) is the correct representation. The
+    PHIR spec only defines ``u32`` and ``u64``, so those are the two choices.
+    """
+    if size <= 32:
+        return "u32"
+    if size <= 64:
+        return "u64"
+    msg = f"Classical register size {size} exceeds the maximum 64-bit backing type."
+    raise ValueError(msg)
+
+
 def conv_expr(expr: dict[str, Any]) -> dict[str, Any]:
     """Convert expression dictionary to PHIR format.
 
@@ -238,7 +254,7 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         ops.append(
             {
                 "data": "cvar_define",
-                "data_type": "i32",
+                "data_type": _classical_register_dtype(size),
                 "variable": sym,
                 "size": size,
             },

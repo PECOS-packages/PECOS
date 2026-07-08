@@ -59,7 +59,7 @@ mod tests {
                 "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
             },
             "ops": [
-                {"data": "cvar_define", "data_type": "i32", "variable": "placeholder", "size": 32},
+                {"data": "cvar_define", "data_type": "i32", "variable": "placeholder", "size": 31},
                 {"cop": "=", "args": [0], "returns": ["placeholder"]},
                 {"cop": "Result", "args": ["placeholder"], "returns": ["output"]}
             ]
@@ -152,10 +152,10 @@ mod tests {
                 "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
             },
             "ops": [
-                {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 32},
-                {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 32},
-                {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 32},
-                {"data": "cvar_define", "data_type": "i32", "variable": "final_result", "size": 32},
+                {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 31},
+                {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 31},
+                {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 31},
+                {"data": "cvar_define", "data_type": "i32", "variable": "final_result", "size": 31},
                 {"cop": "=", "args": [3], "returns": ["a"]},
                 {"cop": "=", "args": [4], "returns": ["b"]},
                 {"cop": "ffcall", "function": "add", "args": ["a", "b"], "returns": ["c"]},
@@ -213,8 +213,8 @@ mod tests {
                 "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
             },
             "ops": [
-                {"data": "cvar_define", "data_type": "i32", "variable": "condition", "size": 32},
-                {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 32},
+                {"data": "cvar_define", "data_type": "i32", "variable": "condition", "size": 31},
+                {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 31},
                 {"cop": "=", "args": [1], "returns": ["condition"]},
                 {
                     "block": "if",

@@ -339,21 +339,20 @@ impl PhirClassicalInterpreter {
                         );
                     }
                 } else {
-                    // A signed register carries a sign bit on top of its `size`
-                    // data bits, so a size-n register prints n+1 bits -- capped
-                    // at the backing type width, since an i32-backed register
-                    // cannot exceed 32 bits. Unsigned registers stay at `size`.
+                    // A signed size-S register is an i(S+1) integer, so it
+                    // prints S+1 bits (S data bits + a sign bit); an unsigned
+                    // size-S register prints S bits. Register widths are
+                    // validated to fit the backing type at definition time.
                     let width = if info.data_type.is_signed() {
-                        (info.size + 1).min(info.data_type.bit_width())
+                        info.size + 1
                     } else {
                         info.size
                     };
                     // Render the raw two's-complement bit pattern rather than
                     // sign-and-magnitude (which prints a leading "-" for
                     // negative values). `as_u64()` already holds the value
-                    // masked to the register, so reinterpreting it at `width`
-                    // bits makes the sign bit print as a "1"/"0" like every
-                    // other bit.
+                    // sign-extended, so reinterpreting it at `width` bits makes
+                    // the sign bit print as a "1"/"0" like every other bit.
                     let mask = if width >= 64 {
                         u64::MAX
                     } else {
@@ -593,14 +592,14 @@ impl PhirClassicalInterpreter {
                     match ret {
                         ArgItem::Simple(var) => {
                             if !self.environment.has_variable(var) {
-                                self.environment.add_variable(var, DataType::I32, 32)?;
+                                self.environment.add_variable(var, DataType::I32, 31)?;
                             }
                             #[allow(clippy::cast_sign_loss)]
                             self.environment.set_raw(var, val as u64)?;
                         }
                         ArgItem::Indexed((var, idx)) => {
                             if !self.environment.has_variable(var) {
-                                self.environment.add_variable(var, DataType::I32, 32)?;
+                                self.environment.add_variable(var, DataType::I32, 31)?;
                             }
                             self.environment.set_bit(var, *idx, (val & 1) != 0)?;
                         }
@@ -662,14 +661,14 @@ impl PhirClassicalInterpreter {
                         match ret {
                             ArgItem::Simple(var) => {
                                 if !self.environment.has_variable(var) {
-                                    self.environment.add_variable(var, DataType::I32, 32)?;
+                                    self.environment.add_variable(var, DataType::I32, 31)?;
                                 }
                                 #[allow(clippy::cast_sign_loss)]
                                 self.environment.set_raw(var, result[i] as u64)?;
                             }
                             ArgItem::Indexed((var, idx)) => {
                                 if !self.environment.has_variable(var) {
-                                    self.environment.add_variable(var, DataType::I32, 32)?;
+                                    self.environment.add_variable(var, DataType::I32, 31)?;
                                 }
                                 self.environment.set_bit(var, *idx, (result[i] & 1) != 0)?;
                             }
@@ -918,21 +917,23 @@ mod tests {
 
     #[test]
     fn test_negative_signed_register_is_twos_complement() {
-        // A full-width signed register (size == type width) can hold a
-        // negative value. Its bit string must be the two's-complement pattern
-        // (sign bit as "1"/"0"), never a sign-and-magnitude "-...".
+        // A signed size-S register is an i(S+1) integer. A full-width register
+        // (S = N-1) can hold any iN value and prints its N-bit two's-complement
+        // pattern -- the sign bit as "1"/"0", never a sign-and-magnitude "-...".
+        // A narrow signed register prints S+1 bits and can also go negative.
         let mut interp = PhirClassicalInterpreter::new();
         interp.init(SIMPLE_PROGRAM, None).unwrap();
 
-        interp.add_cvar("w", DataType::I32, 32).unwrap();
-        interp.add_cvar("n", DataType::I32, 32).unwrap();
-        // A size-31 signed register adds a sign bit -> 32 bits total, and is
-        // non-negative (data masked to 31 bits) so the sign bit is "0".
-        interp.add_cvar("s", DataType::I32, 31).unwrap();
-        // -1 stored as its 32-bit two's-complement pattern.
+        // Full-width i32 == i(31 + 1).
+        interp.add_cvar("w", DataType::I32, 31).unwrap();
+        interp.add_cvar("n", DataType::I32, 31).unwrap();
+        // Narrow signed register: i32 size 4 is an i5, range [-16, 15].
+        interp.add_cvar("narrow", DataType::I32, 4).unwrap();
+
+        // -1 stored as its two's-complement pattern.
         interp.environment.set("w", 0xFFFF_FFFF).unwrap();
         interp.environment.set("n", 5).unwrap();
-        interp.environment.set("s", 5).unwrap();
+        interp.environment.set("narrow", 0xFFFF_FFFF).unwrap();
 
         let results = interp.results(false);
         match results.get("w").unwrap() {
@@ -946,13 +947,40 @@ mod tests {
             ResultValue::BitString(s) => assert_eq!(s, "00000000000000000000000000000101"),
             other => panic!("Expected BitString, got {other:?}"),
         }
-        match results.get("s").unwrap() {
+        match results.get("narrow").unwrap() {
             ResultValue::BitString(s) => {
-                assert_eq!(s, "00000000000000000000000000000101");
-                assert_eq!(s.len(), 32); // 31 data bits + 1 sign bit
+                assert_eq!(s, "11111"); // i5: -1 -> five ones
+                assert_eq!(s.len(), 5); // size 4 + 1 sign bit
             }
             other => panic!("Expected BitString, got {other:?}"),
         }
+
+        // The integer view sees the correct signed values.
+        let ints = interp.results(true);
+        match ints.get("w").unwrap() {
+            ResultValue::Int(v, _) => assert_eq!(*v, -1),
+            other => panic!("Expected Int, got {other:?}"),
+        }
+        match ints.get("narrow").unwrap() {
+            ResultValue::Int(v, _) => assert_eq!(*v, -1),
+            other => panic!("Expected Int, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_oversized_signed_register_errors() {
+        // A signed size-S register is an i(S+1) integer, so size + 1 must fit
+        // the backing width. i32 size 32 would need 33 bits -> fail fast.
+        let mut interp = PhirClassicalInterpreter::new();
+        interp.init(SIMPLE_PROGRAM, None).unwrap();
+
+        let err = interp.add_cvar("bad", DataType::I32, 32).unwrap_err();
+        assert!(
+            err.to_string().contains("does not fit its 32-bit backing type"),
+            "unexpected error: {err}"
+        );
+        // Unsigned u32 size 32 is a valid u(32).
+        interp.add_cvar("ok", DataType::U32, 32).unwrap();
     }
 
     #[test]

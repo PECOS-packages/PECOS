@@ -255,7 +255,7 @@ mod tests {
             phir_engine
                 .processor
                 .environment
-                .add_variable("result", v0_1::environment::DataType::I32, 32)
+                .add_variable("result", v0_1::environment::DataType::I32, 31)
                 .ok();
             phir_engine.processor.environment.set("result", 1).ok();
 

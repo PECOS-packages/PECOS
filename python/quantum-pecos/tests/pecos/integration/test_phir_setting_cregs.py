@@ -123,18 +123,18 @@ def test_setting_mixed() -> None:
 
 
 def test_negative_signed_register_is_twos_complement() -> None:
-    """Negative signed registers print two's-complement bits, not a "-" sign.
+    """A signed register that goes negative prints two's-complement, not "-".
 
-    A full-width signed register (size == the backing type width) can hold a
-    negative value. Its bit string must show the sign bit as "1"/"0" -- never
-    Python's sign-and-magnitude "-..." -- and stays at the backing width.
+    A size-31 i32 register is an i32 (i(31+1)), so 0 - 1 = -1, which prints as
+    the full 32-bit two's-complement string (all ones) -- never Python's
+    sign-and-magnitude "-...".
     """
     phir = {
         "format": "PHIR/JSON",
         "version": "0.1.0",
         "ops": [
-            {"data": "cvar_define", "data_type": "i32", "variable": "w", "size": 32},
-            {"data": "cvar_define", "data_type": "i64", "variable": "d", "size": 64},
+            {"data": "cvar_define", "data_type": "i32", "variable": "w", "size": 31},
+            {"data": "cvar_define", "data_type": "i64", "variable": "d", "size": 63},
             # w = d = 0 - 1  ->  -1  ->  all ones in two's complement
             {
                 "cop": "=",
@@ -154,6 +154,23 @@ def test_negative_signed_register_is_twos_complement() -> None:
     for bits in results["d"]:
         assert bits == "1" * 64
     assert not any("-" in bits for bits in results["w"] + results["d"])
+
+
+def test_oversized_signed_register_errors() -> None:
+    """A signed register whose size+1 exceeds its backing width errors loudly."""
+    import pytest
+
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            # i32 size-32 would need 33 bits (32 data + sign) -> does not fit i32.
+            {"data": "cvar_define", "data_type": "i32", "variable": "bad", "size": 32},
+        ],
+    }
+
+    with pytest.raises(ValueError, match=r"does not fit its 32-bit backing type"):
+        HybridEngine(qsim="stabilizer").run(program=phir, shots=1)
 
 
 def test_signed_register_prints_sign_bit_width() -> None:

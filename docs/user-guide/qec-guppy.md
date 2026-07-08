@@ -95,7 +95,6 @@ The 4.8.8 triangular color code supports transversal Clifford gates.
 ### Quick Start
 
 ```python
-from pecos import sim, state_vector
 from pecos.guppy import make_color_code, get_num_qubits_color
 
 # Create a distance-3 color code memory experiment
@@ -103,9 +102,7 @@ prog = make_color_code(distance=3, num_rounds=2, basis="Z")
 
 # Get qubit count
 num_qubits = get_num_qubits_color(3)
-
-# Run simulation
-results = sim(prog).qubits(num_qubits).quantum(state_vector()).seed(42).run(100)
+print(f"Color code d=3 uses {num_qubits} qubits")
 ```
 
 ### Comparing Surface and Color Codes

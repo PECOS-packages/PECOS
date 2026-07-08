@@ -848,6 +848,35 @@ def test_not_of_single_bit_is_boolean(bit: int) -> None:
     assert int(py_r["r"]) == (0 if bit else 1)
 
 
+@pytest.mark.parametrize("bit", [0, 1])
+def test_double_not_of_bit_roundtrips(bit: int) -> None:
+    """~~ of a bit is the bit again (boolean NOT is involutive), matching Rust."""
+    phir = _make_classical_program(
+        [("m", "u64", 2), ("r", "u64", 64)],
+        [
+            {"cop": "=", "returns": [["m", 0]], "args": [bit]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": "~", "args": [{"cop": "~", "args": [["m", 0]]}]}]},
+        ],
+    )
+    py_r, rs_r = _run_classical(phir)
+    assert py_r == rs_r, f"Parity failure: py={py_r}, rs={rs_r}"
+    assert int(py_r["r"]) == bit
+
+
+def test_not_of_bit_expression_is_bitwise() -> None:
+    """~ of an arithmetic expression on a bit is a bitwise NOT, not boolean."""
+    phir = _make_classical_program(
+        [("m", "u64", 2), ("r", "u64", 64)],
+        [
+            {"cop": "=", "returns": [["m", 0]], "args": [1]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": "~", "args": [{"cop": "&", "args": [["m", 0], 5]}]}]},
+        ],
+    )
+    py_r, rs_r = _run_classical(phir)
+    assert py_r == rs_r, f"Parity failure: py={py_r}, rs={rs_r}"
+    assert int(py_r["r"]) == ((1 & 5) ^ (2**64 - 1))  # ~(1) at 64 bits
+
+
 # ── Nested expressions with narrow registers ────────────────────────
 
 

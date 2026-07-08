@@ -874,7 +874,7 @@ impl ClassicalEngine for PhirJsonEngine {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     exported_values
                         .entry(info.name.clone())
-                        .or_insert(value.as_u32());
+                        .or_insert(value.as_u64());
                 }
             }
         } else {
@@ -923,7 +923,7 @@ impl ClassicalEngine for PhirJsonEngine {
                         info.size
                     }
                 });
-            results.add_register(key, *value, width);
+            results.add_register_u64(key, *value, width);
             log::debug!("PHIR: Adding mapped register {key} = {value} (width={width})");
         }
 
@@ -941,7 +941,7 @@ impl ClassicalEngine for PhirJsonEngine {
                     } else {
                         info.size
                     };
-                    results.add_register(&info.name, value.as_u32(), width);
+                    results.add_register_u64(&info.name, value.as_u64(), width);
                 }
             }
 
@@ -955,7 +955,7 @@ impl ClassicalEngine for PhirJsonEngine {
                 // Try to get the value from the environment
                 if let Some(value) = self.processor.environment.get(source) {
                     log::debug!("PHIR: Exporting {source} -> {dest} = {value}");
-                    results.data.insert(dest.clone(), Data::U32(value.as_u32()));
+                    results.data.insert(dest.clone(), Data::U64(value.as_u64()));
                 } else {
                     // If not found in environment, try the exported_values directly
                     // Try to get the value directly from environment if not already found
@@ -963,7 +963,7 @@ impl ClassicalEngine for PhirJsonEngine {
                         log::debug!(
                             "PHIR: Exporting from environment {source} -> {dest} = {value}"
                         );
-                        results.data.insert(dest.clone(), Data::U32(value.as_u32()));
+                        results.data.insert(dest.clone(), Data::U64(value.as_u64()));
                     }
                     // Note: We no longer fall back to measurement_results as primary source
                 }
@@ -976,7 +976,7 @@ impl ClassicalEngine for PhirJsonEngine {
                         log::debug!("PHIR: Adding all variables: {} = {}", info.name, value);
                         results
                             .data
-                            .insert(info.name.clone(), Data::U32(value.as_u32()));
+                            .insert(info.name.clone(), Data::U64(value.as_u64()));
                     }
                 }
             }

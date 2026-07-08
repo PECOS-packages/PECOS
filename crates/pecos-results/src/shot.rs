@@ -38,16 +38,30 @@ impl Shot {
     /// * `value` - The register value as u32
     /// * `width` - The bit width of the register
     pub fn add_register(&mut self, name: &str, value: u32, width: usize) {
+        self.add_register_u64(name, u64::from(value), width);
+    }
+
+    /// Add a register from a 64-bit value, preserving bits 32-63.
+    ///
+    /// Use this for registers wider than 32 bits; [`Shot::add_register`] is a
+    /// convenience for the common case where the value fits in `u32`.
+    ///
+    /// # Parameters
+    ///
+    /// * `name` - The register name
+    /// * `value` - The register value as u64
+    /// * `width` - The bit width of the register
+    pub fn add_register_u64(&mut self, name: &str, value: u64, width: usize) {
         // Create a BitVec with the specified width
         let mut bv = BitVec::<u8, Lsb0>::with_capacity(width);
 
         // Set bits from the value
         for i in 0..width {
-            if i < 32 {
-                // Only shift if within u32 bounds
+            if i < 64 {
+                // Only shift if within u64 bounds
                 bv.push((value >> i) & 1 == 1);
             } else {
-                // For bits beyond u32, push zeros
+                // For bits beyond u64, push zeros
                 bv.push(false);
             }
         }

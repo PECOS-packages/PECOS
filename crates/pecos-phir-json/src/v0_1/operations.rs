@@ -1005,30 +1005,9 @@ impl OperationProcessor {
                         )?;
                         log::debug!("Set bit {var}[{idx}] = {bit_value} in environment");
                     }
-
-                    // Calculate the new value and update exported_values
-                    // Get the current value from environment or use 0 if it doesn't exist
-                    let current_value = self
-                        .environment
-                        .get(&var)
-                        .map_or(0u32, super::environment::BitValue::as_u32);
-
-                    // Clear the bit and set it to the new value
-                    let mask = !(1 << idx);
-                    // bit_value is already masked with & 1, so it's guaranteed to be 0 or 1
-                    let bit_u32 = u32::try_from(bit_value).unwrap_or(0);
-                    let new_value = (current_value & mask) | (bit_u32 << idx);
-
-                    // Make sure the composite variable is updated in the environment as well
-                    match self.environment.set(&var, u64::from(new_value)) {
-                        Ok(()) => {
-                            log::debug!("Updated composite variable: {var} = {new_value}");
-                        }
-                        Err(e) => {
-                            log::warn!("Could not update composite variable: {var}. Error: {e}");
-                        }
-                    }
-                    log::debug!("Added bit-level value to environment: {var} = {new_value}");
+                    // `set_bit` above already updates the full 64-bit value in the
+                    // environment; do not recompute the whole register here (a u32
+                    // recompute both truncated bits 32-63 and panicked on idx >= 32).
                 } else {
                     // For whole variable assignment, store in environment
                     log::debug!("Storing assignment value {value} in variable {var}");
@@ -1870,22 +1849,20 @@ impl OperationProcessor {
 
                 // Create destination variable if needed
                 if !self.environment.has_variable(&dst_name) {
-                    // Inherit type and size from source variable when possible
-                    let (var_type, var_size) = self
-                        .environment
-                        .get_variable_info_opt(&src_name)
-                        .map_or_else(
-                            || {
-                                // Fallback for an undeclared Result destination:
-                                // an unsigned register wide enough for the bit.
-                                if let Some(idx) = dst_index {
-                                    (DataType::U64, std::cmp::max(idx + 1, 32))
-                                } else {
-                                    (DataType::U64, 32)
-                                }
-                            },
-                            |info| (info.data_type.clone(), info.size),
-                        );
+                    let (var_type, var_size) = if let Some(idx) = dst_index {
+                        // An indexed destination is an unsigned bit collection;
+                        // it must be wide enough for `idx` regardless of the
+                        // source's type/size (inheriting a small or signed
+                        // source would drop the bit).
+                        (DataType::U64, std::cmp::max(idx + 1, 32))
+                    } else {
+                        // Whole-register copy: mirror the source, else default.
+                        self.environment
+                            .get_variable_info_opt(&src_name)
+                            .map_or((DataType::U64, 32), |info| {
+                                (info.data_type.clone(), info.size)
+                            })
+                    };
 
                     // Create the variable, but don't fail if it already exists
                     if let Err(e) = self.environment.add_variable(&dst_name, var_type, var_size) {
@@ -1926,7 +1903,7 @@ impl OperationProcessor {
     /// This simplified method treats the environment as the single source of truth
     /// and provides a clean, simple approach to gathering exported values.
     #[must_use]
-    pub fn process_export_mappings(&self) -> BTreeMap<String, u32> {
+    pub fn process_export_mappings(&self) -> BTreeMap<String, u64> {
         let mut exported_values = BTreeMap::new();
         log::debug!("Processing export mappings using environment as source of truth");
 
@@ -1953,7 +1930,7 @@ impl OperationProcessor {
                 if self.environment.has_variable(source_register) {
                     if let Some(value) = self.environment.get(source_register) {
                         log::debug!("Using value from environment: {source_register} = {value}");
-                        exported_values.insert(export_name.clone(), value.as_u32());
+                        exported_values.insert(export_name.clone(), value.as_u64());
                     } else {
                         log::debug!(
                             "Variable {source_register} exists in environment but has no value"
@@ -1989,7 +1966,7 @@ impl OperationProcessor {
                 // Include any variable that has a value
                 if let Some(val) = self.environment.get(&var_info.name) {
                     log::debug!("Adding variable: {} = {}", var_info.name, val);
-                    exported_values.insert(var_info.name.clone(), val.as_u32());
+                    exported_values.insert(var_info.name.clone(), val.as_u64());
                 }
             }
         }

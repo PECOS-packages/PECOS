@@ -330,52 +330,57 @@ class PhirClassicalInterpreter:
         assignment boundary (handle_cops/assign_int) clamps it to the
         destination register's i(S+1)/u(S) width.
         """
-        bits, _signed = self._eval_bits(expr)
+        bits, _signed, _is_bool = self._eval_bits(expr)
         return _to_i64(bits)
 
-    def _eval_bits(self, expr: int | str | list | pt.opt.COp) -> tuple[int, bool]:
-        """Evaluate to a ``(64-bit unsigned bit pattern, is_signed)`` pair."""
+    def _eval_bits(self, expr: int | str | list | pt.opt.COp) -> tuple[int, bool, bool]:
+        """Evaluate to a ``(64-bit bit pattern, is_signed, is_bool)`` triple.
+
+        ``is_bool`` mirrors Rust's ``ExprValue::Boolean`` (a bit access or a
+        ``&&``/``||`` result): unary ``~`` on a boolean is a logical NOT, not a
+        full-width bit flip.
+        """
         match expr:
             case int():
                 # Literals that fit i64 are signed (Rust `ArgItem::Integer`);
                 # larger values up to u64::MAX are unsigned (`ArgItem::UInteger`).
                 signed = -(1 << 63) <= expr < (1 << 63)
-                return expr & _MASK64, signed
+                return expr & _MASK64, signed, False
             case str():
                 cid = self.csym2id[expr]
                 signed = self.cvar_meta[cid].data_type in signed_data_types
-                return int(self.get_cval(expr)) & _MASK64, signed
+                return int(self.get_cval(expr)) & _MASK64, signed, False
             case list():
-                # A single-bit access is an unsigned 0/1.
-                return int(self.get_bit(*expr)) & 1, False
+                # A single-bit access is a boolean 0/1.
+                return int(self.get_bit(*expr)) & 1, False, True
             case pt.opt.COp():
                 sym = expr.name
                 if sym == "~":  # Unary NOT
                     (arg,) = expr.args
-                    if isinstance(arg, list | tuple):
-                        # ~ of a single bit is a boolean NOT (the bit is a Rust
-                        # `ExprValue::Boolean`), not a full-width bit flip.
-                        return int(not self.get_bit(*arg)), False
-                    # Otherwise a bitwise NOT at eval width; keeps signedness.
-                    bits, signed = self._eval_bits(arg)
-                    return (~bits) & _MASK64, signed
+                    bits, signed, is_bool = self._eval_bits(arg)
+                    if is_bool:
+                        # Logical NOT of a boolean (matches Rust ~Boolean).
+                        return int(not bits), False, True
+                    # Bitwise NOT at eval width; keeps signedness.
+                    return (~bits) & _MASK64, signed, False
                 lhs, rhs = expr.args
-                lbits, lsigned = self._eval_bits(lhs)
-                rbits, rsigned = self._eval_bits(rhs)
+                lbits, lsigned, _ = self._eval_bits(lhs)
+                rbits, rsigned, _ = self._eval_bits(rhs)
                 return self._eval_binop(sym, lbits, lsigned, rbits, rsigned)
             case _:
                 msg = f"Unsupported expression: {expr!r}"
                 raise ValueError(msg)
 
     @staticmethod
-    def _eval_binop(op: str, lbits: int, lsigned: bool, rbits: int, rsigned: bool) -> tuple[int, bool]:
-        """Apply a binary op on 64-bit patterns, returning ``(bits, is_signed)``.
+    def _eval_binop(op: str, lbits: int, lsigned: bool, rbits: int, rsigned: bool) -> tuple[int, bool, bool]:
+        """Apply a binary op on 64-bit patterns, returning ``(bits, is_signed, is_bool)``.
 
         An operation is signed only when both operands are signed; division,
         modulo, shift-right and ordering comparisons then use the signed
         interpretation (matching the Rust interpreter). ``+ - * & | ^ << ==``
         depend only on the two's-complement bit pattern, so signedness only
-        propagates the result tag for a later operation.
+        propagates the result tag for a later operation. ``&&``/``||`` return a
+        boolean; the ordering/equality comparisons return an unsigned 0/1.
         """
         result_signed = lsigned and rsigned
         li = _to_i64(lbits)
@@ -383,57 +388,61 @@ class PhirClassicalInterpreter:
 
         match op:
             case "+":
-                return (lbits + rbits) & _MASK64, result_signed
+                return (lbits + rbits) & _MASK64, result_signed, False
             case "-":
-                return (lbits - rbits) & _MASK64, result_signed
+                return (lbits - rbits) & _MASK64, result_signed, False
             case "*":
-                return (lbits * rbits) & _MASK64, result_signed
+                return (lbits * rbits) & _MASK64, result_signed, False
             case "&":
-                return lbits & rbits, result_signed
+                return lbits & rbits, result_signed, False
             case "|":
-                return lbits | rbits, result_signed
+                return lbits | rbits, result_signed, False
             case "^":
-                return lbits ^ rbits, result_signed
+                return lbits ^ rbits, result_signed, False
             case "/":
                 if rbits == 0:
                     msg = "division by zero"
                     raise ZeroDivisionError(msg)
                 if result_signed:
-                    return _trunc_div(li, ri) & _MASK64, True
-                return (lbits // rbits) & _MASK64, False
+                    return _trunc_div(li, ri) & _MASK64, True, False
+                return (lbits // rbits) & _MASK64, False, False
             case "%":
                 if rbits == 0:
                     msg = "modulo by zero"
                     raise ZeroDivisionError(msg)
                 if result_signed:
-                    return _trunc_mod(li, ri) & _MASK64, True
-                return (lbits % rbits) & _MASK64, False
+                    return _trunc_mod(li, ri) & _MASK64, True, False
+                return (lbits % rbits) & _MASK64, False, False
             case "<<":
                 if ri < 0:
                     msg = f"Negative shift amount: {ri}"
                     raise ValueError(msg)
                 shift = rbits & 0xFFFF
-                return ((lbits << shift) & _MASK64 if shift < 64 else 0), result_signed
+                return ((lbits << shift) & _MASK64 if shift < 64 else 0), result_signed, False
             case ">>":
                 if ri < 0:
                     msg = f"Negative shift amount: {ri}"
                     raise ValueError(msg)
                 if lsigned:  # arithmetic shift (sign-extends), tagged by the LHS
-                    return (li >> (ri % 64)) & _MASK64, True
+                    return (li >> (ri % 64)) & _MASK64, True, False
                 shift = rbits & 0xFFFF
-                return (lbits >> shift if shift < 64 else 0), False
+                return (lbits >> shift if shift < 64 else 0), False, False
             case "==":
-                return int(lbits == rbits), False
+                return int(lbits == rbits), False, False
             case "!=":
-                return int(lbits != rbits), False
+                return int(lbits != rbits), False, False
             case "<":
-                return int(li < ri if result_signed else lbits < rbits), False
+                return int(li < ri if result_signed else lbits < rbits), False, False
             case ">":
-                return int(li > ri if result_signed else lbits > rbits), False
+                return int(li > ri if result_signed else lbits > rbits), False, False
             case "<=":
-                return int(li <= ri if result_signed else lbits <= rbits), False
+                return int(li <= ri if result_signed else lbits <= rbits), False, False
             case ">=":
-                return int(li >= ri if result_signed else lbits >= rbits), False
+                return int(li >= ri if result_signed else lbits >= rbits), False, False
+            case "&&":
+                return int(lbits != 0 and rbits != 0), False, True
+            case "||":
+                return int(lbits != 0 or rbits != 0), False, True
             case _:
                 msg = f"Unknown expression type: {op}"
                 raise ValueError(msg)

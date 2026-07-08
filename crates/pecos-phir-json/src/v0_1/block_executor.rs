@@ -475,13 +475,13 @@ impl BlockExecutor {
 
     /// Process export mappings to determine values to return from simulations
     #[must_use]
-    pub fn process_export_mappings(&self) -> BTreeMap<String, u32> {
+    pub fn process_export_mappings(&self) -> BTreeMap<String, u64> {
         self.processor.process_export_mappings()
     }
 
     /// Get mapped results for output (alias for `process_export_mappings`)
     #[must_use]
-    pub fn get_mapped_results(&self) -> BTreeMap<String, u32> {
+    pub fn get_mapped_results(&self) -> BTreeMap<String, u64> {
         self.processor.process_export_mappings()
     }
 
@@ -492,7 +492,7 @@ impl BlockExecutor {
     pub fn execute_program(
         &mut self,
         program: &[Operation],
-    ) -> Result<BTreeMap<String, u32>, PecosError> {
+    ) -> Result<BTreeMap<String, u64>, PecosError> {
         debug!("Executing PHIR program with {} operations", program.len());
 
         // Reset state before execution

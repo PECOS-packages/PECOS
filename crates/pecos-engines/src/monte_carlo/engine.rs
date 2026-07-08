@@ -30,6 +30,8 @@ use rayon::{
 };
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use super::builder::MonteCarloEngineBuilder;
@@ -269,11 +271,41 @@ impl MonteCarloEngine {
     /// # Panics
     /// - If `num_shots` is zero.
     /// - If `num_workers` is zero.
-    pub fn run_with_workers(
+    pub fn run_with_workers(&mut self, num_shots: usize, num_workers: usize) -> Result<ShotVec, PecosError> {
+        let (shots, _) = self.run_with_workers_seed_report(num_shots, num_workers, false)?;
+        Ok(shots)
+    }
+
+    /// Run the Monte Carlo simulation with a specified number of worker threads and return the RNG seed report.
+    ///
+    /// The seed report records the engine root seed, the derived base seed, and each worker's
+    /// deterministic seed and shot count so the run can be reproduced or audited.
+    /// This method runs the simulation with the specified number of shots and worker threads,
+    /// overriding the default worker count configured during construction.
+    ///
+    /// # Arguments
+    /// * `num_shots` - The number of shots to run
+    /// * `num_workers` - The number of parallel worker threads to use
+    /// * `save_seed_report` - When `true`, save the seed report to `seed_report.json`;
+    ///   when `false`, only return it from this method.
+    ///
+    /// # Returns
+    /// A tuple containing the aggregated shot results and the seed report for the run. The seed
+    /// report is returned regardless of whether it is saved to disk.
+    ///
+    /// # Errors
+    /// Returns a `PecosError` if any part of the simulation fails, or if saving the seed
+    /// report fails when `save_seed_report` is `true`.
+    ///
+    /// # Panics
+    /// - If `num_shots` is zero.
+    /// - If `num_workers` is zero.
+    pub fn run_with_workers_seed_report(
         &mut self,
         num_shots: usize,
         num_workers: usize,
-    ) -> Result<ShotVec, PecosError> {
+        save_seed_report: bool,
+    ) -> Result<(ShotVec, SeedReport), PecosError> {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
 
@@ -288,6 +320,24 @@ impl MonteCarloEngine {
         let shots_per_worker = distribute_shots(num_shots, num_workers);
         let base_seed = self.rng.next_u64();
 
+        // Create Seed Report to save with run
+        let seed_report = SeedReport {
+            root_seed: self.seed,
+            base_seed,
+            num_shots,
+            num_workers,
+            workers: (0..num_workers)
+                .map(|worker_idx| {
+                    let seed = derive_seed(base_seed, &format!("worker_{worker_idx}"));
+                    WorkerSeedRecord {
+                        worker_idx,
+                        shots: shots_per_worker[worker_idx],
+                        seed,
+                    }
+                })
+                .collect(),
+        };
+
         // CRITICAL: Pre-create worker engines on the main thread before parallel execution.
         // This avoids potential deadlocks when worker threads try to clone engines
         // simultaneously, which can trigger concurrent library loading operations
@@ -295,8 +345,7 @@ impl MonteCarloEngine {
         let worker_engines: Vec<_> = (0..num_workers)
             .map(|worker_idx| {
                 let mut engine = self.hybrid_engine_template.clone();
-                let worker_seed = derive_seed(base_seed, &format!("worker_{worker_idx}"));
-                engine.set_seed(worker_seed);
+                engine.set_seed(seed_report.workers[worker_idx].seed);
                 (worker_idx, shots_per_worker[worker_idx], engine)
             })
             .collect();
@@ -382,6 +431,149 @@ impl MonteCarloEngine {
         let combined_results = ShotVec::from_measurements(&shot_results);
 
         debug!("Monte Carlo simulation completed successfully");
+        
+        if save_seed_report {
+            Self::save_seed_report_json(&seed_report, "seed_report.json")?;
+            debug!("Seed report successfully saved!");
+        }
+
+        Ok((combined_results, seed_report))
+    }
+
+    /// Serializes `seed_report` to JSON and writes it to `filename`.
+    ///
+    /// # Errors
+    /// Returns a `PecosError` if serialization fails or if the file cannot be written.
+    pub fn save_seed_report_json(
+        seed_report: &SeedReport,
+        filename: &str,
+    ) -> Result<(), PecosError> {
+        let json = serde_json::to_vec(seed_report).map_err(|e| {
+            PecosError::Processing(format!("Failed to serialize seed report: {e}"))
+        })?;
+        std::fs::write(filename, json)?;
+        Ok(())
+    }
+
+     pub fn rerun_from_seed_report(
+        &mut self,
+        seed_report_filename: &str,
+    ) -> Result<ShotVec, PecosError> {
+
+        // Import seed report from user's file.
+        let seed_report = SeedReport::from_json_file(Path::new(seed_report_filename))?;
+        debug!("SeedReport successfully imported!");
+
+        // Import shot count, worker count, and all seeds from seed report.
+        let num_shots = seed_report.num_shots;
+        let num_workers = seed_report.num_workers;
+        let shots_per_worker = distribute_shots(num_shots, num_workers);
+        self.seed = seed_report.root_seed; // make sure to update root seed.
+
+        assert!(num_shots > 0, "num_shots cannot be zero");
+        assert!(num_workers > 0, "num_workers cannot be zero");
+
+        debug!("Running Monte Carlo simulation: {num_shots} shots, {num_workers} workers");
+
+        // Shared results collection
+        let results_vec = Arc::new(Mutex::new(Vec::<(usize, usize, Shot)>::with_capacity(
+            num_shots,
+        )));
+
+        // CRITICAL: Pre-create worker engines on the main thread before parallel execution.
+        // This avoids potential deadlocks when worker threads try to clone engines
+        // simultaneously, which can trigger concurrent library loading operations
+        // that contend with each other or the dynamic linker.
+        let worker_engines: Vec<_> = (0..num_workers)
+            .map(|worker_idx| {
+                let mut engine = self.hybrid_engine_template.clone();
+                engine.set_seed(seed_report.workers[worker_idx].seed);
+                (worker_idx, shots_per_worker[worker_idx], engine)
+            })
+            .collect();
+
+        // Create a dedicated thread pool for this simulation to avoid contention
+        // with global Rayon thread pool when multiple simulations run concurrently.
+        // CRITICAL: For QIS programs, we need to ensure each test gets its own
+        // isolated thread pool to prevent TLS conflicts during library cleanup.
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(num_workers)
+            .thread_name(|index| format!("pecos-mc-worker-{index}"))
+            .build()
+            .map_err(|e| PecosError::Processing(format!("Failed to create thread pool: {e}")))?;
+
+        // Run shots in parallel across workers using dedicated thread pool
+        // CRITICAL: Use install() to ensure all work completes before thread pool cleanup
+        let parallel_result = thread_pool.install(|| {
+            worker_engines
+                .into_par_iter()
+                .map(|(worker_idx, shots_this_worker, mut engine)| {
+                    if shots_this_worker == 0 {
+                        return Ok(());
+                    }
+
+                    // Process all shots for this worker
+                    debug!("Worker {worker_idx} running {shots_this_worker} shots");
+
+                    for shot_idx in 0..shots_this_worker {
+                        engine.reset()?;
+
+                        // Catch panics during shot execution and convert to PecosError
+                        let shot_result =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                engine.run_shot()
+                            }));
+
+                        let shot_result = match shot_result {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(e)) => return Err(e),
+                            Err(panic_payload) => {
+                                // Convert panic to PecosError
+                                let panic_msg =
+                                    if let Some(s) = panic_payload.downcast_ref::<String>() {
+                                        s.clone()
+                                    } else if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                                        (*s).to_string()
+                                    } else {
+                                        "Unknown panic occurred during shot execution".to_string()
+                                    };
+
+                                return Err(PecosError::Processing(format!(
+                                    "Shot execution failed: {panic_msg}"
+                                )));
+                            }
+                        };
+
+                        // Store with worker/shot indices for deterministic ordering
+                        results_vec.lock().expect("results mutex poisoned").push((
+                            worker_idx,
+                            shot_idx,
+                            shot_result,
+                        ));
+                    }
+
+                    Ok(())
+                })
+                .collect::<Result<Vec<()>, PecosError>>()
+        });
+
+        // Handle the parallel execution result
+        parallel_result?;
+
+        // CRITICAL: Explicitly drop the thread pool to ensure clean shutdown
+        // This helps prevent TLS issues during test cleanup
+        drop(thread_pool);
+
+        // Ensure deterministic ordering of results
+        let mut results = results_vec.lock().expect("results mutex poisoned");
+        results.sort_by(|(w1, s1, _), (w2, s2, _)| w1.cmp(w2).then(s1.cmp(s2)));
+
+        // Convert to final results format
+        let shot_results: Vec<Shot> = results.iter().map(|(_, _, shot)| shot.clone()).collect();
+        let combined_results = ShotVec::from_measurements(&shot_results);
+
+        debug!("Monte Carlo simulation completed successfully");
+
         Ok(combined_results)
     }
 
@@ -620,6 +812,59 @@ fn distribute_shots(num_shots: usize, num_workers: usize) -> Vec<usize> {
         .for_each(|shots| *shots += 1);
 
     result
+}
+
+/// Seed metadata for one Monte Carlo worker.
+///
+/// Each record captures the worker index, the number of shots assigned to that
+/// worker, and the deterministic seed used to initialize its cloned engine.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WorkerSeedRecord {
+    pub worker_idx: usize,
+    pub shots: usize,
+    pub seed: u64,
+}
+
+/// Reproducibility metadata captured for a Monte Carlo simulation run.
+///
+/// The report records the engine's root seed, the base seed drawn for this run,
+/// the shot and worker configuration, and the deterministic seed assigned to
+/// each worker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SeedReport {
+    pub root_seed: u64,
+    pub base_seed: u64,
+    pub num_shots: usize,
+    pub num_workers: usize,
+    pub workers: Vec<WorkerSeedRecord>,
+}
+
+/// JSON import helpers for `SeedReport`.
+///
+/// Use these constructors to reload reproducibility metadata emitted by a
+/// previous Monte Carlo run when rerunning or investigating specific worker
+/// seeds.
+impl SeedReport {
+    /// Deserializes a `SeedReport` from a JSON string.
+    ///
+    /// Returns `PecosError::Input` when the JSON is malformed or does not match
+    /// the expected seed report schema.
+    pub fn from_json_str(json: &str) -> Result<Self, PecosError> {
+        serde_json::from_str(json).map_err(|err| {
+            PecosError::Input(format!("Failed to parse seed report JSON: {err}"))
+        })
+    }
+
+    /// Reads and deserializes a `SeedReport` from a JSON file.
+    ///
+    /// Returns `PecosError::Input` when the file cannot be read or the file
+    /// contents cannot be parsed as a seed report.
+    pub fn from_json_file<P: AsRef<Path>>(path: P) -> Result<Self, PecosError> {
+        let json = fs::read_to_string(path).map_err(|err| {
+            PecosError::Input(format!("Failed to read seed report JSON: {err}"))
+        })?;
+        Self::from_json_str(&json)
+    }
 }
 
 /// An external classical engine implementation used for testing and examples.

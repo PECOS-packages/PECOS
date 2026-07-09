@@ -58,6 +58,7 @@ from pecos.qec.surface.circuit_builder import (
     generate_dem_from_patch as generate_dem_from_patch_stim,
 )
 from pecos.qec.surface.decode import (
+    RUNTIME_IDLE_TIME_UNITS_PER_SECOND,
     DecoderType,
     DecodingResult,
     NativeSampler,
@@ -169,6 +170,7 @@ __all__ = [
     "DecodingResult",
     "NativeSampler",
     "NoiseModel",
+    "RUNTIME_IDLE_TIME_UNITS_PER_SECOND",
     "SimulationResult",
     "SurfaceDecoder",
     "build_memory_circuit",

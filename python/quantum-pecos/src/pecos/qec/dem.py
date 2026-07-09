@@ -264,6 +264,12 @@ class _DetectorErrorModelMixin:
                 replayed.
 
         Note:
+            Runtime-lowered idles are replayed as nanosecond PECOS
+            ``TimeUnits``. If idle parameters come from a per-second
+            simulator/runtime model, convert the ``NoiseModel`` with
+            ``noise.for_runtime_idle_time_units()`` before passing it to
+            traced-QIS DEM construction.
+
             **Measurement-dependent (dynamic) control flow is unsupported.**
             ``from_guppy`` traces one ideal execution; a Guppy program whose
             quantum operations depend on a measurement *outcome* (e.g.

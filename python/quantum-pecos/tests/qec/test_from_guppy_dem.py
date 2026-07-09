@@ -12,7 +12,7 @@ from guppylang.std.builtins import barrier, owned, result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import NoiseModel, SurfacePatch
+from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseModel, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
     generate_tick_circuit_from_patch,
     normalize_traced_qis_tick_circuit,
@@ -311,6 +311,55 @@ def test_lowered_replay_preserves_runtime_idles() -> None:
     tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
     assert _flat_idle_gates(tc) == [([0], 20.0)]
+
+
+def test_lowered_replay_converts_runtime_idle_seconds_to_nanosecond_time_units() -> None:
+    chunks = [
+        {
+            "operations": [{"Quantum": {"H": 0}}],
+            "lowered_quantum_ops": [
+                {"gate_type": "Idle", "qubits": [0], "angles": [], "params": [1.3857e-5]},
+                {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
+            ],
+        },
+    ]
+
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+    assert _flat_idle_gates(tc) == [([0], 13857.0)]
+
+
+def test_noise_model_converts_runtime_idle_rates_from_seconds_to_dem_time_units() -> None:
+    noise = NoiseModel(
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+        p_idle=9.0,
+        t1=1.5,
+        t2=2.5,
+        p_idle_z_linear_rate=3.0,
+        p_idle_x_quadratic_rate=4.0,
+        p_idle_z_quadratic_sine_rate=5.0,
+    )
+
+    converted = noise.for_runtime_idle_time_units()
+
+    assert converted.p1 == noise.p1
+    assert converted.p2 == noise.p2
+    assert converted.p_meas == noise.p_meas
+    assert converted.p_prep == noise.p_prep
+    assert converted.p_idle == pytest.approx(9.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.t1 == pytest.approx(1.5 * RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.t2 == pytest.approx(2.5 * RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.p_idle_z_linear_rate == pytest.approx(3.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.p_idle_x_quadratic_rate == pytest.approx(4.0 / (RUNTIME_IDLE_TIME_UNITS_PER_SECOND**2))
+    assert converted.p_idle_z_quadratic_sine_rate == pytest.approx(5.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+
+
+def test_noise_model_rejects_invalid_runtime_idle_time_unit_scale() -> None:
+    with pytest.raises(ValueError, match="time_units_per_second"):
+        NoiseModel(p_idle_z_linear_rate=1.0).for_runtime_idle_time_units(time_units_per_second=0.0)
 
 
 def test_lowered_replay_preserves_gate_metadata() -> None:

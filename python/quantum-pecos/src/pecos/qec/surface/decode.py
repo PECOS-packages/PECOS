@@ -43,6 +43,7 @@ For circuit-level decoding with MWPM:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -68,6 +69,26 @@ P2Weights = Mapping[str, float] | Sequence[tuple[str, float]]
 # hyperedge mechanisms, not alternate exact DEM serializations.
 NativeDemDecomposition = Literal["source_graphlike", "terminal_graphlike"]
 CircuitLevelDemMode = Literal["native_full", "native_decomposed", "native_terminal_graphlike"]
+RUNTIME_IDLE_TIME_UNITS_PER_SECOND = 1_000_000_000.0
+
+
+def _convert_optional_rate(rate: float | None, scale: float) -> float | None:
+    """Return ``rate / scale`` while preserving unset idle parameters."""
+    return None if rate is None else float(rate) / scale
+
+
+def _convert_optional_time(time_value: float | None, scale: float) -> float | None:
+    """Return ``time_value * scale`` while preserving unset idle parameters."""
+    return None if time_value is None else float(time_value) * scale
+
+
+def _validate_time_units_per_second(time_units_per_second: float) -> float:
+    """Validate a conversion factor from seconds to DEM idle time units."""
+    units = float(time_units_per_second)
+    if not math.isfinite(units) or units <= 0.0:
+        msg = f"time_units_per_second must be positive and finite, got {time_units_per_second!r}"
+        raise ValueError(msg)
+    return units
 
 
 def _validate_probability(name: str, value: float) -> float:
@@ -156,6 +177,11 @@ class NoiseModel:
         p_idle_x_quadratic_sine_rate: Stochastic X-memory sine-law rate.
         p_idle_y_quadratic_sine_rate: Stochastic Y-memory sine-law rate.
         p_idle_z_quadratic_sine_rate: Stochastic Z-memory sine-law rate.
+
+    Runtime idle units:
+        For ``traced_qis`` DEMs, runtime idles are replayed as nanosecond
+        ``TimeUnits``; use :meth:`for_runtime_idle_time_units` when carrying
+        per-second simulator/runtime idle parameters into that DEM path.
     """
 
     p1: float = 0.0
@@ -228,6 +254,48 @@ class NoiseModel:
     def p2_gate_rates(self) -> tuple[float | None, ...]:
         """Explicit two-qubit gate-rate overrides."""
         return (self.p2_szz, self.p2_szzdg)
+
+    def for_runtime_idle_time_units(
+        self,
+        *,
+        time_units_per_second: float = RUNTIME_IDLE_TIME_UNITS_PER_SECOND,
+    ) -> NoiseModel:
+        """Return a copy whose idle noise is expressed in runtime replay units.
+
+        Selene-compatible runtimes emit idle durations in seconds, but the
+        traced-QIS DEM replay stores explicit ``Idle`` gates as integer PECOS
+        ``TimeUnits``. The surface replay currently uses nanosecond units, so
+        a runtime idle of ``1.3857e-5`` seconds becomes ``13857`` DEM time
+        units. When carrying physical rates from a runtime/simulator model into
+        a traced-QIS DEM, the time-dependent idle fields must be converted to
+        the DEM circuit's time unit first.
+
+        Linear rates and sine-law rates have units ``1 / time`` and are divided
+        by ``time_units_per_second``. Quadratic coefficient rates have units
+        ``1 / time**2`` and are divided by ``time_units_per_second**2``. Idle
+        lifetimes such as ``t1`` and ``t2`` are durations, so they are
+        multiplied by ``time_units_per_second``.
+        """
+        units = _validate_time_units_per_second(time_units_per_second)
+        units_squared = units * units
+        return replace(
+            self,
+            p_idle=_convert_optional_rate(self.p_idle, units),
+            t1=_convert_optional_time(self.t1, units),
+            t2=_convert_optional_time(self.t2, units),
+            p_idle_linear_rate=_convert_optional_rate(self.p_idle_linear_rate, units),
+            p_idle_x_linear_rate=_convert_optional_rate(self.p_idle_x_linear_rate, units),
+            p_idle_y_linear_rate=_convert_optional_rate(self.p_idle_y_linear_rate, units),
+            p_idle_z_linear_rate=_convert_optional_rate(self.p_idle_z_linear_rate, units),
+            p_idle_quadratic_rate=_convert_optional_rate(self.p_idle_quadratic_rate, units_squared),
+            p_idle_x_quadratic_rate=_convert_optional_rate(self.p_idle_x_quadratic_rate, units_squared),
+            p_idle_y_quadratic_rate=_convert_optional_rate(self.p_idle_y_quadratic_rate, units_squared),
+            p_idle_z_quadratic_rate=_convert_optional_rate(self.p_idle_z_quadratic_rate, units_squared),
+            p_idle_quadratic_sine_rate=_convert_optional_rate(self.p_idle_quadratic_sine_rate, units),
+            p_idle_x_quadratic_sine_rate=_convert_optional_rate(self.p_idle_x_quadratic_sine_rate, units),
+            p_idle_y_quadratic_sine_rate=_convert_optional_rate(self.p_idle_y_quadratic_sine_rate, units),
+            p_idle_z_quadratic_sine_rate=_convert_optional_rate(self.p_idle_z_quadratic_sine_rate, units),
+        )
 
     @staticmethod
     def uniform(physical_error_rate: float) -> NoiseModel:

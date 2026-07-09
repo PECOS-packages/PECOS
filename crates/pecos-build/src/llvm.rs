@@ -676,7 +676,10 @@ mod tests {
         // the LLVM version, not the target triple or CPU line.
         let llvm_as = "  LLVM (http://llvm.org/):\n    LLVM version 14.0.0\n    \
                        Optimized build.\n    Default target: x86_64-pc-linux-gnu\n";
-        assert_eq!(parse_llvm_version_output(llvm_as).as_deref(), Some("14.0.0"));
+        assert_eq!(
+            parse_llvm_version_output(llvm_as).as_deref(),
+            Some("14.0.0")
+        );
         assert_eq!(parse_llvm_version_output("no version here"), None);
     }
 

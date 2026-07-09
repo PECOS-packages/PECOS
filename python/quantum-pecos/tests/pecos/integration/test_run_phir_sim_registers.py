@@ -308,7 +308,7 @@ def test_no_return_measure_keeps_later_outcomes_aligned() -> None:
 
 def test_unknown_block_type_fails_fast() -> None:
     """An unrecognized block type is a hard error, not a silent skip."""
-    with pytest.raises(Exception, match="[Uu]nknown block"):
+    with pytest.raises(Exception, match="Unknown block"):
         _run(
             [
                 _qc("q", 1),

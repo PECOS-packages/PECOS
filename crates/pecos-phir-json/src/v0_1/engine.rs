@@ -297,7 +297,8 @@ impl PhirJsonEngine {
                     ..
                 } => {
                     let (gate_type, qubit_args, angle_args) =
-                        self.processor.process_quantum_op(qop, angles.as_ref(), args)?;
+                        self.processor
+                            .process_quantum_op(qop, angles.as_ref(), args)?;
                     self.processor.add_quantum_operation_to_builder(
                         &mut self.message_builder,
                         &gate_type,
@@ -327,7 +328,9 @@ impl PhirJsonEngine {
                     // Yield the queued quantum ops first (leaving the cursor in
                     // place) so measurements land before this op executes.
                     if operation_count > 0 {
-                        debug!("Deferring classical op '{cop}' until batch measurements are applied");
+                        debug!(
+                            "Deferring classical op '{cop}' until batch measurements are applied"
+                        );
                         return Ok(Some(self.message_builder.build()));
                     }
                     // Pass the op itself so an ffcall can find its function name.
@@ -357,15 +360,15 @@ impl PhirJsonEngine {
                             // measured earlier in this batch; defer until the
                             // batch's measurements are applied.
                             if operation_count > 0 {
-                                debug!("Deferring conditional block until batch measurements are applied");
+                                debug!(
+                                    "Deferring conditional block until batch measurements are applied"
+                                );
                                 return Ok(Some(self.message_builder.build()));
                             }
                             let branch = match (condition, true_branch) {
-                                (Some(cond), Some(tb)) => self.processor.process_conditional_block(
-                                    cond,
-                                    tb,
-                                    false_branch.as_deref(),
-                                )?,
+                                (Some(cond), Some(tb)) => self
+                                    .processor
+                                    .process_conditional_block(cond, tb, false_branch.as_deref())?,
                                 _ => Vec::new(),
                             };
                             self.advance_cursor();
@@ -386,9 +389,7 @@ impl PhirJsonEngine {
                             });
                         }
                         other => {
-                            return Err(PecosError::Input(format!(
-                                "Unknown block type: {other}"
-                            )));
+                            return Err(PecosError::Input(format!("Unknown block type: {other}")));
                         }
                     }
                 }

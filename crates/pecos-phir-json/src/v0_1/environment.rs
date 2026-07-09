@@ -526,7 +526,11 @@ impl Environment {
         // register is a `u(S)` and needs `S <= N`. Fail fast otherwise.
         if data_type.is_integer() {
             let tw = data_type.bit_width();
-            let needed = if data_type.is_signed() { size + 1 } else { size };
+            let needed = if data_type.is_signed() {
+                size + 1
+            } else {
+                size
+            };
             if needed > tw {
                 let kind = if data_type.is_signed() {
                     "signed"

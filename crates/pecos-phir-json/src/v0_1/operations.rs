@@ -1751,7 +1751,9 @@ impl OperationProcessor {
                 // Fallback for a measured qubit with no recorded return register
                 // (e.g. Bell-state test programs that measure without returns).
                 self.store_measurement_result("m", index, *outcome);
-                log::debug!("PHIR: Auto-mapped measurement result {index} to m[{index}] = {outcome}");
+                log::debug!(
+                    "PHIR: Auto-mapped measurement result {index} to m[{index}] = {outcome}"
+                );
             }
         }
 
@@ -1884,7 +1886,8 @@ impl OperationProcessor {
                                 (info.data_type.clone(), info.size)
                             })
                     };
-                    self.environment.add_variable(&dst_name, var_type, var_size)?;
+                    self.environment
+                        .add_variable(&dst_name, var_type, var_size)?;
                 }
 
                 // Store the value in the destination, failing loudly on error

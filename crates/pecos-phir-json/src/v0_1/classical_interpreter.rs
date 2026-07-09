@@ -976,7 +976,8 @@ mod tests {
 
         let err = interp.add_cvar("bad", DataType::I32, 32).unwrap_err();
         assert!(
-            err.to_string().contains("does not fit its 32-bit backing type"),
+            err.to_string()
+                .contains("does not fit its 32-bit backing type"),
             "unexpected error: {err}"
         );
         // Unsigned u32 size 32 is a valid u(32).

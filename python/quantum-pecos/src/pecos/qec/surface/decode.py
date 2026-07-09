@@ -1693,8 +1693,9 @@ def build_memory_circuit(
         ancilla_budget: Optional cap on simultaneously live ancillas.
         circuit_source: ``"abstract"`` for the native surface builder or
             ``"traced_qis"`` for the lowered traced QIS gate stream.
-        runtime: Optional Selene runtime selector/plugin used when
-            ``circuit_source="traced_qis"``.
+        runtime: Optional Selene-compatible runtime plugin/object used when
+            ``circuit_source="traced_qis"``. This is runtime-generic; PECOS
+            only requires the object shape accepted by ``pecos.selene_engine``.
         twirl: Optional Pauli-frame randomization layout. Currently supported
             only with ``circuit_source="abstract"``; traced-QIS twirl is
             rejected because a runtime trace would bake one sampled mask into
@@ -2386,8 +2387,10 @@ def generate_circuit_level_dem_from_builder(
             ``"traced_qis"`` traces the lowered ideal Selene/QIS gate stream
             and replays that exact gate list into a TickCircuit before running
             native PECOS fault analysis.
-        runtime: Optional Selene runtime selector/plugin used when
-            ``circuit_source="traced_qis"``. Custom runtime topologies are not
+        runtime: Optional Selene-compatible runtime plugin/object used when
+            ``circuit_source="traced_qis"``. PECOS treats this generically and
+            only requires the object shape accepted by ``pecos.selene_engine``.
+            Custom runtime topologies are not
             kept in PECOS's in-process topology cache because plugin objects
             can carry private mutable state.
         twirl: Optional Pauli-frame randomization layout. Canonical Guppy
@@ -3936,8 +3939,9 @@ def surface_code_memory(
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
-        runtime: Optional Selene runtime selector/plugin used when
-            ``circuit_source="traced_qis"``.
+        runtime: Optional Selene-compatible runtime plugin/object used when
+            ``circuit_source="traced_qis"``. PECOS treats this generically and
+            only requires the object shape accepted by ``pecos.selene_engine``.
         ancilla_budget: Optional cap on simultaneously live ancillas.
         interaction_basis: Backward-compatible selector for the default
             ``check_plan`` of a two-qubit interaction basis.

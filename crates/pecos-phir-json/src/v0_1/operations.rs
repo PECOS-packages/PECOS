@@ -1761,7 +1761,7 @@ impl OperationProcessor {
     ///
     /// This simplified implementation treats the environment as the single source of truth
     /// for retrieving variable values.
-    fn get_variable_value(&self, var_name: &str, index: Option<usize>) -> Result<u32, PecosError> {
+    fn get_variable_value(&self, var_name: &str, index: Option<usize>) -> Result<u64, PecosError> {
         log::debug!("Getting variable value for {var_name}[{index:?}]");
 
         // Ensure the variable exists in the environment
@@ -1777,7 +1777,7 @@ impl OperationProcessor {
             match self.environment.get_bit(var_name, idx) {
                 Ok(bit_value) => {
                     log::debug!("Found bit value in environment: {var_name}[{idx}] = {bit_value}");
-                    return Ok(u32::from(bit_value.0));
+                    return Ok(u64::from(bit_value.0));
                 }
                 Err(_) => {
                     // Fall back to extracting bit from full u64 value
@@ -1785,8 +1785,7 @@ impl OperationProcessor {
                         let raw = full_val.as_u64();
                         let bit_value = (raw >> idx) & 1;
                         log::debug!("Extracted bit from variable: {var_name}[{idx}] = {bit_value}");
-                        #[allow(clippy::cast_possible_truncation)]
-                        return Ok(bit_value as u32);
+                        return Ok(bit_value);
                     }
                 }
             }
@@ -1799,7 +1798,7 @@ impl OperationProcessor {
         // Handle whole variable access
         if let Some(val) = self.environment.get(var_name) {
             log::debug!("Got value from environment: {var_name} = {val}");
-            return Ok(val.as_u32());
+            return Ok(val.as_u64());
         }
 
         // If we get here, the variable exists but has no value
@@ -1838,11 +1837,7 @@ impl OperationProcessor {
                     "Result mapping: {src_name}[{src_index:?}] -> {dst_name}[{dst_index:?}]"
                 );
 
-                // Store mapping in the environment
-                let _ = self.environment.add_mapping(&src_name, &dst_name);
-
-                // Get the source value directly from the environment
-                // No special handling or fallbacks - environment is the single source of truth
+                // Get the source value from the environment (single source of truth).
                 let value = self.get_variable_value(&src_name, src_index)?;
 
                 log::debug!("Got value for {src_name}: {value}");
@@ -1863,35 +1858,32 @@ impl OperationProcessor {
                                 (info.data_type.clone(), info.size)
                             })
                     };
-
-                    // Create the variable, but don't fail if it already exists
-                    if let Err(e) = self.environment.add_variable(&dst_name, var_type, var_size) {
-                        log::warn!(
-                            "Could not create variable: {dst_name}. Will try to update existing: {e}"
-                        );
-                    }
+                    self.environment.add_variable(&dst_name, var_type, var_size)?;
                 }
 
-                // Store the value in the destination
+                // Store the value in the destination, failing loudly on error
+                // (e.g. a bit index that does not fit the backing type).
                 if let Some(idx) = dst_index {
-                    // Bit access - set specific bit in the variable
-                    let bit_value = value & 1;
-                    if let Err(e) = self
-                        .environment
-                        .set_bit(&dst_name, idx, u64::from(bit_value))
-                    {
-                        log::warn!("Could not set bit {dst_name}[{idx}] = {bit_value}: {e}");
-                    } else {
-                        log::debug!("Set bit {dst_name}[{idx}] = {bit_value}");
-                    }
+                    self.environment.set_bit(&dst_name, idx, value & 1)?;
+                    log::debug!("Set bit {dst_name}[{idx}] = {}", value & 1);
                 } else {
-                    // Whole variable assignment
-                    if let Err(e) = self.environment.set(&dst_name, u64::from(value)) {
-                        log::warn!("Could not set variable {dst_name} = {value}: {e}");
-                    } else {
-                        log::debug!("Set variable {dst_name} = {value}");
-                    }
+                    self.environment.set(&dst_name, value)?;
+                    log::debug!("Set variable {dst_name} = {value}");
                 }
+
+                // Record the export mapping. For an indexed destination the
+                // value is accumulated in the destination register (via set_bit
+                // above), so export the destination itself. For a whole-register
+                // copy keep the source -> destination rename: Path B applies
+                // measurements lazily, so the source is re-read at export time
+                // and reflects a measurement that had not yet landed when this
+                // Result ran.
+                let export_source = if dst_index.is_some() {
+                    &dst_name
+                } else {
+                    &src_name
+                };
+                let _ = self.environment.add_mapping(export_source, &dst_name);
             }
         }
 

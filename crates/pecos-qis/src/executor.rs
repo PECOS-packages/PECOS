@@ -759,9 +759,54 @@ fn find_llvm_tool(tool_name: &str) -> PathBuf {
                 })
         })
         .unwrap_or_else(|| {
+            // Neither the embedded nor the env-configured LLVM was usable; fall
+            // back to PATH. Warn if that resolves to a non-21.1 tool: a stale
+            // system LLVM (e.g. llvm-as 14) cannot parse opaque-pointer IR and
+            // silently fails QIS loading rather than producing wrong data.
+            let path_tool = PathBuf::from(tool_name);
+            warn_if_wrong_llvm_version(&path_tool, tool_name);
             debug!("Using {tool_name} from PATH");
-            PathBuf::from(tool_name)
+            path_tool
         })
+}
+
+/// Required LLVM version for PECOS. Kept in sync with `pecos-build`'s
+/// `REQUIRED_VERSION`; duplicated here because `pecos-build` is only a
+/// build-dependency and is not available at runtime.
+const REQUIRED_LLVM_VERSION: &str = "21.1";
+
+/// Warn (once per call) if an LLVM tool resolved from `PATH` reports a version
+/// other than the required 21.1 series. Best-effort: a tool that cannot be run
+/// or whose version cannot be parsed is left alone.
+fn warn_if_wrong_llvm_version(tool_path: &Path, tool_name: &str) {
+    let Ok(output) = Command::new(tool_path).arg("--version").output() else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    // The first dotted numeric token is the LLVM version (`llvm-config` prints
+    // it bare; `llvm-as` embeds it in a `LLVM version X.Y.Z` line).
+    let Some(version) = text.split_whitespace().find(|token| {
+        let mut parts = token.split('.');
+        token.starts_with(|c: char| c.is_ascii_digit())
+            && parts.clone().count() >= 2
+            && parts.all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    }) else {
+        return;
+    };
+    let matches_required = version == REQUIRED_LLVM_VERSION
+        || version
+            .strip_prefix(REQUIRED_LLVM_VERSION)
+            .is_some_and(|rest| rest.starts_with('.'));
+    if !matches_required {
+        warn!(
+            "'{tool_name}' resolved from PATH is LLVM {version}, but PECOS requires \
+             {REQUIRED_LLVM_VERSION}. This can silently break QIS execution. Configure \
+             LLVM 21.1 (`pecos llvm configure`) or put its bin directory ahead on PATH."
+        );
+    }
 }
 
 // FFI function types for dynamic circuit coordination

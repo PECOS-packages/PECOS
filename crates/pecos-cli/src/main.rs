@@ -1006,6 +1006,37 @@ fn run_doctor() {
             ));
         }
     }
+
+    // Warn when a wrong-version LLVM tool would be resolved from PATH. External
+    // tools (Selene's llvm-as) and PECOS's own runtime PATH fallback pick these
+    // up, so a system LLVM ahead of 21.1 silently breaks QIS execution.
+    for report in pecos_build::llvm::inspect_path_llvm_tools(&["llvm-as", "llvm-config"]) {
+        let label = format!("PATH {}", report.tool);
+        match report.version {
+            Some(ref v) if report.is_required => {
+                print_check(&label, true, &format!("{v} at {}", report.path.display()));
+            }
+            Some(ref v) => {
+                print_check(
+                    &label,
+                    false,
+                    &format!("{v} at {} (need 21.1)", report.path.display()),
+                );
+                problems.push(format!(
+                    "{} on PATH is LLVM {v}, not 21.1 ({}). External tools like Selene resolve it from PATH; put LLVM 21.1's bin directory ahead on PATH.",
+                    report.tool,
+                    report.path.display()
+                ));
+            }
+            None => {
+                print_check(
+                    &label,
+                    false,
+                    &format!("version unknown at {}", report.path.display()),
+                );
+            }
+        }
+    }
     println!();
 
     // --- Python / uv ---

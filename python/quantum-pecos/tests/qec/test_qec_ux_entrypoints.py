@@ -74,6 +74,25 @@ def test_surface_code_memory_accepts_szz_interaction_basis() -> None:
     assert result.raw_error_rate == 0.0
 
 
+def test_surface_code_memory_accepts_traced_qis_runtime() -> None:
+    selene_anduril = pytest.importorskip("selene_anduril")
+    from pecos.qec.surface import surface_code_memory
+
+    result = surface_code_memory(
+        distance=3,
+        physical_error_rate=0.0,
+        shots=4,
+        rounds=1,
+        seed=123,
+        circuit_source="traced_qis",
+        runtime=selene_anduril.AndurilRuntimePlugin(),
+        decoder_type="pymatching_uncorrelated",
+    )
+
+    assert result.logical_error_rate == 0.0
+    assert result.raw_error_rate == 0.0
+
+
 def test_surface_code_memory_rejects_ambiguous_noise_inputs() -> None:
     from pecos.qec.surface import NoiseModel, surface_code_memory
 

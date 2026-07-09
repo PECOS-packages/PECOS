@@ -3906,6 +3906,7 @@ def surface_code_memory(
     seed: int | None = None,
     decode: bool = True,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    runtime: object | None = None,
     ancilla_budget: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
@@ -3935,6 +3936,8 @@ def surface_code_memory(
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
+        runtime: Optional Selene runtime selector/plugin used when
+            ``circuit_source="traced_qis"``.
         ancilla_budget: Optional cap on simultaneously live ancillas.
         interaction_basis: Backward-compatible selector for the default
             ``check_plan`` of a two-qubit interaction basis.
@@ -3987,6 +3990,7 @@ def surface_code_memory(
         dem_decomposition=_recommended_graphlike_decomposition_for_decoder(decoder_type),
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
+        runtime=runtime,
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,

@@ -139,6 +139,13 @@ pub struct OperationProcessor {
     pub foreign_object: Option<Box<dyn ForeignObject>>,
     /// Current operation index being processed
     current_op: usize,
+    /// Return register for each qubit measured in the current batch, in the
+    /// order the simulator emits outcomes -- one slot per measured qubit, so
+    /// `outcome[i]` maps to `pending_measurements[i]`. `None` marks a measured
+    /// qubit with no return register (handled by the fallback). Populated as
+    /// `Measure` ops are queued (including from inside blocks) and consumed by
+    /// `handle_measurements`.
+    pending_measurements: Vec<Option<(String, usize)>>,
 }
 
 impl Default for OperationProcessor {
@@ -154,6 +161,7 @@ impl Clone for OperationProcessor {
             environment: self.environment.clone(),
             foreign_object: self.foreign_object.as_ref().map(|fo| fo.clone_box()),
             current_op: self.current_op,
+            pending_measurements: self.pending_measurements.clone(),
         }
         // All data including mappings is now in the environment
     }
@@ -167,7 +175,43 @@ impl OperationProcessor {
             environment: Environment::new(),
             foreign_object: None,
             current_op: 0,
+            pending_measurements: Vec::new(),
         }
+    }
+
+    /// Record the return registers of a queued `Measure` op so
+    /// `handle_measurements` can map positional outcomes back to them. The
+    /// simulator emits one outcome per measured qubit, so we record one slot
+    /// per qubit to keep outcomes aligned even across a no-return measure.
+    ///
+    /// # Errors
+    /// Returns an error if a Measure has return registers that do not match its
+    /// measured qubits one-to-one (malformed PHIR).
+    pub fn record_measurement_returns(
+        &mut self,
+        qubit_count: usize,
+        returns: &[(String, usize)],
+    ) -> Result<(), PecosError> {
+        if returns.is_empty() {
+            // No-return measure: reserve a placeholder per qubit so a later
+            // measurement's outcomes stay positionally aligned.
+            self.pending_measurements
+                .extend((0..qubit_count).map(|_| None));
+        } else if returns.len() == qubit_count {
+            self.pending_measurements
+                .extend(returns.iter().map(|r| Some(r.clone())));
+        } else {
+            return Err(PecosError::Input(format!(
+                "Measure op measures {qubit_count} qubit(s) but has {} return register(s); they must match one-to-one",
+                returns.len()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Clear the queued-measurement record (called when a new batch begins).
+    pub fn clear_pending_measurements(&mut self) {
+        self.pending_measurements.clear();
     }
 
     /// Get the variables of type "qubits"
@@ -232,6 +276,7 @@ impl OperationProcessor {
         // Clear state but keep variable definitions
         self.environment.reset_values();
         // Environment reset_values now also clears mappings
+        self.pending_measurements.clear();
 
         // We deliberately don't clear variable definitions or foreign_object
         // so that we preserve the structure of the program while resetting state
@@ -1597,7 +1642,10 @@ impl OperationProcessor {
                 builder.z(&[qubit_args[0]]);
             }
             "Measure" => {
-                builder.mz(&[qubit_args[0]]);
+                // Measure every qubit in the op (one outcome per qubit, in
+                // order), not just the first, so multi-qubit Measure works and
+                // the outcomes align with the recorded return registers.
+                builder.mz(qubit_args);
             }
             "Init" => {
                 // Initialize qubit to |0⟩ state using the Prep gate
@@ -1665,7 +1713,7 @@ impl OperationProcessor {
     pub fn handle_measurements(
         &mut self,
         measurements: &[u32],
-        ops: &[Operation],
+        _ops: &[Operation],
     ) -> Result<(), PecosError> {
         log::debug!("PHIR: Handling {} measurement results", measurements.len());
 
@@ -1693,39 +1741,17 @@ impl OperationProcessor {
                 log::debug!("Stored measurement result: {prefixed_name} = {outcome}");
             }
 
-            // Also map to specific variable based on the Measure operation
-            let mut found_mapping = false;
-            for op in ops {
-                if let Operation::QuantumOp {
-                    qop,
-                    args: _,
-                    returns,
-                    ..
-                } = op
-                    && qop == "Measure"
-                    && !returns.is_empty()
-                {
-                    // Get the variable name and index from the returns field
-                    let (var_name, var_idx) = &returns[0];
-
-                    // Check if this is the right measurement result
-                    if *var_idx == result_id as usize {
-                        // Store the result in the specific bit of the variable
-                        self.store_measurement_result(var_name, *var_idx, *outcome);
-                        found_mapping = true;
-                    }
-                }
-            }
-
-            // If we didn't find a mapping in the operations, add a default mapping to variable "m"
-            // This helps with tests and interoperability, particularly Bell state tests
-            if !found_mapping && self.environment.has_variable("m") {
-                // Store in main "m" variable for test compatibility
-                let idx = result_id as usize;
-                self.store_measurement_result("m", idx, *outcome);
-                log::debug!(
-                    "PHIR: Auto-mapped measurement result {result_id} to m[{idx}] = {outcome}"
-                );
+            // Map the outcome to the return register recorded when this
+            // measurement was queued (queue-order positional). This works for
+            // measurements queued from inside blocks too, which a scan of the
+            // top-level ops would miss.
+            if let Some(Some((var_name, var_idx))) = self.pending_measurements.get(index).cloned() {
+                self.store_measurement_result(&var_name, var_idx, *outcome);
+            } else if self.environment.has_variable("m") {
+                // Fallback for a measured qubit with no recorded return register
+                // (e.g. Bell-state test programs that measure without returns).
+                self.store_measurement_result("m", index, *outcome);
+                log::debug!("PHIR: Auto-mapped measurement result {index} to m[{index}] = {outcome}");
             }
         }
 
@@ -1871,19 +1897,14 @@ impl OperationProcessor {
                     log::debug!("Set variable {dst_name} = {value}");
                 }
 
-                // Record the export mapping. For an indexed destination the
-                // value is accumulated in the destination register (via set_bit
-                // above), so export the destination itself. For a whole-register
-                // copy keep the source -> destination rename: Path B applies
-                // measurements lazily, so the source is re-read at export time
-                // and reflects a measurement that had not yet landed when this
-                // Result ran.
-                let export_source = if dst_index.is_some() {
-                    &dst_name
-                } else {
-                    &src_name
-                };
-                let _ = self.environment.add_mapping(export_source, &dst_name);
+                // Export the destination register, which now holds the copied
+                // (whole-register `set`) or accumulated (indexed `set_bit`)
+                // value. Measurement ordering is handled by the engine (classical
+                // ops are deferred until batch measurements are applied), so the
+                // destination is correct at this point -- mapping it to itself is
+                // correct even when multiple Results (whole-register and/or
+                // indexed) target the same destination.
+                let _ = self.environment.add_mapping(&dst_name, &dst_name);
             }
         }
 

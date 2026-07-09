@@ -2885,6 +2885,7 @@ class SurfaceDecoder:
         use_circuit_level_dem: bool = True,
         circuit_level_dem_mode: CircuitLevelDemMode = "native_full",
         circuit_level_dem_source: Literal["abstract", "traced_qis"] = "abstract",
+        runtime: object | None = None,
         ancilla_budget: int | None = None,
         interaction_basis: str = "cx",
     ) -> None:
@@ -2927,6 +2928,10 @@ class SurfaceDecoder:
                 building native circuit-level DEMs. ``"abstract"`` uses the
                 high-level surface TickCircuit, while ``"traced_qis"`` traces
                 the lowered ideal Selene/QIS gate stream and analyzes that.
+            runtime: Optional Selene-compatible runtime plugin/object used
+                when ``circuit_level_dem_source="traced_qis"``. PECOS treats
+                this generically and only requires the object shape accepted
+                by ``pecos.selene_engine``.
             ancilla_budget: Optional cap on simultaneously live ancillas for
                 the native circuit-level DEM path. When provided, the decoder
                 builds its DEM from the corresponding batched ancilla-reuse
@@ -2951,6 +2956,7 @@ class SurfaceDecoder:
             raise ValueError(msg)
         self.circuit_level_dem_mode = circuit_level_dem_mode
         self.circuit_level_dem_source = circuit_level_dem_source
+        self.runtime = runtime
         self.ancilla_budget = ancilla_budget
         self.interaction_basis = _normalize_interaction_basis(interaction_basis)
 
@@ -2992,6 +2998,7 @@ class SurfaceDecoder:
             decompose_errors=self.circuit_level_dem_mode != "native_full",
             dem_decomposition=dem_decomposition,
             circuit_source=self.circuit_level_dem_source,
+            runtime=self.runtime,
             ancilla_budget=self.ancilla_budget,
             interaction_basis=self.interaction_basis,
         )
@@ -4293,6 +4300,7 @@ def build_native_sampler(
     basis: str = "Z",
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    runtime: object | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str | None = None,
     sampling_model: Literal[
@@ -4330,6 +4338,10 @@ def build_native_sampler(
             TickCircuit. ``"traced_qis"`` traces the lowered ideal Selene/QIS
             gate stream and replays that exact gate list into a TickCircuit
             before native PECOS fault analysis.
+        runtime: Optional Selene-compatible runtime plugin/object used when
+            ``circuit_source="traced_qis"``. Runtime-plugin topologies are
+            not kept in PECOS's in-process topology cache because plugin
+            objects can carry private mutable state.
         twirl: Optional Pauli-frame randomization layout. Canonical runtime
             frame-output mode is normalized to the same abstract raw lookup.
         interaction_basis: Backward-compatible selector for the default
@@ -4373,64 +4385,91 @@ def build_native_sampler(
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
     szz_physical_prefixes = _use_szz_physical_prefixes(noise, interaction_basis, circuit_source)
-    topology = _cached_surface_native_topology(
-        patch_key,
-        num_rounds,
-        basis,
-        ancilla_budget,
-        circuit_source,
-        _noise_uses_dedicated_idle_noise(noise),
-        twirl=twirl,
-        interaction_basis=interaction_basis,
-        check_plan=resolved_plan.plan_id,
-        szz_physical_prefixes=szz_physical_prefixes,
-        resolved_check_plan_hash=resolved_plan.resolved_hash,
-        clifford_frame_policy=clifford_frame_policy,
-        szz_runtime_barriers=szz_runtime_barriers,
-        require_hosted_operation_order=require_hosted_operation_order,
-        max_hosted_tick_separation=max_hosted_tick_separation,
-    )
-    if sampling_model == "dem":
-        dem_str = _cached_surface_native_dem_string(
+    include_idle_gates = _noise_uses_dedicated_idle_noise(noise)
+    if runtime is not None:
+        topology = _surface_native_topology(
             patch_key,
             num_rounds,
             basis,
             ancilla_budget,
             circuit_source,
-            noise.p1,
-            noise.p1_weights,
-            noise.p2,
-            noise.p2_szz,
-            noise.p2_szzdg,
-            noise.p_meas,
-            noise.p_prep,
-            decompose_errors=True,
-            p2_weights=noise.p2_weights,
-            p2_replacement_approximation=noise.p2_replacement_approximation,
-            p_idle=noise.p_idle,
-            t1=noise.t1,
-            t2=noise.t2,
-            p_idle_linear_rate=noise.p_idle_linear_rate,
-            p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-            p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-            p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-            p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+            include_idle_gates,
+            runtime=runtime,
             twirl=twirl,
             interaction_basis=interaction_basis,
             check_plan=resolved_plan.plan_id,
+            szz_physical_prefixes=szz_physical_prefixes,
+            clifford_frame_policy=clifford_frame_policy,
+            szz_runtime_barriers=szz_runtime_barriers,
+            require_hosted_operation_order=require_hosted_operation_order,
+            max_hosted_tick_separation=max_hosted_tick_separation,
+        )
+    else:
+        topology = _cached_surface_native_topology(
+            patch_key,
+            num_rounds,
+            basis,
+            ancilla_budget,
+            circuit_source,
+            include_idle_gates,
+            twirl=twirl,
+            interaction_basis=interaction_basis,
+            check_plan=resolved_plan.plan_id,
+            szz_physical_prefixes=szz_physical_prefixes,
             resolved_check_plan_hash=resolved_plan.resolved_hash,
             clifford_frame_policy=clifford_frame_policy,
             szz_runtime_barriers=szz_runtime_barriers,
             require_hosted_operation_order=require_hosted_operation_order,
             max_hosted_tick_separation=max_hosted_tick_separation,
         )
+    if sampling_model == "dem":
+        if runtime is not None:
+            dem_str = _dem_string_from_cached_surface_topology(
+                topology,
+                noise,
+                decompose_errors=True,
+            )
+        else:
+            dem_str = _cached_surface_native_dem_string(
+                patch_key,
+                num_rounds,
+                basis,
+                ancilla_budget,
+                circuit_source,
+                noise.p1,
+                noise.p1_weights,
+                noise.p2,
+                noise.p2_szz,
+                noise.p2_szzdg,
+                noise.p_meas,
+                noise.p_prep,
+                decompose_errors=True,
+                p2_weights=noise.p2_weights,
+                p2_replacement_approximation=noise.p2_replacement_approximation,
+                p_idle=noise.p_idle,
+                t1=noise.t1,
+                t2=noise.t2,
+                p_idle_linear_rate=noise.p_idle_linear_rate,
+                p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+                p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
+                p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
+                p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
+                p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
+                p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
+                p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+                p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
+                p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
+                p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
+                p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+                twirl=twirl,
+                interaction_basis=interaction_basis,
+                check_plan=resolved_plan.plan_id,
+                resolved_check_plan_hash=resolved_plan.resolved_hash,
+                clifford_frame_policy=clifford_frame_policy,
+                szz_runtime_barriers=szz_runtime_barriers,
+                require_hosted_operation_order=require_hosted_operation_order,
+                max_hosted_tick_separation=max_hosted_tick_separation,
+            )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(
             sampler=sampler,

@@ -93,6 +93,37 @@ def test_surface_code_memory_accepts_traced_qis_runtime() -> None:
     assert result.raw_error_rate == 0.0
 
 
+def test_surface_decoder_accepts_traced_qis_runtime() -> None:
+    selene_anduril = pytest.importorskip("selene_anduril")
+    from pecos.qec.surface import NoiseModel, SurfaceDecoder, SurfacePatch
+
+    decoder = SurfaceDecoder(
+        SurfacePatch.create(distance=3),
+        num_rounds=1,
+        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        decoder_type="pymatching_uncorrelated",
+        circuit_level_dem_source="traced_qis",
+        runtime=selene_anduril.AndurilRuntimePlugin(),
+    )
+
+    assert decoder.get_dem("Z")
+
+
+def test_build_native_sampler_accepts_traced_qis_runtime() -> None:
+    selene_anduril = pytest.importorskip("selene_anduril")
+    from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
+
+    sampler = build_native_sampler(
+        SurfacePatch.create(distance=3),
+        num_rounds=1,
+        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        circuit_source="traced_qis",
+        runtime=selene_anduril.AndurilRuntimePlugin(),
+    )
+
+    assert sampler.dem_string
+
+
 def test_surface_code_memory_rejects_ambiguous_noise_inputs() -> None:
     from pecos.qec.surface import NoiseModel, surface_code_memory
 

@@ -80,6 +80,14 @@ class HybridEngine:
     Note:
         Parameters of the quantum simulator are provided as extra keyword arguments passed
         down to ``QuantumSimulator`` as the dictionary ``**params``.
+
+    Note:
+        The default classical interpreter is now the Rust-backed
+        ``RustPhirClassicalInterpreter`` (previously the pure-Python
+        ``PhirClassicalInterpreter``). It is behaviorally equivalent for valid
+        programs and is differentially validated against the Python interpreter.
+        To restore the previous behavior, construct the engine with
+        ``HybridEngine(cinterp="python")``.
     """
 
     def __init__(

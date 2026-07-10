@@ -833,7 +833,7 @@ def test_ffcall_return_to_undeclared_variable_raises_key_error(interp: str) -> N
         def get_funcs(self) -> list:
             return ["f"]
 
-        def exec(self, func: str, args: list) -> list:
+        def exec(self, _func: str, _args: list) -> list:
             return [1]
 
     phir = {

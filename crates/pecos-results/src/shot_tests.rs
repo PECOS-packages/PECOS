@@ -411,4 +411,25 @@ mod tests {
         assert!(!names.contains(&"_width_c".to_string()));
         assert!(!names.contains(&"_width_d".to_string()));
     }
+
+    #[test]
+    fn test_add_register_u64_preserves_high_bits() {
+        // A 64-bit value with bits above 31 set must round-trip losslessly
+        // (regression: add_register(u32) zeroed bits 32-63).
+        let mut shot = Shot::default();
+        // bit 63 and bit 40 set, plus low bits 0b101
+        let value: u64 = (1 << 63) | (1 << 40) | 0b101;
+        shot.add_register_u64("c", value, 64);
+
+        let bits = shot.register_to_binary_string("c").unwrap();
+        assert_eq!(bits.len(), 64);
+        assert_eq!(&bits[0..1], "1"); // MSB = bit 63
+        assert_eq!(bits.chars().nth(64 - 1 - 40).unwrap(), '1'); // bit 40
+        assert_eq!(&bits[62..64], "01"); // low bits: ...0b101 -> ends "101"
+        assert_eq!(bits.matches('1').count(), 4);
+
+        // The u32 convenience still works for values that fit.
+        shot.add_register("d", 5, 3);
+        assert_eq!(shot.register_to_binary_string("d"), Some("101".to_string()));
+    }
 }

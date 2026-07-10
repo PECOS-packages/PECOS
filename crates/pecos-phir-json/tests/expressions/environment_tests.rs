@@ -9,9 +9,9 @@ fn test_variable_environment() {
     let mut env = Environment::new();
 
     // Add variables of different types
-    env.add_variable("i8_var", DataType::I8, 8).unwrap();
+    env.add_variable("i8_var", DataType::I8, 7).unwrap();
     env.add_variable("u8_var", DataType::U8, 8).unwrap();
-    env.add_variable("i32_var", DataType::I32, 32).unwrap();
+    env.add_variable("i32_var", DataType::I32, 31).unwrap();
     env.add_variable("qubits", DataType::Qubits, 4).unwrap();
 
     // Set values
@@ -67,9 +67,9 @@ fn test_variable_environment() {
 fn test_expression_evaluation() {
     // Create an environment with test variables
     let mut env = Environment::new();
-    env.add_variable("a", DataType::I32, 32).unwrap();
-    env.add_variable("b", DataType::I32, 32).unwrap();
-    env.add_variable("c", DataType::I32, 32).unwrap();
+    env.add_variable("a", DataType::I32, 31).unwrap();
+    env.add_variable("b", DataType::I32, 31).unwrap();
+    env.add_variable("c", DataType::I32, 31).unwrap();
 
     env.set("a", 10).unwrap();
     env.set("b", 5).unwrap();

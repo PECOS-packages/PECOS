@@ -96,9 +96,9 @@ mod tests {
     "source_program_type": ["Test", ["PECOS", "0.5.dev1"]]
   },
   "ops": [
-    {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 32},
-    {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 32},
-    {"data": "cvar_define", "data_type": "i32", "variable": "sum", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 31},
+    {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 31},
+    {"data": "cvar_define", "data_type": "i32", "variable": "sum", "size": 31},
     {"cop": "=", "args": [1], "returns": ["a"]},
     {"cop": "=", "args": [10], "returns": ["b"]},
     {"cop": "ffcall", "function": "add", "args": ["a", "b"], "returns": ["sum"]},

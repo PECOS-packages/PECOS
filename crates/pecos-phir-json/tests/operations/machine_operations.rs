@@ -80,7 +80,7 @@ mod tests {
           },
           "ops": [
             {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
-            {"data": "cvar_define", "data_type": "i32", "variable": "var", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "var", "size": 31},
             {"qop": "H", "args": [["q", 0]]},
             {"mop": "Idle", "args": [["q", 0], ["q", 1]], "duration": [5.0, "ms"]},
             {"mop": "Delay", "args": [["q", 0]], "duration": [2.0, "us"]},
@@ -167,7 +167,7 @@ mod tests {
           },
           "ops": [
             {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
-            {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 31},
             {"qop": "H", "args": [["q", 0]]},
             {"mop": "Idle", "args": [["q", 0], ["q", 1]], "duration": [5.0, "ms"]},
             {"mop": "Delay", "args": [["q", 0]], "duration": [2.0, "us"]},

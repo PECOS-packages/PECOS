@@ -362,7 +362,7 @@ mod tests {
         let mut executor = BlockExecutor::new();
 
         // Add a variable for testing
-        executor.add_classical_variable("x", "i32", 32).unwrap();
+        executor.add_classical_variable("x", "i32", 31).unwrap();
 
         // Create a sequence of operations
         let operations = vec![
@@ -401,8 +401,8 @@ mod tests {
         let mut executor = BlockExecutor::new();
 
         // Add variables for testing
-        executor.add_classical_variable("x", "i32", 32).unwrap();
-        executor.add_classical_variable("y", "i32", 32).unwrap();
+        executor.add_classical_variable("x", "i32", 31).unwrap();
+        executor.add_classical_variable("y", "i32", 31).unwrap();
 
         // Set initial value
         executor.get_environment_mut().set_raw("x", 10).unwrap();
@@ -461,9 +461,9 @@ mod tests {
         let mut executor = BlockExecutor::new();
 
         // Add variables for testing
-        executor.add_classical_variable("x", "i32", 32).unwrap();
-        executor.add_classical_variable("y", "i32", 32).unwrap();
-        executor.add_classical_variable("z", "i32", 32).unwrap();
+        executor.add_classical_variable("x", "i32", 31).unwrap();
+        executor.add_classical_variable("y", "i32", 31).unwrap();
+        executor.add_classical_variable("z", "i32", 31).unwrap();
 
         // Set initial values
         executor.get_environment_mut().set_raw("x", 10).unwrap();
@@ -544,7 +544,7 @@ mod tests {
 
         // Add variables for testing
         executor.add_quantum_variable("q", 2).unwrap();
-        executor.add_classical_variable("m", "i32", 32).unwrap();
+        executor.add_classical_variable("m", "i32", 31).unwrap();
 
         // Create operations with measurements
         let operations = vec![
@@ -593,7 +593,7 @@ mod tests {
         let mut executor = BlockExecutor::new();
 
         // Add a variable for testing
-        executor.add_classical_variable("x", "i32", 32).unwrap();
+        executor.add_classical_variable("x", "i32", 31).unwrap();
 
         // Create a sequence of operations
         let operations = vec![

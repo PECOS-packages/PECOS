@@ -49,6 +49,7 @@ fn run_check(quiet: bool) {
 
             // Validate configuration
             validation.print_warnings();
+            warn_wrong_path_llvm_tools();
         }
 
         // Exit with error if config is unhealthy (would cause build failures).
@@ -71,8 +72,33 @@ fn run_check(quiet: bool) {
             } else {
                 eprintln!("Install with: `{cmd} install llvm`");
             }
+            warn_wrong_path_llvm_tools();
         }
         std::process::exit(1);
+    }
+}
+
+/// Warn when LLVM tools resolved from `PATH` are the wrong version. Selene and
+/// PECOS's own runtime `PATH` fallback resolve `llvm-as` this way, so a system
+/// LLVM ahead of 21.1 silently breaks QIS execution even when
+/// `.cargo/config.toml` is correct.
+fn warn_wrong_path_llvm_tools() {
+    for report in pecos_build::llvm::inspect_path_llvm_tools(&["llvm-as", "llvm-config"]) {
+        let Some(version) = &report.version else {
+            continue;
+        };
+        if !report.is_required {
+            eprintln!();
+            eprintln!(
+                "Warning: '{}' on PATH is LLVM {version} ({}), not {REQUIRED_VERSION}",
+                report.tool,
+                report.path.display()
+            );
+            eprintln!(
+                "  External tools (Selene) resolve {} from PATH; put LLVM {REQUIRED_VERSION}'s bin directory ahead on PATH.",
+                report.tool
+            );
+        }
     }
 }
 

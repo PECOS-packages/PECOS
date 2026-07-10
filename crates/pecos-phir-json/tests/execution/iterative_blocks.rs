@@ -14,8 +14,8 @@ fn test_basic_iterative_execution() -> Result<(), PecosError> {
 
     // Add variables for testing
     executor.add_quantum_variable("q", 2)?;
-    executor.add_classical_variable("m", "i32", 32)?;
-    executor.add_classical_variable("result", "i32", 32)?;
+    executor.add_classical_variable("m", "i32", 31)?;
+    executor.add_classical_variable("result", "i32", 31)?;
 
     // Create a sequence of operations
     let operations = vec![
@@ -86,9 +86,9 @@ fn test_nested_blocks_iterative() -> Result<(), PecosError> {
     let mut executor = BlockExecutor::new();
 
     // Add variables for testing
-    executor.add_classical_variable("x", "i32", 32)?;
-    executor.add_classical_variable("y", "i32", 32)?;
-    executor.add_classical_variable("z", "i32", 32)?;
+    executor.add_classical_variable("x", "i32", 31)?;
+    executor.add_classical_variable("y", "i32", 31)?;
+    executor.add_classical_variable("z", "i32", 31)?;
 
     // Set initial values
     executor.get_environment_mut().set("x", 10)?;
@@ -172,7 +172,7 @@ fn test_operation_buffering() -> Result<(), PecosError> {
 
     // Add variables for testing
     executor.add_quantum_variable("q", 2)?;
-    executor.add_classical_variable("m", "i32", 32)?;
+    executor.add_classical_variable("m", "i32", 31)?;
 
     // Create operations with measurements
     let operations = vec![
@@ -230,8 +230,8 @@ fn test_iterator_interface() -> Result<(), PecosError> {
     let mut executor = BlockExecutor::new();
 
     // Add variables for testing
-    executor.add_classical_variable("x", "i32", 32)?;
-    executor.add_classical_variable("y", "i32", 32)?;
+    executor.add_classical_variable("x", "i32", 31)?;
+    executor.add_classical_variable("y", "i32", 31)?;
 
     // Create a sequence of operations
     let operations = vec![

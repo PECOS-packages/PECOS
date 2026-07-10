@@ -361,8 +361,11 @@ pub const MEASUREMENT_PREFIX: &str = "measurement_";
 
 /// Infer variable size from data type when not explicitly provided.
 ///
-/// For types like "i32", "u64", extracts the bit width from the name.
-/// For "qubits", returns 0 (size must be explicit).
+/// For types like "i32", "u64", extracts the bit width from the name. A signed
+/// type defaults to `N - 1` because a signed size-S register is an `i(S+1)`
+/// integer, so the full backing type `iN` holds `N - 1` data bits plus a sign
+/// bit. Unsigned types default to their full `N` bits. For "qubits", returns 0
+/// (size must be explicit).
 #[must_use]
 pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
     if let Some(s) = explicit_size {
@@ -370,7 +373,12 @@ pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
     }
     // Try to extract bit width from type name (e.g., "i32" -> 32, "u64" -> 64)
     let digits: String = data_type.chars().filter(char::is_ascii_digit).collect();
-    digits.parse().unwrap_or(0)
+    let width: usize = digits.parse().unwrap_or(0);
+    if width > 0 && data_type.starts_with('i') {
+        width - 1
+    } else {
+        width
+    }
 }
 
 #[cfg(test)]

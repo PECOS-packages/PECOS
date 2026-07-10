@@ -11,17 +11,49 @@ use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+/// A frame of the execution stack: a slice of operations and the index of the
+/// next one to process. Blocks (`if`/`sequence`/`qparallel`) push a new frame
+/// so their child ops flow through the same measurement-boundary deferral as
+/// top-level ops, with arbitrary nesting.
+#[derive(Debug, Clone)]
+struct ExecFrame {
+    ops: Vec<Operation>,
+    idx: usize,
+}
+
 /// `PhirJsonEngine` processes PHIR programs and generates quantum operations
 #[derive(Debug)]
 pub struct PhirJsonEngine {
     /// The loaded PHIR program
     program: Option<PHIRProgram>,
-    /// Current operation index being processed
-    current_op: usize,
+    /// Execution cursor: a stack of operation frames. The bottom frame is the
+    /// top-level program; blocks push nested frames. Persists across batch
+    /// yields so a batch can end mid-block and resume after measurements land.
+    exec_stack: Vec<ExecFrame>,
     /// Operation processor for handling different operation types
     pub processor: OperationProcessor,
     /// Builder for constructing `ByteMessages`
     message_builder: ByteMessageBuilder,
+}
+
+impl PhirJsonEngine {
+    /// Build the initial execution stack from the loaded program (a single
+    /// bottom frame over the top-level ops), or empty if no program.
+    fn initial_stack(program: Option<&PHIRProgram>) -> Vec<ExecFrame> {
+        program.map_or_else(Vec::new, |p| {
+            vec![ExecFrame {
+                ops: p.ops.clone(),
+                idx: 0,
+            }]
+        })
+    }
+
+    /// Advance the top execution frame past the current op.
+    fn advance_cursor(&mut self) {
+        if let Some(frame) = self.exec_stack.last_mut() {
+            frame.idx += 1;
+        }
+    }
 }
 
 impl PhirJsonEngine {
@@ -132,8 +164,8 @@ impl PhirJsonEngine {
         }
 
         Ok(Self {
+            exec_stack: Self::initial_stack(Some(&program)),
             program: Some(program),
-            current_op: 0,
             processor,
             message_builder: ByteMessageBuilder::new(),
         })
@@ -171,8 +203,8 @@ impl PhirJsonEngine {
         }
 
         Ok(Self {
+            exec_stack: Self::initial_stack(Some(&program)),
             program: Some(program),
-            current_op: 0,
             processor,
             message_builder: ByteMessageBuilder::new(),
         })
@@ -184,13 +216,10 @@ impl PhirJsonEngine {
     /// This no longer preserves and restores variable values during reset, as they
     /// should be recomputed during program execution.
     fn reset_state(&mut self) {
-        debug!(
-            "INTERNAL RESET: PhirJsonEngine reset, current_op={}",
-            self.current_op
-        );
+        debug!("INTERNAL RESET: PhirJsonEngine reset");
 
-        // Reset the operation index to start from the beginning
-        self.current_op = 0;
+        // Reset the execution cursor to the start of the program.
+        self.exec_stack = Self::initial_stack(self.program.as_ref());
 
         // Log operations for debugging if needed
         if log::log_enabled!(log::Level::Debug)
@@ -214,382 +243,153 @@ impl PhirJsonEngine {
     fn empty() -> Self {
         Self {
             program: None,
-            current_op: 0,
+            exec_stack: Vec::new(),
             processor: OperationProcessor::new(),
             message_builder: ByteMessageBuilder::new(),
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     fn generate_commands_impl(&mut self) -> Result<Option<ByteMessage>, PecosError> {
-        // Define a maximum batch size for better performance
-        // This helps avoid creating excessively large messages
+        // Maximum quantum ops per batch, to bound message size.
         const MAX_BATCH_SIZE: usize = 100;
 
-        debug!("generate_commands called, current_op: {}", self.current_op);
-
-        debug!(
-            "Generating commands - thread {:?}, current_op: {}",
-            std::thread::current().id(),
-            self.current_op
-        );
-
-        // Get program reference and clone ops to avoid borrow issues
-        let prog = self.program.as_ref().ok_or_else(|| {
-            PecosError::Resource("Cannot generate commands: No PHIR program loaded".to_string())
-        })?;
-        let ops = prog.ops.clone();
-
-        // If we've processed all ops, return None to signal completion
-        if self.current_op >= ops.len() {
-            debug!(
-                "End of program reached at op {}, no more commands to generate",
-                self.current_op
-            );
-
-            // With our updated HybridEngine and ControlEngine implementations,
-            // we can now consistently return None when there are no more commands,
-            // even for the first batch.
-            return Ok(None);
-        }
-
-        debug!(
-            "Current operation to process: {} - {:?}",
-            self.current_op, ops[self.current_op]
-        );
-
-        // Reset and configure the reusable message builder for quantum operations
+        // Reset per-batch state.
         self.message_builder.reset();
         let _ = self.message_builder.for_quantum_operations();
+        self.processor.clear_pending_measurements();
         let mut operation_count = 0;
 
-        while self.current_op < ops.len() && operation_count < MAX_BATCH_SIZE {
-            match &ops[self.current_op] {
+        loop {
+            // Drop exhausted frames (finished blocks / end of program).
+            while self.exec_stack.last().is_some_and(|f| f.idx >= f.ops.len()) {
+                self.exec_stack.pop();
+            }
+            let Some(frame) = self.exec_stack.last() else {
+                // Nothing left to process. Flush any queued quantum ops.
+                if operation_count > 0 {
+                    return Ok(Some(self.message_builder.build()));
+                }
+                debug!("Execution stack empty; shot complete");
+                return Ok(None);
+            };
+            let op = frame.ops[frame.idx].clone();
+
+            match &op {
                 Operation::VariableDefinition {
                     data,
                     data_type,
                     variable,
                     size,
                 } => {
-                    debug!("Processing variable definition: {data} {data_type} {variable}");
                     let _ = self.processor.handle_variable_definition(
                         data,
                         data_type,
                         variable,
                         infer_size(data_type, *size),
                     );
-                    self.current_op += 1;
-                    return self.generate_commands_impl();
+                    self.advance_cursor();
                 }
                 Operation::QuantumOp {
                     qop,
                     angles,
                     args,
-                    returns: _,
-                    metadata: _,
+                    returns,
+                    ..
                 } => {
-                    debug!("Processing quantum operation: {qop}");
-
-                    // Clone the operation parameters to avoid borrow issues
-                    let qop_str = qop.clone();
-                    let args_clone = args.clone();
-                    let angles_clone = angles.clone();
-
-                    // Process the quantum operation with angles in radians
-                    match self.processor.process_quantum_op(
-                        &qop_str,
-                        angles_clone.as_ref(),
-                        &args_clone,
-                    ) {
-                        Ok((gate_type, qubit_args, angle_args)) => {
-                            // Add the gate to the builder
-                            self.processor.add_quantum_operation_to_builder(
-                                &mut self.message_builder,
-                                &gate_type,
-                                &qubit_args,
-                                &angle_args,
-                            )?;
-
-                            operation_count += 1;
-                            debug!("Added quantum operation to builder");
-                        }
-                        Err(e) => return Err(e),
+                    let (gate_type, qubit_args, angle_args) =
+                        self.processor
+                            .process_quantum_op(qop, angles.as_ref(), args)?;
+                    self.processor.add_quantum_operation_to_builder(
+                        &mut self.message_builder,
+                        &gate_type,
+                        &qubit_args,
+                        &angle_args,
+                    )?;
+                    if gate_type == "Measure" {
+                        // Record the return registers so positional outcomes map
+                        // back to them -- works for measurements queued from
+                        // inside blocks too, which a top-level scan would miss.
+                        // One slot per measured qubit keeps outcomes aligned.
+                        self.processor
+                            .record_measurement_returns(qubit_args.len(), returns)?;
+                    }
+                    operation_count += 1;
+                    self.advance_cursor();
+                    if operation_count >= MAX_BATCH_SIZE {
+                        debug!("Reached maximum batch size ({MAX_BATCH_SIZE}), returning batch");
+                        return Ok(Some(self.message_builder.build()));
                     }
                 }
                 Operation::ClassicalOp {
-                    cop,
-                    args,
-                    returns,
-                    metadata: _,
-                    function,
+                    cop, args, returns, ..
                 } => {
-                    debug!("Processing classical operation: {cop}");
-
-                    // Debug log specially for ffcall operations
-                    if cop == "ffcall" {
+                    // A classical op may read a register measured earlier in this
+                    // batch; its result is not available until the batch runs.
+                    // Yield the queued quantum ops first (leaving the cursor in
+                    // place) so measurements land before this op executes.
+                    if operation_count > 0 {
                         debug!(
-                            "Found ffcall operation: function={function:?}, args={args:?}, returns={returns:?}"
+                            "Deferring classical op '{cop}' until batch measurements are applied"
                         );
+                        return Ok(Some(self.message_builder.build()));
                     }
-
-                    if self.processor.handle_classical_op(
+                    // Pass the op itself so an ffcall can find its function name.
+                    let ended = self.processor.handle_classical_op(
                         cop,
                         args,
                         returns,
-                        &ops,
-                        self.current_op,
-                    )? {
-                        debug!("Finishing batch due to classical operation completion");
-                        self.current_op += 1;
-
-                        // Build and return the message
-                        if operation_count > 0 {
-                            debug!("Returning batch with {operation_count} operations");
-                            return Ok(Some(self.message_builder.build()));
-                        }
-
-                        // Create an empty message if no operations were added
-                        debug!("Returning empty batch after classical operation");
-                        return Ok(Some(ByteMessage::builder().build()));
+                        std::slice::from_ref(&op),
+                        0,
+                    )?;
+                    self.advance_cursor();
+                    if ended {
+                        return Ok(Some(self.message_builder.build()));
                     }
                 }
                 Operation::Block {
                     block,
-                    ops,
+                    ops: block_ops,
                     condition,
                     true_branch,
                     false_branch,
                     ..
                 } => {
-                    debug!("Processing block operation: {block}");
-
                     match block.as_str() {
                         "if" => {
-                            // Process if/else block
-                            if let Some(_cond) = condition
-                                && let (Some(tb), fb) = (true_branch, false_branch)
-                            {
-                                // Get operations based on condition
-                                let branch_ops = self.processor.process_conditional_block(
-                                    condition.as_ref().expect("checked Some above"),
-                                    tb,
-                                    fb.as_deref(),
-                                )?;
-
-                                // Replace the current op with the branch operations
-                                // This is a simplification - a more robust implementation would
-                                // involve temporarily changing the ops list
-                                for branch_op in &branch_ops {
-                                    match branch_op {
-                                        Operation::QuantumOp {
-                                            qop, angles, args, ..
-                                        } => {
-                                            // Process each quantum operation in the branch
-                                            let qop_str = qop.clone();
-                                            let args_clone = args.clone();
-                                            let angles_clone = angles.clone();
-
-                                            match self.processor.process_quantum_op(
-                                                &qop_str,
-                                                angles_clone.as_ref(),
-                                                &args_clone,
-                                            ) {
-                                                Ok((gate_type, qubit_args, angle_args)) => {
-                                                    self.processor
-                                                        .add_quantum_operation_to_builder(
-                                                            &mut self.message_builder,
-                                                            &gate_type,
-                                                            &qubit_args,
-                                                            &angle_args,
-                                                        )?;
-                                                    operation_count += 1;
-                                                }
-                                                Err(e) => return Err(e),
-                                            }
-                                        }
-                                        Operation::ClassicalOp {
-                                            cop,
-                                            args,
-                                            returns,
-                                            metadata: _,
-                                            function,
-                                        } => {
-                                            debug!(
-                                                "Processing classical operation in branch: {cop}"
-                                            );
-                                            // Handle classical operations from conditional branches
-                                            if cop == "ffcall" {
-                                                debug!(
-                                                    "Processing ffcall in branch: function={function:?}, args={args:?}, returns={returns:?}"
-                                                );
-                                            }
-                                            // For ffcall operations from branches, we need to handle them specially
-                                            // because they have the function name directly in the operation
-                                            if cop == "ffcall" {
-                                                // Create a temporary operation list with just this operation
-                                                // This ensures handle_classical_op can find the function name
-                                                let temp_ops = vec![branch_op.clone()];
-                                                if self.processor.handle_classical_op(
-                                                    cop, args, returns, &temp_ops,
-                                                    0, // The operation is at index 0 in temp_ops
-                                                )? {
-                                                    debug!(
-                                                        "Classical ffcall operation in branch completed"
-                                                    );
-                                                }
-                                            } else {
-                                                // For other classical operations, use the original ops
-                                                if self.processor.handle_classical_op(
-                                                    cop,
-                                                    args,
-                                                    returns,
-                                                    &branch_ops,
-                                                    0, // Index within branch ops
-                                                )? {
-                                                    debug!(
-                                                        "Classical operation in branch completed"
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        _ => {
-                                            // For other operation types, we'll handle them later
-                                            debug!(
-                                                "Skipping other operation type in branch: {branch_op:?}"
-                                            );
-                                        }
-                                    }
-                                }
+                            // A conditional's condition may read a register
+                            // measured earlier in this batch; defer until the
+                            // batch's measurements are applied.
+                            if operation_count > 0 {
+                                debug!(
+                                    "Deferring conditional block until batch measurements are applied"
+                                );
+                                return Ok(Some(self.message_builder.build()));
                             }
+                            let branch = match (condition, true_branch) {
+                                (Some(cond), Some(tb)) => self
+                                    .processor
+                                    .process_conditional_block(cond, tb, false_branch.as_deref())?,
+                                _ => Vec::new(),
+                            };
+                            self.advance_cursor();
+                            self.exec_stack.push(ExecFrame {
+                                ops: branch,
+                                idx: 0,
+                            });
                         }
-                        "qparallel" => {
-                            // Process qparallel block
-                            let parallel_ops = self.processor.process_block(block, ops)?;
-
-                            for parallel_op in parallel_ops {
-                                match parallel_op {
-                                    Operation::QuantumOp {
-                                        qop, angles, args, ..
-                                    } => {
-                                        // Process each quantum operation in the parallel block
-                                        let qop_str = qop.clone();
-                                        let args_clone = args.clone();
-                                        let angles_clone = angles.clone();
-
-                                        match self.processor.process_quantum_op(
-                                            &qop_str,
-                                            angles_clone.as_ref(),
-                                            &args_clone,
-                                        ) {
-                                            Ok((gate_type, qubit_args, angle_args)) => {
-                                                self.processor.add_quantum_operation_to_builder(
-                                                    &mut self.message_builder,
-                                                    &gate_type,
-                                                    &qubit_args,
-                                                    &angle_args,
-                                                )?;
-                                                operation_count += 1;
-                                            }
-                                            Err(e) => return Err(e),
-                                        }
-                                    }
-                                    _ => {
-                                        // For other operation types, we'll handle them later
-                                        debug!("Skipping non-quantum operation in qparallel block");
-                                    }
-                                }
-                            }
+                        "sequence" | "qparallel" => {
+                            // Flatten the block: its child ops run through the
+                            // same cursor (and the same measurement deferral),
+                            // with arbitrary nesting.
+                            let expanded = self.processor.process_block(block, block_ops)?;
+                            self.advance_cursor();
+                            self.exec_stack.push(ExecFrame {
+                                ops: expanded,
+                                idx: 0,
+                            });
                         }
-                        "sequence" => {
-                            // Process sequence block by recursively processing all operations
-                            debug!("Processing sequence block");
-
-                            // Process each operation in the sequence block
-                            for op in ops {
-                                match op {
-                                    Operation::QuantumOp {
-                                        qop, angles, args, ..
-                                    } => {
-                                        // Process each quantum operation
-                                        let qop_str = qop.clone();
-                                        let args_clone = args.clone();
-                                        let angles_clone = angles.clone();
-
-                                        match self.processor.process_quantum_op(
-                                            &qop_str,
-                                            angles_clone.as_ref(),
-                                            &args_clone,
-                                        ) {
-                                            Ok((gate_type, qubit_args, angle_args)) => {
-                                                self.processor.add_quantum_operation_to_builder(
-                                                    &mut self.message_builder,
-                                                    &gate_type,
-                                                    &qubit_args,
-                                                    &angle_args,
-                                                )?;
-                                                operation_count += 1;
-                                                debug!(
-                                                    "Added quantum operation from sequence block to builder"
-                                                );
-                                            }
-                                            Err(e) => return Err(e),
-                                        }
-                                    }
-                                    Operation::ClassicalOp {
-                                        cop,
-                                        args,
-                                        returns,
-                                        function: _,
-                                        metadata: _,
-                                    } => {
-                                        // Process classical operations in the sequence
-                                        if self.processor.handle_classical_op(
-                                            cop,
-                                            args,
-                                            returns,
-                                            ops,
-                                            self.current_op,
-                                        )? {
-                                            debug!(
-                                                "Processed classical operation from sequence block"
-                                            );
-                                            operation_count += 1;
-                                        }
-                                    }
-                                    Operation::MachineOp {
-                                        mop,
-                                        args,
-                                        duration,
-                                        metadata,
-                                    } => {
-                                        // Process machine operations in the sequence
-                                        match self.processor.process_machine_op(
-                                            mop,
-                                            args.as_ref(),
-                                            duration.as_ref(),
-                                            metadata.as_ref(),
-                                        ) {
-                                            Ok(mop_result) => {
-                                                self.processor.add_machine_operation_to_builder(
-                                                    &mut self.message_builder,
-                                                    &mop_result,
-                                                )?;
-                                                operation_count += 1;
-                                                debug!(
-                                                    "Added machine operation from sequence block to builder"
-                                                );
-                                            }
-                                            Err(e) => return Err(e),
-                                        }
-                                    }
-                                    // We don't process nested blocks here to avoid excessive recursion
-                                    // If needed, we could add a recursion limit
-                                    _ => debug!("Skipping complex operation in sequence block"),
-                                }
-                            }
-                        }
-                        _ => {
-                            return Err(PecosError::Input(format!("Unknown block type: {block}")));
+                        other => {
+                            return Err(PecosError::Input(format!("Unknown block type: {other}")));
                         }
                     }
                 }
@@ -599,70 +399,29 @@ impl PhirJsonEngine {
                     duration,
                     metadata,
                 } => {
-                    debug!("Processing machine operation: {mop}");
-
-                    // Process the machine operation
-                    match self.processor.process_machine_op(
+                    let mop_result = self.processor.process_machine_op(
                         mop,
                         args.as_ref(),
                         duration.as_ref(),
                         metadata.as_ref(),
-                    ) {
-                        Ok(mop_result) => {
-                            // Add the machine operation to the builder
-                            self.processor.add_machine_operation_to_builder(
-                                &mut self.message_builder,
-                                &mop_result,
-                            )?;
-                            operation_count += 1;
-                            debug!("Added machine operation to builder");
-                        }
-                        Err(e) => return Err(e),
-                    }
+                    )?;
+                    self.processor
+                        .add_machine_operation_to_builder(&mut self.message_builder, &mop_result)?;
+                    operation_count += 1;
+                    self.advance_cursor();
                 }
-                Operation::MetaInstruction {
-                    meta,
-                    args,
-                    metadata: _,
-                } => {
-                    debug!("Processing meta instruction: {meta}");
-
-                    // Process meta instructions like barrier
-                    match self.processor.process_meta_instruction(meta, args) {
-                        Ok(meta_result) => {
-                            // Add the meta instruction to the builder
-                            self.processor.add_meta_instruction_to_builder(
-                                &mut self.message_builder,
-                                &meta_result,
-                            )?;
-                            operation_count += 1;
-                            debug!("Added meta instruction to builder");
-                        }
-                        Err(e) => return Err(e),
-                    }
+                Operation::MetaInstruction { meta, args, .. } => {
+                    let meta_result = self.processor.process_meta_instruction(meta, args)?;
+                    self.processor
+                        .add_meta_instruction_to_builder(&mut self.message_builder, &meta_result)?;
+                    operation_count += 1;
+                    self.advance_cursor();
                 }
-                Operation::Comment { comment } => {
-                    debug!("Processing comment: {comment}");
-                    // Comments are ignored during execution
+                Operation::Comment { .. } | Operation::DataExport { .. } => {
+                    self.advance_cursor();
                 }
-                Operation::DataExport { .. } => {
-                    // Data exports are handled elsewhere
-                }
-            }
-            self.current_op += 1;
-
-            // If we've reached the maximum batch size, break out of the loop
-            // This ensures we don't create excessively large messages
-            if operation_count >= MAX_BATCH_SIZE {
-                debug!("Reached maximum batch size ({MAX_BATCH_SIZE}), returning current batch");
-                break;
             }
         }
-
-        debug!("PHIR-JSON engine generated {operation_count} operations for shot");
-
-        // Build and return the message
-        Ok(Some(self.message_builder.build()))
     }
 
     /// Gets the results in a specific format
@@ -699,11 +458,8 @@ impl ControlEngine for PhirJsonEngine {
     type EngineOutput = ByteMessage;
 
     fn start(&mut self, _input: ()) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
-        debug!(
-            "PHIR: start() called with current_op={}, beginning new shot",
-            self.current_op
-        );
-        self.current_op = 0; // Force reset here too
+        debug!("PHIR: start() called, beginning new shot");
+        self.exec_stack = Self::initial_stack(self.program.as_ref());
         self.processor.reset();
 
         debug!("start() called, generating commands");
@@ -720,10 +476,7 @@ impl ControlEngine for PhirJsonEngine {
         &mut self,
         measurements: ByteMessage,
     ) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
-        debug!(
-            "continue_processing called with current_op={}",
-            self.current_op
-        );
+        debug!("continue_processing called");
 
         // Handle received measurements
         let measurement_results = measurements.outcomes()?;
@@ -764,30 +517,8 @@ impl ControlEngine for PhirJsonEngine {
             Ok(EngineStage::NeedsProcessing(commands))
         } else {
             debug!("No more commands, returning results");
-            // Make sure to process any remaining Result operations
-            if self.current_op < self.program.as_ref().map_or(0, |prog| prog.ops.len()) {
-                let ops = self
-                    .program
-                    .as_ref()
-                    .expect("program is set during execution")
-                    .ops
-                    .clone();
-                if let Operation::ClassicalOp {
-                    cop, args, returns, ..
-                } = &ops[self.current_op]
-                    && cop == "Result"
-                {
-                    debug!("Processing Result operation: {cop}");
-                    self.processor.handle_classical_op(
-                        cop,
-                        args,
-                        returns,
-                        &ops,
-                        self.current_op,
-                    )?;
-                }
-            }
-
+            // The cursor re-processes any deferred classical ops after
+            // measurements are applied, so no end-of-program fallback is needed.
             let results = self.get_results()?;
             debug!("Completed processing, returning results");
             Ok(EngineStage::Complete(results))
@@ -874,7 +605,7 @@ impl ClassicalEngine for PhirJsonEngine {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     exported_values
                         .entry(info.name.clone())
-                        .or_insert(value.as_u32());
+                        .or_insert(value.as_u64());
                 }
             }
         } else {
@@ -909,13 +640,21 @@ impl ClassicalEngine for PhirJsonEngine {
         );
 
         for (key, value) in &exported_values {
-            // Use add_register with proper width from variable metadata
+            // Use add_register with proper width from variable metadata. A
+            // signed size-S register is an i(S+1) integer, so it renders S+1
+            // bits (the extra sign bit); unsigned registers render S bits.
             let width = self
                 .processor
                 .environment
                 .get_variable_info_opt(key)
-                .map_or(32, |info| info.size);
-            results.add_register(key, *value, width);
+                .map_or(32, |info| {
+                    if info.data_type.is_signed() {
+                        info.size + 1
+                    } else {
+                        info.size
+                    }
+                });
+            results.add_register_u64(key, *value, width);
             log::debug!("PHIR: Adding mapped register {key} = {value} (width={width})");
         }
 
@@ -928,7 +667,12 @@ impl ClassicalEngine for PhirJsonEngine {
             for info in self.processor.environment.get_all_variables() {
                 if let Some(value) = self.processor.environment.get(&info.name) {
                     log::debug!("PHIR: Adding variable {} = {} to results", info.name, value);
-                    results.add_register(&info.name, value.as_u32(), info.size);
+                    let width = if info.data_type.is_signed() {
+                        info.size + 1
+                    } else {
+                        info.size
+                    };
+                    results.add_register_u64(&info.name, value.as_u64(), width);
                 }
             }
 
@@ -942,7 +686,7 @@ impl ClassicalEngine for PhirJsonEngine {
                 // Try to get the value from the environment
                 if let Some(value) = self.processor.environment.get(source) {
                     log::debug!("PHIR: Exporting {source} -> {dest} = {value}");
-                    results.data.insert(dest.clone(), Data::U32(value.as_u32()));
+                    results.data.insert(dest.clone(), Data::U64(value.as_u64()));
                 } else {
                     // If not found in environment, try the exported_values directly
                     // Try to get the value directly from environment if not already found
@@ -950,7 +694,7 @@ impl ClassicalEngine for PhirJsonEngine {
                         log::debug!(
                             "PHIR: Exporting from environment {source} -> {dest} = {value}"
                         );
-                        results.data.insert(dest.clone(), Data::U32(value.as_u32()));
+                        results.data.insert(dest.clone(), Data::U64(value.as_u64()));
                     }
                     // Note: We no longer fall back to measurement_results as primary source
                 }
@@ -963,7 +707,7 @@ impl ClassicalEngine for PhirJsonEngine {
                         log::debug!("PHIR: Adding all variables: {} = {}", info.name, value);
                         results
                             .data
-                            .insert(info.name.clone(), Data::U32(value.as_u32()));
+                            .insert(info.name.clone(), Data::U64(value.as_u64()));
                     }
                 }
             }
@@ -1027,7 +771,7 @@ impl Clone for PhirJsonEngine {
 
                 Self {
                     program: Some(program.clone()),
-                    current_op: self.current_op, // Preserve the current operation position
+                    exec_stack: self.exec_stack.clone(), // Preserve execution position
                     processor, // Use the fully cloned processor with preserved state
                     message_builder: ByteMessageBuilder::new(),
                 }

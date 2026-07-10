@@ -298,7 +298,7 @@ mod tests {
           },
           "ops": [
             {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
-            {"data": "cvar_define", "data_type": "i32", "variable": "condition", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "condition", "size": 31},
             {"data": "cvar_define", "data_type": "i32", "variable": "m", "size": 1},
             {"cop": "=", "args": [1], "returns": ["condition"]},
             {

@@ -144,7 +144,7 @@ impl<'a> ExpressionEvaluator<'a> {
                         ExprValue::from_bit_value(value)
                     });
                 }
-                return Err(PecosError::Input(format!("Variable '{name}' not found")));
+                return Err(PecosError::RuntimeUndefinedVariable { name: name.clone() });
             }
             Expression::Operation { .. } => {}
         }
@@ -221,17 +221,15 @@ impl<'a> ExpressionEvaluator<'a> {
                         ExprValue::from_bit_value(value)
                     })
                 } else {
-                    Err(PecosError::Input(format!("Variable '{name}' not found")))
+                    Err(PecosError::RuntimeUndefinedVariable { name: name.clone() })
                 }
             }
             ArgItem::Indexed((name, idx)) => {
-                if let Ok(bit) = self.environment.get_bit(name, *idx) {
-                    Ok(ExprValue::Boolean(bit.0))
-                } else {
-                    Err(PecosError::Input(format!(
-                        "Failed to access bit {name}[{idx}]"
-                    )))
-                }
+                // Propagate the underlying error so an undefined variable surfaces
+                // as `RuntimeUndefinedVariable` (-> KeyError) rather than being
+                // flattened into a generic `Input` error.
+                let bit = self.environment.get_bit(name, *idx)?;
+                Ok(ExprValue::Boolean(bit.0))
             }
             ArgItem::Integer(val) => Ok(ExprValue::signed(*val)),
             ArgItem::UInteger(val) => Ok(ExprValue::unsigned(*val)),
@@ -414,10 +412,12 @@ impl<'a> ExpressionEvaluator<'a> {
     /// # Errors
     /// Returns an error if any bit access fails.
     pub fn get_bits(&self, name: &str, indices: &[usize]) -> Result<Vec<bool>, PecosError> {
-        let value = self
-            .environment
-            .get(name)
-            .ok_or_else(|| PecosError::Input(format!("Variable '{name}' not found")))?;
+        let value =
+            self.environment
+                .get(name)
+                .ok_or_else(|| PecosError::RuntimeUndefinedVariable {
+                    name: name.to_string(),
+                })?;
         let value_u64 = value.as_u64();
         indices
             .iter()

@@ -604,7 +604,9 @@ impl Environment {
             self.values[idx] = BitValue::from_u64(&info.data_type, info.size, value);
             Ok(())
         } else {
-            Err(PecosError::Input(format!("Variable '{name}' not found")))
+            Err(PecosError::RuntimeUndefinedVariable {
+                name: name.to_string(),
+            })
         }
     }
 
@@ -616,7 +618,9 @@ impl Environment {
         if let Some(&idx) = self.name_to_index.get(name) {
             Ok(&self.metadata[idx])
         } else {
-            Err(PecosError::Input(format!("Variable '{name}' not found")))
+            Err(PecosError::RuntimeUndefinedVariable {
+                name: name.to_string(),
+            })
         }
     }
 
@@ -634,9 +638,9 @@ impl Environment {
         if let Some(&idx) = self.name_to_index.get(var_name) {
             self.values[idx].get_bit(bit_index).map(BoolBit)
         } else {
-            Err(PecosError::Input(format!(
-                "Variable '{var_name}' not found"
-            )))
+            Err(PecosError::RuntimeUndefinedVariable {
+                name: var_name.to_string(),
+            })
         }
     }
 
@@ -661,9 +665,9 @@ impl Environment {
             self.values[idx] = BitValue::from_u64(&info.data_type, info.size, updated.as_u64());
             Ok(())
         } else {
-            Err(PecosError::Input(format!(
-                "Variable '{var_name}' not found"
-            )))
+            Err(PecosError::RuntimeUndefinedVariable {
+                name: var_name.to_string(),
+            })
         }
     }
 

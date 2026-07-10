@@ -36,16 +36,16 @@ def _make_classical_interpreter(
     """Create a classical interpreter from a string specifier.
 
     Args:
-        spec: One of "python", "rust", or None (defaults to "python").
+        spec: One of "python", "rust", or None (defaults to "rust").
 
     Returns:
         A classical interpreter instance.
     """
-    if spec == "rust":
+    if spec is None or spec == "rust":
         from pecos_rslib import RustPhirClassicalInterpreter  # noqa: PLC0415
 
         return RustPhirClassicalInterpreter()
-    if spec is None or spec == "python":
+    if spec == "python":
         return PhirClassicalInterpreter()
     msg = f"Unknown classical interpreter: {spec!r}. Use 'python' or 'rust'."
     raise ValueError(msg)
@@ -96,8 +96,8 @@ class HybridEngine:
         Args:
             cinterp: Classical interpreter for executing classical operations.
                 Can be a ClassicalInterpreterProtocol instance, or a string:
-                "python" for PhirClassicalInterpreter (default), "rust" for
-                the Rust-backed RustPhirClassicalInterpreter.
+                "rust" for the Rust-backed RustPhirClassicalInterpreter (default),
+                "python" for the pure-Python PhirClassicalInterpreter.
             qsim: Quantum simulator for executing quantum operations. Can be a
                 QuantumSimulator instance or a string specifying the simulator type.
                 Defaults to QuantumSimulator if None.

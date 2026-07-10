@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pecos.classical_interpreters.phir_classical_interpreter import PhirClassicalInterpreter
 from pecos.engines.hybrid_engine import HybridEngine
-from pecos_rslib import RustPhirClassicalInterpreter
+from pecos_rslib import RustPhirClassicalInterpreter, qasm_to_phir_json_py
 
 if TYPE_CHECKING:
     from pecos.protocols import ForeignObjectProtocol
@@ -96,29 +96,43 @@ def test_phir_integration_files(filename: str) -> None:
 WAT_DIR = Path(__file__).parent.parent / "integration" / "wat"
 
 
-def test_wasm_spec_example() -> None:
-    """Test spec_example.phir.json with WASM foreign object."""
+@pytest.mark.parametrize("filename", ["spec_example.phir.json", "example1.phir.json"])
+def test_wasm_parity(filename: str) -> None:
+    """PHIR programs with WASM foreign calls must produce identical results."""
     from pecos import WasmForeignObject
 
-    phir = json.loads((PHIR_DIR / "spec_example.phir.json").read_text())
-    math_wat = WAT_DIR / "math.wat"
-
-    py_i = PhirClassicalInterpreter()
-    py_r = HybridEngine(cinterp=py_i).run(
+    phir = json.loads((PHIR_DIR / filename).read_text())
+    py_r, rs_r = run_both(
         phir,
-        foreign_object=WasmForeignObject(math_wat),
         shots=20,
         seed=42,
+        foreign_object=WasmForeignObject(WAT_DIR / "math.wat"),
     )
+    assert py_r == rs_r
 
-    rs_i = RustPhirClassicalInterpreter()
-    rs_r = HybridEngine(cinterp=rs_i).run(
-        phir,
-        foreign_object=WasmForeignObject(math_wat),
-        shots=20,
-        seed=42,
-    )
 
+# ── Real-generator differential: QASM → PHIR ─────────────────────────
+
+QASM_VALIDATION_DIR = (
+    Path(__file__).resolve().parents[5] / "crates" / "pecos-qasm" / "tests" / "fixtures" / "qasm_validation"
+)
+
+
+@pytest.mark.parametrize(
+    "qasm_file",
+    sorted(QASM_VALIDATION_DIR.glob("*.qasm")),
+    ids=lambda p: p.stem,
+)
+def test_qasm_generated_phir_parity(qasm_file: Path) -> None:
+    """Real generated PHIR must be interpreted identically by both interpreters.
+
+    Converts each QASM fixture to PHIR through the real Rust ``qasm_to_phir_json``
+    generator (conditionals, classical registers, ...) and runs the result
+    through both interpreters -- a differential over actual generator output,
+    complementing the synthetic fuzz.
+    """
+    phir = qasm_to_phir_json_py(qasm_file.read_text())
+    py_r, rs_r = run_both(phir, shots=10, seed=42)
     assert py_r == rs_r
 
 
@@ -349,6 +363,33 @@ FUZZ_DTYPES = ["i32", "u32", "i64", "u64"]
 FUZZ_COPS = ["+", "-", "*", "&", "|", "^", ">>", "<<", "/", "%", "==", "!=", "<", ">", "<=", ">="]
 
 
+def _random_expr(rng: random.Random, vars_info: list, depth: int):
+    """Generate a random (possibly nested) classical expression.
+
+    Nests binary ops and the unary ``~`` so the interpreters' expression
+    recursion is exercised, not just flat one-level ops. Division/modulo use a
+    nonzero literal divisor and shifts a bounded literal amount, so no generated
+    program divides by zero or shifts wildly (both interpreters would agree on
+    those, but they'd raise/short-circuit and stop the differential).
+    """
+    if depth <= 0 or rng.random() < 0.4:
+        # Leaf: a variable reference or a small literal.
+        if rng.random() < 0.6:
+            return rng.choice(vars_info)[0]
+        return rng.randint(0, 15)
+    if rng.random() < 0.2:
+        return {"cop": "~", "args": [_random_expr(rng, vars_info, depth - 1)]}
+    cop = rng.choice(FUZZ_COPS)
+    lhs = _random_expr(rng, vars_info, depth - 1)
+    if cop in ("/", "%"):
+        rhs = rng.randint(1, 15)
+    elif cop in (">>", "<<"):
+        rhs = rng.randint(0, 15)
+    else:
+        rhs = _random_expr(rng, vars_info, depth - 1)
+    return {"cop": cop, "args": [lhs, rhs]}
+
+
 def _make_random_classical_program(rng: random.Random) -> dict:
     """Generate a random classical-only PHIR program."""
     nvars = rng.randint(2, 5)
@@ -380,14 +421,8 @@ def _make_random_classical_program(rng: random.Random) -> dict:
             val = max(-(2**63), min(2**63 - 1, val))
             ops.append({"cop": "=", "returns": [tname], "args": [val]})
         elif op_kind < 0.6:
-            src = rng.choice(vars_info)
-            cop = rng.choice(FUZZ_COPS)
-            rhs = rng.randint(0, 15)
-            if cop in ("/", "%"):
-                rhs = max(rhs, 1)
-            if cop in (">>", "<<"):
-                rhs = rhs % 16
-            ops.append({"cop": "=", "returns": [tname], "args": [{"cop": cop, "args": [src[0], rhs]}]})
+            expr = _random_expr(rng, vars_info, depth=rng.randint(1, 3))
+            ops.append({"cop": "=", "returns": [tname], "args": [expr]})
         elif op_kind < 0.8:
             bi = rng.randint(0, min(tsize - 1, 7))
             bv = rng.randint(0, 1)
@@ -457,7 +492,7 @@ def _make_random_quantum_program(rng: random.Random) -> dict:
 def test_fuzz_classical_programs() -> None:
     """Fuzz test: random classical programs must produce identical results."""
     rng = random.Random(2026)
-    for i in range(200):
+    for i in range(2000):
         phir = _make_random_classical_program(rng)
         py_r, rs_r = run_both(phir, seed=i, qsim="stabilizer")
         assert py_r == rs_r, f"Classical fuzz program {i} produced different results"
@@ -468,13 +503,13 @@ def test_fuzz_quantum_programs() -> None:
     rng = random.Random(2026)
     identical = 0
 
-    for i in range(200):
+    for i in range(1000):
         phir = _make_random_quantum_program(rng)
         py_r, rs_r = run_both(phir, shots=20, seed=i + 10000)
         assert py_r == rs_r, f"Quantum fuzz program {i} produced different results"
         identical += 1
 
-    assert identical == 200
+    assert identical == 1000
 
 
 # ── Targeted classical edge cases ──────────────────────────────────

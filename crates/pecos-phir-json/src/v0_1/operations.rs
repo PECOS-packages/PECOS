@@ -869,11 +869,20 @@ impl OperationProcessor {
     /// # Errors
     /// Returns an error if the variable already exists or cannot be added.
     pub fn add_quantum_variable(&mut self, variable: &str, size: usize) -> Result<(), PecosError> {
-        // Only add if it doesn't already exist. The engine pre-defines variables
-        // from the program header and then re-encounters the same definitions
-        // during execution, so re-definition must be a no-op (mirrors
-        // `add_classical_variable`). Genuine definition errors still propagate.
+        // The engine pre-defines variables from the program header and then
+        // re-encounters the same definitions during execution, so an IDENTICAL
+        // re-definition must be a no-op (mirrors `add_classical_variable`). A
+        // CONFLICTING re-definition (different type or size) is a genuine
+        // definition error and must propagate.
         if self.environment.has_variable(variable) {
+            let info = self.environment.get_variable_info(variable)?;
+            if info.data_type != DataType::Qubits || info.size != size {
+                return Err(PecosError::Input(format!(
+                    "Conflicting definition for variable '{variable}': existing {:?} size {}, \
+                     new qubits size {size}",
+                    info.data_type, info.size
+                )));
+            }
             log::debug!(
                 "Quantum variable '{variable}' already exists in environment, skipping creation"
             );
@@ -1711,6 +1720,17 @@ impl OperationProcessor {
 
         // Step 2: Update the specific bit directly. An out-of-range write is a
         // hard error -- fail fast rather than silently dropping the outcome.
+        // `Environment::set_bit` only bounds-checks the backing integer width
+        // and then re-masks to the declared width, which would silently drop a
+        // bit between the declared size and the backing width -- so check the
+        // declared size here.
+        let declared_size = self.environment.get_variable_info(var_name)?.size;
+        if var_idx >= declared_size {
+            return Err(PecosError::Input(format!(
+                "Measurement write {var_name}[{var_idx}] is out of range for a register of \
+                 declared size {declared_size}"
+            )));
+        }
         let bit_value = u64::from(outcome != 0);
         self.environment.set_bit(var_name, var_idx, bit_value)?;
         log::debug!("Set bit {var_name}[{var_idx}] = {bit_value} in environment");
@@ -2033,6 +2053,48 @@ mod tests {
             msg.contains("70") || msg.to_lowercase().contains("bound") || msg.contains("fit"),
             "expected an out-of-range error, got: {msg}"
         );
+    }
+
+    // A write between the declared size and the backing integer width must also
+    // fail fast -- Environment::set_bit alone would accept it and then mask the
+    // bit away when re-normalizing to the declared width (silent drop).
+    #[test]
+    fn test_measurement_write_beyond_declared_size_fails_fast() {
+        let mut processor = OperationProcessor::new();
+        processor.add_classical_variable("m", "u64", 4).unwrap();
+        // Bit 4 on a size-4 register: within the 64-bit backing width, but
+        // beyond the declared size.
+        processor
+            .record_measurement_returns(1, &[("m".to_string(), 4)])
+            .unwrap();
+        let err = processor
+            .handle_measurements(&[1], &[])
+            .expect_err("write beyond the declared register size must fail fast");
+        assert!(
+            err.to_string().contains("declared size 4"),
+            "expected a declared-size error, got: {err}"
+        );
+    }
+
+    // A conflicting re-definition (same name, different type or size) is a
+    // genuine definition error; only an identical re-definition is a no-op.
+    #[test]
+    fn test_conflicting_quantum_variable_definition_fails() {
+        let mut processor = OperationProcessor::new();
+        processor.add_quantum_variable("q", 2).unwrap();
+        processor
+            .add_quantum_variable("q", 2)
+            .expect("identical re-definition is a no-op");
+        let err = processor
+            .add_quantum_variable("q", 3)
+            .expect_err("conflicting size must be rejected");
+        assert!(err.to_string().contains("Conflicting definition"));
+
+        processor.add_classical_variable("c", "u32", 4).unwrap();
+        let err = processor
+            .add_quantum_variable("c", 4)
+            .expect_err("classical/quantum name collision must be rejected");
+        assert!(err.to_string().contains("Conflicting definition"));
     }
 
     // Issue #345 finding 3: no-return measurements split across batches must not

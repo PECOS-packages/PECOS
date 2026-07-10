@@ -207,6 +207,12 @@ impl PhirClassicalInterpreter {
         Ok(())
     }
 
+    /// Detach the foreign object (e.g. so the interpreter can be pickled
+    /// without it; workers re-attach their own copy via `init`).
+    pub fn clear_foreign_object(&mut self) {
+        self.foreign_object = None;
+    }
+
     /// Get a reference to the program ops.
     #[must_use]
     pub fn program_ops(&self) -> &[Operation] {

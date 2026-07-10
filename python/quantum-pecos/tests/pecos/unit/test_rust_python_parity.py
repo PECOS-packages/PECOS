@@ -755,6 +755,96 @@ def test_division_by_zero(cop: str) -> None:
         run_both(phir, qsim="stabilizer")
 
 
+@pytest.mark.parametrize("interp", ["python", "rust"])
+def test_division_by_zero_raises_zero_division_error(interp: str) -> None:
+    """Division by zero raises the exact ``ZeroDivisionError`` in both interpreters.
+
+    ``run_both`` cannot assert this because it raises in the Python interpreter
+    before the Rust one runs, so each interpreter is exercised directly here.
+    """
+    phir = _make_classical_program(
+        [("a", "i64", 32), ("r", "i64", 32)],
+        [
+            {"cop": "=", "returns": ["a"], "args": [42]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": "/", "args": ["a", 0]}]},
+        ],
+    )
+    with pytest.raises(ZeroDivisionError):
+        HybridEngine(cinterp=interp, qsim="stabilizer").run(phir, shots=1, seed=42)
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+@pytest.mark.parametrize(
+    "read_expr",
+    [
+        {"cop": "+", "args": ["missing", 1]},  # whole-variable read
+        {"cop": "+", "args": [["missing", 0], 1]},  # indexed bit read
+    ],
+    ids=["whole", "indexed"],
+)
+def test_undefined_variable_raises_key_error(interp: str, read_expr: dict) -> None:
+    """Reading an undefined classical variable (whole or indexed) raises ``KeyError`` in both."""
+    phir = _make_classical_program(
+        [("x", "u32", 4)],
+        [{"cop": "=", "returns": ["x"], "args": [read_expr]}],
+    )
+    with pytest.raises(KeyError):
+        HybridEngine(cinterp=interp, qsim="stabilizer").run(phir, shots=1, seed=42)
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+@pytest.mark.parametrize(
+    "ops",
+    [
+        [{"cop": "=", "returns": ["undeclared"], "args": [7]}],  # whole-variable assignment
+        [{"cop": "=", "returns": [["undeclared", 0]], "args": [1]}],  # indexed assignment
+    ],
+    ids=["assign-simple", "assign-indexed"],
+)
+def test_assign_to_undeclared_variable_raises_key_error(interp: str, ops: list) -> None:
+    """Assigning to an undeclared classical variable raises ``KeyError`` in both interpreters."""
+    phir = {"format": "PHIR/JSON", "version": "0.1.0", "ops": ops}
+    with pytest.raises(KeyError):
+        HybridEngine(cinterp=interp).run(phir, shots=1, seed=42)
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+def test_measure_to_undeclared_variable_raises_key_error(interp: str) -> None:
+    """Measuring into an undeclared classical variable raises ``KeyError`` in both interpreters."""
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["undeclared", 0]]},
+        ],
+    }
+    with pytest.raises(KeyError):
+        HybridEngine(cinterp=interp, qsim="stabilizer").run(phir, shots=1, seed=42)
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+def test_ffcall_return_to_undeclared_variable_raises_key_error(interp: str) -> None:
+    """An ffcall returning into an undeclared classical variable raises ``KeyError`` in both."""
+
+    class _ForeignObj:
+        def init(self) -> None: ...
+        def shot_reinit(self) -> None: ...
+        def get_funcs(self) -> list:
+            return ["f"]
+
+        def exec(self, func: str, args: list) -> list:
+            return [1]
+
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [{"cop": "ffcall", "function": "f", "args": [], "returns": ["undeclared"]}],
+    }
+    with pytest.raises(KeyError):
+        HybridEngine(cinterp=interp).run(phir, foreign_object=_ForeignObj(), shots=1, seed=42)
+
+
 def test_signed_division_min_by_neg_one() -> None:
     """i64::MIN / -1 wraps to i64::MIN in both interpreters.
 

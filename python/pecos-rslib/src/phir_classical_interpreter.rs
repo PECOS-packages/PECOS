@@ -203,9 +203,17 @@ impl PyPhirClassicalInterpreter {
         };
 
         // Honor `phir_validate` (matching the Python interpreter): schema-validate
-        // the PHIR dict against the pydantic `PhirModel` before running.
+        // the PHIR dict against the pydantic `PhirModel` before running. The
+        // schema lives in `quantum-pecos` (`pecos.typing`), which `pecos_rslib`
+        // does not depend on -- fail with an actionable message on standalone
+        // installs rather than a bare ModuleNotFoundError.
         if self.phir_validate {
-            let typing = py.import("pecos.typing")?;
+            let typing = py.import("pecos.typing").map_err(|e| {
+                pyo3::exceptions::PyImportError::new_err(format!(
+                    "phir_validate=True requires the 'quantum-pecos' package (pecos.typing) \
+                     for PHIR schema validation; install it or set phir_validate=False: {e}"
+                ))
+            })?;
             typing
                 .getattr("PhirModel")?
                 .call_method1("model_validate", (&program_dict,))?;
@@ -506,6 +514,27 @@ impl PyPhirClassicalInterpreter {
         // We return None here for protocol compatibility -- the actual
         // foreign object was passed via init() and is held in Rust.
         None
+    }
+
+    /// Allow `foreign_obj = None` (protocol compatibility): detaches the
+    /// foreign object held in Rust, e.g. before pickling for multiprocessing
+    /// (`run_multisim` clears it and workers re-attach via `init`). Attaching
+    /// a foreign object must go through `init()`, so any other value is an
+    /// error.
+    #[setter]
+    fn set_foreign_obj(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        match value {
+            None => {
+                let mut inner = self.inner.lock().map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {e}"))
+                })?;
+                inner.clear_foreign_object();
+                Ok(())
+            }
+            Some(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "foreign_obj can only be set to None (detach); pass a foreign object via init()",
+            )),
+        }
     }
 }
 

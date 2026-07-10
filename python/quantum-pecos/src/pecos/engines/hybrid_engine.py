@@ -84,9 +84,12 @@ class HybridEngine:
     Note:
         The default classical interpreter is now the Rust-backed
         ``RustPhirClassicalInterpreter`` (previously the pure-Python
-        ``PhirClassicalInterpreter``). It is behaviorally equivalent for valid
-        programs and is differentially validated against the Python interpreter.
-        To restore the previous behavior, construct the engine with
+        ``PhirClassicalInterpreter``). For valid PHIR programs supplied as a
+        dict, JSON string, or ``to_phir_dict()``-convertible object it is
+        behaviorally equivalent and differentially validated against the
+        Python interpreter. Known limitation: ``PyPHIR`` program objects are
+        not accepted by the Rust interpreter (clear ``TypeError``). To restore
+        the previous behavior, construct the engine with
         ``HybridEngine(cinterp="python")``.
     """
 

@@ -111,6 +111,28 @@ def test_wasm_parity(filename: str) -> None:
     assert py_r == rs_r
 
 
+@pytest.mark.parametrize("interp", ["python", "rust"])
+def test_run_multisim_with_wasm_foreign_object(interp: str) -> None:
+    """``run_multisim`` with a ``to_dict``-capable foreign object works on both interpreters.
+
+    The multiprocessing helper detaches the interpreter's foreign object
+    (``cinterp.foreign_obj = None``) before pickling; the Rust interpreter used
+    to expose ``foreign_obj`` as a getter-only attribute, crashing here.
+    """
+    from pecos import WasmForeignObject
+
+    phir = json.loads((PHIR_DIR / "spec_example.phir.json").read_text())
+    results = HybridEngine(cinterp=interp).run_multisim(
+        phir,
+        foreign_object=WasmForeignObject(WAT_DIR / "math.wat"),
+        shots=4,
+        seed=42,
+        pool_size=2,
+    )
+    total = sum(len(v) for v in results.values())
+    assert total >= 4, f"expected results from all shots, got {results}"
+
+
 # ── Real-generator differential: QASM → PHIR ─────────────────────────
 
 QASM_VALIDATION_DIR = (
@@ -756,8 +778,9 @@ def test_division_by_zero(cop: str) -> None:
 
 
 @pytest.mark.parametrize("interp", ["python", "rust"])
-def test_division_by_zero_raises_zero_division_error(interp: str) -> None:
-    """Division by zero raises the exact ``ZeroDivisionError`` in both interpreters.
+@pytest.mark.parametrize("cop", ["/", "%"])
+def test_division_by_zero_raises_zero_division_error(interp: str, cop: str) -> None:
+    """Division/modulo by zero raises the exact ``ZeroDivisionError`` in both interpreters.
 
     ``run_both`` cannot assert this because it raises in the Python interpreter
     before the Rust one runs, so each interpreter is exercised directly here.
@@ -766,7 +789,7 @@ def test_division_by_zero_raises_zero_division_error(interp: str) -> None:
         [("a", "i64", 32), ("r", "i64", 32)],
         [
             {"cop": "=", "returns": ["a"], "args": [42]},
-            {"cop": "=", "returns": ["r"], "args": [{"cop": "/", "args": ["a", 0]}]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": cop, "args": ["a", 0]}]},
         ],
     )
     with pytest.raises(ZeroDivisionError):

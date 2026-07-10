@@ -777,7 +777,7 @@ fn write_script(
 /// Emit a JS palette object definition for the given palette.
 fn write_palette_js(html: &mut String, name: &str, p: &Palette) {
     // Capitalize first letter for the JS variable name
-    let var_name = format!("palette{}{}", &name[..1].to_uppercase(), &name[1..]);
+    let var_name = format!("palette{}{}", name[..1].to_uppercase(), &name[1..]);
     let _ = writeln!(
         html,
         "const {var_name} = {{\n\

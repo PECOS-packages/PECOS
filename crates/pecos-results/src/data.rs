@@ -213,10 +213,7 @@ impl Data {
             Self::Vec(v) => {
                 let mut result = Vec::with_capacity(v.len());
                 for item in v {
-                    match item.as_u32() {
-                        Some(val) => result.push(val),
-                        None => return None,
-                    }
+                    result.push(item.as_u32()?);
                 }
                 Some(result)
             }

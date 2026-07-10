@@ -154,12 +154,12 @@ impl PhirJsonEngine {
                 size,
             } = op
             {
-                let _ = processor.handle_variable_definition(
+                processor.handle_variable_definition(
                     data,
                     data_type,
                     variable,
                     infer_size(data_type, *size),
-                );
+                )?;
             }
         }
 
@@ -281,12 +281,12 @@ impl PhirJsonEngine {
                     variable,
                     size,
                 } => {
-                    let _ = self.processor.handle_variable_definition(
+                    self.processor.handle_variable_definition(
                         data,
                         data_type,
                         variable,
                         infer_size(data_type, *size),
-                    );
+                    )?;
                     self.advance_cursor();
                 }
                 Operation::QuantumOp {

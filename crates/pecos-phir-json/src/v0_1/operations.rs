@@ -146,6 +146,14 @@ pub struct OperationProcessor {
     /// `Measure` ops are queued (including from inside blocks) and consumed by
     /// `handle_measurements`.
     pending_measurements: Vec<Option<(String, usize)>>,
+    /// Absolute count of measurement outcomes applied so far in the current
+    /// shot, accumulated across batches and reset per shot in `reset()`. Gives
+    /// the legacy `measurement_N` variables and the no-return `m` fallback a
+    /// stable absolute bit position even when a shot's measurements are split
+    /// across batches (`MAX_BATCH_SIZE` or a deferral). The primary
+    /// explicit-return path indexes `pending_measurements` batch-locally and is
+    /// unaffected.
+    measurements_applied: usize,
 }
 
 impl Default for OperationProcessor {
@@ -162,6 +170,7 @@ impl Clone for OperationProcessor {
             foreign_object: self.foreign_object.as_ref().map(|fo| fo.clone_box()),
             current_op: self.current_op,
             pending_measurements: self.pending_measurements.clone(),
+            measurements_applied: self.measurements_applied,
         }
         // All data including mappings is now in the environment
     }
@@ -176,6 +185,7 @@ impl OperationProcessor {
             foreign_object: None,
             current_op: 0,
             pending_measurements: Vec::new(),
+            measurements_applied: 0,
         }
     }
 
@@ -277,6 +287,7 @@ impl OperationProcessor {
         self.environment.reset_values();
         // Environment reset_values now also clears mappings
         self.pending_measurements.clear();
+        self.measurements_applied = 0;
 
         // We deliberately don't clear variable definitions or foreign_object
         // so that we preserve the structure of the program while resetting state
@@ -858,10 +869,19 @@ impl OperationProcessor {
     /// # Errors
     /// Returns an error if the variable already exists or cannot be added.
     pub fn add_quantum_variable(&mut self, variable: &str, size: usize) -> Result<(), PecosError> {
-        // Store in the environment (single source of truth)
-        self.environment
-            .add_variable(variable, DataType::Qubits, size)?;
-        log::debug!("Defined quantum variable {variable} of size {size}");
+        // Only add if it doesn't already exist. The engine pre-defines variables
+        // from the program header and then re-encounters the same definitions
+        // during execution, so re-definition must be a no-op (mirrors
+        // `add_classical_variable`). Genuine definition errors still propagate.
+        if self.environment.has_variable(variable) {
+            log::debug!(
+                "Quantum variable '{variable}' already exists in environment, skipping creation"
+            );
+        } else {
+            self.environment
+                .add_variable(variable, DataType::Qubits, size)?;
+            log::debug!("Defined quantum variable {variable} of size {size}");
+        }
         Ok(())
     }
 
@@ -1669,7 +1689,12 @@ impl OperationProcessor {
     /// in the integer variable (e.g., "m") in the environment.
     ///
     /// The environment is the single source of truth for all variables.
-    fn store_measurement_result(&mut self, var_name: &str, var_idx: usize, outcome: u32) {
+    fn store_measurement_result(
+        &mut self,
+        var_name: &str,
+        var_idx: usize,
+        outcome: u32,
+    ) -> Result<(), PecosError> {
         log::debug!("PHIR: Storing measurement result {var_name}[{var_idx}] = {outcome}");
 
         // Step 1: Ensure the main variable exists in the environment with appropriate size
@@ -1679,26 +1704,17 @@ impl OperationProcessor {
             // an unsigned type -- `u64` is valid for any size up to 64, whereas
             // a signed `i32` could not hold e.g. bit index 31 (size 32).
             let var_size = std::cmp::max(var_idx + 1, 32);
-
-            // Create the variable
-            match self
-                .environment
-                .add_variable(var_name, DataType::U64, var_size)
-            {
-                Ok(()) => log::debug!("Created variable {var_name} with size {var_size}"),
-                Err(e) => log::warn!(
-                    "Could not create variable: {var_name}. Will try to update anyway: {e}"
-                ),
-            }
+            self.environment
+                .add_variable(var_name, DataType::U64, var_size)?;
+            log::debug!("Created variable {var_name} with size {var_size}");
         }
 
-        // Step 2: Update the specific bit directly using the environment's bit setting functionality
+        // Step 2: Update the specific bit directly. An out-of-range write is a
+        // hard error -- fail fast rather than silently dropping the outcome.
         let bit_value = u64::from(outcome != 0);
-        if let Err(e) = self.environment.set_bit(var_name, var_idx, bit_value) {
-            log::warn!("Could not set bit {var_name}[{var_idx}] = {bit_value}. Error: {e}");
-        } else {
-            log::debug!("Set bit {var_name}[{var_idx}] = {bit_value} in environment");
-        }
+        self.environment.set_bit(var_name, var_idx, bit_value)?;
+        log::debug!("Set bit {var_name}[{var_idx}] = {bit_value} in environment");
+        Ok(())
     }
 
     /// Handle incoming measurements from quantum operations and store results
@@ -1718,44 +1734,40 @@ impl OperationProcessor {
         log::debug!("PHIR: Handling {} measurement results", measurements.len());
 
         for (index, outcome) in measurements.iter().enumerate() {
-            let result_id = u32::try_from(index).unwrap_or(u32::MAX);
-            log::debug!("PHIR: Received measurement index={index}, outcome={outcome}");
+            // Absolute position across batches, for the legacy `measurement_N`
+            // variable and the no-return `m` fallback. The explicit-return path
+            // below stays batch-local (it indexes this batch's
+            // `pending_measurements`).
+            let abs_index = self.measurements_applied + index;
+            let result_id = u32::try_from(abs_index).unwrap_or(u32::MAX);
+            log::debug!("PHIR: Received measurement index={abs_index}, outcome={outcome}");
 
-            // Create the standard measurement variable name (e.g., "measurement_0")
+            // Store in the standard measurement variable name (e.g., "measurement_0")
             let prefixed_name = format!("{MEASUREMENT_PREFIX}{result_id}");
-
-            // Store in the standard measurement variable
-            // Create the variable if it doesn't exist
-            if !self.environment.has_variable(&prefixed_name)
-                && let Err(e) = self
-                    .environment
-                    .add_variable(&prefixed_name, DataType::I32, 31)
-            {
-                log::warn!("Could not create measurement variable: {prefixed_name}. Error: {e}");
+            if !self.environment.has_variable(&prefixed_name) {
+                self.environment
+                    .add_variable(&prefixed_name, DataType::I32, 31)?;
             }
-
-            // Set the measurement value
-            if let Err(e) = self.environment.set(&prefixed_name, u64::from(*outcome)) {
-                log::warn!("Could not set measurement variable {prefixed_name}. Error: {e}");
-            } else {
-                log::debug!("Stored measurement result: {prefixed_name} = {outcome}");
-            }
+            self.environment.set(&prefixed_name, u64::from(*outcome))?;
+            log::debug!("Stored measurement result: {prefixed_name} = {outcome}");
 
             // Map the outcome to the return register recorded when this
             // measurement was queued (queue-order positional). This works for
             // measurements queued from inside blocks too, which a scan of the
             // top-level ops would miss.
             if let Some(Some((var_name, var_idx))) = self.pending_measurements.get(index).cloned() {
-                self.store_measurement_result(&var_name, var_idx, *outcome);
+                self.store_measurement_result(&var_name, var_idx, *outcome)?;
             } else if self.environment.has_variable("m") {
                 // Fallback for a measured qubit with no recorded return register
                 // (e.g. Bell-state test programs that measure without returns).
-                self.store_measurement_result("m", index, *outcome);
+                self.store_measurement_result("m", abs_index, *outcome)?;
                 log::debug!(
-                    "PHIR: Auto-mapped measurement result {index} to m[{index}] = {outcome}"
+                    "PHIR: Auto-mapped measurement result {abs_index} to m[{abs_index}] = {outcome}"
                 );
             }
         }
+
+        self.measurements_applied += measurements.len();
 
         // Log mappings for debugging purposes
         // The environment automatically manages and uses these mappings
@@ -2001,6 +2013,55 @@ impl OperationProcessor {
 mod tests {
     use super::*;
     use crate::v0_1::ast::{ArgItem, Expression};
+
+    // Issue #345 finding 2: an out-of-range measurement return write must fail
+    // fast, not log-and-continue (silently dropping the outcome).
+    #[test]
+    fn test_out_of_range_measurement_return_fails_fast() {
+        let mut processor = OperationProcessor::new();
+        processor.add_classical_variable("m", "u64", 4).unwrap();
+        // Measure one qubit whose return register targets bit 70 -- beyond the
+        // 64-bit backing width, so the write cannot succeed.
+        processor
+            .record_measurement_returns(1, &[("m".to_string(), 70)])
+            .unwrap();
+        let err = processor
+            .handle_measurements(&[1], &[])
+            .expect_err("out-of-range measurement write must fail fast");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("70") || msg.to_lowercase().contains("bound") || msg.contains("fit"),
+            "expected an out-of-range error, got: {msg}"
+        );
+    }
+
+    // Issue #345 finding 3: no-return measurements split across batches must not
+    // alias onto m[0..] -- the fallback position is absolute across batches, not
+    // batch-local.
+    #[test]
+    fn test_measurement_index_is_absolute_across_batches() {
+        let mut processor = OperationProcessor::new();
+        processor.add_classical_variable("m", "u64", 8).unwrap();
+
+        // Batch 1: two no-return measures -> m[0]=1, m[1]=0.
+        processor.record_measurement_returns(2, &[]).unwrap();
+        processor.handle_measurements(&[1, 0], &[]).unwrap();
+        processor.clear_pending_measurements();
+
+        // Batch 2: two more. The batch-local index restarts at 0, but the
+        // absolute position must continue at m[2], m[3] rather than overwrite
+        // m[0..]. Old (batch-local) behaviour gave m = 0b0011 = 3.
+        processor.record_measurement_returns(2, &[]).unwrap();
+        processor.handle_measurements(&[1, 1], &[]).unwrap();
+
+        let m = processor
+            .evaluate_expression(&Expression::Variable("m".to_string()))
+            .unwrap();
+        assert_eq!(
+            m, 0b1101,
+            "no-return measurements across batches must not alias m[0..]"
+        );
+    }
 
     #[test]
     fn test_evaluate_expression() {

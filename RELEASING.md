@@ -66,8 +66,13 @@ installed, e.g. `uv tool install twine`).
 ```
 
 Confirm each package at its prompt. Upload order matters and the script
-handles it: `pecos-rslib` -> `pecos-rslib-llvm` -> `quantum-pecos`
-(quantum-pecos pins both at exact versions, so dependencies go first).
+enforces it: all packages are preflighted (complete set, consistent version,
+only expected files) before anything uploads, dependencies go first
+(`pecos-rslib` -> `pecos-rslib-llvm` -> `quantum-pecos`, which pins both at
+exact versions), and any failure or declined prompt aborts the remaining
+uploads rather than continuing. Publishing `quantum-pecos` alone (`-p`) is
+blocked unless its pinned dependencies already exist on PyPI. Checks run
+`twine check --strict`.
 Credentials come from `~/.pypirc`; a **new** package's first upload needs an
 account-scoped token (project-scoped tokens cannot create projects).
 

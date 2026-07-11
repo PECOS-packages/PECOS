@@ -118,14 +118,17 @@ reason = "Transitive via rustpython-parser in the experimental zlup frontend; un
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0196"
 # cgmath@0.18.0 -- unmaintained; 0.18.0 is the latest release (no fix exists).
-# Chain: hugr-core -> hugr -> tket -> pecos-hugr.
-# Upstream owner: https://github.com/CQCL/hugr (awaiting a maintained geometry dep).
-reason = "Transitive via hugr/tket; unmaintained-crate warning, no exploit path in PECOS."
+# Chains: cgmath -> hugr-core -> hugr -> tket -> pecos-hugr, and
+#         cgmath -> tket (dev-dependency) -> pecos-hugr.
+# Upstream owners: https://github.com/CQCL/hugr and https://github.com/CQCL/tket2
+# (awaiting a maintained geometry dep).
+reason = "Transitive via hugr-core and tket; unmaintained-crate warning, no exploit path in PECOS."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0197"
 # cgmath@0.18.0 -- unsound Matrix{2,3,4}::swap_columns(a, a): identical indices
 # create aliasing mutable refs passed to ptr::swap -> UB. No patched release.
-# Chain: hugr-core -> hugr -> tket -> pecos-hugr.
-# Upstream owner: https://github.com/CQCL/hugr.
-reason = "Transitive via hugr/tket; PECOS never calls cgmath swap_columns (UB needs an identical-index call, only reachable inside hugr/tket internals), no fixed version. Re-check on hugr/tket bump."
+# Chains: cgmath -> hugr-core -> hugr -> tket -> pecos-hugr, and
+#         cgmath -> tket (dev-dependency) -> pecos-hugr.
+# Upstream owners: https://github.com/CQCL/hugr and https://github.com/CQCL/tket2.
+reason = "Transitive via hugr-core and tket; no swap_columns call exists in PECOS or in the pinned hugr-core 0.27.1/tket 0.19.0 sources, and no fixed cgmath release exists. Re-check on hugr/tket bumps."

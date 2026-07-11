@@ -207,6 +207,12 @@ impl PhirClassicalInterpreter {
         Ok(())
     }
 
+    /// Detach the foreign object (e.g. so the interpreter can be pickled
+    /// without it; workers re-attach their own copy via `init`).
+    pub fn clear_foreign_object(&mut self) {
+        self.foreign_object = None;
+    }
+
     /// Get a reference to the program ops.
     #[must_use]
     pub fn program_ops(&self) -> &[Operation] {
@@ -532,18 +538,14 @@ impl PhirClassicalInterpreter {
     /// The Environment's `BitValue` storage automatically masks to the declared
     /// bit width, so no manual masking is needed.
     fn assign_int_var(&mut self, name: &str, val: u64) -> Result<(), PecosError> {
-        if self.environment.has_variable(name) {
-            self.environment.set_raw(name, val)?;
-        }
-        Ok(())
+        // Assigning a measurement result to an undeclared variable is an error
+        // (matching Python's `csym2id[cvar]` lookup), not a silent no-op.
+        self.environment.set_raw(name, val)
     }
 
     /// Assign a bit value to a specific bit of a classical variable.
     fn assign_int_bit(&mut self, name: &str, idx: usize, val: i64) -> Result<(), PecosError> {
-        if self.environment.has_variable(name) {
-            self.environment.set_bit(name, idx, (val & 1) != 0)?;
-        }
-        Ok(())
+        self.environment.set_bit(name, idx, (val & 1) != 0)
     }
 
     /// Evaluate an expression using the current environment.
@@ -591,16 +593,10 @@ impl PhirClassicalInterpreter {
                 for (val, ret) in values.into_iter().zip(returns.iter()) {
                     match ret {
                         ArgItem::Simple(var) => {
-                            if !self.environment.has_variable(var) {
-                                self.environment.add_variable(var, DataType::I32, 31)?;
-                            }
                             #[allow(clippy::cast_sign_loss)]
                             self.environment.set_raw(var, val as u64)?;
                         }
                         ArgItem::Indexed((var, idx)) => {
-                            if !self.environment.has_variable(var) {
-                                self.environment.add_variable(var, DataType::I32, 31)?;
-                            }
                             self.environment.set_bit(var, *idx, (val & 1) != 0)?;
                         }
                         _ => {
@@ -660,16 +656,10 @@ impl PhirClassicalInterpreter {
                     if i < result.len() {
                         match ret {
                             ArgItem::Simple(var) => {
-                                if !self.environment.has_variable(var) {
-                                    self.environment.add_variable(var, DataType::I32, 31)?;
-                                }
                                 #[allow(clippy::cast_sign_loss)]
                                 self.environment.set_raw(var, result[i] as u64)?;
                             }
                             ArgItem::Indexed((var, idx)) => {
-                                if !self.environment.has_variable(var) {
-                                    self.environment.add_variable(var, DataType::I32, 31)?;
-                                }
                                 self.environment.set_bit(var, *idx, (result[i] & 1) != 0)?;
                             }
                             _ => {

@@ -3,7 +3,7 @@ mod common;
 #[cfg(test)]
 mod tests {
     use pecos_core::errors::PecosError;
-    use pecos_engines::{Engine, ShotVec, shot_results::Data};
+    use pecos_engines::{Engine, ShotVec};
     use pecos_phir_json::v0_1::ast::PHIRProgram;
     use pecos_phir_json::v0_1::engine::PhirJsonEngine;
     use pecos_phir_json::v0_1::operations::{MachineOperationResult, OperationProcessor};
@@ -130,8 +130,8 @@ mod tests {
         // Look in the shot map for string-based values
         if shot.data.contains_key("x") {
             assert_eq!(
-                shot.data.get("x").unwrap(),
-                &Data::U32(1),
+                shot.data.get("x").unwrap().as_u32(),
+                Some(1),
                 "Expected output value to be 1, got {}",
                 shot.data.get("x").unwrap()
             );
@@ -139,8 +139,8 @@ mod tests {
         // Check if source variable was exposed directly
         else if shot.data.contains_key("var") {
             assert_eq!(
-                shot.data.get("var").unwrap(),
-                &Data::U32(1),
+                shot.data.get("var").unwrap().as_u32(),
+                Some(1),
                 "Expected var value to be 1, got {}",
                 shot.data.get("var").unwrap()
             );

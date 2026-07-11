@@ -1,11 +1,11 @@
 /*!
 Test the improved PHIR-JSON to PHIR converter functionality
 
-This test was converted from examples/test_improved_converter.rs
+This test was converted from `examples/test_improved_converter.rs`
 */
 
-use pecos_phir_json::phir_json_to_module;
 use pecos_core::errors::PecosError;
+use pecos_phir_json::phir_json_to_module;
 
 #[test]
 fn test_converter_bell_state_ssa_flow() -> Result<(), PecosError> {
@@ -27,12 +27,18 @@ fn test_converter_bell_state_ssa_flow() -> Result<(), PecosError> {
     let module = phir_json_to_module(bell_json)?;
 
     // Verify the module structure
-    assert!(!module.body.blocks.is_empty(), "Module should have at least one block");
+    assert!(
+        !module.body.blocks.is_empty(),
+        "Module should have at least one block"
+    );
     let operations = &module.body.blocks[0].operations;
 
     // The converter should generate additional operations for bit combining
     // Original has 7 ops, but converter adds bitwise operations for measurements
-    assert!(operations.len() > 7, "Converter should add bit-combining operations");
+    assert!(
+        operations.len() > 7,
+        "Converter should add bit-combining operations"
+    );
 
     // Count measurement operations and verify they have proper SSA values
     let mut measure_count = 0;
@@ -48,20 +54,21 @@ fn test_converter_bell_state_ssa_flow() -> Result<(), PecosError> {
                 assert_eq!(op.operands.len(), 1, "Measure should have one operand");
                 assert_eq!(op.results.len(), 1, "Measure should have one result");
             }
-            pecos_phir::ops::Operation::Classical(classical_op) => {
-                match classical_op {
-                    pecos_phir::ops::ClassicalOp::Bitcast => has_bitcast = true,
-                    pecos_phir::ops::ClassicalOp::Shl(_) => has_shift = true,
-                    pecos_phir::ops::ClassicalOp::Or => has_or = true,
-                    _ => {}
-                }
-            }
+            pecos_phir::ops::Operation::Classical(classical_op) => match classical_op {
+                pecos_phir::ops::ClassicalOp::Bitcast => has_bitcast = true,
+                pecos_phir::ops::ClassicalOp::Shl(_) => has_shift = true,
+                pecos_phir::ops::ClassicalOp::Or => has_or = true,
+                _ => {}
+            },
             _ => {}
         }
     }
 
     assert_eq!(measure_count, 2, "Should have 2 measurement operations");
-    assert!(has_bitcast, "Should have bitcast operations for type conversion");
+    assert!(
+        has_bitcast,
+        "Should have bitcast operations for type conversion"
+    );
     assert!(has_shift, "Should have shift operation for bit positioning");
     assert!(has_or, "Should have OR operation for bit combining");
 
@@ -93,15 +100,24 @@ fn test_converter_single_qubit_circuit() -> Result<(), PecosError> {
     assert!(operations.len() >= 5, "Should have at least 5 operations");
 
     // Verify we have the expected quantum operations
-    let quantum_ops: Vec<_> = operations.iter()
+    let quantum_ops: Vec<_> = operations
+        .iter()
         .filter_map(|op| match &op.operation {
             pecos_phir::ops::Operation::Quantum(q) => Some(q),
-            _ => None
+            _ => None,
         })
         .collect();
 
-    assert!(quantum_ops.iter().any(|op| matches!(op, pecos_phir::ops::QuantumOp::H)));
-    assert!(quantum_ops.iter().any(|op| matches!(op, pecos_phir::ops::QuantumOp::Measure)));
+    assert!(
+        quantum_ops
+            .iter()
+            .any(|op| matches!(op, pecos_phir::ops::QuantumOp::H))
+    );
+    assert!(
+        quantum_ops
+            .iter()
+            .any(|op| matches!(op, pecos_phir::ops::QuantumOp::Measure))
+    );
 
     Ok(())
 }

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pecos.classical_interpreters.phir_classical_interpreter import PhirClassicalInterpreter
 from pecos.engines.hybrid_engine import HybridEngine
-from pecos_rslib import RustPhirClassicalInterpreter
+from pecos_rslib import RustPhirClassicalInterpreter, qasm_to_phir_json_py
 
 if TYPE_CHECKING:
     from pecos.protocols import ForeignObjectProtocol
@@ -96,29 +96,65 @@ def test_phir_integration_files(filename: str) -> None:
 WAT_DIR = Path(__file__).parent.parent / "integration" / "wat"
 
 
-def test_wasm_spec_example() -> None:
-    """Test spec_example.phir.json with WASM foreign object."""
+@pytest.mark.parametrize("filename", ["spec_example.phir.json", "example1.phir.json"])
+def test_wasm_parity(filename: str) -> None:
+    """PHIR programs with WASM foreign calls must produce identical results."""
+    from pecos import WasmForeignObject
+
+    phir = json.loads((PHIR_DIR / filename).read_text())
+    py_r, rs_r = run_both(
+        phir,
+        shots=20,
+        seed=42,
+        foreign_object=WasmForeignObject(WAT_DIR / "math.wat"),
+    )
+    assert py_r == rs_r
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+def test_run_multisim_with_wasm_foreign_object(interp: str) -> None:
+    """``run_multisim`` with a ``to_dict``-capable foreign object works on both interpreters.
+
+    The multiprocessing helper detaches the interpreter's foreign object
+    (``cinterp.foreign_obj = None``) before pickling; the Rust interpreter used
+    to expose ``foreign_obj`` as a getter-only attribute, crashing here.
+    """
     from pecos import WasmForeignObject
 
     phir = json.loads((PHIR_DIR / "spec_example.phir.json").read_text())
-    math_wat = WAT_DIR / "math.wat"
-
-    py_i = PhirClassicalInterpreter()
-    py_r = HybridEngine(cinterp=py_i).run(
+    results = HybridEngine(cinterp=interp).run_multisim(
         phir,
-        foreign_object=WasmForeignObject(math_wat),
-        shots=20,
+        foreign_object=WasmForeignObject(WAT_DIR / "math.wat"),
+        shots=4,
         seed=42,
+        pool_size=2,
     )
+    total = sum(len(v) for v in results.values())
+    assert total >= 4, f"expected results from all shots, got {results}"
 
-    rs_i = RustPhirClassicalInterpreter()
-    rs_r = HybridEngine(cinterp=rs_i).run(
-        phir,
-        foreign_object=WasmForeignObject(math_wat),
-        shots=20,
-        seed=42,
-    )
 
+# ── Real-generator differential: QASM → PHIR ─────────────────────────
+
+QASM_VALIDATION_DIR = (
+    Path(__file__).resolve().parents[5] / "crates" / "pecos-qasm" / "tests" / "fixtures" / "qasm_validation"
+)
+
+
+@pytest.mark.parametrize(
+    "qasm_file",
+    sorted(QASM_VALIDATION_DIR.glob("*.qasm")),
+    ids=lambda p: p.stem,
+)
+def test_qasm_generated_phir_parity(qasm_file: Path) -> None:
+    """Real generated PHIR must be interpreted identically by both interpreters.
+
+    Converts each QASM fixture to PHIR through the real Rust ``qasm_to_phir_json``
+    generator (conditionals, classical registers, ...) and runs the result
+    through both interpreters -- a differential over actual generator output,
+    complementing the synthetic fuzz.
+    """
+    phir = qasm_to_phir_json_py(qasm_file.read_text())
+    py_r, rs_r = run_both(phir, shots=10, seed=42)
     assert py_r == rs_r
 
 
@@ -349,6 +385,33 @@ FUZZ_DTYPES = ["i32", "u32", "i64", "u64"]
 FUZZ_COPS = ["+", "-", "*", "&", "|", "^", ">>", "<<", "/", "%", "==", "!=", "<", ">", "<=", ">="]
 
 
+def _random_expr(rng: random.Random, vars_info: list, depth: int):
+    """Generate a random (possibly nested) classical expression.
+
+    Nests binary ops and the unary ``~`` so the interpreters' expression
+    recursion is exercised, not just flat one-level ops. Division/modulo use a
+    nonzero literal divisor and shifts a bounded literal amount, so no generated
+    program divides by zero or shifts wildly (both interpreters would agree on
+    those, but they'd raise/short-circuit and stop the differential).
+    """
+    if depth <= 0 or rng.random() < 0.4:
+        # Leaf: a variable reference or a small literal.
+        if rng.random() < 0.6:
+            return rng.choice(vars_info)[0]
+        return rng.randint(0, 15)
+    if rng.random() < 0.2:
+        return {"cop": "~", "args": [_random_expr(rng, vars_info, depth - 1)]}
+    cop = rng.choice(FUZZ_COPS)
+    lhs = _random_expr(rng, vars_info, depth - 1)
+    if cop in ("/", "%"):
+        rhs = rng.randint(1, 15)
+    elif cop in (">>", "<<"):
+        rhs = rng.randint(0, 15)
+    else:
+        rhs = _random_expr(rng, vars_info, depth - 1)
+    return {"cop": cop, "args": [lhs, rhs]}
+
+
 def _make_random_classical_program(rng: random.Random) -> dict:
     """Generate a random classical-only PHIR program."""
     nvars = rng.randint(2, 5)
@@ -380,14 +443,8 @@ def _make_random_classical_program(rng: random.Random) -> dict:
             val = max(-(2**63), min(2**63 - 1, val))
             ops.append({"cop": "=", "returns": [tname], "args": [val]})
         elif op_kind < 0.6:
-            src = rng.choice(vars_info)
-            cop = rng.choice(FUZZ_COPS)
-            rhs = rng.randint(0, 15)
-            if cop in ("/", "%"):
-                rhs = max(rhs, 1)
-            if cop in (">>", "<<"):
-                rhs = rhs % 16
-            ops.append({"cop": "=", "returns": [tname], "args": [{"cop": cop, "args": [src[0], rhs]}]})
+            expr = _random_expr(rng, vars_info, depth=rng.randint(1, 3))
+            ops.append({"cop": "=", "returns": [tname], "args": [expr]})
         elif op_kind < 0.8:
             bi = rng.randint(0, min(tsize - 1, 7))
             bv = rng.randint(0, 1)
@@ -457,7 +514,7 @@ def _make_random_quantum_program(rng: random.Random) -> dict:
 def test_fuzz_classical_programs() -> None:
     """Fuzz test: random classical programs must produce identical results."""
     rng = random.Random(2026)
-    for i in range(200):
+    for i in range(2000):
         phir = _make_random_classical_program(rng)
         py_r, rs_r = run_both(phir, seed=i, qsim="stabilizer")
         assert py_r == rs_r, f"Classical fuzz program {i} produced different results"
@@ -468,13 +525,13 @@ def test_fuzz_quantum_programs() -> None:
     rng = random.Random(2026)
     identical = 0
 
-    for i in range(200):
+    for i in range(1000):
         phir = _make_random_quantum_program(rng)
         py_r, rs_r = run_both(phir, shots=20, seed=i + 10000)
         assert py_r == rs_r, f"Quantum fuzz program {i} produced different results"
         identical += 1
 
-    assert identical == 200
+    assert identical == 1000
 
 
 # ── Targeted classical edge cases ──────────────────────────────────
@@ -718,6 +775,97 @@ def test_division_by_zero(cop: str) -> None:
     )
     with pytest.raises((ZeroDivisionError, RuntimeError)):
         run_both(phir, qsim="stabilizer")
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+@pytest.mark.parametrize("cop", ["/", "%"])
+def test_division_by_zero_raises_zero_division_error(interp: str, cop: str) -> None:
+    """Division/modulo by zero raises the exact ``ZeroDivisionError`` in both interpreters.
+
+    ``run_both`` cannot assert this because it raises in the Python interpreter
+    before the Rust one runs, so each interpreter is exercised directly here.
+    """
+    phir = _make_classical_program(
+        [("a", "i64", 32), ("r", "i64", 32)],
+        [
+            {"cop": "=", "returns": ["a"], "args": [42]},
+            {"cop": "=", "returns": ["r"], "args": [{"cop": cop, "args": ["a", 0]}]},
+        ],
+    )
+    with pytest.raises(ZeroDivisionError):
+        HybridEngine(cinterp=interp, qsim="stabilizer").run(phir, shots=1, seed=42)
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+@pytest.mark.parametrize(
+    "read_expr",
+    [
+        {"cop": "+", "args": ["missing", 1]},  # whole-variable read
+        {"cop": "+", "args": [["missing", 0], 1]},  # indexed bit read
+    ],
+    ids=["whole", "indexed"],
+)
+def test_undefined_variable_raises_key_error(interp: str, read_expr: dict) -> None:
+    """Reading an undefined classical variable (whole or indexed) raises ``KeyError`` in both."""
+    phir = _make_classical_program(
+        [("x", "u32", 4)],
+        [{"cop": "=", "returns": ["x"], "args": [read_expr]}],
+    )
+    with pytest.raises(KeyError):
+        HybridEngine(cinterp=interp, qsim="stabilizer").run(phir, shots=1, seed=42)
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+@pytest.mark.parametrize(
+    "ops",
+    [
+        [{"cop": "=", "returns": ["undeclared"], "args": [7]}],  # whole-variable assignment
+        [{"cop": "=", "returns": [["undeclared", 0]], "args": [1]}],  # indexed assignment
+    ],
+    ids=["assign-simple", "assign-indexed"],
+)
+def test_assign_to_undeclared_variable_raises_key_error(interp: str, ops: list) -> None:
+    """Assigning to an undeclared classical variable raises ``KeyError`` in both interpreters."""
+    phir = {"format": "PHIR/JSON", "version": "0.1.0", "ops": ops}
+    with pytest.raises(KeyError):
+        HybridEngine(cinterp=interp).run(phir, shots=1, seed=42)
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+def test_measure_to_undeclared_variable_raises_key_error(interp: str) -> None:
+    """Measuring into an undeclared classical variable raises ``KeyError`` in both interpreters."""
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["undeclared", 0]]},
+        ],
+    }
+    with pytest.raises(KeyError):
+        HybridEngine(cinterp=interp, qsim="stabilizer").run(phir, shots=1, seed=42)
+
+
+@pytest.mark.parametrize("interp", ["python", "rust"])
+def test_ffcall_return_to_undeclared_variable_raises_key_error(interp: str) -> None:
+    """An ffcall returning into an undeclared classical variable raises ``KeyError`` in both."""
+
+    class _ForeignObj:
+        def init(self) -> None: ...
+        def shot_reinit(self) -> None: ...
+        def get_funcs(self) -> list:
+            return ["f"]
+
+        def exec(self, _func: str, _args: list) -> list:
+            return [1]
+
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [{"cop": "ffcall", "function": "f", "args": [], "returns": ["undeclared"]}],
+    }
+    with pytest.raises(KeyError):
+        HybridEngine(cinterp=interp).run(phir, foreign_object=_ForeignObj(), shots=1, seed=42)
 
 
 def test_signed_division_min_by_neg_one() -> None:

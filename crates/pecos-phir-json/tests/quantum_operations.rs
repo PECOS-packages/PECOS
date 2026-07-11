@@ -3,7 +3,6 @@ mod common;
 #[cfg(test)]
 mod tests {
     use pecos_core::errors::PecosError;
-    use pecos_engines::shot_results::Data;
 
     // Import helpers from common module
 
@@ -59,8 +58,9 @@ mod tests {
         let shot = &results.shots[0];
         if shot.data.contains_key("output") {
             let data_value = shot.data.get("output").unwrap();
+            let value = data_value.as_u32();
             assert!(
-                *data_value == Data::U32(0) || *data_value == Data::U32(1),
+                value == Some(0) || value == Some(1),
                 "Expected measurement value to be 0 or 1, got {data_value}"
             );
         } else {
@@ -126,8 +126,9 @@ mod tests {
         let shot = &results.shots[0];
         if shot.data.contains_key("output") {
             let data_value = shot.data.get("output").unwrap();
+            let value = data_value.as_u32();
             assert!(
-                *data_value == Data::U32(0) || *data_value == Data::U32(3),
+                value == Some(0) || value == Some(3),
                 "Expected Bell state measurement value to be 0 or 3, got {data_value}"
             );
         } else {
@@ -192,8 +193,9 @@ mod tests {
         let shot = &results.shots[0];
         if shot.data.contains_key("output") {
             let data_value = shot.data.get("output").unwrap();
+            let value = data_value.as_u32();
             assert!(
-                *data_value == Data::U32(0) || *data_value == Data::U32(1),
+                value == Some(0) || value == Some(1),
                 "Expected measurement value to be 0 or 1, got {data_value}"
             );
         } else {
@@ -345,11 +347,9 @@ mod tests {
         if shot.data.contains_key("output") {
             // The value can be either 0 or 1 depending on the implementation
             let value = shot.data.get("output").unwrap();
+            let numeric = value.as_u32();
             assert!(
-                matches!(
-                    value,
-                    &Data::I32(0) | &Data::U32(0) | &Data::I32(1) | &Data::U32(1)
-                ),
+                numeric == Some(0) || numeric == Some(1),
                 "Expected control flow output value to be 0 or 1, got {value:?}"
             );
         } else {

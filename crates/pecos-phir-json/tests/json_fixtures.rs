@@ -2,8 +2,8 @@
 Test loading and processing PHIR-JSON fixtures
 */
 
-use pecos_phir_json::phir_json_to_module;
 use pecos_core::errors::PecosError;
+use pecos_phir_json::phir_json_to_module;
 use std::fs;
 
 #[test]
@@ -16,7 +16,10 @@ fn test_bell_state_fixture() -> Result<(), PecosError> {
     let module = phir_json_to_module(&bell_json)?;
 
     // Verify the module name and structure
-    assert_eq!(module.name, "bell_state_circuit", "Module should be named 'bell_state_circuit'");
+    assert_eq!(
+        module.name, "bell_state_circuit",
+        "Module should be named 'bell_state_circuit'"
+    );
     assert!(!module.body.blocks.is_empty(), "Module should have blocks");
 
     // Verify it has the expected operations
@@ -28,14 +31,13 @@ fn test_bell_state_fixture() -> Result<(), PecosError> {
     let mut measure_count = 0;
 
     for op in operations {
-        match &op.operation {
-            pecos_phir::ops::Operation::Quantum(q) => match q {
+        if let pecos_phir::ops::Operation::Quantum(q) = &op.operation {
+            match q {
                 pecos_phir::ops::QuantumOp::H => h_count += 1,
                 pecos_phir::ops::QuantumOp::CX => cx_count += 1,
                 pecos_phir::ops::QuantumOp::Measure => measure_count += 1,
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
 
@@ -47,7 +49,7 @@ fn test_bell_state_fixture() -> Result<(), PecosError> {
 }
 
 #[test]
-fn test_all_json_fixtures() -> Result<(), PecosError> {
+fn test_all_json_fixtures() {
     // Test that all .json files in fixtures directory can be parsed
     let fixtures_dir = "tests/fixtures";
 
@@ -57,8 +59,8 @@ fn test_all_json_fixtures() -> Result<(), PecosError> {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                let json_content = fs::read_to_string(&path)
-                    .expect(&format!("Failed to read {:?}", path));
+                let json_content =
+                    fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read {path:?}"));
 
                 // Try to parse each JSON file
                 let result = phir_json_to_module(&json_content);
@@ -71,6 +73,4 @@ fn test_all_json_fixtures() -> Result<(), PecosError> {
             }
         }
     }
-
-    Ok(())
 }

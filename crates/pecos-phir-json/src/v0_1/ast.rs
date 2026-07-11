@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
 /// Program structure for PHIR (PECOS High-level Intermediate Representation)
@@ -10,6 +10,49 @@ pub struct PHIRProgram {
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_json::Value>,
     pub ops: Vec<Operation>,
+}
+
+impl PHIRProgram {
+    /// Collect the names of all foreign functions invoked by `ffcall` classical
+    /// operations anywhere in the program, including inside `if`/`sequence`
+    /// blocks. Mirrors `PyPHIR.foreign_func_calls` and is used to fail fast when
+    /// a program calls a foreign function the supplied foreign object lacks.
+    #[must_use]
+    pub fn foreign_func_calls(&self) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        collect_foreign_func_calls(&self.ops, &mut names);
+        names
+    }
+}
+
+/// Recursively gather `ffcall` function names from a slice of operations.
+fn collect_foreign_func_calls(ops: &[Operation], names: &mut BTreeSet<String>) {
+    for op in ops {
+        match op {
+            Operation::ClassicalOp {
+                cop,
+                function: Some(name),
+                ..
+            } if cop == "ffcall" => {
+                names.insert(name.clone());
+            }
+            Operation::Block {
+                ops,
+                true_branch,
+                false_branch,
+                ..
+            } => {
+                collect_foreign_func_calls(ops, names);
+                if let Some(branch) = true_branch {
+                    collect_foreign_func_calls(branch, names);
+                }
+                if let Some(branch) = false_branch {
+                    collect_foreign_func_calls(branch, names);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Represents an operation in the PHIR program.
@@ -509,5 +552,31 @@ mod tests {
         } else {
             panic!("Expected DataExport");
         }
+    }
+
+    #[test]
+    fn test_foreign_func_calls_collects_nested_and_dedups() {
+        let json = r#"{
+            "format": "PHIR/JSON", "version": "0.1.0", "metadata": {},
+            "ops": [
+                {"cop": "ffcall", "function": "foo", "args": [1], "returns": ["a"]},
+                {"block": "if", "condition": {"cop": "==", "args": ["a", 1]},
+                 "true_branch": [
+                    {"cop": "ffcall", "function": "bar", "args": [], "returns": ["b"]}
+                 ],
+                 "false_branch": [
+                    {"cop": "ffcall", "function": "foo", "args": [2], "returns": ["c"]}
+                 ]},
+                {"block": "sequence", "ops": [
+                    {"cop": "ffcall", "function": "baz", "args": [], "returns": ["d"]}
+                ]}
+            ]
+        }"#;
+        let program: PHIRProgram = serde_json::from_str(json).expect("should parse");
+        let expected: BTreeSet<String> = ["bar", "baz", "foo"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        assert_eq!(program.foreign_func_calls(), expected);
     }
 }

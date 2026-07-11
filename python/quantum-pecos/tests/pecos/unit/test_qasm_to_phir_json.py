@@ -67,8 +67,8 @@ def test_bell_state_validates() -> None:
     PHIRModel.model_validate(phir)
 
 
-def test_all_cregs_are_i64() -> None:
-    """All classical registers should be emitted as i64."""
+def test_all_cregs_are_unsigned() -> None:
+    """Classical registers are unsigned bit collections: <=32 bits -> u32, else u64."""
     qasm = """
     OPENQASM 2.0;
     include "qelib1.inc";
@@ -76,12 +76,11 @@ def test_all_cregs_are_i64() -> None:
     creg a[1];
     creg b[4];
     creg c[32];
+    creg d[33];
     """
     phir = qasm_to_phir_json_py(qasm)
-    cvars = [op for op in phir["ops"] if op.get("data") == "cvar_define"]
-    assert len(cvars) == 3
-    for cvar in cvars:
-        assert cvar["data_type"] == "i64"
+    cvars = {op["variable"]: op["data_type"] for op in phir["ops"] if op.get("data") == "cvar_define"}
+    assert cvars == {"a": "u32", "b": "u32", "c": "u32", "d": "u64"}
 
 
 def test_conditional_produces_if_block() -> None:

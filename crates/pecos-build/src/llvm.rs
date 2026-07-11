@@ -81,6 +81,88 @@ pub fn is_required_llvm_version(version: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('.'))
 }
 
+/// An LLVM tool resolved via a bare `PATH` lookup, with the version it reports.
+///
+/// Used to warn when a wrong-version tool (e.g. a system LLVM 14 `llvm-as`)
+/// would be picked up at runtime instead of LLVM 21.1 — external tools such as
+/// Selene resolve `llvm-as` straight from `PATH`, so a stale system LLVM ahead
+/// of the PECOS one silently produces wrong results.
+#[derive(Debug, Clone)]
+pub struct PathToolReport {
+    /// Tool name, e.g. `"llvm-as"`.
+    pub tool: String,
+    /// Location resolved from `PATH`.
+    pub path: PathBuf,
+    /// Version string reported by `<tool> --version`, if one could be parsed.
+    pub version: Option<String>,
+    /// Whether the reported version satisfies the required LLVM version.
+    pub is_required: bool,
+}
+
+/// Resolve an executable via `PATH`, mirroring how a bare `Command::new(name)`
+/// (and external tools like Selene) find it.
+#[must_use]
+pub fn which_on_path(exe_name: &str) -> Option<PathBuf> {
+    let exe = if cfg!(windows) {
+        format!("{exe_name}.exe")
+    } else {
+        exe_name.to_string()
+    };
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .map(|dir| dir.join(&exe))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Parse an LLVM `--version` output into a bare `X.Y.Z` version string.
+///
+/// Handles both `llvm-config --version` (prints `21.1.8`) and tools like
+/// `llvm-as --version` (whose output contains `LLVM version 21.1.8`) by
+/// returning the first dotted numeric token (at least `major.minor`).
+#[must_use]
+pub fn parse_llvm_version_output(output: &str) -> Option<String> {
+    output
+        .split_whitespace()
+        .find(|token| {
+            let mut parts = token.split('.');
+            token.starts_with(|c: char| c.is_ascii_digit())
+                && parts.clone().count() >= 2
+                && parts.all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(str::to_string)
+}
+
+/// Run `<tool_path> --version` and parse the LLVM version it reports.
+#[must_use]
+pub fn get_tool_llvm_version(tool_path: &Path) -> Option<String> {
+    let output = Command::new(tool_path).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_llvm_version_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Inspect the LLVM tools a bare `PATH` lookup resolves, reporting each one's
+/// version and whether it is the required LLVM. A tool not found on `PATH` is
+/// omitted from the result.
+#[must_use]
+pub fn inspect_path_llvm_tools(tools: &[&str]) -> Vec<PathToolReport> {
+    tools
+        .iter()
+        .filter_map(|&tool| {
+            let path = which_on_path(tool)?;
+            let version = get_tool_llvm_version(&path);
+            let is_required = version.as_deref().is_some_and(is_required_llvm_version);
+            Some(PathToolReport {
+                tool: tool.to_string(),
+                path,
+                version,
+                is_required,
+            })
+        })
+        .collect()
+}
+
 /// Find a compatible LLVM installation on the system.
 ///
 /// This function searches for LLVM in the following priority order:
@@ -581,6 +663,36 @@ mod tests {
         assert!(!is_required_llvm_version("21.0.9"));
         assert!(!is_required_llvm_version("21.10.0"));
         assert!(!is_required_llvm_version("22.0.0"));
+    }
+
+    #[test]
+    fn parse_llvm_version_handles_config_and_tool_output() {
+        // `llvm-config --version` prints the bare version.
+        assert_eq!(
+            parse_llvm_version_output("21.1.8\n").as_deref(),
+            Some("21.1.8")
+        );
+        // `llvm-as --version` prints a block; the first dotted numeric token is
+        // the LLVM version, not the target triple or CPU line.
+        let llvm_as = "  LLVM (http://llvm.org/):\n    LLVM version 14.0.0\n    \
+                       Optimized build.\n    Default target: x86_64-pc-linux-gnu\n";
+        assert_eq!(
+            parse_llvm_version_output(llvm_as).as_deref(),
+            Some("14.0.0")
+        );
+        assert_eq!(parse_llvm_version_output("no version here"), None);
+    }
+
+    #[test]
+    fn path_tool_report_flags_wrong_version() {
+        // Version parsing + is_required together decide whether a PATH tool is
+        // acceptable; a system LLVM 14 must be flagged, 21.1.x accepted.
+        assert!(!is_required_llvm_version(
+            &parse_llvm_version_output("LLVM version 14.0.0").unwrap()
+        ));
+        assert!(is_required_llvm_version(
+            &parse_llvm_version_output("LLVM version 21.1.8").unwrap()
+        ));
     }
 
     #[test]

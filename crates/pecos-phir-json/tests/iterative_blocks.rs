@@ -14,8 +14,8 @@ fn test_basic_iterative_execution() -> Result<(), PecosError> {
 
     // Add variables for testing
     executor.add_quantum_variable("q", 2)?;
-    executor.add_classical_variable("m", "i32", 32)?;
-    executor.add_classical_variable("result", "i32", 32)?;
+    executor.add_classical_variable("m", "i32", 31)?;
+    executor.add_classical_variable("result", "i32", 31)?;
 
     // Create a sequence of operations
     let operations = vec![
@@ -86,9 +86,9 @@ fn test_nested_blocks_iterative() -> Result<(), PecosError> {
     let mut executor = BlockExecutor::new();
 
     // Add variables for testing
-    executor.add_classical_variable("x", "i32", 32)?;
-    executor.add_classical_variable("y", "i32", 32)?;
-    executor.add_classical_variable("z", "i32", 32)?;
+    executor.add_classical_variable("x", "i32", 31)?;
+    executor.add_classical_variable("y", "i32", 31)?;
+    executor.add_classical_variable("z", "i32", 31)?;
 
     // Set initial values
     executor.get_environment_mut().set("x", 10)?;
@@ -153,11 +153,15 @@ fn test_nested_blocks_iterative() -> Result<(), PecosError> {
     // 2. z should be 100 (from true branch since y > 10)
     let env = executor.get_environment();
 
-    let y_value = env.get("y").map(|v| v.as_i64());
+    let y_value = env
+        .get("y")
+        .map(pecos_phir_json::v0_1::environment::BitValue::as_i64);
     println!("y value: {y_value:?}");
     assert_eq!(y_value, Some(15));
 
-    let z_value = env.get("z").map(|v| v.as_i64());
+    let z_value = env
+        .get("z")
+        .map(pecos_phir_json::v0_1::environment::BitValue::as_i64);
     println!("z value: {z_value:?}");
     assert_eq!(z_value, Some(100));
 
@@ -172,7 +176,7 @@ fn test_operation_buffering() -> Result<(), PecosError> {
 
     // Add variables for testing
     executor.add_quantum_variable("q", 2)?;
-    executor.add_classical_variable("m", "i32", 32)?;
+    executor.add_classical_variable("m", "i32", 31)?;
 
     // Create operations with measurements
     let operations = vec![
@@ -218,7 +222,11 @@ fn test_operation_buffering() -> Result<(), PecosError> {
 
     // Verify the final state
     let env = executor.get_environment();
-    assert_eq!(env.get("m").map(|v| v.as_i64()), Some(42));
+    assert_eq!(
+        env.get("m")
+            .map(pecos_phir_json::v0_1::environment::BitValue::as_i64),
+        Some(42)
+    );
 
     Ok(())
 }
@@ -230,8 +238,8 @@ fn test_iterator_interface() -> Result<(), PecosError> {
     let mut executor = BlockExecutor::new();
 
     // Add variables for testing
-    executor.add_classical_variable("x", "i32", 32)?;
-    executor.add_classical_variable("y", "i32", 32)?;
+    executor.add_classical_variable("x", "i32", 31)?;
+    executor.add_classical_variable("y", "i32", 31)?;
 
     // Create a sequence of operations
     let operations = vec![
@@ -268,8 +276,16 @@ fn test_iterator_interface() -> Result<(), PecosError> {
 
     // Verify the values were set
     let env = executor.get_environment();
-    assert_eq!(env.get("x").map(|v| v.as_i64()), Some(10));
-    assert_eq!(env.get("y").map(|v| v.as_i64()), Some(20));
+    assert_eq!(
+        env.get("x")
+            .map(pecos_phir_json::v0_1::environment::BitValue::as_i64),
+        Some(10)
+    );
+    assert_eq!(
+        env.get("y")
+            .map(pecos_phir_json::v0_1::environment::BitValue::as_i64),
+        Some(20)
+    );
 
     Ok(())
 }

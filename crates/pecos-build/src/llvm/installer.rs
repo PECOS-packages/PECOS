@@ -383,6 +383,7 @@ fn download_file(url: &str, dest: &Path, label: &str) -> Result<()> {
     print!("Downloading {label}... ");
     io::Write::flush(&mut io::stdout())?;
 
+    crate::download::ensure_crypto_provider();
     let response = reqwest::blocking::get(url).map_err(|e| Error::Http(e.to_string()))?;
     if !response.status().is_success() {
         return Err(Error::Http(format!(

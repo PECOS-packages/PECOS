@@ -29,11 +29,32 @@ pub fn qasm_to_phir_json(qasm_str: &str) -> Result<Value, String> {
     program_to_phir_json(&program)
 }
 
+/// Unsigned PHIR integer type that holds `size` bits.
+///
+/// Classical registers are unsigned bit collections, so an unsigned type (legal
+/// for any `size <= N`, and lossless even at 64 bits where a signed
+/// `i(size+1)` register has no backing) is the correct representation. The PHIR
+/// spec only defines `u32` and `u64`, so those are the two choices.
+///
+/// # Errors
+///
+/// Returns an error if `size` exceeds the maximum 64-bit backing type.
+fn classical_register_dtype(size: usize) -> Result<&'static str, String> {
+    match size {
+        0..=32 => Ok("u32"),
+        33..=64 => Ok("u64"),
+        _ => Err(format!(
+            "classical register size {size} exceeds the maximum 64-bit backing type"
+        )),
+    }
+}
+
 /// Convert a parsed QASM `Program` to a PHIR-JSON `serde_json::Value`.
 ///
 /// # Errors
 ///
-/// Returns an error if the program contains unsupported operations.
+/// Returns an error if the program contains unsupported operations or a
+/// classical register is too large for a 64-bit backing type.
 pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
     let mut ops: Vec<Value> = Vec::new();
 
@@ -47,11 +68,16 @@ pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
         }));
     }
 
-    // 2) Classical register definitions -- all i64
+    // 2) Classical register definitions. QASM classical registers are unsigned
+    // bit collections, so they map to the smallest unsigned type that holds
+    // `size` bits (`uN` is valid for any size up to the 64-bit backing width;
+    // a signed register would need size + 1 <= N and could not represent 64
+    // bits at all).
     for (name, size) in &program.classical_registers {
+        let dtype = classical_register_dtype(*size)?;
         ops.push(json!({
             "data": "cvar_define",
-            "data_type": "i64",
+            "data_type": dtype,
             "variable": name,
             "size": size
         }));
@@ -421,6 +447,7 @@ mod tests {
             include "qelib1.inc";
             qreg q[2];
             creg m[3];
+            creg big[64];
         "#,
         );
         let ops = get_ops(&phir);
@@ -430,10 +457,23 @@ mod tests {
         assert_eq!(qvar["size"], 2);
         assert_eq!(qvar["data_type"], "qubits");
 
-        let cvar = ops.iter().find(|o| o["data"] == "cvar_define").unwrap();
-        assert_eq!(cvar["variable"], "m");
+        // Classical registers are unsigned bit collections. The PHIR spec only
+        // defines u32/u64, so a <=32-bit register maps to u32.
+        let cvar = ops
+            .iter()
+            .find(|o| o["data"] == "cvar_define" && o["variable"] == "m")
+            .unwrap();
         assert_eq!(cvar["size"], 3);
-        assert_eq!(cvar["data_type"], "i64");
+        assert_eq!(cvar["data_type"], "u32");
+
+        // A 64-bit register maps to u64 -- a signed register could not hold 64
+        // bits (i65 has no backing type).
+        let big = ops
+            .iter()
+            .find(|o| o["data"] == "cvar_define" && o["variable"] == "big")
+            .unwrap();
+        assert_eq!(big["size"], 64);
+        assert_eq!(big["data_type"], "u64");
     }
 
     #[test]

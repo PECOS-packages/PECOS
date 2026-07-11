@@ -120,3 +120,81 @@ def test_setting_mixed() -> None:
     assert results_dict["b"].count("011") == len(results_dict["b"])
     assert results_dict["c"].count("010") == len(results_dict["c"])
     assert results_dict["d"].count("100") == len(results_dict["d"])
+
+
+def test_negative_signed_register_is_twos_complement() -> None:
+    """A signed register that goes negative prints two's-complement, not "-".
+
+    A size-31 i32 register is an i32 (i(31+1)), so 0 - 1 = -1, which prints as
+    the full 32-bit two's-complement string (all ones) -- never Python's
+    sign-and-magnitude "-...".
+    """
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "cvar_define", "data_type": "i32", "variable": "w", "size": 31},
+            {"data": "cvar_define", "data_type": "i64", "variable": "d", "size": 63},
+            # w = d = 0 - 1  ->  -1  ->  all ones in two's complement
+            {
+                "cop": "=",
+                "returns": ["w", "d"],
+                "args": [
+                    {"cop": "-", "args": [0, 1]},
+                    {"cop": "-", "args": [0, 1]},
+                ],
+            },
+        ],
+    }
+
+    results = HybridEngine(qsim="stabilizer").run(program=phir, shots=3)
+
+    for bits in results["w"]:
+        assert bits == "1" * 32
+    for bits in results["d"]:
+        assert bits == "1" * 64
+    assert not any("-" in bits for bits in results["w"] + results["d"])
+
+
+def test_oversized_signed_register_errors() -> None:
+    """A signed register whose size+1 exceeds its backing width errors loudly."""
+    import pytest
+
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            # i32 size-32 would need 33 bits (32 data + sign) -> does not fit i32.
+            {"data": "cvar_define", "data_type": "i32", "variable": "bad", "size": 32},
+        ],
+    }
+
+    with pytest.raises(ValueError, match=r"does not fit its 32-bit backing type"):
+        HybridEngine(qsim="stabilizer").run(program=phir, shots=1)
+
+
+def test_signed_register_prints_sign_bit_width() -> None:
+    """A signed size-n register prints n+1 bits: n data bits plus a sign bit.
+
+    A size-31 i32-backed register is non-negative (its data bits are masked to
+    31 bits), so it prints 32 bits with a leading "0" sign bit. An unsigned
+    register has no sign bit and stays exactly `size` wide.
+    """
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "cvar_define", "data_type": "i32", "variable": "s", "size": 31},
+            {"data": "cvar_define", "data_type": "u32", "variable": "u", "size": 31},
+            {"cop": "=", "returns": ["s", "u"], "args": [5, 5]},
+        ],
+    }
+
+    results = HybridEngine(qsim="stabilizer").run(program=phir, shots=3)
+
+    for bits in results["s"]:
+        assert bits == "0" + "0" * 26 + "00101"  # 32 bits: sign "0" + 31 data bits
+        assert len(bits) == 32
+    for bits in results["u"]:
+        assert bits == "0" * 26 + "00101"  # 31 bits, no sign bit
+        assert len(bits) == 31

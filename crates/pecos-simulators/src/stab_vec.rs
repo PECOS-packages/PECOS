@@ -2451,7 +2451,7 @@ mod tests {
         }
         crz.rz(Angle64::from_radians(0.3), &[QubitId(0)]);
         let results = crz.mz(&[QubitId(0)]);
-        assert!(results.len() == 1);
+        assert_eq!(results.len(), 1);
     }
 
     #[test]
@@ -2464,7 +2464,7 @@ mod tests {
         }
         crz.rz(Angle64::from_radians(0.3), &[QubitId(0)]);
         let results = crz.mz(&[QubitId(0)]);
-        assert!(results.len() == 1);
+        assert_eq!(results.len(), 1);
     }
 
     #[test]

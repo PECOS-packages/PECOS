@@ -25,7 +25,7 @@ use pecos_wasm::ForeignObject;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 // ── Python ForeignObject bridge ──────────────────────────────────────
@@ -175,22 +175,49 @@ impl PyPhirClassicalInterpreter {
         program: &Bound<'_, PyAny>,
         foreign_obj: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<usize> {
-        // Convert program to JSON string
-        let json_str = if let Ok(s) = program.extract::<String>() {
-            s
+        // Resolve the program to a Python dict (for optional schema validation)
+        // and a JSON string (for the Rust core), mirroring the input types the
+        // Python `PhirClassicalInterpreter` accepts: a PHIR/JSON string, a dict,
+        // or a `PhirConvertible` exposing `to_phir_dict()`.
+        let json_mod = py.import("json")?;
+        let (program_dict, json_str) = if let Ok(s) = program.extract::<String>() {
+            let dict = json_mod.call_method1("loads", (s.as_str(),))?;
+            (dict, s)
         } else if program.is_instance_of::<pyo3::types::PyDict>() {
-            let json_mod = py.import("json")?;
-            json_mod
+            let s = json_mod
                 .call_method1("dumps", (program,))?
-                .extract::<String>()?
+                .extract::<String>()?;
+            (program.clone(), s)
+        } else if program.hasattr("to_phir_dict")? {
+            let dict = program.call_method0("to_phir_dict")?;
+            let s = json_mod
+                .call_method1("dumps", (&dict,))?
+                .extract::<String>()?;
+            (dict, s)
         } else {
-            // Try to_phir_dict() for PhirConvertible objects
-            let phir_dict = program.call_method0("to_phir_dict")?;
-            let json_mod = py.import("json")?;
-            json_mod
-                .call_method1("dumps", (&phir_dict,))?
-                .extract::<String>()?
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "RustPhirClassicalInterpreter cannot accept a '{}' program; pass PHIR as a \
+                 dict or JSON string, or use the Python interpreter (cinterp=\"python\").",
+                program.get_type().name()?,
+            )));
         };
+
+        // Honor `phir_validate` (matching the Python interpreter): schema-validate
+        // the PHIR dict against the pydantic `PhirModel` before running. The
+        // schema lives in `quantum-pecos` (`pecos.typing`), which `pecos_rslib`
+        // does not depend on -- fail with an actionable message on standalone
+        // installs rather than a bare ModuleNotFoundError.
+        if self.phir_validate {
+            let typing = py.import("pecos.typing").map_err(|e| {
+                pyo3::exceptions::PyImportError::new_err(format!(
+                    "phir_validate=True requires the 'quantum-pecos' package (pecos.typing) \
+                     for PHIR schema validation; install it or set phir_validate=False: {e}"
+                ))
+            })?;
+            typing
+                .getattr("PhirModel")?
+                .call_method1("model_validate", (&program_dict,))?;
+        }
 
         let rust_foreign = foreign_obj.map(|fo| {
             let py_fo = PyForeignObject {
@@ -198,6 +225,47 @@ impl PyPhirClassicalInterpreter {
             };
             Box::new(py_fo) as Box<dyn ForeignObject>
         });
+
+        // Fast-fail (matching the intent of the Python interpreter's `check_ffc`)
+        // when the program invokes foreign functions that are not available --
+        // either because the supplied foreign object lacks them, or because no
+        // foreign object was supplied at all.
+        {
+            let program_ast: PHIRProgram = serde_json::from_str(&json_str).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!("Failed to parse: {e}"))
+            })?;
+            let ffcalls = program_ast.foreign_func_calls();
+            if !ffcalls.is_empty() {
+                let provided: BTreeSet<String> = match foreign_obj {
+                    Some(fo) => fo
+                        .call_method0("get_funcs")?
+                        .extract::<Vec<String>>()?
+                        .into_iter()
+                        .collect(),
+                    None => BTreeSet::new(),
+                };
+                let missing = ffcalls
+                    .iter()
+                    .filter(|name| !provided.contains(name.as_str()))
+                    .map(|name| format!("'{name}'"))
+                    .collect::<Vec<_>>();
+                if !missing.is_empty() {
+                    let missing_set = format!("{{{}}}", missing.join(", "));
+                    let msg = if foreign_obj.is_some() {
+                        format!(
+                            "The following foreign function calls are listed in the program but \
+                             not supported by the supplied foreign object: {missing_set}"
+                        )
+                    } else {
+                        format!(
+                            "The program lists foreign function calls but no foreign object was \
+                             supplied: {missing_set}"
+                        )
+                    };
+                    return Err(pyo3::exceptions::PyException::new_err(msg));
+                }
+            }
+        }
 
         self.program_json = Some(json_str.clone());
 
@@ -325,7 +393,7 @@ impl PyPhirClassicalInterpreter {
 
         inner
             .receive_results(&results)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
+            .map_err(|e| pecos_error_to_pyerr(&e))
     }
 
     /// Extract measurement bits, optionally filtering private variables.
@@ -446,6 +514,27 @@ impl PyPhirClassicalInterpreter {
         // We return None here for protocol compatibility -- the actual
         // foreign object was passed via init() and is held in Rust.
         None
+    }
+
+    /// Allow `foreign_obj = None` (protocol compatibility): detaches the
+    /// foreign object held in Rust, e.g. before pickling for multiprocessing
+    /// (`run_multisim` clears it and workers re-attach via `init`). Attaching
+    /// a foreign object must go through `init()`, so any other value is an
+    /// error.
+    #[setter]
+    fn set_foreign_obj(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        match value {
+            None => {
+                let mut inner = self.inner.lock().map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {e}"))
+                })?;
+                inner.clear_foreign_object();
+                Ok(())
+            }
+            Some(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "foreign_obj can only be set to None (detach); pass a foreign object via init()",
+            )),
+        }
     }
 }
 
@@ -594,6 +683,19 @@ impl PyPhirExecuteIter {
     }
 }
 
+/// Map a `PecosError` from the interpreter to the closest Python exception type,
+/// so the Rust interpreter's runtime errors match the Python interpreter's (e.g.
+/// a division by zero raises `ZeroDivisionError`, and an undefined reference
+/// raises `KeyError`, rather than a generic `RuntimeError`).
+fn pecos_error_to_pyerr(err: &PecosError) -> PyErr {
+    let msg = err.to_string();
+    match err {
+        PecosError::RuntimeDivisionByZero => pyo3::exceptions::PyZeroDivisionError::new_err(msg),
+        PecosError::RuntimeUndefinedVariable { .. } => pyo3::exceptions::PyKeyError::new_err(msg),
+        _ => pyo3::exceptions::PyRuntimeError::new_err(msg),
+    }
+}
+
 impl PyPhirExecuteIter {
     fn get_ops_slice<'a>(ops: &'a [Operation], stack_entry: &'a OpsRef) -> &'a [Operation] {
         match stack_entry {
@@ -651,7 +753,7 @@ impl PyPhirExecuteIter {
                 } => {
                     let yielded = interp
                         .make_qop(qop, angles, args, returns, metadata)
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+                        .map_err(|e| pecos_error_to_pyerr(&e))?;
                     let is_measure = matches!(qop.as_str(), "measure Z" | "Measure" | "Measure +Z");
                     self.buffer.push(YieldedOp::QOp(yielded));
 
@@ -668,7 +770,7 @@ impl PyPhirExecuteIter {
                 } => {
                     let yielded = interp
                         .make_mop(mop, args, duration, metadata)
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+                        .map_err(|e| pecos_error_to_pyerr(&e))?;
                     self.buffer.push(YieldedOp::MOp(yielded));
                 }
 
@@ -681,7 +783,7 @@ impl PyPhirExecuteIter {
                 } => {
                     interp
                         .handle_cop(cop, args, returns, function)
-                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))?;
+                        .map_err(|e| pecos_error_to_pyerr(&e))?;
                 }
 
                 Operation::Block {
@@ -699,9 +801,9 @@ impl PyPhirExecuteIter {
                         let cond = condition.as_ref().ok_or_else(|| {
                             pyo3::exceptions::PyValueError::new_err("If block missing condition")
                         })?;
-                        let cond_val = interp.eval_expr(cond).map_err(|e| {
-                            pyo3::exceptions::PyRuntimeError::new_err(format!("{e}"))
-                        })?;
+                        let cond_val = interp
+                            .eval_expr(cond)
+                            .map_err(|e| pecos_error_to_pyerr(&e))?;
                         if cond_val != 0 {
                             if let Some(tb) = true_branch {
                                 self.stack.push((0, OpsRef::Owned(tb.clone())));

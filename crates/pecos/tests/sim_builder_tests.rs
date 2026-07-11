@@ -181,7 +181,7 @@ fn test_sim_determinism() -> Result<(), PecosError> {
     // Results should be different (this is probabilistic but very likely)
     // We're checking if the measurements are completely identical, which is
     // extremely unlikely with different seeds over 100 shots
-    assert!(results1 != results3);
+    assert_ne!(results1, results3);
 
     Ok(())
 }

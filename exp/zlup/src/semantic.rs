@@ -5387,22 +5387,16 @@ impl SemanticAnalyzer {
             Type::Struct { fields, .. } => {
                 let mut total = 0;
                 for (_, field_ty) in fields {
-                    if let Some(bits) = self.type_bit_size(field_ty) {
-                        total += bits;
-                    } else {
-                        return None;
-                    }
+                    let bits = self.type_bit_size(field_ty)?;
+                    total += bits;
                 }
                 Some(total)
             }
             Type::Tuple { elements } => {
                 let mut total = 0;
                 for elem_ty in elements {
-                    if let Some(bits) = self.type_bit_size(elem_ty) {
-                        total += bits;
-                    } else {
-                        return None;
-                    }
+                    let bits = self.type_bit_size(elem_ty)?;
+                    total += bits;
                 }
                 Some(total)
             }

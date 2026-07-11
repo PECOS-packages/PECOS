@@ -206,6 +206,7 @@ fn download_cuquantum(url: &str, dest: &Path) -> Result<()> {
     print!("Downloading cuQuantum SDK... ");
     io::stdout().flush()?;
 
+    crate::download::ensure_crypto_provider();
     let response = reqwest::blocking::get(url).map_err(|e| Error::Http(e.to_string()))?;
 
     if !response.status().is_success() {

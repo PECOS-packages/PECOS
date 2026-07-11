@@ -231,16 +231,16 @@ jobs:
 
       - name: Install PR smoke artifacts
         run: |
-          uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl
-          uv pip install --system --force-reinstall ./pr-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl
-          uv pip install --system \
-            "phir>=0.3.3" \
-            "networkx>=2.1.0" \
-            "guppylang>=0.21.6" \
-            "tket<0.12.16" \
-            "hugr>=0.13.0" \
-            "selene-sim~=0.2.0"
-          uv pip install --system --force-reinstall --no-deps ./pr-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+          # Install all three local wheels in ONE resolver invocation: the local
+          # wheels satisfy quantum-pecos's exact pecos-rslib/-llvm pins (which do
+          # not exist on PyPI for unreleased versions) and every other dependency
+          # resolves from the wheel's own Requires-Dist -- no hand-maintained
+          # duplicate pin list that can drift from the package metadata.
+          uv pip install --system --force-reinstall \
+            ./pr-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl \
+            ./pr-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl \
+            ./pr-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+          uv pip check --system
 
       - name: Import PR smoke artifacts
         run: |

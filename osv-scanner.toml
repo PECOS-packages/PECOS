@@ -75,7 +75,7 @@ reason = "Transitive via mwpf -> slp -> structopt; maintenance-mode warning for 
 
 [[IgnoredVulns]]
 id = "PYSEC-2026-151"
-# wasmtime (PyPI) 42.0.0 (uv.lock) / 38.0.0 (exp/zluppy/uv.lock) -- Wasmtime
+# wasmtime (PyPI) 43.0.0 (uv.lock) / 38.0.0 (exp/zluppy/uv.lock) -- Wasmtime
 # stack-overflow bug class; the advisory lists NO fixed release (last_affected
 # 43.0.0, the latest).
 # Chain: quantum-pecos -> guppylang -> guppylang-internals -> wasmtime.

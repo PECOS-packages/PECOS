@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  -f, --file FILE      Path to the GitHub Actions artifact zip (default: pecos-distribution.zip)"
-            echo "  -p, --package PKG    Publish only specific package (pecos-rslib or quantum-pecos)"
+            echo "  -p, --package PKG    Publish only specific package (pecos-rslib, pecos-rslib-llvm, or quantum-pecos)"
             echo "  --dry-run            Show what would be uploaded without actually uploading"
             echo "  -h, --help           Show this help message"
             echo ""
@@ -137,16 +137,18 @@ publish_package() {
 # Main execution
 if [ -n "$PACKAGE" ]; then
     # Publish specific package
-    if [[ "$PACKAGE" != "pecos-rslib" && "$PACKAGE" != "quantum-pecos" ]]; then
+    if [[ "$PACKAGE" != "pecos-rslib" && "$PACKAGE" != "pecos-rslib-llvm" && "$PACKAGE" != "quantum-pecos" ]]; then
         echo -e "${RED}Error: Invalid package name '$PACKAGE'${NC}"
-        echo "Valid options are: pecos-rslib, quantum-pecos"
+        echo "Valid options are: pecos-rslib, pecos-rslib-llvm, quantum-pecos"
         exit 1
     fi
     publish_package "$PACKAGE"
 else
-    # Publish all packages
+    # Publish all packages. quantum-pecos pins pecos-rslib and pecos-rslib-llvm
+    # at exact versions, so publish the dependencies first.
     echo -e "${GREEN}Publishing all PECOS packages${NC}"
     publish_package "pecos-rslib"
+    publish_package "pecos-rslib-llvm"
     publish_package "quantum-pecos"
 fi
 

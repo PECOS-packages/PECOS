@@ -137,7 +137,10 @@ jobs:
 
   python-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The full post-merge core suite passed at ~40m in late June and has since
+    # grown past 45m (timing out at ~83% of the suite on every dev push since
+    # 2026-07-07). 75m restores the original ~35% headroom.
+    timeout-minutes: 75
     steps:
     - name: Harden the runner (egress audit)
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

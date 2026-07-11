@@ -50,11 +50,11 @@ ref.
 ## 4. Download the bundle and dry-run
 
 ```
-gh run download <tag-run-id> -n pecos-distribution
-# gh auto-extracts; the publish script wants the zip:
-zip -qr pecos-distribution.zip pecos-rslib pecos-rslib-llvm quantum-pecos
-./scripts/publish-wheels.sh --dry-run -f pecos-distribution.zip
+gh run download <tag-run-id> -n pecos-distribution -D pecos-distribution
+./scripts/publish-wheels.sh --dry-run -f pecos-distribution
 ```
+
+(`-f` accepts the extracted directory `gh` produces, or the original zip.)
 
 The dry run must show a real `twine check ... PASSED` per file (twine must be
 installed, e.g. `uv tool install twine`).
@@ -62,7 +62,7 @@ installed, e.g. `uv tool install twine`).
 ## 5. Publish (the manual step)
 
 ```
-./scripts/publish-wheels.sh -f pecos-distribution.zip
+./scripts/publish-wheels.sh -f pecos-distribution
 ```
 
 Confirm each package at its prompt. Upload order matters and the script

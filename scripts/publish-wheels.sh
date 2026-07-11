@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  -f, --file FILE      Path to the GitHub Actions artifact zip (default: pecos-distribution.zip)"
+            echo "  -f, --file FILE      Artifact zip OR extracted artifact directory (default: pecos-distribution.zip)"
             echo "  -p, --package PKG    Publish only specific package (pecos-rslib, pecos-rslib-llvm, or quantum-pecos)"
             echo "  --dry-run            Show what would be uploaded without actually uploading"
             echo "  -y, --yes            Skip per-package confirmation prompts (for non-interactive use)"
@@ -57,9 +57,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if artifact file exists
-if [ ! -f "$ARTIFACT_FILE" ]; then
-    echo -e "${RED}Error: Artifact file '$ARTIFACT_FILE' not found!${NC}"
+# Check if the artifact exists: either the zip, or an already-extracted
+# directory (`gh run download` auto-extracts artifacts).
+if [ ! -f "$ARTIFACT_FILE" ] && [ ! -d "$ARTIFACT_FILE" ]; then
+    echo -e "${RED}Error: Artifact '$ARTIFACT_FILE' not found!${NC}"
     echo "Please download the 'pecos-distribution' artifact from GitHub Actions."
     exit 1
 fi
@@ -82,16 +83,24 @@ fi
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
-echo -e "${GREEN}Extracting distribution bundle...${NC}"
-unzip -q "$ARTIFACT_FILE" -d "$TEMP_DIR"
+if [ -d "$ARTIFACT_FILE" ]; then
+    # Already-extracted artifact directory: read it in place (copy nothing,
+    # delete nothing -- TEMP_DIR cleanup must not touch the user's files).
+    echo -e "${GREEN}Using extracted distribution directory...${NC}"
+    DIST_DIR="$ARTIFACT_FILE"
+else
+    echo -e "${GREEN}Extracting distribution bundle...${NC}"
+    unzip -q "$ARTIFACT_FILE" -d "$TEMP_DIR"
+    DIST_DIR="$TEMP_DIR"
+fi
 
 # Function to publish a package
 publish_package() {
     local package_name=$1
     # Try both possible locations: with and without dist/ prefix
-    local package_dir="$TEMP_DIR/$package_name"
+    local package_dir="$DIST_DIR/$package_name"
     if [ ! -d "$package_dir" ]; then
-        package_dir="$TEMP_DIR/dist/$package_name"
+        package_dir="$DIST_DIR/dist/$package_name"
     fi
 
     if [ ! -d "$package_dir" ]; then

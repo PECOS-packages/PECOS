@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 ARTIFACT_FILE="pecos-distribution.zip"
 DRY_RUN=false
 PACKAGE=""
+ASSUME_YES=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -29,6 +30,10 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        -y|--yes)
+            ASSUME_YES=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -36,6 +41,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -f, --file FILE      Path to the GitHub Actions artifact zip (default: pecos-distribution.zip)"
             echo "  -p, --package PKG    Publish only specific package (pecos-rslib, pecos-rslib-llvm, or quantum-pecos)"
             echo "  --dry-run            Show what would be uploaded without actually uploading"
+            echo "  -y, --yes            Skip per-package confirmation prompts (for non-interactive use)"
             echo "  -h, --help           Show this help message"
             echo ""
             echo "Examples:"
@@ -103,19 +109,19 @@ publish_package() {
     echo "Found $file_count distribution file(s):"
     ls -la "$package_dir"
 
-    # Run twine check
+    # Run twine check. Capture the output and rely on twine's own exit status:
+    # twine exits nonzero on real errors and zero on warnings (e.g. the benign
+    # license-file warning maturin wheels carry). Piping to grep here would
+    # mask a failed or missing twine with grep's exit status.
     echo -e "\n${GREEN}Running twine check...${NC}"
-    if $TWINE_CMD check "$package_dir"/* 2>&1 | grep -v "license-file"; then
+    local check_output
+    if check_output=$($TWINE_CMD check "$package_dir"/* 2>&1); then
+        echo "$check_output" | grep -v "license-file" || true
         echo -e "${GREEN}Distribution checks passed${NC}"
     else
-        # Check if there are errors other than license-file
-        if $TWINE_CMD check "$package_dir"/* 2>&1 | grep -v "license-file" | grep -q "ERROR"; then
-            echo -e "${RED}Distribution checks failed${NC}"
-            echo "Run '$TWINE_CMD check $package_dir/*' to see details"
-            return 1
-        else
-            echo -e "${YELLOW}Only license-file warnings found (safe to ignore for maturin wheels)${NC}"
-        fi
+        echo "$check_output"
+        echo -e "${RED}Distribution checks failed${NC}"
+        return 1
     fi
 
     if [ "$DRY_RUN" = true ]; then
@@ -123,8 +129,14 @@ publish_package() {
         ls -1 "$package_dir"
     else
         echo -e "\n${GREEN}Uploading to PyPI...${NC}"
-        read -p "Are you sure you want to upload $package_name to PyPI? (y/N) " -n 1 -r
-        echo
+        if [ "$ASSUME_YES" = true ]; then
+            REPLY="y"
+        else
+            # Read a full line (not -n 1): single-character reads mis-consume
+            # piped input (e.g. `yes |` leaves a newline that answers the NEXT
+            # prompt as "no", silently skipping a package).
+            read -p "Are you sure you want to upload $package_name to PyPI? (y/N) " -r
+        fi
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             $TWINE_CMD upload "$package_dir"/*
             echo -e "${GREEN}Successfully uploaded $package_name!${NC}"

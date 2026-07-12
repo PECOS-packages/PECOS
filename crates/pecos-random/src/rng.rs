@@ -39,7 +39,7 @@
 //!
 //! # Implementation
 //!
-//! Backed by 4 parallel [`RapidRng`] instances, providing similar bulk generation
+//! Backed by 4 parallel `RapidRng` instances, providing similar bulk generation
 //! capabilities to [`PecosRng`](crate::quality_rng::PecosQualityRng).
 
 use crate::rapid_rng::RapidRng;
@@ -54,12 +54,12 @@ const BUFFER_SIZE: usize = BUFFER_CHUNKS * 4; // 16 elements
 
 /// A high-performance RNG using `RapidHash` mixing with 4 parallel streams.
 ///
-/// This implementation maintains 4 independent [`RapidRng`] instances to provide
+/// This implementation maintains 4 independent `RapidRng` instances to provide
 /// bulk random number generation with an interface matching [`PecosRng`](crate::quality_rng::PecosQualityRng).
 ///
 /// # State Size
 ///
-/// Maintains 4 independent [`RapidRng`] generators, each with 64 bits of state,
+/// Maintains 4 independent `RapidRng` generators, each with 64 bits of state,
 /// for a total of 256 bits of state.
 ///
 /// # Optimized Methods

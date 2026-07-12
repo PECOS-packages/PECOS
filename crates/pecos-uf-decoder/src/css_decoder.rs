@@ -113,6 +113,8 @@ impl CssUfDecoder {
     ) -> Result<Self, DecoderError> {
         let x_graph = DemMatchingGraph::from_dem_str(x_dem)?;
         let z_graph = DemMatchingGraph::from_dem_str(z_dem)?;
+        x_graph.ensure_observables_fit_u64()?;
+        z_graph.ensure_observables_fit_u64()?;
         UfDecoder::check_non_negative_weights(&x_graph)?;
         UfDecoder::check_non_negative_weights(&z_graph)?;
 
@@ -120,8 +122,8 @@ impl CssUfDecoder {
         let qubit_map = Self::build_qubit_mapping(&x_graph, &z_graph);
 
         let x_num_detectors = x_graph.num_detectors;
-        let x_decoder = UfDecoder::from_matching_graph(&x_graph, config);
-        let z_decoder = UfDecoder::from_matching_graph(&z_graph, config);
+        let x_decoder = UfDecoder::from_matching_graph(&x_graph, config)?;
+        let z_decoder = UfDecoder::from_matching_graph(&z_graph, config)?;
 
         Ok(Self {
             x_decoder,

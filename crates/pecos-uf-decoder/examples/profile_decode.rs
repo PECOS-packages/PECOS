@@ -16,7 +16,7 @@ fn shots_as_f64(num_shots: usize) -> f64 {
 
 fn profile_decoder(name: &str, dem: &str, num_shots: usize) {
     let graph = DemMatchingGraph::from_dem_str(dem).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::fast());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::fast()).unwrap();
     let num_det = graph.num_detectors;
 
     // Generate random syndromes
@@ -59,7 +59,7 @@ fn profile_phases(name: &str, dem: &str, num_shots: usize) {
         .collect();
 
     // Phase 1: measure reset + syndrome loading only
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::fast());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::fast()).unwrap();
     let t0 = Instant::now();
     for syn in &syndromes {
         dec.syndrome_validate(syn); // reset + grow (no peel)
@@ -126,7 +126,7 @@ fn main() {
     println!();
     println!("=== Balanced (Prim MST) ===");
     let graph = DemMatchingGraph::from_dem_str(D5_DEM).unwrap();
-    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::balanced());
+    let mut dec = UfDecoder::from_matching_graph(&graph, UfDecoderConfig::balanced()).unwrap();
     let num_det = graph.num_detectors;
 
     let mut rng = fastrand::Rng::with_seed(42);

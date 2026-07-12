@@ -141,9 +141,7 @@ fn generate_rapidrng_bytes(seed: u64, count: usize) -> Vec<u8> {
     let mut rng = rapidrand::RapidRng::from_seed(seed.to_le_bytes());
     let mut bytes = vec![0u8; count];
     for chunk in bytes.chunks_exact_mut(8) {
-        let v = match rng.try_next_u64() {
-            Ok(v) => v,
-        };
+        let Ok(v) = rng.try_next_u64();
         chunk.copy_from_slice(&v.to_le_bytes());
     }
     bytes

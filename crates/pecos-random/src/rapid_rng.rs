@@ -39,8 +39,7 @@ impl RapidRng {
     /// Next value in the stream.
     #[inline]
     pub fn next(&mut self) -> u64 {
-        match self.0.try_next_u64() {
-            Ok(v) => v,
-        }
+        let Ok(v) = self.0.try_next_u64();
+        v
     }
 }

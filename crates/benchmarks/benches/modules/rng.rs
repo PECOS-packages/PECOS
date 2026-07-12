@@ -45,9 +45,8 @@ impl RapidRng {
         Self(rapidrand::RapidRng::from_seed(seed.to_le_bytes()))
     }
     fn next(&mut self) -> u64 {
-        match self.0.try_next_u64() {
-            Ok(v) => v,
-        }
+        let Ok(v) = self.0.try_next_u64();
+        v
     }
 }
 use std::hint::black_box;

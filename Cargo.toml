@@ -102,7 +102,9 @@ fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = "0.8"
-rapidhash = { version = "4", features = ["rng"] }
+# 4.5 deprecates RapidRng (moved to the separate `rapidrand` crate); stay on
+# 4.4 until pecos-random migrates -- tracked as a follow-up.
+rapidhash = { version = "4, <4.5", features = ["rng"] }
 
 # --- Data structures ---
 bitflags = "2"

@@ -471,7 +471,7 @@ dependencies = [
  "quizx",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",
- "rapidhash",
+ "rapidrand",
  "wide",
 ]
 
@@ -4708,7 +4708,7 @@ dependencies = [
  "rand_core 0.10.1",
  "rand_xoshiro 0.8.1",
  "random_tester",
- "rapidhash",
+ "rapidrand",
  "wide",
 ]
 
@@ -5727,13 +5727,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
 
 [[package]]
-name = "rapidhash"
-version = "4.4.1"
+name = "rapidrand"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e48930979c155e2f33aa36ab3119b5ee81332beb6482199a8ecd6029b80b59"
+checksum = "c8342ccc4b00f4d1592b5dee20d74a3b2fdb72ba0cf2802b5f0af2886974d032"
 dependencies = [
- "rand_core 0.9.5",
- "rustversion",
+ "rand_core 0.10.1",
 ]
 
 [[package]]

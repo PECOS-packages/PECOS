@@ -78,6 +78,12 @@ cuda12 = [ # CUDA 12 Python packages for GPU-accelerated simulations
 
 [tool.uv]
 default-groups = ["dev", "test"]
+# Security floors for transitive dependencies. Keep in sync with
+# docs/requirements.txt, which pins the same floors for the readthedocs build
+# (that file does not constrain this workspace's resolution).
+constraint-dependencies = [
+  "idna>=3.18", # CVE-2026-45409 (re-fix of CVE-2024-3651): idna.encode() DoS on crafted long inputs
+]
 # CUDA 12 and CUDA 13 stacks are mutually exclusive (separate cupy/cuquantum
 # wheels per CUDA major). Declare them conflicting so the lock never co-resolves
 # both -- co-resolution downgrades cu12 to satisfy cu13.

@@ -40,9 +40,9 @@
 //! }
 //! ```
 
+use crate::rapid_rng::RapidRng;
 use core::convert::Infallible;
 use rand_core::{SeedableRng, TryRng};
-use rapidhash::rng::RapidRng;
 use wide::u64x4;
 
 /// Scalar-optimized RNG with dedicated scalar RNG and parallel RNGs for bulk operations.

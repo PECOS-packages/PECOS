@@ -105,7 +105,7 @@ fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = "0.8"
-rapidhash = { version = "4", features = ["rng"] }
+rapidrand = { version = "0.1", features = ["rand"] }
 
 # --- Data structures ---
 bitflags = "2"

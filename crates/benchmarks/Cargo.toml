@@ -46,7 +46,7 @@ pecos-quantum.workspace = true
 pecos-random.workspace = true
 rand.workspace = true
 rand_xoshiro.workspace = true
-rapidhash.workspace = true
+rapidrand.workspace = true
 wide.workspace = true
 
 [[bench]]

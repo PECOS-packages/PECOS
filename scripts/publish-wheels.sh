@@ -1,7 +1,13 @@
 #!/bin/bash
 # Script to help publish PECOS wheels to PyPI from GitHub Actions artifacts
+#
+# Publish order matters: quantum-pecos pins pecos-rslib and pecos-rslib-llvm at
+# exact versions, so the dependencies must exist on PyPI before quantum-pecos.
+# All-packages mode preflights the complete artifact set and aborts on any
+# missing package or declined prompt rather than continuing (a partial publish
+# leaves quantum-pecos with unresolvable pins -- this has happened).
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -13,6 +19,9 @@ NC='\033[0m' # No Color
 ARTIFACT_FILE="pecos-distribution.zip"
 DRY_RUN=false
 PACKAGE=""
+ASSUME_YES=false
+
+ALL_PACKAGES=(pecos-rslib pecos-rslib-llvm quantum-pecos)
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -29,13 +38,18 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        -y|--yes)
+            ASSUME_YES=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  -f, --file FILE      Path to the GitHub Actions artifact zip (default: pecos-distribution.zip)"
+            echo "  -f, --file FILE      Artifact zip OR extracted artifact directory (default: pecos-distribution.zip)"
             echo "  -p, --package PKG    Publish only specific package (pecos-rslib, pecos-rslib-llvm, or quantum-pecos)"
             echo "  --dry-run            Show what would be uploaded without actually uploading"
+            echo "  -y, --yes            Skip per-package confirmation prompts (for non-interactive use)"
             echo "  -h, --help           Show this help message"
             echo ""
             echo "Examples:"
@@ -51,10 +65,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if artifact file exists
-if [ ! -f "$ARTIFACT_FILE" ]; then
-    echo -e "${RED}Error: Artifact file '$ARTIFACT_FILE' not found!${NC}"
+# Check if the artifact exists: either the zip, or an already-extracted
+# directory (`gh run download` auto-extracts artifacts).
+if [ ! -f "$ARTIFACT_FILE" ] && [ ! -d "$ARTIFACT_FILE" ]; then
+    echo -e "${RED}Error: Artifact '$ARTIFACT_FILE' not found!${NC}"
     echo "Please download the 'pecos-distribution' artifact from GitHub Actions."
+    exit 1
+fi
+
+# Prompts need a terminal; refuse to guess in non-interactive contexts.
+if [ "$ASSUME_YES" = false ] && [ "$DRY_RUN" = false ] && [ ! -t 0 ]; then
+    echo -e "${RED}Error: stdin is not a terminal. Use --yes for non-interactive publishing.${NC}"
     exit 1
 fi
 
@@ -72,84 +93,165 @@ else
     exit 1
 fi
 
-# Create temporary directory
-TEMP_DIR=$(mktemp -d)
-trap "rm -rf $TEMP_DIR" EXIT
+if [ -d "$ARTIFACT_FILE" ]; then
+    # Already-extracted artifact directory: read it in place.
+    echo -e "${GREEN}Using extracted distribution directory...${NC}"
+    DIST_DIR="$ARTIFACT_FILE"
+else
+    TEMP_DIR=$(mktemp -d)
+    trap 'rm -rf -- "${TEMP_DIR:?}"' EXIT
+    echo -e "${GREEN}Extracting distribution bundle...${NC}"
+    unzip -q "$ARTIFACT_FILE" -d "$TEMP_DIR"
+    DIST_DIR="$TEMP_DIR"
+fi
 
-echo -e "${GREEN}Extracting distribution bundle...${NC}"
-unzip -q "$ARTIFACT_FILE" -d "$TEMP_DIR"
+# Resolve a package's distribution directory (with or without dist/ prefix).
+package_dir_for() {
+    local package_name=$1
+    local dir="$DIST_DIR/$package_name"
+    [ -d "$dir" ] || dir="$DIST_DIR/dist/$package_name"
+    printf '%s\n' "$dir"
+}
 
-# Function to publish a package
+# Preflight one package: directory exists, contains only expected distribution
+# files for that project, and report the single version they carry.
+# Prints the version on stdout; fails the script otherwise.
+preflight_package() {
+    local package_name=$1
+    local dir
+    dir=$(package_dir_for "$package_name")
+    if [ ! -d "$dir" ]; then
+        echo -e "${RED}Error: $package_name directory not found in distribution${NC}" >&2
+        return 1
+    fi
+    local prefix="${package_name//-/_}"
+    local versions=()
+    local f base ver
+    shopt -s nullglob
+    local files=("$dir"/*)
+    shopt -u nullglob
+    if [ "${#files[@]}" -eq 0 ]; then
+        echo -e "${RED}Error: no files found in $dir${NC}" >&2
+        return 1
+    fi
+    for f in "${files[@]}"; do
+        base=$(basename "$f")
+        case "$base" in
+            "$prefix"-*.whl|"$prefix"-*.tar.gz) ;;
+            *)
+                echo -e "${RED}Error: unexpected file in $dir: $base (expected only $prefix-*.whl / $prefix-*.tar.gz)${NC}" >&2
+                return 1
+                ;;
+        esac
+        ver=${base#"$prefix"-}
+        ver=${ver%%-*}
+        ver=${ver%.tar.gz}
+        versions+=("$ver")
+    done
+    local unique
+    unique=$(printf '%s\n' "${versions[@]}" | sort -u)
+    if [ "$(printf '%s\n' "$unique" | wc -l)" -ne 1 ]; then
+        echo -e "${RED}Error: mixed versions in $dir: ${unique//$'\n'/ }${NC}" >&2
+        return 1
+    fi
+    printf '%s\n' "$unique"
+}
+
+# Publish a package (assumed preflighted). Fails the script on any error or on
+# a declined prompt -- callers rely on this to abort dependent uploads.
 publish_package() {
     local package_name=$1
-    # Try both possible locations: with and without dist/ prefix
-    local package_dir="$TEMP_DIR/$package_name"
-    if [ ! -d "$package_dir" ]; then
-        package_dir="$TEMP_DIR/dist/$package_name"
-    fi
-
-    if [ ! -d "$package_dir" ]; then
-        echo -e "${YELLOW}Warning: $package_name directory not found in distribution${NC}"
-        return
-    fi
-
-    local file_count=$(ls -1 "$package_dir" | wc -l)
-    if [ "$file_count" -eq 0 ]; then
-        echo -e "${YELLOW}Warning: No files found in $package_name directory${NC}"
-        return
-    fi
+    local package_dir
+    package_dir=$(package_dir_for "$package_name")
 
     echo -e "\n${GREEN}=== Publishing $package_name ===${NC}"
-    echo "Found $file_count distribution file(s):"
     ls -la "$package_dir"
 
-    # Run twine check
+    # --strict: fail on warnings too. Current maturin/hatchling artifacts pass
+    # strict checks cleanly, so any warning is a real signal.
     echo -e "\n${GREEN}Running twine check...${NC}"
-    if $TWINE_CMD check "$package_dir"/* 2>&1 | grep -v "license-file"; then
+    local check_output
+    if check_output=$($TWINE_CMD check --strict "$package_dir"/* 2>&1); then
         echo -e "${GREEN}Distribution checks passed${NC}"
     else
-        # Check if there are errors other than license-file
-        if $TWINE_CMD check "$package_dir"/* 2>&1 | grep -v "license-file" | grep -q "ERROR"; then
-            echo -e "${RED}Distribution checks failed${NC}"
-            echo "Run '$TWINE_CMD check $package_dir/*' to see details"
-            return 1
-        else
-            echo -e "${YELLOW}Only license-file warnings found (safe to ignore for maturin wheels)${NC}"
-        fi
+        echo "$check_output"
+        echo -e "${RED}Distribution checks failed${NC}"
+        return 1
     fi
 
     if [ "$DRY_RUN" = true ]; then
         echo -e "\n${YELLOW}DRY RUN: Would upload the following files:${NC}"
         ls -1 "$package_dir"
+        return 0
+    fi
+
+    echo -e "\n${GREEN}Uploading to PyPI...${NC}"
+    if [ "$ASSUME_YES" = true ]; then
+        REPLY="y"
     else
-        echo -e "\n${GREEN}Uploading to PyPI...${NC}"
-        read -p "Are you sure you want to upload $package_name to PyPI? (y/N) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            $TWINE_CMD upload "$package_dir"/*
-            echo -e "${GREEN}Successfully uploaded $package_name!${NC}"
-        else
-            echo -e "${YELLOW}Skipped uploading $package_name${NC}"
+        # Full-line read: single-character reads mis-consume piped input. A
+        # read failure (EOF) aborts loudly rather than guessing.
+        if ! read -p "Are you sure you want to upload $package_name to PyPI? (y/N) " -r; then
+            echo -e "${RED}Error: could not read confirmation (EOF); aborting.${NC}"
+            return 1
         fi
     fi
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        $TWINE_CMD upload "$package_dir"/*
+        echo -e "${GREEN}Successfully uploaded $package_name!${NC}"
+    else
+        echo -e "${RED}Declined uploading $package_name; aborting (later packages depend on it).${NC}"
+        return 1
+    fi
+}
+
+# Verify an exact pin exists on PyPI (used to guard publishing quantum-pecos
+# on its own: its exact pecos-rslib/-llvm pins must already be resolvable).
+pin_exists_on_pypi() {
+    local name=$1 version=$2
+    curl -fsSL -o /dev/null "https://pypi.org/pypi/$name/$version/json"
 }
 
 # Main execution
 if [ -n "$PACKAGE" ]; then
-    # Publish specific package
-    if [[ "$PACKAGE" != "pecos-rslib" && "$PACKAGE" != "pecos-rslib-llvm" && "$PACKAGE" != "quantum-pecos" ]]; then
+    if ! printf '%s\n' "${ALL_PACKAGES[@]}" | grep -qx "$PACKAGE"; then
         echo -e "${RED}Error: Invalid package name '$PACKAGE'${NC}"
-        echo "Valid options are: pecos-rslib, pecos-rslib-llvm, quantum-pecos"
+        echo "Valid options are: ${ALL_PACKAGES[*]}"
         exit 1
+    fi
+    version=$(preflight_package "$PACKAGE")
+    echo -e "${GREEN}Preflight OK: $PACKAGE $version${NC}"
+    if [ "$PACKAGE" = "quantum-pecos" ] && [ "$DRY_RUN" = false ]; then
+        for dep in pecos-rslib pecos-rslib-llvm; do
+            if ! pin_exists_on_pypi "$dep" "$version"; then
+                echo -e "${RED}Error: quantum-pecos==$version pins $dep==$version, which is not on PyPI.${NC}"
+                echo "Publish $dep first (or use all-packages mode)."
+                exit 1
+            fi
+        done
     fi
     publish_package "$PACKAGE"
 else
-    # Publish all packages. quantum-pecos pins pecos-rslib and pecos-rslib-llvm
-    # at exact versions, so publish the dependencies first.
-    echo -e "${GREEN}Publishing all PECOS packages${NC}"
-    publish_package "pecos-rslib"
-    publish_package "pecos-rslib-llvm"
-    publish_package "quantum-pecos"
+    # All-packages mode: preflight EVERYTHING before uploading anything, and
+    # require one consistent version across the set.
+    echo -e "${GREEN}Preflighting all PECOS packages${NC}"
+    versions=()
+    for pkg in "${ALL_PACKAGES[@]}"; do
+        v=$(preflight_package "$pkg")
+        echo -e "${GREEN}Preflight OK: $pkg $v${NC}"
+        versions+=("$v")
+    done
+    unique=$(printf '%s\n' "${versions[@]}" | sort -u)
+    if [ "$(printf '%s\n' "$unique" | wc -l)" -ne 1 ]; then
+        echo -e "${RED}Error: packages carry different versions: ${unique//$'\n'/ }${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Publishing all PECOS packages at version $unique${NC}"
+    # Dependencies first; publish_package aborts the script on failure or
+    # decline, so quantum-pecos cannot publish without its pinned deps.
+    for pkg in "${ALL_PACKAGES[@]}"; do
+        publish_package "$pkg"
+    done
 fi
 
 echo -e "\n${GREEN}Done!${NC}"

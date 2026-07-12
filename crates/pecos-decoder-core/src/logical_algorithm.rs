@@ -309,8 +309,9 @@ pub struct StreamingLogicalDecoder {
     total_detectors: usize,
     /// Rounds fed so far.
     rounds_fed: usize,
-    /// Accumulated observable correction from last flush.
-    accumulated_obs: u64,
+    /// Accumulated observable correction from last flush (wide; lossless
+    /// beyond 64 observables).
+    accumulated_obs: ObsMask,
 }
 
 impl StreamingLogicalDecoder {
@@ -323,7 +324,7 @@ impl StreamingLogicalDecoder {
             syndrome: vec![0u8; total],
             total_detectors: total,
             rounds_fed: 0,
-            accumulated_obs: 0,
+            accumulated_obs: ObsMask::new(),
         }
     }
 
@@ -354,15 +355,19 @@ impl StreamingLogicalDecoder {
     /// Returns the observable correction mask. This is the final
     /// correction to apply to raw measurement outcomes.
     pub fn flush(&mut self) -> Result<u64, DecoderError> {
-        let obs = self.inner.decode_shot(&self.syndrome)?;
-        self.accumulated_obs = obs;
-        Ok(obs)
+        self.flush_obs()?.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "decoder has more than 64 observables; use flush_obs() for the wide mask".into(),
+            )
+        })
     }
 
     /// Wide variant of [`Self::flush`]: returns an [`ObsMask`] supporting more
-    /// than 64 observables (no truncation).
+    /// than 64 observables (no truncation). Updates the accumulated correction.
     pub fn flush_obs(&mut self) -> Result<ObsMask, DecoderError> {
-        self.inner.decode_obs(&self.syndrome)
+        let obs = self.inner.decode_obs(&self.syndrome)?;
+        self.accumulated_obs = obs.clone();
+        Ok(obs)
     }
 
     /// Wide variant of [`Self::decode_shot`]: feed + flush as an [`ObsMask`].
@@ -377,10 +382,23 @@ impl StreamingLogicalDecoder {
         self.flush()
     }
 
-    /// Current accumulated observable correction.
+    /// Current accumulated observable correction, narrowed to `u64`.
+    ///
+    /// # Errors
+    /// Errors (rather than truncating) if the accumulated mask exceeds 64
+    /// observables; use [`Self::accumulated_obs_mask`] for the wide mask.
+    pub fn accumulated_obs(&self) -> Result<u64, DecoderError> {
+        self.accumulated_obs.to_u64().ok_or_else(|| {
+            DecoderError::InvalidConfiguration(
+                "accumulated mask has more than 64 observables; use accumulated_obs_mask()".into(),
+            )
+        })
+    }
+
+    /// Current accumulated observable correction as a wide mask.
     #[must_use]
-    pub fn accumulated_obs(&self) -> u64 {
-        self.accumulated_obs
+    pub fn accumulated_obs_mask(&self) -> &ObsMask {
+        &self.accumulated_obs
     }
 
     /// Number of segments in the algorithm.
@@ -413,7 +431,7 @@ impl StreamingLogicalDecoder {
     pub fn reset(&mut self) {
         self.syndrome.fill(0);
         self.rounds_fed = 0;
-        self.accumulated_obs = 0;
+        self.accumulated_obs = ObsMask::new();
     }
 }
 
@@ -1215,7 +1233,7 @@ mod tests {
         // Feed full syndrome at once
         let result = streaming.decode_shot(&[0, 1, 0, 1]).unwrap();
         assert_eq!(result, 0b10);
-        assert_eq!(streaming.accumulated_obs(), 0b10);
+        assert_eq!(streaming.accumulated_obs().unwrap(), 0b10);
     }
 
     #[test]
@@ -1252,10 +1270,10 @@ mod tests {
         let mut streaming = StreamingLogicalDecoder::new(inner);
 
         streaming.decode_shot(&[1, 0, 1, 0]).unwrap();
-        assert_eq!(streaming.accumulated_obs(), 0b11);
+        assert_eq!(streaming.accumulated_obs().unwrap(), 0b11);
 
         streaming.reset();
-        assert_eq!(streaming.accumulated_obs(), 0);
+        assert_eq!(streaming.accumulated_obs().unwrap(), 0);
     }
 
     #[test]
@@ -1279,5 +1297,29 @@ mod tests {
 
         let errors = streaming_decode_count(&mut streaming, &syndromes, &expected).unwrap();
         assert_eq!(errors, 1); // only shot 1 is wrong (predicted 1, expected 0)
+    }
+    #[test]
+    fn wide_decode_path_updates_accumulated_obs() {
+        // Regression: decode_shot_obs (the wide path, used by the Python
+        // bindings' decode()) must update the accumulated correction just
+        // like the narrow decode_shot path does.
+        let desc = AlgorithmDescriptor {
+            segments: vec![SegmentDescriptor {
+                num_detectors: 4,
+                num_observables: 2,
+            }],
+            boundary_gates: vec![],
+            num_observables: 2,
+        };
+        let inner = LogicalAlgorithmDecoder::new(Box::new(FixedDecoder(0b10)), desc);
+        let mut streaming = StreamingLogicalDecoder::new(inner);
+
+        let mask = streaming.decode_shot_obs(&[0, 1, 0, 1]).unwrap();
+        assert_eq!(mask.to_u64(), Some(0b10));
+        assert_eq!(streaming.accumulated_obs().unwrap(), 0b10);
+        assert_eq!(streaming.accumulated_obs_mask().to_u64(), Some(0b10));
+
+        streaming.reset();
+        assert_eq!(streaming.accumulated_obs().unwrap(), 0);
     }
 }

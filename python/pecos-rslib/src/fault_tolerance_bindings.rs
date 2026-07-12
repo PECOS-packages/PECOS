@@ -6279,9 +6279,19 @@ impl PyLogicalAlgorithmDecoder {
         self.inner.reset();
     }
 
-    /// Current accumulated observable correction.
-    fn accumulated_obs(&self) -> u64 {
-        self.inner.accumulated_obs()
+    /// Current accumulated observable correction, narrowed to `u64`.
+    ///
+    /// Raises if the accumulated mask exceeds 64 observables; use
+    /// `accumulated_obs_mask` for the wide value.
+    fn accumulated_obs(&self) -> PyResult<u64> {
+        self.inner
+            .accumulated_obs()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    /// Current accumulated observable correction as an arbitrary-precision int.
+    fn accumulated_obs_mask(&self, py: Python<'_>) -> PyResult<Py<pyo3::PyAny>> {
+        obsmask_to_py(py, self.inner.accumulated_obs_mask())
     }
 
     // -- Metadata --

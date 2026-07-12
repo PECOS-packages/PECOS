@@ -89,6 +89,32 @@ doctor: _msvc-bootstrap
     fi
     echo ""
 
+    echo "Rust:"
+    if command -v rustup >/dev/null 2>&1; then
+        # CI runs the latest floating stable (we deliberately do not pin the
+        # toolchain), so a stale local stable can lint/build differently than CI.
+        # Advisory only -- never a hard failure.
+        RUST_HOST=$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')
+        RUST_VER=$(rustc +stable --version 2>/dev/null | awk '{print $2}') || RUST_VER=""
+        # Only the host's stable line -- a machine may carry stable for several
+        # targets; head -1 guards if the host triple can't be determined.
+        RUST_CHECK=$(rustup check 2>/dev/null | grep -iE "^stable-${RUST_HOST:-}" | head -1 || true)
+        if [ -z "$RUST_VER" ]; then
+            echo "  [--] stable: could not determine version (run: rustup toolchain install stable)"
+        elif [ -z "$RUST_CHECK" ]; then
+            echo "  [--] stable: $RUST_VER (could not check latest -- offline?)"
+        elif echo "$RUST_CHECK" | grep -qi "update available"; then
+            LATEST=$(echo "$RUST_CHECK" | sed -E 's/.*-> ([0-9.]+).*/\1/')
+            echo "  [--] stable: $RUST_VER installed, but ${LATEST:-a newer release} is out"
+            echo "       CI runs the latest stable -- run 'rustup update stable' to match it."
+        else
+            ok "stable" "$RUST_VER (latest)"
+        fi
+    else
+        fail "rustup" "not found (see https://rustup.rs)"
+    fi
+    echo ""
+
     echo "Python:"
     if command -v uv >/dev/null 2>&1; then
         ok "uv" "$(uv --version)"

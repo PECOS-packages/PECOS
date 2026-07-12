@@ -398,11 +398,13 @@ fn surface_memory_ler_matches_across_stacks() {
     // noise by an independent 6-seed 120k-shot-per-stack run (engines
     // 517 vs neo 482, z = 1.11).
     let equivalence_confidence = 0.99999;
+    let equivalence_alpha = 1.0 - equivalence_confidence;
     // The suppression margin is smaller than the equivalence margin, so
     // it gets its own (still strict) confidence. Pooling the two stacks
     // for suppression is justified by that 120k-shot equivalence run,
     // not by this test's own (weaker) overlap check.
     let suppression_confidence = 0.99;
+    let suppression_alpha = 1.0 - suppression_confidence;
 
     let mut pooled_intervals = Vec::new();
     for distance in [3, 5] {
@@ -411,26 +413,31 @@ fn surface_memory_ler_matches_across_stacks() {
         let neo = run_stack(&experiment, SimStack::Neo, p, shots, 42);
         let (engines_errors, neo_errors) = decode_logical_errors(&experiment, p, &engines, &neo);
 
-        let engines_ci = jeffreys_interval(engines_errors, shots as u64, equivalence_confidence);
-        let neo_ci = jeffreys_interval(neo_errors, shots as u64, equivalence_confidence);
+        let engines_ci = jeffreys_interval(engines_errors, shots as u64, equivalence_alpha)
+            .expect("Jeffreys interval for engines_errors k and shots n");
+        let neo_ci = jeffreys_interval(neo_errors, shots as u64, equivalence_alpha)
+            .expect("Jeffreys interval for neo_errors k and shots n");
         println!(
             "d={distance}: engines {engines_errors}/{shots} LER CI [{:.5}, {:.5}], \
              neo {neo_errors}/{shots} LER CI [{:.5}, {:.5}]",
-            engines_ci.0, engines_ci.1, neo_ci.0, neo_ci.1
+            engines_ci.lo, engines_ci.hi, neo_ci.lo, neo_ci.hi
         );
 
         assert!(
-            engines_ci.0 <= neo_ci.1 && neo_ci.0 <= engines_ci.1,
+            engines_ci.lo <= neo_ci.hi && neo_ci.lo <= engines_ci.hi,
             "d={distance}: stack LERs are statistically incompatible: \
              engines {engines_errors}/{shots} vs neo {neo_errors}/{shots}"
         );
         // With per-stack equivalence established, pool the stacks for the
         // suppression physics check (doubles the statistics).
-        pooled_intervals.push(jeffreys_interval(
-            engines_errors + neo_errors,
-            2 * shots as u64,
-            suppression_confidence,
-        ));
+        pooled_intervals.push(
+            jeffreys_interval(
+                engines_errors + neo_errors,
+                2 * shots as u64,
+                suppression_alpha,
+            )
+            .expect("Jeffreys interval for pooled errors k and pooled shots n"),
+        );
     }
 
     // Error suppression: the pooled d=5 interval must sit strictly below
@@ -438,12 +445,12 @@ fn surface_memory_ler_matches_across_stacks() {
     let d3 = pooled_intervals[0];
     let d5 = pooled_intervals[1];
     assert!(
-        d5.1 < d3.0,
+        d5.hi < d3.lo,
         "d=5 LER must be suppressed below d=3: \
          d5 CI [{:.5}, {:.5}] vs d3 CI [{:.5}, {:.5}]",
-        d5.0,
-        d5.1,
-        d3.0,
-        d3.1
+        d5.lo,
+        d5.hi,
+        d3.lo,
+        d3.hi
     );
 }

@@ -58,4 +58,6 @@ pub use linalg::{matrix_exp, matrix_log};
 pub use optimize::{BrentqOptions, NewtonOptions, OptimizeError, brentq, newton};
 pub use polynomial::{Poly1d, PolynomialError, polyfit};
 pub use special::{betainc_inv, betainc_reg, ln_gamma};
-pub use stats::{jeffreys_interval, mean};
+pub use stats::{
+    JeffreysError, JeffreysEstimator, JeffreysInterval, jeffreys_interval, jeffreys_point, mean,
+};

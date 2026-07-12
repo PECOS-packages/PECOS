@@ -3127,7 +3127,7 @@ mod tests {
         // sample_statistics_with_rng uses auto-selection internally
         let mut rng = SmallRng::seed_from_u64(42);
         let stats = sampler.sample_statistics_with_rng(10000, &mut rng);
-        assert!(stats.total_shots == 10000);
+        assert_eq!(stats.total_shots, 10000);
     }
 
     #[test]
@@ -3157,7 +3157,7 @@ mod tests {
         // sample_statistics_with_rng uses auto-selection internally
         let mut rng = SmallRng::seed_from_u64(42);
         let stats = sampler.sample_statistics_with_rng(10000, &mut rng);
-        assert!(stats.total_shots == 10000);
+        assert_eq!(stats.total_shots, 10000);
     }
 
     #[test]
@@ -3364,6 +3364,6 @@ mod tests {
 
         let stats = sampler.sample_statistics(1000, 42);
         // Just verify it runs without panicking
-        assert!(stats.total_shots == 1000);
+        assert_eq!(stats.total_shots, 1000);
     }
 }

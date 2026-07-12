@@ -195,6 +195,7 @@ fn get_download_info() -> Result<(String, String)> {
 
 /// Download a file from a URL, streaming to disk
 fn download(url: &str, dest: &Path) -> Result<()> {
+    crate::download::ensure_crypto_provider();
     let mut response = reqwest::blocking::get(url).map_err(|e| Error::Http(e.to_string()))?;
 
     if !response.status().is_success() {

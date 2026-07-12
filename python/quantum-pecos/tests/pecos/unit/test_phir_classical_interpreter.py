@@ -102,9 +102,9 @@ class TestPhirClassicalInterpreterBitwiseOps:
             "ops": [
                 {
                     "data": "cvar_define",
-                    "data_type": "i64",
+                    "data_type": "i64",  # i64 == i(63+1); full width is size 63
                     "variable": "a",
-                    "size": 64,
+                    "size": 63,
                 },
                 {"cop": "=", "args": [1], "returns": ["a"]},
                 {
@@ -132,9 +132,9 @@ class TestPhirClassicalInterpreterBitwiseOps:
             "ops": [
                 {
                     "data": "cvar_define",
-                    "data_type": "i64",
+                    "data_type": "i64",  # i64 == i(63+1); full width is size 63
                     "variable": "a",
-                    "size": 64,
+                    "size": 63,
                 },
                 {"cop": "=", "args": [16], "returns": ["a"]},
                 {
@@ -162,9 +162,9 @@ class TestPhirClassicalInterpreterBitwiseOps:
             "ops": [
                 {
                     "data": "cvar_define",
-                    "data_type": "i64",
+                    "data_type": "i64",  # i64 == i(63+1); full width is size 63
                     "variable": "a",
-                    "size": 64,
+                    "size": 63,
                 },
                 {"cop": "=", "args": [15], "returns": ["a"]},
                 {
@@ -192,9 +192,9 @@ class TestPhirClassicalInterpreterBitwiseOps:
             "ops": [
                 {
                     "data": "cvar_define",
-                    "data_type": "i64",
+                    "data_type": "i64",  # i64 == i(63+1); full width is size 63
                     "variable": "a",
-                    "size": 64,
+                    "size": 63,
                 },
                 {"cop": "=", "args": [8], "returns": ["a"]},
                 {
@@ -222,9 +222,9 @@ class TestPhirClassicalInterpreterBitwiseOps:
             "ops": [
                 {
                     "data": "cvar_define",
-                    "data_type": "i64",
+                    "data_type": "i64",  # i64 == i(63+1); full width is size 63
                     "variable": "a",
-                    "size": 64,
+                    "size": 63,
                 },
                 {"cop": "=", "args": [15], "returns": ["a"]},
                 {

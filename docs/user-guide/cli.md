@@ -132,8 +132,8 @@ LLVM 21.1:
 
 Python:
   [OK] uv: uv 0.11.3
-  [OK] import pecos: v0.8.0.dev8
-  [OK] pecos_rslib: v0.2.0-dev.0
+  [OK] import pecos: v<version>
+  [OK] pecos_rslib: v<version>
 
 CUDA (optional):
   [--] CUDA: not found (optional)

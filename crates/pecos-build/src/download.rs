@@ -3,6 +3,23 @@
 use crate::errors::{Error, Result};
 use crate::home::get_cache_dir;
 use std::fs;
+use std::sync::Once;
+
+/// Install the process-wide rustls crypto provider (ring) exactly once.
+///
+/// reqwest is built with `rustls-no-provider`, so it uses whichever
+/// `CryptoProvider` is installed as the process default; building a client
+/// without one panics. We use ring rather than the rustls default (aws-lc-rs)
+/// because aws-lc-sys's assembly mis-links under rustc's bundled rust-lld.
+/// Every function that builds a reqwest client must call this first.
+pub fn ensure_crypto_provider() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        // Ignore the error: a provider may already be installed (e.g. by the
+        // host application), in which case ours is simply not needed.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// Download info with URL and expected SHA256
 pub struct DownloadInfo {
@@ -49,6 +66,7 @@ pub fn download_cached(info: &DownloadInfo) -> Result<Vec<u8>> {
     // Download fresh with timeout and retry logic
     log::info!("Downloading {} (will be cached)", info.name);
 
+    ensure_crypto_provider();
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_mins(5))
         .connect_timeout(std::time::Duration::from_secs(30))

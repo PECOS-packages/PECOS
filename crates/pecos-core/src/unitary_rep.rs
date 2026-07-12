@@ -2279,11 +2279,8 @@ impl UnitaryRep {
                 // For tensor products, compose all parts (they act on different qubits)
                 let mut result = CliffordRep::identity(num_qubits);
                 for part in parts {
-                    if let Some(cliff) = part.to_clifford_rep(num_qubits) {
-                        result = result.compose(&cliff);
-                    } else {
-                        return None;
-                    }
+                    let cliff = part.to_clifford_rep(num_qubits)?;
+                    result = result.compose(&cliff);
                 }
                 Some(result)
             }
@@ -2292,11 +2289,8 @@ impl UnitaryRep {
                 // For composition, compose in order (parts are in application order)
                 let mut result = CliffordRep::identity(num_qubits);
                 for part in parts {
-                    if let Some(cliff) = part.to_clifford_rep(num_qubits) {
-                        result = cliff.compose(&result);
-                    } else {
-                        return None;
-                    }
+                    let cliff = part.to_clifford_rep(num_qubits)?;
+                    result = cliff.compose(&result);
                 }
                 Some(result)
             }

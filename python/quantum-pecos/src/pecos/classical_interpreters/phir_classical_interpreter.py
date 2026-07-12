@@ -44,6 +44,36 @@ data_type_map = signed_data_types | unsigned_data_types
 data_type_map_rev = {v: k for k, v in data_type_map.items()}
 
 
+_MASK64 = (1 << 64) - 1
+
+
+def _to_i64(bits: int) -> int:
+    """Reinterpret the low 64 bits of ``bits`` as a signed two's-complement int."""
+    bits &= _MASK64
+    return bits - (1 << 64) if bits & (1 << 63) else bits
+
+
+def _trunc_div(x: int, y: int) -> int:
+    """Integer division truncated toward zero (C/Rust semantics).
+
+    Python's ``//`` floors, so ``-7 // 2 == -4``; hardware/C integer division
+    truncates toward zero, giving ``-3``. Matches the Rust interpreter's
+    ``wrapping_div``.
+    """
+    q = abs(x) // abs(y)
+    return -q if (x < 0) != (y < 0) else q
+
+
+def _trunc_mod(x: int, y: int) -> int:
+    """Integer remainder whose sign follows the dividend (C/Rust semantics).
+
+    Consistent with :func:`_trunc_div`: ``x == _trunc_div(x, y) * y + _trunc_mod(x, y)``.
+    So ``-7 % 3 == -1`` (not Python's ``2``). Matches Rust's ``wrapping_rem``.
+    """
+    r = abs(x) % abs(y)
+    return -r if x < 0 else r
+
+
 class PhirClassicalInterpreter:
     """An interpreter that takes in a PHIR program and runs the classical side of the program."""
 
@@ -149,6 +179,27 @@ class PhirClassicalInterpreter:
         """Run all code needed at the beginning of each shot, e.g., resetting state."""
         self.initialize_cenv()
 
+    @staticmethod
+    def _check_register_width(variable: str, data_type: str, size: int, type_width: int) -> None:
+        """Ensure a register's declared width fits its backing integer type.
+
+        A signed size-S register is an ``i(S+1)`` integer (S data bits + a sign
+        bit), so ``S + 1`` must fit the backing width N. An unsigned size-S
+        register is a ``u(S)`` and must satisfy ``S <= N``.
+        """
+        needed = size + 1 if data_type in signed_data_types else size
+        if needed > type_width:
+            kind = "signed" if data_type in signed_data_types else "unsigned"
+            limit = type_width - 1 if data_type in signed_data_types else type_width
+            note = " (one bit is reserved for the sign)" if data_type in signed_data_types else ""
+            msg = (
+                f"Register {variable!r} declares {kind} type {data_type!r} with size {size}, "
+                f"which does not fit its {type_width}-bit backing type{note}. "
+                f"A size-{size} {kind} register needs {needed} bits. "
+                f"Use size <= {limit} or a wider integer type."
+            )
+            raise ValueError(msg)
+
     def initialize_cenv(self) -> None:
         """Initialize the classical environment with program variables."""
         self._reset_env()
@@ -156,12 +207,15 @@ class PhirClassicalInterpreter:
             for cvar in self.cvar_meta:
                 cvar: pt.data.CVarDefine
                 dtype = data_type_map[cvar.data_type]
+                self._check_register_width(cvar.variable, cvar.data_type, cvar.size, dtype.itemsize * 8)
                 self.cenv.append(dtype(0))
                 self.cid2dtype.append(dtype)
 
     def add_cvar(self, cvar: str, dtype: type[Integer], size: int) -> None:
         """Adds a new classical variable to the interpreter."""
         if cvar not in self.csym2id:
+            data_type = data_type_map_rev[dtype]
+            self._check_register_width(cvar, data_type, size, dtype.itemsize * 8)
             cid = len(self.csym2id)
             self.csym2id[cvar] = cid
             self.cenv.append(dtype(0))
@@ -169,7 +223,7 @@ class PhirClassicalInterpreter:
             self.cvar_meta.append(
                 pt.data.CVarDefine(
                     size=size,
-                    data_type=data_type_map_rev[dtype],
+                    data_type=data_type,
                     cvar_id=cid,
                     variable=cvar,
                 ),
@@ -265,62 +319,133 @@ class PhirClassicalInterpreter:
     def eval_expr(
         self,
         expr: int | str | list | pt.opt.COp,
-    ) -> int | Integer | None:
-        """Evaluates integer expressions.
+    ) -> int:
+        """Evaluate an integer expression at 64-bit backing precision.
 
-        All arithmetic is performed at Python int level (arbitrary precision),
-        matching the hardware model where evaluation happens at full register
-        width. The result is NOT wrapped in a PECOS dtype -- that happens at
-        the assignment boundary in handle_cops/assign_int.
+        Mirrors the Rust interpreter: every operand is widened to 64 bits (signed
+        values sign-extended, unsigned zero-extended), arithmetic wraps at 64
+        bits, and division/modulo/shift/comparison follow signedness (an
+        operation is signed only when BOTH operands are signed). The returned
+        value is the 64-bit result reinterpreted as a signed integer; the
+        assignment boundary (handle_cops/assign_int) clamps it to the
+        destination register's i(S+1)/u(S) width.
+        """
+        bits, _signed, _is_bool = self._eval_bits(expr)
+        return _to_i64(bits)
+
+    def _eval_bits(self, expr: int | str | list | pt.opt.COp) -> tuple[int, bool, bool]:
+        """Evaluate to a ``(64-bit bit pattern, is_signed, is_bool)`` triple.
+
+        ``is_bool`` mirrors Rust's ``ExprValue::Boolean`` (a bit access or a
+        ``&&``/``||`` result): unary ``~`` on a boolean is a logical NOT, not a
+        full-width bit flip.
         """
         match expr:
             case int():
-                return expr
-
+                # Literals that fit i64 are signed (Rust `ArgItem::Integer`);
+                # larger values up to u64::MAX are unsigned (`ArgItem::UInteger`).
+                signed = -(1 << 63) <= expr < (1 << 63)
+                return expr & _MASK64, signed, False
             case str():
-                return int(self.get_cval(expr))
+                cid = self.csym2id[expr]
+                signed = self.cvar_meta[cid].data_type in signed_data_types
+                return int(self.get_cval(expr)) & _MASK64, signed, False
             case list():
-                return int(self.get_bit(*expr))
+                # A single-bit access is a boolean 0/1.
+                return int(self.get_bit(*expr)) & 1, False, True
             case pt.opt.COp():
                 sym = expr.name
-                args = expr.args
-
-                if sym in {"~"}:  # Unary ops
-                    lhs = self.eval_expr(args[0])
-                    return ~int(lhs)
-
-                # Binary operators
-                lhs, rhs = args
-                lhs = int(self.eval_expr(lhs))
-                rhs = int(self.eval_expr(rhs))
-
-                # Map of operators to their functions
-                ops = {
-                    "^": lambda x, y: x ^ y,
-                    "+": lambda x, y: x + y,
-                    "-": lambda x, y: x - y,
-                    "|": lambda x, y: x | y,
-                    "&": lambda x, y: x & y,
-                    ">>": lambda x, y: x >> y,
-                    "<<": lambda x, y: x << y,
-                    "*": lambda x, y: x * y,
-                    "/": lambda x, y: x // y,
-                    "==": lambda x, y: x == y,
-                    "!=": lambda x, y: x != y,
-                    "<=": lambda x, y: x <= y,
-                    ">=": lambda x, y: x >= y,
-                    "<": lambda x, y: x < y,
-                    ">": lambda x, y: x > y,
-                    "%": lambda x, y: x % y,
-                }
-
-                if sym in ops:
-                    return ops[sym](lhs, rhs)
-
-                msg = f"Unknown expression type: {sym}"
-                raise ValueError(msg)
+                if sym == "~":  # Unary NOT
+                    (arg,) = expr.args
+                    bits, signed, is_bool = self._eval_bits(arg)
+                    if is_bool:
+                        # Logical NOT of a boolean (matches Rust ~Boolean).
+                        return int(not bits), False, True
+                    # Bitwise NOT at eval width; keeps signedness.
+                    return (~bits) & _MASK64, signed, False
+                lhs, rhs = expr.args
+                lbits, lsigned, _ = self._eval_bits(lhs)
+                rbits, rsigned, _ = self._eval_bits(rhs)
+                return self._eval_binop(sym, lbits, lsigned, rbits, rsigned)
             case _:
-                return None
+                msg = f"Unsupported expression: {expr!r}"
+                raise ValueError(msg)
+
+    @staticmethod
+    def _eval_binop(op: str, lbits: int, lsigned: bool, rbits: int, rsigned: bool) -> tuple[int, bool, bool]:
+        """Apply a binary op on 64-bit patterns, returning ``(bits, is_signed, is_bool)``.
+
+        An operation is signed only when both operands are signed; division,
+        modulo, shift-right and ordering comparisons then use the signed
+        interpretation (matching the Rust interpreter). ``+ - * & | ^ << ==``
+        depend only on the two's-complement bit pattern, so signedness only
+        propagates the result tag for a later operation. ``&&``/``||`` return a
+        boolean; the ordering/equality comparisons return an unsigned 0/1.
+        """
+        result_signed = lsigned and rsigned
+        li = _to_i64(lbits)
+        ri = _to_i64(rbits)
+
+        match op:
+            case "+":
+                return (lbits + rbits) & _MASK64, result_signed, False
+            case "-":
+                return (lbits - rbits) & _MASK64, result_signed, False
+            case "*":
+                return (lbits * rbits) & _MASK64, result_signed, False
+            case "&":
+                return lbits & rbits, result_signed, False
+            case "|":
+                return lbits | rbits, result_signed, False
+            case "^":
+                return lbits ^ rbits, result_signed, False
+            case "/":
+                if rbits == 0:
+                    msg = "division by zero"
+                    raise ZeroDivisionError(msg)
+                if result_signed:
+                    return _trunc_div(li, ri) & _MASK64, True, False
+                return (lbits // rbits) & _MASK64, False, False
+            case "%":
+                if rbits == 0:
+                    msg = "modulo by zero"
+                    raise ZeroDivisionError(msg)
+                if result_signed:
+                    return _trunc_mod(li, ri) & _MASK64, True, False
+                return (lbits % rbits) & _MASK64, False, False
+            case "<<":
+                if ri < 0:
+                    msg = f"Negative shift amount: {ri}"
+                    raise ValueError(msg)
+                shift = rbits & 0xFFFF
+                return ((lbits << shift) & _MASK64 if shift < 64 else 0), result_signed, False
+            case ">>":
+                if ri < 0:
+                    msg = f"Negative shift amount: {ri}"
+                    raise ValueError(msg)
+                if lsigned:  # arithmetic shift (sign-extends), tagged by the LHS
+                    return (li >> (ri % 64)) & _MASK64, True, False
+                shift = rbits & 0xFFFF
+                return (lbits >> shift if shift < 64 else 0), False, False
+            case "==":
+                return int(lbits == rbits), False, False
+            case "!=":
+                return int(lbits != rbits), False, False
+            case "<":
+                return int(li < ri if result_signed else lbits < rbits), False, False
+            case ">":
+                return int(li > ri if result_signed else lbits > rbits), False, False
+            case "<=":
+                return int(li <= ri if result_signed else lbits <= rbits), False, False
+            case ">=":
+                return int(li >= ri if result_signed else lbits >= rbits), False, False
+            case "&&":
+                return int(lbits != 0 and rbits != 0), False, True
+            case "||":
+                return int(lbits != 0 or rbits != 0), False, True
+            case _:
+                msg = f"Unknown expression type: {op}"
+                raise ValueError(msg)
 
     def assign_int(self, cvar: str | tuple | list, val: int) -> None:
         """Assign an integer value to a classical variable or specific bit.
@@ -346,14 +471,20 @@ class PhirClassicalInterpreter:
             cval &= ~(one << i)
             cval |= (val & one) << i
 
-        # Mask to the register's declared size.
-        # This applies to all types -- `size` constrains how many data bits
-        # the user can assign. The underlying dtype provides the total storage.
-        size = self.cvar_meta[cid].size
-        type_width = dtype.itemsize * 8
-        if size < type_width:
-            cval = dtype(int(cval) & ((1 << size) - 1))
-        self.cenv[cid] = cval
+        # Wrap the value to the register's declared width. In PHIR a signed
+        # size-S register means an i(S+1) integer -- S data bits plus a sign
+        # bit -- so it wraps to S+1 bits (capped at the backing type width),
+        # and the sign bit is honored via two's complement. An unsigned size-S
+        # register is a u(S) and wraps to S bits with no sign bit. Sign-extend
+        # signed values before storing so later arithmetic and output see the
+        # correct sign.
+        meta = self.cvar_meta[cid]
+        signed = meta.data_type in signed_data_types
+        width = meta.size + 1 if signed else meta.size
+        raw = int(cval) & ((1 << width) - 1)
+        if signed and raw >> (width - 1):
+            raw -= 1 << width
+        self.cenv[cid] = dtype(raw)
 
     def handle_cops(self, op: pt.opt.COp) -> None:
         """Handle the processing of classical operations."""
@@ -424,9 +555,16 @@ class PhirClassicalInterpreter:
         for csym, cid in self.csym2id.items():
             cval = self.cenv[cid]
             if not return_int:
-                size = self.cvar_meta[cid].size
-                # Use native __format__() implementation from Rust scalars
-                cval = "{:0{width}b}".format(cval, width=size)
+                meta = self.cvar_meta[cid]
+                # A signed size-S register is an i(S+1) integer, so it prints
+                # S+1 bits (S data bits + a sign bit); an unsigned size-S
+                # register prints S bits. Render the raw two's-complement bit
+                # pattern rather than Python's sign-and-magnitude form (which
+                # prints a leading "-" for negatives), so the sign bit shows up
+                # as a "1"/"0" like every other bit.
+                width = meta.size + 1 if meta.data_type in signed_data_types else meta.size
+                raw = int(cval) & ((1 << width) - 1)
+                cval = format(raw, f"0{width}b")
             result[csym] = cval
 
         return result

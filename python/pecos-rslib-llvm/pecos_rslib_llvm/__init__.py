@@ -46,9 +46,61 @@ def _add_windows_llvm_dll_directories() -> None:
         _add_dll_directory(candidate)
 
 
+def _preload_unix_llvm_runtime() -> None:
+    """Preload ``libLLVM`` (global visibility) so the extension's ``NEEDED
+    libLLVM.so.21.1`` resolves -- a fallback only, run when the extension
+    cannot import on its own.
+
+    A distributed wheel bundles ``libLLVM`` with an rpath (auditwheel on Linux)
+    and imports directly, so this never runs for it -- which matters, because
+    preloading a *second*, differently-named ``libLLVM`` alongside the bundled
+    copy leaves two sets of LLVM global state that crash the interpreter at
+    shutdown. But a source/editable build links ``libLLVM`` by soname and may
+    carry no usable rpath, so without help it fails ``ImportError:
+    libLLVM.so.21.1``. PECOS installs LLVM under ``~/.pecos/deps/llvm-21.1``
+    (honouring ``PECOS_LLVM`` / ``LLVM_SYS_211_PREFIX``); load it from there.
+    Best-effort: if no candidate is found, the caller's retry re-raises the
+    original ImportError.
+    """
+    if os.name == "nt":
+        return
+
+    import ctypes
+
+    # Soname the extension is linked against, plus nearby fallbacks.
+    lib_names = ("libLLVM.so.21.1", "libLLVM.so.21", "libLLVM.dylib", "libLLVM-21.dylib")
+
+    lib_dirs: list[Path] = []
+    for env_name in ("PECOS_LLVM", "LLVM_SYS_211_PREFIX"):
+        if raw_path := os.environ.get(env_name):
+            lib_dirs.append(Path(raw_path) / "lib")
+    lib_dirs.append(Path.home() / ".pecos" / "deps" / "llvm-21.1" / "lib")
+
+    for lib_dir in lib_dirs:
+        for name in lib_names:
+            candidate = lib_dir / name
+            if not candidate.is_file():
+                continue
+            try:
+                ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                continue
+            return
+
+
+# Windows has no rpath, so a Windows source/editable build needs the managed
+# LLVM ``bin`` on the DLL search path (search-path only -- never loads a second
+# copy, so it is safe to run eagerly). Unix resolves ``libLLVM`` via the
+# extension's own rpath (dev build) or a bundled copy (wheel); only if that
+# fails do we fall back to preloading it below.
 _add_windows_llvm_dll_directories()
 
-from . import pecos_rslib_llvm as _native  # noqa: E402
+try:
+    from . import pecos_rslib_llvm as _native  # noqa: E402
+except ImportError:
+    _preload_unix_llvm_runtime()
+    from . import pecos_rslib_llvm as _native  # noqa: E402
+
 from .pecos_rslib_llvm import *  # noqa: E402,F403
 
 __doc__ = _native.__doc__

@@ -431,7 +431,10 @@ mod tests {
             .build();
 
         // Just verify that it was created without panic
-        assert!(engine.hybrid_engine_template.classical_engine.num_qubits() == 2);
+        assert_eq!(
+            engine.hybrid_engine_template.classical_engine.num_qubits(),
+            2
+        );
     }
 
     #[test]
@@ -444,7 +447,10 @@ mod tests {
             .build();
 
         // Just verify that it was created without panic
-        assert!(engine.hybrid_engine_template.classical_engine.num_qubits() == 2);
+        assert_eq!(
+            engine.hybrid_engine_template.classical_engine.num_qubits(),
+            2
+        );
     }
 
     #[test]
@@ -481,7 +487,10 @@ mod tests {
             .build();
 
         // Just verify that it was created without panic
-        assert!(engine.hybrid_engine_template.classical_engine.num_qubits() == 2);
+        assert_eq!(
+            engine.hybrid_engine_template.classical_engine.num_qubits(),
+            2
+        );
     }
 
     #[test]
@@ -493,7 +502,10 @@ mod tests {
             .build();
 
         // Just verify that it was created without panic
-        assert!(engine.hybrid_engine_template.classical_engine.num_qubits() == 2);
+        assert_eq!(
+            engine.hybrid_engine_template.classical_engine.num_qubits(),
+            2
+        );
     }
 
     #[test]
@@ -511,6 +523,9 @@ mod tests {
             .build();
 
         // Just verify that it was created without panic
-        assert!(engine.hybrid_engine_template.classical_engine.num_qubits() == 2);
+        assert_eq!(
+            engine.hybrid_engine_template.classical_engine.num_qubits(),
+            2
+        );
     }
 }

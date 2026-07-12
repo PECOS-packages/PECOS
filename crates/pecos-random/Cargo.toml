@@ -15,7 +15,7 @@ description = "Random number generation for PECOS"
 wide.workspace = true
 rand_core.workspace = true
 rand.workspace = true
-rapidhash.workspace = true
+rapidrand.workspace = true
 
 [dev-dependencies]
 random_tester.workspace = true

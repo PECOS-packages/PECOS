@@ -4569,6 +4569,7 @@ dependencies = [
  "pecos-engines",
  "pecos-phir",
  "pliron",
+ "pliron-derive",
 ]
 
 [[package]]
@@ -5136,9 +5137,9 @@ dependencies = [
 
 [[package]]
 name = "pliron-derive"
-version = "0.16.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df85990dc7ef664eaa0d5a19fd4283ba4e4f7328258278d7493861d8afc7608f"
+checksum = "a7c51af14f1d04076965ef02bd24394515433223a614b5279d63b3372f6d8a32"
 dependencies = [
  "combine",
  "convert_case 0.11.0",

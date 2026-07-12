@@ -430,6 +430,18 @@ fn normalize_pecos_helper_symbols_in_module(module: &Module) -> Result<()> {
     Ok(())
 }
 
+/// Fail fast on platforms the QIS codegen and Selene runtime do not support.
+fn ensure_supported_platform(platform: QSystemPlatform) -> Result<()> {
+    match platform {
+        QSystemPlatform::Helios | QSystemPlatform::Sol => Ok(()),
+        other => Err(anyhow!(
+            "Unsupported QSystem platform {other:?}: pecos-hugr-qis supports Helios and Sol. \
+             Wire a newer tket-qsystem platform through the QIS codegen and Selene runtime \
+             before selecting it."
+        )),
+    }
+}
+
 /// Compile the given HUGR to an LLVM module
 /// This function is the primary entry point for the compiler
 fn compile<'c, 'hugr: 'c>(
@@ -437,6 +449,9 @@ fn compile<'c, 'hugr: 'c>(
     ctx: &'c Context,
     hugr: &'hugr mut Hugr,
 ) -> Result<Module<'c>> {
+    // Fail fast before any expensive work if the platform is unsupported.
+    ensure_supported_platform(args.platform)?;
+
     log::debug!("starting primary compilation");
     let namer = Rc::new(Namer::new("__hugr__.", true));
 
@@ -713,7 +728,9 @@ pub fn compile_hugr_bytes_to_bitcode_with_options(
     let module = compile(args, &context, &mut hugr)
         .map_err(|e| PecosError::Generic(format!("Compilation failed: {e}")))?;
 
-    // Write to memory buffer and get bitcode
+    // Write to memory buffer and get bitcode. `as_slice()` includes LLVM's
+    // trailing C-string NUL, which is not part of the bitcode stream.
     let buffer = module.write_bitcode_to_memory();
-    Ok(buffer.as_slice().to_vec())
+    let bitcode = buffer.as_slice();
+    Ok(bitcode[..bitcode.len().saturating_sub(1)].to_vec())
 }

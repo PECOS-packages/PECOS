@@ -42,9 +42,9 @@
 //! Backed by 4 parallel [`RapidRng`] instances, providing similar bulk generation
 //! capabilities to [`PecosRng`](crate::quality_rng::PecosQualityRng).
 
+use crate::rapid_rng::RapidRng;
 use core::convert::Infallible;
 use rand_core::{SeedableRng, TryRng};
-use rapidhash::rng::RapidRng;
 use wide::u64x4;
 
 /// Buffer size in chunks (each chunk = 4 u64s from the 4 parallel RNGs).

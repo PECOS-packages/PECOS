@@ -127,19 +127,23 @@ fn emission_is_gate_removing_and_matches_engines() {
     let engines = engines_zero_count();
     let neo = neo_zero_count();
     let facade = neo_facade_zero_count();
-    let engines_ci = jeffreys_interval(engines, SHOTS as u64, CONFIDENCE);
-    let neo_ci = jeffreys_interval(neo, SHOTS as u64, CONFIDENCE);
-    let facade_ci = jeffreys_interval(facade, SHOTS as u64, CONFIDENCE);
+    let alpha = 1.0 - CONFIDENCE;
+    let engines_ci = jeffreys_interval(engines, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for engines k and SHOTS n");
+    let neo_ci = jeffreys_interval(neo, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for neo k and SHOTS n");
+    let facade_ci = jeffreys_interval(facade, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for facade k and SHOTS n");
     println!(
         "emission: engines {engines}/{SHOTS} CI [{:.4}, {:.4}], neo-direct {neo}/{SHOTS} CI \
          [{:.4}, {:.4}], neo-facade {facade}/{SHOTS} CI [{:.4}, {:.4}], gate-removing analytic \
          {analytic:.4} (gate-preserving would be {:.4})",
-        engines_ci.0,
-        engines_ci.1,
-        neo_ci.0,
-        neo_ci.1,
-        facade_ci.0,
-        facade_ci.1,
+        engines_ci.lo,
+        engines_ci.hi,
+        neo_ci.lo,
+        neo_ci.hi,
+        facade_ci.lo,
+        facade_ci.hi,
         P1 * 2.0 / 3.0
     );
 
@@ -153,17 +157,17 @@ fn emission_is_gate_removing_and_matches_engines() {
         ("neo-facade", facade_ci),
     ] {
         assert!(
-            ci.0 <= analytic && analytic <= ci.1,
+            ci.lo <= analytic && analytic <= ci.hi,
             "{name} P(0) excludes the gate-removing analytic {analytic}"
         );
     }
     // And every pair of stacks agrees.
     assert!(
-        engines_ci.0 <= neo_ci.1 && neo_ci.0 <= engines_ci.1,
+        engines_ci.lo <= neo_ci.hi && neo_ci.lo <= engines_ci.hi,
         "engines and neo-direct emission rates disagree: {engines}/{SHOTS} vs {neo}/{SHOTS}"
     );
     assert!(
-        engines_ci.0 <= facade_ci.1 && facade_ci.0 <= engines_ci.1,
+        engines_ci.lo <= facade_ci.hi && facade_ci.lo <= engines_ci.hi,
         "engines and neo-facade emission rates disagree: {engines}/{SHOTS} vs {facade}/{SHOTS}"
     );
 }
@@ -248,19 +252,23 @@ fn two_qubit_emission_is_gate_removing_and_matches_engines() {
     let engines = engines_2q_zero_count();
     let neo = neo_2q_zero_count();
     let facade = neo_facade_2q_zero_count();
-    let engines_ci = jeffreys_interval(engines, SHOTS as u64, CONFIDENCE);
-    let neo_ci = jeffreys_interval(neo, SHOTS as u64, CONFIDENCE);
-    let facade_ci = jeffreys_interval(facade, SHOTS as u64, CONFIDENCE);
+    let alpha = 1.0 - CONFIDENCE;
+    let engines_ci = jeffreys_interval(engines, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for engines k and SHOTS n");
+    let neo_ci = jeffreys_interval(neo, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for neo k and SHOTS n");
+    let facade_ci = jeffreys_interval(facade, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for facade k and SHOTS n");
     println!(
         "2q emission: engines {engines}/{SHOTS} CI [{:.4}, {:.4}], neo-direct {neo}/{SHOTS} CI \
          [{:.4}, {:.4}], neo-facade {facade}/{SHOTS} CI [{:.4}, {:.4}], gate-removing analytic \
          {analytic:.4} (gate-preserving would be {:.4})",
-        engines_ci.0,
-        engines_ci.1,
-        neo_ci.0,
-        neo_ci.1,
-        facade_ci.0,
-        facade_ci.1,
+        engines_ci.lo,
+        engines_ci.hi,
+        neo_ci.lo,
+        neo_ci.hi,
+        facade_ci.lo,
+        facade_ci.hi,
         P2 * 8.0 / 15.0
     );
 
@@ -270,16 +278,16 @@ fn two_qubit_emission_is_gate_removing_and_matches_engines() {
         ("neo-facade", facade_ci),
     ] {
         assert!(
-            ci.0 <= analytic && analytic <= ci.1,
+            ci.lo <= analytic && analytic <= ci.hi,
             "{name} P(q1=0) excludes the gate-removing analytic {analytic}"
         );
     }
     assert!(
-        engines_ci.0 <= neo_ci.1 && neo_ci.0 <= engines_ci.1,
+        engines_ci.lo <= neo_ci.hi && neo_ci.lo <= engines_ci.hi,
         "engines and neo-direct 2q emission rates disagree: {engines}/{SHOTS} vs {neo}/{SHOTS}"
     );
     assert!(
-        engines_ci.0 <= facade_ci.1 && facade_ci.0 <= engines_ci.1,
+        engines_ci.lo <= facade_ci.hi && facade_ci.lo <= engines_ci.hi,
         "engines and neo-facade 2q emission rates disagree: {engines}/{SHOTS} vs {facade}/{SHOTS}"
     );
 }

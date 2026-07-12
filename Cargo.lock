@@ -3191,6 +3191,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "507460a910eb7b32ee961886ff48539633b788a36b65692b95f225b844c82553"
 
 [[package]]
+name = "lambert_w"
+version = "1.2.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f0846ee4f0299ca4c5b9ca06ff55cf88b3430a763bf591474cc734479c9b24"
+dependencies = [
+ "num-complex 0.4.6",
+ "num-traits",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4515,12 +4525,14 @@ dependencies = [
 name = "pecos-num"
 version = "0.2.0-dev.0"
 dependencies = [
+ "libm",
  "log",
  "nalgebra",
  "ndarray 0.17.2",
  "num-complex 0.4.6",
  "num-traits",
  "pecos-random",
+ "puruspe",
  "rand 0.10.2",
  "rustworkx-core",
  "serde",
@@ -5456,6 +5468,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "puruspe"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d62b4ad8b456f2ac8a171567bd475cae8cecd53ff5a46fce4f261eef17648"
+dependencies = [
+ "lambert_w",
+ "num-complex 0.4.6",
 ]
 
 [[package]]

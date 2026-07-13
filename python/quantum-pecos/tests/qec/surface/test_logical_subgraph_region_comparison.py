@@ -82,8 +82,7 @@ def _groupfill_membership(dem_str: str, stab_coords, *, seed_all: bool) -> list[
         elif ln.startswith("error("):
             toks = ln[ln.index(")") + 1 :].split()
             mechs.append(
-                ([int(t[1:]) for t in toks if t.startswith("D")],
-                 [int(t[1:]) for t in toks if t.startswith("L")]),
+                ([int(t[1:]) for t in toks if t.startswith("D")], [int(t[1:]) for t in toks if t.startswith("L")]),
             )
 
     coords_to_stab: dict[tuple, tuple[int, str]] = {}
@@ -165,14 +164,12 @@ def test_coordinate_region_beats_raw_backprop_region():
 
     # The coordinate group-fill region is dramatically better. The gap is large
     # and stable (~20x at d=3, p=0.001); assert a conservative margin.
-    assert coord_ler < backprop_ler, (
-        f"expected coordinate region to beat raw back-prop: "
-        f"coord={coord_ler:.5f} backprop={backprop_ler:.5f}"
-    )
-    assert coord_ler * 5 < backprop_ler, (
-        f"expected a large gap (group-fill essential): "
-        f"coord={coord_ler:.5f} backprop={backprop_ler:.5f}"
-    )
+    assert (
+        coord_ler < backprop_ler
+    ), f"expected coordinate region to beat raw back-prop: coord={coord_ler:.5f} backprop={backprop_ler:.5f}"
+    assert (
+        coord_ler * 5 < backprop_ler
+    ), f"expected a large gap (group-fill essential): coord={coord_ler:.5f} backprop={backprop_ler:.5f}"
 
 
 def test_coordinate_seeding_reproduces_shipping_path():
@@ -211,9 +208,7 @@ def test_coordinate_beats_backprop_seeded_groupfill():
     backprop = LogicalSubgraphDecoder.from_membership(dem, backprop_membership, "pecos_uf:fast")
     coord_ler = coord.decode_count(batch) / n
     backprop_ler = backprop.decode_count(batch) / n
-    assert coord_ler < backprop_ler, (
-        f"coord={coord_ler:.5f} backprop-seeds={backprop_ler:.5f}"
-    )
+    assert coord_ler < backprop_ler, f"coord={coord_ler:.5f} backprop-seeds={backprop_ler:.5f}"
 
 
 def _mem_ler(d, p, n, seed, inner=None):
@@ -237,9 +232,7 @@ def test_distance_suppression_memory():
     ler_d3 = _mem_ler(3, p, n, seed=1)
     ler_d5 = _mem_ler(5, p, n, seed=1)
     # Below threshold, d=5 must beat d=3 by a clear margin (lomatching: ~13x).
-    assert ler_d5 < ler_d3 * 0.7, (
-        f"no distance suppression with default inner: d3={ler_d3:.5f} d5={ler_d5:.5f}"
-    )
+    assert ler_d5 < ler_d3 * 0.7, f"no distance suppression with default inner: d3={ler_d3:.5f} d5={ler_d5:.5f}"
 
 
 def test_native_bp_uf_inner_suppresses():
@@ -265,9 +258,7 @@ def test_native_bp_uf_inner_suppresses():
     uf_d3 = _mem_ler(3, p, n, seed=1, inner="pecos_uf:bp")
     uf_d5 = _mem_ler(5, p, n, seed=1, inner="pecos_uf:bp")
     # Below threshold, d=5 must beat d=3 by a clear margin.
-    assert uf_d5 < uf_d3 * 0.7, (
-        f"default bp+uf inner no longer suppresses: d3={uf_d3:.5f} d5={uf_d5:.5f}"
-    )
+    assert uf_d5 < uf_d3 * 0.7, f"default bp+uf inner no longer suppresses: d3={uf_d3:.5f} d5={uf_d5:.5f}"
 
 
 def _mem_dem_batch(d, p, n, seed):
@@ -348,9 +339,10 @@ def test_windowed_logical_subgraph_single_window_matches_nonwindowed():
         non = _nonwindowed_mem_ler(d, rounds, p, n, seed=7, inner="pecos_uf:fast")
         assert nwin == 1, f"expected a single window, got {nwin}"
         # Same decode up to negligible tie-breaking differences.
-        assert abs(win - non) <= max(0.0005, 0.15 * non), (
-            f"single-window windowed != non-windowed at d={d}: win={win:.5f} non={non:.5f}"
-        )
+        assert abs(win - non) <= max(
+            0.0005,
+            0.15 * non,
+        ), f"single-window windowed != non-windowed at d={d}: win={win:.5f} non={non:.5f}"
 
 
 def test_windowed_logical_subgraph_known_limitation_no_full_suppression():
@@ -387,18 +379,19 @@ def test_windowed_logical_subgraph_known_limitation_no_full_suppression():
     # Still does not fully suppress (the paper's windowed-LOM limitation): LER does
     # not fall with distance (it in fact grows). When the anti-snake machinery
     # lands and this suppresses, flip the assertions and update the test.
-    assert ler_d5 >= ler_d3 * 0.7 and ler_d7 >= ler_d5 * 0.7, (
+    suppression_note = (
         f"windowed logical-subgraph now suppresses (d3={ler_d3:.5f} "
         f"d5={ler_d5:.5f} d7={ler_d7:.5f}) -- anti-snake machinery appears to "
         "have landed; update this test."
     )
+    assert ler_d5 >= ler_d3 * 0.7, suppression_note
+    assert ler_d7 >= ler_d5 * 0.7, suppression_note
     # Guard against regressing to the old catastrophic anti-suppression (the
     # naive-XOR decoder reached ~0.1-0.25 here); the core-commit rewrite keeps it
     # well below that across distances.
-    assert max(ler_d3, ler_d5, ler_d7) < 0.1, (
-        f"windowed LER regressed toward catastrophic: "
-        f"d3={ler_d3:.5f} d5={ler_d5:.5f} d7={ler_d7:.5f}"
-    )
+    assert (
+        max(ler_d3, ler_d5, ler_d7) < 0.1
+    ), f"windowed LER regressed toward catastrophic: d3={ler_d3:.5f} d5={ler_d5:.5f} d7={ler_d7:.5f}"
 
 
 def test_decode_each_matches_decode_count():

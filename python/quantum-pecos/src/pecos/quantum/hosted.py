@@ -139,11 +139,7 @@ def validate_hosted_operations(
                 f"host gate{shared_clause} carrying the same host_id."
             )
             raise ValueError(msg)
-        later_hosts = [
-            candidate
-            for candidate in host_candidates
-            if _gate_order(candidate) > _gate_order(local)
-        ]
+        later_hosts = [candidate for candidate in host_candidates if _gate_order(candidate) > _gate_order(local)]
         if require_host_after_local and not later_hosts:
             nearest_host = host_candidates[-1]
             msg = (
@@ -206,17 +202,12 @@ def _raise_if_repeated_host_records(
         if record.local_role or not record.host_id:
             continue
         host_records_by_id.setdefault(record.host_id, []).append(record)
-    repeated = {
-        host_id: host_records
-        for host_id, host_records in host_records_by_id.items()
-        if len(host_records) > 1
-    }
+    repeated = {host_id: host_records for host_id, host_records in host_records_by_id.items() if len(host_records) > 1}
     if not repeated:
         return
     host_id, host_records = next(iter(repeated.items()))
     first_locations = ", ".join(
-        f"{record.gate_name}@t{record.tick_index}/g{record.gate_index}"
-        for record in host_records[:4]
+        f"{record.gate_name}@t{record.tick_index}/g{record.gate_index}" for record in host_records[:4]
     )
     extra_count = len(host_records) - 4
     if extra_count > 0:
@@ -293,10 +284,7 @@ def _iter_tick_gates(
         except AttributeError as exc:
             msg = f"{context}: expected TickCircuit ticks with gate_batches()."
             raise TypeError(msg) from exc
-        gate_locations.extend(
-            (tick_index, gate_index, gate)
-            for gate_index, gate in enumerate(gate_batches)
-        )
+        gate_locations.extend((tick_index, gate_index, gate) for gate_index, gate in enumerate(gate_batches))
     return tuple(gate_locations)
 
 

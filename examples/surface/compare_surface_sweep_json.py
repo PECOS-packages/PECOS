@@ -97,11 +97,7 @@ def jeffreys_interval(errors: int, shots: int, confidence: float = 0.95) -> tupl
 
     alpha = (1.0 - confidence) / 2.0
     lower = 0.0 if errors == 0 else float(beta.ppf(alpha, errors + 0.5, shots - errors + 0.5))
-    upper = (
-        1.0
-        if errors == shots
-        else float(beta.ppf(1.0 - alpha, errors + 0.5, shots - errors + 0.5))
-    )
+    upper = 1.0 if errors == shots else float(beta.ppf(1.0 - alpha, errors + 0.5, shots - errors + 0.5))
     return lower, upper
 
 
@@ -123,8 +119,7 @@ def standard_error(errors: int, shots: int) -> float:
 
 def z_score(left: Point, right: Point) -> float:
     denom = math.sqrt(
-        standard_error(left.errors, left.shots) ** 2
-        + standard_error(right.errors, right.shots) ** 2,
+        standard_error(left.errors, left.shots) ** 2 + standard_error(right.errors, right.shots) ** 2,
     )
     if denom == 0.0:
         return math.nan

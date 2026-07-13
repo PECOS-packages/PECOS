@@ -38,15 +38,11 @@ def _assert_szz_prefix_barrier_host_order(src: str) -> None:
         if "phased_x(" not in line:
             continue
         prefix_meta = next(
-            i
-            for i in range(index - 1, -1, -1)
-            if _line_has_trace_metadata(lines[i], "source_kind", "szz_data_prefix")
+            i for i in range(index - 1, -1, -1) if _line_has_trace_metadata(lines[i], "source_kind", "szz_data_prefix")
         )
         barrier_index = next(i for i in range(prefix_meta - 1, -1, -1) if _SZZ_RUNTIME_BARRIER_CALL in lines[i])
         host_meta = next(
-            i
-            for i in range(index + 1, len(lines))
-            if _line_has_trace_metadata(lines[i], "source_kind", "szz_host")
+            i for i in range(index + 1, len(lines)) if _line_has_trace_metadata(lines[i], "source_kind", "szz_host")
         )
         zz_phase_index = next(i for i in range(host_meta + 1, len(lines)) if "zz_phase(" in lines[i])
 

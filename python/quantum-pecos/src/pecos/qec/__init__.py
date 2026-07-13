@@ -37,7 +37,6 @@ from pecos_rslib.qec import (
     EquivalenceResult,
     FaultLocation,
     InfluenceBuilder,
-    PauliFrameLookup,
     ParsedDem,
     PauliFrameLookup,
     assert_dems_equivalent,

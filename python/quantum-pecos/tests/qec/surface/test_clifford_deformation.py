@@ -157,16 +157,8 @@ def test_checkerboard_frames_emit_mixed_szz_check_scaffold(
         clifford_frame_policy=policy,
     )
 
-    assert any(
-        op.op_type == OpType.H
-        and op.label == f"prep_x_basis_d{rotated_data}:to_z"
-        for op in ops
-    )
-    assert any(
-        op.op_type == OpType.H
-        and op.label == f"measure_x_basis_d{rotated_data}:from_z"
-        for op in ops
-    )
+    assert any(op.op_type == OpType.H and op.label == f"prep_x_basis_d{rotated_data}:to_z" for op in ops)
+    assert any(op.op_type == OpType.H and op.label == f"measure_x_basis_d{rotated_data}:from_z" for op in ops)
     assert not any(op.label == f"prep_x_basis_d{unrotated_data}:to_z" for op in ops)
     assert any(f"szz_x_touch_pre:X1:d{x_touch_data}:to_z" in op.label for op in ops)
     assert any(f"szz_touch_comp:SXDG:X:X1:d{x_touch_data}" in op.label for op in ops)

@@ -11,7 +11,6 @@ and the public ``DemBuilder.build`` -- not silently dropped.
 
 import pytest
 from pecos_rslib import DagCircuit
-from pecos_rslib.quantum import Gate, GateType
 from pecos_rslib.qec import (
     DagFaultAnalyzer,
     DemBuilder,

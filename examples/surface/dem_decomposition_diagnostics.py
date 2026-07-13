@@ -685,9 +685,7 @@ def run_case(
         ),
     ]
     decoders.extend(
-        _timed_decode(name, callback, shots)
-        for name, callback in graphlike_decoder_specs
-        if name in decoder_names
+        _timed_decode(name, callback, shots) for name, callback in graphlike_decoder_specs if name in decoder_names
     )
 
     return CaseResult(
@@ -710,15 +708,17 @@ def run_case(
             "terminal_decomposed": dem_stats(terminal_decomposed),
         },
         decoders=decoders,
-        pair_analysis=two_fault_pair_analysis(
-            native_raw=native_raw,
-            native_decomposed=native_decomposed,
-            stim_decomposed=stim_decomposed,
-            terminal_decomposed=terminal_decomposed,
-            max_effects=pair_analysis_max_effects,
-        )
-        if pair_analysis
-        else None,
+        pair_analysis=(
+            two_fault_pair_analysis(
+                native_raw=native_raw,
+                native_decomposed=native_decomposed,
+                stim_decomposed=stim_decomposed,
+                terminal_decomposed=terminal_decomposed,
+                max_effects=pair_analysis_max_effects,
+            )
+            if pair_analysis
+            else None
+        ),
     )
 
 
@@ -737,8 +737,7 @@ def print_case(result: CaseResult) -> None:
     )
     if raw.only_native == 0 and raw.only_stim == 0 and raw.max_rel_probability_diff > 0:
         print(
-            "  raw structures match; probability deltas reflect "
-            "combination/rounding conventions.",
+            "  raw structures match; probability deltas reflect combination/rounding conventions.",
         )
 
     print("DEM stats:")
@@ -852,13 +851,10 @@ def load_cached_results(path: Path) -> tuple[list[dict[str, Any]], dict[tuple[An
     """Load resumable diagnostic results from a previous JSON file."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
-        raise ValueError(f"Expected a list of case results in {path}")
+        msg = f"Expected a list of case results in {path}"
+        raise TypeError(msg)
     results = [item for item in payload if isinstance(item, dict)]
-    by_key = {
-        key: result
-        for result in results
-        if (key := cached_case_key(result)) is not None
-    }
+    by_key = {key: result for result in results if (key := cached_case_key(result)) is not None}
     return results, by_key
 
 
@@ -902,7 +898,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     if args.resume and args.save_json is None:
-        raise ValueError("--resume requires --save-json so completed cases have a source")
+        msg = "--resume requires --save-json so completed cases have a source"
+        raise ValueError(msg)
 
     results: list[CaseResult | dict[str, Any]] = []
     cached_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}

@@ -232,9 +232,7 @@ def test_tick_circuit_uses_explicit_prep_syndrome_baseline(
     ]
     assert init_tick_rounds
 
-    first_random_detector = next(
-        det for det in detectors if det["coords"][1] == detector_y and det["coords"][2] == 0
-    )
+    first_random_detector = next(det for det in detectors if det["coords"][1] == detector_y and det["coords"][2] == 0)
     assert len(first_random_detector["records"]) == 2
     record_indices = [num_measurements + int(record) for record in first_random_detector["records"]]
     assert record_indices[0] >= init_count

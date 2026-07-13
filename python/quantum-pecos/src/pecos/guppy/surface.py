@@ -35,7 +35,9 @@ class _ModuleState:
     # Keyed by full patch identity + effective budget (dx, dz, orientation,
     # rotated, effective_budget) so distinct patch geometries -- e.g. rotated
     # vs non-rotated at the same dx/dz -- never collide on a cached module.
-    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str, str, str | None, str, bool, int | None], dict]] = {}
+    distance_module_cache: ClassVar[
+        dict[tuple[int, int, str, bool, int, str, str, str | None, str, bool, int | None], dict]
+    ] = {}
 
 
 _state = _ModuleState()
@@ -282,10 +284,7 @@ def generate_guppy_source(
     cnot_round_order = cnot_round_order_for_check_plan(resolved_plan)
     interaction_basis = resolved_plan.interaction_basis
     szz_runtime_barrier_policy = _normalize_szz_runtime_barrier_policy(szz_runtime_barriers)
-    if (
-        interaction_basis != "szz"
-        and szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE
-    ):
+    if interaction_basis != "szz" and szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE:
         msg = "szz_runtime_barriers is only supported for interaction_basis='szz'"
         raise ValueError(msg)
     resolved_clifford_frame = _resolve_szz_clifford_frame_for_builder(
@@ -679,10 +678,7 @@ def generate_guppy_source(
         try:
             return _SZZ_FLOW_PHYSICAL_PREFIX_BY_PENDING[pending]
         except KeyError as exc:
-            msg = (
-                "SZZ Guppy hosted-prefix lowering cannot lower pending "
-                f"Clifford {_szz_flow_clifford_name(pending)}"
-            )
+            msg = f"SZZ Guppy hosted-prefix lowering cannot lower pending Clifford {_szz_flow_clifford_name(pending)}"
             raise ValueError(msg) from exc
 
     _szz_guppy_prefix_cache: dict[tuple[int, int], tuple[OpType, ...]] = {_SZZ_FLOW_IDENTITY: ()}
@@ -855,20 +851,15 @@ def generate_guppy_source(
                 if pending_by_data is None
                 else pending_by_data.setdefault(data_q, _SZZ_FLOW_IDENTITY)
             )
-            has_data_prefix = (
-                pending != _SZZ_FLOW_IDENTITY and not _szz_flow_is_virtual_z(pending)
-            )
+            has_data_prefix = pending != _SZZ_FLOW_IDENTITY and not _szz_flow_is_virtual_z(pending)
             sign = szz_sign_by_touch[(stab_type, stab_idx, data_q)]
             host_gate = OpType.SZZ if sign > 0 else OpType.SZZDG
             host_label_core = f"r{rnd_idx + 1}:{stab_type}{stab_idx}:d{data_q}:{host_gate.name}"
             host_label = (
-                f"szz:{host_label_core}"
-                if host_label_scope is None
-                else f"szz:{host_label_scope}:{host_label_core}"
+                f"szz:{host_label_core}" if host_label_scope is None else f"szz:{host_label_scope}:{host_label_core}"
             )
             if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_ALL or (
-                szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX
-                and has_data_prefix
+                szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_DATA_PREFIX and has_data_prefix
             ):
                 target.append(
                     f"{indent}{ancilla_expr(stab_type, stab_idx)}, {data_expr(data_q)} = "
@@ -1091,9 +1082,7 @@ def generate_guppy_source(
                         "    ",
                         rnd_idx,
                         rnd_in_batch,
-                        lambda stab_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
-                            (stab_type, stab_idx)
-                        ],
+                        lambda stab_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[(stab_type, stab_idx)],
                         _szz_data_expr,
                         pending_by_data=szz_syndrome_pending_by_data,
                         host_label_scope="syndrome_extraction",
@@ -1291,13 +1280,13 @@ def generate_guppy_source(
                             "    ",
                             rnd_idx,
                             rnd_in_batch,
-                        lambda selected_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
-                            (selected_type, stab_idx)
-                        ],
-                        _szz_data_expr,
-                        pending_by_data=szz_init_pending_by_data,
-                        host_label_scope=function_name,
-                    )
+                            lambda selected_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
+                                (selected_type, stab_idx)
+                            ],
+                            _szz_data_expr,
+                            pending_by_data=szz_init_pending_by_data,
+                            host_label_scope=function_name,
+                        )
 
                 if interaction_basis == "cx":
                     if stab_type == "X":
@@ -1515,9 +1504,7 @@ def generate_guppy_source(
                         indent,
                         rnd_idx,
                         rnd_in_batch,
-                        lambda stab_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[
-                            (stab_type, stab_idx)
-                        ],
+                        lambda stab_type, stab_idx, batch_anc_var=batch_anc_var: batch_anc_var[(stab_type, stab_idx)],
                         _szz_data_expr,
                         pending_by_data=pending_by_data,
                         host_label_scope=host_label_scope,
@@ -1558,10 +1545,7 @@ def generate_guppy_source(
                 f"def {helper_name}(surf: SurfaceCode_{dx}x{dz} @ owned) "
                 f"-> tuple[SurfaceCode_{dx}x{dz}, Syndrome_{dx}x{dz}]:"
             ),
-            (
-                f'    """Extract counted SZZ syndrome round {round_idx} '
-                'with round-scoped hosted metadata."""'
-            ),
+            f'    """Extract counted SZZ syndrome round {round_idx} with round-scoped hosted metadata."""',
         ]
         _append_inline_szz_syndrome_extraction(
             body,
@@ -2322,19 +2306,14 @@ def _guppy_module_cache_key(
     )
     interaction_basis = resolved_plan.interaction_basis
     szz_runtime_barrier_policy = _normalize_szz_runtime_barrier_policy(szz_runtime_barriers)
-    if (
-        interaction_basis != "szz"
-        and szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE
-    ):
+    if interaction_basis != "szz" and szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE:
         msg = "szz_runtime_barriers is only supported for interaction_basis='szz'"
         raise ValueError(msg)
     interaction_part = "" if interaction_basis == "cx" else f"_ib{interaction_basis}"
     check_plan_part = "" if check_plan is None else f"_cp{resolved_plan.plan_id}"
     frame_part = "" if clifford_frame_policy is None else f"_cf{str(clifford_frame_policy).lower().replace('-', '_')}"
     runtime_barrier_part = (
-        ""
-        if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_NONE
-        else f"_szzrb-{szz_runtime_barrier_policy}"
+        "" if szz_runtime_barrier_policy == _SZZ_RUNTIME_BARRIER_POLICY_NONE else f"_szzrb-{szz_runtime_barrier_policy}"
     )
     trace_metadata_part = "" if trace_metadata else "_trace-metadata-off"
     base = (

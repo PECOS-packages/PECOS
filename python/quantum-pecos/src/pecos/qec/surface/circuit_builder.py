@@ -408,9 +408,7 @@ def _validate_szz_sign_vector(
             )
             raise ValueError(msg)
         touch = next(
-            entry
-            for entry in signs
-            if entry.stabilizer_type == stabilizer_type and entry.data_qubit == data_qubit
+            entry for entry in signs if entry.stabilizer_type == stabilizer_type and entry.data_qubit == data_qubit
         )
         gate = {
             ("X", 1): "SXDG",
@@ -485,10 +483,7 @@ def _szz_memory_physical_axis(
     if resolved_clifford_frame is None:
         return source_basis  # type: ignore[return-value]
 
-    axes = {
-        frame.image(source_basis).axis
-        for frame in resolved_clifford_frame.data_frames
-    }
+    axes = {frame.image(source_basis).axis for frame in resolved_clifford_frame.data_frames}
     if len(axes) != 1:
         msg = (
             f"clifford frame policy {resolved_clifford_frame.policy!r} maps "
@@ -1290,8 +1285,7 @@ def build_surface_code_circuit(
                             cx_ops.append((data_q(data_idx), ancilla_q, f"Z{stab_idx}"))
                     emit_gate_local_twirl_layer(ops, cx_ops)
                     ops.extend(
-                        SurfaceCircuitStep(OpType.CX, [control, target], label)
-                        for control, target, label in cx_ops
+                        SurfaceCircuitStep(OpType.CX, [control, target], label) for control, target, label in cx_ops
                     )
                     ops.append(SurfaceCircuitStep(OpType.TICK))
 

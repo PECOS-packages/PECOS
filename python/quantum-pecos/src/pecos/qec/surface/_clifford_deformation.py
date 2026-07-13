@@ -43,9 +43,7 @@ _SUPPORTED_CHECKERBOARD_FRAME_POLICIES = frozenset(
         "checkerboard_zxxz",
     },
 )
-_SUPPORTED_FRAME_POLICIES = (
-    _SUPPORTED_GLOBAL_FRAME_POLICIES | _SUPPORTED_CHECKERBOARD_FRAME_POLICIES
-)
+_SUPPORTED_FRAME_POLICIES = _SUPPORTED_GLOBAL_FRAME_POLICIES | _SUPPORTED_CHECKERBOARD_FRAME_POLICIES
 
 
 @dataclass(frozen=True, order=True)
@@ -212,10 +210,7 @@ def normalize_surface_frame_policy(policy: str) -> str:
     """Normalize and validate a named surface Clifford frame policy."""
     normalized = str(policy).lower().replace("-", "_")
     if normalized not in _SUPPORTED_FRAME_POLICIES:
-        msg = (
-            f"unknown surface Clifford frame policy {policy!r}; expected one of "
-            f"{sorted(_SUPPORTED_FRAME_POLICIES)}"
-        )
+        msg = f"unknown surface Clifford frame policy {policy!r}; expected one of {sorted(_SUPPORTED_FRAME_POLICIES)}"
         raise ValueError(msg)
     return normalized
 
@@ -244,11 +239,7 @@ def resolve_surface_clifford_frame(
 ) -> ResolvedSurfaceCliffordFrame:
     """Resolve source surface checks/logicals through a local Clifford frame."""
     normalized = normalize_surface_frame_policy(policy)
-    frames = (
-        tuple(data_frames)
-        if data_frames is not None
-        else _surface_frame_for_policy(patch, normalized)
-    )
+    frames = tuple(data_frames) if data_frames is not None else _surface_frame_for_policy(patch, normalized)
     if len(frames) != patch.num_data:
         msg = f"data frame length {len(frames)} does not match patch.num_data={patch.num_data}"
         raise ValueError(msg)

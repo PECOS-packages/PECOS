@@ -1306,7 +1306,7 @@ fn canonical_single_qubit_clifford_sequence(clifford: Clifford) -> Vec<GateType>
 }
 
 fn flush_single_qubit_clifford_chain(
-    chain: SingleQubitCliffordChain,
+    chain: &SingleQubitCliffordChain,
     replacements: &mut BTreeMap<(usize, usize), GateType>,
     to_remove: &mut HashSet<(usize, usize)>,
 ) {
@@ -1367,14 +1367,18 @@ impl CircuitPass for SimplifySingleQubitCliffordChains {
 
                 for &qubit in &gate.qubits {
                     if let Some(chain) = pending.remove(&qubit) {
-                        flush_single_qubit_clifford_chain(chain, &mut replacements, &mut to_remove);
+                        flush_single_qubit_clifford_chain(
+                            &chain,
+                            &mut replacements,
+                            &mut to_remove,
+                        );
                     }
                 }
             }
         }
 
         for (_, chain) in pending {
-            flush_single_qubit_clifford_chain(chain, &mut replacements, &mut to_remove);
+            flush_single_qubit_clifford_chain(&chain, &mut replacements, &mut to_remove);
         }
 
         for (&(ti, gi), &gate_type) in &replacements {

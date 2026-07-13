@@ -914,20 +914,14 @@ def _validate_measurement_crosstalk_topology(
         return None
     if measurement_crosstalk_topology == "global_from_measurements":
         return measurement_crosstalk_topology
-    msg = (
-        "measurement_crosstalk_topology must be None, 'runtime_payloads', "
-        "or 'global_from_measurements'"
-    )
+    msg = "measurement_crosstalk_topology must be None, 'runtime_payloads', or 'global_from_measurements'"
     raise ValueError(msg)
 
 
 def _should_add_global_measurement_crosstalk_payload(
     measurement_crosstalk_topology: str | None,
 ) -> bool:
-    return (
-        _validate_measurement_crosstalk_topology(measurement_crosstalk_topology)
-        == "global_from_measurements"
-    )
+    return _validate_measurement_crosstalk_topology(measurement_crosstalk_topology) == "global_from_measurements"
 
 
 def _replay_qis_trace_into_tick_circuit(
@@ -1662,10 +1656,7 @@ def _pauli_masks_as_int64(pauli_masks: Any) -> NDArray[np.int64]:
     """Return Pauli-mask input in the integer dtype accepted by Rust bindings."""
     masks_arr = np.asarray(pauli_masks)
     if not np.issubdtype(masks_arr.dtype, np.integer):
-        msg = (
-            "pauli_masks must be an integer array with values "
-            "0=I, 1=X, 2=Y, 3=Z"
-        )
+        msg = "pauli_masks must be an integer array with values 0=I, 1=X, 2=Y, 3=Z"
         raise TypeError(msg)
     return np.asarray(masks_arr, dtype=np.int64)
 
@@ -1944,9 +1935,7 @@ def _with_noise_compat(
         )
     except TypeError as exc:
         unsupported = {
-            key: value
-            for key, value in noise_kwargs.items()
-            if key not in {"p_idle", "t1", "t2"} and value is not None
+            key: value for key, value in noise_kwargs.items() if key not in {"p_idle", "t1", "t2"} and value is not None
         }
         if unsupported:
             msg = (
@@ -2037,12 +2026,16 @@ def _surface_native_topology(
         tuple(_extract_measurement_order(tc)) if _metadata_uses_record_offsets(detectors_json, observables_json) else ()
     )
     num_measurements = int(tc.get_meta("num_measurements") or str(len(measurement_order)))
-    det_records = [
-        _metadata_record_offsets(detector, num_measurements) for detector in json.loads(detectors_json)
-    ] if detectors_json else []
-    obs_records = [
-        _metadata_record_offsets(observable, num_measurements) for observable in json.loads(observables_json)
-    ] if observables_json else []
+    det_records = (
+        [_metadata_record_offsets(detector, num_measurements) for detector in json.loads(detectors_json)]
+        if detectors_json
+        else []
+    )
+    obs_records = (
+        [_metadata_record_offsets(observable, num_measurements) for observable in json.loads(observables_json)]
+        if observables_json
+        else []
+    )
 
     pauli_frame_lookup = None
     num_pauli_sites = 0
@@ -2197,8 +2190,8 @@ def _cached_surface_native_dem_string(
     check_plan: str | None = None,
     resolved_check_plan_hash: str = "",
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool | str = False,
     *,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> str:
@@ -2222,9 +2215,7 @@ def _cached_surface_native_dem_string(
         p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
     )
     szz_physical_prefixes = (
-        interaction_basis == "szz"
-        and circuit_source == "abstract"
-        and (p1 > 0.0 or include_idle_gates)
+        interaction_basis == "szz" and circuit_source == "abstract" and (p1 > 0.0 or include_idle_gates)
     )
     topology = _cached_surface_native_topology(
         patch_key,
@@ -2988,9 +2979,7 @@ class SurfaceDecoder:
             DEM string in Stim format
         """
         dem_decomposition: NativeDemDecomposition = (
-            "terminal_graphlike"
-            if self.circuit_level_dem_mode == "native_terminal_graphlike"
-            else "source_graphlike"
+            "terminal_graphlike" if self.circuit_level_dem_mode == "native_terminal_graphlike" else "source_graphlike"
         )
         dem = generate_circuit_level_dem_from_builder(
             self.patch,
@@ -4305,8 +4294,8 @@ def build_native_sampler(
     ] = "dem",  # "mnm" accepted for compat, mapped to "influence_dem",
     check_plan: str | None = None,
     clifford_frame_policy: str | None = None,
-    szz_runtime_barriers: bool | str = False,
     *,
+    szz_runtime_barriers: bool | str = False,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
 ) -> NativeSampler:
@@ -4531,10 +4520,7 @@ def decode_native_samples(
 
     dem_str = dem if dem is not None else sampler.dem_string
     if dem_str is None:
-        msg = (
-            "decode_native_samples requires a DEM string; "
-            "pass dem= or build the sampler with sampling_model='dem'"
-        )
+        msg = "decode_native_samples requires a DEM string; pass dem= or build the sampler with sampling_model='dem'"
         raise ValueError(msg)
 
     masks_arr = _pauli_masks_as_int64(pauli_masks) if pauli_masks is not None else None
@@ -4600,22 +4586,13 @@ def demask_pauli_frame_records(
     expected_obs = pauli_frame_lookup.num_observables
     expected_sites = pauli_frame_lookup.num_pauli_sites
     if events_arr.shape[1] != expected_det:
-        msg = (
-            f"raw_events width {events_arr.shape[1]} != "
-            f"pauli_frame_lookup.num_detectors {expected_det}"
-        )
+        msg = f"raw_events width {events_arr.shape[1]} != pauli_frame_lookup.num_detectors {expected_det}"
         raise ValueError(msg)
     if obs_arr.shape[1] != expected_obs:
-        msg = (
-            f"raw_obs width {obs_arr.shape[1]} != "
-            f"pauli_frame_lookup.num_observables {expected_obs}"
-        )
+        msg = f"raw_obs width {obs_arr.shape[1]} != pauli_frame_lookup.num_observables {expected_obs}"
         raise ValueError(msg)
     if masks_arr.shape[1] != expected_sites:
-        msg = (
-            f"pauli_masks width {masks_arr.shape[1]} != "
-            f"pauli_frame_lookup.num_pauli_sites {expected_sites}"
-        )
+        msg = f"pauli_masks width {masks_arr.shape[1]} != pauli_frame_lookup.num_pauli_sites {expected_sites}"
         raise ValueError(msg)
 
     det_xor, obs_xor = pauli_frame_lookup.compute_mask_xor(masks_arr)
@@ -4680,10 +4657,7 @@ def _extract_pauli_masks_from_results(
                 raise ValueError(msg)
             per_gate = results[tag]
             if len(per_gate) != num_shots:
-                msg = (
-                    f"Pauli-mask tag {tag!r}: got {len(per_gate)} shots, "
-                    f"expected {num_shots} shots"
-                )
+                msg = f"Pauli-mask tag {tag!r}: got {len(per_gate)} shots, expected {num_shots} shots"
                 raise ValueError(msg)
 
             bits = np.asarray(per_gate, dtype=np.uint8)
@@ -4726,10 +4700,7 @@ def _extract_pauli_masks_from_results(
             raise ValueError(msg)
         per_round = results[tag]
         if len(per_round) != num_shots:
-            msg = (
-                f"Pauli-mask tag {tag!r}: got {len(per_round)} shots, "
-                f"expected {num_shots} shots"
-            )
+            msg = f"Pauli-mask tag {tag!r}: got {len(per_round)} shots, expected {num_shots} shots"
             raise ValueError(msg)
 
         bits = np.asarray(per_round, dtype=np.uint8)
@@ -4826,10 +4797,7 @@ def _extract_pauli_activations_from_results(
                 raise ValueError(msg)
             per_gate = results[tag]
             if len(per_gate) != num_shots:
-                msg = (
-                    f"Pauli-activation tag {tag!r}: got {len(per_gate)} shots, "
-                    f"expected {num_shots} shots"
-                )
+                msg = f"Pauli-activation tag {tag!r}: got {len(per_gate)} shots, expected {num_shots} shots"
                 raise ValueError(msg)
             bits = np.asarray(per_gate, dtype=bool)
             if bits.ndim != 2 or bits.shape[1] != 2:
@@ -4854,10 +4822,7 @@ def _extract_pauli_activations_from_results(
             raise ValueError(msg)
         per_round = results[tag]
         if len(per_round) != num_shots:
-            msg = (
-                f"Pauli-activation tag {tag!r}: got {len(per_round)} shots, "
-                f"expected {num_shots} shots"
-            )
+            msg = f"Pauli-activation tag {tag!r}: got {len(per_round)} shots, expected {num_shots} shots"
             raise ValueError(msg)
         bits = np.asarray(per_round, dtype=bool)
         if bits.ndim != 2 or bits.shape[1] != num_data:

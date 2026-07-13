@@ -42,10 +42,7 @@ def extract_detection_events_and_observables(
 
     num_meas_meta = tick_circuit.get_meta("num_measurements")
     if num_meas_meta is None or num_meas_meta == "":
-        msg = (
-            "extract_detection_events_and_observables requires "
-            "tick_circuit.get_meta('num_measurements') to be set"
-        )
+        msg = "extract_detection_events_and_observables requires tick_circuit.get_meta('num_measurements') to be set"
         raise ValueError(msg)
     num_meas = int(num_meas_meta)
 
@@ -54,10 +51,7 @@ def extract_detection_events_and_observables(
 
     for row in results:
         if len(row) != num_meas:
-            msg = (
-                f"result row has length {len(row)} but tick_circuit metadata "
-                f"declares num_measurements={num_meas}"
-            )
+            msg = f"result row has length {len(row)} but tick_circuit metadata declares num_measurements={num_meas}"
             raise ValueError(msg)
 
         fired_detectors: list[int] = []

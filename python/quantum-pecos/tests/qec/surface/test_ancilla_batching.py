@@ -59,14 +59,12 @@ def _touch_gap_metrics_for_batches(
     squared_gap_sum = 0
     for touch_times in events_by_data.values():
         touch_times.sort()
-        gaps = [
-            touch_times[index + 1] - touch_times[index]
-            for index in range(len(touch_times) - 1)
-        ]
+        gaps = [touch_times[index + 1] - touch_times[index] for index in range(len(touch_times) - 1)]
         gaps.append(period + touch_times[0] - touch_times[-1])
         worst_gap = max(worst_gap, *gaps)
         squared_gap_sum += sum(gap * gap for gap in gaps)
     return worst_gap, squared_gap_sum
+
 
 # --- normalize_ancilla_budget -----------------------------------------------
 
@@ -342,9 +340,7 @@ def test_balanced_data_d9_a17_round_order_touch_gap_tradeoff() -> None:
     ]
     best_max_gap = min(round_candidates)
     best_sumsq_with_baseline_max_gap = min(
-        candidate
-        for candidate in round_candidates
-        if candidate[0][0] == baseline_metrics[0]
+        candidate for candidate in round_candidates if candidate[0][0] == baseline_metrics[0]
     )
 
     assert baseline_metrics == (14, 11292)

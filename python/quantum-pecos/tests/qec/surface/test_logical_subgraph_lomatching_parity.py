@@ -44,9 +44,7 @@ def _lomatching_reference_membership(dem_str: str, stab_coords) -> list[list[int
     """
     dem = stim.DetectorErrorModel(dem_str).flattened()
 
-    det_to_coords = {
-        d: tuple(map(float, c)) for d, c in dem.get_detector_coordinates().items()
-    }
+    det_to_coords = {d: tuple(map(float, c)) for d, c in dem.get_detector_coordinates().items()}
     coords_to_det = {c: d for d, c in det_to_coords.items()}
 
     # spatial coord (all but the trailing time element) -> (logical qubit, stab type)
@@ -68,9 +66,7 @@ def _lomatching_reference_membership(dem_str: str, stab_coords) -> list[list[int
             bd_edges_obs[o] += dets
 
     # (logical qubit, stab type, time) seeds for each observable
-    lst_obs: dict[int, set[tuple[int, str, float]]] = {
-        o: set() for o in range(dem.num_observables)
-    }
+    lst_obs: dict[int, set[tuple[int, str, float]]] = {o: set() for o in range(dem.num_observables)}
     for obs, dets in bd_edges_obs.items():
         for det in dets:
             coords = det_to_coords[det]
@@ -94,9 +90,7 @@ def _assert_parity(dem_str: str, stab_coords) -> None:
     pecos = [sorted(r) for r in decoder.observing_regions()]
     reference = _lomatching_reference_membership(dem_str, stab_coords)
 
-    assert len(pecos) == len(reference), (
-        f"observable count mismatch: PECOS {len(pecos)} vs lomatching {len(reference)}"
-    )
+    assert len(pecos) == len(reference), f"observable count mismatch: PECOS {len(pecos)} vs lomatching {len(reference)}"
     for obs, (p, r) in enumerate(zip(pecos, reference, strict=True)):
         assert p == r, f"observable {obs} membership differs:\n PECOS={p}\n lomatching={r}"
 

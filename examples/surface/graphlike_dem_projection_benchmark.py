@@ -113,8 +113,7 @@ def build_case(
     )
 
     print(
-        f"\n=== d={distance} r={rounds} basis={basis} basis2q={interaction_basis} "
-        f"p={p:g} shots={shots} ===",
+        f"\n=== d={distance} r={rounds} basis={basis} basis2q={interaction_basis} p={p:g} shots={shots} ===",
         flush=True,
     )
     setup_timings: list[TimedValue] = []
@@ -177,8 +176,7 @@ def build_case(
         and raw_comparison["max_rel_probability_diff"] > 0
     ):
         print(
-            "raw structures match; max_rel is a probability-combination/"
-            "rounding delta.",
+            "raw structures match; max_rel is a probability-combination/rounding delta.",
             flush=True,
         )
 

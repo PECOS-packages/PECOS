@@ -45,11 +45,7 @@ def _canonicalize_raw_rows_from_masks(
 ) -> list[list[int]]:
     """Apply the same Pauli-frame rule as the generated canonical tracker."""
     num_data = patch.geometry.num_data
-    init_count = (
-        len(patch.geometry.x_stabilizers)
-        if basis.upper() == "Z"
-        else len(patch.geometry.z_stabilizers)
-    )
+    init_count = len(patch.geometry.x_stabilizers) if basis.upper() == "Z" else len(patch.geometry.z_stabilizers)
     expected_width = init_count + num_rounds * patch.geometry.num_ancilla + num_data
     canonical_rows: list[list[int]] = []
 

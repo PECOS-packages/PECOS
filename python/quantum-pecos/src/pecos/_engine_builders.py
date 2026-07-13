@@ -233,12 +233,7 @@ def qis_engine() -> QisEngineBuilder:
 
 def _looks_like_library_path(value: str) -> bool:
     path = Path(value)
-    return (
-        path.exists()
-        or "/" in value
-        or "\\" in value
-        or path.suffix in {".so", ".dylib", ".dll"}
-    )
+    return path.exists() or "/" in value or "\\" in value or path.suffix in {".so", ".dylib", ".dll"}
 
 
 def _configure_selene_runtime(builder: object, runtime: object | None) -> object:

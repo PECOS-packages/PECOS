@@ -69,14 +69,14 @@ struct SourceTraceMetadata {
 
 #[repr(C)]
 struct SeleneRuntimeGetOperationInterface {
-    rzz_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64, f64),
-    rxy_fn: extern "C" fn(RuntimeGetOperationInstance, u64, f64, f64),
-    rz_fn: extern "C" fn(RuntimeGetOperationInstance, u64, f64),
-    measure_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
-    measure_leaked_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
-    reset_fn: extern "C" fn(RuntimeGetOperationInstance, u64),
-    custom_fn: extern "C" fn(RuntimeGetOperationInstance, usize, *const c_void, usize),
-    set_batch_time_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    rzz: extern "C" fn(RuntimeGetOperationInstance, u64, u64, f64),
+    rxy: extern "C" fn(RuntimeGetOperationInstance, u64, f64, f64),
+    rz: extern "C" fn(RuntimeGetOperationInstance, u64, f64),
+    measure: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    measure_leaked: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    reset: extern "C" fn(RuntimeGetOperationInstance, u64),
+    custom: extern "C" fn(RuntimeGetOperationInstance, usize, *const c_void, usize),
+    set_batch_time: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
 }
 
 extern "C" fn runtime_batch_rxy(
@@ -175,14 +175,14 @@ extern "C" fn runtime_batch_set_time(
 
 static RUNTIME_OPERATION_CALLBACKS: SeleneRuntimeGetOperationInterface =
     SeleneRuntimeGetOperationInterface {
-        rzz_fn: runtime_batch_rzz,
-        rxy_fn: runtime_batch_rxy,
-        rz_fn: runtime_batch_rz,
-        measure_fn: runtime_batch_measure,
-        measure_leaked_fn: runtime_batch_measure_leaked,
-        reset_fn: runtime_batch_reset,
-        custom_fn: runtime_batch_custom,
-        set_batch_time_fn: runtime_batch_set_time,
+        rzz: runtime_batch_rzz,
+        rxy: runtime_batch_rxy,
+        rz: runtime_batch_rz,
+        measure: runtime_batch_measure,
+        measure_leaked: runtime_batch_measure_leaked,
+        reset: runtime_batch_reset,
+        custom: runtime_batch_custom,
+        set_batch_time: runtime_batch_set_time,
     };
 
 /// Selene runtime implementation
@@ -414,7 +414,7 @@ impl SeleneRuntime {
                 &raw mut instance,
                 plugin_num_qubits as u64,
                 0, // start time
-                arg_ptrs.len() as u32,
+                u32::try_from(arg_ptrs.len()).expect("custom-op argument count exceeds u32"),
                 argv,
             );
 
@@ -444,8 +444,7 @@ impl SeleneRuntime {
         }
 
         debug!(
-            "Reinitializing Selene plugin capacity from {} to {} qubits",
-            initialized_num_qubits, plugin_num_qubits
+            "Reinitializing Selene plugin capacity from {initialized_num_qubits} to {plugin_num_qubits} qubits"
         );
         self.reset_plugin_instance()?;
         self.load_plugin()
@@ -1260,7 +1259,8 @@ impl SeleneRuntime {
             }
             (
                 QuantumOp::ZZ(source_qubit_1, source_qubit_2),
-                QuantumOp::ZZ(lowered_qubit_1, lowered_qubit_2),
+                QuantumOp::ZZ(lowered_qubit_1, lowered_qubit_2)
+                | QuantumOp::RZZ(_, lowered_qubit_1, lowered_qubit_2),
             ) => Self::same_unordered_pair(
                 *source_qubit_1,
                 *source_qubit_2,
@@ -1279,15 +1279,7 @@ impl SeleneRuntime {
                         *lowered_qubit_2,
                     )
             }
-            (
-                QuantumOp::ZZ(source_qubit_1, source_qubit_2),
-                QuantumOp::RZZ(_, lowered_qubit_1, lowered_qubit_2),
-            ) => Self::same_unordered_pair(
-                *source_qubit_1,
-                *source_qubit_2,
-                *lowered_qubit_1,
-                *lowered_qubit_2,
-            ),
+
             (
                 QuantumOp::Measure(source_qubit, source_result),
                 QuantumOp::Measure(lowered_qubit, lowered_result),
@@ -1616,7 +1608,7 @@ fn operation_capacity_with_mode(
     for op in operations {
         match op {
             Operation::Quantum(qop) if !uses_explicit_allocations => {
-                include_quantum_op_capacity(qop, &mut num_qubits, &mut num_results)
+                include_quantum_op_capacity(qop, &mut num_qubits, &mut num_results);
             }
             Operation::Quantum(qop) => {
                 include_quantum_result_capacity(qop, &mut num_results);
@@ -1632,8 +1624,7 @@ fn operation_capacity_with_mode(
             Operation::RecordOutput { result_id, .. } => {
                 include_result(&mut num_results, *result_id);
             }
-            Operation::TraceMetadata { .. } => {}
-            Operation::Barrier => {}
+            Operation::TraceMetadata { .. } | Operation::Barrier => {}
         }
     }
     if uses_explicit_allocations {

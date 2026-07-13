@@ -113,6 +113,9 @@ pub struct PauliFrameLookup {
     observable_rows: Vec<Vec<u32>>,
 }
 
+/// Per-shot detector rows paired with per-shot observable rows.
+type DetectorObservableRows = (Vec<Vec<bool>>, Vec<Vec<bool>>);
+
 impl PauliFrameLookup {
     /// Build a Pauli-frame lookup from a DAG circuit and record-based detector
     /// and observable definitions.
@@ -151,7 +154,7 @@ impl PauliFrameLookup {
         }
         let tracked: Vec<(&pecos_quantum::PauliAnnotation, usize)> =
             tracked_annotations.into_iter().zip(meta_nodes).collect();
-        if tracked.len() % 3 != 0 {
+        if !tracked.len().is_multiple_of(3) {
             return Err(PauliFrameLookupError::NonTripletTrackedPaulis {
                 num_tracked_paulis: tracked.len(),
             });
@@ -173,9 +176,9 @@ impl PauliFrameLookup {
         let mut observable_rows = Vec::with_capacity(tracked.len());
 
         for (ann, meta_node) in &tracked {
-            if !dag
+            if dag
                 .gate(*meta_node)
-                .is_some_and(|gate| gate.gate_type == GateType::TrackedPauliMeta)
+                .is_none_or(|gate| gate.gate_type != GateType::TrackedPauliMeta)
             {
                 return Err(PauliFrameLookupError::MetaNodeNotTrackedPauliMeta {
                     meta_node: *meta_node,
@@ -284,7 +287,7 @@ impl PauliFrameLookup {
         masks: &[u8],
         rows: usize,
         cols: usize,
-    ) -> Result<(Vec<Vec<bool>>, Vec<Vec<bool>>), PauliFrameLookupError> {
+    ) -> Result<DetectorObservableRows, PauliFrameLookupError> {
         let mut det_xor = vec![vec![false; self.num_detectors]; rows];
         let mut obs_xor = vec![vec![false; self.num_observables]; rows];
         self.apply_mask_values(masks, rows, cols, &mut det_xor, &mut obs_xor)?;

@@ -226,15 +226,15 @@ fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
     let linear = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
         .set_idle_linear_rate(1.0e-3)
         .idle_pauli_probs(20.0);
-    assert_eq!(linear.px, 0.0);
-    assert_eq!(linear.py, 0.0);
+    assert_eq!(linear.px.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(linear.py.to_bits(), 0.0_f64.to_bits());
     assert!((linear.pz - 0.02).abs() < 1e-15);
 
     let quadratic = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
         .set_idle_quadratic_rate(0.1)
         .idle_pauli_probs(2.0);
-    assert_eq!(quadratic.px, 0.0);
-    assert_eq!(quadratic.py, 0.0);
+    assert_eq!(quadratic.px.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(quadratic.py.to_bits(), 0.0_f64.to_bits());
     assert!((quadratic.pz - 0.4).abs() < 1e-15);
 
     let pauli = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
@@ -251,8 +251,8 @@ fn idle_memory_pauli_probabilities_support_quadratic_sine_model() {
     let z_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
         .set_idle_quadratic_sine_rate(0.2)
         .idle_memory_pauli_probs(3.0);
-    assert_eq!(z_sine.px, 0.0);
-    assert_eq!(z_sine.py, 0.0);
+    assert_eq!(z_sine.px.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(z_sine.py.to_bits(), 0.0_f64.to_bits());
     assert!((z_sine.pz - 0.6_f64.sin().powi(2)).abs() < 1e-15);
 
     let pauli_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)

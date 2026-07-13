@@ -1917,8 +1917,8 @@ impl<'a> SamplingEngineBuilder<'a> {
         self.p2_gate_rates = noise.p2_gate_rates.clone();
         self.p_meas = noise.p_meas;
         self.p_prep = noise.p_prep;
-        self.p1_weights = noise.p1_weights.clone();
-        self.p2_weights = noise.p2_weights.clone();
+        self.p1_weights.clone_from(&noise.p1_weights);
+        self.p2_weights.clone_from(&noise.p2_weights);
         self.p2_replacement_approximation = noise.p2_replacement_approximation;
         self.idle_noise = noise.uses_dedicated_idle_noise().then_some(noise);
         self
@@ -2012,7 +2012,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             && self
                 .p2_weights
                 .as_ref()
-                .is_some_and(|weights| weights.has_replacement_entries())
+                .is_some_and(super::types::PauliWeights::has_replacement_entries)
         {
             panic!(
                 "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"

@@ -143,4 +143,3 @@ Recommended defaults:
   which should be explicitly tied to the lowered/traced circuit version?
 - How should traces link back to DEM contribution/source records when one sampled
   event corresponds to multiple detector/observable effects?
-

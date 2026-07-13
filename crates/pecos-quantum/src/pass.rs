@@ -3170,7 +3170,11 @@ mod tests {
 
         SimplifySingleQubitCliffordChains.apply_tick(&mut tc);
 
-        assert!(tc.ticks().iter().all(|tick| tick.is_empty()));
+        assert!(
+            tc.ticks()
+                .iter()
+                .all(super::super::tick_circuit::Tick::is_empty)
+        );
     }
 
     #[test]

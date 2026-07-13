@@ -137,7 +137,10 @@ jobs:
 
   python-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The full post-merge core suite passed at ~40m in late June and has since
+    # grown past 45m (timing out at ~83% of the suite on every dev push since
+    # 2026-07-07). 75m restores the original ~35% headroom.
+    timeout-minutes: 75
     steps:
     - name: Harden the runner (egress audit)
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -489,14 +492,17 @@ jobs:
           uv pip install --system --force-reinstall "${llvm_wheels[0]}"
         fi
         if [ "${{ matrix.include-pecos }}" = "true" ]; then
-          uv pip install --system \
-            "phir>=0.3.3" \
-            "networkx>=2.1.0" \
-            "guppylang>=0.21.6" \
-            "tket<0.12.16" \
-            "hugr>=0.13.0" \
-            "selene-sim~=0.2.0"
-          uv pip install --system --force-reinstall --no-deps ./python-compat-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+          # One resolver invocation: the freshly built quantum-pecos wheel plus
+          # the already-installed local native wheels (re-passed so they satisfy
+          # its exact pecos-rslib/-llvm pins, which do not exist on PyPI for
+          # unreleased versions). All other dependencies resolve from the
+          # wheel's own Requires-Dist -- no hand-maintained pin list that can
+          # drift from the package metadata.
+          uv pip install --system --force-reinstall \
+            ./python-compat-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl \
+            ./python-compat-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl \
+            ./python-compat-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+          uv pip check --system
         fi
 
     - name: Run Python compatibility smoke test

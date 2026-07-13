@@ -18,8 +18,11 @@ default = []
 # Directory management
 dirs.workspace = true
 
-# Downloading
+# Downloading. reqwest uses rustls with no built-in provider; we install the
+# ring crypto provider at runtime (see download.rs) to avoid aws-lc-sys, whose
+# assembly rustc's bundled rust-lld mis-links.
 reqwest.workspace = true
+rustls.workspace = true
 
 # Checksums
 sha2.workspace = true

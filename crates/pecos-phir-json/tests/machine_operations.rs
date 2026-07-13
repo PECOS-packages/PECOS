@@ -3,7 +3,7 @@ mod common;
 #[cfg(test)]
 mod tests {
     use pecos_core::errors::PecosError;
-    use pecos_engines::{Engine, ShotVec, shot_results::Data};
+    use pecos_engines::{Engine, ShotVec};
     use pecos_phir_json::v0_1::ast::PHIRProgram;
     use pecos_phir_json::v0_1::engine::PhirJsonEngine;
     use pecos_phir_json::v0_1::operations::{MachineOperationResult, OperationProcessor};
@@ -80,7 +80,7 @@ mod tests {
           },
           "ops": [
             {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
-            {"data": "cvar_define", "data_type": "i32", "variable": "var", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "var", "size": 31},
             {"qop": "H", "args": [["q", 0]]},
             {"mop": "Idle", "args": [["q", 0], ["q", 1]], "duration": [5.0, "ms"]},
             {"mop": "Delay", "args": [["q", 0]], "duration": [2.0, "us"]},
@@ -130,8 +130,8 @@ mod tests {
         // Look in the shot map for string-based values
         if shot.data.contains_key("x") {
             assert_eq!(
-                shot.data.get("x").unwrap(),
-                &Data::U32(1),
+                shot.data.get("x").unwrap().as_u32(),
+                Some(1),
                 "Expected output value to be 1, got {}",
                 shot.data.get("x").unwrap()
             );
@@ -139,8 +139,8 @@ mod tests {
         // Check if source variable was exposed directly
         else if shot.data.contains_key("var") {
             assert_eq!(
-                shot.data.get("var").unwrap(),
-                &Data::U32(1),
+                shot.data.get("var").unwrap().as_u32(),
+                Some(1),
                 "Expected var value to be 1, got {}",
                 shot.data.get("var").unwrap()
             );
@@ -167,7 +167,7 @@ mod tests {
           },
           "ops": [
             {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
-            {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 31},
             {"qop": "H", "args": [["q", 0]]},
             {"mop": "Idle", "args": [["q", 0], ["q", 1]], "duration": [5.0, "ms"]},
             {"mop": "Delay", "args": [["q", 0]], "duration": [2.0, "us"]},

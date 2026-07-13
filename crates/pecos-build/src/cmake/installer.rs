@@ -194,6 +194,7 @@ fn download(url: &str, dest: &PathBuf) -> Result<()> {
     print!("Downloading cmake... ");
     io::Write::flush(&mut io::stdout())?;
 
+    crate::download::ensure_crypto_provider();
     let response = reqwest::blocking::get(url).map_err(|e| Error::Http(e.to_string()))?;
     let total_size = response.content_length().unwrap_or(0);
 

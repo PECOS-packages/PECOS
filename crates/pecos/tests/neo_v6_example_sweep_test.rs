@@ -131,14 +131,17 @@ fn assert_cross_stack_rate(
     let neo = run(program, SimStack::Neo, SEED ^ 0xA5A5, noise);
     let (e_count, _) = rate_where(&engines, &pred);
     let (n_count, _) = rate_where(&neo, &pred);
-    let e_ci = jeffreys_interval(e_count, SHOTS as u64, CONFIDENCE);
-    let n_ci = jeffreys_interval(n_count, SHOTS as u64, CONFIDENCE);
+    let alpha = 1.0 - CONFIDENCE;
+    let e_ci = jeffreys_interval(e_count, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for engines k and SHOTS n");
+    let n_ci = jeffreys_interval(n_count, SHOTS as u64, alpha)
+        .expect("Jeffreys interval for neo k and SHOTS n");
     println!(
         "V6 {name}: engines {e_count}/{SHOTS} CI [{:.4}, {:.4}], neo {n_count}/{SHOTS} CI [{:.4}, {:.4}]",
-        e_ci.0, e_ci.1, n_ci.0, n_ci.1
+        e_ci.lo, e_ci.hi, n_ci.lo, n_ci.hi
     );
     assert!(
-        e_ci.0 <= n_ci.1 && n_ci.0 <= e_ci.1,
+        e_ci.lo <= n_ci.hi && n_ci.lo <= e_ci.hi,
         "V6 {name}: stack rates are statistically incompatible: \
          engines {e_count}/{SHOTS} vs neo {n_count}/{SHOTS}"
     );

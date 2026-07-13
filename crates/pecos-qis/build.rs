@@ -64,11 +64,30 @@ fn validate_llvm() {
         panic!("Invalid {LLVM_SYS_PREFIX_ENV}. See error message above.");
     }
 
-    // LLVM_SYS_PREFIX_ENV not set - print setup instructions
-    print_llvm_not_found_error_extended();
-    panic!(
-        "LLVM {REQUIRED_VERSION} not configured. See error message above for setup instructions."
-    );
+    // LLVM_SYS_PREFIX_ENV not set. Reaching here means llvm-sys already located
+    // a usable LLVM (via PATH llvm-config) without an explicit prefix. If a
+    // valid LLVM 21.1 exists, auto-configure .cargo/config.toml so the prefix is
+    // pinned for future builds, and set it now so the PECOS_LLVM_BIN_PATH embed
+    // below resolves. Installing a missing LLVM stays with `pecos setup`.
+    if let Ok(path) = pecos_build::llvm::config::auto_configure_llvm(None) {
+        eprintln!(
+            "pecos-qis: auto-configured .cargo/config.toml to use LLVM {REQUIRED_VERSION} at {}",
+            path.display()
+        );
+        // SAFETY: build scripts run single-threaded; set the prefix so the
+        // bin-path embed step (which reads this env var) picks it up.
+        unsafe {
+            env::set_var(
+                LLVM_SYS_PREFIX_ENV,
+                pecos_build::llvm::path_to_env_string(&path),
+            );
+        }
+    } else {
+        print_llvm_not_found_error_extended();
+        panic!(
+            "LLVM {REQUIRED_VERSION} not configured. See error message above for setup instructions."
+        );
+    }
 }
 
 #[cfg(feature = "llvm")]

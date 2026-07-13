@@ -22,7 +22,7 @@ mod tests {
           },
           "ops": [
             {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 2},
-            {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 32},
+            {"data": "cvar_define", "data_type": "i32", "variable": "result", "size": 31},
             {"data": "cvar_define", "data_type": "i32", "variable": "m", "size": 2},
             {"qop": "H", "args": [["q", 0]]},
             {"meta": "barrier", "args": [["q", 0], ["q", 1]]},

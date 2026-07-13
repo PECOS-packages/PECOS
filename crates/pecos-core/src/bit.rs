@@ -811,10 +811,10 @@ mod tests {
 
     #[test]
     fn test_comparison_with_bool() {
-        assert!(Bit::ONE == true);
-        assert!(Bit::ZERO == false);
-        assert!(true == Bit::ONE);
-        assert!(false == Bit::ZERO);
+        assert_eq!(Bit::ONE, true);
+        assert_eq!(Bit::ZERO, false);
+        assert_eq!(true, Bit::ONE);
+        assert_eq!(false, Bit::ZERO);
     }
 
     #[test]

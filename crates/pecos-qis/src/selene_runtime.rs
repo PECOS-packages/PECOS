@@ -67,20 +67,16 @@ struct SourceTraceMetadata {
     metadata: TraceMetadata,
 }
 
-// `_fn` postfix is intentional: this is a `#[repr(C)]` vtable of Selene runtime
-// callback function pointers, where the suffix marks each field as a function
-// pointer. Bare names like `reset`/`custom`/`measure` would be ambiguous here.
-#[allow(clippy::struct_field_names)]
 #[repr(C)]
 struct SeleneRuntimeGetOperationInterface {
-    rzz_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64, f64),
-    rxy_fn: extern "C" fn(RuntimeGetOperationInstance, u64, f64, f64),
-    rz_fn: extern "C" fn(RuntimeGetOperationInstance, u64, f64),
-    measure_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
-    measure_leaked_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
-    reset_fn: extern "C" fn(RuntimeGetOperationInstance, u64),
-    custom_fn: extern "C" fn(RuntimeGetOperationInstance, usize, *const c_void, usize),
-    set_batch_time_fn: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    rzz: extern "C" fn(RuntimeGetOperationInstance, u64, u64, f64),
+    rxy: extern "C" fn(RuntimeGetOperationInstance, u64, f64, f64),
+    rz: extern "C" fn(RuntimeGetOperationInstance, u64, f64),
+    measure: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    measure_leaked: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
+    reset: extern "C" fn(RuntimeGetOperationInstance, u64),
+    custom: extern "C" fn(RuntimeGetOperationInstance, usize, *const c_void, usize),
+    set_batch_time: extern "C" fn(RuntimeGetOperationInstance, u64, u64),
 }
 
 extern "C" fn runtime_batch_rxy(
@@ -179,14 +175,14 @@ extern "C" fn runtime_batch_set_time(
 
 static RUNTIME_OPERATION_CALLBACKS: SeleneRuntimeGetOperationInterface =
     SeleneRuntimeGetOperationInterface {
-        rzz_fn: runtime_batch_rzz,
-        rxy_fn: runtime_batch_rxy,
-        rz_fn: runtime_batch_rz,
-        measure_fn: runtime_batch_measure,
-        measure_leaked_fn: runtime_batch_measure_leaked,
-        reset_fn: runtime_batch_reset,
-        custom_fn: runtime_batch_custom,
-        set_batch_time_fn: runtime_batch_set_time,
+        rzz: runtime_batch_rzz,
+        rxy: runtime_batch_rxy,
+        rz: runtime_batch_rz,
+        measure: runtime_batch_measure,
+        measure_leaked: runtime_batch_measure_leaked,
+        reset: runtime_batch_reset,
+        custom: runtime_batch_custom,
+        set_batch_time: runtime_batch_set_time,
     };
 
 /// Selene runtime implementation
@@ -418,7 +414,7 @@ impl SeleneRuntime {
                 &raw mut instance,
                 plugin_num_qubits as u64,
                 0, // start time
-                u32::try_from(arg_ptrs.len()).expect("plugin argument count fits in u32"),
+                u32::try_from(arg_ptrs.len()).expect("custom-op argument count exceeds u32"),
                 argv,
             );
 
@@ -455,10 +451,6 @@ impl SeleneRuntime {
     }
 
     fn plugin_num_qubits(&self) -> usize {
-        // An explicit hint is authoritative and caps the plugin capacity (a
-        // program that exceeds it fails loudly at qalloc by design). The bogus
-        // "0 inferred before execution" case is handled upstream in SimBuilder,
-        // which no longer freezes that 0 as a hint.
         self.num_qubits_hint.unwrap_or(self.num_qubits)
     }
 
@@ -1287,6 +1279,7 @@ impl SeleneRuntime {
                         *lowered_qubit_2,
                     )
             }
+
             (
                 QuantumOp::Measure(source_qubit, source_result),
                 QuantumOp::Measure(lowered_qubit, lowered_result),

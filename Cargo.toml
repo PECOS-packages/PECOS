@@ -89,8 +89,11 @@ pest_derive = "2"
 regex = "1"
 
 # --- Numerical computing ---
+libm = "0.2"
 nalgebra = "0.35"
 num = "0.4"
+# Dev-only differential oracle for special-function tests (see design/jeffreys-pecos-num.md)
+puruspe = "0.4"
 num-complex = "0.4"
 num-traits = "0.2"
 num-bigint = { version = "0.4", features = ["serde"] }
@@ -102,7 +105,7 @@ fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = "0.8"
-rapidhash = { version = "4", features = ["rng"] }
+rapidrand = { version = "0.1", features = ["rand"] }
 
 # --- Data structures ---
 bitflags = "2"
@@ -125,9 +128,18 @@ petgraph = "0.8"
 rustworkx-core = "0.18"
 
 # --- Networking & archive handling ---
+# Use rustls WITHOUT its default aws-lc-rs crypto provider: aws-lc-sys ships
+# hand-written assembly whose .eh_frame rustc's bundled rust-lld mis-links
+# ("invalid CIE reference"), breaking build-script links on some toolchains.
+# We install the `ring` provider at runtime instead (see pecos-build download).
 reqwest = { version = "0.13", default-features = false, features = [
   "blocking",
-  "rustls",
+  "rustls-no-provider",
+] }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
 ] }
 flate2 = "1"
 sha2 = "0.11"

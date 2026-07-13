@@ -29,10 +29,6 @@ use thiserror::Error;
 
 type MeasurementRecordMap = BTreeMap<usize, Vec<(usize, usize)>>;
 
-/// Per-shot detector and observable XOR patterns: `(det_xor, obs_xor)`, where
-/// row `i` of each is the mask-induced frame flip for shot `i`.
-type DetectorObservableXor = (Vec<Vec<bool>>, Vec<Vec<bool>>);
-
 /// Errors returned while building or applying a Pauli-frame lookup.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum PauliFrameLookupError {
@@ -116,6 +112,9 @@ pub struct PauliFrameLookup {
     detector_rows: Vec<Vec<u32>>,
     observable_rows: Vec<Vec<u32>>,
 }
+
+/// Per-shot detector rows paired with per-shot observable rows.
+type DetectorObservableRows = (Vec<Vec<bool>>, Vec<Vec<bool>>);
 
 impl PauliFrameLookup {
     /// Build a Pauli-frame lookup from a DAG circuit and record-based detector
@@ -288,7 +287,7 @@ impl PauliFrameLookup {
         masks: &[u8],
         rows: usize,
         cols: usize,
-    ) -> Result<DetectorObservableXor, PauliFrameLookupError> {
+    ) -> Result<DetectorObservableRows, PauliFrameLookupError> {
         let mut det_xor = vec![vec![false; self.num_detectors]; rows];
         let mut obs_xor = vec![vec![false; self.num_observables]; rows];
         self.apply_mask_values(masks, rows, cols, &mut det_xor, &mut obs_xor)?;

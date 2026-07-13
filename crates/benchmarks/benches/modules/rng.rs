@@ -33,9 +33,22 @@
 use criterion::{BenchmarkId, Criterion, Throughput, measurement::Measurement};
 use pecos::prelude::{PCG64Fast, PecosQualityRng, PecosRng};
 use pecos_random::{PecosScalarRng, Rng, RngExt, SeedableRng};
+use rand::TryRng;
 use rand::rngs::SmallRng;
 use rand_xoshiro::{Xoroshiro128PlusPlus, Xoshiro256PlusPlus, Xoshiro512PlusPlus};
-use rapidhash::rng::RapidRng;
+
+/// rapidrand with the legacy raw-seed semantics (stream-identical to the old
+/// rapidhash 4.4 `RapidRng::new`).
+struct RapidRng(rapidrand::RapidRng);
+impl RapidRng {
+    fn new(seed: u64) -> Self {
+        Self(rapidrand::RapidRng::from_seed(seed.to_le_bytes()))
+    }
+    fn next(&mut self) -> u64 {
+        let Ok(v) = self.0.try_next_u64();
+        v
+    }
+}
 use std::hint::black_box;
 use wide::u64x4;
 

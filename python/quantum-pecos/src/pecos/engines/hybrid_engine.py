@@ -36,16 +36,16 @@ def _make_classical_interpreter(
     """Create a classical interpreter from a string specifier.
 
     Args:
-        spec: One of "python", "rust", or None (defaults to "python").
+        spec: One of "python", "rust", or None (defaults to "rust").
 
     Returns:
         A classical interpreter instance.
     """
-    if spec == "rust":
+    if spec is None or spec == "rust":
         from pecos_rslib import RustPhirClassicalInterpreter  # noqa: PLC0415
 
         return RustPhirClassicalInterpreter()
-    if spec is None or spec == "python":
+    if spec == "python":
         return PhirClassicalInterpreter()
     msg = f"Unknown classical interpreter: {spec!r}. Use 'python' or 'rust'."
     raise ValueError(msg)
@@ -80,6 +80,17 @@ class HybridEngine:
     Note:
         Parameters of the quantum simulator are provided as extra keyword arguments passed
         down to ``QuantumSimulator`` as the dictionary ``**params``.
+
+    Note:
+        The default classical interpreter is now the Rust-backed
+        ``RustPhirClassicalInterpreter`` (previously the pure-Python
+        ``PhirClassicalInterpreter``). For valid PHIR programs supplied as a
+        dict, JSON string, or ``to_phir_dict()``-convertible object it is
+        behaviorally equivalent and differentially validated against the
+        Python interpreter. Known limitation: ``PyPHIR`` program objects are
+        not accepted by the Rust interpreter (clear ``TypeError``). To restore
+        the previous behavior, construct the engine with
+        ``HybridEngine(cinterp="python")``.
     """
 
     def __init__(
@@ -96,8 +107,8 @@ class HybridEngine:
         Args:
             cinterp: Classical interpreter for executing classical operations.
                 Can be a ClassicalInterpreterProtocol instance, or a string:
-                "python" for PhirClassicalInterpreter (default), "rust" for
-                the Rust-backed RustPhirClassicalInterpreter.
+                "rust" for the Rust-backed RustPhirClassicalInterpreter (default),
+                "python" for the pure-Python PhirClassicalInterpreter.
             qsim: Quantum simulator for executing quantum operations. Can be a
                 QuantumSimulator instance or a string specifying the simulator type.
                 Defaults to QuantumSimulator if None.

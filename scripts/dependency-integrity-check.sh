@@ -349,6 +349,22 @@ if ((${#cargo_locks[@]} == 0)); then
     fail "no Cargo.lock files found"
 else
     for lockfile in "${cargo_locks[@]}"; do
+        # Fail-closed handling for lockfiles that are not tracked by git:
+        # - gitignored ones are documented generated artifacts (see .gitignore
+        #   for the per-entry rationale); CI checkouts never contain them and a
+        #   stale local copy fails --locked with a misleading error, so skip.
+        # - anything else is an unexpected lock that should either be committed
+        #   or gitignored with a rationale -- fail so it cannot slip through.
+        # (rg --files can list gitignored files under negation patterns, which
+        # is how these reach this loop at all.)
+        if ! git ls-files --error-unmatch "$lockfile" >/dev/null 2>&1; then
+            if git check-ignore -q "$lockfile"; then
+                echo "Skipping gitignored generated lockfile: $lockfile"
+                continue
+            fi
+            fail "$lockfile is untracked and not gitignored: commit it or gitignore it with a rationale"
+            continue
+        fi
         manifest="$(dirname "$lockfile")/Cargo.toml"
         if [[ ! -f "$manifest" ]]; then
             fail "$lockfile has no adjacent Cargo.toml"

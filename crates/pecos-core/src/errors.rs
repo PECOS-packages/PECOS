@@ -100,6 +100,10 @@ pub enum PecosError {
     #[error("Division by zero")]
     RuntimeDivisionByZero,
 
+    /// Undefined variable referenced at runtime
+    #[error("Variable '{name}' not found")]
+    RuntimeUndefinedVariable { name: String },
+
     /// Stack overflow
     #[error("Stack overflow")]
     RuntimeStackOverflow,

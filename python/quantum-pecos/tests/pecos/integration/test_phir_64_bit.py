@@ -14,9 +14,9 @@
 from pecos.engines.hybrid_engine import HybridEngine
 
 
-def bin2int(result: list[str]) -> int:
-    """Convert binary string to integer."""
-    return int(result[0], base=2)
+def twos_complement_bits(value: int, width: int) -> str:
+    """Expected two's-complement bit string of ``value`` at ``width`` bits."""
+    return format(value & ((1 << width) - 1), f"0{width}b")
 
 
 def test_setting_cvar() -> None:
@@ -53,9 +53,15 @@ def test_setting_cvar() -> None:
     results = HybridEngine(qsim="stabilizer").run(program=phir, shots=5)
     results_dict = results
 
-    assert bin2int(results_dict["var_i32"]) == 2**31 - 1
-    assert bin2int(results_dict["var_u32"]) == 2**32 - 1
-    assert bin2int(results_dict["var_i64"]) == 2**63 - 1
-    assert bin2int(results_dict["var_u64"]) == 2**64 - 1
-    assert bin2int(results_dict["var_i32neg"]) == -(2**31)
-    assert bin2int(results_dict["var_i64neg"]) == -(2**63)
+    # Registers render as fixed-width two's-complement bit strings. Negative
+    # signed values show the sign bit as "1" -- never a "-" prefix.
+    expected = {
+        "var_i32": twos_complement_bits(2**31 - 1, 32),
+        "var_u32": twos_complement_bits(2**32 - 1, 32),
+        "var_i64": twos_complement_bits(2**63 - 1, 64),
+        "var_u64": twos_complement_bits(2**64 - 1, 64),
+        "var_i32neg": twos_complement_bits(-(2**31), 32),
+        "var_i64neg": twos_complement_bits(-(2**63), 64),
+    }
+    for name, bits in expected.items():
+        assert all(shot == bits for shot in results_dict[name]), name

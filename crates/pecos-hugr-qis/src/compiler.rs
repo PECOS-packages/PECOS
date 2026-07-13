@@ -37,15 +37,14 @@ enum ExactlyOneError {
 }
 use tket::hugr::envelope::EnvelopeConfig;
 use tket::hugr::llvm::extension::int::IntCodegenExtension;
-use tket::hugr::llvm::inkwell::AddressSpace;
 use tket::hugr::llvm::inkwell::OptimizationLevel;
-use tket::hugr::llvm::inkwell::context::{Context, ContextRef};
+use tket::hugr::llvm::inkwell::context::Context;
 use tket::hugr::llvm::inkwell::module::Module;
 use tket::hugr::llvm::inkwell::passes::PassBuilderOptions;
 use tket::hugr::llvm::inkwell::targets::{
     CodeModel, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
-use tket::hugr::llvm::inkwell::types::FunctionType;
+use tket::hugr::llvm::inkwell::values::FunctionValue;
 use tket::hugr::llvm::utils::fat::FatExt as _;
 use tket::hugr::llvm::{
     CodegenExtsBuilder,
@@ -75,6 +74,16 @@ const TRACE_METADATA_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_qubit_h
 const RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubit_hugr";
 const RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubits2_hugr";
 
+const PECOS_HELPER_ABIS: &[(&str, &str)] = &[
+    (TRACE_METADATA_HUGR_SYMBOL, "void (ptr, ptr)"),
+    (TRACE_METADATA_QUBIT_HUGR_SYMBOL, "i64 (i64, ptr, ptr)"),
+    (RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL, "i64 (i64)"),
+    (
+        RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL,
+        "{ i64, i64 } (i64, i64)",
+    ),
+];
+
 // Extension registry is defined in the parent module
 
 /// Compilation arguments
@@ -90,13 +99,7 @@ pub struct CompileArgs {
     pub target_triple: Option<String>,
     /// Optimization level
     pub opt_level: OptimizationLevel,
-    /// Target `QSystem` platform for lowering and codegen.
-    ///
-    /// PECOS targets the Quantinuum Helios QIS runtime (the Selene Helios
-    /// plugin), so this defaults to [`QSystemPlatform::Helios`]. Set it
-    /// explicitly to select another supported platform such as
-    /// [`QSystemPlatform::Sol`]; unsupported platforms are rejected with a
-    /// clear error when compilation starts.
+    /// Target `QSystem` platform
     pub platform: QSystemPlatform,
 }
 
@@ -108,25 +111,8 @@ impl Default for CompileArgs {
             save_hugr: None,
             target_triple: None,
             opt_level: OptimizationLevel::Default,
-            // PECOS targets the Selene Helios QIS runtime by default.
             platform: QSystemPlatform::Helios,
         }
-    }
-}
-
-/// Reject `QSystem` platforms that PECOS has not wired through its QIS pipeline.
-///
-/// [`QSystemPlatform`] is `#[non_exhaustive]`; fail loudly on any future variant
-/// rather than silently lowering for a platform PECOS has not validated
-/// end-to-end (codegen extensions + Selene runtime).
-fn ensure_supported_platform(platform: QSystemPlatform) -> Result<()> {
-    match platform {
-        QSystemPlatform::Helios | QSystemPlatform::Sol => Ok(()),
-        other => Err(anyhow!(
-            "Unsupported QSystem platform {other:?}: pecos-hugr-qis supports Helios and Sol. \
-             Wire a newer tket-qsystem platform through the QIS codegen and Selene runtime \
-             before selecting it."
-        )),
     }
 }
 
@@ -154,7 +140,7 @@ fn codegen_extensions(platform: QSystemPlatform) -> CodegenExtsMap<'static, Hugr
         .add_default_static_array_extensions()
         .add_default_borrow_array_extensions(pcg.clone())
         .add_extension(FuturesCodegenExtension)
-        .add_extension(QSystemCodegenExtension::new(platform, pcg.clone()))
+        .add_extension(QSystemCodegenExtension::from((platform, pcg.clone())))
         .add_extension(RandomCodegenExtension)
         .add_extension(ResultsCodegenExtension::new(
             SeleneHeapArrayCodegen::LOWERING,
@@ -358,6 +344,104 @@ fn optimize_module(
     Ok(())
 }
 
+fn pecos_helper_public_name(symbol: &str) -> Option<&'static str> {
+    if PECOS_HELPER_ABIS.iter().any(|(name, _)| *name == symbol) {
+        return Some(match symbol {
+            TRACE_METADATA_HUGR_SYMBOL => TRACE_METADATA_HUGR_SYMBOL,
+            TRACE_METADATA_QUBIT_HUGR_SYMBOL => TRACE_METADATA_QUBIT_HUGR_SYMBOL,
+            RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL => RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL,
+            RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL => RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL,
+            _ => unreachable!("checked helper symbol must be mapped"),
+        });
+    }
+
+    let rest = symbol.strip_prefix(HUGR_SYMBOL_PREFIX)?;
+    let mut parts = rest.rsplit('.');
+    let _suffix = parts.next()?;
+    let helper_name = parts.next()?;
+    PECOS_HELPER_ABIS
+        .iter()
+        .find_map(|(name, _)| (*name == helper_name).then_some(*name))
+}
+
+fn expected_helper_abi(public_name: &str) -> &'static str {
+    PECOS_HELPER_ABIS
+        .iter()
+        .find_map(|(name, abi)| (*name == public_name).then_some(*abi))
+        .expect("recognized helper must have ABI")
+}
+
+fn function_abi_string(function: FunctionValue<'_>) -> String {
+    function.get_type().print_to_string().to_string()
+}
+
+fn validate_pecos_helper_abi(function: FunctionValue<'_>, public_name: &str) -> Result<()> {
+    let actual = function_abi_string(function);
+    let expected = expected_helper_abi(public_name);
+    if actual != expected {
+        return Err(anyhow!(
+            "PECOS helper '{public_name}' has LLVM type '{actual}', but pecos-qis-ffi ABI expects '{expected}'"
+        ));
+    }
+    Ok(())
+}
+
+/// Normalize PECOS-owned helper declarations inside the LLVM module before
+/// verification/bitcode emission, so both text and bitcode expose the runtime
+/// ABI symbols exported by pecos-qis-ffi.
+fn normalize_pecos_helper_symbols_in_module(module: &Module) -> Result<()> {
+    for &(public_name, _) in PECOS_HELPER_ABIS {
+        let candidates = module
+            .get_functions()
+            .filter_map(|function| {
+                let name = function.get_name().to_str().ok()?;
+                (pecos_helper_public_name(name) == Some(public_name)).then_some(function)
+            })
+            .collect::<Vec<_>>();
+
+        if candidates.is_empty() {
+            continue;
+        }
+
+        for &candidate in &candidates {
+            validate_pecos_helper_abi(candidate, public_name)?;
+        }
+
+        let canonical = candidates
+            .iter()
+            .copied()
+            .find(|function| function.get_name().to_str().ok() == Some(public_name))
+            .unwrap_or(candidates[0]);
+
+        if canonical.get_name().to_str().ok() != Some(public_name) {
+            canonical.as_global_value().set_name(public_name);
+        }
+
+        for candidate in candidates {
+            if candidate == canonical {
+                continue;
+            }
+            candidate.replace_all_uses_with(canonical);
+            // SAFETY: all uses were rewired to the canonical declaration above.
+            unsafe { candidate.delete() };
+        }
+    }
+
+    Ok(())
+}
+
+/// Fail fast on platforms the QIS codegen and Selene runtime do not support.
+fn ensure_supported_platform(platform: QSystemPlatform) -> Result<()> {
+    match platform {
+        QSystemPlatform::Helios | QSystemPlatform::Sol => Ok(()),
+        other => Err(anyhow!(
+            "Unsupported QSystem platform {other:?}: pecos-hugr-qis supports Helios and Sol. \
+             Wire a newer tket-qsystem platform through the QIS codegen and Selene runtime \
+             before selecting it."
+        )),
+    }
+}
+
 /// Compile the given HUGR to an LLVM module
 /// This function is the primary entry point for the compiler
 fn compile<'c, 'hugr: 'c>(
@@ -379,11 +463,6 @@ fn compile<'c, 'hugr: 'c>(
 
     // Create a new LLVM module using hugr-llvm
     let module = get_module_with_std_exts(args, ctx, namer, hugr)?;
-
-    // Rewrite PECOS helper declarations to their public ABI symbols in the module
-    // itself, so both the text and bitcode outputs link against pecos-qis-ffi's
-    // `pecos_qis_*` exports (a text-only rewrite would miss the bitcode path).
-    normalize_pecos_helper_symbols_in_module(&module)?;
 
     // Get the target machine
     let target_machine = if let Some(ref triple) = args.target_triple {
@@ -411,6 +490,8 @@ fn compile<'c, 'hugr: 'c>(
             .map_err(|e| anyhow!("Failed to add metadata: {e}"))?;
     }
 
+    normalize_pecos_helper_symbols_in_module(&module)?;
+
     // Optimize
     optimize_module(&module, &target_machine, args.opt_level)?;
 
@@ -431,134 +512,66 @@ fn compile<'c, 'hugr: 'c>(
     Ok(module)
 }
 
-/// PECOS-owned QIS runtime ABI helpers. Guppy/HUGR lowers these under a private
-/// `__hugr__.*` symbol; they must be rewritten to their stable public names so the
-/// compiled module links against the `pecos_qis_*` symbols `pecos-qis-ffi` exports.
-const PECOS_HELPER_SYMBOLS: &[&str] = &[
-    TRACE_METADATA_HUGR_SYMBOL,
-    TRACE_METADATA_QUBIT_HUGR_SYMBOL,
-    RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL,
-    RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL,
-];
-
-/// If `symbol` is a PECOS-owned helper lowered under the private `__hugr__.*`
-/// namespace, return its stable public name; otherwise `None`.
-///
-/// Guppy qualifies the symbol with the defining scope (module/function, plus a
-/// `<locals>` segment for function-local declarations) and tket appends a numeric
-/// node id, so the helper name sits second-from-last:
-/// `__hugr__.<scope...>.<helper>.<id>`.
-fn pecos_helper_public_name<'a>(symbol: &str, helper_symbols: &[&'a str]) -> Option<&'a str> {
-    let rest = symbol.strip_prefix(HUGR_SYMBOL_PREFIX)?;
-    let mut parts = rest.rsplit('.');
-    let _suffix = parts.next()?;
-    let helper_name = parts.next()?;
-    helper_symbols
-        .iter()
-        .copied()
-        .find(|helper| *helper == helper_name)
+fn is_llvm_symbol_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '$' | '-')
 }
 
-/// The fixed LLVM signature each PECOS helper must have, matching the
-/// `pecos-qis-ffi` ABI export (`crates/pecos-qis-ffi/src/ffi.rs`):
+/// Normalize PECOS-owned helper declarations that Guppy/HUGR lowers under a
+/// private `__hugr__.*` symbol name.
 ///
-/// - `pecos_qis_trace_metadata_hugr(*const u8, *const u8)`        -> `void (ptr, ptr)`
-/// - `pecos_qis_trace_metadata_qubit_hugr(i64, *const u8, *const u8) -> i64`
-///   -> `i64 (i64, ptr, ptr)`
-/// - `pecos_qis_runtime_barrier_qubit_hugr(i64) -> i64`            -> `i64 (i64)`
-/// - `pecos_qis_runtime_barrier_qubits2_hugr(i64, i64) -> QubitPair{i64,i64}`
-///   -> `{ i64, i64 } (i64, i64)`
-///
-/// Returns `None` only if `helper` is not a recognized PECOS helper (a programming
-/// error here, since callers pass a name already matched against `PECOS_HELPER_SYMBOLS`).
-fn expected_pecos_helper_type<'ctx>(
-    ctx: ContextRef<'ctx>,
-    helper: &str,
-) -> Option<FunctionType<'ctx>> {
-    let i64t = ctx.i64_type();
-    let ptr = ctx.ptr_type(AddressSpace::default());
-    let ty = match helper {
-        TRACE_METADATA_HUGR_SYMBOL => ctx.void_type().fn_type(&[ptr.into(), ptr.into()], false),
-        TRACE_METADATA_QUBIT_HUGR_SYMBOL => {
-            i64t.fn_type(&[i64t.into(), ptr.into(), ptr.into()], false)
-        }
-        RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL => i64t.fn_type(&[i64t.into()], false),
-        RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL => ctx
-            .struct_type(&[i64t.into(), i64t.into()], false)
-            .fn_type(&[i64t.into(), i64t.into()], false),
-        _ => return None,
-    };
-    Some(ty)
-}
+/// These helpers are part of PECOS's runtime ABI, not ordinary user functions,
+/// so they need stable external symbols for dynamic linking. Keep this rewrite
+/// deliberately narrow: only PECOS-owned QIS helper declarations receive this
+/// treatment.
+fn normalize_pecos_helper_symbols_in_llvm(llvm_ir: &str) -> String {
+    let helper_symbols = [
+        TRACE_METADATA_HUGR_SYMBOL,
+        TRACE_METADATA_QUBIT_HUGR_SYMBOL,
+        RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL,
+        RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL,
+    ];
+    let mut normalized = String::with_capacity(llvm_ir.len());
+    let mut cursor = 0;
 
-/// Rewrite PECOS helper declarations from their private `__hugr__.*` symbol to the
-/// stable public `pecos_qis_*` name, in the LLVM module itself.
-///
-/// Renaming the `FunctionValue`s (rather than rewriting printed text) means every
-/// output format -- LLVM IR text AND bitcode -- carries the public ABI symbol that
-/// `pecos-qis-ffi` exports. It also sidesteps text-only quoting: a function-local
-/// Guppy declaration's raw module symbol
-/// (`__hugr__.<mod>.<fn>.<locals>.pecos_qis_..._hugr.<id>`) is unquoted here, so the
-/// same `pecos_helper_public_name` match applies. Renaming a function updates all of
-/// its call sites automatically (they reference the value, not the name).
-///
-/// Because this code claims the public ABI symbol, it also enforces the ABI: every
-/// recognized helper declaration is validated against its fixed `pecos-qis-ffi`
-/// signature. LLVM 21 opaque pointers let a call disagree with its callee declaration's
-/// type without failing `module.verify()`, so a helper declared with the wrong
-/// signature -- even a lone, self-consistent one -- would otherwise silently emit a
-/// call to the public symbol with the wrong ABI. We fail loud instead. This also makes
-/// duplicate declarations safe to merge: any two that pass the ABI check are identical,
-/// so the duplicate's uses can be redirected to the first (avoiding LLVM uniquifying a
-/// second declaration to `<public>.1`, which `pecos-qis-ffi` does not export).
-fn normalize_pecos_helper_symbols_in_module(module: &Module<'_>) -> Result<()> {
-    let ctx = module.get_context();
-    // Collect first: we rename and (on collision) delete functions below, so we must
-    // not hold the module's function iterator while mutating the function list.
-    let funcs: Vec<_> = module.get_functions().collect();
-    for func in funcs {
-        let Some(public) = func
-            .get_name()
-            .to_str()
-            .ok()
-            .and_then(|name| pecos_helper_public_name(name, PECOS_HELPER_SYMBOLS))
-        else {
+    while let Some(relative_start) = llvm_ir[cursor..].find('@') {
+        let start = cursor + relative_start;
+        normalized.push_str(&llvm_ir[cursor..start]);
+
+        let symbol_start = start + 1;
+        let symbol_len = llvm_ir[symbol_start..]
+            .chars()
+            .take_while(|ch| is_llvm_symbol_char(*ch))
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if symbol_len == 0 {
+            normalized.push('@');
+            cursor = symbol_start;
             continue;
-        };
-
-        // Enforce the fixed PECOS helper ABI on every recognized declaration before
-        // claiming the public symbol.
-        let Some(expected) = expected_pecos_helper_type(ctx, public) else {
-            return Err(anyhow!(
-                "internal error: no ABI signature registered for PECOS helper `{public}`"
-            ));
-        };
-        if func.get_type() != expected {
-            return Err(anyhow!(
-                "PECOS helper `{public}` is declared as `{}`, but the pecos-qis-ffi ABI is \
-                 `{}`. Declare it with the exported signature.",
-                func.get_type(),
-                expected,
-            ));
         }
 
-        match module.get_function(public) {
-            // The public ABI symbol is already owned by another declaration. Both passed
-            // the ABI check above, so they are identical: fold this duplicate into it so
-            // the module keeps a single unsuffixed public symbol.
-            Some(canonical) if canonical != func => {
-                func.replace_all_uses_with(canonical);
-                // SAFETY: all uses were just redirected to `canonical`, so this
-                // declaration is now unreferenced and safe to remove.
-                unsafe { func.delete() };
+        let symbol_end = symbol_start + symbol_len;
+        let symbol = &llvm_ir[symbol_start..symbol_end];
+        if let Some(rest) = symbol.strip_prefix(HUGR_SYMBOL_PREFIX) {
+            let mut parts = rest.rsplit('.');
+            let suffix = parts.next();
+            let helper_name = parts.next();
+            if let (Some(_suffix), Some(helper_name)) = (suffix, helper_name)
+                && helper_symbols.iter().any(|helper| helper == &helper_name)
+            {
+                normalized.push('@');
+                normalized.push_str(helper_name);
+                cursor = symbol_end;
+                continue;
             }
-            // Already named with the public symbol (idempotent).
-            Some(_) => {}
-            // First occurrence: claim the public name.
-            None => func.as_global_value().set_name(public),
         }
+
+        normalized.push('@');
+        normalized.push_str(symbol);
+        cursor = symbol_end;
     }
-    Ok(())
+
+    normalized.push_str(&llvm_ir[cursor..]);
+    normalized
 }
 
 /// Compile HUGR bytes to LLVM IR string
@@ -592,9 +605,9 @@ pub fn compile_hugr_bytes_to_string_with_options(
     let module = compile(args, &context, &mut hugr)
         .map_err(|e| PecosError::Generic(format!("Compilation failed: {e}")))?;
 
-    // Get the module string (PECOS helper symbols are already normalized to their
-    // public names in `compile`).
+    // Get the module string
     let mut llvm_str = module.to_string();
+    llvm_str = normalize_pecos_helper_symbols_in_llvm(&llvm_str);
 
     // Workaround: Manually add the EntryPoint attribute if it's missing
     // This is needed because inkwell sometimes doesn't properly serialize string attributes
@@ -679,58 +692,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pecos_helper_public_name_matches_private_helper_symbols() {
-        // Bare, module-level declaration.
-        assert_eq!(
-            pecos_helper_public_name(
-                "__hugr__.pecos_qis_trace_metadata_hugr.16",
-                PECOS_HELPER_SYMBOLS,
-            ),
-            Some("pecos_qis_trace_metadata_hugr"),
+    fn normalize_trace_metadata_helper_symbol() {
+        let llvm = concat!(
+            "declare void @__hugr__.pecos_qis_trace_metadata_hugr.16(i8*, i8*)\n",
+            "call void @__hugr__.pecos_qis_trace_metadata_hugr.16(i8* %0, i8* %1)\n",
+            "call void @__hugr__.__main__.pecos_qis_trace_metadata_hugr.18(i8* %0, i8* %1)\n",
+            "declare i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.19(i64, i8*, i8*)\n",
+            "%q = call i64 @__hugr__.pecos_qis_trace_metadata_qubit_hugr.19(i64 %0, i8* %1, i8* %2)\n",
+            "%q2 = call i64 @__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.21(i64 %0, i8* %1, i8* %2)\n",
+            "%q3 = call i64 @__hugr__.pecos_qis_runtime_barrier_qubit_hugr.22(i64 %0)\n",
+            "%q4 = call i64 @__hugr__.__main__.pecos_qis_runtime_barrier_qubit_hugr.23(i64 %0)\n",
+            "%q5 = call { i64, i64 } @__hugr__.pecos_qis_runtime_barrier_qubits2_hugr.24(i64 %0, i64 %1)\n",
+            "%q6 = call { i64, i64 } @__hugr__.__main__.pecos_qis_runtime_barrier_qubits2_hugr.25(i64 %0, i64 %1)\n",
+            "call void @__hugr__.other_helper.16()\n",
+        )
+        .to_string();
+        let normalized = normalize_pecos_helper_symbols_in_llvm(&llvm);
+        assert!(normalized.contains("declare void @pecos_qis_trace_metadata_hugr(i8*, i8*)"));
+        assert!(normalized.contains("call void @pecos_qis_trace_metadata_hugr(i8* %0, i8* %1)"));
+        assert!(
+            normalized.contains("declare i64 @pecos_qis_trace_metadata_qubit_hugr(i64, i8*, i8*)")
         );
-        // Module-qualified (e.g. `__main__`) declaration.
-        assert_eq!(
-            pecos_helper_public_name(
-                "__hugr__.__main__.pecos_qis_trace_metadata_qubit_hugr.21",
-                PECOS_HELPER_SYMBOLS,
-            ),
-            Some("pecos_qis_trace_metadata_qubit_hugr"),
+        assert!(normalized.contains(
+            "%q = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %0, i8* %1, i8* %2)"
+        ));
+        assert!(normalized.contains(
+            "%q2 = call i64 @pecos_qis_trace_metadata_qubit_hugr(i64 %0, i8* %1, i8* %2)"
+        ));
+        assert!(
+            normalized.contains("%q3 = call i64 @pecos_qis_runtime_barrier_qubit_hugr(i64 %0)")
         );
-        // Function-local declaration: the raw module symbol carries a `<locals>`
-        // segment (this is the case guppylang 0.21.11 produces; in LLVM text it is
-        // additionally quoted, but the module symbol seen here is unquoted).
-        assert_eq!(
-            pecos_helper_public_name(
-                "__hugr__.test_mod.test_fn.<locals>.pecos_qis_runtime_barrier_qubits2_hugr.23",
-                PECOS_HELPER_SYMBOLS,
-            ),
-            Some("pecos_qis_runtime_barrier_qubits2_hugr"),
+        assert!(
+            normalized.contains("%q4 = call i64 @pecos_qis_runtime_barrier_qubit_hugr(i64 %0)")
         );
-        assert_eq!(
-            pecos_helper_public_name(
-                "__hugr__.m.f.<locals>.pecos_qis_runtime_barrier_qubit_hugr.7",
-                PECOS_HELPER_SYMBOLS,
-            ),
-            Some("pecos_qis_runtime_barrier_qubit_hugr"),
-        );
-    }
-
-    #[test]
-    fn pecos_helper_public_name_ignores_non_helpers() {
-        // A non-PECOS helper under the private prefix is left alone.
-        assert_eq!(
-            pecos_helper_public_name("__hugr__.m.f.<locals>.other_helper.9", PECOS_HELPER_SYMBOLS),
-            None,
-        );
-        // A symbol that is not under the private prefix is not a candidate.
-        assert_eq!(
-            pecos_helper_public_name("pecos_qis_trace_metadata_hugr", PECOS_HELPER_SYMBOLS),
-            None,
-        );
-        // Too few components to carry a `<helper>.<id>` tail.
-        assert_eq!(
-            pecos_helper_public_name("__hugr__.foo", PECOS_HELPER_SYMBOLS),
-            None,
-        );
+        assert!(normalized.contains(
+            "%q5 = call { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 %0, i64 %1)"
+        ));
+        assert!(normalized.contains(
+            "%q6 = call { i64, i64 } @pecos_qis_runtime_barrier_qubits2_hugr(i64 %0, i64 %1)"
+        ));
+        assert!(normalized.contains("@__hugr__.other_helper.16"));
     }
 }

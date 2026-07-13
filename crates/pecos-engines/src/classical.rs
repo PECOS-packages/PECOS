@@ -21,11 +21,10 @@ pub trait ClassicalEngine: Engine<Input = (), Output = Shot> + DynClone + Send +
     /// Whether this engine's qubit count is only known after execution because it
     /// allocates qubits dynamically.
     ///
-    /// For such engines a [`Self::num_qubits`] of 0 before execution means "not
-    /// yet known", not "genuinely zero qubits". Static engines that parse their
-    /// whole program up front (e.g. QASM) know their exact count and return
-    /// `false` (the default); dynamic runtimes (e.g. the QIS/Selene runtime,
-    /// which discovers allocations during execution) return `true`.
+    /// For such engines, [`Self::num_qubits`] returning 0 before execution means
+    /// "not yet known", not "genuinely zero qubits". Static engines that parse
+    /// their whole program up front know their exact count and return `false`
+    /// (the default); dynamic runtimes return `true`.
     fn has_dynamic_qubit_count(&self) -> bool {
         false
     }

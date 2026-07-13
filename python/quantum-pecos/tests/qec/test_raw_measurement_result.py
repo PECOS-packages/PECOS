@@ -11,7 +11,7 @@ the output contract is identical for stabilizer and meas_sampling.
 import pytest
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
-from pecos_rslib_exp import depolarizing, meas_sampling, monte_carlo, sim_neo, stabilizer
+from pecos_rslib_exp import depolarizing, meas_sampling, sim_neo, stabilizer
 
 
 @pytest.fixture
@@ -26,8 +26,8 @@ def d3_results():
     num_meas = int(tc.get_meta("num_measurements"))
     depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
 
-    stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(100)).seed(42).run()
-    meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(100)).seed(42).run()
+    stab_r = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(100).seed(42).run()
+    meas_r = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(100).seed(42).run()
     return stab_r, meas_r, num_meas
 
 
@@ -175,7 +175,7 @@ class TestGenericConsumer:
         patch = SurfacePatch.create(distance=3)
         tc = _build_surface_tick_circuit_for_native_model(patch, 6, "Z", circuit_source="abstract")
         depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
-        result = sim_neo(tc).quantum(stabilizer()).noise(depol).sampling(monte_carlo(1000)).seed(42).run()
+        result = sim_neo(tc).quantum(stabilizer()).noise(depol).shots(1000).seed(42).run()
 
         means = self.compute_measurement_means(result)
         assert len(means) == int(tc.get_meta("num_measurements"))
@@ -187,7 +187,7 @@ class TestGenericConsumer:
         patch = SurfacePatch.create(distance=3)
         tc = _build_surface_tick_circuit_for_native_model(patch, 6, "Z", circuit_source="abstract")
         depol = depolarizing().p1(0.005).p2(0.005).p_meas(0.005).p_prep(0.005)
-        result = sim_neo(tc).quantum(meas_sampling()).noise(depol).sampling(monte_carlo(1000)).seed(42).run()
+        result = sim_neo(tc).quantum(meas_sampling()).noise(depol).shots(1000).seed(42).run()
 
         means = self.compute_measurement_means(result)
         assert len(means) == int(tc.get_meta("num_measurements"))

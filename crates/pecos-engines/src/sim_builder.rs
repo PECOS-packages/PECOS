@@ -285,12 +285,9 @@ impl SimBuilder {
             })?;
 
         // Forward a qubit-count hint only when it is meaningful. An explicit
-        // count is the caller's choice and is always forwarded (even 0). But an
-        // inferred 0 from a dynamic classical engine (e.g. the QIS/Selene
-        // runtime, which reports 0 qubits until program execution discovers its
-        // allocations) means "unknown", not "zero qubits": freezing it would
-        // override the runtime's own capacity discovery and initialize the
-        // plugin with no qubits, so every qalloc fails. Keep that distinction.
+        // count is the caller's choice and is always forwarded, even 0. But an
+        // inferred 0 from a dynamic classical engine means "unknown", not "zero
+        // qubits"; forwarding it would freeze dynamic allocation at 0.
         match self.explicit_num_qubits {
             Some(explicit) => classical_engine.set_num_qubits_hint(explicit),
             None if num_qubits > 0 => classical_engine.set_num_qubits_hint(num_qubits),
@@ -303,16 +300,9 @@ impl SimBuilder {
             builder.set_qubits_if_needed(num_qubits);
             builder.build_boxed()?
         } else {
-            // Default: fixed-size sparse stabilizer. It does NOT grow, so a
-            // 0-qubit default is only correct for a program that genuinely uses
-            // zero qubits (e.g. a classical-only QASM program, which reports a
-            // STATIC 0). A dynamic engine (e.g. QIS) instead reports 0 *before
-            // execution* and then allocates qubits at runtime; building a 0-qubit
-            // fixed engine for it would panic on the first allocation. Reject only
-            // that specific case -- no explicit count, no quantum engine, and a
-            // dynamic-unknown-zero classical engine -- and ask for an explicit
-            // `.qubits(n)` or a `.quantum(...)` engine. Genuinely-0-qubit and
-            // explicit-count programs are unaffected.
+            // Default: fixed-size sparse stabilizer. Dynamic classical engines
+            // may report 0 before execution, but the default quantum engine
+            // cannot grow to fit runtime qalloc operations.
             if self.explicit_num_qubits.is_none()
                 && num_qubits == 0
                 && classical_engine.has_dynamic_qubit_count()

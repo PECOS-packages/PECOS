@@ -1386,12 +1386,6 @@ impl ClassicalEngine for QisEngine {
         num_qubits
     }
 
-    /// QIS programs allocate qubits dynamically during execution, so a
-    /// pre-execution count of 0 means "not yet discovered", not "zero qubits".
-    fn has_dynamic_qubit_count(&self) -> bool {
-        true
-    }
-
     fn set_num_qubits_hint(&mut self, num_qubits: usize) {
         self.num_qubits_hint = Some(num_qubits);
         self.runtime.set_num_qubits(num_qubits);

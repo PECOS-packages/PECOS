@@ -751,12 +751,10 @@ impl<'a> DemBuilder<'a> {
     ///
     /// This does **not** validate metadata refs; callers ingesting
     /// circuit-derived metadata must use [`Self::try_build`] instead.
-    ///
     /// # Panics
     ///
-    /// Panics if the configured replacement-branch approximation or measurement
-    /// crosstalk DEM mode is invalid. Use [`Self::try_build`] to receive those as
-    /// errors instead of panicking.
+    /// Panics if the configured replacement-branch approximation is invalid;
+    /// validity is established by construction-time validation.
     #[must_use]
     pub fn build(&self) -> DetectorErrorModel {
         self.validate_replacement_branch_approximation()
@@ -1687,7 +1685,7 @@ impl<'a> DemBuilder<'a> {
                 )
                 .with_direct_source_family(DirectSourceFamily::TwoLocationExactReplacementBranch)
                 .with_replacement_branch(),
-                DirectSourceComponents::new(&base_effect, &branch_pauli_effect),
+                &DirectSourceComponents::new(&base_effect, &branch_pauli_effect),
             );
         }
     }
@@ -2105,7 +2103,7 @@ impl<'a> DemBuilder<'a> {
                     &source_gate_types,
                     &source_before_flags,
                 ),
-                DirectSourceComponents::from_slice(parts.as_slice()),
+                &DirectSourceComponents::from_slice(parts.as_slice()),
             );
             return;
         }
@@ -2140,7 +2138,7 @@ impl<'a> DemBuilder<'a> {
                 effect.clone(),
                 prob,
                 source,
-                DirectSourceComponents::new(e1, e2),
+                &DirectSourceComponents::new(e1, e2),
             );
         }
     }

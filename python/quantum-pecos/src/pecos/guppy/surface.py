@@ -35,7 +35,9 @@ class _ModuleState:
     # Keyed by full patch identity + effective budget (dx, dz, orientation,
     # rotated, effective_budget) so distinct patch geometries -- e.g. rotated
     # vs non-rotated at the same dx/dz -- never collide on a cached module.
-    distance_module_cache: ClassVar[dict[tuple[int, int, str, bool, int, str, str, str | None, str], dict]] = {}
+    distance_module_cache: ClassVar[
+        dict[tuple[int, int, str, bool, int, str, str, str | None, str, bool, int | None], dict]
+    ] = {}
 
 
 _state = _ModuleState()
@@ -255,6 +257,7 @@ def generate_guppy_source(
     from pecos.qec.surface._ancilla_batching import batched_stabilizers, normalize_ancilla_budget
     from pecos.qec.surface._check_plan import (
         ancilla_schedule_for_check_plan,
+        cnot_round_order_for_check_plan,
         require_current_surface_check_plan_renderer,
     )
     from pecos.qec.surface.circuit_builder import (
@@ -278,6 +281,7 @@ def generate_guppy_source(
         context="Guppy surface-code source generation",
     )
     ancilla_schedule = ancilla_schedule_for_check_plan(resolved_plan)
+    cnot_round_order = cnot_round_order_for_check_plan(resolved_plan)
     interaction_basis = resolved_plan.interaction_basis
     szz_runtime_barrier_policy = _normalize_szz_runtime_barrier_policy(szz_runtime_barriers)
     if interaction_basis != "szz" and szz_runtime_barrier_policy != _SZZ_RUNTIME_BARRIER_POLICY_NONE:
@@ -780,7 +784,7 @@ def generate_guppy_source(
     lines.extend(["", ""])
 
     # Generate syndrome extraction with the selected parallel interaction schedule.
-    rounds = compute_cnot_schedule(patch)
+    rounds = compute_cnot_schedule(patch, round_order=cnot_round_order)
     szz_sign_by_touch: dict[tuple[str, int, int], int] = {}
     if interaction_basis == "szz":
         residual_plan = _szz_residual_plan_for_check_plan(patch, resolved_plan)
@@ -2626,6 +2630,7 @@ def _round_scoped_surface_memory_factory(
     check_plan: str | None,
     clifford_frame_policy: str | None,
     szz_runtime_barriers: bool | str,
+    trace_metadata: bool,
 ) -> Callable[[int], object]:
     """Memory factory that scopes each call to a round-specific Guppy module.
 
@@ -2645,6 +2650,7 @@ def _round_scoped_surface_memory_factory(
             check_plan=check_plan,
             clifford_frame_policy=clifford_frame_policy,
             szz_runtime_barriers=szz_runtime_barriers,
+            trace_metadata=trace_metadata,
         )
         return scoped[f"make_memory_{basis}"](num_rounds)
 
@@ -2680,9 +2686,6 @@ def _surface_code_module_for_patch(
     """
     from pecos.qec.surface._ancilla_batching import normalize_ancilla_budget
 
-    # Preserve the caller's original interaction-basis selector for the
-    # round-scoped factory wrappers below (the local is reassigned to the
-    # resolved basis just after).
     original_interaction_basis = interaction_basis
     resolved_plan = _resolve_surface_check_plan(
         interaction_basis=interaction_basis,
@@ -2736,13 +2739,6 @@ def _surface_code_module_for_patch(
     module["resolved_check_plan_hash"] = resolved_plan.resolved_hash
 
     if num_rounds is None:
-        # Round-agnostic getter path: hand back memory factories that scope each
-        # call to a round-specific module. Calling e.g. make_memory_z(2) then
-        # make_memory_z(6) on a single round-agnostic module would define both
-        # factory-local @guppy bodies under the same module-qualified name, so
-        # guppylang would reuse the first compiled body (see
-        # _guppy_module_cache_key). Copy first so the shared _load_guppy_module
-        # namespace keeps its real factories for the round-scoped re-entry.
         module = dict(module)
         for basis in ("z", "x"):
             key = f"make_memory_{basis}"
@@ -2754,7 +2750,8 @@ def _surface_code_module_for_patch(
                     interaction_basis=original_interaction_basis,
                     check_plan=check_plan,
                     clifford_frame_policy=clifford_frame_policy,
-                    szz_runtime_barriers=szz_runtime_barriers,
+                    szz_runtime_barriers=szz_runtime_barrier_policy,
+                    trace_metadata=trace_metadata,
                 )
 
     _state.distance_module_cache[cache_key] = module
@@ -2771,14 +2768,6 @@ def get_surface_code_module(
     szz_runtime_barriers: bool | str = False,
 ) -> dict:
     """Get a loaded surface code module for distance d.
-
-    The returned ``make_memory_z``/``make_memory_x`` factories scope each call to
-    a round-specific module: ``factory(n)`` always produces (and caches) the
-    experiment in a distinct ``pecos._generated.patch_..._r{n}`` module. The
-    round count is therefore taken solely from the factory argument -- there is
-    no separate module-level round count to keep in sync -- so building
-    experiments at several round counts in one process stays isolated (guppylang
-    caches compiled functions by module-qualified name).
 
     Args:
         d: Code distance (must be odd >= 3)

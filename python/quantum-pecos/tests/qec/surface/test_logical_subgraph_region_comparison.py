@@ -379,13 +379,13 @@ def test_windowed_logical_subgraph_known_limitation_no_full_suppression():
     # Still does not fully suppress (the paper's windowed-LOM limitation): LER does
     # not fall with distance (it in fact grows). When the anti-snake machinery
     # lands and this suppresses, flip the assertions and update the test.
-    suppression_msg = (
+    suppression_note = (
         f"windowed logical-subgraph now suppresses (d3={ler_d3:.5f} "
         f"d5={ler_d5:.5f} d7={ler_d7:.5f}) -- anti-snake machinery appears to "
         "have landed; update this test."
     )
-    assert ler_d5 >= ler_d3 * 0.7, suppression_msg
-    assert ler_d7 >= ler_d5 * 0.7, suppression_msg
+    assert ler_d5 >= ler_d3 * 0.7, suppression_note
+    assert ler_d7 >= ler_d5 * 0.7, suppression_note
     # Guard against regressing to the old catastrophic anti-suppression (the
     # naive-XOR decoder reached ~0.1-0.25 here); the core-commit rewrite keeps it
     # well below that across distances.

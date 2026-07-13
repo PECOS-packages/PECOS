@@ -1605,9 +1605,9 @@ mod tests {
         unsafe {
             pecos_qis_trace_metadata_direct(
                 key.as_ptr(),
-                i64::try_from(key.len()).expect("test key length fits in i64"),
+                i64::try_from(key.len()).unwrap(),
                 value.as_ptr(),
-                i64::try_from(value.len()).expect("test value length fits in i64"),
+                i64::try_from(value.len()).unwrap(),
             );
         }
 
@@ -1706,16 +1706,11 @@ mod tests {
     fn test_trace_metadata_qubit_hugr_expands_packed_json_metadata() {
         setup_test();
         let mut key = Vec::with_capacity(PACKED_TRACE_METADATA_JSON_KEY.len() + 1);
-        // tket "pascal string" layout: a single-byte length prefix, so the key
-        // length must fit in u8 (< 256).
-        key.push(
-            u8::try_from(PACKED_TRACE_METADATA_JSON_KEY.len()).expect("key length fits in u8"),
-        );
+        key.push(u8::try_from(PACKED_TRACE_METADATA_JSON_KEY.len()).unwrap());
         key.extend_from_slice(PACKED_TRACE_METADATA_JSON_KEY.as_bytes());
         let value = br#"{"host_id":"probe:host","source_kind":"szz_host"}"#;
         let mut packed = Vec::with_capacity(value.len() + 1);
-        // Single-byte length prefix (tket pascal-string layout): value length < 256.
-        packed.push(u8::try_from(value.len()).expect("value length fits in u8"));
+        packed.push(u8::try_from(value.len()).unwrap());
         packed.extend_from_slice(value);
 
         let returned =

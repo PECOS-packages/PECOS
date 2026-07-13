@@ -61,6 +61,8 @@ def test_check_plan_default_resolves_to_cx_metadata() -> None:
     assert surface_check_plan_ids() == (
         "cx_balanced_data_v1",
         "cx_standard_v1",
+        "szz_balanced_data_round_order_1032_v1",
+        "szz_balanced_data_round_order_3102_v1",
         "szz_balanced_data_v1",
         "szz_boundary_first_balanced_data_v1",
         "szz_boundary_first_v1",
@@ -153,6 +155,40 @@ def test_balanced_data_check_plans_resolve_to_explicit_schedule(
     require_current_surface_check_plan_renderer(plan, context="unit-test")
 
 
+def test_round_order_check_plan_resolves_to_explicit_schedule() -> None:
+    from pecos.qec.surface._check_plan import (
+        cnot_round_order_for_check_plan,
+        require_current_surface_check_plan_renderer,
+        resolve_surface_check_plan,
+    )
+    from pecos.qec.surface.schedule import CNOT_ROUND_ORDER_1032, CNOT_ROUND_ORDER_3102
+
+    cases = [
+        ("szz_balanced_data_round_order_3102_v1", CNOT_ROUND_ORDER_3102),
+        ("szz_balanced_data_round_order_1032_v1", CNOT_ROUND_ORDER_1032),
+    ]
+
+    for plan_id, expected_round_order in cases:
+        plan = resolve_surface_check_plan(check_plan=plan_id)
+
+        assert plan.interaction_basis == "szz"
+        assert plan.synthesis_identity == {
+            "family": "szz",
+            "szz_phase_pattern": "standard",
+            "interaction_order": "pecos-default",
+            "ancilla_schedule": "balanced-data-v1",
+        }
+        assert plan.semantic_content["schedule"] == {
+            "round_policy": "constant",
+            "site_policy": "global",
+            "edge_order": "current_surface_cnot_schedule_v1",
+            "ancilla_batch_policy": "balanced-data-v1",
+            "round_order": expected_round_order,
+        }
+        assert cnot_round_order_for_check_plan(plan) == expected_round_order
+        require_current_surface_check_plan_renderer(plan, context="unit-test")
+
+
 def test_current_renderer_rejects_unimplemented_plan_semantics() -> None:
     from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 
@@ -227,6 +263,8 @@ def test_guppy_surface_code_accepts_check_plan_as_source_of_truth() -> None:
     [
         "cx_balanced_data_v1",
         "szz_balanced_data_v1",
+        "szz_balanced_data_round_order_1032_v1",
+        "szz_balanced_data_round_order_3102_v1",
         "szz_boundary_first_balanced_data_v1",
     ],
 )
@@ -532,6 +570,98 @@ def test_boundary_first_szz_check_plan_changes_source_gates_not_metadata() -> No
 
     source = generate_guppy_from_patch(patch, check_plan="szz_boundary_first_v1")
     assert "Check plan: szz_boundary_first_v1" in source
+
+
+@pytest.mark.parametrize(
+    ("round_order_plan", "expected_hosts"),
+    [
+        (
+            "szz_balanced_data_round_order_3102_v1",
+            [
+                "szz:syndrome_extraction:r1:X0:d0:SZZ",
+                "szz:syndrome_extraction:r1:Z3:d5:SZZDG",
+                "szz:syndrome_extraction:r4:X0:d1:SZZDG",
+                "szz:syndrome_extraction:r4:Z3:d2:SZZ",
+            ],
+        ),
+        (
+            "szz_balanced_data_round_order_1032_v1",
+            [
+                "szz:syndrome_extraction:r3:X0:d0:SZZ",
+                "szz:syndrome_extraction:r3:Z3:d5:SZZDG",
+                "szz:syndrome_extraction:r4:X0:d1:SZZDG",
+                "szz:syndrome_extraction:r4:Z3:d2:SZZ",
+            ],
+        ),
+    ],
+)
+def test_round_order_szz_check_plan_changes_host_order_not_metadata(
+    round_order_plan: str,
+    expected_hosts: list[str],
+) -> None:
+    from pecos.guppy.surface import generate_guppy_source
+    from pecos.qec.surface import SurfacePatch
+    from pecos.qec.surface.circuit_builder import (
+        OpType,
+        build_surface_code_circuit,
+        generate_tick_circuit_from_patch,
+    )
+
+    patch = SurfacePatch.create(distance=3)
+    baseline_plan = "szz_balanced_data_v1"
+
+    def szz_gate_signature(plan_id: str) -> list[tuple[str, tuple[int, ...], str]]:
+        ops, _ = build_surface_code_circuit(
+            patch,
+            num_rounds=1,
+            ancilla_budget=2,
+            check_plan=plan_id,
+        )
+        return [(op.label, tuple(op.qubits), op.op_type.name) for op in ops if op.op_type in {OpType.SZZ, OpType.SZZDG}]
+
+    baseline_signature = szz_gate_signature(baseline_plan)
+    round_order_signature = szz_gate_signature(round_order_plan)
+    assert round_order_signature != baseline_signature
+    assert round_order_signature[:4] == [
+        ("X0", (9, 0), "SZZ"),
+        ("X0", (9, 1), "SZZDG"),
+        ("X3", (9, 7), "SZZ"),
+        ("X3", (9, 8), "SZZDG"),
+    ]
+
+    baseline_tick = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        ancilla_budget=2,
+        check_plan=baseline_plan,
+    )
+    round_order_tick = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds=1,
+        ancilla_budget=2,
+        check_plan=round_order_plan,
+    )
+    assert round_order_tick.get_meta("detectors") == baseline_tick.get_meta("detectors")
+    assert round_order_tick.get_meta("observables") == baseline_tick.get_meta("observables")
+
+    def guppy_syndrome_host_ids(plan_id: str) -> list[str]:
+        source = generate_guppy_source(
+            patch,
+            num_rounds=1,
+            ancilla_budget=2,
+            check_plan=plan_id,
+        )
+        return [
+            str(metadata["host_id"])
+            for _, metadata in _packed_trace_metadata_records(source)
+            if metadata.get("source_kind") == "szz_host"
+            and str(metadata.get("host_id", "")).startswith("szz:syndrome_extraction:")
+        ]
+
+    baseline_hosts = guppy_syndrome_host_ids(baseline_plan)
+    round_order_hosts = guppy_syndrome_host_ids(round_order_plan)
+    assert round_order_hosts != baseline_hosts
+    assert round_order_hosts[:4] == expected_hosts
 
 
 def test_direct_surface_renderers_reject_plan_basis_mismatch() -> None:

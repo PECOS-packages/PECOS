@@ -37,6 +37,7 @@ from pecos.qec.surface._ancilla_batching import (
 )
 from pecos.qec.surface._check_plan import (
     ancilla_schedule_for_check_plan,
+    cnot_round_order_for_check_plan,
     require_current_surface_check_plan_renderer,
     resolve_surface_check_plan,
 )
@@ -934,6 +935,7 @@ def build_surface_code_circuit(
         context="abstract surface-code circuit generation",
     )
     ancilla_schedule = ancilla_schedule_for_check_plan(resolved_plan)
+    cnot_round_order = cnot_round_order_for_check_plan(resolved_plan)
     interaction_basis = _normalize_interaction_basis(resolved_plan.interaction_basis)
     resolved_clifford_frame = _resolve_szz_clifford_frame_for_builder(
         patch,
@@ -1030,7 +1032,7 @@ def build_surface_code_circuit(
             gate_twirl_site_idx += 1
 
     # Get CNOT schedule
-    cnot_rounds = compute_cnot_schedule(patch)
+    cnot_rounds = compute_cnot_schedule(patch, round_order=cnot_round_order)
 
     if interaction_basis == "szz":
         if twirl is not None:

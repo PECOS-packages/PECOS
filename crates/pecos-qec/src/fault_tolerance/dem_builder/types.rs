@@ -3653,6 +3653,12 @@ impl PerGateTypeNoise {
     /// Idle noise is intentionally rejected here: this Pauli channel represents
     /// gate/prep/measurement faults and cannot carry duration-dependent idle
     /// models without changing the simulated physics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this model carries dedicated idle noise or any
+    /// `GateType::Idle` rates -- idle noise cannot be represented in the
+    /// returned Pauli channel.
     #[cfg(feature = "neo")]
     #[must_use]
     pub fn to_neo_channel(&self) -> pecos_neo::noise::PerGatePauliChannel {

@@ -837,6 +837,11 @@ def _index_surface_result_trace_ids(
         if _is_surface_sideband_result_tag(name):
             continue
         if len(values) != len(result_ids):
+            if not result_ids and name in {"synx", "synz"}:
+                # Per-measurement scalar tags are the authoritative syndrome
+                # provenance. The aggregate array is intentionally unbound
+                # when those scalar reads have already been consumed.
+                continue
             msg = (
                 f"runtime result tag {name!r} has {len(values)} value(s) but "
                 f"{len(result_ids)} result id(s); cannot bind surface metadata"
@@ -1377,6 +1382,7 @@ def _replay_qis_trace_chunks_into_tick_circuit(
     chunks: list[dict[str, Any]],
     *,
     measurement_crosstalk_topology: str | None = None,
+    allow_raw_measurement_id_fallback: bool = True,
 ) -> Any:
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
@@ -1392,6 +1398,12 @@ def _replay_qis_trace_chunks_into_tick_circuit(
         except ValueError as exc:
             if "missing measurement_result_ids" not in str(exc):
                 raise
+            if not allow_raw_measurement_id_fallback:
+                msg = (
+                    "runtime-lowered trace is missing measurement_result_ids; "
+                    "refusing to fall back to the raw QIS stream for an audited build"
+                )
+                raise ValueError(msg) from exc
             # Older local Selene/qis-compiler builds can emit lowered gates
             # without measurement_result_ids while still carrying the raw QIS
             # operations, whose Measure payloads include the stable result ids.
@@ -1450,12 +1462,14 @@ def trace_guppy_into_tick_circuit_with_result_traces(
     measurement_crosstalk_topology: str | None = None,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
+    allow_raw_measurement_id_fallback: bool = True,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a Guppy/QIS program into a ``TickCircuit`` plus result-tag provenance."""
     chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
     tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
+        allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
     )
     _validate_trace_hosted_operations_if_requested(
         tick_circuit,

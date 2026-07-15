@@ -88,6 +88,104 @@ synz_rounds = data.get("synz", [])
 final_meas = data.get("final", [])
 ```
 
+## Building a DEM from Guppy
+
+Use `build_dem_from_guppy` when a runtime may schedule measurements in a
+different order from the Guppy program. It captures one runtime trace, builds
+the DEM from that exact circuit, and returns the measurement-identity ledger
+needed to convert simulation results into decoder inputs.
+
+Researchers can describe the same detector in either Stim-style record terms
+or with Guppy `result()` tags:
+
+```python,notest
+from pecos.qec import (
+    Detector,
+    Observable,
+    build_dem_from_guppy,
+    rec,
+    result_ref,
+)
+
+# Relative to the canonical Guppy measurement stream, before runtime
+# scheduling. These have the same meaning as Stim rec[-k] references.
+stim_style = [
+    Detector(rec[-3], rec[-2]),
+    Detector(rec[-2], rec[-1]),
+]
+
+# Equivalent when the program emits result("m0", ...), etc.
+guppy_style = [
+    Detector(result_ref("m0"), result_ref("m1")),
+    Detector(result_ref("m1"), result_ref("m2")),
+]
+
+build = build_dem_from_guppy(
+    program,
+    num_qubits=3,
+    detectors=stim_style,
+    observables=[Observable(result_ref("m2"))],
+    runtime=my_selene_compatible_runtime,
+    p1=0.001,
+    p2=0.005,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+
+dem = build.dem
+print(build.schema_fingerprint)
+print(build.audit["runtime_measurement_order"])
+```
+
+`rec[-k]` is deliberately **not** interpreted against the runtime's final gate
+order. PECOS first resolves it to the canonical Guppy result ID, then follows
+that identity through runtime lowering. `result_ref(...)` follows the compiled
+HUGR dataflow from `result()` back to its raw scalar measurement and resolves to
+the same `MeasId` representation. A runtime can therefore reorder measurements
+without changing detector meaning.
+
+### Converting shots for a decoder
+
+Use the returned build to evaluate every shot with the same detector and
+observable schema that produced the DEM:
+
+```python,notest
+from pecos_rslib.qec import SampleBatch
+
+evaluated = [build.evaluate_results(shot) for shot in named_result_shots]
+detector_events = [events for events, _ in evaluated]
+observable_masks = [mask for _, mask in evaluated]
+batch = SampleBatch(detector_events, observable_masks)
+
+pymatching_errors = batch.decode_count(
+    dem.to_string_terminal_graphlike_decomposed(),
+    "pymatching",
+)
+tesseract_errors = batch.decode_count(
+    dem.to_string_source_graphlike_decomposed(),
+    "tesseract",
+)
+```
+
+For a backend that returns raw measurements in runtime execution order, use
+`build.evaluate_runtime_record(values)` instead. Both methods produce the
+detector order and packed observable mask expected by the DEM.
+
+### Current soundness boundary
+
+- DEM construction currently supports static-schedule programs. Quantum
+  operations controlled by noisy measurement outcomes are not representable by
+  one ideal trace and must not be used.
+- Scalar `result(tag, measure(q))` provenance is the certified generic tag
+  path. Repeated tags use `occurrence=...`.
+- Aggregate arrays are used for shot conversion only when their measurements
+  have no scalar provenance. Validate runtime/compiler element ordering for
+  such programs; prefer scalar measurement tags for portable experiments.
+- An audited runtime-lowered build must provide measurement result IDs. PECOS
+  will not silently fall back to the raw pre-lowering QIS stream.
+- `build.audit` exposes every canonical ID, runtime record position, result
+  reference, and the schema fingerprint. Persist it with simulation data.
+
 ## Color Code Memory Experiments
 
 The 4.8.8 triangular color code supports transversal Clifford gates.

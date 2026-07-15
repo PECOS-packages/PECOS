@@ -13,6 +13,27 @@ entry point. The intended shape is:
 3. Attach caller-provided detector and observable metadata.
 4. Build the native PECOS DEM from that traced circuit.
 
+For new workflows, prefer the additive typed build API over separately tracing
+metadata and then calling `from_guppy`:
+
+```python,notest
+from pecos.qec import Detector, Observable, build_dem_from_guppy, rec
+
+build = build_dem_from_guppy(
+    program,
+    num_qubits=num_qubits,
+    detectors=[Detector(rec[-2], rec[-1])],
+    observables=[Observable(rec[-1])],
+    runtime=runtime,
+)
+dem = build.dem
+```
+
+The `GuppyDemBuild` owns the one traced circuit, resolved `MeasId` metadata,
+measurement ledger, schema fingerprint, and shot evaluators. This prevents a
+second runtime trace or a separately maintained detector conversion from
+silently permuting decoder inputs.
+
 This should support calls like:
 
 ```python,notest

@@ -36,10 +36,18 @@ directly to ``from_circuit`` / ``DemSampler.from_circuit`` /
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
+
+from pecos.qec.dem_spec import GuppyDemBuild, ResultRef, _resolve_dem_specs
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pecos.qec.dem_spec import Detector, Observable
 
 P1Weights = Mapping[str, float]
 P2Weights = Mapping[str, float]
@@ -391,6 +399,145 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     extraction, loop-guard, resolution, and validation are all done in Rust.
     """
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
+
+
+def build_dem_from_guppy(
+    guppy: Any,
+    *,
+    num_qubits: int,
+    detectors: Sequence[Detector],
+    observables: Sequence[Observable] = (),
+    p1: float = 0.001,
+    p1_weights: P1Weights | None = None,
+    p2: float = 0.01,
+    p2_weights: P2Weights | None = None,
+    p2_replacement_approximation: str | None = None,
+    p_meas: float = 0.001,
+    p_prep: float = 0.001,
+    p_idle: float | None = None,
+    t1: float | None = None,
+    t2: float | None = None,
+    p_idle_linear_rate: float | None = None,
+    p_idle_quadratic_rate: float | None = None,
+    p_idle_x_linear_rate: float | None = None,
+    p_idle_y_linear_rate: float | None = None,
+    p_idle_z_linear_rate: float | None = None,
+    p_idle_x_quadratic_rate: float | None = None,
+    p_idle_y_quadratic_rate: float | None = None,
+    p_idle_z_quadratic_rate: float | None = None,
+    p_idle_quadratic_sine_rate: float | None = None,
+    p_idle_x_quadratic_sine_rate: float | None = None,
+    p_idle_y_quadratic_sine_rate: float | None = None,
+    p_idle_z_quadratic_sine_rate: float | None = None,
+    runtime: object | None = None,
+    seed: int = 0,
+    require_hosted_operation_order: bool = False,
+    max_hosted_tick_separation: int | None = None,
+) -> GuppyDemBuild:
+    """Trace once and build an audited DEM from typed measurement references.
+
+    ``rec[-k]`` references the canonical dense Guppy result-id stream, not the
+    runtime's scheduled measurement-gate order. ``result_ref(...)`` resolves
+    through the compiled HUGR's dataflow and is checked against the traced
+    measurement count. Both forms lower to stable ``MeasId`` metadata before
+    DEM construction.
+
+    Measurement-dependent quantum control remains unsupported because one
+    captured execution is not a static circuit model.
+    """
+    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
+    from pecos.qec.surface.decode import trace_guppy_into_tick_circuit_with_result_traces
+
+    circuit, result_traces = trace_guppy_into_tick_circuit_with_result_traces(
+        guppy,
+        num_qubits,
+        seed=seed,
+        runtime=runtime,
+        require_hosted_operation_order=require_hosted_operation_order,
+        max_hosted_tick_separation=max_hosted_tick_separation,
+        allow_raw_measurement_id_fallback=False,
+    )
+    normalize_traced_qis_tick_circuit(circuit, context="build_dem_from_guppy")
+    referenced_tags = sorted(
+        {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
+    )
+    if referenced_tags:
+        from pecos_rslib import resolve_result_tags_for_guppy
+
+        from pecos._compilation import guppy_to_hugr
+
+        try:
+            hugr_bytes = guppy_to_hugr(guppy)
+        except ValueError as exc:
+            msg = "result_ref(...) requires a HUGR-compilable Guppy program"
+            raise ValueError(msg) from exc
+        tag_requests = json.dumps(
+            [{"id": index, "result_tags": [tag]} for index, tag in enumerate(referenced_tags)],
+        )
+        resolved_tags_json, _ = resolve_result_tags_for_guppy(
+            tag_requests,
+            "[]",
+            hugr_bytes,
+            circuit.num_measurements(),
+        )
+        compiler_traces = [
+            {
+                "name": tag,
+                "values": [False],
+                "result_ids": [circuit.num_measurements() + int(record)],
+            }
+            for tag, entry in zip(referenced_tags, json.loads(resolved_tags_json), strict=True)
+            for record in entry["records"]
+        ]
+        result_traces = [trace for trace in result_traces if trace.get("name") not in referenced_tags]
+        result_traces.extend(compiler_traces)
+    schema = _resolve_dem_specs(
+        detectors,
+        observables,
+        circuit=circuit,
+        result_traces=result_traces,
+    )
+    circuit.set_meta("detectors", schema.detectors_json)
+    circuit.set_meta("observables", schema.observables_json)
+    circuit.set_meta("num_measurements", str(circuit.num_measurements()))
+    circuit.set_meta("dem_schema_fingerprint", schema.schema_fingerprint)
+
+    dem = _from_circuit_with_noise(
+        circuit,
+        p1=p1,
+        p1_weights=p1_weights,
+        p2=p2,
+        p2_weights=p2_weights,
+        p2_replacement_approximation=p2_replacement_approximation,
+        p_meas=p_meas,
+        p_prep=p_prep,
+        p_idle=p_idle,
+        t1=t1,
+        t2=t2,
+        p_idle_linear_rate=p_idle_linear_rate,
+        p_idle_quadratic_rate=p_idle_quadratic_rate,
+        p_idle_x_linear_rate=p_idle_x_linear_rate,
+        p_idle_y_linear_rate=p_idle_y_linear_rate,
+        p_idle_z_linear_rate=p_idle_z_linear_rate,
+        p_idle_x_quadratic_rate=p_idle_x_quadratic_rate,
+        p_idle_y_quadratic_rate=p_idle_y_quadratic_rate,
+        p_idle_z_quadratic_rate=p_idle_z_quadratic_rate,
+        p_idle_quadratic_sine_rate=p_idle_quadratic_sine_rate,
+        p_idle_x_quadratic_sine_rate=p_idle_x_quadratic_sine_rate,
+        p_idle_y_quadratic_sine_rate=p_idle_y_quadratic_sine_rate,
+        p_idle_z_quadratic_sine_rate=p_idle_z_quadratic_sine_rate,
+    )
+    return GuppyDemBuild(
+        dem=dem,
+        circuit=circuit,
+        detectors_json=schema.detectors_json,
+        observables_json=schema.observables_json,
+        measurement_ledger=schema.ledger,
+        schema_fingerprint=schema.schema_fingerprint,
+        _detector_meas_ids=schema.detector_meas_ids,
+        _observable_meas_ids=schema.observable_meas_ids,
+        _result_ids_by_tag=schema.result_ids_by_tag,
+    )
 
 
 DetectorErrorModel = _RustDetectorErrorModel

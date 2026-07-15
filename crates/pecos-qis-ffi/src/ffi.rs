@@ -1996,6 +1996,24 @@ mod tests {
     }
 
     #[test]
+    fn test_named_result_trace_rejects_ambiguous_recorded_reads() {
+        let ctx = crate::ExecutionContext::new();
+
+        ctx.record_result_read(7);
+        ctx.record_result_read(8);
+        ctx.store_named_bool("computed", true);
+
+        let traces = ctx.get_named_result_traces();
+        assert_eq!(traces.len(), 1);
+        assert!(traces[0].result_ids.is_empty());
+
+        ctx.record_result_read(9);
+        ctx.store_named_bool("next", false);
+        let traces = ctx.get_named_result_traces();
+        assert_eq!(traces[1].result_ids, vec![9]);
+    }
+
+    #[test]
     fn test_read_future_bool_default() {
         setup_test();
 

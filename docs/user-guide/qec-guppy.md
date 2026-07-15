@@ -73,6 +73,11 @@ The generated program produces these result keys:
 | `synz` | Z syndrome per round |
 | `final` | Final data qubit measurements |
 
+Generated surface programs also emit scalar `*:meas:*` sideband tags. These
+carry the same measurement bits with compiler-certifiable element identity for
+audited DEM shot conversion; most users should continue reading the aggregate
+keys above for ordinary analysis.
+
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_surface_code
@@ -167,7 +172,9 @@ tesseract_errors = batch.decode_count(
 )
 ```
 
-For a backend that returns raw measurements in runtime execution order, use
+`evaluate_results(...)` accepts only direct scalar `result()` values whose
+measurement identity the Guppy compiler can certify. For a backend that returns
+raw measurements in runtime execution order, use
 `build.evaluate_runtime_record(values)` instead. Both methods produce the
 detector order and packed observable mask expected by the DEM.
 
@@ -178,11 +185,13 @@ detector order and packed observable mask expected by the DEM.
   one ideal trace and must not be used.
 - Scalar `result(tag, measure(q))` provenance is the certified generic tag
   path. Repeated tags use `occurrence=...`.
-- Aggregate arrays are used for shot conversion only when their measurements
-  have no scalar provenance. Validate runtime/compiler element ordering for
-  such programs; prefer scalar measurement tags for portable experiments.
-- An audited runtime-lowered build must provide measurement result IDs. PECOS
-  will not silently fall back to the raw pre-lowering QIS stream.
+- Aggregate result arrays are not accepted as generic measurement provenance:
+  their public element order is not yet part of the compiler identity ABI. Emit
+  direct scalar sideband tags when decoder inputs must be reconstructed from
+  named results.
+- An audited runtime-lowered build must provide a complete lowered operation
+  stream and measurement result IDs. PECOS will not silently build from the raw
+  pre-lowering QIS stream.
 - `build.audit` exposes every canonical ID, runtime record position, result
   reference, and the schema fingerprint. Persist it with simulation data.
 

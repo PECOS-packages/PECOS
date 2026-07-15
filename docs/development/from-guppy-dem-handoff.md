@@ -34,6 +34,13 @@ measurement ledger, schema fingerprint, and shot evaluators. This prevents a
 second runtime trace or a separately maintained detector conversion from
 silently permuting decoder inputs.
 
+The audited path is deliberately fail-closed. A runtime trace must contain a
+complete lowered operation stream with stable measurement IDs; raw pre-runtime
+QIS order is not an acceptable substitute. Named shot conversion likewise
+accepts only compiler-certified direct scalar `result()` dataflow. Aggregate
+arrays and transformed booleans must not be treated as measurement identity
+until the compiler exposes an explicit element-level provenance ABI.
+
 This should support calls like:
 
 ```python,notest
@@ -135,6 +142,10 @@ line.
   replayed into QEC circuits as `TimeUnits` with the convention
   `1 TimeUnit = 1 ns`. They only affect DEMs when an idle-noise parameter such
   as `p_idle`, `t1/t2`, `p_idle_linear_rate`, or `p_idle_quadratic_rate` is set.
+- Keep fail-closed regression coverage for entirely raw traces, transformed
+  scalar results, and aggregate arrays. Generated adapters may expose direct
+  scalar sideband tags while retaining aggregate results for researcher-facing
+  analysis.
 - Keep the surface helper path compatible with constrained ancilla budgets:
   pass `ancilla_budget` into both `make_surface_code(...)` and
   `get_num_qubits(...)` when tracing surface Guppy.

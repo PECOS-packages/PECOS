@@ -418,20 +418,12 @@ def _resolve_dem_specs(
         )
         for runtime_index, meas_id in enumerate(runtime_order)
     )
-    # Scalar outputs consume exactly one immediately-read measurement and are
-    # the currently certified shot-data provenance path. Array construction
-    # can read elements in an order different from the array's public order,
-    # so do not use aggregate arrays to relabel simulation data until the
-    # compiler supplies an explicit element-level identity ABI.
-    scalar_ids = {call[0] for calls in result_calls.values() for call in calls if len(call) == 1}
+    # Callers supply only compiler-certified direct scalar traces. Aggregate
+    # array element order is not certified and must never become a shot binding.
     result_ids_by_tag = tuple(
         (tag, tuple(meas_id for call in calls for meas_id in call))
         for tag, calls in sorted(result_calls.items())
-        if calls
-        and (
-            all(len(call) == 1 for call in calls)
-            or all(meas_id not in scalar_ids for call in calls for meas_id in call)
-        )
+        if calls and all(len(call) == 1 for call in calls)
     )
     return _ResolvedSchema(
         detectors_json=json.dumps(detector_entries, separators=(",", ":")),

@@ -1388,7 +1388,8 @@ def _replay_qis_trace_chunks_into_tick_circuit(
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
         measurement_crosstalk_topology,
     )
-    if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
+    has_lowered_operations = any(chunk.get("lowered_quantum_ops") for chunk in chunks)
+    if has_lowered_operations:
         _reject_partially_lowered_trace(chunks)
         try:
             return _replay_lowered_qis_trace_into_tick_circuit(
@@ -1409,6 +1410,13 @@ def _replay_qis_trace_chunks_into_tick_circuit(
             # operations, whose Measure payloads include the stable result ids.
             # Replay the raw operations in that compatibility case instead of
             # losing provenance.
+
+    elif not allow_raw_measurement_id_fallback and any(_chunk_has_lowerable_op(chunk) for chunk in chunks):
+        msg = (
+            "runtime trace does not contain lowered_quantum_ops; refusing to "
+            "build an audited DEM from the raw pre-runtime QIS operation order"
+        )
+        raise ValueError(msg)
 
     operations: list[dict[str, Any]] = []
     for chunk in chunks:

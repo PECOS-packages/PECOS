@@ -401,6 +401,68 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
 
 
+def _compiler_certified_result_traces(
+    guppy: Any,
+    circuit: Any,
+    runtime_result_traces: Sequence[Mapping[str, Any]],
+    *,
+    required_tags: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Resolve direct scalar result tags without trusting runtime read timing."""
+    candidate_tags = sorted(
+        {
+            *required_tags,
+            *(trace.get("name") for trace in runtime_result_traces if isinstance(trace.get("name"), str)),
+        },
+    )
+    if not candidate_tags:
+        return []
+
+    from pecos_rslib import resolve_result_tags_for_guppy
+
+    from pecos._compilation import guppy_to_hugr
+
+    try:
+        hugr_bytes = guppy_to_hugr(guppy)
+    except ValueError as exc:
+        if required_tags:
+            msg = "result_ref(...) requires a HUGR-compilable Guppy program"
+            raise ValueError(msg) from exc
+        return []
+
+    required = set(required_tags)
+    certified: list[dict[str, Any]] = []
+    for tag in candidate_tags:
+        tag_request = json.dumps([{"id": 0, "result_tags": [tag]}])
+        try:
+            resolved_json, _ = resolve_result_tags_for_guppy(
+                tag_request,
+                "[]",
+                hugr_bytes,
+                circuit.num_measurements(),
+            )
+        except ValueError as exc:
+            if tag in required:
+                raise
+            if "runtime loops" in str(exc):
+                return []
+            continue
+
+        entries = json.loads(resolved_json)
+        if len(entries) != 1:
+            msg = f"compiler returned {len(entries)} result entries while resolving tag {tag!r}"
+            raise ValueError(msg)
+        certified.extend(
+            {
+                "name": tag,
+                "values": [False],
+                "result_ids": [circuit.num_measurements() + int(record)],
+            }
+            for record in entries[0]["records"]
+        )
+    return certified
+
+
 def build_dem_from_guppy(
     guppy: Any,
     *,
@@ -461,36 +523,12 @@ def build_dem_from_guppy(
     referenced_tags = sorted(
         {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
     )
-    if referenced_tags:
-        from pecos_rslib import resolve_result_tags_for_guppy
-
-        from pecos._compilation import guppy_to_hugr
-
-        try:
-            hugr_bytes = guppy_to_hugr(guppy)
-        except ValueError as exc:
-            msg = "result_ref(...) requires a HUGR-compilable Guppy program"
-            raise ValueError(msg) from exc
-        tag_requests = json.dumps(
-            [{"id": index, "result_tags": [tag]} for index, tag in enumerate(referenced_tags)],
-        )
-        resolved_tags_json, _ = resolve_result_tags_for_guppy(
-            tag_requests,
-            "[]",
-            hugr_bytes,
-            circuit.num_measurements(),
-        )
-        compiler_traces = [
-            {
-                "name": tag,
-                "values": [False],
-                "result_ids": [circuit.num_measurements() + int(record)],
-            }
-            for tag, entry in zip(referenced_tags, json.loads(resolved_tags_json), strict=True)
-            for record in entry["records"]
-        ]
-        result_traces = [trace for trace in result_traces if trace.get("name") not in referenced_tags]
-        result_traces.extend(compiler_traces)
+    result_traces = _compiler_certified_result_traces(
+        guppy,
+        circuit,
+        result_traces,
+        required_tags=referenced_tags,
+    )
     schema = _resolve_dem_specs(
         detectors,
         observables,

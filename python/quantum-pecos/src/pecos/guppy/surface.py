@@ -1584,6 +1584,7 @@ def generate_guppy_source(
             [
                 f"        final = measure_{basis}_basis(surf)",
                 '        result("final", final)',
+                *(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data)),
             ],
         )
         return [
@@ -1654,7 +1655,7 @@ def _render_memory_experiments(
     ]
     for basis, basis_upper in (("z", "Z"), ("x", "X")):
         if twirl is None:
-            lines.extend(_render_plain_memory_block(basis, basis_upper, dx, dz, interaction_basis))
+            lines.extend(_render_plain_memory_block(basis, basis_upper, dx, dz, num_data, interaction_basis))
         else:
             if rng is None or num_rounds is None:
                 msg = "twirled memory rendering requires both rng and num_rounds"
@@ -1694,6 +1695,7 @@ def _render_plain_memory_block(
     basis_upper: str,
     dx: int,
     dz: int,
+    num_data: int,
     interaction_basis: str,
 ) -> list[str]:
     """Render the vanilla handoff memory factory for one basis."""
@@ -1705,7 +1707,7 @@ def _render_plain_memory_block(
     else:
         init_line = f"        init_syn = {init_func}(surf)"
         syndrome_line = "            syn = syndrome_extraction(surf)"
-    return [
+    lines = [
         f"def make_memory_{basis}(num_rounds: int):",
         f'    """Create {basis_upper}-basis memory experiment."""',
         "    from guppylang.std.builtins import comptime",
@@ -1724,11 +1726,17 @@ def _render_plain_memory_block(
         "",
         f"        final = measure_{basis}_basis(surf)",
         '        result("final", final)',
-        "",
-        f"    return memory_{basis}",
-        "",
-        "",
     ]
+    lines.extend(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data))
+    lines.extend(
+        [
+            "",
+            f"    return memory_{basis}",
+            "",
+            "",
+        ],
+    )
+    return lines
 
 
 def _twirl_activation_threshold(twirl: "TwirlConfig") -> int:
@@ -1873,9 +1881,11 @@ def _render_twirled_memory_block(
             body.append(f"        final_{q} = final_raw[{q}] != {flip_var}")
         final_elements = ", ".join(f"final_{q}" for q in range(num_data))
         body.append(f'        result("final", array({final_elements}))')
+        body.extend(f'        result("final:meas:{q}", final_{q})' for q in range(num_data))
     else:
         body.append(f"        final = measure_{basis}_basis(surf)")
         body.append('        result("final", final)')
+        body.extend(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data))
 
     return [
         f"def make_memory_{basis}(num_rounds: int):",
@@ -2231,9 +2241,11 @@ def _render_gate_local_twirled_memory_block(
             frame_x, _frame_z = data_frames[q]
             body.append(f"{indent}final_{q} = final_raw[{q}] != {frame_x}")
         body.append(f'{indent}result("final", array({", ".join(f"final_{q}" for q in range(num_data))}))')
+        body.extend(f'{indent}result("final:meas:{q}", final_{q})' for q in range(num_data))
     else:
         body.append(f"{indent}final = measure_{basis}_basis(surf)")
         body.append(f'{indent}result("final", final)')
+        body.extend(f'{indent}result("final:meas:{q}", final[{q}])' for q in range(num_data))
 
     return [
         f"def make_memory_{basis}(num_rounds: int):",

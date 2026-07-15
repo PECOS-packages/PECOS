@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quantum-pecos"
-version = "0.9.0.dev0"
+version = "0.9.0.dev1"
 authors = [
     {name = "The PECOS Developers"},
 ]
@@ -28,8 +28,8 @@ requires-python = ">=3.10"
 license = { file = "LICENSE"}
 keywords = ["quantum", "QEC", "simulation", "PECOS"]
 dependencies = [
-    "pecos-rslib==0.9.0.dev0",
-    "pecos-rslib-llvm==0.9.0.dev0",
+    "pecos-rslib==0.9.0.dev1",
+    "pecos-rslib-llvm==0.9.0.dev1",
     "phir>=0.3.3",
     "networkx>=2.1.0",
     # Pin to the 0.21.x line (tket.bool era). guppylang 0.22+ emits the

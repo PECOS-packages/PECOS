@@ -519,6 +519,9 @@ jobs:
           fi
         fi
 
+    - name: Execute WASM compatibility smoke test
+      run: python scripts/ci/smoke_wasm_foreign_object.py
+
   # Post-merge lanes excluded from the PR fast path: the slow integration
   # tests and the optional-dependency suite (guppy/selene/QIR runtime tests
   # marked `optional_dependency`).

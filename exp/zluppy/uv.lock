@@ -539,7 +539,7 @@ wheels = [
 
 [[package]]
 name = "pecos-rslib"
-version = "0.9.0.dev0"
+version = "0.9.0.dev1"
 source = { editable = "../../python/pecos-rslib" }
 
 [package.metadata]
@@ -554,7 +554,7 @@ test = [{ name = "pytest", specifier = ">=9.0" }]
 
 [[package]]
 name = "pecos-rslib-llvm"
-version = "0.9.0.dev0"
+version = "0.9.0.dev1"
 source = { editable = "../../python/pecos-rslib-llvm" }
 
 [package.metadata]
@@ -882,7 +882,7 @@ wheels = [
 
 [[package]]
 name = "quantum-pecos"
-version = "0.9.0.dev0"
+version = "0.9.0.dev1"
 source = { editable = "../../python/quantum-pecos" }
 dependencies = [
     { name = "guppylang" },

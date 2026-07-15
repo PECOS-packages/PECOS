@@ -13,11 +13,12 @@ The version is a literal in many coordinated places. Bump them all:
   `python/selene-plugins/*` packages)
 - Exact-version internal pins: the root's `quantum-pecos[cuda12/13]==...`
   entries and quantum-pecos's `pecos-rslib==...` / `pecos-rslib-llvm==...`
-- Regenerate both lockfiles: `uv lock` at the root and in `exp/zluppy/`
-  (verify the diffs are version-lines-only)
-- `docs/user-guide/cli.md` example output
+- Regenerate both lockfiles: `uv lock` at the root and in `exp/zluppy/`,
+  using the same uv version CI pins in `.github/workflows/` (verify the
+  diffs are version-lines-only)
 
-Verify: `git grep <old-version>` returns nothing; `uv lock --check` passes;
+Verify: `git grep <old-version>` returns nothing outside this file's
+historical note; `uv lock --check` passes;
 `just python-ci-sync-test` then `python -c "import pecos; print(pecos.__version__)"`
 reports the new version.
 

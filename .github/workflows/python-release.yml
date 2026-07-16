@@ -319,6 +319,13 @@ jobs:
             bash scripts/ci/build-llvm-21-manylinux.sh \
             /project/.ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
 
+      - name: Build LLVM 21.1 for macOS 13
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p .ci-llvm
+          bash scripts/ci/build-llvm-21-macos.sh \
+            .ci-llvm/llvm-21.1.8-macos-${{ matrix.architecture }}.tar.gz
+
       # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
       - name: Set up Visual Studio environment (Windows)
         if: runner.os == 'Windows' && matrix.install_cuda
@@ -449,9 +456,7 @@ jobs:
             bash scripts/ci/ensure-rust.sh stable minimal
             export PATH=$HOME/.cargo/bin:$PATH
             rustup update
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
-            mkdir -p "$HOME/.pecos/deps"
-            ln -sfn "$(brew --prefix llvm@21)" "$HOME/.pecos/deps/llvm-21.1"
+            bash scripts/ci/install-llvm-21-macos.sh .ci-llvm/llvm-21.1.8-macos-${{ matrix.architecture }}.tar.gz
             cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             cargo run --locked --release -p pecos-cli -- install cmake --force
             # Create a codesign wrapper that strips DYLD_LIBRARY_PATH to prevent
@@ -552,9 +557,7 @@ jobs:
             fi
             if [ ! -d "$HOME/.pecos/deps/llvm-21.1/bin" ]; then
               rustup update
-              HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@21
-              mkdir -p "$HOME/.pecos/deps"
-              ln -sfn "$(brew --prefix llvm@21)" "$HOME/.pecos/deps/llvm-21.1"
+              bash scripts/ci/install-llvm-21-macos.sh .ci-llvm/llvm-21.1.8-macos-${{ matrix.architecture }}.tar.gz
               cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             else
               echo "LLVM already installed from pecos-rslib build, skipping"

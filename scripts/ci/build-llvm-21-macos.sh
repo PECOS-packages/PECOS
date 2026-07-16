@@ -77,7 +77,8 @@ cmake --build "$BUILD_DIR" --target \
 "$INSTALL_DIR/bin/llvm-config" --libnames --link-shared
 
 test "$("$INSTALL_DIR/bin/llvm-config" --shared-mode)" = shared
-"$INSTALL_DIR/bin/llvm-config" --libnames --link-shared | grep -q 'libLLVM\.dylib'
+"$INSTALL_DIR/bin/llvm-config" --libnames --link-shared \
+    | grep -Eq '(^|[[:space:]])libLLVM(-[0-9]+)?\.dylib($|[[:space:]])'
 find "$INSTALL_DIR/lib" -maxdepth 1 -name 'libclang*.dylib' | grep -q .
 
 mkdir -p "$(dirname "$OUTPUT_ARCHIVE")"

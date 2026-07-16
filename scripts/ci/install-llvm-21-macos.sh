@@ -20,7 +20,8 @@ tar -xzf "$ARCHIVE" -C "$INSTALL_DIR"
 "$LLVM_CONFIG" --libnames --link-shared
 
 test "$("$LLVM_CONFIG" --shared-mode)" = shared
-"$LLVM_CONFIG" --libnames --link-shared | grep -q 'libLLVM\.dylib'
+"$LLVM_CONFIG" --libnames --link-shared \
+    | grep -Eq '(^|[[:space:]])libLLVM(-[0-9]+)?\.dylib($|[[:space:]])'
 find "$INSTALL_DIR/lib" -maxdepth 1 -name 'libclang*.dylib' | grep -q .
 
 echo "Installed macOS-compatible LLVM at $INSTALL_DIR"

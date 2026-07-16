@@ -74,9 +74,9 @@ The generated program produces these result keys:
 | `final` | Final data qubit measurements |
 
 Generated surface programs also emit scalar `*:meas:*` sideband tags. These
-carry the same measurement bits with compiler-certifiable element identity for
-audited DEM shot conversion; most users should continue reading the aggregate
-keys above for ordinary analysis.
+carry the same measurement bits with a generator-certified mapping to the
+canonical measurement stream for audited DEM shot conversion; most users
+should continue reading the aggregate keys above for ordinary analysis.
 
 ```python
 from pecos import sim, state_vector
@@ -103,7 +103,12 @@ needed to convert simulation results into decoder inputs.
 Researchers can describe the same detector in either Stim-style record terms
 or with Guppy `result()` tags:
 
-```python,notest
+```python
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import measure, qubit
+
+from pecos import selene_engine, sim, stabilizer
 from pecos.qec import (
     Detector,
     Observable,
@@ -112,25 +117,33 @@ from pecos.qec import (
     result_ref,
 )
 
+
+@guppy
+def program() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    m0 = measure(q0)
+    m1 = measure(q1)
+    result("m0", m0)
+    result("m1", m1)
+
+
 # Relative to the canonical Guppy measurement stream, before runtime
 # scheduling. These have the same meaning as Stim rec[-k] references.
 stim_style = [
-    Detector(rec[-3], rec[-2]),
     Detector(rec[-2], rec[-1]),
 ]
 
 # Equivalent when the program emits result("m0", ...), etc.
 guppy_style = [
     Detector(result_ref("m0"), result_ref("m1")),
-    Detector(result_ref("m1"), result_ref("m2")),
 ]
 
 build = build_dem_from_guppy(
     program,
-    num_qubits=3,
+    num_qubits=2,
     detectors=stim_style,
-    observables=[Observable(result_ref("m2"))],
-    runtime=my_selene_compatible_runtime,
+    observables=[Observable(result_ref("m1"))],
     p1=0.001,
     p2=0.005,
     p_meas=0.001,
@@ -140,6 +153,11 @@ build = build_dem_from_guppy(
 dem = build.dem
 print(build.schema_fingerprint)
 print(build.audit["runtime_measurement_order"])
+
+columns = (
+    sim(program).classical(selene_engine()).quantum(stabilizer()).qubits(2).seed(42).run(100).to_shot_map().to_dict()
+)
+evaluated = build.evaluate_result_columns(columns)
 ```
 
 `rec[-k]` is deliberately **not** interpreted against the runtime's final gate
@@ -154,10 +172,9 @@ without changing detector meaning.
 Use the returned build to evaluate every shot with the same detector and
 observable schema that produced the DEM:
 
-```python,notest
+```python
 from pecos_rslib.qec import SampleBatch
 
-evaluated = [build.evaluate_results(shot) for shot in named_result_shots]
 detector_events = [events for events, _ in evaluated]
 observable_masks = [mask for _, mask in evaluated]
 batch = SampleBatch(detector_events, observable_masks)
@@ -177,6 +194,11 @@ measurement identity the Guppy compiler can certify. For a backend that returns
 raw measurements in runtime execution order, use
 `build.evaluate_runtime_record(values)` instead. Both methods produce the
 detector order and packed observable mask expected by the DEM.
+
+Generated programs may supply a validated named-measurement layout certificate.
+`make_surface_code(...)` does this automatically, so its scalar sidebands work
+with `evaluate_results(...)` and `evaluate_result_columns(...)` even though its
+round loop is not statically unrolled in the HUGR.
 
 ### Current soundness boundary
 

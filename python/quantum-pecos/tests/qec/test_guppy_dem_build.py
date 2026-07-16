@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import json
 
+import pecos
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, h, measure, qubit
+from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import Detector, Observable, build_dem_from_guppy, rec, result_ref
 from pecos.qec.dem_spec import _resolve_dem_specs
+from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 from pecos.qec.surface.decode import _replay_qis_trace_chunks_into_tick_circuit
 from pecos_rslib.quantum import TickCircuit
 
@@ -43,6 +47,14 @@ def _aggregate_measurement_result() -> None:
     a = measure(qa)
     b = measure(qb)
     result("pair", array(a, b))
+
+
+@guppy
+def _mixed_supported_result_occurrences() -> None:
+    q = qubit()
+    measured = measure(q)
+    result("same", not measured)
+    result("same", measured)
 
 
 def _reordered_trace() -> tuple[TickCircuit, list[dict[str, object]]]:
@@ -186,13 +198,37 @@ def test_result_ref_rejects_ambiguous_or_missing_runtime_provenance() -> None:
     circuit, _ = _reordered_trace()
     ambiguous = [{"name": "computed", "values": [True], "result_ids": []}]
 
-    with pytest.raises(ValueError, match="absent from the runtime trace"):
+    with pytest.raises(ValueError, match="not a direct scalar measurement"):
         _resolve_dem_specs(
             [Detector(result_ref("computed"))],
             [],
             circuit=circuit,
             result_traces=ambiguous,
         )
+
+
+def test_result_ref_preserves_unsupported_occurrence_holes() -> None:
+    with pytest.raises(ValueError, match=r"occurrence 0.*not a direct scalar measurement"):
+        build_dem_from_guppy(
+            _mixed_supported_result_occurrences,
+            num_qubits=1,
+            detectors=[Detector(result_ref("same", occurrence=0))],
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
+
+    build = build_dem_from_guppy(
+        _mixed_supported_result_occurrences,
+        num_qubits=1,
+        detectors=[Detector(result_ref("same", occurrence=1))],
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.1,
+        p_prep=0.0,
+    )
+    assert build.evaluate_results({"same": [True, False]}) == ([0], 0)
 
 
 def test_result_ref_rejects_array_element_provenance() -> None:
@@ -239,6 +275,24 @@ def test_rec_rejects_non_dense_runtime_measurement_identities() -> None:
         )
 
 
+def test_result_ref_supports_non_dense_runtime_measurement_identities() -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    traces = [
+        {"name": "first", "occurrence": 0, "values": [False], "result_ids": [4]},
+        {"name": "second", "occurrence": 0, "values": [False], "result_ids": [9]},
+    ]
+
+    schema = _resolve_dem_specs(
+        [Detector(result_ref("second"))],
+        [],
+        circuit=circuit,
+        result_traces=traces,
+    )
+
+    assert json.loads(schema.detectors_json) == [{"id": 0, "meas_ids": [9]}]
+
+
 def test_audited_build_disables_raw_measurement_id_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
@@ -278,3 +332,44 @@ def test_audited_replay_rejects_entirely_raw_runtime_trace() -> None:
             chunks,
             allow_raw_measurement_id_fallback=False,
         )
+
+
+def test_generated_surface_named_results_evaluate_without_private_adapter() -> None:
+    rounds = 2
+    program = make_surface_code(3, rounds, "Z")
+    abstract = generate_tick_circuit_from_patch(SurfacePatch.create(distance=3), rounds, "Z")
+    detectors = [
+        Detector(*(rec[int(record)] for record in entry["records"]), id=int(entry["id"]))
+        for entry in json.loads(abstract.get_meta("detectors"))
+    ]
+    observables = [
+        Observable(*(rec[int(record)] for record in entry["records"]), id=int(entry["id"]))
+        for entry in json.loads(abstract.get_meta("observables"))
+    ]
+    build = build_dem_from_guppy(
+        program,
+        num_qubits=get_num_qubits(3),
+        detectors=detectors,
+        observables=observables,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.1,
+        p_prep=0.0,
+    )
+    columns = (
+        pecos.sim(program)
+        .classical(pecos.selene_engine())
+        .quantum(pecos.stabilizer())
+        .qubits(get_num_qubits(3))
+        .seed(7)
+        .run(3)
+        .to_shot_map()
+        .to_dict()
+    )
+
+    evaluated = build.evaluate_result_columns(columns)
+
+    assert build.audit["named_result_binding"] == "generator_layout_v1"
+    assert len(evaluated) == 3
+    assert all(len(events) == build.dem.num_detectors for events, _ in evaluated)
+    assert evaluated == [([0] * build.dem.num_detectors, 0)] * 3

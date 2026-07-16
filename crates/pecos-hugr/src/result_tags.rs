@@ -70,8 +70,8 @@ pub fn measurement_op_count<H: HugrView<Node = Node>>(hugr: &H) -> usize {
 /// `tket.bool:read` of a measurement op. The compiled chain is verified to be
 /// precisely `result_bool <- tket.bool:read <- Measure/MeasureFree`.
 ///
-/// Any other shape is **deliberately excluded** (the tag is omitted from the
-/// returned map) rather than guessed at -- e.g. computed values
+/// Any other shape is **deliberately represented as an unsupported occurrence**
+/// (``None``) rather than guessed at -- e.g. computed values
 /// (`result("x", m0 == m1)` lowers through `tket.bool:eq`), constants
 /// (`result("x", True)` lowers through a `Const`), and array-valued
 /// `result(...)` (`result_array_bool` lowers through `collections.borrow_arr`
@@ -79,12 +79,13 @@ pub fn measurement_op_count<H: HugrView<Node = Node>>(hugr: &H) -> usize {
 /// Resolving those structurally would silently misbind (equality is not
 /// parity; an empty record set is not a detector), so they are not returned.
 ///
-/// A tag repeated across the program accumulates its ordinals in traversal
-/// order; callers handle occurrence disambiguation / loop guarding.
+/// A tag repeated across the program accumulates one entry per call in
+/// traversal order, including unsupported holes. This preserves the source
+/// occurrence identity for callers that disambiguate repeated tags.
 #[must_use]
 pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
     hugr: &H,
-) -> BTreeMap<String, Vec<usize>> {
+) -> BTreeMap<String, Vec<Option<usize>>> {
     // Pass 1: ordinal for every measurement op, in traversal order.
     let mut meas_ordinal: HashMap<Node, usize> = HashMap::new();
     for node in hugr.nodes() {
@@ -101,14 +102,14 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
     };
 
     // Pass 2: accept only result_bool <- tket.bool:read <- measurement.
-    let mut out: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut out: BTreeMap<String, Vec<Option<usize>>> = BTreeMap::new();
     for node in hugr.nodes() {
         let op = hugr.get_optype(node);
         let Some((ext, name)) = extension_ids(op) else {
             continue;
         };
-        if ext != "tket.result" || name != "result_bool" {
-            continue; // arrays / non-bool result ops: not soundly resolvable
+        if ext != "tket.result" {
+            continue;
         }
         let Some(ext_op) = op.as_extension_op() else {
             continue;
@@ -120,22 +121,18 @@ pub fn extract_result_tag_measurements<H: HugrView<Node = Node>>(
             continue;
         };
 
-        // result_bool value input (port 0) must be exactly `tket.bool:read`.
-        let Some(read) = src_op(node, 0) else {
-            continue;
-        };
-        match extension_ids(hugr.get_optype(read)) {
-            Some((e, ref n)) if e == "tket.bool" && n == "read" => {}
-            _ => continue, // e.g. tket.bool:eq (computed) -> exclude
-        }
-        // ... whose input (port 0) must be a measurement op.
-        let Some(meas) = src_op(read, 0) else {
-            continue;
-        };
-        let Some(&ord) = meas_ordinal.get(&meas) else {
-            continue; // e.g. a Const -> exclude
-        };
-        out.entry(tag).or_default().push(ord);
+        let ordinal = (name == "result_bool")
+            .then(|| src_op(node, 0))
+            .flatten()
+            .filter(|&read| {
+                matches!(
+                    extension_ids(hugr.get_optype(read)),
+                    Some((e, ref n)) if e == "tket.bool" && n == "read"
+                )
+            })
+            .and_then(|read| src_op(read, 0))
+            .and_then(|meas| meas_ordinal.get(&meas).copied());
+        out.entry(tag).or_default().push(ordinal);
     }
     out
 }
@@ -168,9 +165,9 @@ mod tests {
         assert_eq!(
             map,
             BTreeMap::from([
-                ("tag_a".to_string(), vec![0]),
-                ("tag_b".to_string(), vec![1]),
-                ("tag_c".to_string(), vec![2]),
+                ("tag_a".to_string(), vec![Some(0)]),
+                ("tag_b".to_string(), vec![Some(1)]),
+                ("tag_c".to_string(), vec![Some(2)]),
             ]),
             "tag must bind to its own measurement regardless of result() order",
         );
@@ -186,7 +183,7 @@ mod tests {
         let map = extract_result_tag_measurements(&hugr);
         assert_eq!(
             map.get("synx").map(Vec::as_slice),
-            Some([0].as_slice()),
+            Some([Some(0)].as_slice()),
             "runtime loop is not unrolled in HUGR: one static measure op",
         );
     }
@@ -200,8 +197,8 @@ mod tests {
         let hugr = read_hugr_envelope(COMPUTED).unwrap();
         let map = extract_result_tag_measurements(&hugr);
         assert!(
-            !map.contains_key("eq") && !map.contains_key("const"),
-            "computed/constant tags must be excluded, got {map:?}",
+            map.get("eq") == Some(&vec![None]) && map.get("const") == Some(&vec![None]),
+            "computed/constant tag occurrences must be preserved as unsupported, got {map:?}",
         );
     }
 
@@ -213,8 +210,8 @@ mod tests {
         let hugr = read_hugr_envelope(ARR).unwrap();
         let map = extract_result_tag_measurements(&hugr);
         assert!(
-            !map.contains_key("pair"),
-            "array-valued result tag must be excluded, got {map:?}",
+            map.get("pair") == Some(&vec![None]),
+            "array-valued result occurrence must be preserved as unsupported, got {map:?}",
         );
     }
 }

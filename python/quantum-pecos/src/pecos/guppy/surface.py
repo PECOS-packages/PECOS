@@ -2853,7 +2853,7 @@ def make_surface_code(
 
     _validate_surface_memory_distance(distance)
     patch = SurfacePatch.create(distance=distance)
-    return generate_memory_experiment(
+    program = generate_memory_experiment(
         patch,
         num_rounds,
         basis,
@@ -2864,3 +2864,29 @@ def make_surface_code(
         szz_runtime_barriers=szz_runtime_barriers,
         trace_metadata=trace_metadata,
     )
+    from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
+
+    abstract_tc = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        add_typed_annotations=False,
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
+    )
+    occurrence_by_tag: dict[str, int] = {}
+    layout: list[tuple[str, int]] = []
+    for ref in _surface_abstract_measurement_result_refs(abstract_tc):
+        if ref[0] == "scalar":
+            _, tag = ref
+            occurrence = occurrence_by_tag.get(tag, 0)
+            occurrence_by_tag[tag] = occurrence + 1
+            layout.append((tag, occurrence))
+        else:
+            _, tag, element = ref
+            layout.append((f"{tag}:meas:{element}", 0))
+    object.__setattr__(program, "__pecos_named_measurement_layout_v1__", tuple(layout))
+    return program

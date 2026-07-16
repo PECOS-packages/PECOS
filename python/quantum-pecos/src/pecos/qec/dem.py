@@ -37,7 +37,7 @@ directly to ``from_circuit`` / ``DemSampler.from_circuit`` /
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
@@ -45,8 +45,6 @@ from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 from pecos.qec.dem_spec import GuppyDemBuild, ResultRef, _resolve_dem_specs
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from pecos.qec.dem_spec import Detector, Observable
 
 P1Weights = Mapping[str, float]
@@ -184,7 +182,7 @@ class _DetectorErrorModelMixin:
                   reorder-immune ``tag -> measurement`` binding is recovered
                   from the compiled HUGR by
                   ``pecos_hugr_qis::extract_result_tag_measurements`` and
-                  resolved to record offsets in Rust. Supported only for
+                  resolved to stable runtime ``MeasId`` values in Rust. Supported only for
                   **straight-line, canonical** programs:
                   ``result(tag, measure(q))`` of a raw scalar measurement.
                   Computed (``result(tag, m0 == m1)``), constant
@@ -274,9 +272,9 @@ class _DetectorErrorModelMixin:
         Note:
             Runtime-lowered idles are replayed as nanosecond PECOS
             ``TimeUnits``. If idle parameters come from a per-second
-            simulator/runtime model, convert the ``NoiseModel`` with
-            ``noise.for_runtime_idle_time_units()`` before passing it to
-            traced-QIS DEM construction.
+            simulator/runtime model, use
+            ``noise.for_runtime_idle_time_units()`` and pass the converted
+            scalar idle-rate fields to this constructor.
 
             **Measurement-dependent (dynamic) control flow is unsupported.**
             ``from_guppy`` traces one ideal execution; a Guppy program whose
@@ -349,11 +347,17 @@ class _DetectorErrorModelMixin:
         if needs_tags:
             from pecos_rslib import resolve_result_tags_for_guppy
 
+            from pecos.qec.surface.decode import _extract_measurement_meas_ids
+
+            source_ids_json = tc.get_meta("guppy_source_measurement_ids")
+            source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
+
             detectors_json, observables_json = resolve_result_tags_for_guppy(
                 detectors_json,
                 observables_json,
                 hugr_bytes,
-                tc.num_measurements(),
+                source_measurement_ids,
+                _extract_measurement_meas_ids(tc),
             )
 
         # Hand the caller's metadata to the Rust builder verbatim; it owns all
@@ -409,6 +413,15 @@ def _compiler_certified_result_traces(
     required_tags: Sequence[str],
 ) -> list[dict[str, Any]]:
     """Resolve direct scalar result tags without trusting runtime read timing."""
+    generator_layout = getattr(guppy, "__pecos_named_measurement_layout_v1__", None)
+    if generator_layout is not None:
+        return _generator_certified_result_traces(
+            generator_layout,
+            circuit,
+            runtime_result_traces,
+            required_tags=required_tags,
+        )
+
     candidate_tags = sorted(
         {
             *required_tags,
@@ -418,7 +431,7 @@ def _compiler_certified_result_traces(
     if not candidate_tags:
         return []
 
-    from pecos_rslib import resolve_result_tags_for_guppy
+    from pecos_rslib import extract_result_tag_measurements_for_guppy
 
     from pecos._compilation import guppy_to_hugr
 
@@ -430,37 +443,143 @@ def _compiler_certified_result_traces(
             raise ValueError(msg) from exc
         return []
 
+    tag_occurrences, static_measurement_count = extract_result_tag_measurements_for_guppy(hugr_bytes)
+    source_ids_json = circuit.get_meta("guppy_source_measurement_ids")
+    source_measurement_ids = json.loads(source_ids_json) if source_ids_json else list(range(circuit.num_measurements()))
+    from pecos.qec.surface.decode import _extract_measurement_meas_ids
+
+    runtime_measurement_ids = _extract_measurement_meas_ids(circuit)
+    if len(source_measurement_ids) != len(set(source_measurement_ids)) or set(source_measurement_ids) != set(
+        runtime_measurement_ids,
+    ):
+        msg = "source and runtime measurement identities must be unique and describe the same set"
+        raise ValueError(msg)
+    if static_measurement_count != len(source_measurement_ids):
+        if required_tags:
+            msg = (
+                "result_ref(...) is not supported for Guppy programs with runtime loops: "
+                f"the HUGR has {static_measurement_count} static measurement op(s) but "
+                f"the traced program emits {len(source_measurement_ids)} measurement(s)"
+            )
+            raise ValueError(msg)
+        return []
+
     required = set(required_tags)
+    runtime_arities: dict[tuple[str, int], int] = {}
+    runtime_occurrences: dict[str, int] = {}
+    for trace in runtime_result_traces:
+        tag = trace.get("name")
+        if not isinstance(tag, str):
+            continue
+        occurrence = runtime_occurrences.get(tag, 0)
+        runtime_occurrences[tag] = occurrence + 1
+        values = trace.get("values")
+        if isinstance(values, list):
+            runtime_arities[(tag, occurrence)] = max(len(values), 1)
     certified: list[dict[str, Any]] = []
     for tag in candidate_tags:
-        tag_request = json.dumps([{"id": 0, "result_tags": [tag]}])
-        try:
-            resolved_json, _ = resolve_result_tags_for_guppy(
-                tag_request,
-                "[]",
-                hugr_bytes,
-                circuit.num_measurements(),
-            )
-        except ValueError as exc:
+        occurrences = tag_occurrences.get(tag)
+        if occurrences is None:
             if tag in required:
-                raise
-            if "runtime loops" in str(exc):
-                return []
+                msg = f"result_ref {tag!r} is absent from the compiled Guppy program"
+                raise ValueError(msg)
             continue
-
-        entries = json.loads(resolved_json)
-        if len(entries) != 1:
-            msg = f"compiler returned {len(entries)} result entries while resolving tag {tag!r}"
-            raise ValueError(msg)
-        certified.extend(
-            {
-                "name": tag,
-                "values": [False],
-                "result_ids": [circuit.num_measurements() + int(record)],
-            }
-            for record in entries[0]["records"]
-        )
+        for occurrence, ordinal in enumerate(occurrences):
+            if ordinal is None:
+                arity = runtime_arities.get((tag, occurrence), 1)
+                certified.append(
+                    {
+                        "name": tag,
+                        "occurrence": occurrence,
+                        "values": [False] * arity,
+                        "result_ids": [],
+                    },
+                )
+                continue
+            if ordinal >= len(source_measurement_ids):
+                msg = f"compiler measurement ordinal {ordinal} is outside the traced source measurement stream"
+                raise ValueError(msg)
+            certified.append(
+                {
+                    "name": tag,
+                    "occurrence": occurrence,
+                    "values": [False],
+                    "result_ids": [int(source_measurement_ids[ordinal])],
+                },
+            )
     return certified
+
+
+def _generator_certified_result_traces(
+    layout: Any,
+    circuit: Any,
+    runtime_result_traces: Sequence[Mapping[str, Any]],
+    *,
+    required_tags: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Validate a generator-supplied named-output to source-measurement layout."""
+    if not isinstance(layout, Sequence) or isinstance(layout, (str, bytes)):
+        msg = "Guppy named measurement layout certificate must be a sequence"
+        raise TypeError(msg)
+    entries: list[tuple[str, int]] = []
+    for entry in layout:
+        if (
+            not isinstance(entry, Sequence)
+            or isinstance(entry, (str, bytes))
+            or len(entry) != 2
+            or not isinstance(entry[0], str)
+            or isinstance(entry[1], bool)
+            or not isinstance(entry[1], int)
+            or entry[1] < 0
+        ):
+            msg = f"invalid Guppy named measurement layout entry: {entry!r}"
+            raise ValueError(msg)
+        entries.append((entry[0], entry[1]))
+
+    source_ids_json = circuit.get_meta("guppy_source_measurement_ids")
+    source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
+    if len(entries) != len(source_measurement_ids):
+        msg = (
+            "Guppy named measurement layout has "
+            f"{len(entries)} entries but the source trace has {len(source_measurement_ids)} measurements"
+        )
+        raise ValueError(msg)
+
+    runtime_value_count: dict[str, int] = {}
+    for trace in runtime_result_traces:
+        tag = trace.get("name")
+        values = trace.get("values")
+        if isinstance(tag, str) and isinstance(values, list):
+            runtime_value_count[tag] = runtime_value_count.get(tag, 0) + len(values)
+    layout_value_count: dict[str, int] = {}
+    seen_slots: set[tuple[str, int]] = set()
+    for slot in entries:
+        if slot in seen_slots:
+            msg = f"Guppy named measurement layout repeats output slot {slot!r}"
+            raise ValueError(msg)
+        seen_slots.add(slot)
+        layout_value_count[slot[0]] = max(layout_value_count.get(slot[0], 0), slot[1] + 1)
+    for tag, count in layout_value_count.items():
+        if runtime_value_count.get(tag) != count:
+            msg = (
+                f"Guppy named measurement layout expects {count} value(s) for {tag!r}, "
+                f"but the runtime trace emits {runtime_value_count.get(tag, 0)}"
+            )
+            raise ValueError(msg)
+    missing_required = sorted(set(required_tags).difference(layout_value_count))
+    if missing_required:
+        msg = f"result_ref tag(s) are absent from the generator-certified layout: {missing_required}"
+        raise ValueError(msg)
+
+    return [
+        {
+            "name": tag,
+            "occurrence": value_index,
+            "values": [False],
+            "result_ids": [int(source_measurement_ids[source_index])],
+        }
+        for source_index, (tag, value_index) in enumerate(entries)
+    ]
 
 
 def build_dem_from_guppy(
@@ -523,6 +642,11 @@ def build_dem_from_guppy(
     referenced_tags = sorted(
         {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
     )
+    named_result_binding = (
+        "generator_layout_v1"
+        if getattr(guppy, "__pecos_named_measurement_layout_v1__", None) is not None
+        else "compiler_direct_scalar"
+    )
     result_traces = _compiler_certified_result_traces(
         guppy,
         circuit,
@@ -572,6 +696,7 @@ def build_dem_from_guppy(
         observables_json=schema.observables_json,
         measurement_ledger=schema.ledger,
         schema_fingerprint=schema.schema_fingerprint,
+        named_result_binding=named_result_binding,
         _detector_meas_ids=schema.detector_meas_ids,
         _observable_meas_ids=schema.observable_meas_ids,
         _result_ids_by_tag=schema.result_ids_by_tag,

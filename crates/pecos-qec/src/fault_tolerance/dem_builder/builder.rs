@@ -3417,15 +3417,12 @@ fn observable_records_from_annotations(
 /// `tag_to_ords` is the **sound** Guppy `result(tag, ...)` -> measurement
 /// ordinal binding recovered structurally from the compiled HUGR
 /// (reorder-immune; see `pecos_hugr_qis::result_tags`). Each referenced tag's
-/// ordinals are converted to record offsets (`ordinal - traced_meas_count`).
-/// `result_tags` is an *alternative* to `records` (not additive): if the
-/// entry has no `records`, the resolved offsets become its `records`; if it
-/// has both, they must be redundant (sorted-set equality) and `records` is
-/// left unchanged. `result_tags` is then removed so the downstream parser is
-/// unchanged.
+/// ordinals are mapped through `source_meas_ids` to stable runtime measurement
+/// identities. `result_tags` is an alternative to `records`/`meas_ids` (not
+/// additive): any co-present form must resolve to the same measurements.
 ///
 /// Fail-loud (returns `Err`), never silently misbinds:
-/// - **Loop guard**: if `static_meas_count != traced_meas_count` the program
+/// - **Loop guard**: if `static_meas_count != source_meas_ids.len()` the program
 ///   has un-unrolled runtime loops (the HUGR has one static measure op per
 ///   loop body), so per-occurrence tag binding is not statically available.
 /// - An unknown tag, malformed `result_tags`, or invalid JSON is an error.
@@ -3436,22 +3433,38 @@ fn observable_records_from_annotations(
 pub fn resolve_result_tags(
     detectors_json: &str,
     observables_json: &str,
-    tag_to_ords: &std::collections::BTreeMap<String, Vec<usize>>,
+    tag_to_ords: &std::collections::BTreeMap<String, Vec<Option<usize>>>,
     static_meas_count: usize,
-    traced_meas_count: usize,
+    source_meas_ids: &[usize],
+    runtime_meas_ids: &[usize],
 ) -> Result<(String, String), DemBuilderError> {
-    if static_meas_count != traced_meas_count {
+    if static_meas_count != source_meas_ids.len() {
         return Err(DemBuilderError::ParseError(format!(
             "result_tags (tag-referenced detectors) is not supported for Guppy \
              programs with runtime loops: the HUGR has {static_meas_count} \
              static measurement op(s) but the traced program emits \
-             {traced_meas_count} measurement(s). Per-occurrence tag binding is \
-             not statically available; use positional records."
+             {} measurement(s). Per-occurrence tag binding is \
+             not statically available; use positional records.",
+            source_meas_ids.len()
         )));
     }
-    let traced = i64::try_from(traced_meas_count).map_err(|_| {
-        DemBuilderError::ParseError("traced measurement count too large".to_string())
-    })?;
+    let source_set = source_meas_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let runtime_set = runtime_meas_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if source_set.len() != source_meas_ids.len()
+        || runtime_set.len() != runtime_meas_ids.len()
+        || source_set != runtime_set
+    {
+        return Err(DemBuilderError::ParseError(
+            "source and runtime measurement identities must be unique and describe the same set"
+                .to_string(),
+        ));
+    }
 
     let rewrite = |json: &str, kind: &str| -> Result<String, DemBuilderError> {
         if json.trim().is_empty() {
@@ -3477,7 +3490,7 @@ pub fn resolve_result_tags(
                     "result_tags must be a JSON array of strings".to_string(),
                 )
             })?;
-            let mut tag_offsets: Vec<i64> = Vec::new();
+            let mut tag_meas_ids: Vec<usize> = Vec::new();
             for tag in tag_list {
                 let tag = tag.as_str().ok_or_else(|| {
                     DemBuilderError::ParseError("result_tags entries must be strings".to_string())
@@ -3488,8 +3501,18 @@ pub fn resolve_result_tags(
                          program never records via result(...)"
                     ))
                 })?;
-                for &ord in ords {
-                    tag_offsets.push(i64::try_from(ord).unwrap_or(i64::MAX) - traced);
+                for (occurrence, ord) in ords.iter().enumerate() {
+                    let ord = ord.ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "{kind} references result_tag {tag:?}, but occurrence {occurrence} is not a direct scalar measurement result"
+                        ))
+                    })?;
+                    let meas_id = source_meas_ids.get(ord).ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "compiler measurement ordinal {ord} is outside the traced source measurement stream"
+                        ))
+                    })?;
+                    tag_meas_ids.push(*meas_id);
                 }
             }
 
@@ -3500,47 +3523,94 @@ pub fn resolve_result_tags(
             // would either silently weaken the DEM (when callers expected
             // alternatives) or corrupt parity by double-referencing (when
             // they were actually redundant).
-            match obj.get("records") {
-                None => {
-                    obj.insert(
-                        "records".to_string(),
-                        serde_json::Value::Array(
-                            tag_offsets
-                                .into_iter()
-                                .map(serde_json::Value::from)
-                                .collect(),
-                        ),
-                    );
-                }
-                Some(records_value) => {
-                    let records_array = records_value.as_array().ok_or_else(|| {
-                        DemBuilderError::ParseError(format!(
-                            "{kind} records must be a JSON array of integers"
-                        ))
-                    })?;
-                    let mut existing: Vec<i64> = Vec::with_capacity(records_array.len());
-                    for rec in records_array {
-                        let r = rec.as_i64().ok_or_else(|| {
+            let mut existing_meas_ids: Option<Vec<usize>> = None;
+            if let Some(meas_ids_value) = obj.get("meas_ids") {
+                let meas_ids_array = meas_ids_value.as_array().ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} meas_ids must be a JSON array of non-negative integers"
+                    ))
+                })?;
+                let mut parsed = Vec::with_capacity(meas_ids_array.len());
+                for meas_id in meas_ids_array {
+                    let meas_id = meas_id
+                        .as_u64()
+                        .and_then(|value| usize::try_from(value).ok())
+                        .ok_or_else(|| {
                             DemBuilderError::ParseError(format!(
-                                "{kind} records entries must be integers"
+                                "{kind} meas_ids entries must be non-negative integers"
                             ))
                         })?;
-                        existing.push(r);
-                    }
-                    let mut a = existing;
-                    let mut b = tag_offsets;
+                    parsed.push(meas_id);
+                }
+                existing_meas_ids = Some(parsed);
+            }
+            if let Some(records_value) = obj.get("records") {
+                let records_array = records_value.as_array().ok_or_else(|| {
+                    DemBuilderError::ParseError(format!(
+                        "{kind} records must be a JSON array of integers"
+                    ))
+                })?;
+                let mut from_records: Vec<usize> = Vec::with_capacity(records_array.len());
+                for rec in records_array {
+                    let r = rec.as_i64().ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "{kind} records entries must be integers"
+                        ))
+                    })?;
+                    let runtime_len = i64::try_from(runtime_meas_ids.len()).map_err(|_| {
+                        DemBuilderError::ParseError(
+                            "traced measurement count too large".to_string(),
+                        )
+                    })?;
+                    let index = runtime_len + r;
+                    let index = usize::try_from(index)
+                        .ok()
+                        .filter(|&value| value < runtime_meas_ids.len())
+                        .ok_or_else(|| {
+                            DemBuilderError::ParseError(format!(
+                                "{kind} record offset {r} is out of range for {} measurements",
+                                runtime_meas_ids.len()
+                            ))
+                        })?;
+                    from_records.push(runtime_meas_ids[index]);
+                }
+                if let Some(existing) = &existing_meas_ids {
+                    let mut a = existing.clone();
+                    let mut b = from_records.clone();
                     a.sort_unstable();
                     b.sort_unstable();
                     if a != b {
                         return Err(DemBuilderError::ParseError(format!(
-                            "{kind} entry has both 'records' and 'result_tags' but \
-                             they reference different measurements (records {a:?}, \
-                             result_tags resolve to {b:?}); they are alternatives, \
-                             not additive -- provide one, or make them redundant"
+                            "{kind} records and meas_ids reference different measurements"
                         )));
                     }
-                    // Records left unchanged; tag offsets are redundant.
                 }
+                existing_meas_ids = Some(from_records);
+            }
+
+            if let Some(existing) = existing_meas_ids {
+                let mut a = existing;
+                let mut b = tag_meas_ids;
+                a.sort_unstable();
+                b.sort_unstable();
+                if a != b {
+                    return Err(DemBuilderError::ParseError(format!(
+                        "{kind} entry has both 'records' and 'result_tags' but \
+                             they reference different measurements (existing {a:?}, \
+                             result_tags resolve to meas_ids {b:?}); they are alternatives, \
+                             not additive -- provide one, or make them redundant"
+                    )));
+                }
+            } else {
+                obj.insert(
+                    "meas_ids".to_string(),
+                    serde_json::Value::Array(
+                        tag_meas_ids
+                            .into_iter()
+                            .map(serde_json::Value::from)
+                            .collect(),
+                    ),
+                );
             }
         }
         serde_json::to_string(&value)

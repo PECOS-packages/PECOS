@@ -36,10 +36,11 @@ silently permuting decoder inputs.
 
 The audited path is deliberately fail-closed. A runtime trace must contain a
 complete lowered operation stream with stable measurement IDs; raw pre-runtime
-QIS order is not an acceptable substitute. Named shot conversion likewise
-accepts only compiler-certified direct scalar `result()` dataflow. Aggregate
-arrays and transformed booleans must not be treated as measurement identity
-until the compiler exposes an explicit element-level provenance ABI.
+QIS order is not an acceptable substitute. Named shot conversion accepts
+compiler-certified direct scalar `result()` dataflow and validated
+generator-supplied scalar layouts. Aggregate arrays and transformed booleans
+must not be treated as generic measurement identity until the compiler exposes
+an explicit element-level provenance ABI.
 
 This should support calls like:
 
@@ -131,8 +132,9 @@ line.
 
 ## Follow-Up Guidance
 
-- Prefer the generic `from_guppy(...)` abstraction for future DEM construction
-  rather than adding more surface-specific tracing plumbing.
+- Prefer `build_dem_from_guppy(...)` for new audited workflows. Keep
+  `DetectorErrorModel.from_guppy(...)` as the lower-level JSON compatibility
+  constructor rather than adding more surface-specific tracing plumbing.
 - Runtime plugins are intentionally generic: pass any Selene-compatible runtime
   plugin object through `pecos.selene_engine(runtime)` or the higher-level
   `runtime=...` arguments on traced Guppy/DEM helpers. PECOS should depend only

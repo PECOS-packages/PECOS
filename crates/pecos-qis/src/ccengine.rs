@@ -63,6 +63,7 @@ pub struct OperationTraceChunk {
     pub num_operations: usize,
     pub operations: Vec<Operation>,
     pub lowered_quantum_ops: Vec<LoweredQuantumGateTrace>,
+    pub lowered_quantum_ops_complete: bool,
     pub named_result_traces: Vec<NamedResultTrace>,
 }
 
@@ -926,17 +927,19 @@ impl QisEngine {
         commands: &ByteMessage,
         measurement_mapping: &[usize],
         gate_metadata: &[TraceMetadata],
-    ) -> Vec<LoweredQuantumGateTrace> {
-        match commands.quantum_ops() {
-            Ok(gates) => {
+    ) -> Result<Vec<LoweredQuantumGateTrace>, String> {
+        commands
+            .quantum_ops()
+            .map_err(|err| format!("failed to parse lowered quantum ops: {err}"))
+            .and_then(|gates| {
                 let mut measurement_cursor = 0usize;
                 let mut traces = Vec::with_capacity(gates.len());
                 if gate_metadata.len() != gates.len() {
-                    warn!(
-                        "Lowered operation trace has {} metadata record(s) for {} gate(s)",
+                    return Err(format!(
+                        "lowered operation trace has {} metadata record(s) for {} gate(s)",
                         gate_metadata.len(),
                         gates.len()
-                    );
+                    ));
                 }
                 for (gate_index, gate) in gates.iter().enumerate() {
                     let gate_type = gate.gate_type.to_string();
@@ -948,15 +951,14 @@ impl QisEngine {
                     let measurement_result_ids = if gate_type == "MZ" {
                         let end = measurement_cursor + qubits.len();
                         if end > measurement_mapping.len() {
-                            warn!(
-                                "Lowered operation trace has more measured qubits than result-id mappings"
+                            return Err(
+                                "lowered operation trace has more measured qubits than result-id mappings"
+                                    .to_string(),
                             );
-                            Vec::new()
-                        } else {
-                            let ids = measurement_mapping[measurement_cursor..end].to_vec();
-                            measurement_cursor = end;
-                            ids
                         }
+                        let ids = measurement_mapping[measurement_cursor..end].to_vec();
+                        measurement_cursor = end;
+                        ids
                     } else {
                         Vec::new()
                     };
@@ -974,19 +976,14 @@ impl QisEngine {
                     });
                 }
                 if measurement_cursor != measurement_mapping.len() {
-                    warn!(
-                        "Lowered operation trace consumed {} measurement mapping(s), but {} were present",
+                    return Err(format!(
+                        "lowered operation trace consumed {} measurement mapping(s), but {} were present",
                         measurement_cursor,
                         measurement_mapping.len()
-                    );
+                    ));
                 }
-                traces
-            }
-            Err(err) => {
-                warn!("Failed to parse lowered quantum ops for tracing: {err}");
-                Vec::new()
-            }
-        }
+                Ok(traces)
+            })
     }
 
     fn trace_operations_chunk(
@@ -1000,15 +997,20 @@ impl QisEngine {
             return;
         }
 
-        let lowered_trace = lowered_quantum_ops
-            .map(|lowered| {
-                Self::lowered_quantum_ops_trace(
-                    &lowered.commands,
-                    &self.measurement_mapping,
-                    &lowered.gate_metadata,
-                )
-            })
-            .unwrap_or_default();
+        let (lowered_trace, lowered_quantum_ops_complete) = lowered_quantum_ops.map_or_else(
+            || (Vec::new(), false),
+            |lowered| match Self::lowered_quantum_ops_trace(
+                &lowered.commands,
+                &self.measurement_mapping,
+                &lowered.gate_metadata,
+            ) {
+                Ok(trace) => (trace, true),
+                Err(err) => {
+                    warn!("Failed to certify lowered operation trace: {err}");
+                    (Vec::new(), false)
+                }
+            },
+        );
         let file_name = format!(
             "engine_{:04}_shot_{:06}_chunk_{:04}_{}.json",
             self.trace_engine_id, self.trace_shot_index, self.trace_chunk_index, stage
@@ -1030,6 +1032,7 @@ impl QisEngine {
             num_operations: ops.len(),
             operations: ops.to_vec(),
             lowered_quantum_ops: lowered_trace,
+            lowered_quantum_ops_complete,
             named_result_traces: Vec::new(),
         };
 
@@ -1099,6 +1102,7 @@ impl QisEngine {
             num_operations: 0,
             operations: Vec::new(),
             lowered_quantum_ops: Vec::new(),
+            lowered_quantum_ops_complete: true,
             named_result_traces: named_result_traces.to_vec(),
         };
 
@@ -1849,6 +1853,7 @@ mod tests {
         assert_eq!(value["waiting_for_result_id"], 7);
         assert_eq!(value["current_shot_seed"], 123);
         assert_eq!(value["num_operations"], 4);
+        assert_eq!(value["lowered_quantum_ops_complete"], true);
         assert_eq!(value["operations"][0]["AllocateQubit"]["id"], 0);
         assert_eq!(value["operations"][1]["Quantum"]["H"], 0);
         assert_eq!(value["operations"][2]["Quantum"]["Idle"][0], 20e-9);

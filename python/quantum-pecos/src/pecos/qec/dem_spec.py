@@ -63,7 +63,11 @@ class ResultRef:
 
 
 def result_ref(tag: str, *, occurrence: int = 0, element: int | None = None) -> ResultRef:
-    """Reference a scalar or array element emitted by Guppy ``result()``."""
+    """Reference a direct scalar measurement emitted by Guppy ``result()``.
+
+    ``element`` is reserved for future compiler-certified array provenance;
+    nonzero/array-valued references currently fail closed during resolution.
+    """
     return ResultRef(tag, occurrence=occurrence, element=element)
 
 
@@ -152,7 +156,7 @@ class _ResolvedSchema:
     detector_meas_ids: tuple[tuple[int, ...], ...]
     observable_meas_ids: tuple[tuple[int, tuple[int, ...]], ...]
     ledger: tuple[MeasurementLedgerEntry, ...]
-    result_ids_by_tag: tuple[tuple[str, tuple[int, ...]], ...]
+    result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...]
     schema_fingerprint: str
 
 
@@ -166,9 +170,10 @@ class GuppyDemBuild:
     observables_json: str
     measurement_ledger: tuple[MeasurementLedgerEntry, ...]
     schema_fingerprint: str
+    named_result_binding: str
     _detector_meas_ids: tuple[tuple[int, ...], ...]
     _observable_meas_ids: tuple[tuple[int, tuple[int, ...]], ...]
-    _result_ids_by_tag: tuple[tuple[str, tuple[int, ...]], ...]
+    _result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...]
 
     @property
     def audit(self) -> dict[str, Any]:
@@ -177,6 +182,7 @@ class GuppyDemBuild:
         return {
             "schema_fingerprint": self.schema_fingerprint,
             "soundness_scope": "static_schedule_only",
+            "named_result_binding": self.named_result_binding,
             "measurement_count": len(runtime_order),
             "runtime_measurement_order": runtime_order,
             "runtime_order_is_canonical": runtime_order == list(range(len(runtime_order))),
@@ -210,11 +216,25 @@ class GuppyDemBuild:
                 msg = f"result {tag!r} has {len(values)} values; trace provenance expects {len(result_ids)}"
                 raise ValueError(msg)
             for meas_id, value in zip(result_ids, values, strict=True):
+                if meas_id is None:
+                    continue
                 bit = int(bool(value))
                 if meas_id in by_id and by_id[meas_id] != bit:
                     raise ValueError(f"result outputs disagree about measurement MeasId {meas_id}")
                 by_id[meas_id] = bit
         return self.evaluate_measurements(by_id)
+
+    def evaluate_result_columns(self, results: Mapping[str, Sequence[Any]]) -> list[tuple[list[int], int]]:
+        """Evaluate PECOS ``ShotMap.to_dict()`` column-oriented results."""
+        relevant = {tag for tag, _ in self._result_ids_by_tag}
+        available = [tag for tag in relevant if tag in results]
+        if not available:
+            raise ValueError("result columns do not contain any compiler- or generator-certified measurement tags")
+        shot_count = len(results[available[0]])
+        mismatched = {tag: len(results[tag]) for tag in available if len(results[tag]) != shot_count}
+        if mismatched:
+            raise ValueError(f"result columns have inconsistent shot counts: {mismatched}")
+        return [self.evaluate_results({tag: results[tag][shot] for tag in available}) for shot in range(shot_count)]
 
     def evaluate_measurements(self, values_by_meas_id: Mapping[int, int | bool]) -> tuple[list[int], int]:
         """Evaluate the canonical detector vector and packed observable mask."""
@@ -257,25 +277,33 @@ def _measurement_ids_in_runtime_order(circuit: Any) -> list[int]:
 
 def _index_result_traces(
     traces: Sequence[Mapping[str, Any]],
-) -> tuple[dict[str, list[tuple[int, ...]]], dict[int, list[ResultRef]]]:
-    calls: dict[str, list[tuple[int, ...]]] = defaultdict(list)
+) -> tuple[dict[str, dict[int, tuple[int | None, ...]]], dict[int, list[ResultRef]]]:
+    calls: dict[str, dict[int, tuple[int | None, ...]]] = defaultdict(dict)
+    next_occurrence: dict[str, int] = defaultdict(int)
     refs_by_id: dict[int, list[ResultRef]] = defaultdict(list)
     for trace in traces:
         tag = trace.get("name")
+        if not isinstance(tag, str):
+            continue
+        raw_occurrence = trace.get("occurrence")
+        if raw_occurrence is None:
+            occurrence = next_occurrence[tag]
+        elif isinstance(raw_occurrence, bool) or not isinstance(raw_occurrence, int) or raw_occurrence < 0:
+            raise ValueError(f"result trace {tag!r} has invalid occurrence {raw_occurrence!r}")
+        else:
+            occurrence = raw_occurrence
+        next_occurrence[tag] = max(next_occurrence[tag], occurrence + 1)
+        if occurrence in calls[tag]:
+            raise ValueError(f"result trace {tag!r} repeats occurrence {occurrence}")
+
         values = trace.get("values")
         raw_ids = trace.get("result_ids")
-        if not isinstance(tag, str) or not isinstance(values, list) or not isinstance(raw_ids, list):
-            continue
-        if len(values) != len(raw_ids):
-            # The FFI emits an empty binding when runtime read timing cannot
-            # prove provenance. Ignore it here; compiler dataflow resolves a
-            # referenced scalar tag or the reference fails as absent.
-            continue
-        if not raw_ids:
+        if not isinstance(values, list) or not isinstance(raw_ids, list) or len(values) != len(raw_ids) or not raw_ids:
+            arity = max(len(values), 1) if isinstance(values, list) else 1
+            calls[tag][occurrence] = (None,) * arity
             continue
         result_ids = tuple(int(result_id) for result_id in raw_ids)
-        occurrence = len(calls[tag])
-        calls[tag].append(result_ids)
+        calls[tag][occurrence] = result_ids
         for element, meas_id in enumerate(result_ids):
             refs_by_id[meas_id].append(
                 ResultRef(tag, occurrence=occurrence, element=element if len(result_ids) > 1 else None),
@@ -288,7 +316,7 @@ def _resolve_ref(
     *,
     num_measurements: int,
     runtime_meas_ids: set[int],
-    result_calls: Mapping[str, list[tuple[int, ...]]],
+    result_calls: Mapping[str, Mapping[int, tuple[int | None, ...]]],
 ) -> int:
     if isinstance(ref, RecordRef):
         if sorted(runtime_meas_ids) != list(range(num_measurements)):
@@ -304,21 +332,25 @@ def _resolve_ref(
         return logical_index
 
     calls = result_calls.get(ref.tag)
-    if calls is None or ref.occurrence >= len(calls):
+    if calls is None or ref.occurrence not in calls:
         raise ValueError(f"result_ref {ref.tag!r} occurrence {ref.occurrence} is absent from the runtime trace")
     result_ids = calls[ref.occurrence]
+    if any(result_id is None for result_id in result_ids):
+        raise ValueError(
+            f"result_ref {ref.tag!r} occurrence {ref.occurrence} is not a direct scalar measurement result",
+        )
     if len(result_ids) != 1:
         raise ValueError(
             "array-valued result_ref provenance is not yet certified; expose "
             "scalar result() tags or use canonical rec[...] references",
         )
     if ref.element is None:
-        return result_ids[0]
+        return int(result_ids[0])
     if ref.element not in (None, 0):
         raise ValueError(
             f"scalar result_ref {ref.tag!r} only accepts element=None or element=0",
         )
-    return result_ids[0]
+    return int(result_ids[0])
 
 
 def _xor_normalize(meas_ids: Sequence[int]) -> tuple[int, ...]:
@@ -421,9 +453,15 @@ def _resolve_dem_specs(
     # Callers supply only compiler-certified direct scalar traces. Aggregate
     # array element order is not certified and must never become a shot binding.
     result_ids_by_tag = tuple(
-        (tag, tuple(meas_id for call in calls for meas_id in call))
+        (
+            tag,
+            tuple(result_id for occurrence in range(len(calls)) for result_id in calls[occurrence]),
+        )
         for tag, calls in sorted(result_calls.items())
-        if calls and all(len(call) == 1 for call in calls)
+        if calls
+        and sorted(calls) == list(range(len(calls)))
+        and all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
+        and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
     )
     return _ResolvedSchema(
         detectors_json=json.dumps(detector_entries, separators=(",", ":")),

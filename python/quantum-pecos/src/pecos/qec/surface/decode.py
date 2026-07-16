@@ -43,6 +43,7 @@ For circuit-level decoding with MWPM:
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -1366,6 +1367,14 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
     exercised end-to-end by the byte-identical surface DEM regressions.)
     """
     for idx, chunk in enumerate(chunks):
+        if _chunk_has_lowerable_op(chunk) and chunk.get("lowered_quantum_ops_complete") is not True:
+            msg = (
+                f"Traced chunk {idx} does not attest a complete lowered gate stream. "
+                "Audited DEM construction requires lowered_quantum_ops_complete=true "
+                "from the QIS trace producer; refusing to infer completeness from "
+                "a non-empty lowered_quantum_ops list."
+            )
+            raise ValueError(msg)
         if _chunk_has_lowerable_op(chunk) and not chunk.get("lowered_quantum_ops"):
             msg = (
                 f"Traced chunk {idx} carries lowerable operations (a quantum "
@@ -1435,6 +1444,26 @@ def named_result_traces_from_operation_trace(chunks: list[dict[str, Any]]) -> li
     return traces
 
 
+def source_measurement_ids_from_operation_trace(chunks: list[dict[str, Any]]) -> list[int]:
+    """Return pre-runtime QIS measurement ids in source execution order."""
+    ids: list[int] = []
+    for chunk in chunks:
+        for operation in chunk.get("operations") or []:
+            if not isinstance(operation, Mapping):
+                continue
+            quantum = operation.get("Quantum")
+            if not isinstance(quantum, Mapping):
+                continue
+            measure = quantum.get("Measure")
+            if not isinstance(measure, Sequence) or isinstance(measure, (str, bytes)) or len(measure) != 2:
+                continue
+            ids.append(int(measure[1]))
+    if len(ids) != len(set(ids)):
+        msg = "raw QIS operation trace contains duplicate measurement result ids"
+        raise ValueError(msg)
+    return ids
+
+
 def capture_guppy_operation_trace(
     program: Any,
     num_qubits: int,
@@ -1478,6 +1507,10 @@ def trace_guppy_into_tick_circuit_with_result_traces(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
         allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
+    )
+    tick_circuit.set_meta(
+        "guppy_source_measurement_ids",
+        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
     )
     _validate_trace_hosted_operations_if_requested(
         tick_circuit,
@@ -1539,6 +1572,11 @@ def trace_guppy_into_tick_circuit(
     tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
+        allow_raw_measurement_id_fallback=False,
+    )
+    tick_circuit.set_meta(
+        "guppy_source_measurement_ids",
+        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
     )
     _validate_trace_hosted_operations_if_requested(
         tick_circuit,

@@ -623,6 +623,7 @@ def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
         {
             "operations": [{"Quantum": {"Measure": [0, 7]}}],
             "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0], "angles": [], "measurement_result_ids": [7]}],
+            "lowered_quantum_ops_complete": True,
         },
         {  # allocation/output bookkeeping only; legitimately has no lowered ops
             "operations": [{"AllocateResult": {"id": 7}}, {"RecordOutput": {"id": 7}}],
@@ -641,13 +642,15 @@ def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
         {
             "operations": [{"Quantum": {"H": 0}}],
             "lowered_quantum_ops": [{"gate_type": "H", "qubits": [0], "angles": []}],
+            "lowered_quantum_ops_complete": True,
         },
         {  # raw quantum gate present, but not lowered -> would be dropped
             "operations": [{"Quantum": {"CX": [0, 1]}}],
             "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": False,
         },
     ]
-    with pytest.raises(ValueError, match=r"mixed/partially-lowered|incomplete gate stream"):
+    with pytest.raises(ValueError, match=r"does not attest|mixed/partially-lowered|incomplete gate stream"):
         _reject_partially_lowered_trace(chunks)
 
 
@@ -659,14 +662,57 @@ def test_reject_partially_lowered_trace_fails_on_unlowered_allocation() -> None:
         {
             "operations": [{"Quantum": {"H": 0}}],
             "lowered_quantum_ops": [{"gate_type": "H", "qubits": [0], "angles": []}],
+            "lowered_quantum_ops_complete": True,
         },
         {  # allocation present (lowers to PZ) but not lowered -> would be dropped
             "operations": [{"AllocateQubit": {"id": 1}}],
             "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": False,
         },
     ]
-    with pytest.raises(ValueError, match=r"mixed/partially-lowered|incomplete gate stream"):
+    with pytest.raises(ValueError, match=r"does not attest|mixed/partially-lowered|incomplete gate stream"):
         _reject_partially_lowered_trace(chunks)
+
+
+def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
+    chunks = [
+        {
+            "operations": [
+                {"AllocateQubit": {"id": 0}},
+                {"Quantum": {"H": 0}},
+                {"Quantum": {"Measure": [0, 7]}},
+            ],
+            "lowered_quantum_ops": [
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "measurement_result_ids": [7]},
+            ],
+        },
+    ]
+
+    with pytest.raises(ValueError, match="does not attest a complete lowered gate stream"):
+        _reject_partially_lowered_trace(chunks)
+
+
+def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    chunks = [
+        {
+            "operations": [
+                {"AllocateQubit": {"id": 0}},
+                {"Quantum": {"Measure": [0, 0]}},
+            ],
+        },
+    ]
+    monkeypatch.setattr("pecos.qec.surface.decode.capture_guppy_operation_trace", lambda *_args, **_kwargs: chunks)
+
+    with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
+        DetectorErrorModel.from_guppy(
+            object(),
+            num_qubits=1,
+            detectors_json='[{"id":0,"records":[-1]}]',
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
 
 
 def test_non_lowered_replay_preserves_non_sequential_result_ids() -> None:

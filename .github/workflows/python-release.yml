@@ -315,7 +315,7 @@ jobs:
           docker run --rm \
             --volume "$PWD:/project" \
             --workdir /project \
-            quay.io/pypa/manylinux_2_28_x86_64:2026.01.04-1 \
+            quay.io/pypa/manylinux_2_28_x86_64:2026.01.04-1@sha256:4d62ce9d1ca259171e7cde403686e538e6f8fdc517660a557a66e102577d67d3 \
             bash scripts/ci/build-llvm-21-manylinux.sh \
             /project/.ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
 
@@ -690,7 +690,7 @@ jobs:
       always() &&
       needs.build_wheelspecos_rslib.result == 'success'
     runs-on: ubuntu-latest
-    container: quay.io/pypa/manylinux_2_28_x86_64
+    container: quay.io/pypa/manylinux_2_28_x86_64:2026.01.04-1@sha256:4d62ce9d1ca259171e7cde403686e538e6f8fdc517660a557a66e102577d67d3
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

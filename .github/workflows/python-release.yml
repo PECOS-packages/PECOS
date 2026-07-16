@@ -260,6 +260,7 @@ jobs:
             architecture: x86_64
             cibw_archs: x86_64
             install_cuda: true
+            python_command: python3
             expected_wheel_platform_tag: manylinux_2_28_x86_64
           # Linux aarch64 - temporarily disabled while the LLVM 21.1
           # manylinux 2.28 bootstrap is validated on the primary x86_64 lane.
@@ -279,16 +280,19 @@ jobs:
           - os: macos-15
             architecture: aarch64
             install_cuda: false
+            python_command: python3
             expected_wheel_platform_tag: macosx_13_0_arm64
           - os: macos-15-intel
             architecture: x86_64
             install_cuda: false
+            python_command: python3
             expected_wheel_platform_tag: macosx_13_0_x86_64
           # Windows x86_64 with CUDA support
           # Note: Uses specific sub-packages to avoid VS integration bug (see Jimver/cuda-toolkit#382)
           - os: windows-2022
             architecture: x86_64
             install_cuda: true
+            python_command: python
             expected_wheel_platform_tag: win_amd64
 
     steps:
@@ -303,6 +307,17 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.inputs.sha || github.sha }}
           submodules: recursive
+
+      - name: Build LLVM 21.1 for manylinux 2.28
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p .ci-llvm
+          docker run --rm \
+            --volume "$PWD:/project" \
+            --workdir /project \
+            quay.io/pypa/manylinux_2_28_x86_64:2026.01.04-1 \
+            bash scripts/ci/build-llvm-21-manylinux.sh \
+            /project/.ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
 
       # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
       - name: Set up Visual Studio environment (Windows)
@@ -414,7 +429,7 @@ jobs:
             fi
             "$CC" --version
             "$CXX" --version
-            bash scripts/ci/install-llvm-21-conda-linux.sh
+            bash scripts/ci/install-llvm-21-manylinux.sh .ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
             cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
             cargo run --locked --release -p pecos-cli -- install cmake --force
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
@@ -475,7 +490,7 @@ jobs:
 
       - name: Verify pecos-rslib wheel platform tag
         run: >
-          python scripts/ci/check_wheel_platform_tags.py
+          ${{ matrix.python_command }} scripts/ci/check_wheel_platform_tags.py
           --expected-platform-tag "${{ matrix.expected_wheel_platform_tag }}"
           wheelhouse/*.whl
 
@@ -518,7 +533,7 @@ jobs:
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=/opt/rh/gcc-toolset-13/root/usr/bin/gcc
             "$CC" --version
             "$CXX" --version
-            bash scripts/ci/install-llvm-21-conda-linux.sh
+            bash scripts/ci/install-llvm-21-manylinux.sh .ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
             cargo run --locked --release -p pecos-cli -- llvm configure "$HOME/.pecos/deps/llvm-21.1"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             LD_LIBRARY_PATH=$HOME/.pecos/deps/llvm-21.1/lib:$LD_LIBRARY_PATH
@@ -567,7 +582,7 @@ jobs:
 
       - name: Verify pecos-rslib-llvm wheel platform tag
         run: >
-          python scripts/ci/check_wheel_platform_tags.py
+          ${{ matrix.python_command }} scripts/ci/check_wheel_platform_tags.py
           --expected-platform-tag "${{ matrix.expected_wheel_platform_tag }}"
           wheelhouse-llvm/*.whl
 

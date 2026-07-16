@@ -20,7 +20,7 @@ case "$(uname -m)" in
         ;;
 esac
 
-dnf install -y cmake curl gcc gcc-c++ ninja-build python3 tar xz
+dnf install -y cmake curl gcc gcc-c++ make python3 tar xz
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -43,7 +43,7 @@ export CXX=/usr/bin/g++
 "$CC" --version
 "$CXX" --version
 
-cmake -S "$SOURCE_DIR/llvm" -B "$BUILD_DIR" -G Ninja \
+cmake -S "$SOURCE_DIR/llvm" -B "$BUILD_DIR" -G "Unix Makefiles" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
     -DLLVM_ENABLE_PROJECTS=clang \

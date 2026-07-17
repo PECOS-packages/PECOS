@@ -1345,6 +1345,30 @@ impl QisEngine {
             .map(|err| PecosError::Generic(format!("dynamic QIS worker failed: {err}")))
     }
 
+    /// Refuse to certify a complete trace while the runtime scheduler still
+    /// holds operations. Per-batch lowering drains the runtime until it stops
+    /// producing, but a scheduling runtime may defer operations past the final
+    /// batch; those would otherwise be dropped silently after the terminal
+    /// marker. Late operations cannot be simulated at this point, so this is
+    /// fail-loud rather than a flush.
+    fn verify_runtime_drained(&mut self) -> Result<(), PecosError> {
+        if !self.runtime.supports_operation_lowering() {
+            return Ok(());
+        }
+        let late_ops = self
+            .runtime
+            .drain_pending_operations()
+            .map_err(|e| PecosError::Generic(format!("Runtime drain check failed: {e}")))?;
+        if !late_ops.is_empty() {
+            return Err(PecosError::Generic(format!(
+                "runtime scheduler emitted {} operation(s) after the final lowered batch; \
+                 refusing to certify a complete trace",
+                late_ops.len()
+            )));
+        }
+        Ok(())
+    }
+
     /// Abort dynamic execution (cleanup)
     fn abort_dynamic_execution(&mut self) {
         // Abort execution via sync handle if available
@@ -1673,6 +1697,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
+            self.verify_runtime_drained()?;
             self.trace_named_result_traces_from_dynamic_handle();
             self.trace_complete_chunk();
             let shot = self.get_results()?;
@@ -1724,6 +1749,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
+            self.verify_runtime_drained()?;
             self.trace_named_result_traces_from_dynamic_handle();
             self.trace_complete_chunk();
             let shot = self.get_results()?;
@@ -1793,6 +1819,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
+            self.verify_runtime_drained()?;
             self.trace_named_result_traces_from_dynamic_handle();
             self.trace_complete_chunk();
             let shot = self.get_results()?;
@@ -2153,6 +2180,89 @@ mod tests {
             engine
                 .continue_processing(ByteMessage::builder().build())
                 .is_err()
+        );
+
+        // The failed shot must not have emitted the terminal trace marker.
+        let wrote_terminal_marker = std::fs::read_dir(temp_dir.path())
+            .expect("read trace dir")
+            .any(|entry| {
+                entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("trace_complete")
+            });
+        assert!(!wrote_terminal_marker);
+    }
+
+    #[derive(Clone, Default)]
+    struct LateOpRuntime {
+        state: ClassicalState,
+    }
+
+    impl QisRuntime for LateOpRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+
+        fn supports_operation_lowering(&self) -> bool {
+            true
+        }
+
+        fn lower_operations(&mut self, _operations: &[Operation]) -> RuntimeResult<Vec<QuantumOp>> {
+            Ok(Vec::new())
+        }
+
+        fn drain_pending_operations(&mut self) -> RuntimeResult<Vec<QuantumOp>> {
+            Ok(vec![QuantumOp::H(0)])
+        }
+    }
+
+    #[test]
+    fn test_undrained_runtime_scheduler_fails_the_shot() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let mut engine = QisEngine::with_runtime(Box::new(LateOpRuntime::default()));
+        engine.set_operation_trace_dir(temp_dir.path());
+        engine.begin_trace_shot();
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            worker_error: None,
+        });
+
+        let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
+            panic!("late scheduler operations must fail the shot");
+        };
+        assert!(
+            err.to_string().contains("after the final lowered batch"),
+            "unexpected error: {err}"
         );
 
         // The failed shot must not have emitted the terminal trace marker.

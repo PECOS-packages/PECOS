@@ -1728,6 +1728,14 @@ impl QisRuntime for SeleneRuntime {
         true
     }
 
+    fn drain_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
+        if self.instance.is_none() {
+            // Nothing was ever submitted; do not load the plugin just to drain.
+            return Ok(Vec::new());
+        }
+        self.drain_runtime_operations()
+    }
+
     fn lower_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
         if has_explicit_qubit_allocations(operations) {
             self.uses_explicit_qubit_allocation = true;

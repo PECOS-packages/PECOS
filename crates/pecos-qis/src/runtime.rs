@@ -258,6 +258,20 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
             .map(|ops| ops.into_iter().map(LoweredQuantumOp::from).collect())
     }
 
+    /// Drain any operations the runtime scheduler is still holding.
+    ///
+    /// A scheduling runtime may defer operations across lowering batches.
+    /// The engine calls this at shot completion, before certifying the trace
+    /// complete: a non-empty result means lowered operations exist that no
+    /// batch will ever carry, so the shot must fail rather than certify.
+    /// Runtimes without operation lowering hold nothing by construction.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot report its pending operations.
+    fn drain_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
+        Ok(Vec::new())
+    }
+
     /// Check if the runtime needs to re-execute with known measurements
     ///
     /// This is set to true after measurements are provided for programs

@@ -183,14 +183,16 @@ different DEM.
 
 ## Limitations
 
-- **Measurement-dependent quantum control flow is unsupported and fails
-  silently.** `from_guppy` traces one ideal execution; a program whose
+- **Measurement-dependent quantum control flow is unsupported and
+  rejected.** `from_guppy` traces one ideal execution, so a program whose
   quantum operations depend on a measurement *outcome* (e.g.
-  `if measure(q): x(other)`) yields a DEM built from a single sampled
-  branch — wrong and seed-dependent, with no error raised.
+  `if measure(q): x(other)`) would yield a DEM built from a single sampled
+  branch — wrong and seed-dependent. Guppy programs whose compiled HUGR
+  contains branching or looping control flow therefore raise `ValueError`
+  before tracing; built-in generators such as `make_surface_code` cross
+  this boundary through a trusted program-bound layout certificate.
   Statically-scheduled gates after measurements (every QEC round has them)
-  are fine; genuinely conditioned gates are not. Pass straight-line
-  programs only.
+  are fine; genuinely conditioned gates are not.
 - **Clifford circuits only.** Traced operations must normalize to named
   Clifford gates (`RZZ(±π/2)` is accepted as `SZZ`/`SZZdg`); residual
   non-Clifford rotations are rejected.

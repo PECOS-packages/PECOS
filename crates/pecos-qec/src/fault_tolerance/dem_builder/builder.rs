@@ -3551,16 +3551,14 @@ pub fn resolve_result_tags(
                     ))
                 })?;
                 let mut from_records: Vec<usize> = Vec::with_capacity(records_array.len());
+                let runtime_len = i64::try_from(runtime_meas_ids.len()).map_err(|_| {
+                    DemBuilderError::ParseError("traced measurement count too large".to_string())
+                })?;
                 for rec in records_array {
                     let r = rec.as_i64().ok_or_else(|| {
                         DemBuilderError::ParseError(format!(
                             "{kind} records entries must be integers"
                         ))
-                    })?;
-                    let runtime_len = i64::try_from(runtime_meas_ids.len()).map_err(|_| {
-                        DemBuilderError::ParseError(
-                            "traced measurement count too large".to_string(),
-                        )
                     })?;
                     let index = runtime_len + r;
                     let index = usize::try_from(index)
@@ -3595,8 +3593,8 @@ pub fn resolve_result_tags(
                 b.sort_unstable();
                 if a != b {
                     return Err(DemBuilderError::ParseError(format!(
-                        "{kind} entry has both 'records' and 'result_tags' but \
-                             they reference different measurements (existing {a:?}, \
+                        "{kind} entry has 'records'/'meas_ids' alongside 'result_tags' but \
+                             they reference different measurements (existing meas_ids {a:?}, \
                              result_tags resolve to meas_ids {b:?}); they are alternatives, \
                              not additive -- provide one, or make them redundant"
                     )));

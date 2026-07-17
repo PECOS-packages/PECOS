@@ -287,8 +287,7 @@ class GuppyDemBuild:
 
     def evaluate_result_columns(self, results: Mapping[str, Sequence[Any]]) -> list[tuple[list[int], int]]:
         """Evaluate PECOS ``ShotMap.to_dict()`` column-oriented results."""
-        relevant = {tag for tag, _ in self._result_ids_by_tag}
-        available = [tag for tag in relevant if tag in results]
+        available = [tag for tag, _ in self._result_ids_by_tag if tag in results]
         if not available:
             raise ValueError("result columns do not contain any compiler- or generator-certified measurement tags")
         shot_count = len(results[available[0]])

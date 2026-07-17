@@ -464,29 +464,21 @@ def _validated_source_measurement_ids(circuit: Any) -> list[int]:
     return source_measurement_ids
 
 
-def _compiler_certified_result_traces(
+def _preflight_guppy_static_schedule(
     guppy: Any,
-    circuit: Any,
-    runtime_result_traces: Sequence[Mapping[str, Any]],
     *,
     required_tags: Sequence[str],
-) -> list[dict[str, Any]]:
-    """Resolve direct scalar result tags without trusting runtime read timing."""
+) -> tuple[Sequence[Any] | None, bytes | None]:
+    """Validate program-level trust before any runtime trace is captured.
+
+    Returns ``(generator_layout, hugr_bytes)``. Runs the generator-certificate
+    digest check and the branching/looping HUGR rejection *before* execution,
+    so an unsupported program cannot run (or hang) ahead of its rejection.
+    """
     generator_layout = _generator_certified_layout(guppy)
     if generator_layout is not None:
-        return _generator_certified_result_traces(
-            generator_layout,
-            circuit,
-            runtime_result_traces,
-            required_tags=required_tags,
-        )
+        return generator_layout, None
 
-    candidate_tags = sorted(
-        {
-            *required_tags,
-            *(trace.get("name") for trace in runtime_result_traces if isinstance(trace.get("name"), str)),
-        },
-    )
     from pecos._compilation import guppy_to_hugr
 
     try:
@@ -495,7 +487,7 @@ def _compiler_certified_result_traces(
         if required_tags:
             msg = "result_ref(...) requires a HUGR-compilable Guppy program"
             raise ValueError(msg) from exc
-        return []
+        return None, None
 
     from pecos_rslib import guppy_hugr_has_nontrivial_control_flow
 
@@ -506,6 +498,34 @@ def _compiler_certified_result_traces(
             "certified from one runtime trace"
         )
         raise ValueError(msg)
+    return None, hugr_bytes
+
+
+def _compiler_certified_result_traces(
+    generator_layout: Sequence[Any] | None,
+    hugr_bytes: bytes | None,
+    circuit: Any,
+    runtime_result_traces: Sequence[Mapping[str, Any]],
+    *,
+    required_tags: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Resolve direct scalar result tags without trusting runtime read timing."""
+    if generator_layout is not None:
+        return _generator_certified_result_traces(
+            generator_layout,
+            circuit,
+            runtime_result_traces,
+            required_tags=required_tags,
+        )
+    if hugr_bytes is None:
+        return []
+
+    candidate_tags = sorted(
+        {
+            *required_tags,
+            *(trace.get("name") for trace in runtime_result_traces if isinstance(trace.get("name"), str)),
+        },
+    )
     if not candidate_tags:
         return []
 
@@ -687,6 +707,14 @@ def build_dem_from_guppy(
     from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
     from pecos.qec.surface.decode import trace_guppy_into_tick_circuit_with_result_traces
 
+    referenced_tags = sorted(
+        {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
+    )
+    generator_layout, hugr_bytes = _preflight_guppy_static_schedule(
+        guppy,
+        required_tags=referenced_tags,
+    )
+    has_generator_layout = generator_layout is not None
     circuit, result_traces = trace_guppy_into_tick_circuit_with_result_traces(
         guppy,
         num_qubits,
@@ -697,12 +725,9 @@ def build_dem_from_guppy(
         allow_raw_measurement_id_fallback=False,
     )
     normalize_traced_qis_tick_circuit(circuit, context="build_dem_from_guppy")
-    referenced_tags = sorted(
-        {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
-    )
-    has_generator_layout = getattr(guppy, _GENERATOR_LAYOUT_ATTR, None) is not None
     result_traces = _compiler_certified_result_traces(
-        guppy,
+        generator_layout,
+        hugr_bytes,
         circuit,
         result_traces,
         required_tags=referenced_tags,

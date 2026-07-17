@@ -90,6 +90,9 @@ struct LoweredCommandBatch {
 struct DynamicExecutionState {
     /// Whether execution has completed
     execution_complete: bool,
+    /// Worker failure captured at completion. Sticky: completion paths must
+    /// error out instead of certifying a partial trace as a complete shot.
+    worker_error: Option<String>,
     /// Sync handle for main thread FFI calls
     /// Uses the same library instance (singleton) as the worker thread,
     /// ensuring TLS consistency across platforms
@@ -1225,6 +1228,7 @@ impl QisEngine {
         self.dynamic_state = Some(DynamicExecutionState {
             sync_handle,
             execution_complete: false,
+            worker_error: None,
         });
 
         Ok(())
@@ -1321,6 +1325,7 @@ impl QisEngine {
                     log::error!("Worker failed: {e}");
                     if let Some(ref mut state) = self.dynamic_state {
                         state.execution_complete = true;
+                        state.worker_error = Some(e);
                     }
                     return true;
                 }
@@ -1328,6 +1333,16 @@ impl QisEngine {
         }
 
         false
+    }
+
+    /// Sticky error if the dynamic worker failed: completion paths call this
+    /// before emitting the terminal trace marker or returning shot results,
+    /// so a crashed program can never certify a partial trace as complete.
+    fn worker_failure_error(&self) -> Option<PecosError> {
+        self.dynamic_state
+            .as_ref()
+            .and_then(|state| state.worker_error.as_ref())
+            .map(|err| PecosError::Generic(format!("dynamic QIS worker failed: {err}")))
     }
 
     /// Abort dynamic execution (cleanup)
@@ -1645,6 +1660,9 @@ impl ControlEngine for QisEngine {
 
         // Check if worker completed without needing any results
         if self.check_worker_complete() {
+            if let Some(err) = self.worker_failure_error() {
+                return Err(err);
+            }
             // Worker completed but we still need to process any pending operations
             // through the quantum engine (e.g., programs without measurement-dependent conditionals)
             if !self.pending_dynamic_ops.is_empty() {
@@ -1693,6 +1711,9 @@ impl ControlEngine for QisEngine {
         // First, check if worker already completed (before processing anything else)
         // This avoids unnecessary work if the worker finished
         if self.check_worker_complete() {
+            if let Some(err) = self.worker_failure_error() {
+                return Err(err);
+            }
             debug!("Worker already complete, finishing shot");
             // Process any final operations
             if !self.pending_dynamic_ops.is_empty() {
@@ -1759,6 +1780,9 @@ impl ControlEngine for QisEngine {
 
         // Check if worker completed after the wait
         if self.check_worker_complete() {
+            if let Some(err) = self.worker_failure_error() {
+                return Err(err);
+            }
             debug!("Worker completed after wait");
             // Process any final operations
             if !self.pending_dynamic_ops.is_empty() {
@@ -2102,6 +2126,46 @@ mod tests {
         );
         assert_eq!(engine.num_physical_slots, 2);
         assert_eq!(engine.num_qubits(), 98);
+    }
+
+    #[test]
+    fn test_worker_failure_does_not_certify_a_complete_trace() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        engine.set_operation_trace_dir(temp_dir.path());
+        engine.begin_trace_shot();
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            worker_error: Some("interface crashed".to_string()),
+        });
+
+        let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
+            panic!("worker failure must fail the shot");
+        };
+        assert!(
+            err.to_string().contains("dynamic QIS worker failed"),
+            "unexpected error: {err}"
+        );
+
+        // Sticky: retrying must not complete the shot from the partial state.
+        assert!(
+            engine
+                .continue_processing(ByteMessage::builder().build())
+                .is_err()
+        );
+
+        // The failed shot must not have emitted the terminal trace marker.
+        let wrote_terminal_marker = std::fs::read_dir(temp_dir.path())
+            .expect("read trace dir")
+            .any(|entry| {
+                entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("trace_complete")
+            });
+        assert!(!wrote_terminal_marker);
     }
 
     #[test]

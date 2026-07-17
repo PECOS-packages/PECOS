@@ -1398,6 +1398,18 @@ def _replay_qis_trace_chunks_into_tick_circuit(
         measurement_crosstalk_topology,
     )
     has_lowered_operations = any(chunk.get("lowered_quantum_ops") for chunk in chunks)
+    if (
+        not allow_raw_measurement_id_fallback
+        and not has_lowered_operations
+        and any(_chunk_has_lowerable_op(chunk) for chunk in chunks)
+    ):
+        msg = (
+            "runtime trace does not contain lowered_quantum_ops; refusing to "
+            "build an audited DEM from the raw pre-runtime QIS operation order"
+        )
+        raise ValueError(msg)
+    if not allow_raw_measurement_id_fallback:
+        _validate_audited_trace_stream(chunks)
     if has_lowered_operations:
         _reject_partially_lowered_trace(chunks)
         try:
@@ -1420,13 +1432,6 @@ def _replay_qis_trace_chunks_into_tick_circuit(
             # Replay the raw operations in that compatibility case instead of
             # losing provenance.
 
-    elif not allow_raw_measurement_id_fallback and any(_chunk_has_lowerable_op(chunk) for chunk in chunks):
-        msg = (
-            "runtime trace does not contain lowered_quantum_ops; refusing to "
-            "build an audited DEM from the raw pre-runtime QIS operation order"
-        )
-        raise ValueError(msg)
-
     operations: list[dict[str, Any]] = []
     for chunk in chunks:
         operations.extend(list(chunk.get("operations", [])))
@@ -1434,6 +1439,41 @@ def _replay_qis_trace_chunks_into_tick_circuit(
         operations,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
     )
+
+
+def _validate_audited_trace_stream(chunks: list[dict[str, Any]]) -> None:
+    """Validate framing and completeness across an audited QIS trace stream."""
+    if not chunks:
+        msg = "audited runtime trace is empty"
+        raise ValueError(msg)
+    engine_trace_id = chunks[0].get("engine_trace_id")
+    shot_index = chunks[0].get("shot_index")
+    if isinstance(engine_trace_id, bool) or not isinstance(engine_trace_id, int):
+        msg = "audited runtime trace is missing a valid engine_trace_id"
+        raise TypeError(msg)
+    if isinstance(shot_index, bool) or not isinstance(shot_index, int):
+        msg = "audited runtime trace is missing a valid shot_index"
+        raise TypeError(msg)
+    for expected_index, chunk in enumerate(chunks):
+        if chunk.get("format") != "pecos_qis_operation_trace_v1":
+            msg = f"audited runtime trace chunk {expected_index} has an unsupported format"
+            raise ValueError(msg)
+        if chunk.get("engine_trace_id") != engine_trace_id or chunk.get("shot_index") != shot_index:
+            msg = "audited runtime trace mixes engine or shot identities"
+            raise ValueError(msg)
+        if chunk.get("chunk_index") != expected_index:
+            msg = (
+                f"audited runtime trace chunk indices must be contiguous; expected {expected_index}, "
+                f"got {chunk.get('chunk_index')!r}"
+            )
+            raise ValueError(msg)
+        operations = chunk.get("operations")
+        if not isinstance(operations, list) or chunk.get("num_operations") != len(operations):
+            msg = f"audited runtime trace chunk {expected_index} has an invalid operation count"
+            raise ValueError(msg)
+    if chunks[-1].get("stage") != "trace_complete":
+        msg = "audited runtime trace is missing its terminal trace_complete chunk"
+        raise ValueError(msg)
 
 
 def named_result_traces_from_operation_trace(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:

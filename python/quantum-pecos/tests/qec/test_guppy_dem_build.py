@@ -11,13 +11,22 @@ import pecos
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
-from guppylang.std.quantum import cx, h, measure, qubit
+from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
-from pecos.qec import Detector, Observable, build_dem_from_guppy, rec, result_ref
-from pecos.qec.dem_spec import _resolve_dem_specs
-from pecos.qec.surface import SurfacePatch
-from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
-from pecos.qec.surface.decode import _replay_qis_trace_chunks_into_tick_circuit
+from pecos.qec import (
+    Detector,
+    Observable,
+    build_dem_from_guppy,
+    rec,
+    result_ref,
+    surface_memory_dem_spec,
+)
+from pecos.qec.dem import _generator_certified_result_traces
+from pecos.qec.dem_spec import GuppyDemBuild, _resolve_dem_specs
+from pecos.qec.surface.decode import (
+    _replay_qis_trace_chunks_into_tick_circuit,
+    _validate_audited_trace_stream,
+)
 from pecos_rslib.quantum import TickCircuit
 
 
@@ -55,6 +64,16 @@ def _mixed_supported_result_occurrences() -> None:
     measured = measure(q)
     result("same", not measured)
     result("same", measured)
+
+
+@guppy
+def _measurement_feedback_without_named_results() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    h(q0)
+    if measure(q0):
+        x(q1)
+    _ = measure(q1)
 
 
 def _reordered_trace() -> tuple[TickCircuit, list[dict[str, object]]]:
@@ -161,7 +180,21 @@ def test_rec_build_evaluates_compiler_certified_scalar_results() -> None:
         p_prep=0.0,
     )
 
+    assert build.audit["named_result_binding"] == "compiler_direct_scalar_complete"
     assert build.evaluate_results({"a": [0], "b": [1]}) == ([0], 1)
+
+
+def test_typed_rec_build_rejects_dynamic_control_without_named_results() -> None:
+    with pytest.raises(ValueError, match="branching or looping control flow"):
+        build_dem_from_guppy(
+            _measurement_feedback_without_named_results,
+            num_qubits=2,
+            detectors=[Detector(rec[-2], rec[-1])],
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
 
 
 def test_rec_build_rejects_transformed_scalar_result_as_measurement_provenance() -> None:
@@ -175,8 +208,43 @@ def test_rec_build_rejects_transformed_scalar_result_as_measurement_provenance()
         p_prep=0.0,
     )
 
+    assert build.audit["named_result_binding"] == "none"
     with pytest.raises(ValueError, match="missing referenced MeasId"):
         build.evaluate_results({"not_m": [1]})
+
+
+def test_shot_evaluators_reject_non_bit_values() -> None:
+    circuit, traces = _reordered_trace()
+    schema = _resolve_dem_specs(
+        [Detector(result_ref("a"))],
+        [],
+        circuit=circuit,
+        result_traces=traces,
+    )
+    build = GuppyDemBuild(
+        dem=None,
+        circuit=circuit,
+        detectors_json=schema.detectors_json,
+        observables_json=schema.observables_json,
+        measurement_ledger=schema.ledger,
+        schema_fingerprint=schema.schema_fingerprint,
+        named_result_binding="compiler_direct_scalar_complete",
+        _detector_meas_ids=schema.detector_meas_ids,
+        _observable_meas_ids=schema.observable_meas_ids,
+        _result_ids_by_tag=schema.result_ids_by_tag,
+    )
+
+    with pytest.raises(ValueError, match="must be bool, 0, or 1"):
+        build.evaluate_runtime_record([0, 2, 0])
+    with pytest.raises(ValueError, match="must be bool, 0, or 1"):
+        build.evaluate_results({"a": ["0"], "b": [0], "c": [0]})
+    with pytest.raises(ValueError, match="must be bool, 0, or 1"):
+        build.evaluate_measurements({0: 2})
+
+
+def test_result_ref_rejects_non_string_tag() -> None:
+    with pytest.raises(ValueError, match="non-empty string"):
+        result_ref(123)  # type: ignore[arg-type]
 
 
 def test_rec_build_rejects_aggregate_array_as_measurement_provenance() -> None:
@@ -334,18 +402,52 @@ def test_audited_replay_rejects_entirely_raw_runtime_trace() -> None:
         )
 
 
+def _framed_trace_chunks() -> list[dict[str, object]]:
+    common = {
+        "format": "pecos_qis_operation_trace_v1",
+        "engine_trace_id": 7,
+        "shot_index": 1,
+    }
+    return [
+        {
+            **common,
+            "chunk_index": 0,
+            "stage": "pending_final",
+            "num_operations": 1,
+            "operations": [{"Quantum": {"Measure": [0, 0]}}],
+        },
+        {
+            **common,
+            "chunk_index": 1,
+            "stage": "trace_complete",
+            "num_operations": 0,
+            "operations": [],
+        },
+    ]
+
+
+def test_audited_trace_stream_accepts_contiguous_terminal_framing() -> None:
+    _validate_audited_trace_stream(_framed_trace_chunks())
+
+
+@pytest.mark.parametrize("corruption", ["gap", "cross_shot", "truncated"])
+def test_audited_trace_stream_rejects_incomplete_or_mixed_framing(corruption: str) -> None:
+    chunks = _framed_trace_chunks()
+    if corruption == "gap":
+        chunks[1]["chunk_index"] = 2
+    elif corruption == "cross_shot":
+        chunks[1]["shot_index"] = 2
+    else:
+        chunks.pop()
+
+    with pytest.raises(ValueError, match=r"contiguous|mixes engine or shot|terminal"):
+        _validate_audited_trace_stream(chunks)
+
+
 def test_generated_surface_named_results_evaluate_without_private_adapter() -> None:
     rounds = 2
     program = make_surface_code(3, rounds, "Z")
-    abstract = generate_tick_circuit_from_patch(SurfacePatch.create(distance=3), rounds, "Z")
-    detectors = [
-        Detector(*(rec[int(record)] for record in entry["records"]), id=int(entry["id"]))
-        for entry in json.loads(abstract.get_meta("detectors"))
-    ]
-    observables = [
-        Observable(*(rec[int(record)] for record in entry["records"]), id=int(entry["id"]))
-        for entry in json.loads(abstract.get_meta("observables"))
-    ]
+    detectors, observables = surface_memory_dem_spec(3, rounds, "Z")
     build = build_dem_from_guppy(
         program,
         num_qubits=get_num_qubits(3),
@@ -369,7 +471,75 @@ def test_generated_surface_named_results_evaluate_without_private_adapter() -> N
 
     evaluated = build.evaluate_result_columns(columns)
 
-    assert build.audit["named_result_binding"] == "generator_layout_v1"
+    assert build.audit["named_result_binding"] == "generator_layout_v2_program_bound"
     assert len(evaluated) == 3
     assert all(len(events) == build.dem.num_detectors for events, _ in evaluated)
     assert evaluated == [([0] * build.dem.num_detectors, 0)] * 3
+
+
+def test_generator_layout_rejects_source_runtime_identity_mismatch() -> None:
+    circuit = TickCircuit()
+    circuit.tick().mz_with_ids([0, 1], [4, 9])
+    circuit.set_meta("guppy_source_measurement_ids", "[0,1]")
+    traces = [
+        {"name": "first", "values": [False], "result_ids": [4]},
+        {"name": "second", "values": [False], "result_ids": [9]},
+    ]
+
+    with pytest.raises(ValueError, match="source and runtime measurement identities"):
+        _generator_certified_result_traces(
+            (("first", 0), ("second", 0)),
+            circuit,
+            traces,
+            required_tags=["first"],
+        )
+
+
+def test_generated_surface_layout_certificate_rejects_permutation() -> None:
+    program = make_surface_code(3, 1, "Z")
+    digest, layout = program.__pecos_named_measurement_layout_v2__
+    object.__setattr__(
+        program,
+        "__pecos_named_measurement_layout_v2__",
+        (digest, (layout[1], layout[0], *layout[2:])),
+    )
+
+    with pytest.raises(ValueError, match="does not match the program and layout"):
+        build_dem_from_guppy(
+            program,
+            num_qubits=get_num_qubits(3),
+            detectors=[Detector(rec[-1])],
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
+
+
+def test_schema_fingerprint_binds_runtime_order_and_named_results() -> None:
+    circuit, traces = _reordered_trace()
+    baseline = _resolve_dem_specs(
+        [Detector(rec[-1])],
+        [],
+        circuit=circuit,
+        result_traces=traces,
+    )
+
+    reordered = TickCircuit()
+    reordered.tick().mz_with_ids([0, 1, 2], [0, 1, 2])
+    reordered_schema = _resolve_dem_specs(
+        [Detector(rec[-1])],
+        [],
+        circuit=reordered,
+        result_traces=traces,
+    )
+    renamed_traces = [*traces[:-1], {"name": "renamed", "values": [False], "result_ids": [2]}]
+    renamed_schema = _resolve_dem_specs(
+        [Detector(rec[-1])],
+        [],
+        circuit=circuit,
+        result_traces=renamed_traces,
+    )
+
+    assert baseline.schema_fingerprint != reordered_schema.schema_fingerprint
+    assert baseline.schema_fingerprint != renamed_schema.schema_fingerprint

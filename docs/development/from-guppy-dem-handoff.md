@@ -35,12 +35,17 @@ second runtime trace or a separately maintained detector conversion from
 silently permuting decoder inputs.
 
 The audited path is deliberately fail-closed. A runtime trace must contain a
-complete lowered operation stream with stable measurement IDs; raw pre-runtime
-QIS order is not an acceptable substitute. Named shot conversion accepts
-compiler-certified direct scalar `result()` dataflow and validated
-generator-supplied scalar layouts. Aggregate arrays and transformed booleans
+complete, contiguously framed lowered operation stream with stable measurement
+IDs and an explicit terminal marker; raw pre-runtime QIS order is not an
+acceptable substitute. Named shot conversion accepts compiler-certified direct
+scalar `result()` dataflow and trusted built-in generator layouts whose digest
+binds both the HUGR and layout. Aggregate arrays and transformed booleans
 must not be treated as generic measurement identity until the compiler exposes
 an explicit element-level provenance ABI.
+
+Generic Guppy branching and looping control flow is rejected. One sampled
+runtime branch cannot certify a static DEM; built-in surface generators cross
+that boundary only through their program-bound static-layout certificate.
 
 This should support calls like:
 

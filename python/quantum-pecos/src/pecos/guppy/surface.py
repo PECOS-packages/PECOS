@@ -11,6 +11,7 @@ The generated syndrome extraction uses a 4-round parallel CNOT
 schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 """
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -2888,5 +2889,14 @@ def make_surface_code(
         else:
             _, tag, element = ref
             layout.append((f"{tag}:meas:{element}", 0))
-    object.__setattr__(program, "__pecos_named_measurement_layout_v1__", tuple(layout))
+    from pecos._compilation import guppy_to_hugr
+
+    certified_layout = tuple(layout)
+    layout_json = json.dumps(certified_layout, separators=(",", ":"))
+    digest = hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
+    object.__setattr__(
+        program,
+        "__pecos_named_measurement_layout_v2__",
+        (digest, certified_layout),
+    )
     return program

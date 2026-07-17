@@ -11,9 +11,9 @@ module attaches a Python :meth:`from_guppy` classmethod to the Rust-backed
 ``pecos.qec.DetectorErrorModel``.
 
 This wrapper is intentionally thin: it traces the Guppy program into a
-``TickCircuit``, optionally compiles the program to a HUGR (only when
-``result_tags`` is requested -- to recover the sound tag -> measurement
-binding via ``pecos_hugr_qis::extract_result_tag_measurements``), and hands
+``TickCircuit``, compiles Guppy inputs to a HUGR to reject unverified control
+flow and, when requested, recover the sound tag -> measurement binding via
+``pecos_hugr_qis::extract_result_tag_measurements``, and hands
 the caller's detector/observable JSON to the Rust DEM builder. The metadata
 validation that applies to **every** ingest path (``from_guppy``,
 ``from_circuit``, ``DemSampler.from_circuit``, public ``DemBuilder``) lives
@@ -36,6 +36,7 @@ directly to ``from_circuit`` / ``DemSampler.from_circuit`` /
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,34 @@ if TYPE_CHECKING:
 
 P1Weights = Mapping[str, float]
 P2Weights = Mapping[str, float]
+
+_GENERATOR_LAYOUT_ATTR = "__pecos_named_measurement_layout_v2__"
+
+
+def _generator_certified_layout(guppy: Any, hugr_bytes: bytes | None = None) -> Sequence[Any] | None:
+    """Validate and return a built-in generator's program-bound layout."""
+    certificate = getattr(guppy, _GENERATOR_LAYOUT_ATTR, None)
+    if certificate is None:
+        return None
+    if (
+        not isinstance(certificate, Sequence)
+        or isinstance(certificate, (str, bytes))
+        or len(certificate) != 2
+        or not isinstance(certificate[0], str)
+    ):
+        msg = "invalid Guppy generator measurement-layout certificate"
+        raise ValueError(msg)
+    digest, layout = certificate
+    if hugr_bytes is None:
+        from pecos._compilation import guppy_to_hugr
+
+        hugr_bytes = guppy_to_hugr(guppy)
+    layout_json = json.dumps(layout, separators=(",", ":"))
+    expected = hashlib.sha256(hugr_bytes + b"\0" + layout_json.encode()).hexdigest()
+    if digest != expected:
+        msg = "Guppy generator measurement-layout certificate does not match the program and layout"
+        raise ValueError(msg)
+    return layout
 
 
 def _from_circuit_with_noise(
@@ -279,13 +308,10 @@ class _DetectorErrorModelMixin:
             **Measurement-dependent (dynamic) control flow is unsupported.**
             ``from_guppy`` traces one ideal execution; a Guppy program whose
             quantum operations depend on a measurement *outcome* (e.g.
-            ``if measure(q): x(other)``) would yield a DEM built from a single
-            sampled branch, silently wrong and seed-dependent. No reliable
-            runtime-trace heuristic distinguishes that from the
-            statically-scheduled post-measurement gates a normal QEC circuit
-            has (the surface code has these every round), so no guard is
-            attempted -- pass straight-line programs only. Sound detection
-            would require HUGR conditional-on-measurement analysis (deferred).
+            ``if measure(q): x(other)``) is rejected before tracing. Generic
+            branching and looping HUGR control flow is conservatively rejected
+            because one sampled branch cannot certify a static circuit. Built-in
+            generators may carry a trusted static measurement-layout certificate.
 
             Every measurement is anchored to a stable MeasId automatically:
             ``measure()`` itself allocates the result slot in the trace (a
@@ -310,12 +336,12 @@ class _DetectorErrorModelMixin:
         # inside the HUGR step.
         needs_tags = _result_tags_present(detectors_json, observables_json)
         hugr_bytes: bytes | None = None
-        if needs_tags:
+        try:
             from pecos._compilation import guppy_to_hugr
 
-            try:
-                hugr_bytes = guppy_to_hugr(guppy)
-            except ValueError as exc:
+            hugr_bytes = guppy_to_hugr(guppy)
+        except ValueError as exc:
+            if needs_tags:
                 msg = (
                     "result_tags requires a @guppy-decorated function (or a "
                     "GuppyFunctionDefinition, e.g. the object "
@@ -324,6 +350,16 @@ class _DetectorErrorModelMixin:
                     "positional 'records' / 'meas_ids' instead."
                 )
                 raise ValueError(msg) from exc
+        generator_layout = _generator_certified_layout(guppy, hugr_bytes) if hugr_bytes is not None else None
+        if hugr_bytes is not None and generator_layout is None:
+            from pecos_rslib import guppy_hugr_has_nontrivial_control_flow
+
+            if guppy_hugr_has_nontrivial_control_flow(hugr_bytes):
+                msg = (
+                    "DetectorErrorModel.from_guppy requires a statically straight-line Guppy program; "
+                    "branching or looping control flow cannot be certified from one runtime trace"
+                )
+                raise ValueError(msg)
 
         tc = trace_guppy_into_tick_circuit(
             guppy,
@@ -405,6 +441,29 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
 
 
+def _validated_source_measurement_ids(circuit: Any) -> list[int]:
+    """Return source IDs after proving they match the lowered runtime identities."""
+    source_ids_json = circuit.get_meta("guppy_source_measurement_ids")
+    source_measurement_ids = json.loads(source_ids_json) if source_ids_json else list(range(circuit.num_measurements()))
+    if not isinstance(source_measurement_ids, list) or any(
+        isinstance(meas_id, bool) or not isinstance(meas_id, int) or meas_id < 0 for meas_id in source_measurement_ids
+    ):
+        msg = "source measurement identities must be a list of non-negative integers"
+        raise ValueError(msg)
+
+    from pecos.qec.surface.decode import _extract_measurement_meas_ids
+
+    runtime_measurement_ids = _extract_measurement_meas_ids(circuit)
+    if (
+        len(source_measurement_ids) != len(set(source_measurement_ids))
+        or len(runtime_measurement_ids) != len(set(runtime_measurement_ids))
+        or set(source_measurement_ids) != set(runtime_measurement_ids)
+    ):
+        msg = "source and runtime measurement identities must be unique and describe the same set"
+        raise ValueError(msg)
+    return source_measurement_ids
+
+
 def _compiler_certified_result_traces(
     guppy: Any,
     circuit: Any,
@@ -413,7 +472,7 @@ def _compiler_certified_result_traces(
     required_tags: Sequence[str],
 ) -> list[dict[str, Any]]:
     """Resolve direct scalar result tags without trusting runtime read timing."""
-    generator_layout = getattr(guppy, "__pecos_named_measurement_layout_v1__", None)
+    generator_layout = _generator_certified_layout(guppy)
     if generator_layout is not None:
         return _generator_certified_result_traces(
             generator_layout,
@@ -428,11 +487,6 @@ def _compiler_certified_result_traces(
             *(trace.get("name") for trace in runtime_result_traces if isinstance(trace.get("name"), str)),
         },
     )
-    if not candidate_tags:
-        return []
-
-    from pecos_rslib import extract_result_tag_measurements_for_guppy
-
     from pecos._compilation import guppy_to_hugr
 
     try:
@@ -443,17 +497,22 @@ def _compiler_certified_result_traces(
             raise ValueError(msg) from exc
         return []
 
-    tag_occurrences, static_measurement_count = extract_result_tag_measurements_for_guppy(hugr_bytes)
-    source_ids_json = circuit.get_meta("guppy_source_measurement_ids")
-    source_measurement_ids = json.loads(source_ids_json) if source_ids_json else list(range(circuit.num_measurements()))
-    from pecos.qec.surface.decode import _extract_measurement_meas_ids
+    from pecos_rslib import guppy_hugr_has_nontrivial_control_flow
 
-    runtime_measurement_ids = _extract_measurement_meas_ids(circuit)
-    if len(source_measurement_ids) != len(set(source_measurement_ids)) or set(source_measurement_ids) != set(
-        runtime_measurement_ids,
-    ):
-        msg = "source and runtime measurement identities must be unique and describe the same set"
+    if guppy_hugr_has_nontrivial_control_flow(hugr_bytes):
+        msg = (
+            "build_dem_from_guppy requires a statically straight-line Guppy program unless it carries "
+            "a trusted generator-owned measurement layout; branching or looping control flow cannot be "
+            "certified from one runtime trace"
+        )
         raise ValueError(msg)
+    if not candidate_tags:
+        return []
+
+    from pecos_rslib import extract_result_tag_measurements_for_guppy
+
+    tag_occurrences, static_measurement_count = extract_result_tag_measurements_for_guppy(hugr_bytes)
+    source_measurement_ids = _validated_source_measurement_ids(circuit)
     if static_measurement_count != len(source_measurement_ids):
         if required_tags:
             msg = (
@@ -536,8 +595,7 @@ def _generator_certified_result_traces(
             raise ValueError(msg)
         entries.append((entry[0], entry[1]))
 
-    source_ids_json = circuit.get_meta("guppy_source_measurement_ids")
-    source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
+    source_measurement_ids = _validated_source_measurement_ids(circuit)
     if len(entries) != len(source_measurement_ids):
         msg = (
             "Guppy named measurement layout has "
@@ -642,11 +700,7 @@ def build_dem_from_guppy(
     referenced_tags = sorted(
         {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
     )
-    named_result_binding = (
-        "generator_layout_v1"
-        if getattr(guppy, "__pecos_named_measurement_layout_v1__", None) is not None
-        else "compiler_direct_scalar"
-    )
+    has_generator_layout = getattr(guppy, _GENERATOR_LAYOUT_ATTR, None) is not None
     result_traces = _compiler_certified_result_traces(
         guppy,
         circuit,
@@ -659,6 +713,16 @@ def build_dem_from_guppy(
         circuit=circuit,
         result_traces=result_traces,
     )
+    if has_generator_layout:
+        named_result_binding = "generator_layout_v2_program_bound"
+    else:
+        result_ids = [result_id for _, ids in schema.result_ids_by_tag for result_id in ids]
+        if not result_ids or all(result_id is None for result_id in result_ids):
+            named_result_binding = "none"
+        elif any(result_id is None for result_id in result_ids):
+            named_result_binding = "compiler_direct_scalar_partial"
+        else:
+            named_result_binding = "compiler_direct_scalar_complete"
     circuit.set_meta("detectors", schema.detectors_json)
     circuit.set_meta("observables", schema.observables_json)
     circuit.set_meta("num_measurements", str(circuit.num_measurements()))

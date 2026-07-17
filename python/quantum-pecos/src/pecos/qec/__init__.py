@@ -78,7 +78,14 @@ from pecos.qec.color import (
 # pipeline is Python-only, so it cannot live in the Rust extension without a
 # dependency cycle.
 from pecos.qec.dem import DetectorErrorModel, build_dem_from_guppy
-from pecos.qec.dem_spec import Detector, GuppyDemBuild, Observable, rec, result_ref
+from pecos.qec.dem_spec import (
+    Detector,
+    GuppyDemBuild,
+    Observable,
+    rec,
+    result_ref,
+    surface_memory_dem_spec,
+)
 from pecos.qec.generic import (
     CheckSchedule,
     PauliOperator,
@@ -137,6 +144,7 @@ __all__ = [
     "build_dem_from_guppy",
     "rec",
     "result_ref",
+    "surface_memory_dem_spec",
     # Pauli constants
     "PAULI_I",
     "PAULI_X",

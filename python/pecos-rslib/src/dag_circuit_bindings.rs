@@ -1892,6 +1892,17 @@ fn py_extract_result_tag_measurements_for_guppy(
     Ok((extract_result_tag_measurements(&hugr), static_meas_count))
 }
 
+/// Return whether a Guppy HUGR contains branching or looping control flow.
+#[pyfunction]
+#[pyo3(name = "guppy_hugr_has_nontrivial_control_flow")]
+fn py_guppy_hugr_has_nontrivial_control_flow(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<bool> {
+    use pecos_hugr::{has_nontrivial_control_flow, load_hugr_from_bytes as read_hugr_envelope};
+
+    let hugr = read_hugr_envelope(hugr_bytes.as_bytes())
+        .map_err(|e| PyErr::new::<HugrConversionError, _>(format!("Failed to parse HUGR: {e}")))?;
+    Ok(has_nontrivial_control_flow(&hugr))
+}
+
 /// Map a HUGR operation name to a `GateType`.
 ///
 /// Args:
@@ -3933,6 +3944,10 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
     )?)?;
     parent_module.add_function(wrap_pyfunction!(
         py_extract_result_tag_measurements_for_guppy,
+        parent_module
+    )?)?;
+    parent_module.add_function(wrap_pyfunction!(
+        py_guppy_hugr_has_nontrivial_control_flow,
         parent_module
     )?)?;
 

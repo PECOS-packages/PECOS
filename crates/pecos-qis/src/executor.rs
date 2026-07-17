@@ -980,6 +980,17 @@ impl QisHeliosInterface {
             exe_dir.join(format!("deps/{lib_name}")),
         ];
 
+        // Editable/development installs may execute from outside the checkout.
+        // Preserve the workspace target as a stable fallback in that case.
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Some(workspace_root) = manifest_dir.parent().and_then(std::path::Path::parent) {
+            for profile in &profile_order {
+                candidate_paths.push(workspace_root.join(format!("target/{profile}/{lib_name}")));
+                candidate_paths
+                    .push(workspace_root.join(format!("target/{profile}/deps/{lib_name}")));
+            }
+        }
+
         if let Some(parent) = exe_dir.parent() {
             candidate_paths.push(parent.join(&lib_name));
             candidate_paths.push(parent.join(format!("deps/{lib_name}")));

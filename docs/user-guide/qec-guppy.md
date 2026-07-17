@@ -158,21 +158,7 @@ columns = (
     sim(program).classical(selene_engine()).quantum(stabilizer()).qubits(2).seed(42).run(100).to_shot_map().to_dict()
 )
 evaluated = build.evaluate_result_columns(columns)
-```
 
-`rec[-k]` is deliberately **not** interpreted against the runtime's final gate
-order. PECOS first resolves it to the canonical Guppy result ID, then follows
-that identity through runtime lowering. `result_ref(...)` follows the compiled
-HUGR dataflow from `result()` back to its raw scalar measurement and resolves to
-the same `MeasId` representation. A runtime can therefore reorder measurements
-without changing detector meaning.
-
-### Converting shots for a decoder
-
-Use the returned build to evaluate every shot with the same detector and
-observable schema that produced the DEM:
-
-```python
 from pecos_rslib.qec import SampleBatch
 
 detector_events = [events for events, _ in evaluated]
@@ -189,22 +175,55 @@ tesseract_errors = batch.decode_count(
 )
 ```
 
+`rec[-k]` is deliberately **not** interpreted against the runtime's final gate
+order. PECOS first resolves it to the canonical Guppy result ID, then follows
+that identity through runtime lowering. `result_ref(...)` follows the compiled
+HUGR dataflow from `result()` back to its raw scalar measurement and resolves to
+the same `MeasId` representation. A runtime can therefore reorder measurements
+without changing detector meaning.
+
+### Converting shots for a decoder
+
+Use the returned build to evaluate every shot with the same detector and
+observable schema that produced the DEM, as the final lines of the complete
+example above demonstrate for both PyMatching and Tesseract.
+
 `evaluate_results(...)` accepts only direct scalar `result()` values whose
 measurement identity the Guppy compiler can certify. For a backend that returns
 raw measurements in runtime execution order, use
 `build.evaluate_runtime_record(values)` instead. Both methods produce the
 detector order and packed observable mask expected by the DEM.
 
-Generated programs may supply a validated named-measurement layout certificate.
-`make_surface_code(...)` does this automatically, so its scalar sidebands work
-with `evaluate_results(...)` and `evaluate_result_columns(...)` even though its
-round loop is not statically unrolled in the HUGR.
+Built-in generators may supply a trusted, program-bound named-measurement layout
+certificate. `make_surface_code(...)` does this automatically, so its scalar
+sidebands work with `evaluate_results(...)` and
+`evaluate_result_columns(...)` even though its round loop is not statically
+unrolled in the HUGR. Use the public typed specification helper rather than
+reconstructing private surface metadata:
+
+```python
+from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.qec import build_dem_from_guppy, surface_memory_dem_spec
+
+surface_program = make_surface_code(3, 2, "Z")
+surface_detectors, surface_observables = surface_memory_dem_spec(3, 2, "Z")
+surface_build = build_dem_from_guppy(
+    surface_program,
+    num_qubits=get_num_qubits(3),
+    detectors=surface_detectors,
+    observables=surface_observables,
+    p1=0.001,
+    p2=0.005,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+```
 
 ### Current soundness boundary
 
-- DEM construction currently supports static-schedule programs. Quantum
-  operations controlled by noisy measurement outcomes are not representable by
-  one ideal trace and must not be used.
+- DEM construction supports straight-line static schedules and trusted built-in
+  generator certificates. Generic branching and looping Guppy programs are
+  rejected because one trace cannot certify all quantum-operation paths.
 - Scalar `result(tag, measure(q))` provenance is the certified generic tag
   path. Repeated tags use `occurrence=...`.
 - Aggregate result arrays are not accepted as generic measurement provenance:

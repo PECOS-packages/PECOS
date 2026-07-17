@@ -1143,6 +1143,21 @@ impl QisEngine {
         }
     }
 
+    fn trace_complete_chunk(&mut self) {
+        if self.operation_trace_dir.is_none() && self.operation_trace_collector.is_none() {
+            return;
+        }
+        self.trace_operations_chunk(
+            "trace_complete",
+            &[],
+            None,
+            Some(&LoweredCommandBatch {
+                commands: ByteMessage::builder().build(),
+                gate_metadata: Vec::new(),
+            }),
+        );
+    }
+
     fn trace_named_result_traces_from_dynamic_handle(&mut self) {
         let named_result_traces = if let Some(state) = &self.dynamic_state
             && let Some(handle) = &state.sync_handle
@@ -1641,6 +1656,7 @@ impl ControlEngine for QisEngine {
                 }
             }
             self.trace_named_result_traces_from_dynamic_handle();
+            self.trace_complete_chunk();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -1688,6 +1704,7 @@ impl ControlEngine for QisEngine {
                 }
             }
             self.trace_named_result_traces_from_dynamic_handle();
+            self.trace_complete_chunk();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -1753,6 +1770,7 @@ impl ControlEngine for QisEngine {
                 }
             }
             self.trace_named_result_traces_from_dynamic_handle();
+            self.trace_complete_chunk();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }

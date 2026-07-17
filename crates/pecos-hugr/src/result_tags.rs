@@ -62,6 +62,19 @@ pub fn measurement_op_count<H: HugrView<Node = Node>>(hugr: &H) -> usize {
         .count()
 }
 
+/// Whether the HUGR contains branching or looping control flow.
+///
+/// A single captured execution cannot certify a static circuit for these
+/// structures. Callers may separately trust a generator-owned static layout.
+#[must_use]
+pub fn has_nontrivial_control_flow<H: HugrView<Node = Node>>(hugr: &H) -> bool {
+    hugr.nodes().any(|node| match hugr.get_optype(node) {
+        OpType::Conditional(_) | OpType::TailLoop(_) => true,
+        OpType::DataflowBlock(block) => block.sum_rows.len() > 1,
+        _ => false,
+    })
+}
+
 /// Map each `result(tag, <measurement>)` to the measurement ordinal it records.
 ///
 /// **Sound by construction, narrow by design.** Only the canonical pattern
@@ -186,6 +199,13 @@ mod tests {
             Some([Some(0)].as_slice()),
             "runtime loop is not unrolled in HUGR: one static measure op",
         );
+        assert!(has_nontrivial_control_flow(&hugr));
+    }
+
+    #[test]
+    fn straight_line_program_has_no_nontrivial_control_flow() {
+        let hugr = read_hugr_envelope(SCRAMBLED).unwrap();
+        assert!(!has_nontrivial_control_flow(&hugr));
     }
 
     /// Soundness: a computed `result("eq", m0 == m1)` (lowers through

@@ -11,6 +11,7 @@ import json
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from numbers import Integral
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ class ResultRef:
 
     def __post_init__(self) -> None:
         """Validate the source result selector."""
-        if not self.tag:
+        if not isinstance(self.tag, str) or not self.tag:
             raise ValueError("result_ref tag must be a non-empty string")
         if isinstance(self.occurrence, bool) or not isinstance(self.occurrence, int) or self.occurrence < 0:
             raise ValueError("result_ref occurrence must be a non-negative integer")
@@ -128,6 +129,56 @@ class Observable:
         object.__setattr__(self, "metadata", dict(metadata) if metadata is not None else None)
 
 
+def surface_memory_dem_spec(
+    distance: int,
+    num_rounds: int,
+    basis: str,
+    *,
+    ancilla_budget: int | None = None,
+    interaction_basis: str | None = None,
+    check_plan: str | None = None,
+    clifford_frame_policy: str | None = None,
+) -> tuple[list[Detector], list[Observable]]:
+    """Return typed detector and observable specs for ``make_surface_code``."""
+    from pecos.qec.surface import SurfacePatch  # noqa: PLC0415
+    from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch  # noqa: PLC0415
+
+    circuit = generate_tick_circuit_from_patch(
+        SurfacePatch.create(distance=distance),
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        add_typed_annotations=False,
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
+    )
+    detector_entries = json.loads(circuit.get_meta("detectors") or "[]")
+    observable_entries = json.loads(circuit.get_meta("observables") or "[]")
+    detectors = []
+    for entry in detector_entries:
+        metadata = {key: value for key, value in entry.items() if key not in {"id", "records", "coords"}}
+        detectors.append(
+            Detector(
+                *(rec[int(record)] for record in entry["records"]),
+                id=int(entry["id"]),
+                coords=entry.get("coords"),
+                metadata=metadata or None,
+            ),
+        )
+    observables = []
+    for entry in observable_entries:
+        metadata = {key: value for key, value in entry.items() if key not in {"id", "records"}}
+        observables.append(
+            Observable(
+                *(rec[int(record)] for record in entry["records"]),
+                id=int(entry["id"]),
+                metadata=metadata or None,
+            ),
+        )
+    return detectors, observables
+
+
 @dataclass(frozen=True, slots=True)
 class MeasurementLedgerEntry:
     """Auditable identity transport for one runtime measurement."""
@@ -158,6 +209,13 @@ class _ResolvedSchema:
     ledger: tuple[MeasurementLedgerEntry, ...]
     result_ids_by_tag: tuple[tuple[str, tuple[int | None, ...]], ...]
     schema_fingerprint: str
+
+
+def _measurement_bit(value: Any, *, context: str) -> int:
+    """Validate and normalize one externally supplied measurement bit."""
+    if isinstance(value, Integral) and value in (0, 1):
+        return int(value)
+    raise ValueError(f"{context} must be bool, 0, or 1; got {value!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,7 +253,10 @@ class GuppyDemBuild:
         if len(values) != len(self.measurement_ledger):
             msg = f"runtime measurement record has {len(values)} values; expected {len(self.measurement_ledger)}"
             raise ValueError(msg)
-        by_id = {entry.meas_id: int(bool(value)) for entry, value in zip(self.measurement_ledger, values, strict=True)}
+        by_id = {
+            entry.meas_id: _measurement_bit(value, context=f"runtime measurement {entry.runtime_record_index}")
+            for entry, value in zip(self.measurement_ledger, values, strict=True)
+        }
         return self.evaluate_measurements(by_id)
 
     def evaluate_results(self, results: Mapping[str, Any]) -> tuple[list[int], int]:
@@ -218,7 +279,7 @@ class GuppyDemBuild:
             for meas_id, value in zip(result_ids, values, strict=True):
                 if meas_id is None:
                     continue
-                bit = int(bool(value))
+                bit = _measurement_bit(value, context=f"result {tag!r}")
                 if meas_id in by_id and by_id[meas_id] != bit:
                     raise ValueError(f"result outputs disagree about measurement MeasId {meas_id}")
                 by_id[meas_id] = bit
@@ -243,7 +304,13 @@ class GuppyDemBuild:
             missing = [meas_id for meas_id in meas_ids if meas_id not in values_by_meas_id]
             if missing:
                 raise ValueError(f"measurement values are missing referenced MeasId(s): {missing[:8]}")
-            return sum(int(bool(values_by_meas_id[meas_id])) for meas_id in meas_ids) & 1
+            return (
+                sum(
+                    _measurement_bit(values_by_meas_id[meas_id], context=f"measurement MeasId {meas_id}")
+                    for meas_id in meas_ids
+                )
+                & 1
+            )
 
         events = [parity(meas_ids) for meas_ids in self._detector_meas_ids]
         observable_mask = 0
@@ -431,10 +498,24 @@ def _resolve_dem_specs(
 
     detector_entries = [item[1] for item in resolved_detectors]
     observable_entries = [item[1] for item in resolved_observables]
+    # Callers supply only compiler-certified direct scalar traces. Aggregate
+    # array element order is not certified and must never become a shot binding.
+    result_ids_by_tag = tuple(
+        (
+            tag,
+            tuple(result_id for occurrence in range(len(calls)) for result_id in calls[occurrence]),
+        )
+        for tag, calls in sorted(result_calls.items())
+        if calls
+        and sorted(calls) == list(range(len(calls)))
+        and all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
+        and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
+    )
     fingerprint_payload = {
         "detectors": detector_entries,
         "observables": observable_entries,
-        "runtime_meas_ids": sorted(runtime_ids),
+        "runtime_measurement_order": runtime_order,
+        "named_result_measurements": result_ids_by_tag,
     }
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode(),
@@ -449,19 +530,6 @@ def _resolve_dem_specs(
             result_refs=tuple(refs_by_id.get(meas_id, ())),
         )
         for runtime_index, meas_id in enumerate(runtime_order)
-    )
-    # Callers supply only compiler-certified direct scalar traces. Aggregate
-    # array element order is not certified and must never become a shot binding.
-    result_ids_by_tag = tuple(
-        (
-            tag,
-            tuple(result_id for occurrence in range(len(calls)) for result_id in calls[occurrence]),
-        )
-        for tag, calls in sorted(result_calls.items())
-        if calls
-        and sorted(calls) == list(range(len(calls)))
-        and all(len(call) == 1 or all(result_id is None for result_id in call) for call in calls.values())
-        and all(result_id is None or isinstance(result_id, int) for call in calls.values() for result_id in call)
     )
     return _ResolvedSchema(
         detectors_json=json.dumps(detector_entries, separators=(",", ":")),

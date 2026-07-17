@@ -222,28 +222,19 @@ def test_from_guppy_rejects_json_tracked_pauli_observables() -> None:
         _dem_text(observables_json='[{"kind":"tracked_pauli","label":"x","pauli":"X0"}]')
 
 
-def test_from_guppy_dynamic_control_is_unsupported_and_unguarded() -> None:
-    """Measurement-dependent control flow is unsupported/undefined.
-
-    A prior runtime-trace guard false-positived on the standard surface code
-    (statically-scheduled post-measurement gates look the same in the trace),
-    so it was reverted. This test pins that NO guard rejects programs here --
-    from_guppy must not raise on either a dynamic program or, by extension,
-    the surface code. The DEM for a dynamic program is undefined/seed-dependent
-    and callers must not rely on it (see from_guppy docstring / proposal 001).
-    """
+def test_from_guppy_rejects_dynamic_control_before_seed_can_select_a_branch() -> None:
     for s in (0, 2, 5):
-        dem = DetectorErrorModel.from_guppy(
-            _measurement_feedback,
-            num_qubits=2,
-            detectors_json='[{"id":0,"records":[-2,-1]}]',
-            p1=0.0,
-            p2=0.0,
-            p_meas=0.1,
-            p_prep=0.0,
-            seed=s,
-        )
-        assert dem.num_detectors == 1  # builds (undefined content; do not rely)
+        with pytest.raises(ValueError, match="branching or looping control flow"):
+            DetectorErrorModel.from_guppy(
+                _measurement_feedback,
+                num_qubits=2,
+                detectors_json='[{"id":0,"records":[-2,-1]}]',
+                p1=0.0,
+                p2=0.0,
+                p_meas=0.1,
+                p_prep=0.0,
+                seed=s,
+            )
 
 
 def test_lowered_replay_uses_measure_result_ids_directly() -> None:

@@ -226,6 +226,10 @@ surface_build = build_dem_from_guppy(
   rejected because one trace cannot certify all quantum-operation paths.
 - Scalar `result(tag, measure(q))` provenance is the certified generic tag
   path. Repeated tags use `occurrence=...`.
+- Generic scalar binding currently relies on the committed-test invariant that
+  Guppy HUGR measurement traversal and source QIS measurement emission use the
+  same ordinal order. A future compiler origin-ID ABI should replace this
+  cross-pipeline invariant directly.
 - Aggregate result arrays are not accepted as generic measurement provenance:
   their public element order is not yet part of the compiler identity ABI. Emit
   direct scalar sideband tags when decoder inputs must be reconstructed from

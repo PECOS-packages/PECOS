@@ -47,6 +47,11 @@ Generic Guppy branching and looping control flow is rejected. One sampled
 runtime branch cannot certify a static DEM; built-in surface generators cross
 that boundary only through their program-bound static-layout certificate.
 
+The remaining generic scalar trust boundary is cross-pipeline measurement
+ordinal agreement: HUGR traversal ordinals and source-QIS measurement emission
+are regression-tested to agree for supported straight-line programs, but do not
+yet share an explicit compiler origin-ID ABI.
+
 This should support calls like:
 
 ```python,notest

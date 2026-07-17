@@ -421,6 +421,12 @@ impl ForeignObject for WasmForeignObject {
     fn new_instance(&mut self) -> Result<(), PecosError> {
         let mut store = self.store.write();
 
+        // Instantiation can execute enough Wasm work to observe an epoch
+        // interrupt. Arm the deadline before Instance::new, just as exec does
+        // before calling an exported function.
+        let max_ticks = Self::calculate_max_ticks(self.timeout_seconds);
+        store.set_epoch_deadline(max_ticks);
+
         // Create a new instance
         let instance = Instance::new(&mut *store, &self.module, &[]).map_err(|e| {
             PecosError::Processing(format!("Failed to create WebAssembly instance: {e}"))

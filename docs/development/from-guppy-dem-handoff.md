@@ -37,7 +37,14 @@ silently permuting decoder inputs.
 The audited path is deliberately fail-closed. A runtime trace must contain a
 complete, contiguously framed lowered operation stream with stable measurement
 IDs and an explicit terminal marker; raw pre-runtime QIS order is not an
-acceptable substitute. Named shot conversion accepts compiler-certified direct
+acceptable substitute. The terminal marker is only emitted after the engine
+verifies the shot did not fail and the runtime scheduler holds no undelivered
+operations. Precisely stated, `lowered_quantum_ops_complete` attests that the
+operations the runtime returned parsed consistently (counts, metadata,
+measurement IDs); dropped measurements are additionally caught by
+measurement-mapping conservation. A runtime that internally discards a
+non-measurement gate while reporting a consistent stream remains undetectable
+in principle — that residual trust lives in the runtime plugin itself. Named shot conversion accepts compiler-certified direct
 scalar `result()` dataflow and trusted built-in generator layouts whose digest
 binds both the HUGR and layout. Aggregate arrays and transformed booleans
 must not be treated as generic measurement identity until the compiler exposes
@@ -46,6 +53,14 @@ an explicit element-level provenance ABI.
 Generic Guppy branching and looping control flow is rejected. One sampled
 runtime branch cannot certify a static DEM; built-in surface generators cross
 that boundary only through their program-bound static-layout certificate.
+
+The certificate is an integrity mechanism, not an authentication mechanism.
+Its digest binds a layout to the exact compiled HUGR, so a stale, permuted,
+or accidentally re-attached layout fails closed. It does not defend against
+deliberate in-process forgery: any Python code that can set the attribute can
+also recompute the public digest (or monkeypatch the checker), and no
+in-process scheme changes that. The trust statement is "this layout was
+computed for exactly this program", nothing more.
 
 The remaining generic scalar trust boundary is cross-pipeline measurement
 ordinal agreement: HUGR traversal ordinals and source-QIS measurement emission

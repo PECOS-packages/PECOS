@@ -516,6 +516,44 @@ def test_generated_surface_layout_certificate_rejects_permutation() -> None:
         )
 
 
+def test_result_columns_are_a_trusted_carrier_bound_only_by_row_index() -> None:
+    """Pin the documented boundary: a permuted column silently changes shots.
+
+    ``evaluate_result_columns`` binds shot i to row i of every column; it has
+    no cross-column shot identity to check against. This test exists so the
+    boundary is deliberate -- if binding is ever added, update the docstring
+    and replace this test with a detection assertion.
+    """
+    circuit, traces = _reordered_trace()
+    schema = _resolve_dem_specs(
+        [Detector(result_ref("a"), result_ref("b"))],
+        [],
+        circuit=circuit,
+        result_traces=traces,
+    )
+    build = GuppyDemBuild(
+        dem=None,
+        circuit=circuit,
+        detectors_json=schema.detectors_json,
+        observables_json=schema.observables_json,
+        measurement_ledger=schema.ledger,
+        schema_fingerprint=schema.schema_fingerprint,
+        named_result_binding="compiler_direct_scalar_complete",
+        _detector_meas_ids=schema.detector_meas_ids,
+        _observable_meas_ids=schema.observable_meas_ids,
+        _result_ids_by_tag=schema.result_ids_by_tag,
+    )
+    columns = {"a": [0, 1], "b": [0, 0], "c": [0, 0]}
+    permuted = {**columns, "a": [1, 0]}
+
+    baseline = build.evaluate_result_columns(columns)
+    swapped = build.evaluate_result_columns(permuted)
+
+    assert baseline == [([0], 0), ([1], 0)]
+    assert swapped == [([1], 0), ([0], 0)]
+    assert baseline != swapped
+
+
 def test_schema_fingerprint_binds_runtime_order_and_named_results() -> None:
     circuit, traces = _reordered_trace()
     baseline = _resolve_dem_specs(

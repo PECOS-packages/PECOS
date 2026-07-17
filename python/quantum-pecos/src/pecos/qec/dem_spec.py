@@ -286,7 +286,13 @@ class GuppyDemBuild:
         return self.evaluate_measurements(by_id)
 
     def evaluate_result_columns(self, results: Mapping[str, Sequence[Any]]) -> list[tuple[list[int], int]]:
-        """Evaluate PECOS ``ShotMap.to_dict()`` column-oriented results."""
+        """Evaluate PECOS ``ShotMap.to_dict()`` column-oriented results.
+
+        The column mapping is a trusted carrier: shot ``i`` is whatever sits at
+        row ``i`` of every column. Columns spliced from different runs, or one
+        independently permuted column, are not detectable at this boundary --
+        pass columns exactly as one simulation produced them.
+        """
         available = [tag for tag, _ in self._result_ids_by_tag if tag in results]
         if not available:
             raise ValueError("result columns do not contain any compiler- or generator-certified measurement tags")

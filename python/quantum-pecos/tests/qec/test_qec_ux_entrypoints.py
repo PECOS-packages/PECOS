@@ -74,8 +74,13 @@ def test_surface_code_memory_accepts_szz_interaction_basis() -> None:
     assert result.raw_error_rate == 0.0
 
 
+# The traced-qis runtime plumbing is runtime-generic; these tests select a
+# non-default PECOS-built runtime by name to prove the runtime argument is
+# actually threaded through rather than silently falling back to the default.
+_NON_DEFAULT_RUNTIME = "selene_soft_rz_runtime"
+
+
 def test_surface_code_memory_accepts_traced_qis_runtime() -> None:
-    selene_anduril = pytest.importorskip("selene_anduril")
     from pecos.qec.surface import surface_code_memory
 
     result = surface_code_memory(
@@ -85,7 +90,7 @@ def test_surface_code_memory_accepts_traced_qis_runtime() -> None:
         rounds=1,
         seed=123,
         circuit_source="traced_qis",
-        runtime=selene_anduril.AndurilRuntimePlugin(),
+        runtime=_NON_DEFAULT_RUNTIME,
         decoder_type="pymatching_uncorrelated",
     )
 
@@ -94,7 +99,6 @@ def test_surface_code_memory_accepts_traced_qis_runtime() -> None:
 
 
 def test_surface_decoder_accepts_traced_qis_runtime() -> None:
-    selene_anduril = pytest.importorskip("selene_anduril")
     from pecos.qec.surface import NoiseModel, SurfaceDecoder, SurfacePatch
 
     decoder = SurfaceDecoder(
@@ -103,14 +107,13 @@ def test_surface_decoder_accepts_traced_qis_runtime() -> None:
         noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
         decoder_type="pymatching_uncorrelated",
         circuit_level_dem_source="traced_qis",
-        runtime=selene_anduril.AndurilRuntimePlugin(),
+        runtime=_NON_DEFAULT_RUNTIME,
     )
 
     assert decoder.get_dem("Z")
 
 
 def test_build_native_sampler_accepts_traced_qis_runtime() -> None:
-    selene_anduril = pytest.importorskip("selene_anduril")
     from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
 
     sampler = build_native_sampler(
@@ -118,7 +121,7 @@ def test_build_native_sampler_accepts_traced_qis_runtime() -> None:
         num_rounds=1,
         noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
         circuit_source="traced_qis",
-        runtime=selene_anduril.AndurilRuntimePlugin(),
+        runtime=_NON_DEFAULT_RUNTIME,
     )
 
     assert sampler.dem_string

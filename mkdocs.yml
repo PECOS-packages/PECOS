@@ -70,7 +70,6 @@ nav:
   - Fault Catalog Tutorial: user-guide/fault-catalog.md
   - QEC Geometry: user-guide/qec-geometry.md
   - QEC with Guppy: user-guide/qec-guppy.md
-  - Detector Error Models from Guppy: user-guide/dem-from-guppy.md
   - Decoders: user-guide/decoders.md
   - Graph API: user-guide/graph-api.md
   - Circuit Representation: user-guide/circuit-representation.md

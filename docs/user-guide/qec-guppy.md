@@ -496,7 +496,6 @@ See the [SLR and QECLib Developer Guide](../development/slr-qeclib.md) for detai
 ## Next Steps
 
 - **[QEC Geometry](qec-geometry.md)** - Understand the underlying geometry
-- **[Detector Error Models from Guppy](dem-from-guppy.md)** - Build a DEM by tracing generated programs
 - **[Decoders](decoders.md)** - Decode syndromes to recover logical information
 - **[Noise Model Builders](noise-model-builders.md)** - Custom noise configurations
 - **[HUGR & Guppy Simulation](hugr-simulation.md)** - More Guppy features

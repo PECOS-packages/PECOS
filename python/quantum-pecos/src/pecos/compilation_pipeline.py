@@ -39,6 +39,12 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
         msg = "Function must be decorated with @guppy"
         raise ValueError(msg)
 
+    from pecos._compilation.hugr_cache import lookup_cached_hugr_bytes, store_cached_hugr_bytes
+
+    cached = lookup_cached_hugr_bytes(guppy_function)
+    if cached is not None:
+        return cached
+
     # guppylang's compile()/compile_function() both return a hugr `Package`.
     # Parametric functions must use compile_function() (compile() needs entry-point
     # arguments); non-parametric functions use compile() for the entry point.
@@ -58,7 +64,9 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
     # engine's HUGR reader rejects hugr-py 0.16's S-expression *text* envelope
     # (`to_str`) with "Failed to read HUGR", whereas the binary Model form round-trips
     # cleanly, including CFG loops (while statements).
-    return compiled.to_bytes()
+    hugr_bytes = compiled.to_bytes()
+    store_cached_hugr_bytes(guppy_function, hugr_bytes)
+    return hugr_bytes
 
 
 # Step 2: HUGR -> LLVM/QIR

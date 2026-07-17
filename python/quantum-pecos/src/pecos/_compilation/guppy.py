@@ -14,6 +14,8 @@ from pathlib import Path
 from guppylang import guppy
 from pecos_rslib_llvm import compile_hugr_to_qis
 
+from pecos._compilation.hugr_cache import lookup_cached_hugr_bytes, store_cached_hugr_bytes
+
 
 def _raise_external_compiler_error() -> None:
     """Raise ImportError for missing external compiler.
@@ -345,19 +347,25 @@ def guppy_to_hugr(guppy_func: Callable) -> bytes:
         msg = "Function must be decorated with @guppy"
         raise ValueError(msg)
 
+    cached = lookup_cached_hugr_bytes(guppy_func)
+    if cached is not None:
+        return cached
+
     # Compile Guppy → HUGR
     try:
         compiled = guppy_func.compile() if hasattr(guppy_func, "compile") else guppy.compile(guppy_func)
 
         if hasattr(compiled, "to_bytes"):
-            return compiled.to_bytes()
-        if hasattr(compiled, "package"):
-            return compiled.package.to_bytes()
-        if hasattr(compiled, "to_package"):
-            package = compiled.to_package()
-            return package.to_bytes()
-        msg = "Cannot serialize HUGR to binary format"
-        raise RuntimeError(msg)
+            hugr_bytes = compiled.to_bytes()
+        elif hasattr(compiled, "package"):
+            hugr_bytes = compiled.package.to_bytes()
+        elif hasattr(compiled, "to_package"):
+            hugr_bytes = compiled.to_package().to_bytes()
+        else:
+            msg = "Cannot serialize HUGR to binary format"
+            raise RuntimeError(msg)
     except Exception as e:
         msg = f"Failed to compile Guppy to HUGR: {e}"
         raise RuntimeError(msg) from e
+    store_cached_hugr_bytes(guppy_func, hugr_bytes)
+    return hugr_bytes

@@ -7,7 +7,7 @@ env:
   TRIGGER_ON_PR_PUSH: true  # Set to true to enable triggers on PR pushes
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
-  MACOS_WHEEL_DEPLOYMENT_TARGET: "13.2"
+  MACOS_WHEEL_DEPLOYMENT_TARGET: "13.0"
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
@@ -308,8 +308,16 @@ jobs:
           ref: ${{ github.event.inputs.sha || github.sha }}
           submodules: recursive
 
+      - name: Restore release LLVM archive
+        if: runner.os != 'Windows'
+        id: restore-release-llvm
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .ci-llvm
+          key: release-llvm-${{ env.LLVM_RELEASE_VERSION }}-macos-${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/ci/build-llvm-21-*.sh') }}-v1
+
       - name: Build LLVM 21.1 for manylinux 2.28
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.restore-release-llvm.outputs.cache-hit != 'true'
         run: |
           mkdir -p .ci-llvm
           docker run --rm \
@@ -320,11 +328,18 @@ jobs:
             /project/.ci-llvm/llvm-21.1.8-manylinux_2_28-x86_64.tar.xz
 
       - name: Build LLVM 21.1 for macOS 13
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && steps.restore-release-llvm.outputs.cache-hit != 'true'
         run: |
           mkdir -p .ci-llvm
           bash scripts/ci/build-llvm-21-macos.sh \
             .ci-llvm/llvm-21.1.8-macos-${{ matrix.architecture }}.tar.gz
+
+      - name: Save release LLVM archive
+        if: runner.os != 'Windows' && steps.restore-release-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .ci-llvm
+          key: ${{ steps.restore-release-llvm.outputs.cache-primary-key }}
 
       # Set up Visual Studio environment on Windows (required for nvcc to find cl.exe)
       - name: Set up Visual Studio environment (Windows)
@@ -499,6 +514,13 @@ jobs:
           --expected-platform-tag "${{ matrix.expected_wheel_platform_tag }}"
           wheelhouse/*.whl
 
+      - name: Verify pecos-rslib Mach-O deployment target
+        if: runner.os == 'macOS'
+        run: >
+          python3 scripts/ci/check_macos_wheel_minos.py
+          --maximum-version "${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}"
+          wheelhouse/*.whl
+
       - name: Upload pecos-rslib wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -589,6 +611,13 @@ jobs:
           --expected-platform-tag "${{ matrix.expected_wheel_platform_tag }}"
           wheelhouse-llvm/*.whl
 
+      - name: Verify pecos-rslib-llvm Mach-O deployment target
+        if: runner.os == 'macOS'
+        run: >
+          python3 scripts/ci/check_macos_wheel_minos.py
+          --maximum-version "${{ env.MACOS_WHEEL_DEPLOYMENT_TARGET }}"
+          wheelhouse-llvm/*.whl
+
       - name: Upload pecos-rslib-llvm wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -638,18 +667,26 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Download abi3 wheel
+      - name: Download pecos-rslib abi3 wheel
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: wheel-pecos-rslib-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
           path: ./pecos-rslib-wheel
 
-      - name: Test abi3 wheel with Python ${{ matrix.python-version }}
+      - name: Download pecos-rslib-llvm abi3 wheel
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: wheel-pecos-rslib-llvm-${{ matrix.platform.os }}-${{ matrix.platform.architecture }}
+          path: ./pecos-rslib-llvm-wheel
+
+      - name: Test abi3 wheels with Python ${{ matrix.python-version }}
         run: |
-          echo "Testing abi3 wheel with Python ${{ matrix.python-version }}"
+          echo "Testing abi3 wheels with Python ${{ matrix.python-version }}"
           python --version
-          pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl
+          python -m pip install --force-reinstall --verbose ./pecos-rslib-wheel/*.whl ./pecos-rslib-llvm-wheel/*.whl
           python -c 'import pecos_rslib; print(f"pecos_rslib version: {pecos_rslib.__version__}")'
+          python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print(f"LLVM bitcode bytes: {len(bitcode)}")'
+          python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
           python -c 'import sys; print(f"Python version: {sys.version}")'
 
       - name: Debug DLL loading (Windows)
@@ -715,6 +752,8 @@ jobs:
             ./pecos-rslib-wheel/*.whl \
             ./pecos-rslib-llvm-wheel/*.whl
           /opt/python/cp310-cp310/bin/python -c 'import pecos_rslib; import pecos_rslib_llvm; print({"pecos_rslib": pecos_rslib.__version__})'
+          /opt/python/cp310-cp310/bin/python -c 'from pecos_rslib_llvm import binding; bitcode = binding.parse_assembly("define void @f() { ret void }").as_bitcode(); assert bitcode[:2] == b"BC"; print({"llvm_bitcode_bytes": len(bitcode)})'
+          /opt/python/cp310-cp310/bin/python -c 'from pathlib import Path; import pecos_rslib_llvm; license_path = Path(pecos_rslib_llvm.__file__).parent / "licenses" / "LLVM-LICENSE.txt"; assert license_path.is_file(), license_path'
 
   build_sdist_quantum_pecos:
     needs: build_wheelspecos_rslib

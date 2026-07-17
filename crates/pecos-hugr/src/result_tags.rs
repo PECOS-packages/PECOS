@@ -62,14 +62,25 @@ pub fn measurement_op_count<H: HugrView<Node = Node>>(hugr: &H) -> usize {
         .count()
 }
 
-/// Whether the HUGR contains branching or looping control flow.
+/// Whether the HUGR contains branching, looping, or opaque control flow.
 ///
 /// A single captured execution cannot certify a static circuit for these
 /// structures. Callers may separately trust a generator-owned static layout.
+///
+/// Beyond `Conditional`/`TailLoop`/multi-successor blocks, two shapes are
+/// rejected because they hide behavior from whole-graph analysis: a
+/// `FuncDecl` is a body-less declared function (its operations are invisible
+/// here, unlike a `Call` to a `FuncDefn`, whose body nodes are iterated like
+/// any others), and a `CallIndirect` dispatches on a runtime function value,
+/// which can select between operation sequences without any `Conditional`
+/// node appearing in the graph.
 #[must_use]
 pub fn has_nontrivial_control_flow<H: HugrView<Node = Node>>(hugr: &H) -> bool {
     hugr.nodes().any(|node| match hugr.get_optype(node) {
-        OpType::Conditional(_) | OpType::TailLoop(_) => true,
+        OpType::Conditional(_)
+        | OpType::TailLoop(_)
+        | OpType::FuncDecl(_)
+        | OpType::CallIndirect(_) => true,
         OpType::DataflowBlock(block) => block.sum_rows.len() > 1,
         _ => false,
     })
@@ -161,10 +172,34 @@ mod tests {
     //   looped:    for _ in range(comptime(3)): result("synx", measure(q))
     //   computed:  result("eq", m0==m1) ; result("const", True)
     //   arr:       result("pair", measure_array(qs))   (array-valued)
+    //   funcdecl:  @guppy.declare mystery(b: bool); prog calls mystery(measure(q))
+    //   indirect:  g = helper; g()   (LoadFunction + CallIndirect)
     const SCRAMBLED: &[u8] = include_bytes!("../tests/fixtures/scrambled.hugr");
     const LOOPED: &[u8] = include_bytes!("../tests/fixtures/looped.hugr");
     const COMPUTED: &[u8] = include_bytes!("../tests/fixtures/computed.hugr");
     const ARR: &[u8] = include_bytes!("../tests/fixtures/arr.hugr");
+    const FUNCDECL: &[u8] = include_bytes!("../tests/fixtures/funcdecl.hugr");
+    const INDIRECT: &[u8] = include_bytes!("../tests/fixtures/indirect.hugr");
+
+    /// A body-less declared function is opaque to whole-graph analysis; a
+    /// straight-line program calling one must not be certified static. The
+    /// fixture has no `Conditional`/`TailLoop` and only single-successor
+    /// blocks, so only the `FuncDecl` arm rejects it.
+    #[test]
+    fn bodyless_declared_function_is_nontrivial_control_flow() {
+        let hugr = read_hugr_envelope(FUNCDECL).unwrap();
+        assert!(has_nontrivial_control_flow(&hugr));
+    }
+
+    /// An indirect call dispatches on a runtime function value and can select
+    /// between operation sequences without any `Conditional` node. The
+    /// fixture is otherwise straight-line, so only the `CallIndirect` arm
+    /// rejects it.
+    #[test]
+    fn indirect_call_is_nontrivial_control_flow() {
+        let hugr = read_hugr_envelope(INDIRECT).unwrap();
+        assert!(has_nontrivial_control_flow(&hugr));
+    }
 
     /// Foundation: `result()` declared in scrambled order (c, a, b) over
     /// measurements made in order (a, b, c) must still bind each tag to ITS

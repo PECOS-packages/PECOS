@@ -1733,6 +1733,12 @@ impl QisRuntime for SeleneRuntime {
             // Nothing was ever submitted; do not load the plugin just to drain.
             return Ok(Vec::new());
         }
+        // Force the scheduler to release held work before collecting: a plain
+        // poll only returns operations the plugin already considers ready, so
+        // without the terminal barrier a lazily scheduling runtime could hold
+        // a tail batch straight past this check. Plugins without the barrier
+        // symbol fall through to the poll, the best available evidence.
+        self.call_runtime_global_barrier(0)?;
         self.drain_runtime_operations()
     }
 
@@ -1977,7 +1983,12 @@ impl QisRuntime for SeleneRuntime {
                 if let Ok(shot_end_fn) =
                     lib.get::<unsafe extern "C" fn(*mut c_void) -> i32>(b"selene_runtime_shot_end")
                 {
-                    let _ = shot_end_fn(instance);
+                    let errno = shot_end_fn(instance);
+                    if errno != 0 {
+                        return Err(RuntimeError::FfiError(format!(
+                            "selene_runtime_shot_end failed with errno {errno}"
+                        )));
+                    }
                 }
             }
         }

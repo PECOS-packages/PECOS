@@ -70,8 +70,12 @@ pub struct OperationTraceChunk {
 /// Shared in-memory store for traced QIS operation batches.
 pub type OperationTraceStore = Arc<Mutex<Vec<OperationTraceChunk>>>;
 
-/// Result from worker thread - returns both the operations and the interface
-type WorkerResult = Result<(OperationList, BoxedInterface), String>;
+/// Result from worker thread - returns both the operations and the interface.
+///
+/// The error arm also carries the interface back when the worker still holds
+/// it, so one failed shot does not permanently strip the engine of its
+/// interface. `None` means the interface was genuinely lost (worker died).
+type WorkerResult = Result<(OperationList, BoxedInterface), (String, Option<BoxedInterface>)>;
 
 /// Simulator commands plus one metadata record per lowered quantum gate.
 struct LoweredCommandBatch {
@@ -90,9 +94,10 @@ struct LoweredCommandBatch {
 struct DynamicExecutionState {
     /// Whether execution has completed
     execution_complete: bool,
-    /// Worker failure captured at completion. Sticky: completion paths must
-    /// error out instead of certifying a partial trace as a complete shot.
-    worker_error: Option<String>,
+    /// Terminal shot failure (worker error, failed drain verification).
+    /// Sticky: completion paths must keep erroring out instead of certifying
+    /// a partial trace as a complete shot, even across retries.
+    terminal_error: Option<String>,
     /// Sync handle for main thread FFI calls
     /// Uses the same library instance (singleton) as the worker thread,
     /// ensuring TLS consistency across platforms
@@ -136,13 +141,20 @@ impl PersistentDynamicWorker {
                     let result = interface.collect_operations();
                     debug!("Persistent worker: collect_operations returned");
 
-                    // Disable dynamic mode before returning
-                    let _ = interface.disable_dynamic_mode();
+                    // Disable dynamic mode before returning; a teardown
+                    // failure poisons the shot like any other worker error.
+                    let teardown = interface.disable_dynamic_mode();
 
-                    // Send result back to main thread
-                    let send_result = result
-                        .map(|collector| (collector, interface))
-                        .map_err(|e| e.to_string());
+                    // Send result back to main thread; the interface goes
+                    // back with BOTH outcomes so the engine stays usable.
+                    let send_result = match (result, teardown) {
+                        (Ok(collector), Ok(())) => Ok((collector, interface)),
+                        (Ok(_), Err(e)) => Err((
+                            format!("worker teardown (disable_dynamic_mode) failed: {e}"),
+                            Some(interface),
+                        )),
+                        (Err(e), _) => Err((e.to_string(), Some(interface))),
+                    };
 
                     if result_tx.send(send_result).is_err() {
                         // Main thread dropped receiver, exit
@@ -178,9 +190,26 @@ impl PersistentDynamicWorker {
             .map_err(|_| PecosError::Generic("Persistent worker thread died".to_string()))
     }
 
-    /// Try to receive a result without blocking
+    /// Try to receive a result without blocking.
+    ///
+    /// Worker death (channel disconnect) and a poisoned lock are surfaced as
+    /// worker errors rather than `None`: `None` must only ever mean "still
+    /// running", or the engine would poll an already-dead worker forever.
     fn try_recv_result(&self) -> Option<WorkerResult> {
-        self.result_rx.lock().ok()?.try_recv().ok()
+        let Ok(rx) = self.result_rx.lock() else {
+            return Some(Err((
+                "dynamic worker result lock poisoned".to_string(),
+                None,
+            )));
+        };
+        match rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err((
+                "dynamic worker thread died before returning a result".to_string(),
+                None,
+            ))),
+        }
     }
 }
 
@@ -1228,7 +1257,7 @@ impl QisEngine {
         self.dynamic_state = Some(DynamicExecutionState {
             sync_handle,
             execution_complete: false,
-            worker_error: None,
+            terminal_error: None,
         });
 
         Ok(())
@@ -1321,11 +1350,16 @@ impl QisEngine {
                     }
                     return true;
                 }
-                Err(e) => {
+                Err((e, interface)) => {
                     log::error!("Worker failed: {e}");
+                    if let Some(interface) = interface {
+                        // Keep the interface so the engine survives the
+                        // failed shot; only this shot is poisoned.
+                        self.interface = Some(interface);
+                    }
                     if let Some(ref mut state) = self.dynamic_state {
                         state.execution_complete = true;
-                        state.worker_error = Some(e);
+                        state.terminal_error = Some(format!("dynamic QIS worker failed: {e}"));
                     }
                     return true;
                 }
@@ -1335,14 +1369,24 @@ impl QisEngine {
         false
     }
 
-    /// Sticky error if the dynamic worker failed: completion paths call this
-    /// before emitting the terminal trace marker or returning shot results,
-    /// so a crashed program can never certify a partial trace as complete.
-    fn worker_failure_error(&self) -> Option<PecosError> {
+    /// Sticky error if this shot already failed terminally (worker failure,
+    /// failed drain verification): completion paths call this before emitting
+    /// the terminal trace marker or returning shot results, so a poisoned
+    /// shot can never certify a partial trace as complete — including on
+    /// retried `continue_processing` calls after the failure was reported.
+    fn terminal_failure_error(&self) -> Option<PecosError> {
         self.dynamic_state
             .as_ref()
-            .and_then(|state| state.worker_error.as_ref())
-            .map(|err| PecosError::Generic(format!("dynamic QIS worker failed: {err}")))
+            .and_then(|state| state.terminal_error.as_ref())
+            .map(|err| PecosError::Generic(err.clone()))
+    }
+
+    /// Latch a terminal failure for this shot and return it as an error.
+    fn latch_terminal_error(&mut self, message: String) -> PecosError {
+        if let Some(ref mut state) = self.dynamic_state {
+            state.terminal_error = Some(message.clone());
+        }
+        PecosError::Generic(message)
     }
 
     /// Refuse to certify a complete trace while the runtime scheduler still
@@ -1350,23 +1394,22 @@ impl QisEngine {
     /// producing, but a scheduling runtime may defer operations past the final
     /// batch; those would otherwise be dropped silently after the terminal
     /// marker. Late operations cannot be simulated at this point, so this is
-    /// fail-loud rather than a flush.
+    /// fail-loud rather than a flush — and the failure is latched sticky,
+    /// because the verification itself consumes the late operations (a retry
+    /// would otherwise find an innocently empty scheduler and certify).
     fn verify_runtime_drained(&mut self) -> Result<(), PecosError> {
         if !self.runtime.supports_operation_lowering() {
             return Ok(());
         }
-        let late_ops = self
-            .runtime
-            .drain_pending_operations()
-            .map_err(|e| PecosError::Generic(format!("Runtime drain check failed: {e}")))?;
-        if !late_ops.is_empty() {
-            return Err(PecosError::Generic(format!(
+        match self.runtime.drain_pending_operations() {
+            Ok(late_ops) if late_ops.is_empty() => Ok(()),
+            Ok(late_ops) => Err(self.latch_terminal_error(format!(
                 "runtime scheduler emitted {} operation(s) after the final lowered batch; \
                  refusing to certify a complete trace",
                 late_ops.len()
-            )));
+            ))),
+            Err(e) => Err(self.latch_terminal_error(format!("Runtime drain check failed: {e}"))),
         }
-        Ok(())
     }
 
     /// Abort dynamic execution (cleanup)
@@ -1684,7 +1727,7 @@ impl ControlEngine for QisEngine {
 
         // Check if worker completed without needing any results
         if self.check_worker_complete() {
-            if let Some(err) = self.worker_failure_error() {
+            if let Some(err) = self.terminal_failure_error() {
                 return Err(err);
             }
             // Worker completed but we still need to process any pending operations
@@ -1736,7 +1779,7 @@ impl ControlEngine for QisEngine {
         // First, check if worker already completed (before processing anything else)
         // This avoids unnecessary work if the worker finished
         if self.check_worker_complete() {
-            if let Some(err) = self.worker_failure_error() {
+            if let Some(err) = self.terminal_failure_error() {
                 return Err(err);
             }
             debug!("Worker already complete, finishing shot");
@@ -1806,7 +1849,7 @@ impl ControlEngine for QisEngine {
 
         // Check if worker completed after the wait
         if self.check_worker_complete() {
-            if let Some(err) = self.worker_failure_error() {
+            if let Some(err) = self.terminal_failure_error() {
                 return Err(err);
             }
             debug!("Worker completed after wait");
@@ -2053,6 +2096,10 @@ mod tests {
                 QuantumOp::Measure(0, 17).into(),
             ])
         }
+
+        fn drain_pending_operations(&mut self) -> RuntimeResult<Vec<QuantumOp>> {
+            Ok(Vec::new())
+        }
     }
 
     #[test]
@@ -2164,7 +2211,7 @@ mod tests {
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
-            worker_error: Some("interface crashed".to_string()),
+            terminal_error: Some("dynamic QIS worker failed: interface crashed".to_string()),
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2195,9 +2242,14 @@ mod tests {
         assert!(!wrote_terminal_marker);
     }
 
+    /// Emits one late scheduled op on the FIRST drain, then reports empty --
+    /// the shape a real lazily scheduling runtime shows after the check has
+    /// consumed its held tail. A retry must still fail (sticky), because the
+    /// second drain finds an innocently empty scheduler.
     #[derive(Clone, Default)]
     struct LateOpRuntime {
         state: ClassicalState,
+        late_op: bool,
     }
 
     impl QisRuntime for LateOpRuntime {
@@ -2241,20 +2293,28 @@ mod tests {
         }
 
         fn drain_pending_operations(&mut self) -> RuntimeResult<Vec<QuantumOp>> {
-            Ok(vec![QuantumOp::H(0)])
+            if std::mem::replace(&mut self.late_op, false) {
+                Ok(vec![QuantumOp::H(0)])
+            } else {
+                Ok(Vec::new())
+            }
         }
     }
 
     #[test]
-    fn test_undrained_runtime_scheduler_fails_the_shot() {
+    fn test_undrained_runtime_scheduler_fails_the_shot_sticky_across_retry() {
         let temp_dir = TempDir::new().expect("tempdir");
-        let mut engine = QisEngine::with_runtime(Box::new(LateOpRuntime::default()));
+        let runtime = LateOpRuntime {
+            late_op: true,
+            ..LateOpRuntime::default()
+        };
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
         engine.set_operation_trace_dir(temp_dir.path());
         engine.begin_trace_shot();
         engine.dynamic_state = Some(DynamicExecutionState {
             sync_handle: None,
             execution_complete: true,
-            worker_error: None,
+            terminal_error: None,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2263,6 +2323,18 @@ mod tests {
         assert!(
             err.to_string().contains("after the final lowered batch"),
             "unexpected error: {err}"
+        );
+
+        // Sticky: the drain consumed the late op, so a retry now finds an
+        // empty scheduler -- it must STILL fail, not certify the shot.
+        let Err(retry_err) = engine.continue_processing(ByteMessage::builder().build()) else {
+            panic!("retry after drain failure must not certify the shot");
+        };
+        assert!(
+            retry_err
+                .to_string()
+                .contains("after the final lowered batch"),
+            "unexpected retry error: {retry_err}"
         );
 
         // The failed shot must not have emitted the terminal trace marker.

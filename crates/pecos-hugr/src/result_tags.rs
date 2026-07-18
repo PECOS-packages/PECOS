@@ -181,23 +181,36 @@ mod tests {
     const FUNCDECL: &[u8] = include_bytes!("../tests/fixtures/funcdecl.hugr");
     const INDIRECT: &[u8] = include_bytes!("../tests/fixtures/indirect.hugr");
 
+    /// True iff the HUGR would be rejected by the branch/loop arms alone
+    /// (everything `has_nontrivial_control_flow` checked before the
+    /// `FuncDecl`/`CallIndirect` arms were added).
+    fn has_branch_or_loop<H: HugrView<Node = Node>>(hugr: &H) -> bool {
+        hugr.nodes().any(|node| match hugr.get_optype(node) {
+            OpType::Conditional(_) | OpType::TailLoop(_) => true,
+            OpType::DataflowBlock(block) => block.sum_rows.len() > 1,
+            _ => false,
+        })
+    }
+
     /// A body-less declared function is opaque to whole-graph analysis; a
     /// straight-line program calling one must not be certified static. The
-    /// fixture has no `Conditional`/`TailLoop` and only single-successor
-    /// blocks, so only the `FuncDecl` arm rejects it.
+    /// branch/loop assertion proves the `FuncDecl` arm alone is load-bearing
+    /// for this fixture (reverting it would flip the second assertion).
     #[test]
     fn bodyless_declared_function_is_nontrivial_control_flow() {
         let hugr = read_hugr_envelope(FUNCDECL).unwrap();
+        assert!(!has_branch_or_loop(&hugr));
         assert!(has_nontrivial_control_flow(&hugr));
     }
 
     /// An indirect call dispatches on a runtime function value and can select
     /// between operation sequences without any `Conditional` node. The
-    /// fixture is otherwise straight-line, so only the `CallIndirect` arm
-    /// rejects it.
+    /// branch/loop assertion proves the `CallIndirect` arm alone is
+    /// load-bearing for this fixture.
     #[test]
     fn indirect_call_is_nontrivial_control_flow() {
         let hugr = read_hugr_envelope(INDIRECT).unwrap();
+        assert!(!has_branch_or_loop(&hugr));
         assert!(has_nontrivial_control_flow(&hugr));
     }
 

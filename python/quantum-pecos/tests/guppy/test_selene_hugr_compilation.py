@@ -327,3 +327,26 @@ def test_hugr_compilation_is_cached_per_definition_across_entry_points() -> None
         _ = measure(q)
 
     assert compile_guppy_to_hugr(other_prog) is not first
+
+
+def test_parametric_definitions_never_share_cache_entries() -> None:
+    """The library-form compile_function() bytes must not leak into
+    guppy_to_hugr, whose contract is the entry-point compile() form."""
+    from pecos._compilation import guppy_to_hugr
+
+    @guppy_decorator
+    def parametric_prog(flip: bool) -> None:  # pragma: no cover - compiled, not run
+        q = qubit()
+        if flip:
+            h(q)
+        _ = measure(q)
+
+    first = compile_guppy_to_hugr(parametric_prog)
+    assert first.startswith(HUGR_ENVELOPE_MAGIC)
+    # Not cached: a second pipeline compile produces a fresh object.
+    assert compile_guppy_to_hugr(parametric_prog) is not first
+
+    # guppy_to_hugr must still reject the parametric definition rather than
+    # serving the pipeline's library-form bytes.
+    with pytest.raises(RuntimeError, match="Failed to compile Guppy to HUGR"):
+        guppy_to_hugr(parametric_prog)

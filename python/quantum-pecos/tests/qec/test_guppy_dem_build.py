@@ -197,6 +197,36 @@ def test_typed_rec_build_rejects_dynamic_control_without_named_results() -> None
         )
 
 
+def test_dynamic_control_is_rejected_before_any_trace_executes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the preflight ordering: rejection must happen without tracing.
+
+    If the control-flow guard ever moves back behind the runtime trace, the
+    monkeypatched trace raises AssertionError instead of the expected
+    ValueError and this test fails.
+    """
+
+    def _trace_must_not_run(*_args: object, **_kwargs: object) -> None:
+        msg = "trace executed before the static-schedule preflight"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(
+        "pecos.qec.surface.decode.trace_guppy_into_tick_circuit_with_result_traces",
+        _trace_must_not_run,
+    )
+    with pytest.raises(ValueError, match="branching or looping control flow"):
+        build_dem_from_guppy(
+            _measurement_feedback_without_named_results,
+            num_qubits=2,
+            detectors=[Detector(rec[-2], rec[-1])],
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
+
+
 def test_rec_build_rejects_transformed_scalar_result_as_measurement_provenance() -> None:
     build = build_dem_from_guppy(
         _transformed_measurement_result,

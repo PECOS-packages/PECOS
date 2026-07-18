@@ -42,9 +42,19 @@ verifies the shot did not fail and the runtime scheduler holds no undelivered
 operations. Precisely stated, `lowered_quantum_ops_complete` attests that the
 operations the runtime returned parsed consistently (counts, metadata,
 measurement IDs); dropped measurements are additionally caught by
-measurement-mapping conservation. A runtime that internally discards a
-non-measurement gate while reporting a consistent stream remains undetectable
-in principle — that residual trust lives in the runtime plugin itself. Named shot conversion accepts compiler-certified direct
+measurement-mapping conservation. Completion additionally forces a terminal
+scheduler flush (a runtime global barrier where the plugin supports one) and
+fails the shot, stickily, if any operation surfaces after the final lowered
+batch. A runtime that internally discards a non-measurement gate while
+reporting a consistent stream remains undetectable in principle — that
+residual trust lives in the runtime plugin itself.
+
+Known lifecycle gap: the QIS engine does not yet call the runtime's
+`shot_end` hook on its completion paths, so a plugin that validates its own
+finalization there never gets the chance before the trace is certified. The
+Selene wrapper now propagates `selene_runtime_shot_end` errors when the hook
+is invoked; wiring the hook into engine completion (and validating it against
+real plugins) is deliberate follow-up work. Named shot conversion accepts compiler-certified direct
 scalar `result()` dataflow and trusted built-in generator layouts whose digest
 binds both the HUGR and layout. Aggregate arrays and transformed booleans
 must not be treated as generic measurement identity until the compiler exposes

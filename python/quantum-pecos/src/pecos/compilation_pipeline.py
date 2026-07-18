@@ -39,7 +39,11 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
         msg = "Function must be decorated with @guppy"
         raise ValueError(msg)
 
-    from pecos._compilation.hugr_cache import lookup_cached_hugr_bytes, store_cached_hugr_bytes
+    from pecos._compilation.hugr_cache import (
+        definition_takes_parameters,
+        lookup_cached_hugr_bytes,
+        store_cached_hugr_bytes,
+    )
 
     cached = lookup_cached_hugr_bytes(guppy_function)
     if cached is not None:
@@ -48,13 +52,10 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
     # guppylang's compile()/compile_function() both return a hugr `Package`.
     # Parametric functions must use compile_function() (compile() needs entry-point
     # arguments); non-parametric functions use compile() for the entry point.
+    # Only the entry-point form is cached: the two forms are not
+    # interchangeable, and guppy_to_hugr only ever produces the entry-point one.
+    has_params = definition_takes_parameters(guppy_function)
     try:
-        import inspect
-
-        sig = inspect.signature(
-            guppy_function.__wrapped__ if hasattr(guppy_function, "__wrapped__") else guppy_function,
-        )
-        has_params = len(sig.parameters) > 0
         compiled = guppy_function.compile_function() if has_params else guppy_function.compile()
     except Exception as e:
         msg = f"Failed to compile Guppy to HUGR: {e}"
@@ -65,7 +66,8 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
     # (`to_str`) with "Failed to read HUGR", whereas the binary Model form round-trips
     # cleanly, including CFG loops (while statements).
     hugr_bytes = compiled.to_bytes()
-    store_cached_hugr_bytes(guppy_function, hugr_bytes)
+    if not has_params:
+        store_cached_hugr_bytes(guppy_function, hugr_bytes)
     return hugr_bytes
 
 

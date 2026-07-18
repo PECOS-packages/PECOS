@@ -17,6 +17,7 @@ compile entry points can share it cheaply.
 
 from __future__ import annotations
 
+import inspect
 import weakref
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,26 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _hugr_bytes_cache: dict[int, tuple[weakref.ref, bytes]] = {}
+
+
+def definition_takes_parameters(guppy_func: Callable) -> bool:
+    """Best-effort check whether a Guppy definition takes entry-point parameters.
+
+    The compile entry points diverge for parametric definitions
+    (``compile_function()`` library form vs entry-point ``compile()``), so a
+    parametric definition must never share a cache entry with the entry-point
+    form. Guppy definitions do not expose ``__wrapped__``; the raw Python
+    function sits at ``wrapped.python_func``. When no real signature is
+    reachable, the definition is treated as parametric -- the conservative
+    direction (parametric definitions are simply never cached).
+    """
+    target = getattr(getattr(guppy_func, "wrapped", None), "python_func", None)
+    if target is None:
+        target = getattr(guppy_func, "__wrapped__", guppy_func)
+    try:
+        return len(inspect.signature(target).parameters) > 0
+    except (TypeError, ValueError):
+        return True
 
 
 def lookup_cached_hugr_bytes(guppy_func: Callable) -> bytes | None:

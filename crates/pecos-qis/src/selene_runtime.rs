@@ -1736,9 +1736,17 @@ impl QisRuntime for SeleneRuntime {
         // Force the scheduler to release held work before collecting: a plain
         // poll only returns operations the plugin already considers ready, so
         // without the terminal barrier a lazily scheduling runtime could hold
-        // a tail batch straight past this check. Plugins without the barrier
-        // symbol fall through to the poll, the best available evidence.
-        self.call_runtime_global_barrier(0)?;
+        // a tail batch straight past this check. A plugin without the barrier
+        // symbol cannot prove it released held work, so this fails closed
+        // (both PECOS-built runtimes export `selene_runtime_global_barrier`).
+        if !self.call_runtime_global_barrier(0)? {
+            return Err(RuntimeError::ExecutionError(
+                "runtime plugin does not export selene_runtime_global_barrier; \
+                 cannot force the terminal flush required to verify the \
+                 scheduler is drained"
+                    .to_string(),
+            ));
+        }
         self.drain_runtime_operations()
     }
 

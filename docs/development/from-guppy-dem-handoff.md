@@ -49,12 +49,13 @@ batch. A runtime that internally discards a non-measurement gate while
 reporting a consistent stream remains undetectable in principle — that
 residual trust lives in the runtime plugin itself.
 
-Known lifecycle gap: the QIS engine does not yet call the runtime's
-`shot_end` hook on its completion paths, so a plugin that validates its own
-finalization there never gets the chance before the trace is certified. The
-Selene wrapper now propagates `selene_runtime_shot_end` errors when the hook
-is invoked; wiring the hook into engine completion (and validating it against
-real plugins) is deliberate follow-up work. Named shot conversion accepts compiler-certified direct
+Shot completion runs three gates in order before the terminal marker: the
+sticky terminal-failure check, drain verification (which requires the plugin
+to export `selene_runtime_global_barrier` — a plugin that cannot prove a
+terminal flush fails closed), and the runtime's `shot_end` finalization hook
+with its error propagated and latched. A plugin that only detects an invalid
+final schedule at shot end therefore fails the shot rather than receiving a
+certified trace. Named shot conversion accepts compiler-certified direct
 scalar `result()` dataflow and trusted built-in generator layouts whose digest
 binds both the HUGR and layout. Aggregate arrays and transformed booleans
 must not be treated as generic measurement identity until the compiler exposes

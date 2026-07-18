@@ -1412,6 +1412,22 @@ impl QisEngine {
         }
     }
 
+    /// Run the shot-completion gates in order: sticky terminal check, drain
+    /// verification, then the runtime's own `shot_end` finalization hook —
+    /// all before the terminal trace marker, so a runtime that only detects
+    /// an invalid final schedule at shot end still fails the shot instead of
+    /// receiving a certified trace. Every failure is latched sticky.
+    fn finalize_shot_for_certification(&mut self) -> Result<(), PecosError> {
+        if let Some(err) = self.terminal_failure_error() {
+            return Err(err);
+        }
+        self.verify_runtime_drained()?;
+        if let Err(e) = self.runtime.shot_end() {
+            return Err(self.latch_terminal_error(format!("runtime shot_end failed: {e}")));
+        }
+        Ok(())
+    }
+
     /// Abort dynamic execution (cleanup)
     fn abort_dynamic_execution(&mut self) {
         // Abort execution via sync handle if available
@@ -1740,7 +1756,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
-            self.verify_runtime_drained()?;
+            self.finalize_shot_for_certification()?;
             self.trace_named_result_traces_from_dynamic_handle();
             self.trace_complete_chunk();
             let shot = self.get_results()?;
@@ -1792,7 +1808,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
-            self.verify_runtime_drained()?;
+            self.finalize_shot_for_certification()?;
             self.trace_named_result_traces_from_dynamic_handle();
             self.trace_complete_chunk();
             let shot = self.get_results()?;
@@ -1862,7 +1878,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
-            self.verify_runtime_drained()?;
+            self.finalize_shot_for_certification()?;
             self.trace_named_result_traces_from_dynamic_handle();
             self.trace_complete_chunk();
             let shot = self.get_results()?;
@@ -2299,6 +2315,160 @@ mod tests {
                 Ok(Vec::new())
             }
         }
+    }
+
+    /// Lowering runtime that deliberately does NOT override
+    /// `drain_pending_operations`: it must be rejected by the fail-closed
+    /// trait default, never certified drained.
+    #[derive(Clone, Default)]
+    struct NoDrainProtocolRuntime {
+        state: ClassicalState,
+    }
+
+    impl QisRuntime for NoDrainProtocolRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+
+        fn supports_operation_lowering(&self) -> bool {
+            true
+        }
+
+        fn lower_operations(&mut self, _operations: &[Operation]) -> RuntimeResult<Vec<QuantumOp>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn test_lowering_runtime_without_drain_protocol_fails_closed() {
+        let mut engine = QisEngine::with_runtime(Box::new(NoDrainProtocolRuntime::default()));
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+        });
+
+        let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
+            panic!("a lowering runtime without the drain protocol must not certify");
+        };
+        assert!(
+            err.to_string()
+                .contains("does not implement drain_pending_operations"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// Runtime whose `shot_end` finalization fails: the completion gate must
+    /// fail the shot before the terminal trace marker, and stay failed.
+    #[derive(Clone, Default)]
+    struct ShotEndFailRuntime {
+        state: ClassicalState,
+    }
+
+    impl QisRuntime for ShotEndFailRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+
+        fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
+            Err(crate::runtime::RuntimeError::ExecutionError(
+                "invalid final schedule".to_string(),
+            ))
+        }
+    }
+
+    #[test]
+    fn test_failing_shot_end_blocks_certification_sticky() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let mut engine = QisEngine::with_runtime(Box::new(ShotEndFailRuntime::default()));
+        engine.set_operation_trace_dir(temp_dir.path());
+        engine.begin_trace_shot();
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+        });
+
+        let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
+            panic!("failing shot_end must fail the shot");
+        };
+        assert!(
+            err.to_string().contains("runtime shot_end failed"),
+            "unexpected error: {err}"
+        );
+
+        // Sticky across retry.
+        assert!(
+            engine
+                .continue_processing(ByteMessage::builder().build())
+                .is_err()
+        );
+
+        // No terminal trace marker for the failed shot.
+        let wrote_terminal_marker = std::fs::read_dir(temp_dir.path())
+            .expect("read trace dir")
+            .any(|entry| {
+                entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("trace_complete")
+            });
+        assert!(!wrote_terminal_marker);
     }
 
     #[test]

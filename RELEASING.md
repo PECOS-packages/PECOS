@@ -2,7 +2,7 @@
 
 The final PyPI push is deliberately **manual**: artifact building and testing
 are automated, but a human runs the upload and confirms each package. This
-sequence was last exercised for `0.9.0.dev0`.
+sequence was last exercised for `0.9.0.dev1`.
 
 ## 1. Version bump (its own PR)
 

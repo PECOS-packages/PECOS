@@ -270,6 +270,11 @@ pub struct SeleneRuntime {
 
     /// Shot metadata waiting for a lazily loaded runtime plugin.
     pending_shot_start: Option<(u64, Option<u64>)>,
+
+    /// Shot identity actually delivered to the plugin via
+    /// `selene_runtime_shot_start`; `selene_runtime_shot_end` takes the same
+    /// `(shot_id, seed)` pair, so it must be retained until shot end.
+    active_shot: Option<(u64, u64)>,
 }
 
 // SAFETY: SeleneRuntime owns its instance pointer exclusively.
@@ -305,6 +310,7 @@ impl SeleneRuntime {
             runtime_to_program_results: BTreeMap::new(),
             last_gate_time_end_nanos: Vec::new(),
             pending_shot_start: None,
+            active_shot: None,
         }
     }
 
@@ -505,6 +511,7 @@ impl SeleneRuntime {
                         "Shot start failed with errno {errno}"
                     )));
                 }
+                self.active_shot = Some((shot_id, seed.unwrap_or(0)));
             }
         }
 
@@ -1566,6 +1573,7 @@ impl Clone for SeleneRuntime {
             runtime_to_program_results: self.runtime_to_program_results.clone(),
             last_gate_time_end_nanos: self.last_gate_time_end_nanos.clone(),
             pending_shot_start: self.pending_shot_start,
+            active_shot: self.active_shot,
         }
     }
 }
@@ -1984,14 +1992,20 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn shot_end(&mut self) -> Result<Shot> {
-        if let Some(lib) = &self.library
+        // Only end a shot the plugin actually started; the pinned Selene ABI
+        // is `selene_runtime_shot_end(instance, shot_id, seed)`, mirroring
+        // shot_start, so the delivered identity pair is replayed here.
+        if let Some((shot_id, seed)) = self.active_shot
+            && let Some(lib) = &self.library
             && let Some(instance) = self.instance
         {
             unsafe {
-                if let Ok(shot_end_fn) =
-                    lib.get::<unsafe extern "C" fn(*mut c_void) -> i32>(b"selene_runtime_shot_end")
+                if let Ok(shot_end_fn) = lib
+                    .get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
+                        b"selene_runtime_shot_end",
+                    )
                 {
-                    let errno = shot_end_fn(instance);
+                    let errno = shot_end_fn(instance, shot_id, seed);
                     if errno != 0 {
                         return Err(RuntimeError::FfiError(format!(
                             "selene_runtime_shot_end failed with errno {errno}"
@@ -1999,6 +2013,7 @@ impl QisRuntime for SeleneRuntime {
                     }
                 }
             }
+            self.active_shot = None;
         }
         self.pending_shot_start = None;
 
@@ -2021,6 +2036,7 @@ impl QisRuntime for SeleneRuntime {
         self.runtime_to_program_results.clear();
         self.last_gate_time_end_nanos.clear();
         self.pending_shot_start = None;
+        self.active_shot = None;
 
         Ok(())
     }

@@ -43,9 +43,9 @@ operations. Precisely stated, `lowered_quantum_ops_complete` attests that the
 operations the runtime returned parsed consistently (counts, metadata,
 measurement IDs); dropped measurements are additionally caught by
 measurement-mapping conservation. Completion additionally forces a terminal
-scheduler flush (a runtime global barrier where the plugin supports one) and
-fails the shot, stickily, if any operation surfaces after the final lowered
-batch. A runtime that internally discards a non-measurement gate while
+scheduler flush via a required runtime global barrier and fails the shot,
+stickily, if any operation surfaces after the final lowered batch — or if the
+plugin cannot provide the barrier at all. A runtime that internally discards a non-measurement gate while
 reporting a consistent stream remains undetectable in principle — that
 residual trust lives in the runtime plugin itself.
 

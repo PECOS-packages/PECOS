@@ -98,6 +98,10 @@ struct DynamicExecutionState {
     /// Sticky: completion paths must keep erroring out instead of certifying
     /// a partial trace as a complete shot, even across retries.
     terminal_error: Option<String>,
+    /// Whether this shot has already been finalized and certified. A caller
+    /// polling `continue_processing` again after `Complete` must not re-run
+    /// the drain / `shot_end` gates or emit a second terminal marker.
+    finalized: bool,
     /// Sync handle for main thread FFI calls
     /// Uses the same library instance (singleton) as the worker thread,
     /// ensuring TLS consistency across platforms
@@ -1258,6 +1262,7 @@ impl QisEngine {
             sync_handle,
             execution_complete: false,
             terminal_error: None,
+            finalized: false,
         });
 
         Ok(())
@@ -1413,17 +1418,33 @@ impl QisEngine {
     }
 
     /// Run the shot-completion gates in order: sticky terminal check, drain
-    /// verification, then the runtime's own `shot_end` finalization hook —
-    /// all before the terminal trace marker, so a runtime that only detects
-    /// an invalid final schedule at shot end still fails the shot instead of
-    /// receiving a certified trace. Every failure is latched sticky.
+    /// verification, the runtime's own `shot_end` finalization hook, then the
+    /// named-result traces and terminal trace marker. A runtime that only
+    /// detects an invalid final schedule at shot end therefore fails the shot
+    /// instead of receiving a certified trace. Failures latch sticky and
+    /// success is one-shot.
     fn finalize_shot_for_certification(&mut self) -> Result<(), PecosError> {
         if let Some(err) = self.terminal_failure_error() {
             return Err(err);
         }
+        // One-shot: a redundant continue_processing poll after Complete must
+        // not re-run the gates (a second shot_end on an ended shot is a
+        // legitimate runtime error) or emit a second terminal marker.
+        if self
+            .dynamic_state
+            .as_ref()
+            .is_some_and(|state| state.finalized)
+        {
+            return Ok(());
+        }
         self.verify_runtime_drained()?;
         if let Err(e) = self.runtime.shot_end() {
             return Err(self.latch_terminal_error(format!("runtime shot_end failed: {e}")));
+        }
+        self.trace_named_result_traces_from_dynamic_handle();
+        self.trace_complete_chunk();
+        if let Some(ref mut state) = self.dynamic_state {
+            state.finalized = true;
         }
         Ok(())
     }
@@ -1757,8 +1778,6 @@ impl ControlEngine for QisEngine {
                 }
             }
             self.finalize_shot_for_certification()?;
-            self.trace_named_result_traces_from_dynamic_handle();
-            self.trace_complete_chunk();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -1809,8 +1828,6 @@ impl ControlEngine for QisEngine {
                 }
             }
             self.finalize_shot_for_certification()?;
-            self.trace_named_result_traces_from_dynamic_handle();
-            self.trace_complete_chunk();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -1879,8 +1896,6 @@ impl ControlEngine for QisEngine {
                 }
             }
             self.finalize_shot_for_certification()?;
-            self.trace_named_result_traces_from_dynamic_handle();
-            self.trace_complete_chunk();
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
         }
@@ -2228,6 +2243,7 @@ mod tests {
             sync_handle: None,
             execution_complete: true,
             terminal_error: Some("dynamic QIS worker failed: interface crashed".to_string()),
+            finalized: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2373,6 +2389,7 @@ mod tests {
             sync_handle: None,
             execution_complete: true,
             terminal_error: None,
+            finalized: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2441,6 +2458,7 @@ mod tests {
             sync_handle: None,
             execution_complete: true,
             terminal_error: None,
+            finalized: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2471,6 +2489,101 @@ mod tests {
         assert!(!wrote_terminal_marker);
     }
 
+    /// Counts `shot_end` invocations to pin one-shot finalization.
+    #[derive(Clone, Default)]
+    struct CountingShotEndRuntime {
+        state: ClassicalState,
+        shot_end_calls: Arc<Mutex<u32>>,
+    }
+
+    impl QisRuntime for CountingShotEndRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+
+        fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
+            *self.shot_end_calls.lock().expect("counter lock") += 1;
+            Ok(crate::runtime::Shot {
+                measurements: self.state.measurements.clone(),
+                registers: self.state.registers.clone(),
+                metadata: BTreeMap::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn test_successful_finalization_is_one_shot_across_redundant_polls() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let counter = Arc::new(Mutex::new(0u32));
+        let runtime = CountingShotEndRuntime {
+            shot_end_calls: counter.clone(),
+            ..CountingShotEndRuntime::default()
+        };
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine.set_operation_trace_dir(temp_dir.path());
+        engine.begin_trace_shot();
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+        });
+
+        // First completion certifies the shot; a redundant poll must neither
+        // call shot_end again nor emit another terminal marker.
+        assert!(
+            engine
+                .continue_processing(ByteMessage::builder().build())
+                .is_ok()
+        );
+        assert!(
+            engine
+                .continue_processing(ByteMessage::builder().build())
+                .is_ok()
+        );
+        assert_eq!(*counter.lock().expect("counter lock"), 1);
+
+        let terminal_markers = std::fs::read_dir(temp_dir.path())
+            .expect("read trace dir")
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("trace_complete")
+            })
+            .count();
+        assert_eq!(terminal_markers, 1);
+    }
+
     #[test]
     fn test_undrained_runtime_scheduler_fails_the_shot_sticky_across_retry() {
         let temp_dir = TempDir::new().expect("tempdir");
@@ -2485,6 +2598,7 @@ mod tests {
             sync_handle: None,
             execution_complete: true,
             terminal_error: None,
+            finalized: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {

@@ -696,7 +696,7 @@ def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.Monke
 
     with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
         DetectorErrorModel.from_guppy(
-            object(),
+            _single_measurement,
             num_qubits=1,
             detectors_json='[{"id":0,"records":[-1]}]',
             p1=0.0,

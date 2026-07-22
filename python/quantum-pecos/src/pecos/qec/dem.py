@@ -54,6 +54,32 @@ P2Weights = Mapping[str, float]
 _GENERATOR_LAYOUT_ATTR = "__pecos_named_measurement_layout_v2__"
 
 
+def _certifiable_hugr_bytes(guppy: Any) -> bytes | None:
+    """Return the HUGR bytes that certify this program's static schedule.
+
+    Accepts ``@guppy`` definitions (compiled through the shared cache),
+    ``pecos.Guppy`` wrappers (unwrapped and compiled), and ``pecos.Hugr``
+    wrappers or raw HUGR envelope bytes (used directly, so the audit inspects
+    the exact bytes that would execute). Returns ``None`` when the input
+    shape is not HUGR-certifiable; audited callers fail closed on ``None``
+    rather than tracing one sampled execution of an uninspectable program.
+    """
+    if isinstance(guppy, (bytes, bytearray)):
+        return bytes(guppy)
+    wrapped_bytes = getattr(guppy, "hugr_bytes", None)
+    if isinstance(wrapped_bytes, (bytes, bytearray)):
+        return bytes(wrapped_bytes)
+    from pecos._compilation import guppy_to_hugr
+
+    target = getattr(guppy, "wrapped_function", guppy)
+    try:
+        return guppy_to_hugr(target)
+    except ValueError:
+        # Not a Guppy definition at all; a genuine compile failure of a real
+        # definition raises RuntimeError and propagates to the caller.
+        return None
+
+
 def _generator_certified_layout(guppy: Any, hugr_bytes: bytes | None = None) -> Sequence[Any] | None:
     """Validate and return a built-in generator's program-bound layout."""
     certificate = getattr(guppy, _GENERATOR_LAYOUT_ATTR, None)
@@ -183,11 +209,14 @@ class _DetectorErrorModelMixin:
         Rust DEM builder (single source of truth).
 
         Args:
-            guppy: Anything ``pecos.sim`` accepts -- a ``@guppy``-decorated
-                function, a compiled Guppy program (e.g. the object returned by
-                ``pecos.guppy.make_surface_code``), or a program wrapper. There
-                is no Guppy *source-string* form in PECOS; pass a program/
-                function, not source text.
+            guppy: A HUGR-certifiable program: a ``@guppy``-decorated function,
+                a compiled Guppy program (e.g. the object returned by
+                ``pecos.guppy.make_surface_code``), a ``pecos.Guppy`` or
+                ``pecos.Hugr`` wrapper, or raw HUGR envelope bytes. Inputs whose
+                HUGR cannot be obtained (e.g. already-lowered QIS/QIR) are
+                rejected: the audited build must be able to certify the static
+                schedule before tracing, and the exact certified bytes are what
+                gets executed.
             num_qubits: Number of qubits to allocate for the trace. QIS/HUGR
                 programs require an explicit qubit count.
             detectors_json: Detector definitions as a JSON list, e.g.
@@ -335,12 +364,8 @@ class _DetectorErrorModelMixin:
         # with a clear @guppy-mentioning message instead of crashing later
         # inside the HUGR step.
         needs_tags = _result_tags_present(detectors_json, observables_json)
-        hugr_bytes: bytes | None = None
-        try:
-            from pecos._compilation import guppy_to_hugr
-
-            hugr_bytes = guppy_to_hugr(guppy)
-        except ValueError as exc:
+        hugr_bytes = _certifiable_hugr_bytes(guppy)
+        if hugr_bytes is None:
             if needs_tags:
                 msg = (
                     "result_tags requires a @guppy-decorated function (or a "
@@ -349,9 +374,16 @@ class _DetectorErrorModelMixin:
                     "compiled to a HUGR. Pass such an input directly, or use "
                     "positional 'records' / 'meas_ids' instead."
                 )
-                raise ValueError(msg) from exc
-        generator_layout = _generator_certified_layout(guppy, hugr_bytes) if hugr_bytes is not None else None
-        if hugr_bytes is not None and generator_layout is None:
+                raise ValueError(msg)
+            msg = (
+                "DetectorErrorModel.from_guppy requires a HUGR-certifiable program "
+                "(a @guppy function, pecos.Guppy, pecos.Hugr, or HUGR envelope "
+                f"bytes); a {type(guppy).__name__!r} input cannot be certified as "
+                "statically scheduled, so an audited DEM cannot be built from it"
+            )
+            raise ValueError(msg)
+        generator_layout = _generator_certified_layout(guppy, hugr_bytes)
+        if generator_layout is None:
             from pecos_rslib import guppy_hugr_has_nontrivial_control_flow
 
             if guppy_hugr_has_nontrivial_control_flow(hugr_bytes):
@@ -361,8 +393,13 @@ class _DetectorErrorModelMixin:
                 )
                 raise ValueError(msg)
 
+        # Trace the EXACT bytes that were certified above: re-compiling the
+        # original object for execution would let the audit and the execution
+        # diverge (and pays a second compile for nothing).
+        from pecos.programs import Hugr as _HugrProgram
+
         tc = trace_guppy_into_tick_circuit(
-            guppy,
+            _HugrProgram(hugr_bytes),
             num_qubits,
             seed=seed,
             runtime=runtime,
@@ -468,26 +505,32 @@ def _preflight_guppy_static_schedule(
     guppy: Any,
     *,
     required_tags: Sequence[str],
-) -> tuple[Sequence[Any] | None, bytes | None]:
+) -> tuple[Sequence[Any] | None, bytes]:
     """Validate program-level trust before any runtime trace is captured.
 
     Returns ``(generator_layout, hugr_bytes)``. Runs the generator-certificate
     digest check and the branching/looping HUGR rejection *before* execution,
     so an unsupported program cannot run (or hang) ahead of its rejection.
+    Fails closed on any input whose HUGR cannot be obtained: one sampled
+    execution of an uninspectable program is not a certifiable static circuit.
+    The returned bytes are the exact bytes the caller must execute.
     """
-    generator_layout = _generator_certified_layout(guppy)
-    if generator_layout is not None:
-        return generator_layout, None
-
-    from pecos._compilation import guppy_to_hugr
-
-    try:
-        hugr_bytes = guppy_to_hugr(guppy)
-    except ValueError as exc:
+    hugr_bytes = _certifiable_hugr_bytes(guppy)
+    if hugr_bytes is None:
         if required_tags:
             msg = "result_ref(...) requires a HUGR-compilable Guppy program"
-            raise ValueError(msg) from exc
-        return None, None
+            raise ValueError(msg)
+        msg = (
+            "build_dem_from_guppy requires a HUGR-certifiable program (a @guppy "
+            "function, pecos.Guppy, pecos.Hugr, or HUGR envelope bytes); a "
+            f"{type(guppy).__name__!r} input cannot be certified as statically "
+            "scheduled, so an audited DEM cannot be built from it"
+        )
+        raise ValueError(msg)
+
+    generator_layout = _generator_certified_layout(guppy, hugr_bytes)
+    if generator_layout is not None:
+        return generator_layout, hugr_bytes
 
     from pecos_rslib import guppy_hugr_has_nontrivial_control_flow
 
@@ -503,7 +546,7 @@ def _preflight_guppy_static_schedule(
 
 def _compiler_certified_result_traces(
     generator_layout: Sequence[Any] | None,
-    hugr_bytes: bytes | None,
+    hugr_bytes: bytes,
     circuit: Any,
     runtime_result_traces: Sequence[Mapping[str, Any]],
     *,
@@ -517,8 +560,6 @@ def _compiler_certified_result_traces(
             runtime_result_traces,
             required_tags=required_tags,
         )
-    if hugr_bytes is None:
-        return []
 
     candidate_tags = sorted(
         {
@@ -649,6 +690,34 @@ def _generator_certified_result_traces(
         msg = f"result_ref tag(s) are absent from the generator-certified layout: {missing_required}"
         raise ValueError(msg)
 
+    # Defense-in-depth: the layout binds by abstract-circuit position, which
+    # relies on the invariant that abstract measurement order equals source
+    # `result()` emission order. Where the runtime trace exposes its own
+    # scalar result id for a (tag, occurrence), require it to agree with the
+    # positional binding, so an order drift in a future generator variant
+    # fails loud instead of silently misbinding detectors.
+    runtime_scalar_ids: dict[tuple[str, int], int] = {}
+    runtime_occurrences: dict[str, int] = {}
+    for trace in runtime_result_traces:
+        tag = trace.get("name")
+        if not isinstance(tag, str):
+            continue
+        occurrence = runtime_occurrences.get(tag, 0)
+        runtime_occurrences[tag] = occurrence + 1
+        result_ids = trace.get("result_ids")
+        if isinstance(result_ids, list) and len(result_ids) == 1 and isinstance(result_ids[0], int):
+            runtime_scalar_ids[(tag, occurrence)] = result_ids[0]
+    for source_index, (tag, value_index) in enumerate(entries):
+        expected = int(source_measurement_ids[source_index])
+        actual = runtime_scalar_ids.get((tag, value_index))
+        if actual is not None and actual != expected:
+            msg = (
+                f"generator layout binds {tag!r} occurrence {value_index} to source "
+                f"measurement {expected}, but the runtime trace reports result id "
+                f"{actual}; abstract and source measurement order have diverged"
+            )
+            raise ValueError(msg)
+
     return [
         {
             "name": tag,
@@ -715,8 +784,13 @@ def build_dem_from_guppy(
         required_tags=referenced_tags,
     )
     has_generator_layout = generator_layout is not None
+    # Trace the EXACT bytes that were certified: re-compiling the original
+    # object for execution would let the audit and the execution diverge (and
+    # pays a second compile for nothing).
+    from pecos.programs import Hugr as _HugrProgram
+
     circuit, result_traces = trace_guppy_into_tick_circuit_with_result_traces(
-        guppy,
+        _HugrProgram(hugr_bytes),
         num_qubits,
         seed=seed,
         runtime=runtime,

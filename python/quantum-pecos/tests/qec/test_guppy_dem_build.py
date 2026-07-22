@@ -147,7 +147,7 @@ def test_trace_once_build_evaluates_runtime_and_rejects_uncertified_named_result
         fake_trace,
     )
     build = build_dem_from_guppy(
-        object(),
+        _scrambled_tagged_measurements,
         num_qubits=3,
         detectors=[
             Detector(rec[-3], rec[-1]),
@@ -195,6 +195,54 @@ def test_typed_rec_build_rejects_dynamic_control_without_named_results() -> None
             p_meas=0.1,
             p_prep=0.0,
         )
+
+
+def test_uncertifiable_inputs_fail_closed_on_both_entry_points() -> None:
+    """A program whose HUGR cannot be obtained must be rejected, not traced:
+    one sampled execution of an uninspectable program is not a static circuit.
+    """
+    from pecos.qec import DetectorErrorModel
+
+    with pytest.raises(ValueError, match="HUGR-certifiable"):
+        build_dem_from_guppy(
+            object(),
+            num_qubits=1,
+            detectors=[Detector(rec[-1])],
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
+    with pytest.raises(ValueError, match="HUGR-certifiable"):
+        DetectorErrorModel.from_guppy(
+            object(),
+            num_qubits=1,
+            detectors_json='[{"id":0,"records":[-1]}]',
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
+
+
+def test_dynamic_hugr_bytes_wrapper_is_rejected_not_traced() -> None:
+    """Compiled dynamic control flow must not dodge the guard by arriving as
+    a pecos.Hugr wrapper or raw HUGR envelope bytes."""
+    import pecos
+    from pecos._compilation import guppy_to_hugr
+
+    dynamic_bytes = guppy_to_hugr(_measurement_feedback_without_named_results)
+    for program in (pecos.Hugr(dynamic_bytes), dynamic_bytes):
+        with pytest.raises(ValueError, match="branching or looping control flow"):
+            build_dem_from_guppy(
+                program,
+                num_qubits=2,
+                detectors=[Detector(rec[-2], rec[-1])],
+                p1=0.0,
+                p2=0.0,
+                p_meas=0.1,
+                p_prep=0.0,
+            )
 
 
 def test_dynamic_control_is_rejected_before_any_trace_executes(
@@ -403,7 +451,7 @@ def test_audited_build_disables_raw_measurement_id_fallback(monkeypatch: pytest.
         fake_trace,
     )
     build_dem_from_guppy(
-        object(),
+        _scrambled_tagged_measurements,
         num_qubits=3,
         detectors=[Detector(rec[-1])],
         p1=0.0,

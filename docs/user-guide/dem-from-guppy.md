@@ -114,6 +114,15 @@ same measurements):
 A practical split: `result_tags` for small straight-line programs,
 `records`/`meas_ids` for round-looped QEC programs.
 
+Note that the negative-offset spelling appears in three places with three
+reference frames: `"records"` here indexes the **traced runtime record**
+(Stim convention); `rec[-k]` in `build_dem_from_guppy` indexes the
+**canonical Guppy result-id stream** (before runtime scheduling); and the
+surface builder's metadata `records` index its **abstract circuit order**.
+They coincide only when the runtime preserves canonical order — when moving
+a detector spec between entry points under a reordering runtime, re-derive
+the offsets rather than copying them.
+
 ## Surface-Code Memory DEM
 
 For generated QEC programs (see [QEC with Guppy](qec-guppy.md)), the

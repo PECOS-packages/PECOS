@@ -155,12 +155,22 @@ def surface_memory_dem_spec(
     )
     detector_entries = json.loads(circuit.get_meta("detectors") or "[]")
     observable_entries = json.loads(circuit.get_meta("observables") or "[]")
+
+    def records_of(entry: Mapping[str, Any], kind: str) -> list[int]:
+        records = entry.get("records")
+        if not isinstance(records, list) or not records:
+            raise ValueError(
+                f"surface builder emitted a {kind} entry without positional 'records' "
+                f"({entry.get('id')!r}); surface_memory_dem_spec cannot convert it",
+            )
+        return [int(record) for record in records]
+
     detectors = []
     for entry in detector_entries:
         metadata = {key: value for key, value in entry.items() if key not in {"id", "records", "coords"}}
         detectors.append(
             Detector(
-                *(rec[int(record)] for record in entry["records"]),
+                *(rec[record] for record in records_of(entry, "detector")),
                 id=int(entry["id"]),
                 coords=entry.get("coords"),
                 metadata=metadata or None,
@@ -171,7 +181,7 @@ def surface_memory_dem_spec(
         metadata = {key: value for key, value in entry.items() if key not in {"id", "records"}}
         observables.append(
             Observable(
-                *(rec[int(record)] for record in entry["records"]),
+                *(rec[record] for record in records_of(entry, "observable")),
                 id=int(entry["id"]),
                 metadata=metadata or None,
             ),
@@ -303,7 +313,13 @@ class GuppyDemBuild:
         return [self.evaluate_results({tag: results[tag][shot] for tag in available}) for shot in range(shot_count)]
 
     def evaluate_measurements(self, values_by_meas_id: Mapping[int, int | bool]) -> tuple[list[int], int]:
-        """Evaluate the canonical detector vector and packed observable mask."""
+        """Evaluate the canonical detector vector and packed observable mask.
+
+        The mask sets bit ``observable_id`` per observable. It is an
+        arbitrary-precision Python int: with sparse or >=64 observable ids it
+        exceeds 64 bits, so route it only to consumers that accept wide masks
+        (narrow u64 decoders truncate silently).
+        """
 
         def parity(meas_ids: tuple[int, ...]) -> int:
             missing = [meas_id for meas_id in meas_ids if meas_id not in values_by_meas_id]
@@ -425,9 +441,17 @@ def _resolve_ref(
     return int(result_ids[0])
 
 
-def _xor_normalize(meas_ids: Sequence[int]) -> tuple[int, ...]:
+def _xor_normalize(meas_ids: Sequence[int], *, context: str) -> tuple[int, ...]:
     parity = Counter(meas_ids)
-    return tuple(meas_id for meas_id in dict.fromkeys(meas_ids) if parity[meas_id] & 1)
+    normalized = tuple(meas_id for meas_id in dict.fromkeys(meas_ids) if parity[meas_id] & 1)
+    if not normalized:
+        # Every reference cancelled (even multiplicity throughout): the parity
+        # is identically zero, which is almost certainly a spec mistake, not a
+        # deliberately dead detector.
+        raise ValueError(
+            f"{context} references every measurement with even multiplicity; " "its parity is identically zero",
+        )
+    return normalized
 
 
 def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -435,6 +459,13 @@ def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     reserved = {"id", "records", "meas_ids", "result_tags"}.intersection(entry)
     if reserved:
         raise ValueError(f"detector/observable metadata uses reserved keys: {sorted(reserved)}")
+    try:
+        json.dumps(entry)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "detector/observable metadata must be JSON-serializable "
+            f"(it is embedded in the DEM schema and its fingerprint): {exc}",
+        ) from exc
     return entry
 
 
@@ -465,6 +496,7 @@ def _resolve_dem_specs(
                 )
                 for ref in detector.refs
             ],
+            context=f"detector {detector_id}",
         )
         entry = _metadata_entry(detector.metadata)
         entry.update({"id": detector_id, "meas_ids": list(meas_ids)})
@@ -492,6 +524,7 @@ def _resolve_dem_specs(
                 )
                 for ref in observable.refs
             ],
+            context=f"observable {observable_id}",
         )
         entry = _metadata_entry(observable.metadata)
         entry.update({"id": observable_id, "meas_ids": list(meas_ids)})

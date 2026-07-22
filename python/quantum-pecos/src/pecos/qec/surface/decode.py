@@ -1391,7 +1391,7 @@ def _replay_qis_trace_chunks_into_tick_circuit(
     chunks: list[dict[str, Any]],
     *,
     measurement_crosstalk_topology: str | None = None,
-    allow_raw_measurement_id_fallback: bool = True,
+    allow_raw_measurement_id_fallback: bool = False,
 ) -> Any:
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
@@ -1471,8 +1471,19 @@ def _validate_audited_trace_stream(chunks: list[dict[str, Any]]) -> None:
         if not isinstance(operations, list) or chunk.get("num_operations") != len(operations):
             msg = f"audited runtime trace chunk {expected_index} has an invalid operation count"
             raise ValueError(msg)
-    if chunks[-1].get("stage") != "trace_complete":
-        msg = "audited runtime trace is missing its terminal trace_complete chunk"
+    terminal_positions = [index for index, chunk in enumerate(chunks) if chunk.get("stage") == "trace_complete"]
+    if terminal_positions != [len(chunks) - 1]:
+        msg = (
+            "audited runtime trace must contain exactly one terminal trace_complete "
+            f"chunk, as its last chunk; found terminal markers at positions {terminal_positions}"
+        )
+        raise ValueError(msg)
+    terminal = chunks[-1]
+    if terminal.get("operations") or terminal.get("lowered_quantum_ops") or terminal.get("named_result_traces"):
+        msg = (
+            "audited runtime trace terminal chunk must be empty; operations or "
+            "results after the terminal marker cannot be certified"
+        )
         raise ValueError(msg)
 
 
@@ -1539,7 +1550,7 @@ def trace_guppy_into_tick_circuit_with_result_traces(
     measurement_crosstalk_topology: str | None = None,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
-    allow_raw_measurement_id_fallback: bool = True,
+    allow_raw_measurement_id_fallback: bool = False,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a Guppy/QIS program into a ``TickCircuit`` plus result-tag provenance."""
     chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)

@@ -341,7 +341,7 @@ def test_audited_trace_stream_rejects_malformed_terminals(corruption: str) -> No
             "operations": [{"Quantum": {"H": 0}}],
         }
 
-    with pytest.raises(ValueError, match="exactly one terminal|terminal chunk must be empty"):
+    with pytest.raises(ValueError, match=r"exactly one terminal|terminal chunk must be empty"):
         _validate_audited_trace_stream(chunks)
 
 

@@ -192,10 +192,22 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
 
     /// Reset the runtime for a new execution
     ///
+    /// A reset clears execution state; it does NOT start a shot. Shot
+    /// boundaries are delivered exactly once per shot via `shot_start` /
+    /// `shot_end`, so a runtime keying on shot identity never sees phantom
+    /// shot-0 starts from resets (the engine may reset more than once
+    /// between shots).
+    ///
     /// # Errors
     /// Returns an error if the runtime cannot be reset.
     fn reset(&mut self) -> Result<()> {
-        self.shot_start(0, None)
+        let state = self.get_classical_state_mut();
+        state.pc = 0;
+        state.call_stack.clear();
+        state.measurements.clear();
+        state.variables.clear();
+        state.shot_id = None;
+        Ok(())
     }
 
     /// Get the number of qubits used by the program

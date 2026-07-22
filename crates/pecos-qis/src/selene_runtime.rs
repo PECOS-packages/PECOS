@@ -500,19 +500,26 @@ impl SeleneRuntime {
         };
 
         unsafe {
-            if let Ok(shot_start_fn) = lib
+            // The shot lifecycle hooks are part of the certified protocol: a
+            // plugin that cannot receive shot boundaries cannot run its own
+            // per-shot validation, so a missing symbol fails closed (both
+            // PECOS-built runtimes export the full lifecycle).
+            let shot_start_fn = lib
                 .get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
                     b"selene_runtime_shot_start",
                 )
-            {
-                let errno = shot_start_fn(instance, shot_id, seed.unwrap_or(0));
-                if errno != 0 {
-                    return Err(RuntimeError::ExecutionError(format!(
-                        "Shot start failed with errno {errno}"
-                    )));
-                }
-                self.active_shot = Some((shot_id, seed.unwrap_or(0)));
+                .map_err(|e| {
+                    RuntimeError::FfiError(format!(
+                        "runtime plugin does not export selene_runtime_shot_start: {e}"
+                    ))
+                })?;
+            let errno = shot_start_fn(instance, shot_id, seed.unwrap_or(0));
+            if errno != 0 {
+                return Err(RuntimeError::ExecutionError(format!(
+                    "Shot start failed with errno {errno}"
+                )));
             }
+            self.active_shot = Some((shot_id, seed.unwrap_or(0)));
         }
 
         self.pending_shot_start = None;
@@ -1895,11 +1902,19 @@ impl QisRuntime for SeleneRuntime {
                                 b"selene_runtime_set_bool_result",
                             )
                         {
+                            // A delivery FAILURE is fatal: the scheduler
+                            // would otherwise proceed on stale/default state
+                            // while the QIS worker advances on the real bit,
+                            // and no later gate can detect the divergence.
+                            // An ABSENT symbol stays legal -- a runtime that
+                            // never conditions on results has no delivery to
+                            // fail.
                             let errno = set_result_fn(instance, *runtime_result_id, *value);
                             if errno != 0 {
-                                log::trace!(
-                                    "Selene runtime returned error {errno} for result {result_id}"
-                                );
+                                return Err(RuntimeError::FfiError(format!(
+                                    "selene_runtime_set_bool_result failed with errno {errno} \
+                                     for result {result_id}"
+                                )));
                             }
                         }
                     }
@@ -1995,25 +2010,33 @@ impl QisRuntime for SeleneRuntime {
         // Only end a shot the plugin actually started; the pinned Selene ABI
         // is `selene_runtime_shot_end(instance, shot_id, seed)`, mirroring
         // shot_start, so the delivered identity pair is replayed here.
-        if let Some((shot_id, seed)) = self.active_shot
+        // `take()` clears the active shot unconditionally: a clone that
+        // inherited `active_shot` without a loaded plugin has no FFI shot to
+        // end, but must not carry the stale identity forward.
+        if let Some((shot_id, seed)) = self.active_shot.take()
             && let Some(lib) = &self.library
             && let Some(instance) = self.instance
         {
             unsafe {
-                if let Ok(shot_end_fn) = lib
+                // Missing shot_end fails closed like the other lifecycle
+                // hooks: the plugin's own finalization validation is part of
+                // what shot completion certifies.
+                let shot_end_fn = lib
                     .get::<unsafe extern "C" fn(*mut c_void, u64, u64) -> i32>(
                         b"selene_runtime_shot_end",
                     )
-                {
-                    let errno = shot_end_fn(instance, shot_id, seed);
-                    if errno != 0 {
-                        return Err(RuntimeError::FfiError(format!(
-                            "selene_runtime_shot_end failed with errno {errno}"
-                        )));
-                    }
+                    .map_err(|e| {
+                        RuntimeError::FfiError(format!(
+                            "runtime plugin does not export selene_runtime_shot_end: {e}"
+                        ))
+                    })?;
+                let errno = shot_end_fn(instance, shot_id, seed);
+                if errno != 0 {
+                    return Err(RuntimeError::FfiError(format!(
+                        "selene_runtime_shot_end failed with errno {errno}"
+                    )));
                 }
             }
-            self.active_shot = None;
         }
         self.pending_shot_start = None;
 

@@ -1417,6 +1417,41 @@ impl QisEngine {
         }
     }
 
+    /// Lower operations for the running shot, latching any failure sticky.
+    ///
+    /// By the time lowering runs, the operations have already been consumed
+    /// from the pending queue and a scheduling runtime may have consumed a
+    /// prefix of them; retrying after a lowering failure could therefore
+    /// only ever certify a trace with those operations deleted. The failure
+    /// must poison the shot, not merely propagate once.
+    fn lower_operations_terminal(
+        &mut self,
+        ops: &[Operation],
+    ) -> Result<LoweredCommandBatch, PecosError> {
+        match self.lower_operations_to_commands(ops) {
+            Ok(lowered) => Ok(lowered),
+            Err(e) => {
+                Err(self
+                    .latch_terminal_error(format!("failed to lower operations for this shot: {e}")))
+            }
+        }
+    }
+
+    /// Deliver measurement outcomes to the runtime, latching any failure
+    /// sticky: if the scheduler did not receive an outcome it may schedule
+    /// from stale state, and no later gate can certify that trace.
+    fn provide_measurements_terminal(
+        &mut self,
+        updates: &[(usize, bool)],
+    ) -> Result<(), PecosError> {
+        match self.provide_measurement_updates_to_runtime(updates) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(self.latch_terminal_error(format!(
+                "failed to deliver measurement results to the runtime: {e}"
+            ))),
+        }
+    }
+
     /// Run the shot-completion gates in order: sticky terminal check, drain
     /// verification, the runtime's own `shot_end` finalization hook, then the
     /// named-result traces and terminal trace marker. A runtime that only
@@ -1667,7 +1702,7 @@ impl ClassicalEngine for QisEngine {
             self.measurement_results
         );
 
-        self.provide_measurement_updates_to_runtime(&updates)
+        self.provide_measurements_terminal(&updates)
     }
 
     fn compile(&self) -> Result<(), PecosError> {
@@ -1731,9 +1766,13 @@ impl ControlEngine for QisEngine {
             .reset()
             .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))?;
 
-        // Start a new shot with the generated seed
+        // Start a new shot with the generated seed and a real, monotonically
+        // increasing shot id (a plugin keying state or telemetry on the shot
+        // id must not see every shot as shot 0).
+        let shot_id = u64::try_from(self.trace_shot_index)
+            .map_err(|_| PecosError::Generic("shot index exceeds u64".to_string()))?;
         self.runtime
-            .shot_start(0, Some(shot_seed))
+            .shot_start(shot_id, Some(shot_seed))
             .map_err(|e| PecosError::Generic(format!("Failed to start shot: {e}")))?;
 
         self.started = true;
@@ -1750,7 +1789,7 @@ impl ControlEngine for QisEngine {
                 // Track how many operations we're sending for simulation
                 self.simulated_op_count = ops.len();
                 if !ops.is_empty() {
-                    let lowered = self.lower_operations_to_commands(&ops)?;
+                    let lowered = self.lower_operations_terminal(&ops)?;
                     self.trace_operations_chunk(
                         "pending_start",
                         &ops,
@@ -1772,7 +1811,7 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let lowered = self.lower_operations_to_commands(&final_ops)?;
+                    let lowered = self.lower_operations_terminal(&final_ops)?;
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
@@ -1805,7 +1844,7 @@ impl ControlEngine for QisEngine {
             let mapping = std::mem::take(&mut self.measurement_mapping);
             let updates = Self::map_measurements(&mapping, &measurements);
             self.store_measurement_updates(&updates);
-            self.provide_measurement_updates_to_runtime(&updates)?;
+            self.provide_measurements_terminal(&updates)?;
             updates
         } else {
             Vec::new()
@@ -1822,7 +1861,7 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let lowered = self.lower_operations_to_commands(&final_ops)?;
+                    let lowered = self.lower_operations_terminal(&final_ops)?;
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
@@ -1867,7 +1906,7 @@ impl ControlEngine for QisEngine {
                 if let Some(ops) = self.get_dynamic_operations() {
                     self.simulated_op_count += ops.len();
                     if !ops.is_empty() {
-                        let lowered = self.lower_operations_to_commands(&ops)?;
+                        let lowered = self.lower_operations_terminal(&ops)?;
                         self.trace_operations_chunk(
                             "pending_continue",
                             &ops,
@@ -1890,7 +1929,7 @@ impl ControlEngine for QisEngine {
             if !self.pending_dynamic_ops.is_empty() {
                 let final_ops = std::mem::take(&mut self.pending_dynamic_ops);
                 if !final_ops.is_empty() {
-                    let lowered = self.lower_operations_to_commands(&final_ops)?;
+                    let lowered = self.lower_operations_terminal(&final_ops)?;
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
@@ -2582,6 +2621,106 @@ mod tests {
             })
             .count();
         assert_eq!(terminal_markers, 1);
+    }
+
+    /// Errors on every lowering call: the final-tail lowering failure must
+    /// latch sticky, because the tail was already consumed from the pending
+    /// queue and a retry would otherwise certify a trace with it deleted.
+    #[derive(Clone, Default)]
+    struct LoweringFailRuntime {
+        state: ClassicalState,
+    }
+
+    impl QisRuntime for LoweringFailRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+
+        fn supports_operation_lowering(&self) -> bool {
+            true
+        }
+
+        fn lower_operations(&mut self, _operations: &[Operation]) -> RuntimeResult<Vec<QuantumOp>> {
+            Err(crate::runtime::RuntimeError::ExecutionError(
+                "scheduler rejected the batch".to_string(),
+            ))
+        }
+
+        fn drain_pending_operations(&mut self) -> RuntimeResult<Vec<QuantumOp>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn test_final_tail_lowering_failure_is_sticky_and_never_certifies() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let mut engine = QisEngine::with_runtime(Box::new(LoweringFailRuntime::default()));
+        engine.set_operation_trace_dir(temp_dir.path());
+        engine.begin_trace_shot();
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+        });
+        engine.pending_dynamic_ops = vec![QuantumOp::H(0).into()];
+
+        let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
+            panic!("final-tail lowering failure must fail the shot");
+        };
+        assert!(
+            err.to_string().contains("failed to lower operations"),
+            "unexpected error: {err}"
+        );
+
+        // Sticky: the tail was consumed by mem::take, so a retry sees an
+        // empty pending queue -- it must STILL fail, not certify a trace
+        // with the tail deleted.
+        let Err(retry_err) = engine.continue_processing(ByteMessage::builder().build()) else {
+            panic!("retry after tail-lowering failure must not certify the shot");
+        };
+        assert!(
+            retry_err.to_string().contains("failed to lower operations"),
+            "unexpected retry error: {retry_err}"
+        );
+
+        let wrote_terminal_marker = std::fs::read_dir(temp_dir.path())
+            .expect("read trace dir")
+            .any(|entry| {
+                entry
+                    .expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("trace_complete")
+            });
+        assert!(!wrote_terminal_marker);
     }
 
     #[test]

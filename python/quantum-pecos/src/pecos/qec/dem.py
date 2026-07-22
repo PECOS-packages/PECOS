@@ -80,6 +80,22 @@ def _certifiable_hugr_bytes(guppy: Any) -> bytes | None:
         return None
 
 
+def _certificate_carrier(guppy: Any) -> Any | None:
+    """Return the object whose generator certificate may be honored, if any.
+
+    Certificates are stamped by built-in generators on Guppy *definition*
+    objects only. Byte carriers (``pecos.Hugr``, raw HUGR bytes, duck-typed
+    ``hugr_bytes`` holders) never carry an honorable certificate: they are
+    opaque data, and honoring an attribute there would let any bytes suppress
+    the control-flow guard by stapling a self-consistent digest to themselves.
+    """
+    if isinstance(guppy, (bytes, bytearray)):
+        return None
+    if isinstance(getattr(guppy, "hugr_bytes", None), (bytes, bytearray)):
+        return None
+    return getattr(guppy, "wrapped_function", guppy)
+
+
 def _generator_certified_layout(guppy: Any, hugr_bytes: bytes | None = None) -> Sequence[Any] | None:
     """Validate and return a built-in generator's program-bound layout."""
     certificate = getattr(guppy, _GENERATOR_LAYOUT_ATTR, None)
@@ -382,7 +398,10 @@ class _DetectorErrorModelMixin:
                 "statically scheduled, so an audited DEM cannot be built from it"
             )
             raise ValueError(msg)
-        generator_layout = _generator_certified_layout(guppy, hugr_bytes)
+        certificate_carrier = _certificate_carrier(guppy)
+        generator_layout = (
+            _generator_certified_layout(certificate_carrier, hugr_bytes) if certificate_carrier is not None else None
+        )
         if generator_layout is None:
             from pecos_rslib import guppy_hugr_has_nontrivial_control_flow
 
@@ -528,7 +547,10 @@ def _preflight_guppy_static_schedule(
         )
         raise ValueError(msg)
 
-    generator_layout = _generator_certified_layout(guppy, hugr_bytes)
+    certificate_carrier = _certificate_carrier(guppy)
+    generator_layout = (
+        _generator_certified_layout(certificate_carrier, hugr_bytes) if certificate_carrier is not None else None
+    )
     if generator_layout is not None:
         return generator_layout, hugr_bytes
 
@@ -692,10 +714,11 @@ def _generator_certified_result_traces(
 
     # Defense-in-depth: the layout binds by abstract-circuit position, which
     # relies on the invariant that abstract measurement order equals source
-    # `result()` emission order. Where the runtime trace exposes its own
-    # scalar result id for a (tag, occurrence), require it to agree with the
-    # positional binding, so an order drift in a future generator variant
-    # fails loud instead of silently misbinding detectors.
+    # `result()` emission order. Every generator-certified scalar slot must
+    # be backed by the runtime trace's own scalar result id AND agree with
+    # the positional binding: a missing id (a provenance regression) or a
+    # disagreement (order drift in a future generator variant) fails loud
+    # instead of silently misbinding detectors.
     runtime_scalar_ids: dict[tuple[str, int], int] = {}
     runtime_occurrences: dict[str, int] = {}
     for trace in runtime_result_traces:
@@ -705,12 +728,25 @@ def _generator_certified_result_traces(
         occurrence = runtime_occurrences.get(tag, 0)
         runtime_occurrences[tag] = occurrence + 1
         result_ids = trace.get("result_ids")
-        if isinstance(result_ids, list) and len(result_ids) == 1 and isinstance(result_ids[0], int):
+        if (
+            isinstance(result_ids, list)
+            and len(result_ids) == 1
+            and isinstance(result_ids[0], int)
+            and not isinstance(result_ids[0], bool)
+            and result_ids[0] >= 0
+        ):
             runtime_scalar_ids[(tag, occurrence)] = result_ids[0]
     for source_index, (tag, value_index) in enumerate(entries):
         expected = int(source_measurement_ids[source_index])
         actual = runtime_scalar_ids.get((tag, value_index))
-        if actual is not None and actual != expected:
+        if actual is None:
+            msg = (
+                f"runtime trace does not expose a scalar result id for generator "
+                f"slot ({tag!r}, occurrence {value_index}); the certified layout "
+                "cannot be cross-checked against runtime provenance"
+            )
+            raise ValueError(msg)
+        if actual != expected:
             msg = (
                 f"generator layout binds {tag!r} occurrence {value_index} to source "
                 f"measurement {expected}, but the runtime trace reports result id "

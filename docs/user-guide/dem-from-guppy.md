@@ -98,8 +98,10 @@ DEM-label form `"D0"` / `"L0"`. Three reference forms are supported
 same measurements):
 
 - `"records": [-1, -5]` — negative positional offsets into the traced
-  measurement record (Stim convention). Works for any program, including
-  ones with runtime loops.
+  measurement record (Stim convention). Works for any *accepted* program,
+  including the built-in generators' runtime loops; note that generic
+  (non-generator) programs with loops or branches are rejected outright by
+  the static-schedule guard, whatever reference form they use.
 - `"meas_ids": [0, 4]` — stable stamped `MeasId`s, resolved against the
   traced circuit, robust to measurement reordering.
 - `"result_tags": ["s0", "m1"]` — Guppy `result(tag, ...)` names, recovered
@@ -205,7 +207,13 @@ different DEM.
 - **Clifford circuits only.** Traced operations must normalize to named
   Clifford gates (`RZZ(±π/2)` is accepted as `SZZ`/`SZZdg`); residual
   non-Clifford rotations are rejected.
-- **`num_qubits` is required** for QIS/HUGR programs; use
+- **Only HUGR-certifiable inputs are accepted**: a `@guppy` function, a
+  `pecos.Guppy` or `pecos.Hugr` wrapper, or HUGR envelope bytes.
+  Already-lowered QIS/QIR inputs — accepted by `pecos.sim` and by earlier
+  versions of this constructor — are now rejected, because their control
+  flow cannot be certified before tracing; recompile from the Guppy/HUGR
+  source instead.
+- **`num_qubits` is required** for HUGR-bytes programs; use
   `get_num_qubits(...)` for the built-in generators.
 - **Idle noise needs idle gates.** Selene runtimes do not emit idle gates,
   so the idle/T1/T2 noise parameters only apply where idle gates are

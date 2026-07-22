@@ -245,6 +245,132 @@ def test_dynamic_hugr_bytes_wrapper_is_rejected_not_traced() -> None:
             )
 
 
+def test_all_certifiable_input_forms_build_identical_dems() -> None:
+    """@guppy def, pecos.Guppy, pecos.Hugr, and raw bytes are all accepted
+    and certify/trace the same HUGR, so the DEMs are byte-identical."""
+    import pecos
+    from pecos._compilation import guppy_to_hugr
+
+    hugr_bytes = guppy_to_hugr(_scrambled_tagged_measurements)
+    noise = {"p1": 0.01, "p2": 0.02, "p_meas": 0.1, "p_prep": 0.0}
+    dems = [
+        build_dem_from_guppy(
+            program,
+            num_qubits=2,
+            detectors=[Detector(rec[-2])],
+            observables=[Observable(rec[-1])],
+            **noise,
+        ).dem.to_string()
+        for program in (
+            _scrambled_tagged_measurements,
+            pecos.Guppy(_scrambled_tagged_measurements),
+            pecos.Hugr(hugr_bytes),
+            hugr_bytes,
+        )
+    ]
+    assert len(set(dems)) == 1
+
+
+def test_guppy_wrapped_generator_keeps_its_certificate() -> None:
+    """pecos.Guppy(make_surface_code(...)) must still take the generator
+    certificate path (the certificate lives on the wrapped definition)."""
+    import pecos
+
+    program = make_surface_code(3, 1, "Z")
+    detectors, observables = surface_memory_dem_spec(3, 1, "Z")
+    build = build_dem_from_guppy(
+        pecos.Guppy(program),
+        num_qubits=get_num_qubits(3),
+        detectors=detectors,
+        observables=observables,
+        p1=0.0,
+        p2=0.0,
+        p_meas=0.1,
+        p_prep=0.0,
+    )
+
+    assert build.audit["named_result_binding"] == "generator_layout_v2_program_bound"
+
+
+def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard() -> None:
+    """A self-consistent digest stapled to a pecos.Hugr wrapper must not
+    suppress the control-flow guard: certificates are honored only on Guppy
+    definition objects, never on byte carriers."""
+    import hashlib as _hashlib
+
+    import pecos
+    from pecos._compilation import guppy_to_hugr
+
+    dynamic_bytes = guppy_to_hugr(_measurement_feedback_without_named_results)
+    layout_json = json.dumps([], separators=(",", ":"))
+    digest = _hashlib.sha256(dynamic_bytes + b"\0" + layout_json.encode()).hexdigest()
+    forged = pecos.Hugr(dynamic_bytes)
+    forged.__pecos_named_measurement_layout_v2__ = (digest, [])
+
+    with pytest.raises(ValueError, match="branching or looping control flow"):
+        build_dem_from_guppy(
+            forged,
+            num_qubits=2,
+            detectors=[Detector(rec[-2], rec[-1])],
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
+
+
+@pytest.mark.parametrize("corruption", ["duplicate_terminal", "nonempty_terminal"])
+def test_audited_trace_stream_rejects_malformed_terminals(corruption: str) -> None:
+    chunks = _framed_trace_chunks()
+    if corruption == "duplicate_terminal":
+        chunks.insert(
+            1,
+            {
+                **chunks[0],
+                "chunk_index": 1,
+                "stage": "trace_complete",
+                "num_operations": 0,
+                "operations": [],
+            },
+        )
+        chunks[2] = {**chunks[2], "chunk_index": 2}
+    else:
+        chunks[-1] = {
+            **chunks[-1],
+            "num_operations": 1,
+            "operations": [{"Quantum": {"H": 0}}],
+        }
+
+    with pytest.raises(ValueError, match="exactly one terminal|terminal chunk must be empty"):
+        _validate_audited_trace_stream(chunks)
+
+
+def test_spec_rejects_non_json_metadata_and_dead_parity() -> None:
+    circuit, traces = _reordered_trace()
+
+    with pytest.raises(ValueError, match="JSON-serializable"):
+        _resolve_dem_specs(
+            [Detector(rec[-1], metadata={"bad": {1, 2}})],
+            [],
+            circuit=circuit,
+            result_traces=traces,
+        )
+    with pytest.raises(ValueError, match="JSON-serializable"):
+        _resolve_dem_specs(
+            [Detector(rec[-1], metadata={"bad": float("nan")})],
+            [],
+            circuit=circuit,
+            result_traces=traces,
+        )
+    with pytest.raises(ValueError, match="even multiplicity"):
+        _resolve_dem_specs(
+            [Detector(rec[-1], rec[-1])],
+            [],
+            circuit=circuit,
+            result_traces=traces,
+        )
+
+
 def test_dynamic_control_is_rejected_before_any_trace_executes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

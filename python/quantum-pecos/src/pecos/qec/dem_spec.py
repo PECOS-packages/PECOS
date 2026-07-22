@@ -449,7 +449,7 @@ def _xor_normalize(meas_ids: Sequence[int], *, context: str) -> tuple[int, ...]:
         # is identically zero, which is almost certainly a spec mistake, not a
         # deliberately dead detector.
         raise ValueError(
-            f"{context} references every measurement with even multiplicity; " "its parity is identically zero",
+            f"{context} references every measurement with even multiplicity; its parity is identically zero",
         )
     return normalized
 
@@ -460,7 +460,7 @@ def _metadata_entry(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     if reserved:
         raise ValueError(f"detector/observable metadata uses reserved keys: {sorted(reserved)}")
     try:
-        json.dumps(entry)
+        json.dumps(entry, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise ValueError(
             "detector/observable metadata must be JSON-serializable "

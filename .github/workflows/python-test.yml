@@ -229,7 +229,7 @@ jobs:
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.job-timeout }}
     strategy:
       fail-fast: false
       matrix:
@@ -239,16 +239,22 @@ jobs:
             artifact-name: python-compat-smoke-ubuntu
             build-llvm: true
             build-quantum-pecos: true
+            job-timeout: 20
+          # 30 minutes: Windows runner preparation (disk cleanup) varies by
+          # several minutes and the pecos-rslib wheel compile alone takes
+          # 10-12, so 20 minutes cancelled a healthy build (issue #360).
           - os: windows-2022
             python-version: "3.10"
             artifact-name: python-compat-smoke-windows
             build-llvm: false
             build-quantum-pecos: false
+            job-timeout: 30
           - os: macOS-latest
             python-version: "3.10"
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
+            job-timeout: 20
 
     steps:
     - name: Harden the runner (egress audit)

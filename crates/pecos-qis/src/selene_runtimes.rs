@@ -197,6 +197,16 @@ fn find_cargo_target_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(target_dir));
     }
 
+    // Development wheels and editable installs may run from an arbitrary cwd.
+    // The compile-time crate path still identifies this workspace checkout.
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace_root) = manifest_dir.parent().and_then(std::path::Path::parent) {
+        let target = workspace_root.join("target");
+        if target.is_dir() {
+            return Some(target);
+        }
+    }
+
     // Otherwise look for target/ directory going up from current dir
     let mut current = std::env::current_dir().ok()?;
     loop {

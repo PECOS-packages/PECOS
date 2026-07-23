@@ -133,6 +133,7 @@ def _run_twirled_guppy_rows_masks_and_raw(
         saw_final = False
         saw_raw_final = False
         frame_mode: str | None = None
+        final_sidebands: dict[int, int] = {}
 
         for name, values in shot_results:
             try:
@@ -152,6 +153,9 @@ def _run_twirled_guppy_rows_masks_and_raw(
             elif name == "raw:final":
                 raw_row.extend(int(v) for v in shot_value)
                 saw_raw_final = True
+            elif name.startswith("final:meas:"):
+                assert len(shot_value) == 1
+                final_sidebands[int(name.rsplit(":", 1)[1])] = int(shot_value[0])
             elif ":meas:" in name:
                 assert len(shot_value) == 1
                 bit = int(shot_value[0])
@@ -167,6 +171,7 @@ def _run_twirled_guppy_rows_masks_and_raw(
                 saw_final = True
 
         assert saw_final
+        assert [final_sidebands[index] for index in range(patch.geometry.num_data)] == row[-patch.geometry.num_data :]
         assert frame_mode == twirl.frame_output
         if twirl.frame_output == "canonical":
             assert saw_raw_final

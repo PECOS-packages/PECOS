@@ -12,7 +12,7 @@ from guppylang.std.builtins import barrier, owned, result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import NoiseModel, SurfacePatch
+from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseModel, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
     generate_tick_circuit_from_patch,
     normalize_traced_qis_tick_circuit,
@@ -222,28 +222,19 @@ def test_from_guppy_rejects_json_tracked_pauli_observables() -> None:
         _dem_text(observables_json='[{"kind":"tracked_pauli","label":"x","pauli":"X0"}]')
 
 
-def test_from_guppy_dynamic_control_is_unsupported_and_unguarded() -> None:
-    """Measurement-dependent control flow is unsupported/undefined.
-
-    A prior runtime-trace guard false-positived on the standard surface code
-    (statically-scheduled post-measurement gates look the same in the trace),
-    so it was reverted. This test pins that NO guard rejects programs here --
-    from_guppy must not raise on either a dynamic program or, by extension,
-    the surface code. The DEM for a dynamic program is undefined/seed-dependent
-    and callers must not rely on it (see from_guppy docstring / proposal 001).
-    """
+def test_from_guppy_rejects_dynamic_control_before_seed_can_select_a_branch() -> None:
     for s in (0, 2, 5):
-        dem = DetectorErrorModel.from_guppy(
-            _measurement_feedback,
-            num_qubits=2,
-            detectors_json='[{"id":0,"records":[-2,-1]}]',
-            p1=0.0,
-            p2=0.0,
-            p_meas=0.1,
-            p_prep=0.0,
-            seed=s,
-        )
-        assert dem.num_detectors == 1  # builds (undefined content; do not rely)
+        with pytest.raises(ValueError, match="branching or looping control flow"):
+            DetectorErrorModel.from_guppy(
+                _measurement_feedback,
+                num_qubits=2,
+                detectors_json='[{"id":0,"records":[-2,-1]}]',
+                p1=0.0,
+                p2=0.0,
+                p_meas=0.1,
+                p_prep=0.0,
+                seed=s,
+            )
 
 
 def test_lowered_replay_uses_measure_result_ids_directly() -> None:
@@ -307,6 +298,55 @@ def test_lowered_replay_preserves_runtime_idles() -> None:
     tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
 
     assert _flat_idle_gates(tc) == [([0], 20.0)]
+
+
+def test_lowered_replay_converts_runtime_idle_seconds_to_nanosecond_time_units() -> None:
+    chunks = [
+        {
+            "operations": [{"Quantum": {"H": 0}}],
+            "lowered_quantum_ops": [
+                {"gate_type": "Idle", "qubits": [0], "angles": [], "params": [1.3857e-5]},
+                {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
+            ],
+        },
+    ]
+
+    tc = _replay_lowered_qis_trace_into_tick_circuit(chunks)
+
+    assert _flat_idle_gates(tc) == [([0], 13857.0)]
+
+
+def test_noise_model_converts_runtime_idle_rates_from_seconds_to_dem_time_units() -> None:
+    noise = NoiseModel(
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+        p_idle=9.0,
+        t1=1.5,
+        t2=2.5,
+        p_idle_z_linear_rate=3.0,
+        p_idle_x_quadratic_rate=4.0,
+        p_idle_z_quadratic_sine_rate=5.0,
+    )
+
+    converted = noise.for_runtime_idle_time_units()
+
+    assert converted.p1 == noise.p1
+    assert converted.p2 == noise.p2
+    assert converted.p_meas == noise.p_meas
+    assert converted.p_prep == noise.p_prep
+    assert converted.p_idle == pytest.approx(9.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.t1 == pytest.approx(1.5 * RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.t2 == pytest.approx(2.5 * RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.p_idle_z_linear_rate == pytest.approx(3.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+    assert converted.p_idle_x_quadratic_rate == pytest.approx(4.0 / (RUNTIME_IDLE_TIME_UNITS_PER_SECOND**2))
+    assert converted.p_idle_z_quadratic_sine_rate == pytest.approx(5.0 / RUNTIME_IDLE_TIME_UNITS_PER_SECOND)
+
+
+def test_noise_model_rejects_invalid_runtime_idle_time_unit_scale() -> None:
+    with pytest.raises(ValueError, match="time_units_per_second"):
+        NoiseModel(p_idle_z_linear_rate=1.0).for_runtime_idle_time_units(time_units_per_second=0.0)
 
 
 def test_lowered_replay_preserves_gate_metadata() -> None:
@@ -574,6 +614,7 @@ def test_reject_partially_lowered_trace_passes_on_uniformly_lowered() -> None:
         {
             "operations": [{"Quantum": {"Measure": [0, 7]}}],
             "lowered_quantum_ops": [{"gate_type": "MZ", "qubits": [0], "angles": [], "measurement_result_ids": [7]}],
+            "lowered_quantum_ops_complete": True,
         },
         {  # allocation/output bookkeeping only; legitimately has no lowered ops
             "operations": [{"AllocateResult": {"id": 7}}, {"RecordOutput": {"id": 7}}],
@@ -592,13 +633,15 @@ def test_reject_partially_lowered_trace_fails_on_mixed_format() -> None:
         {
             "operations": [{"Quantum": {"H": 0}}],
             "lowered_quantum_ops": [{"gate_type": "H", "qubits": [0], "angles": []}],
+            "lowered_quantum_ops_complete": True,
         },
         {  # raw quantum gate present, but not lowered -> would be dropped
             "operations": [{"Quantum": {"CX": [0, 1]}}],
             "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": False,
         },
     ]
-    with pytest.raises(ValueError, match=r"mixed/partially-lowered|incomplete gate stream"):
+    with pytest.raises(ValueError, match=r"does not attest|mixed/partially-lowered|incomplete gate stream"):
         _reject_partially_lowered_trace(chunks)
 
 
@@ -610,14 +653,57 @@ def test_reject_partially_lowered_trace_fails_on_unlowered_allocation() -> None:
         {
             "operations": [{"Quantum": {"H": 0}}],
             "lowered_quantum_ops": [{"gate_type": "H", "qubits": [0], "angles": []}],
+            "lowered_quantum_ops_complete": True,
         },
         {  # allocation present (lowers to PZ) but not lowered -> would be dropped
             "operations": [{"AllocateQubit": {"id": 1}}],
             "lowered_quantum_ops": [],
+            "lowered_quantum_ops_complete": False,
         },
     ]
-    with pytest.raises(ValueError, match=r"mixed/partially-lowered|incomplete gate stream"):
+    with pytest.raises(ValueError, match=r"does not attest|mixed/partially-lowered|incomplete gate stream"):
         _reject_partially_lowered_trace(chunks)
+
+
+def test_reject_partially_lowered_trace_fails_within_one_chunk() -> None:
+    chunks = [
+        {
+            "operations": [
+                {"AllocateQubit": {"id": 0}},
+                {"Quantum": {"H": 0}},
+                {"Quantum": {"Measure": [0, 7]}},
+            ],
+            "lowered_quantum_ops": [
+                {"gate_type": "MZ", "qubits": [0], "angles": [], "measurement_result_ids": [7]},
+            ],
+        },
+    ]
+
+    with pytest.raises(ValueError, match="does not attest a complete lowered gate stream"):
+        _reject_partially_lowered_trace(chunks)
+
+
+def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    chunks = [
+        {
+            "operations": [
+                {"AllocateQubit": {"id": 0}},
+                {"Quantum": {"Measure": [0, 0]}},
+            ],
+        },
+    ]
+    monkeypatch.setattr("pecos.qec.surface.decode.capture_guppy_operation_trace", lambda *_args, **_kwargs: chunks)
+
+    with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
+        DetectorErrorModel.from_guppy(
+            _single_measurement,
+            num_qubits=1,
+            detectors_json='[{"id":0,"records":[-1]}]',
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
 
 
 def test_non_lowered_replay_preserves_non_sequential_result_ids() -> None:

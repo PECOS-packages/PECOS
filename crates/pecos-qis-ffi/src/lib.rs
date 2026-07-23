@@ -132,14 +132,15 @@ impl ExecutionContext {
             log::error!("ExecutionContext::take_result_reads failed to acquire lock");
             return Vec::new();
         };
-        if reads.len() < count {
+        if reads.len() != count {
             log::warn!(
-                "Named result output expected {count} result read(s), but only {} were recorded",
+                "Named result output expected exactly {count} result read(s), but {} were recorded; refusing ambiguous provenance",
                 reads.len()
             );
+            reads.clear();
             return Vec::new();
         }
-        reads.drain(..count).collect()
+        reads.drain(..).collect()
     }
 
     fn store_named_result_trace(&self, name: &str, values: &[bool], result_ids: Vec<usize>) {

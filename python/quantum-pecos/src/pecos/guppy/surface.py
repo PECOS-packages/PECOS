@@ -11,6 +11,7 @@ The generated syndrome extraction uses a 4-round parallel CNOT
 schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 """
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -1584,6 +1585,7 @@ def generate_guppy_source(
             [
                 f"        final = measure_{basis}_basis(surf)",
                 '        result("final", final)',
+                *(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data)),
             ],
         )
         return [
@@ -1654,7 +1656,7 @@ def _render_memory_experiments(
     ]
     for basis, basis_upper in (("z", "Z"), ("x", "X")):
         if twirl is None:
-            lines.extend(_render_plain_memory_block(basis, basis_upper, dx, dz, interaction_basis))
+            lines.extend(_render_plain_memory_block(basis, basis_upper, dx, dz, num_data, interaction_basis))
         else:
             if rng is None or num_rounds is None:
                 msg = "twirled memory rendering requires both rng and num_rounds"
@@ -1694,6 +1696,7 @@ def _render_plain_memory_block(
     basis_upper: str,
     dx: int,
     dz: int,
+    num_data: int,
     interaction_basis: str,
 ) -> list[str]:
     """Render the vanilla handoff memory factory for one basis."""
@@ -1705,7 +1708,7 @@ def _render_plain_memory_block(
     else:
         init_line = f"        init_syn = {init_func}(surf)"
         syndrome_line = "            syn = syndrome_extraction(surf)"
-    return [
+    lines = [
         f"def make_memory_{basis}(num_rounds: int):",
         f'    """Create {basis_upper}-basis memory experiment."""',
         "    from guppylang.std.builtins import comptime",
@@ -1724,11 +1727,17 @@ def _render_plain_memory_block(
         "",
         f"        final = measure_{basis}_basis(surf)",
         '        result("final", final)',
-        "",
-        f"    return memory_{basis}",
-        "",
-        "",
     ]
+    lines.extend(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data))
+    lines.extend(
+        [
+            "",
+            f"    return memory_{basis}",
+            "",
+            "",
+        ],
+    )
+    return lines
 
 
 def _twirl_activation_threshold(twirl: "TwirlConfig") -> int:
@@ -1873,9 +1882,11 @@ def _render_twirled_memory_block(
             body.append(f"        final_{q} = final_raw[{q}] != {flip_var}")
         final_elements = ", ".join(f"final_{q}" for q in range(num_data))
         body.append(f'        result("final", array({final_elements}))')
+        body.extend(f'        result("final:meas:{q}", final_{q})' for q in range(num_data))
     else:
         body.append(f"        final = measure_{basis}_basis(surf)")
         body.append('        result("final", final)')
+        body.extend(f'        result("final:meas:{q}", final[{q}])' for q in range(num_data))
 
     return [
         f"def make_memory_{basis}(num_rounds: int):",
@@ -2231,9 +2242,11 @@ def _render_gate_local_twirled_memory_block(
             frame_x, _frame_z = data_frames[q]
             body.append(f"{indent}final_{q} = final_raw[{q}] != {frame_x}")
         body.append(f'{indent}result("final", array({", ".join(f"final_{q}" for q in range(num_data))}))')
+        body.extend(f'{indent}result("final:meas:{q}", final_{q})' for q in range(num_data))
     else:
         body.append(f"{indent}final = measure_{basis}_basis(surf)")
         body.append(f'{indent}result("final", final)')
+        body.extend(f'{indent}result("final:meas:{q}", final[{q}])' for q in range(num_data))
 
     return [
         f"def make_memory_{basis}(num_rounds: int):",
@@ -2841,7 +2854,7 @@ def make_surface_code(
 
     _validate_surface_memory_distance(distance)
     patch = SurfacePatch.create(distance=distance)
-    return generate_memory_experiment(
+    program = generate_memory_experiment(
         patch,
         num_rounds,
         basis,
@@ -2852,3 +2865,38 @@ def make_surface_code(
         szz_runtime_barriers=szz_runtime_barriers,
         trace_metadata=trace_metadata,
     )
+    from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
+
+    abstract_tc = generate_tick_circuit_from_patch(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        add_typed_annotations=False,
+        interaction_basis=interaction_basis,
+        check_plan=check_plan,
+        clifford_frame_policy=clifford_frame_policy,
+    )
+    occurrence_by_tag: dict[str, int] = {}
+    layout: list[tuple[str, int]] = []
+    for ref in _surface_abstract_measurement_result_refs(abstract_tc):
+        if ref[0] == "scalar":
+            _, tag = ref
+            occurrence = occurrence_by_tag.get(tag, 0)
+            occurrence_by_tag[tag] = occurrence + 1
+            layout.append((tag, occurrence))
+        else:
+            _, tag, element = ref
+            layout.append((f"{tag}:meas:{element}", 0))
+    from pecos._compilation import guppy_to_hugr
+
+    certified_layout = tuple(layout)
+    layout_json = json.dumps(certified_layout, separators=(",", ":"))
+    digest = hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
+    object.__setattr__(
+        program,
+        "__pecos_named_measurement_layout_v2__",
+        (digest, certified_layout),
+    )
+    return program

@@ -43,6 +43,8 @@ For circuit-level decoding with MWPM:
 
 from __future__ import annotations
 
+import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -68,6 +70,26 @@ P2Weights = Mapping[str, float] | Sequence[tuple[str, float]]
 # hyperedge mechanisms, not alternate exact DEM serializations.
 NativeDemDecomposition = Literal["source_graphlike", "terminal_graphlike"]
 CircuitLevelDemMode = Literal["native_full", "native_decomposed", "native_terminal_graphlike"]
+RUNTIME_IDLE_TIME_UNITS_PER_SECOND = 1_000_000_000.0
+
+
+def _convert_optional_rate(rate: float | None, scale: float) -> float | None:
+    """Return ``rate / scale`` while preserving unset idle parameters."""
+    return None if rate is None else float(rate) / scale
+
+
+def _convert_optional_time(time_value: float | None, scale: float) -> float | None:
+    """Return ``time_value * scale`` while preserving unset idle parameters."""
+    return None if time_value is None else float(time_value) * scale
+
+
+def _validate_time_units_per_second(time_units_per_second: float) -> float:
+    """Validate a conversion factor from seconds to DEM idle time units."""
+    units = float(time_units_per_second)
+    if not math.isfinite(units) or units <= 0.0:
+        msg = f"time_units_per_second must be positive and finite, got {time_units_per_second!r}"
+        raise ValueError(msg)
+    return units
 
 
 def _validate_probability(name: str, value: float) -> float:
@@ -156,6 +178,11 @@ class NoiseModel:
         p_idle_x_quadratic_sine_rate: Stochastic X-memory sine-law rate.
         p_idle_y_quadratic_sine_rate: Stochastic Y-memory sine-law rate.
         p_idle_z_quadratic_sine_rate: Stochastic Z-memory sine-law rate.
+
+    Runtime idle units:
+        For ``traced_qis`` DEMs, runtime idles are replayed as nanosecond
+        ``TimeUnits``; use :meth:`for_runtime_idle_time_units` when carrying
+        per-second simulator/runtime idle parameters into that DEM path.
     """
 
     p1: float = 0.0
@@ -228,6 +255,48 @@ class NoiseModel:
     def p2_gate_rates(self) -> tuple[float | None, ...]:
         """Explicit two-qubit gate-rate overrides."""
         return (self.p2_szz, self.p2_szzdg)
+
+    def for_runtime_idle_time_units(
+        self,
+        *,
+        time_units_per_second: float = RUNTIME_IDLE_TIME_UNITS_PER_SECOND,
+    ) -> NoiseModel:
+        """Return a copy whose idle noise is expressed in runtime replay units.
+
+        Selene-compatible runtimes emit idle durations in seconds, but the
+        traced-QIS DEM replay stores explicit ``Idle`` gates as integer PECOS
+        ``TimeUnits``. The surface replay currently uses nanosecond units, so
+        a runtime idle of ``1.3857e-5`` seconds becomes ``13857`` DEM time
+        units. When carrying physical rates from a runtime/simulator model into
+        a traced-QIS DEM, the time-dependent idle fields must be converted to
+        the DEM circuit's time unit first.
+
+        Linear rates and sine-law rates have units ``1 / time`` and are divided
+        by ``time_units_per_second``. Quadratic coefficient rates have units
+        ``1 / time**2`` and are divided by ``time_units_per_second**2``. Idle
+        lifetimes such as ``t1`` and ``t2`` are durations, so they are
+        multiplied by ``time_units_per_second``.
+        """
+        units = _validate_time_units_per_second(time_units_per_second)
+        units_squared = units * units
+        return replace(
+            self,
+            p_idle=_convert_optional_rate(self.p_idle, units),
+            t1=_convert_optional_time(self.t1, units),
+            t2=_convert_optional_time(self.t2, units),
+            p_idle_linear_rate=_convert_optional_rate(self.p_idle_linear_rate, units),
+            p_idle_x_linear_rate=_convert_optional_rate(self.p_idle_x_linear_rate, units),
+            p_idle_y_linear_rate=_convert_optional_rate(self.p_idle_y_linear_rate, units),
+            p_idle_z_linear_rate=_convert_optional_rate(self.p_idle_z_linear_rate, units),
+            p_idle_quadratic_rate=_convert_optional_rate(self.p_idle_quadratic_rate, units_squared),
+            p_idle_x_quadratic_rate=_convert_optional_rate(self.p_idle_x_quadratic_rate, units_squared),
+            p_idle_y_quadratic_rate=_convert_optional_rate(self.p_idle_y_quadratic_rate, units_squared),
+            p_idle_z_quadratic_rate=_convert_optional_rate(self.p_idle_z_quadratic_rate, units_squared),
+            p_idle_quadratic_sine_rate=_convert_optional_rate(self.p_idle_quadratic_sine_rate, units),
+            p_idle_x_quadratic_sine_rate=_convert_optional_rate(self.p_idle_x_quadratic_sine_rate, units),
+            p_idle_y_quadratic_sine_rate=_convert_optional_rate(self.p_idle_y_quadratic_sine_rate, units),
+            p_idle_z_quadratic_sine_rate=_convert_optional_rate(self.p_idle_z_quadratic_sine_rate, units),
+        )
 
     @staticmethod
     def uniform(physical_error_rate: float) -> NoiseModel:
@@ -769,6 +838,11 @@ def _index_surface_result_trace_ids(
         if _is_surface_sideband_result_tag(name):
             continue
         if len(values) != len(result_ids):
+            if not result_ids and name in {"synx", "synz"}:
+                # Per-measurement scalar tags are the authoritative syndrome
+                # provenance. The aggregate array is intentionally unbound
+                # when those scalar reads have already been consumed.
+                continue
             msg = (
                 f"runtime result tag {name!r} has {len(values)} value(s) but "
                 f"{len(result_ids)} result id(s); cannot bind surface metadata"
@@ -1293,6 +1367,14 @@ def _reject_partially_lowered_trace(chunks: list[dict[str, Any]]) -> None:
     exercised end-to-end by the byte-identical surface DEM regressions.)
     """
     for idx, chunk in enumerate(chunks):
+        if _chunk_has_lowerable_op(chunk) and chunk.get("lowered_quantum_ops_complete") is not True:
+            msg = (
+                f"Traced chunk {idx} does not attest a complete lowered gate stream. "
+                "Audited DEM construction requires lowered_quantum_ops_complete=true "
+                "from the QIS trace producer; refusing to infer completeness from "
+                "a non-empty lowered_quantum_ops list."
+            )
+            raise ValueError(msg)
         if _chunk_has_lowerable_op(chunk) and not chunk.get("lowered_quantum_ops"):
             msg = (
                 f"Traced chunk {idx} carries lowerable operations (a quantum "
@@ -1309,12 +1391,26 @@ def _replay_qis_trace_chunks_into_tick_circuit(
     chunks: list[dict[str, Any]],
     *,
     measurement_crosstalk_topology: str | None = None,
+    allow_raw_measurement_id_fallback: bool = False,
 ) -> Any:
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
         measurement_crosstalk_topology,
     )
-    if any(chunk.get("lowered_quantum_ops") for chunk in chunks):
+    has_lowered_operations = any(chunk.get("lowered_quantum_ops") for chunk in chunks)
+    if (
+        not allow_raw_measurement_id_fallback
+        and not has_lowered_operations
+        and any(_chunk_has_lowerable_op(chunk) for chunk in chunks)
+    ):
+        msg = (
+            "runtime trace does not contain lowered_quantum_ops; refusing to "
+            "build an audited DEM from the raw pre-runtime QIS operation order"
+        )
+        raise ValueError(msg)
+    if not allow_raw_measurement_id_fallback:
+        _validate_audited_trace_stream(chunks)
+    if has_lowered_operations:
         _reject_partially_lowered_trace(chunks)
         try:
             return _replay_lowered_qis_trace_into_tick_circuit(
@@ -1324,6 +1420,12 @@ def _replay_qis_trace_chunks_into_tick_circuit(
         except ValueError as exc:
             if "missing measurement_result_ids" not in str(exc):
                 raise
+            if not allow_raw_measurement_id_fallback:
+                msg = (
+                    "runtime-lowered trace is missing measurement_result_ids; "
+                    "refusing to fall back to the raw QIS stream for an audited build"
+                )
+                raise ValueError(msg) from exc
             # Older local Selene/qis-compiler builds can emit lowered gates
             # without measurement_result_ids while still carrying the raw QIS
             # operations, whose Measure payloads include the stable result ids.
@@ -1339,12 +1441,78 @@ def _replay_qis_trace_chunks_into_tick_circuit(
     )
 
 
+def _validate_audited_trace_stream(chunks: list[dict[str, Any]]) -> None:
+    """Validate framing and completeness across an audited QIS trace stream."""
+    if not chunks:
+        msg = "audited runtime trace is empty"
+        raise ValueError(msg)
+    engine_trace_id = chunks[0].get("engine_trace_id")
+    shot_index = chunks[0].get("shot_index")
+    if isinstance(engine_trace_id, bool) or not isinstance(engine_trace_id, int):
+        msg = "audited runtime trace is missing a valid engine_trace_id"
+        raise TypeError(msg)
+    if isinstance(shot_index, bool) or not isinstance(shot_index, int):
+        msg = "audited runtime trace is missing a valid shot_index"
+        raise TypeError(msg)
+    for expected_index, chunk in enumerate(chunks):
+        if chunk.get("format") != "pecos_qis_operation_trace_v1":
+            msg = f"audited runtime trace chunk {expected_index} has an unsupported format"
+            raise ValueError(msg)
+        if chunk.get("engine_trace_id") != engine_trace_id or chunk.get("shot_index") != shot_index:
+            msg = "audited runtime trace mixes engine or shot identities"
+            raise ValueError(msg)
+        if chunk.get("chunk_index") != expected_index:
+            msg = (
+                f"audited runtime trace chunk indices must be contiguous; expected {expected_index}, "
+                f"got {chunk.get('chunk_index')!r}"
+            )
+            raise ValueError(msg)
+        operations = chunk.get("operations")
+        if not isinstance(operations, list) or chunk.get("num_operations") != len(operations):
+            msg = f"audited runtime trace chunk {expected_index} has an invalid operation count"
+            raise ValueError(msg)
+    terminal_positions = [index for index, chunk in enumerate(chunks) if chunk.get("stage") == "trace_complete"]
+    if terminal_positions != [len(chunks) - 1]:
+        msg = (
+            "audited runtime trace must contain exactly one terminal trace_complete "
+            f"chunk, as its last chunk; found terminal markers at positions {terminal_positions}"
+        )
+        raise ValueError(msg)
+    terminal = chunks[-1]
+    if terminal.get("operations") or terminal.get("lowered_quantum_ops") or terminal.get("named_result_traces"):
+        msg = (
+            "audited runtime trace terminal chunk must be empty; operations or "
+            "results after the terminal marker cannot be certified"
+        )
+        raise ValueError(msg)
+
+
 def named_result_traces_from_operation_trace(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return runtime `result(...)` provenance records from operation trace chunks."""
     traces: list[dict[str, Any]] = []
     for chunk in chunks:
         traces.extend(trace for trace in (chunk.get("named_result_traces") or []) if isinstance(trace, dict))
     return traces
+
+
+def source_measurement_ids_from_operation_trace(chunks: list[dict[str, Any]]) -> list[int]:
+    """Return pre-runtime QIS measurement ids in source execution order."""
+    ids: list[int] = []
+    for chunk in chunks:
+        for operation in chunk.get("operations") or []:
+            if not isinstance(operation, Mapping):
+                continue
+            quantum = operation.get("Quantum")
+            if not isinstance(quantum, Mapping):
+                continue
+            measure = quantum.get("Measure")
+            if not isinstance(measure, Sequence) or isinstance(measure, (str, bytes)) or len(measure) != 2:
+                continue
+            ids.append(int(measure[1]))
+    if len(ids) != len(set(ids)):
+        msg = "raw QIS operation trace contains duplicate measurement result ids"
+        raise ValueError(msg)
+    return ids
 
 
 def capture_guppy_operation_trace(
@@ -1382,12 +1550,18 @@ def trace_guppy_into_tick_circuit_with_result_traces(
     measurement_crosstalk_topology: str | None = None,
     require_hosted_operation_order: bool = False,
     max_hosted_tick_separation: int | None = None,
+    allow_raw_measurement_id_fallback: bool = False,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Trace a Guppy/QIS program into a ``TickCircuit`` plus result-tag provenance."""
     chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
     tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
+        allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
+    )
+    tick_circuit.set_meta(
+        "guppy_source_measurement_ids",
+        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
     )
     _validate_trace_hosted_operations_if_requested(
         tick_circuit,
@@ -1449,6 +1623,11 @@ def trace_guppy_into_tick_circuit(
     tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
+        allow_raw_measurement_id_fallback=False,
+    )
+    tick_circuit.set_meta(
+        "guppy_source_measurement_ids",
+        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
     )
     _validate_trace_hosted_operations_if_requested(
         tick_circuit,
@@ -1693,8 +1872,9 @@ def build_memory_circuit(
         ancilla_budget: Optional cap on simultaneously live ancillas.
         circuit_source: ``"abstract"`` for the native surface builder or
             ``"traced_qis"`` for the lowered traced QIS gate stream.
-        runtime: Optional Selene runtime selector/plugin used when
-            ``circuit_source="traced_qis"``.
+        runtime: Optional Selene-compatible runtime plugin/object used when
+            ``circuit_source="traced_qis"``. This is runtime-generic; PECOS
+            only requires the object shape accepted by ``pecos.selene_engine``.
         twirl: Optional Pauli-frame randomization layout. Currently supported
             only with ``circuit_source="abstract"``; traced-QIS twirl is
             rejected because a runtime trace would bake one sampled mask into
@@ -2386,8 +2566,10 @@ def generate_circuit_level_dem_from_builder(
             ``"traced_qis"`` traces the lowered ideal Selene/QIS gate stream
             and replays that exact gate list into a TickCircuit before running
             native PECOS fault analysis.
-        runtime: Optional Selene runtime selector/plugin used when
-            ``circuit_source="traced_qis"``. Custom runtime topologies are not
+        runtime: Optional Selene-compatible runtime plugin/object used when
+            ``circuit_source="traced_qis"``. PECOS treats this generically and
+            only requires the object shape accepted by ``pecos.selene_engine``.
+            Custom runtime topologies are not
             kept in PECOS's in-process topology cache because plugin objects
             can carry private mutable state.
         twirl: Optional Pauli-frame randomization layout. Canonical Guppy
@@ -2882,6 +3064,7 @@ class SurfaceDecoder:
         use_circuit_level_dem: bool = True,
         circuit_level_dem_mode: CircuitLevelDemMode = "native_full",
         circuit_level_dem_source: Literal["abstract", "traced_qis"] = "abstract",
+        runtime: object | None = None,
         ancilla_budget: int | None = None,
         interaction_basis: str = "cx",
     ) -> None:
@@ -2924,6 +3107,10 @@ class SurfaceDecoder:
                 building native circuit-level DEMs. ``"abstract"`` uses the
                 high-level surface TickCircuit, while ``"traced_qis"`` traces
                 the lowered ideal Selene/QIS gate stream and analyzes that.
+            runtime: Optional Selene-compatible runtime plugin/object used
+                when ``circuit_level_dem_source="traced_qis"``. PECOS treats
+                this generically and only requires the object shape accepted
+                by ``pecos.selene_engine``.
             ancilla_budget: Optional cap on simultaneously live ancillas for
                 the native circuit-level DEM path. When provided, the decoder
                 builds its DEM from the corresponding batched ancilla-reuse
@@ -2948,6 +3135,7 @@ class SurfaceDecoder:
             raise ValueError(msg)
         self.circuit_level_dem_mode = circuit_level_dem_mode
         self.circuit_level_dem_source = circuit_level_dem_source
+        self.runtime = runtime
         self.ancilla_budget = ancilla_budget
         self.interaction_basis = _normalize_interaction_basis(interaction_basis)
 
@@ -2989,6 +3177,7 @@ class SurfaceDecoder:
             decompose_errors=self.circuit_level_dem_mode != "native_full",
             dem_decomposition=dem_decomposition,
             circuit_source=self.circuit_level_dem_source,
+            runtime=self.runtime,
             ancilla_budget=self.ancilla_budget,
             interaction_basis=self.interaction_basis,
         )
@@ -3906,6 +4095,7 @@ def surface_code_memory(
     seed: int | None = None,
     decode: bool = True,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    runtime: object | None = None,
     ancilla_budget: int | None = None,
     interaction_basis: str | None = None,
     check_plan: str | None = None,
@@ -3935,6 +4125,9 @@ def surface_code_memory(
         seed: Optional sampler seed.
         decode: If false, report the raw observable-flip rate.
         circuit_source: ``"abstract"`` or ``"traced_qis"`` circuit source.
+        runtime: Optional Selene-compatible runtime plugin/object used when
+            ``circuit_source="traced_qis"``. PECOS treats this generically and
+            only requires the object shape accepted by ``pecos.selene_engine``.
         ancilla_budget: Optional cap on simultaneously live ancillas.
         interaction_basis: Backward-compatible selector for the default
             ``check_plan`` of a two-qubit interaction basis.
@@ -3987,6 +4180,7 @@ def surface_code_memory(
         dem_decomposition=_recommended_graphlike_decomposition_for_decoder(decoder_type),
         ancilla_budget=ancilla_budget,
         circuit_source=circuit_source,
+        runtime=runtime,
         interaction_basis=interaction_basis,
         check_plan=resolved_plan.plan_id,
         clifford_frame_policy=clifford_frame_policy,
@@ -4285,6 +4479,7 @@ def build_native_sampler(
     basis: str = "Z",
     ancilla_budget: int | None = None,
     circuit_source: Literal["abstract", "traced_qis"] = "abstract",
+    runtime: object | None = None,
     twirl: TwirlConfig | None = None,
     interaction_basis: str | None = None,
     sampling_model: Literal[
@@ -4322,6 +4517,10 @@ def build_native_sampler(
             TickCircuit. ``"traced_qis"`` traces the lowered ideal Selene/QIS
             gate stream and replays that exact gate list into a TickCircuit
             before native PECOS fault analysis.
+        runtime: Optional Selene-compatible runtime plugin/object used when
+            ``circuit_source="traced_qis"``. Runtime-plugin topologies are
+            not kept in PECOS's in-process topology cache because plugin
+            objects can carry private mutable state.
         twirl: Optional Pauli-frame randomization layout. Canonical runtime
             frame-output mode is normalized to the same abstract raw lookup.
         interaction_basis: Backward-compatible selector for the default
@@ -4365,64 +4564,91 @@ def build_native_sampler(
     basis = basis.upper()
     patch_key = _surface_patch_cache_key(patch)
     szz_physical_prefixes = _use_szz_physical_prefixes(noise, interaction_basis, circuit_source)
-    topology = _cached_surface_native_topology(
-        patch_key,
-        num_rounds,
-        basis,
-        ancilla_budget,
-        circuit_source,
-        _noise_uses_dedicated_idle_noise(noise),
-        twirl=twirl,
-        interaction_basis=interaction_basis,
-        check_plan=resolved_plan.plan_id,
-        szz_physical_prefixes=szz_physical_prefixes,
-        resolved_check_plan_hash=resolved_plan.resolved_hash,
-        clifford_frame_policy=clifford_frame_policy,
-        szz_runtime_barriers=szz_runtime_barriers,
-        require_hosted_operation_order=require_hosted_operation_order,
-        max_hosted_tick_separation=max_hosted_tick_separation,
-    )
-    if sampling_model == "dem":
-        dem_str = _cached_surface_native_dem_string(
+    include_idle_gates = _noise_uses_dedicated_idle_noise(noise)
+    if runtime is not None:
+        topology = _surface_native_topology(
             patch_key,
             num_rounds,
             basis,
             ancilla_budget,
             circuit_source,
-            noise.p1,
-            noise.p1_weights,
-            noise.p2,
-            noise.p2_szz,
-            noise.p2_szzdg,
-            noise.p_meas,
-            noise.p_prep,
-            decompose_errors=True,
-            p2_weights=noise.p2_weights,
-            p2_replacement_approximation=noise.p2_replacement_approximation,
-            p_idle=noise.p_idle,
-            t1=noise.t1,
-            t2=noise.t2,
-            p_idle_linear_rate=noise.p_idle_linear_rate,
-            p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
-            p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
-            p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
-            p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
-            p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
-            p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
-            p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
-            p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
-            p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
-            p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
-            p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+            include_idle_gates,
+            runtime=runtime,
             twirl=twirl,
             interaction_basis=interaction_basis,
             check_plan=resolved_plan.plan_id,
+            szz_physical_prefixes=szz_physical_prefixes,
+            clifford_frame_policy=clifford_frame_policy,
+            szz_runtime_barriers=szz_runtime_barriers,
+            require_hosted_operation_order=require_hosted_operation_order,
+            max_hosted_tick_separation=max_hosted_tick_separation,
+        )
+    else:
+        topology = _cached_surface_native_topology(
+            patch_key,
+            num_rounds,
+            basis,
+            ancilla_budget,
+            circuit_source,
+            include_idle_gates,
+            twirl=twirl,
+            interaction_basis=interaction_basis,
+            check_plan=resolved_plan.plan_id,
+            szz_physical_prefixes=szz_physical_prefixes,
             resolved_check_plan_hash=resolved_plan.resolved_hash,
             clifford_frame_policy=clifford_frame_policy,
             szz_runtime_barriers=szz_runtime_barriers,
             require_hosted_operation_order=require_hosted_operation_order,
             max_hosted_tick_separation=max_hosted_tick_separation,
         )
+    if sampling_model == "dem":
+        if runtime is not None:
+            dem_str = _dem_string_from_cached_surface_topology(
+                topology,
+                noise,
+                decompose_errors=True,
+            )
+        else:
+            dem_str = _cached_surface_native_dem_string(
+                patch_key,
+                num_rounds,
+                basis,
+                ancilla_budget,
+                circuit_source,
+                noise.p1,
+                noise.p1_weights,
+                noise.p2,
+                noise.p2_szz,
+                noise.p2_szzdg,
+                noise.p_meas,
+                noise.p_prep,
+                decompose_errors=True,
+                p2_weights=noise.p2_weights,
+                p2_replacement_approximation=noise.p2_replacement_approximation,
+                p_idle=noise.p_idle,
+                t1=noise.t1,
+                t2=noise.t2,
+                p_idle_linear_rate=noise.p_idle_linear_rate,
+                p_idle_quadratic_rate=noise.p_idle_quadratic_rate,
+                p_idle_x_linear_rate=noise.p_idle_x_linear_rate,
+                p_idle_y_linear_rate=noise.p_idle_y_linear_rate,
+                p_idle_z_linear_rate=noise.p_idle_z_linear_rate,
+                p_idle_x_quadratic_rate=noise.p_idle_x_quadratic_rate,
+                p_idle_y_quadratic_rate=noise.p_idle_y_quadratic_rate,
+                p_idle_z_quadratic_rate=noise.p_idle_z_quadratic_rate,
+                p_idle_quadratic_sine_rate=noise.p_idle_quadratic_sine_rate,
+                p_idle_x_quadratic_sine_rate=noise.p_idle_x_quadratic_sine_rate,
+                p_idle_y_quadratic_sine_rate=noise.p_idle_y_quadratic_sine_rate,
+                p_idle_z_quadratic_sine_rate=noise.p_idle_z_quadratic_sine_rate,
+                twirl=twirl,
+                interaction_basis=interaction_basis,
+                check_plan=resolved_plan.plan_id,
+                resolved_check_plan_hash=resolved_plan.resolved_hash,
+                clifford_frame_policy=clifford_frame_policy,
+                szz_runtime_barriers=szz_runtime_barriers,
+                require_hosted_operation_order=require_hosted_operation_order,
+                max_hosted_tick_separation=max_hosted_tick_separation,
+            )
         sampler = _cached_parsed_dem(dem_str).to_dem_sampler()
         return NativeSampler(
             sampler=sampler,

@@ -33,6 +33,12 @@ set shell := ["bash", "-cu"]
 # PECOS CLI - must be installed (run 'just install-cli' first)
 pecos := "cargo run --locked -p pecos-cli --"
 
+# uv version for lockfile generation, single-sourced from the CI pin.
+# Lockfiles must be written by this exact version: a different uv can
+# re-simplify dependency markers, polluting diffs and failing CI's
+# `uv lock --check`.
+uv-pin := `sed -n 's/^required-version = "==\(.*\)"$/\1/p' .github/uv.toml`
+
 # =============================================================================
 # Getting Started
 # =============================================================================
@@ -1134,11 +1140,19 @@ build-release: (build "release")
 [private]
 build-native: (build "native")
 
+# Re-resolve uv lockfiles minimally (no dependency updates), e.g. after a version bump
+[group('setup')]
+lock:
+    uvx uv@{{uv-pin}} lock --project .
+    uvx uv@{{uv-pin}} lock --project exp/zluppy
+
 # Regenerate all lockfiles from scratch
 [group('setup')]
 updatelocks: _msvc-bootstrap
-    rm -f uv.lock Cargo.lock
-    uv lock --project .
+    rm -f uv.lock Cargo.lock exp/zlup/uv.lock exp/zluppy/uv.lock
+    uvx uv@{{uv-pin}} lock --project .
+    uvx uv@{{uv-pin}} lock --project exp/zlup
+    uvx uv@{{uv-pin}} lock --project exp/zluppy
     cargo generate-lockfile
 
 # Install CUDA Python packages (requires CUDA toolkit)

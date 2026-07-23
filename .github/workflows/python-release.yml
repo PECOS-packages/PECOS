@@ -136,7 +136,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "0.11.14"
+          version-file: ".github/uv.toml"
           enable-cache: true
           save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -218,10 +218,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # This job is deliberately checkout-free: it consumes the built wheels
+      # as a pure PyPI-style consumer. The uv version pin is tooling, not part
+      # of that consumer contract, so fetch ONLY the pin file for setup-uv.
+      - name: Fetch the uv version pin
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          sparse-checkout: .github/uv.toml
+          sparse-checkout-cone-mode: false
+
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
-          version: "0.11.14"
+          version-file: ".github/uv.toml"
 
       - name: Download PR smoke artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7

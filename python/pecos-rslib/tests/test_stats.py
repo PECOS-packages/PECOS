@@ -1029,7 +1029,7 @@ class TestSumEdgeCases:
 
         arr = np.array([[1.0, 2.0], [3.0, 4.0]])
 
-        with pytest.raises(ValueError, match="axis.*out of bounds"):
+        with pytest.raises(ValueError, match=r"axis.*out of bounds"):
             pecos_sum(arr, axis=5)
 
 

@@ -13,6 +13,71 @@ entry point. The intended shape is:
 3. Attach caller-provided detector and observable metadata.
 4. Build the native PECOS DEM from that traced circuit.
 
+For new workflows, prefer the additive typed build API over separately tracing
+metadata and then calling `from_guppy`:
+
+```python,notest
+from pecos.qec import Detector, Observable, build_dem_from_guppy, rec
+
+build = build_dem_from_guppy(
+    program,
+    num_qubits=num_qubits,
+    detectors=[Detector(rec[-2], rec[-1])],
+    observables=[Observable(rec[-1])],
+    runtime=runtime,
+)
+dem = build.dem
+```
+
+The `GuppyDemBuild` owns the one traced circuit, resolved `MeasId` metadata,
+measurement ledger, schema fingerprint, and shot evaluators. This prevents a
+second runtime trace or a separately maintained detector conversion from
+silently permuting decoder inputs.
+
+The audited path is deliberately fail-closed. A runtime trace must contain a
+complete, contiguously framed lowered operation stream with stable measurement
+IDs and an explicit terminal marker; raw pre-runtime QIS order is not an
+acceptable substitute. The terminal marker is only emitted after the engine
+verifies the shot did not fail and the runtime scheduler holds no undelivered
+operations. Precisely stated, `lowered_quantum_ops_complete` attests that the
+operations the runtime returned parsed consistently (counts, metadata,
+measurement IDs); dropped measurements are additionally caught by
+measurement-mapping conservation. Completion additionally forces a terminal
+scheduler flush via a required runtime global barrier and fails the shot,
+stickily, if any operation surfaces after the final lowered batch — or if the
+plugin cannot provide the barrier at all. A runtime that internally discards a non-measurement gate while
+reporting a consistent stream remains undetectable in principle — that
+residual trust lives in the runtime plugin itself.
+
+Shot completion runs three gates in order before the terminal marker: the
+sticky terminal-failure check, drain verification (which requires the plugin
+to export `selene_runtime_global_barrier` — a plugin that cannot prove a
+terminal flush fails closed), and the runtime's `shot_end` finalization hook
+with its error propagated and latched. A plugin that only detects an invalid
+final schedule at shot end therefore fails the shot rather than receiving a
+certified trace. Named shot conversion accepts compiler-certified direct
+scalar `result()` dataflow and trusted built-in generator layouts whose digest
+binds both the HUGR and layout. Aggregate arrays and transformed booleans
+must not be treated as generic measurement identity until the compiler exposes
+an explicit element-level provenance ABI.
+
+Generic Guppy branching and looping control flow is rejected. One sampled
+runtime branch cannot certify a static DEM; built-in surface generators cross
+that boundary only through their program-bound static-layout certificate.
+
+The certificate is an integrity mechanism, not an authentication mechanism.
+Its digest binds a layout to the exact compiled HUGR, so a stale, permuted,
+or accidentally re-attached layout fails closed. It does not defend against
+deliberate in-process forgery: any Python code that can set the attribute can
+also recompute the public digest (or monkeypatch the checker), and no
+in-process scheme changes that. The trust statement is "this layout was
+computed for exactly this program", nothing more.
+
+The remaining generic scalar trust boundary is cross-pipeline measurement
+ordinal agreement: HUGR traversal ordinals and source-QIS measurement emission
+are regression-tested to agree for supported straight-line programs, but do not
+yet share an explicit compiler origin-ID ABI.
+
 This should support calls like:
 
 ```python,notest
@@ -103,8 +168,9 @@ line.
 
 ## Follow-Up Guidance
 
-- Prefer the generic `from_guppy(...)` abstraction for future DEM construction
-  rather than adding more surface-specific tracing plumbing.
+- Prefer `build_dem_from_guppy(...)` for new audited workflows. Keep
+  `DetectorErrorModel.from_guppy(...)` as the lower-level JSON compatibility
+  constructor rather than adding more surface-specific tracing plumbing.
 - Runtime plugins are intentionally generic: pass any Selene-compatible runtime
   plugin object through `pecos.selene_engine(runtime)` or the higher-level
   `runtime=...` arguments on traced Guppy/DEM helpers. PECOS should depend only
@@ -114,6 +180,10 @@ line.
   replayed into QEC circuits as `TimeUnits` with the convention
   `1 TimeUnit = 1 ns`. They only affect DEMs when an idle-noise parameter such
   as `p_idle`, `t1/t2`, `p_idle_linear_rate`, or `p_idle_quadratic_rate` is set.
+- Keep fail-closed regression coverage for entirely raw traces, transformed
+  scalar results, and aggregate arrays. Generated adapters may expose direct
+  scalar sideband tags while retaining aggregate results for researcher-facing
+  analysis.
 - Keep the surface helper path compatible with constrained ancilla budgets:
   pass `ancilla_budget` into both `make_surface_code(...)` and
   `get_num_qubits(...)` when tracing surface Guppy.

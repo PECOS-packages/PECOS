@@ -192,10 +192,22 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
 
     /// Reset the runtime for a new execution
     ///
+    /// A reset clears execution state; it does NOT start a shot. Shot
+    /// boundaries are delivered exactly once per shot via `shot_start` /
+    /// `shot_end`, so a runtime keying on shot identity never sees phantom
+    /// shot-0 starts from resets (the engine may reset more than once
+    /// between shots).
+    ///
     /// # Errors
     /// Returns an error if the runtime cannot be reset.
     fn reset(&mut self) -> Result<()> {
-        self.shot_start(0, None)
+        let state = self.get_classical_state_mut();
+        state.pc = 0;
+        state.call_stack.clear();
+        state.measurements.clear();
+        state.variables.clear();
+        state.shot_id = None;
+        Ok(())
     }
 
     /// Get the number of qubits used by the program
@@ -256,6 +268,31 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     ) -> Result<Vec<LoweredQuantumOp>> {
         self.lower_operations(operations)
             .map(|ops| ops.into_iter().map(LoweredQuantumOp::from).collect())
+    }
+
+    /// Flush and drain any operations the runtime scheduler is still holding.
+    ///
+    /// A scheduling runtime may defer operations across lowering batches.
+    /// The engine calls this at shot completion, before certifying the trace
+    /// complete: a non-empty result means lowered operations exist that no
+    /// batch will ever carry, so the shot must fail rather than certify.
+    /// Implementations must force their scheduler to release held work (e.g.
+    /// a terminal barrier) before collecting, not merely poll for ready
+    /// operations.
+    ///
+    /// The default fails closed: the engine only calls this for runtimes
+    /// returning `true` from `supports_operation_lowering`, and a lowering
+    /// runtime that has not implemented the drain protocol cannot be
+    /// certified drained. Non-lowering runtimes are never asked.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot prove its scheduler is drained.
+    fn drain_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
+        Err(RuntimeError::ExecutionError(
+            "lowering runtime does not implement drain_pending_operations; \
+             cannot verify the scheduler is drained"
+                .to_string(),
+        ))
     }
 
     /// Check if the runtime needs to re-execute with known measurements

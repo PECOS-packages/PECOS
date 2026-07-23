@@ -73,6 +73,11 @@ The generated program produces these result keys:
 | `synz` | Z syndrome per round |
 | `final` | Final data qubit measurements |
 
+Generated surface programs also emit scalar `*:meas:*` sideband tags. These
+carry the same measurement bits with a generator-certified mapping to the
+canonical measurement stream for audited DEM shot conversion; most users
+should continue reading the aggregate keys above for ordinary analysis.
+
 ```python
 from pecos import sim, state_vector
 from pecos.guppy import make_surface_code
@@ -87,6 +92,153 @@ synx_rounds = data.get("synx", [])
 synz_rounds = data.get("synz", [])
 final_meas = data.get("final", [])
 ```
+
+## Building a DEM from Guppy
+
+Use `build_dem_from_guppy` when a runtime may schedule measurements in a
+different order from the Guppy program. It captures one runtime trace, builds
+the DEM from that exact circuit, and returns the measurement-identity ledger
+needed to convert simulation results into decoder inputs.
+
+Researchers can describe the same detector in either Stim-style record terms
+or with Guppy `result()` tags:
+
+```python
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import measure, qubit
+
+from pecos import selene_engine, sim, stabilizer
+from pecos.qec import (
+    Detector,
+    Observable,
+    build_dem_from_guppy,
+    rec,
+    result_ref,
+)
+
+
+@guppy
+def program() -> None:
+    q0 = qubit()
+    q1 = qubit()
+    m0 = measure(q0)
+    m1 = measure(q1)
+    result("m0", m0)
+    result("m1", m1)
+
+
+# Relative to the canonical Guppy measurement stream, before runtime
+# scheduling. These have the same meaning as Stim rec[-k] references.
+stim_style = [
+    Detector(rec[-2], rec[-1]),
+]
+
+# Equivalent when the program emits result("m0", ...), etc.
+guppy_style = [
+    Detector(result_ref("m0"), result_ref("m1")),
+]
+
+build = build_dem_from_guppy(
+    program,
+    num_qubits=2,
+    detectors=stim_style,
+    observables=[Observable(result_ref("m1"))],
+    p1=0.001,
+    p2=0.005,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+
+dem = build.dem
+print(build.schema_fingerprint)
+print(build.audit["runtime_measurement_order"])
+
+columns = (
+    sim(program).classical(selene_engine()).quantum(stabilizer()).qubits(2).seed(42).run(100).to_shot_map().to_dict()
+)
+evaluated = build.evaluate_result_columns(columns)
+
+from pecos_rslib.qec import SampleBatch
+
+detector_events = [events for events, _ in evaluated]
+observable_masks = [mask for _, mask in evaluated]
+batch = SampleBatch(detector_events, observable_masks)
+
+pymatching_errors = batch.decode_count(
+    dem.to_string_terminal_graphlike_decomposed(),
+    "pymatching",
+)
+tesseract_errors = batch.decode_count(
+    dem.to_string_source_graphlike_decomposed(),
+    "tesseract",
+)
+```
+
+`rec[-k]` is deliberately **not** interpreted against the runtime's final gate
+order. PECOS first resolves it to the canonical Guppy result ID, then follows
+that identity through runtime lowering. `result_ref(...)` follows the compiled
+HUGR dataflow from `result()` back to its raw scalar measurement and resolves to
+the same `MeasId` representation. A runtime can therefore reorder measurements
+without changing detector meaning.
+
+### Converting shots for a decoder
+
+Use the returned build to evaluate every shot with the same detector and
+observable schema that produced the DEM, as the final lines of the complete
+example above demonstrate for both PyMatching and Tesseract.
+
+`evaluate_results(...)` accepts only direct scalar `result()` values whose
+measurement identity the Guppy compiler can certify. For a backend that returns
+raw measurements in runtime execution order, use
+`build.evaluate_runtime_record(values)` instead. Both methods produce the
+detector order and packed observable mask expected by the DEM.
+
+Built-in generators may supply a trusted, program-bound named-measurement layout
+certificate. `make_surface_code(...)` does this automatically, so its scalar
+sidebands work with `evaluate_results(...)` and
+`evaluate_result_columns(...)` even though its round loop is not statically
+unrolled in the HUGR. Use the public typed specification helper rather than
+reconstructing private surface metadata:
+
+```python
+from pecos.guppy import get_num_qubits, make_surface_code
+from pecos.qec import build_dem_from_guppy, surface_memory_dem_spec
+
+surface_program = make_surface_code(3, 2, "Z")
+surface_detectors, surface_observables = surface_memory_dem_spec(3, 2, "Z")
+surface_build = build_dem_from_guppy(
+    surface_program,
+    num_qubits=get_num_qubits(3),
+    detectors=surface_detectors,
+    observables=surface_observables,
+    p1=0.001,
+    p2=0.005,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+```
+
+### Current soundness boundary
+
+- DEM construction supports straight-line static schedules and trusted built-in
+  generator certificates. Generic branching and looping Guppy programs are
+  rejected because one trace cannot certify all quantum-operation paths.
+- Scalar `result(tag, measure(q))` provenance is the certified generic tag
+  path. Repeated tags use `occurrence=...`.
+- Generic scalar binding currently relies on the committed-test invariant that
+  Guppy HUGR measurement traversal and source QIS measurement emission use the
+  same ordinal order. A future compiler origin-ID ABI should replace this
+  cross-pipeline invariant directly.
+- Aggregate result arrays are not accepted as generic measurement provenance:
+  their public element order is not yet part of the compiler identity ABI. Emit
+  direct scalar sideband tags when decoder inputs must be reconstructed from
+  named results.
+- An audited runtime-lowered build must provide a complete lowered operation
+  stream and measurement result IDs. PECOS will not silently build from the raw
+  pre-lowering QIS stream.
+- `build.audit` exposes every canonical ID, runtime record position, result
+  reference, and the schema fingerprint. Persist it with simulation data.
 
 ## Color Code Memory Experiments
 
@@ -496,6 +648,7 @@ See the [SLR and QECLib Developer Guide](../development/slr-qeclib.md) for detai
 ## Next Steps
 
 - **[QEC Geometry](qec-geometry.md)** - Understand the underlying geometry
+- **[Detector Error Models from Guppy](dem-from-guppy.md)** - Build a DEM by tracing generated programs
 - **[Decoders](decoders.md)** - Decode syndromes to recover logical information
 - **[Noise Model Builders](noise-model-builders.md)** - Custom noise configurations
 - **[HUGR & Guppy Simulation](hugr-simulation.md)** - More Guppy features

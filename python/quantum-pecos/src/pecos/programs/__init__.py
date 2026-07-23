@@ -126,6 +126,11 @@ class Guppy:
         self._func = func
         self._program = None
 
+    @property
+    def wrapped_function(self) -> GuppyFunction:
+        """The wrapped ``@guppy`` definition (for compilation/certification)."""
+        return self._func
+
     def _to_program(self) -> "CompiledHugr":
         """Convert to the underlying Rust program type."""
         if self._program is None:
@@ -160,6 +165,11 @@ class Hugr:
         """Initialize with HUGR bytes."""
         self._data = data
         self._program = None
+
+    @property
+    def hugr_bytes(self) -> bytes:
+        """The HUGR envelope bytes this program wraps."""
+        return self._data
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Hugr":

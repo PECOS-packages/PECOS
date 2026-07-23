@@ -1829,7 +1829,8 @@ fn py_hugr_to_dag_circuit(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<PyDagCirc
 /// Args:
 ///     `detectors_json` / `observables_json`: detector/observable JSON.
 ///     `hugr_bytes`: HUGR envelope bytes (e.g. `guppy_to_hugr(program)`).
-///     `traced_meas_count`: number of measurements in the traced circuit.
+///     `source_meas_ids`: pre-runtime QIS measurement ids in source order.
+///     `runtime_meas_ids`: stable measurement ids in runtime execution order.
 ///
 /// Raises:
 ///     `ValueError`: on the runtime-loop guard, an unknown tag, malformed
@@ -1840,7 +1841,8 @@ fn py_resolve_result_tags_for_guppy(
     detectors_json: &str,
     observables_json: &str,
     hugr_bytes: &Bound<'_, PyBytes>,
-    traced_meas_count: usize,
+    source_meas_ids: Vec<usize>,
+    runtime_meas_ids: Vec<usize>,
 ) -> PyResult<(String, String)> {
     use pecos_hugr::{
         extract_result_tag_measurements, load_hugr_from_bytes as read_hugr_envelope,
@@ -1858,9 +1860,47 @@ fn py_resolve_result_tags_for_guppy(
         observables_json,
         &tag_to_ords,
         static_meas_count,
-        traced_meas_count,
+        &source_meas_ids,
+        &runtime_meas_ids,
     )
     .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+}
+
+type ResultTagMeasurementOccurrences = (
+    std::collections::BTreeMap<String, Vec<Option<usize>>>,
+    usize,
+);
+
+/// Return occurrence-preserving direct-scalar result provenance from a Guppy HUGR.
+///
+/// Each tag maps to one entry per source ``result()`` call. A supported direct
+/// scalar measurement contains its static measurement ordinal; unsupported
+/// computed, constant, or array occurrences contain ``None``.
+#[pyfunction]
+#[pyo3(name = "extract_result_tag_measurements_for_guppy")]
+fn py_extract_result_tag_measurements_for_guppy(
+    hugr_bytes: &Bound<'_, PyBytes>,
+) -> PyResult<ResultTagMeasurementOccurrences> {
+    use pecos_hugr::{
+        extract_result_tag_measurements, load_hugr_from_bytes as read_hugr_envelope,
+        measurement_op_count,
+    };
+
+    let hugr = read_hugr_envelope(hugr_bytes.as_bytes())
+        .map_err(|e| PyErr::new::<HugrConversionError, _>(format!("Failed to parse HUGR: {e}")))?;
+    let static_meas_count = measurement_op_count(&hugr);
+    Ok((extract_result_tag_measurements(&hugr), static_meas_count))
+}
+
+/// Return whether a Guppy HUGR contains branching or looping control flow.
+#[pyfunction]
+#[pyo3(name = "guppy_hugr_has_nontrivial_control_flow")]
+fn py_guppy_hugr_has_nontrivial_control_flow(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<bool> {
+    use pecos_hugr::{has_nontrivial_control_flow, load_hugr_from_bytes as read_hugr_envelope};
+
+    let hugr = read_hugr_envelope(hugr_bytes.as_bytes())
+        .map_err(|e| PyErr::new::<HugrConversionError, _>(format!("Failed to parse HUGR: {e}")))?;
+    Ok(has_nontrivial_control_flow(&hugr))
 }
 
 /// Map a HUGR operation name to a `GateType`.
@@ -3900,6 +3940,14 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
     parent_module.add_function(wrap_pyfunction!(py_is_quantum_operation, parent_module)?)?;
     parent_module.add_function(wrap_pyfunction!(
         py_resolve_result_tags_for_guppy,
+        parent_module
+    )?)?;
+    parent_module.add_function(wrap_pyfunction!(
+        py_extract_result_tag_measurements_for_guppy,
+        parent_module
+    )?)?;
+    parent_module.add_function(wrap_pyfunction!(
+        py_guppy_hugr_has_nontrivial_control_flow,
         parent_module
     )?)?;
 

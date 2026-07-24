@@ -1,6 +1,10 @@
 """Test the Selene Interface integration from Python side."""
 
+import os
 import platform
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -174,6 +178,46 @@ def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
 
     results = pecos.sim(pecos.Guppy(coin)).classical(selene).qubits(1).seed(42).run(10).to_dict()
     assert len(results["measurement_0"]) == 10
+
+
+def test_selene_engine_is_cwd_independent(tmp_path) -> None:
+    """The installed runtime plugin resolves when the process starts outside the checkout."""
+    probe = tmp_path / "selene_cwd_probe.py"
+    probe.write_text(
+        textwrap.dedent(
+            """
+            import pecos
+            from guppylang import guppy
+            from guppylang.std.quantum import measure, qubit
+
+            @guppy
+            def measure_one() -> bool:
+                q = qubit()
+                return measure(q)
+
+            results = (
+                pecos.sim(pecos.Guppy(measure_one))
+                .classical(pecos.selene_engine())
+                .quantum(pecos.stabilizer())
+                .qubits(1)
+                .run(1)
+                .to_dict()
+            )
+            assert len(results["measurement_0"]) == 1
+            """,
+        ),
+        encoding="utf-8",
+    )
+    env = {key: value for key, value in os.environ.items() if not key.startswith(("PECOS", "CARGO"))}
+
+    subprocess.run(
+        [sys.executable, str(probe)],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:

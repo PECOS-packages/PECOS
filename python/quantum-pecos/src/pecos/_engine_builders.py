@@ -17,6 +17,7 @@ Python program wrappers from pecos.programs.
 
 from __future__ import annotations
 
+from importlib import import_module
 from os import PathLike, fspath
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -236,14 +237,40 @@ def _looks_like_library_path(value: str) -> bool:
     return path.exists() or "/" in value or "\\" in value or path.suffix in {".so", ".dylib", ".dll"}
 
 
+def _plugin_object_from_module(module: object) -> object:
+    for exported_name in getattr(module, "__all__", ()):
+        exported = getattr(module, exported_name, None)
+        if isinstance(exported, type):
+            return exported()
+    return module
+
+
 def _configure_selene_runtime(builder: object, runtime: object | None) -> object:
     if runtime is None:
-        return builder.selene_runtime()
+        # Issue #365: freshly built Cargo artifacts win for dev iteration; the
+        # installed plugin package is the stable cwd-independent fallback.
+        try:
+            return builder.selene_runtime()
+        except RuntimeError as original_error:
+            try:
+                plugin_module = import_module("selene_simple_runtime_plugin")
+            except ImportError:
+                # The discovery error is the actionable one; a missing plugin
+                # package must not mask it.
+                raise original_error from None
+            return _configure_selene_runtime(builder, _plugin_object_from_module(plugin_module))
 
     if isinstance(runtime, str):
         if _looks_like_library_path(runtime):
             return builder.selene_runtime_plugin(runtime)
-        return builder.selene_runtime(runtime)
+        try:
+            return builder.selene_runtime(runtime)
+        except RuntimeError as original_error:
+            try:
+                plugin_module = import_module(f"{runtime}_plugin")
+            except ImportError:
+                raise original_error from None
+            return _configure_selene_runtime(builder, _plugin_object_from_module(plugin_module))
 
     if isinstance(runtime, PathLike):
         return builder.selene_runtime_plugin(fspath(runtime))

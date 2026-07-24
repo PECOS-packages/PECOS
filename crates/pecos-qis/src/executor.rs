@@ -3,6 +3,9 @@
 //! This module implements the `QisInterface` trait for Selene's Helios compiler.
 
 use crate::qis_interface::{DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface};
+use crate::selene_runtimes::{
+    find_library_in_dir, platform_hashed_library_pattern, platform_library_name,
+};
 use libloading::{Library, Symbol};
 use log::{debug, error, info, warn};
 use pecos_qis_ffi_types::OperationCollector;
@@ -941,22 +944,48 @@ impl QisHeliosInterface {
 
     /// Find the `libpecos_qis_ffi` library by searching common locations
     fn find_pecos_qis_lib() -> Result<PathBuf, InterfaceError> {
-        // On Windows, Rust cdylibs don't use the "lib" prefix
-        // On Unix (Linux/macOS), they do use the "lib" prefix
-        let (lib_prefix, lib_ext) = if cfg!(target_os = "windows") {
-            ("", "dll")
-        } else if cfg!(target_os = "macos") {
-            ("lib", "dylib")
-        } else {
-            ("lib", "so")
-        };
-
-        let lib_name = format!("{lib_prefix}pecos_qis_ffi.{lib_ext}");
+        let lib_name = platform_library_name("pecos_qis_ffi");
 
         debug!(
             "Looking for QIS FFI library: {lib_name} on {}",
             std::env::consts::OS
         );
+
+        let profile_order = if cfg!(debug_assertions) {
+            ["debug", "release"]
+        } else {
+            ["release", "debug"]
+        };
+
+        if let Some(override_path) = std::env::var_os("PECOS_QIS_FFI_PATH") {
+            let override_path = PathBuf::from(override_path);
+            let hashed_pattern = platform_hashed_library_pattern("pecos_qis_ffi");
+            if override_path.is_file() {
+                return Ok(override_path);
+            }
+            if override_path.is_dir()
+                && let Some(path) = find_library_in_dir(&override_path, "pecos_qis_ffi")
+            {
+                return Ok(path);
+            }
+
+            return Err(InterfaceError::ExecutionError(format!(
+                "PECOS_QIS_FFI_PATH is set to {}, but no library was found. Searched it as a direct file and searched for {lib_name} and {hashed_pattern} in the directory and its deps subdirectory",
+                override_path.display()
+            )));
+        }
+
+        let mut cargo_target_paths = Vec::new();
+        if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+            let target_dir = PathBuf::from(target_dir);
+            for profile in &profile_order {
+                cargo_target_paths.push(target_dir.join(profile).join(&lib_name));
+                cargo_target_paths.push(target_dir.join(profile).join("deps").join(&lib_name));
+            }
+            if let Some(path) = cargo_target_paths.iter().find(|path| path.is_file()) {
+                return Ok(path.clone());
+            }
+        }
 
         let exe_dir = std::env::current_exe()
             .ok()
@@ -969,16 +998,11 @@ impl QisHeliosInterface {
 
         debug!("Executable directory: {}", exe_dir.display());
 
-        let profile_order = if cfg!(debug_assertions) {
-            ["debug", "release"]
-        } else {
-            ["release", "debug"]
-        };
-
-        let mut candidate_paths = vec![
+        let mut candidate_paths = cargo_target_paths;
+        candidate_paths.extend([
             exe_dir.join(&lib_name),
             exe_dir.join(format!("deps/{lib_name}")),
-        ];
+        ]);
 
         // Editable/development installs may execute from outside the checkout.
         // Preserve the workspace target as a stable fallback in that case.
@@ -2509,5 +2533,77 @@ impl Drop for QisHeliosInterface {
         //
         // In both cases, leaking the context is acceptable and avoids the TLS hang.
         let _ = self.execution_context.take();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_env::{ENV_MUTEX, EnvVarGuard};
+    use std::fs::File;
+
+    #[test]
+    fn qis_ffi_env_accepts_direct_file() {
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let library = tempfile::NamedTempFile::new().expect("create temp library");
+        let _env = EnvVarGuard::set("PECOS_QIS_FFI_PATH", library.path());
+
+        assert_eq!(
+            QisHeliosInterface::find_pecos_qis_lib().expect("find direct library"),
+            library.path()
+        );
+    }
+
+    #[test]
+    fn qis_ffi_env_accepts_directory_with_exact_library() {
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp_dir = tempfile::tempdir().expect("create temp directory");
+        let library_path = temp_dir.path().join(platform_library_name("pecos_qis_ffi"));
+        File::create(&library_path).expect("create exact library");
+        let _env = EnvVarGuard::set("PECOS_QIS_FFI_PATH", temp_dir.path());
+
+        assert_eq!(
+            QisHeliosInterface::find_pecos_qis_lib().expect("find exact library"),
+            library_path
+        );
+    }
+
+    #[test]
+    fn qis_ffi_env_accepts_directory_with_hashed_deps_library() {
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp_dir = tempfile::tempdir().expect("create temp directory");
+        let deps_dir = temp_dir.path().join("deps");
+        std::fs::create_dir(&deps_dir).expect("create deps directory");
+        let exact_name = platform_library_name("pecos_qis_ffi");
+        let (stem, extension) = exact_name
+            .rsplit_once('.')
+            .expect("platform library name has extension");
+        let library_path = deps_dir.join(format!("{stem}-abc123.{extension}"));
+        File::create(&library_path).expect("create hashed library");
+        let _env = EnvVarGuard::set("PECOS_QIS_FFI_PATH", temp_dir.path());
+
+        assert_eq!(
+            QisHeliosInterface::find_pecos_qis_lib().expect("find hashed library"),
+            library_path
+        );
+    }
+
+    #[test]
+    fn qis_ffi_env_fails_fast_for_empty_directory() {
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp_dir = tempfile::tempdir().expect("create temp directory");
+        let _env = EnvVarGuard::set("PECOS_QIS_FFI_PATH", temp_dir.path());
+
+        let error = QisHeliosInterface::find_pecos_qis_lib()
+            .expect_err("empty override directory must fail");
+        assert!(error.to_string().contains("PECOS_QIS_FFI_PATH"));
     }
 }

@@ -1,0 +1,5 @@
+# Single source of truth for the uv version: CI reads it via setup-uv's
+# version-file input; Justfile lock recipes read it via the uv-pin variable.
+# Kept inside .github/ so uv's config discovery never finds it -- a uv.toml at
+# the repo root would enforce required-version on every local uv command.
+required-version = "==0.11.16"

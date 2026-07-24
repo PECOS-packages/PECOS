@@ -83,7 +83,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
         enable-cache: true
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -170,7 +170,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
         enable-cache: true
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -229,7 +229,9 @@ jobs:
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # The || guard keeps a future entry that forgets job-timeout at the
+    # historical 20 minutes instead of GitHub's 360-minute default.
+    timeout-minutes: ${{ matrix.job-timeout || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -239,16 +241,22 @@ jobs:
             artifact-name: python-compat-smoke-ubuntu
             build-llvm: true
             build-quantum-pecos: true
+            job-timeout: 20
+          # 30 minutes: Windows runner preparation (disk cleanup) varies by
+          # several minutes and the pecos-rslib wheel compile alone takes
+          # 10-12, so 20 minutes cancelled a healthy build (issue #360).
           - os: windows-2022
             python-version: "3.10"
             artifact-name: python-compat-smoke-windows
             build-llvm: false
             build-quantum-pecos: false
+            job-timeout: 30
           - os: macOS-latest
             python-version: "3.10"
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
+            job-timeout: 20
 
     steps:
     - name: Harden the runner (egress audit)
@@ -289,7 +297,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
         enable-cache: true
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -430,7 +438,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
 
     - name: Set up Rust (Windows)
       if: runner.os == 'Windows' && matrix.include-llvm
@@ -564,7 +572,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
         enable-cache: true
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 

@@ -5108,54 +5108,96 @@ mod tests {
     }
 
     /// Issue #325 regression: `from_circuit` once produced different DEMs for
-    /// native `F`/`SY` gates versus their unitarily identical decompositions
-    /// (86 mechanisms differed on the d=3 SZZ lowered circuit). The gate
-    /// table and the dispatch are separate layers; this pins the composed
-    /// public path. The circuit sandwiches the gate under test between
-    /// two-qubit gates so an X-vs-Z misclassification in the conjugation
-    /// propagates into the Z-basis detectors (a bare `MZ` directly after the
-    /// gate cannot distinguish `X` from `Y` errors).
+    /// native `F`/`Fdg`/`SY`/`SYdg` versus their unitarily identical
+    /// decompositions (86 mechanisms differed on the d=3 SZZ lowered
+    /// circuit). The gate table and the dispatch are separate layers; this
+    /// pins the composed public path.
+    ///
+    /// Construction: an identity pair -- the gate under test followed by the
+    /// *decomposed* inverse -- so every circuit is noiseless-deterministic
+    /// (all measurements read 0, keeping the single-record detectors valid),
+    /// while p2 noise injected by the leading CX is conjugated through the
+    /// pair. A wrong native conjugation leaves a residual Clifford `R` that
+    /// re-maps error components across detector-visibility classes.
+    ///
+    /// Discriminating power (exact, not "any permutation"): a single
+    /// Z-basis readout only distinguishes which Pauli `R` sends to `Z`
+    /// (post-CX `X` and `Y` share a detector signature), so two variants are
+    /// asserted. Variant 1 (Z-basis) partitions {X,Y} | {Z}; variant 2
+    /// (X-basis preparation and readout via `H`) partitions {X} | {Y,Z}.
+    /// Jointly they separate all three axes, and with distinct per-Pauli
+    /// weights (X 0.5 / Y 0.3 / Z 0.2) any unsigned residual permutation
+    /// changes some (probability, signature) pairing. Sign-only differences
+    /// remain invisible -- `SY` versus `SYdg` differ only by signs, which no
+    /// phase-free DEM test can distinguish; their cases pin each gate
+    /// against its own decomposition, not against each other.
+    ///
+    /// Negative controls are part of the test: one confusable pair per
+    /// blindness class proves each variant contributes real teeth.
     #[test]
     fn test_from_tick_circuit_propagates_f_and_sy_like_their_decompositions() {
+        use crate::fault_tolerance::dem_builder::PauliWeights;
         use pecos_core::QubitId;
+        use pecos_core::pauli::{X, Y, Z};
         use pecos_quantum::{Attribute, TickCircuit};
 
-        fn build(steps: &[&str]) -> TickCircuit {
+        fn apply_step(circuit: &mut TickCircuit, step: &str) {
+            let mut tick = circuit.tick();
+            let target = &[QubitId(1)];
+            match step {
+                "f" => {
+                    tick.f(target);
+                }
+                "fdg" => {
+                    tick.fdg(target);
+                }
+                "sy" => {
+                    tick.sy(target);
+                }
+                "sydg" => {
+                    tick.sydg(target);
+                }
+                "sx" => {
+                    tick.sx(target);
+                }
+                "sxdg" => {
+                    tick.sxdg(target);
+                }
+                "sz" => {
+                    tick.sz(target);
+                }
+                "szdg" => {
+                    tick.szdg(target);
+                }
+                "h" => {
+                    tick.h(target);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        /// Build the identity-pair circuit: `gate_steps` then
+        /// `inverse_steps` net to the identity, so the noiseless state stays
+        /// |00> and both single-record Z detectors are deterministic.
+        /// `x_basis` runs the sandwiched qubit in the X basis (H before the
+        /// noise source and H before readout), flipping which error axis is
+        /// invisible to the detectors.
+        fn build(gate_steps: &[&str], inverse_steps: &[&str], x_basis: bool) -> TickCircuit {
             let mut circuit = TickCircuit::new();
             circuit.tick().pz(&[QubitId(0), QubitId(1)]);
-            circuit.tick().cx(&[(QubitId(0), QubitId(1))]);
-            for step in steps {
-                let mut tick = circuit.tick();
-                let target = &[QubitId(1)];
-                match *step {
-                    "f" => {
-                        tick.f(target);
-                    }
-                    "fdg" => {
-                        tick.fdg(target);
-                    }
-                    "sy" => {
-                        tick.sy(target);
-                    }
-                    "sydg" => {
-                        tick.sydg(target);
-                    }
-                    "sx" => {
-                        tick.sx(target);
-                    }
-                    "sxdg" => {
-                        tick.sxdg(target);
-                    }
-                    "sz" => {
-                        tick.sz(target);
-                    }
-                    "szdg" => {
-                        tick.szdg(target);
-                    }
-                    _ => unreachable!(),
-                }
+            if x_basis {
+                apply_step(&mut circuit, "h");
             }
-            circuit.tick().cx(&[(QubitId(1), QubitId(0))]);
+            circuit.tick().cx(&[(QubitId(0), QubitId(1))]);
+            for step in gate_steps {
+                apply_step(&mut circuit, step);
+            }
+            for step in inverse_steps {
+                apply_step(&mut circuit, step);
+            }
+            if x_basis {
+                apply_step(&mut circuit, "h");
+            }
             circuit.tick().mz(&[QubitId(0), QubitId(1)]);
             circuit.set_meta("num_measurements", Attribute::String("2".to_string()));
             circuit.set_meta(
@@ -5168,38 +5210,63 @@ mod tests {
             circuit
         }
 
-        // Uniform depolarizing p2 is blind to WHICH single-qubit Clifford sits
-        // in the sandwich (any Clifford permutes the 15 Pauli pairs, leaving
-        // the mechanism multiset invariant), so the weights must be fully
-        // asymmetric across X/Y/Z of the sandwiched qubit: any wrong
-        // conjugation permutation then re-pairs a probability with a
-        // different detector signature.
-        fn asymmetric_dem(steps: &[&str]) -> String {
-            use crate::fault_tolerance::dem_builder::PauliWeights;
-            use pecos_core::pauli::{X, Y, Z};
-
+        fn dem(gate_steps: &[&str], inverse_steps: &[&str], x_basis: bool) -> String {
             let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0).set_p2_weights(PauliWeights::from([
                 (X(1), 0.5),
                 (Y(1), 0.3),
                 (Z(1), 0.2),
             ]));
-            DemBuilder::try_from_tick_circuit_with_noise_config(&build(steps), noise)
-                .expect("valid DEM metadata")
-                .to_string()
+            DemBuilder::try_from_tick_circuit_with_noise_config(
+                &build(gate_steps, inverse_steps, x_basis),
+                noise,
+            )
+            .expect("valid DEM metadata")
+            .to_string()
         }
 
-        let cases: [(&[&str], &[&str]); 4] = [
-            (&["f"], &["sx", "sz"]),
-            (&["fdg"], &["szdg", "sxdg"]),
-            (&["sy"], &["sx", "sz", "sxdg"]),
-            (&["sydg"], &["sx", "szdg", "sxdg"]),
+        // (native gate, decomposition, decomposed inverse), circuit order
+        // leftmost-first; decompositions are the state-vector-verified maps.
+        let cases: [(&[&str], &[&str], &[&str]); 4] = [
+            (&["f"], &["sx", "sz"], &["szdg", "sxdg"]),
+            (&["fdg"], &["szdg", "sxdg"], &["sx", "sz"]),
+            (&["sy"], &["sx", "sz", "sxdg"], &["sx", "szdg", "sxdg"]),
+            (&["sydg"], &["sx", "szdg", "sxdg"], &["sx", "sz", "sxdg"]),
         ];
-        for (native, decomposed) in cases {
-            assert_eq!(
-                asymmetric_dem(native),
-                asymmetric_dem(decomposed),
-                "from_circuit DEM must be identical for {native:?} and its decomposition {decomposed:?}"
-            );
+        for x_basis in [false, true] {
+            for (native, decomposed, inverse) in cases {
+                assert_eq!(
+                    dem(native, inverse, x_basis),
+                    dem(decomposed, inverse, x_basis),
+                    "from_circuit DEM must be identical for {native:?} and its decomposition \
+                     {decomposed:?} (x_basis readout: {x_basis})"
+                );
+            }
         }
+
+        // Negative controls: each readout variant must catch its class of
+        // wrong conjugation. In the identity-pair construction the variant
+        // blindness is a property of the RESIDUAL `R = decomposed_inverse o
+        // wrong_gate`: the Z-basis variant is blind exactly when `R` fixes
+        // `Z` (an unsigned X<->Y swap), the X-basis variant exactly when `R`
+        // fixes `X` (an unsigned Y<->Z swap). Substituting SY for F leaves
+        // `R = Fdg o SY` = X<->Y swap, the Z-blind case; substituting Fdg
+        // for F leaves `R = F`, which fixes nothing and both variants catch.
+        assert_ne!(
+            dem(&["f"], &["szdg", "sxdg"], false),
+            dem(&["fdg"], &["szdg", "sxdg"], false),
+            "Z-basis variant must distinguish F from Fdg"
+        );
+        assert_eq!(
+            dem(&["f"], &["szdg", "sxdg"], false),
+            dem(&["sy"], &["szdg", "sxdg"], false),
+            "documented blindness: the Z-basis variant alone cannot separate F from SY \
+             (their residual is an X<->Y swap, which fixes Z); if this ever fails, \
+             the readout physics changed"
+        );
+        assert_ne!(
+            dem(&["f"], &["szdg", "sxdg"], true),
+            dem(&["sy"], &["szdg", "sxdg"], true),
+            "X-basis variant must distinguish F from SY (the Z-blind pair)"
+        );
     }
 }

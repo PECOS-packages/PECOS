@@ -82,7 +82,9 @@ class HybridEngine:
         self.state = None
         self.circuit = None
         self.regwidth = regwidth
-        self.classical_semantics = classical_semantics or DefaultClassicalSemantics()
+        self.classical_semantics = (
+            classical_semantics if classical_semantics is not None else DefaultClassicalSemantics()
+        )
 
         if isinstance(seed, bool) and seed is True:
             self.seed = struct.unpack("<L", os.urandom(4))[0]

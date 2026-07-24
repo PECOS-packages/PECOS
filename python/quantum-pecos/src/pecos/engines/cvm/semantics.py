@@ -19,6 +19,8 @@ from pecos import BitInt, BitUInt
 from pecos.engines.cvm import classical
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from pecos.circuits import QuantumCircuit
     from pecos.protocols import SimulatorProtocol
 
@@ -98,36 +100,49 @@ class DefaultClassicalSemantics:
         classical.eval_cop(cop_expr, output, width=width, shot_id=shot_id)
 
 
-class RTEClassicalSemantics:
-    """Unsigned fixed-width semantics matching Quantinuum's real-time engine.
+class UnsignedClassicalSemantics:
+    """Unsigned fixed-width classical semantics.
 
     Arithmetic wraps modulo ``2**width``. Shifts are logical and mask their
     amount to ``width - 1``. Division and modulo by zero produce an all-ones
     word. Comparisons are unsigned unless an expression contains
     ``{"signed": True}``.
 
-    Circuit variables whose ``cvar_spec_type`` is ``"cbitvar"`` use
-    :class:`BitUInt` storage so narrow values are zero-extended. Other
+    By default, circuit variables whose ``cvar_spec_type`` is ``"cbitvar"``
+    use :class:`BitUInt` storage so narrow values are zero-extended. Other
     variables retain :class:`BitInt` storage for two's-complement reporting.
+    Alternate metadata type names can be supplied with
+    ``unsigned_cvar_types``.
+
+    A semantics instance has one authoritative word width. Explicit widths
+    supplied by an engine or another caller must match the configured width.
+    This prevents different components in one execution from silently
+    evaluating the same expression at different widths.
     """
 
     _COMPARISONS = frozenset({"==", "!=", "<=", ">=", "<", ">"})
-    _UNSIGNED_CVAR_TYPES = frozenset({"cbitvar"})
 
-    def __init__(self, width: int = 64) -> None:
-        """Create RTE semantics with a default word width.
+    def __init__(
+        self,
+        width: int = 32,
+        *,
+        unsigned_cvar_types: Iterable[str] = ("cbitvar",),
+    ) -> None:
+        """Create unsigned semantics for one classical word width.
 
-        The legacy hybrid engine supplies its configured ``regwidth`` to each
-        operation. The instance default makes the same evaluator directly
-        reusable by error models, circuit inspectors, and other components
-        outside the engine.
+        The default matches the legacy hybrid engine's default ``regwidth``.
+        Consumers targeting another word size should pass that size to both
+        the semantics object and the engine.
 
         Args:
             width: Default classical word width. Must be a positive power of
-                two. Quantinuum's real-time engine uses 64 bits.
+                two.
+            unsigned_cvar_types: ``cvar_spec_type`` metadata values whose
+                registers should use unsigned, zero-extending storage.
         """
         self._validate_width(width)
         self.width = width
+        self.unsigned_cvar_types = frozenset(unsigned_cvar_types)
 
     @staticmethod
     def _validate_width(width: int) -> None:
@@ -136,9 +151,13 @@ class RTEClassicalSemantics:
             raise ValueError(msg)
 
     def _resolve_width(self, width: int | None) -> int:
-        resolved = self.width if width is None else width
-        self._validate_width(resolved)
-        return resolved
+        if width is None:
+            return self.width
+        self._validate_width(width)
+        if width != self.width:
+            msg = f"Classical register width {width} does not match the semantics width {self.width}."
+            raise ValueError(msg)
+        return width
 
     @staticmethod
     def _to_signed(value: int, width: int) -> int:
@@ -285,14 +304,14 @@ class RTEClassicalSemantics:
         output: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Initialize signed and unsigned circuit-variable storage."""
-        resolved_spec = dict(circuit.metadata.get("cvar_spec", {}))
+        resolved_spec = dict(circuit.metadata.get("cvar_spec") or {})
         resolved_spec.update(output_spec or {})
         resolved_spec["__pecos_scratch"] = state.num_qubits
 
         if output is None:
             cvar_types = circuit.metadata.get("cvar_spec_type", {})
             output = {
-                symbol: (BitUInt(size) if cvar_types.get(symbol) in self._UNSIGNED_CVAR_TYPES else BitInt(size))
+                symbol: (BitUInt(size) if cvar_types.get(symbol) in self.unsigned_cvar_types else BitInt(size))
                 for symbol, size in resolved_spec.items()
             }
         return output
@@ -369,5 +388,5 @@ class RTEClassicalSemantics:
 __all__ = [
     "ClassicalSemantics",
     "DefaultClassicalSemantics",
-    "RTEClassicalSemantics",
+    "UnsignedClassicalSemantics",
 ]

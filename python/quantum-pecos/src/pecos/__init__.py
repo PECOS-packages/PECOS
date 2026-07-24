@@ -269,7 +269,7 @@ from pecos.engines import circuit_runners
 from pecos.engines.cvm import (
     ClassicalSemantics,
     DefaultClassicalSemantics,
-    RTEClassicalSemantics,
+    UnsignedClassicalSemantics,
 )
 from pecos.engines.hybrid_engine_old import HybridEngine
 
@@ -339,11 +339,11 @@ __all__ = [
     "Qis",
     "QisEngineBuilder",
     "QuantumCircuit",
-    "RTEClassicalSemantics",
     "ShotMap",
     "ShotVec",
     "SignedInteger",
     "TimeUnits",
+    "UnsignedClassicalSemantics",
     "UnsignedInteger",
     "Wasm",
     "WasmError",

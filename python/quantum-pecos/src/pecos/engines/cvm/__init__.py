@@ -17,11 +17,11 @@ This package provides the CVM execution environment for classical computations.
 from pecos.engines.cvm.semantics import (
     ClassicalSemantics,
     DefaultClassicalSemantics,
-    RTEClassicalSemantics,
+    UnsignedClassicalSemantics,
 )
 
 __all__ = [
     "ClassicalSemantics",
     "DefaultClassicalSemantics",
-    "RTEClassicalSemantics",
+    "UnsignedClassicalSemantics",
 ]

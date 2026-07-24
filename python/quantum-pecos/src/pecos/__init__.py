@@ -266,6 +266,11 @@ from pecos._engine_builders import (
 from pecos._sim import get_guppy_backends, sim
 from pecos.circuits.quantum_circuit import QuantumCircuit
 from pecos.engines import circuit_runners
+from pecos.engines.cvm import (
+    ClassicalSemantics,
+    DefaultClassicalSemantics,
+    RTEClassicalSemantics,
+)
 from pecos.engines.hybrid_engine_old import HybridEngine
 
 # Import WasmError from pecos.exceptions (Python-defined, inherits from pecos_rslib.WasmError)
@@ -308,7 +313,9 @@ __all__ = [
     "BinArray",
     "BitInt",
     "BitUInt",
+    "ClassicalSemantics",
     "Complex",
+    "DefaultClassicalSemantics",
     "DepolarizingNoiseModelBuilder",
     "Float",
     "GateRegistry",
@@ -332,6 +339,7 @@ __all__ = [
     "Qis",
     "QisEngineBuilder",
     "QuantumCircuit",
+    "RTEClassicalSemantics",
     "ShotMap",
     "ShotVec",
     "SignedInteger",

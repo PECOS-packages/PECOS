@@ -309,7 +309,7 @@ class UnsignedClassicalSemantics:
         resolved_spec["__pecos_scratch"] = state.num_qubits
 
         if output is None:
-            cvar_types = circuit.metadata.get("cvar_spec_type", {})
+            cvar_types = circuit.metadata.get("cvar_spec_type") or {}
             output = {
                 symbol: (BitUInt(size) if cvar_types.get(symbol) in self.unsigned_cvar_types else BitInt(size))
                 for symbol, size in resolved_spec.items()

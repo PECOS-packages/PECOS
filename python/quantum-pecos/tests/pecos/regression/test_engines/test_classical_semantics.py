@@ -216,3 +216,23 @@ def test_unsigned_set_output_accepts_none_cvar_spec() -> None:
 
     assert set(output) == {"__pecos_scratch"}
     assert output["__pecos_scratch"].size == 2
+
+
+def test_unsigned_set_output_accepts_none_cvar_spec_type() -> None:
+    """Nullable variable-type metadata defaults to signed storage."""
+
+    class State:
+        num_qubits = 1
+
+    circuit = pc.QuantumCircuit(
+        cvar_spec={"value": 8},
+        cvar_spec_type=None,
+    )
+    output = UnsignedClassicalSemantics().set_output(
+        State(),
+        circuit,
+        None,
+        None,
+    )
+
+    assert isinstance(output["value"], BitInt)

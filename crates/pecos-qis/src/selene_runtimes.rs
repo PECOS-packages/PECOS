@@ -5,7 +5,90 @@
 //! Selene repository is found at ../selene (relative to PECOS).
 
 use crate::SeleneRuntime;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+fn platform_library_parts() -> (&'static str, &'static str) {
+    if cfg!(target_os = "windows") {
+        ("", "dll")
+    } else if cfg!(target_os = "macos") {
+        ("lib", "dylib")
+    } else {
+        ("lib", "so")
+    }
+}
+
+pub(crate) fn platform_library_name(lib_name: &str) -> String {
+    let (lib_prefix, lib_ext) = platform_library_parts();
+    format!("{lib_prefix}{lib_name}.{lib_ext}")
+}
+
+pub(crate) fn platform_hashed_library_pattern(lib_name: &str) -> String {
+    let (lib_prefix, lib_ext) = platform_library_parts();
+    format!("{lib_prefix}{lib_name}-*.{lib_ext}")
+}
+
+/// Find an exact or Cargo hash-suffixed dynamic library in a directory or its `deps/`.
+pub(crate) fn find_library_in_dir(dir: &Path, lib_name: &str) -> Option<PathBuf> {
+    let (lib_prefix, lib_ext) = platform_library_parts();
+    let exact_name = platform_library_name(lib_name);
+    let hashed_stem_prefix = format!("{lib_prefix}{lib_name}-");
+
+    // Cargo dependency artifacts are fresher than copied top-level artifacts.
+    for search_dir in [dir.join("deps"), dir.to_path_buf()] {
+        let exact_path = search_dir.join(&exact_name);
+        if exact_path.is_file() {
+            return Some(exact_path);
+        }
+
+        let mut hashed_paths = std::fs::read_dir(&search_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case(lib_ext))
+                    && path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .and_then(|stem| stem.strip_prefix(&hashed_stem_prefix))
+                        .is_some_and(|hash| !hash.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        let modified_times = hashed_paths
+            .iter()
+            .map(|path| path.metadata().and_then(|metadata| metadata.modified()))
+            .collect::<Result<Vec<_>, _>>();
+        if let Ok(modified_times) = modified_times {
+            let mut paths_with_times = hashed_paths
+                .into_iter()
+                .zip(modified_times)
+                .collect::<Vec<_>>();
+            paths_with_times.sort_unstable_by(
+                |(left_path, left_time), (right_path, right_time)| {
+                    right_time
+                        .cmp(left_time)
+                        .then_with(|| left_path.cmp(right_path))
+                },
+            );
+            if let Some((path, _)) = paths_with_times.into_iter().next() {
+                return Some(path);
+            }
+            continue;
+        }
+
+        // Some filesystems do not expose modification times.
+        hashed_paths.sort_unstable();
+        if let Some(path) = hashed_paths.into_iter().next() {
+            return Some(path);
+        }
+    }
+
+    None
+}
 
 /// Error type for runtime fetching
 #[derive(Debug)]
@@ -115,15 +198,6 @@ pub fn selene_soft_rz_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
 /// the Selene runtimes are built as dependencies that may not exist when the build
 /// script runs.
 fn find_built_selene_runtime(lib_name: &str) -> Result<PathBuf, RuntimeFetchError> {
-    // Platform-specific library extension
-    let lib_ext = if cfg!(target_os = "macos") {
-        "dylib"
-    } else if cfg!(target_os = "windows") {
-        "dll"
-    } else {
-        "so"
-    };
-
     // Note: We don't check build-time environment variables here because they may be stale
     // The build script runs before Selene runtime dependencies are built, so those env vars
     // would point to non-existent paths. We rely solely on runtime detection instead.
@@ -139,43 +213,13 @@ fn find_built_selene_runtime(lib_name: &str) -> Result<PathBuf, RuntimeFetchErro
             "release"
         };
         let profiles = if current_profile == "release" {
-            vec!["release", "debug"]
+            ["release", "debug"]
         } else {
-            vec!["debug", "release"]
+            ["debug", "release"]
         };
 
         for profile in &profiles {
-            // Check deps directory where cargo puts cdylib dependencies
-            let deps_dir = target.join(profile).join("deps");
-            if deps_dir.exists()
-                && let Ok(entries) = std::fs::read_dir(&deps_dir)
-            {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if let Some(filename) = path.file_name().and_then(|f| f.to_str())
-                        // On Windows, libraries don't have "lib" prefix; on Unix they do
-                        && (filename.starts_with(&format!("lib{lib_name}"))
-                            || filename.starts_with(lib_name))
-                        && path
-                            .extension()
-                            .is_some_and(|ext| ext.eq_ignore_ascii_case(lib_ext))
-                    {
-                        log::info!("Found Selene runtime in cargo deps: {}", path.display());
-                        return Ok(path);
-                    }
-                }
-            }
-
-            // Also check standard location - try both with and without "lib" prefix
-            let lib_prefix = if cfg!(target_os = "windows") {
-                ""
-            } else {
-                "lib"
-            };
-            let runtime_path = target
-                .join(profile)
-                .join(format!("{lib_prefix}{lib_name}.{lib_ext}"));
-            if runtime_path.exists() {
+            if let Some(runtime_path) = find_library_in_dir(&target.join(profile), lib_name) {
                 log::info!(
                     "Found Selene runtime in cargo target: {}",
                     runtime_path.display()
@@ -229,61 +273,52 @@ fn find_cargo_target_dir() -> Option<PathBuf> {
 /// 2. Current target/release or target/debug
 /// 3. Workspace target directory
 /// 4. System library paths
+///
+/// Hash-suffixed matching is anchored on the complete requested library name
+/// followed by `-`. A partial name such as `"simple"` therefore does not match
+/// `selene_simple_runtime-*` artifacts.
+///
+/// `PECOS_SELENE_DIR` is one source in this fallthrough search, so a bad value
+/// warns and continues. In contrast, `PECOS_QIS_FFI_PATH` is an authoritative
+/// per-purpose override and fails loudly when set incorrectly.
 #[must_use]
 pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
-    // Platform-specific library extension
-    let lib_ext = if cfg!(target_os = "macos") {
-        "dylib"
-    } else if cfg!(target_os = "windows") {
-        "dll"
+    let lib_name = if name.starts_with("selene_") {
+        name.to_string()
     } else {
-        "so"
+        format!("selene_{name}")
     };
-    let filename = format!("libselene_{name}.{lib_ext}");
+    let filename = platform_library_name(&lib_name);
+    let hashed_pattern = platform_hashed_library_pattern(&lib_name);
 
     // Check environment variable
-    if let Ok(selene_dir) = std::env::var("PECOS_SELENE_DIR") {
-        let path = PathBuf::from(selene_dir).join(&filename);
-        if path.exists() {
+    if let Some(selene_dir) = std::env::var_os("PECOS_SELENE_DIR") {
+        let selene_dir = PathBuf::from(selene_dir);
+        if let Some(path) = find_library_in_dir(&selene_dir, &lib_name) {
             return Some(path);
         }
+        log::warn!(
+            "PECOS_SELENE_DIR is set to {}, but neither {filename} nor {hashed_pattern} was found there or in its deps directory",
+            selene_dir.display()
+        );
     }
 
     // Check target directories in current project
     for profile in &["release", "debug"] {
-        let path = PathBuf::from("target").join(profile).join(&filename);
-        if path.exists() {
+        let profile_dir = PathBuf::from("target").join(profile);
+        if let Some(path) = find_library_in_dir(&profile_dir, &lib_name) {
             return Some(path);
-        }
-
-        // Check deps directory
-        let deps_path = PathBuf::from("target").join(profile).join("deps");
-        if deps_path.exists()
-            && let Ok(entries) = std::fs::read_dir(&deps_path)
-        {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(file_name) = path.file_name().and_then(|f| f.to_str())
-                    && file_name.starts_with(&format!("libselene_{name}"))
-                    && path
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case(lib_ext))
-                {
-                    return Some(path);
-                }
-            }
         }
 
         // Check parent directories (in case we're in a workspace member)
         if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-            let workspace_target = PathBuf::from(manifest_dir)
+            let workspace_profile = PathBuf::from(manifest_dir)
                 .parent()?
                 .parent()? // Go up to workspace root
                 .join("target")
-                .join(profile)
-                .join(&filename);
-            if workspace_target.exists() {
-                return Some(workspace_target);
+                .join(profile);
+            if let Some(path) = find_library_in_dir(&workspace_profile, &lib_name) {
+                return Some(path);
             }
         }
     }
@@ -334,14 +369,69 @@ pub fn selene_runtime_auto(lib_name: &str) -> Result<SeleneRuntime, RuntimeFetch
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env::{ENV_MUTEX, EnvVarGuard};
+    use std::fs::File;
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn test_find_selene_runtime() {
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // This might not find anything in test environment
         let result = find_selene_runtime("simple");
         // Just verify it doesn't panic
         if let Some(path) = result {
             assert!(path.to_string_lossy().contains("selene_simple"));
         }
+    }
+
+    #[test]
+    fn test_find_selene_runtime_in_hashed_env_deps_dir() {
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp_dir = tempfile::tempdir().expect("create temp directory");
+        let deps_dir = temp_dir.path().join("deps");
+        std::fs::create_dir(&deps_dir).expect("create deps directory");
+        let runtime_path = deps_dir.join({
+            let (prefix, ext) = platform_library_parts();
+            format!("{prefix}selene_simple_runtime-abc123.{ext}")
+        });
+        File::create(&runtime_path).expect("create hashed runtime library");
+        let _env = EnvVarGuard::set("PECOS_SELENE_DIR", temp_dir.path());
+
+        assert_eq!(
+            find_selene_runtime("selene_simple_runtime"),
+            Some(runtime_path)
+        );
+    }
+
+    #[test]
+    fn library_scan_prefers_newest_hashed_dep_over_top_level_exact() {
+        let temp_dir = tempfile::tempdir().expect("create temp directory");
+        let exact_path = temp_dir
+            .path()
+            .join(platform_library_name("selene_simple_runtime"));
+        File::create(exact_path).expect("create top-level exact library");
+
+        let deps_dir = temp_dir.path().join("deps");
+        std::fs::create_dir(&deps_dir).expect("create deps directory");
+        let (prefix, ext) = platform_library_parts();
+        let older_path = deps_dir.join(format!("{prefix}selene_simple_runtime-aaa-old.{ext}"));
+        let older_file = File::create(older_path).expect("create older hashed library");
+        older_file
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1))
+            .expect("set older modification time");
+        let newer_path = deps_dir.join(format!("{prefix}selene_simple_runtime-zzz-new.{ext}"));
+        let newer_file = File::create(&newer_path).expect("create newer hashed library");
+        newer_file
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(2))
+            .expect("set newer modification time");
+
+        assert_eq!(
+            find_library_in_dir(temp_dir.path(), "selene_simple_runtime"),
+            Some(newer_path)
+        );
     }
 }

@@ -5106,4 +5106,100 @@ mod tests {
         // Difference should be < 0.1% for small p
         assert!((small_p - simple).abs() / simple < 0.001);
     }
+
+    /// Issue #325 regression: `from_circuit` once produced different DEMs for
+    /// native `F`/`SY` gates versus their unitarily identical decompositions
+    /// (86 mechanisms differed on the d=3 SZZ lowered circuit). The gate
+    /// table and the dispatch are separate layers; this pins the composed
+    /// public path. The circuit sandwiches the gate under test between
+    /// two-qubit gates so an X-vs-Z misclassification in the conjugation
+    /// propagates into the Z-basis detectors (a bare `MZ` directly after the
+    /// gate cannot distinguish `X` from `Y` errors).
+    #[test]
+    fn test_from_tick_circuit_propagates_f_and_sy_like_their_decompositions() {
+        use pecos_core::QubitId;
+        use pecos_quantum::{Attribute, TickCircuit};
+
+        fn build(steps: &[&str]) -> TickCircuit {
+            let mut circuit = TickCircuit::new();
+            circuit.tick().pz(&[QubitId(0), QubitId(1)]);
+            circuit.tick().cx(&[(QubitId(0), QubitId(1))]);
+            for step in steps {
+                let mut tick = circuit.tick();
+                let target = &[QubitId(1)];
+                match *step {
+                    "f" => {
+                        tick.f(target);
+                    }
+                    "fdg" => {
+                        tick.fdg(target);
+                    }
+                    "sy" => {
+                        tick.sy(target);
+                    }
+                    "sydg" => {
+                        tick.sydg(target);
+                    }
+                    "sx" => {
+                        tick.sx(target);
+                    }
+                    "sxdg" => {
+                        tick.sxdg(target);
+                    }
+                    "sz" => {
+                        tick.sz(target);
+                    }
+                    "szdg" => {
+                        tick.szdg(target);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            circuit.tick().cx(&[(QubitId(1), QubitId(0))]);
+            circuit.tick().mz(&[QubitId(0), QubitId(1)]);
+            circuit.set_meta("num_measurements", Attribute::String("2".to_string()));
+            circuit.set_meta(
+                "detectors",
+                Attribute::String(
+                    r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#.to_string(),
+                ),
+            );
+            circuit.set_meta("observables", Attribute::String("[]".to_string()));
+            circuit
+        }
+
+        // Uniform depolarizing p2 is blind to WHICH single-qubit Clifford sits
+        // in the sandwich (any Clifford permutes the 15 Pauli pairs, leaving
+        // the mechanism multiset invariant), so the weights must be fully
+        // asymmetric across X/Y/Z of the sandwiched qubit: any wrong
+        // conjugation permutation then re-pairs a probability with a
+        // different detector signature.
+        fn asymmetric_dem(steps: &[&str]) -> String {
+            use crate::fault_tolerance::dem_builder::PauliWeights;
+            use pecos_core::pauli::{X, Y, Z};
+
+            let noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0).set_p2_weights(PauliWeights::from([
+                (X(1), 0.5),
+                (Y(1), 0.3),
+                (Z(1), 0.2),
+            ]));
+            DemBuilder::try_from_tick_circuit_with_noise_config(&build(steps), noise)
+                .expect("valid DEM metadata")
+                .to_string()
+        }
+
+        let cases: [(&[&str], &[&str]); 4] = [
+            (&["f"], &["sx", "sz"]),
+            (&["fdg"], &["szdg", "sxdg"]),
+            (&["sy"], &["sx", "sz", "sxdg"]),
+            (&["sydg"], &["sx", "szdg", "sxdg"]),
+        ];
+        for (native, decomposed) in cases {
+            assert_eq!(
+                asymmetric_dem(native),
+                asymmetric_dem(decomposed),
+                "from_circuit DEM must be identical for {native:?} and its decomposition {decomposed:?}"
+            );
+        }
+    }
 }

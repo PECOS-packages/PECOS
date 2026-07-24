@@ -942,7 +942,18 @@ impl QisHeliosInterface {
             .clone()
     }
 
-    /// Find the `libpecos_qis_ffi` library by searching common locations
+    /// Find the `libpecos_qis_ffi` library by searching common locations.
+    ///
+    /// Issue #365 discovery precedence is: the authoritative
+    /// `PECOS_QIS_FFI_PATH` override; executable-adjacent and compile-time
+    /// workspace artifacts from this build; `CARGO_TARGET_DIR`; then the
+    /// remaining parent/cwd fallbacks. Keeping runtime Cargo overrides below
+    /// build-associated locations reduces the risk of loading a stale,
+    /// ABI-incompatible FFI library across ownership-transferring calls.
+    ///
+    /// Unlike `PECOS_SELENE_DIR`, which is one source in a fallthrough search,
+    /// a set-but-invalid `PECOS_QIS_FFI_PATH` fails loudly because it is an
+    /// authoritative per-purpose override.
     fn find_pecos_qis_lib() -> Result<PathBuf, InterfaceError> {
         let lib_name = platform_library_name("pecos_qis_ffi");
 
@@ -975,18 +986,6 @@ impl QisHeliosInterface {
             )));
         }
 
-        let mut cargo_target_paths = Vec::new();
-        if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
-            let target_dir = PathBuf::from(target_dir);
-            for profile in &profile_order {
-                cargo_target_paths.push(target_dir.join(profile).join(&lib_name));
-                cargo_target_paths.push(target_dir.join(profile).join("deps").join(&lib_name));
-            }
-            if let Some(path) = cargo_target_paths.iter().find(|path| path.is_file()) {
-                return Ok(path.clone());
-            }
-        }
-
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
@@ -998,31 +997,55 @@ impl QisHeliosInterface {
 
         debug!("Executable directory: {}", exe_dir.display());
 
-        let mut candidate_paths = cargo_target_paths;
-        candidate_paths.extend([
-            exe_dir.join(&lib_name),
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        Self::find_pecos_qis_lib_from_roots(&exe_dir, &manifest_dir, &profile_order, &lib_name)
+    }
+
+    fn find_pecos_qis_lib_from_roots(
+        exe_dir: &Path,
+        manifest_dir: &Path,
+        profile_order: &[&str; 2],
+        lib_name: &str,
+    ) -> Result<PathBuf, InterfaceError> {
+        let mut candidate_paths = vec![
+            exe_dir.join(lib_name),
             exe_dir.join(format!("deps/{lib_name}")),
-        ]);
+        ];
 
         // Editable/development installs may execute from outside the checkout.
         // Preserve the workspace target as a stable fallback in that case.
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         if let Some(workspace_root) = manifest_dir.parent().and_then(std::path::Path::parent) {
-            for profile in &profile_order {
+            for profile in profile_order {
                 candidate_paths.push(workspace_root.join(format!("target/{profile}/{lib_name}")));
                 candidate_paths
                     .push(workspace_root.join(format!("target/{profile}/deps/{lib_name}")));
             }
         }
 
+        if let Some(path) = candidate_paths.iter().find(|path| path.is_file()) {
+            return Ok(path.clone());
+        }
+
+        if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
+            let target_dir = PathBuf::from(target_dir);
+            for profile in profile_order {
+                let profile_dir = target_dir.join(profile);
+                if let Some(path) = find_library_in_dir(&profile_dir, "pecos_qis_ffi") {
+                    return Ok(path);
+                }
+                candidate_paths.push(profile_dir.join(lib_name));
+                candidate_paths.push(profile_dir.join("deps").join(lib_name));
+            }
+        }
+
         if let Some(parent) = exe_dir.parent() {
-            candidate_paths.push(parent.join(&lib_name));
+            candidate_paths.push(parent.join(lib_name));
             candidate_paths.push(parent.join(format!("deps/{lib_name}")));
         }
 
         if let Ok(current_dir) = std::env::current_dir() {
             debug!("Current directory: {}", current_dir.display());
-            for profile in &profile_order {
+            for profile in profile_order {
                 candidate_paths.push(current_dir.join(format!("target/{profile}/{lib_name}")));
                 candidate_paths.push(current_dir.join(format!("target/{profile}/deps/{lib_name}")));
             }
@@ -1032,7 +1055,7 @@ impl QisHeliosInterface {
             for _ in 0..5 {
                 // Search up to 5 levels
                 if let Some(parent) = search_dir.parent() {
-                    for profile in &profile_order {
+                    for profile in profile_order {
                         candidate_paths.push(parent.join(format!("target/{profile}/{lib_name}")));
                         candidate_paths
                             .push(parent.join(format!("target/{profile}/deps/{lib_name}")));
@@ -2605,5 +2628,93 @@ mod tests {
         let error = QisHeliosInterface::find_pecos_qis_lib()
             .expect_err("empty override directory must fail");
         assert!(error.to_string().contains("PECOS_QIS_FFI_PATH"));
+    }
+
+    #[test]
+    fn qis_ffi_cargo_target_finds_hashed_deps_library() {
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp_dir = tempfile::tempdir().expect("create temp directory");
+        let cargo_target = temp_dir.path().join("cargo-target");
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let deps_dir = cargo_target.join(profile).join("deps");
+        std::fs::create_dir_all(&deps_dir).expect("create Cargo deps directory");
+        let exact_name = platform_library_name("pecos_qis_ffi");
+        let (stem, extension) = exact_name
+            .rsplit_once('.')
+            .expect("platform library name has extension");
+        let library_path = deps_dir.join(format!("{stem}-abc123.{extension}"));
+        File::create(&library_path).expect("create hashed library");
+        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", &cargo_target);
+
+        let fake_exe_dir = temp_dir.path().join("untrusted/bin");
+        let fake_manifest_dir = temp_dir.path().join("untrusted/workspace/crates/pecos-qis");
+        let profile_order = if cfg!(debug_assertions) {
+            ["debug", "release"]
+        } else {
+            ["release", "debug"]
+        };
+
+        assert_eq!(
+            QisHeliosInterface::find_pecos_qis_lib_from_roots(
+                &fake_exe_dir,
+                &fake_manifest_dir,
+                &profile_order,
+                &exact_name,
+            )
+            .expect("find hashed Cargo target library"),
+            library_path
+        );
+    }
+
+    #[test]
+    fn qis_ffi_build_associated_library_precedes_cargo_target() {
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let temp_dir = tempfile::tempdir().expect("create temp directory");
+        let exe_dir = temp_dir.path().join("bin");
+        std::fs::create_dir(&exe_dir).expect("create executable directory");
+        let exact_name = platform_library_name("pecos_qis_ffi");
+        let exe_library = exe_dir.join(&exact_name);
+        File::create(&exe_library).expect("create executable-adjacent library");
+
+        let cargo_target = temp_dir.path().join("cargo-target");
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let cargo_deps = cargo_target.join(profile).join("deps");
+        std::fs::create_dir_all(&cargo_deps).expect("create Cargo deps directory");
+        let (stem, extension) = exact_name
+            .rsplit_once('.')
+            .expect("platform library name has extension");
+        File::create(cargo_deps.join(format!("{stem}-newer.{extension}")))
+            .expect("create Cargo target library");
+        let _env = EnvVarGuard::set("CARGO_TARGET_DIR", cargo_target);
+
+        let fake_manifest_dir = temp_dir.path().join("workspace/crates/pecos-qis");
+        let profile_order = if cfg!(debug_assertions) {
+            ["debug", "release"]
+        } else {
+            ["release", "debug"]
+        };
+
+        assert_eq!(
+            QisHeliosInterface::find_pecos_qis_lib_from_roots(
+                &exe_dir,
+                &fake_manifest_dir,
+                &profile_order,
+                &exact_name,
+            )
+            .expect("find build-associated library"),
+            exe_library
+        );
     }
 }

@@ -33,7 +33,8 @@ pub(crate) fn find_library_in_dir(dir: &Path, lib_name: &str) -> Option<PathBuf>
     let exact_name = platform_library_name(lib_name);
     let hashed_stem_prefix = format!("{lib_prefix}{lib_name}-");
 
-    for search_dir in [dir.to_path_buf(), dir.join("deps")] {
+    // Cargo dependency artifacts are fresher than copied top-level artifacts.
+    for search_dir in [dir.join("deps"), dir.to_path_buf()] {
         let exact_path = search_dir.join(&exact_name);
         if exact_path.is_file() {
             return Some(exact_path);
@@ -56,6 +57,30 @@ pub(crate) fn find_library_in_dir(dir: &Path, lib_name: &str) -> Option<PathBuf>
                         .is_some_and(|hash| !hash.is_empty())
             })
             .collect::<Vec<_>>();
+
+        let modified_times = hashed_paths
+            .iter()
+            .map(|path| path.metadata().and_then(|metadata| metadata.modified()))
+            .collect::<Result<Vec<_>, _>>();
+        if let Ok(modified_times) = modified_times {
+            let mut paths_with_times = hashed_paths
+                .into_iter()
+                .zip(modified_times)
+                .collect::<Vec<_>>();
+            paths_with_times.sort_unstable_by(
+                |(left_path, left_time), (right_path, right_time)| {
+                    right_time
+                        .cmp(left_time)
+                        .then_with(|| left_path.cmp(right_path))
+                },
+            );
+            if let Some((path, _)) = paths_with_times.into_iter().next() {
+                return Some(path);
+            }
+            continue;
+        }
+
+        // Some filesystems do not expose modification times.
         hashed_paths.sort_unstable();
         if let Some(path) = hashed_paths.into_iter().next() {
             return Some(path);
@@ -248,6 +273,14 @@ fn find_cargo_target_dir() -> Option<PathBuf> {
 /// 2. Current target/release or target/debug
 /// 3. Workspace target directory
 /// 4. System library paths
+///
+/// Hash-suffixed matching is anchored on the complete requested library name
+/// followed by `-`. A partial name such as `"simple"` therefore does not match
+/// `selene_simple_runtime-*` artifacts.
+///
+/// `PECOS_SELENE_DIR` is one source in this fallthrough search, so a bad value
+/// warns and continues. In contrast, `PECOS_QIS_FFI_PATH` is an authoritative
+/// per-purpose override and fails loudly when set incorrectly.
 #[must_use]
 pub fn find_selene_runtime(name: &str) -> Option<PathBuf> {
     let lib_name = if name.starts_with("selene_") {
@@ -338,6 +371,7 @@ mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard};
     use std::fs::File;
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn test_find_selene_runtime() {
@@ -370,6 +404,34 @@ mod tests {
         assert_eq!(
             find_selene_runtime("selene_simple_runtime"),
             Some(runtime_path)
+        );
+    }
+
+    #[test]
+    fn library_scan_prefers_newest_hashed_dep_over_top_level_exact() {
+        let temp_dir = tempfile::tempdir().expect("create temp directory");
+        let exact_path = temp_dir
+            .path()
+            .join(platform_library_name("selene_simple_runtime"));
+        File::create(exact_path).expect("create top-level exact library");
+
+        let deps_dir = temp_dir.path().join("deps");
+        std::fs::create_dir(&deps_dir).expect("create deps directory");
+        let (prefix, ext) = platform_library_parts();
+        let older_path = deps_dir.join(format!("{prefix}selene_simple_runtime-aaa-old.{ext}"));
+        let older_file = File::create(older_path).expect("create older hashed library");
+        older_file
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1))
+            .expect("set older modification time");
+        let newer_path = deps_dir.join(format!("{prefix}selene_simple_runtime-zzz-new.{ext}"));
+        let newer_file = File::create(&newer_path).expect("create newer hashed library");
+        newer_file
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(2))
+            .expect("set newer modification time");
+
+        assert_eq!(
+            find_library_in_dir(temp_dir.path(), "selene_simple_runtime"),
+            Some(newer_path)
         );
     }
 }

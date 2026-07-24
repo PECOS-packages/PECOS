@@ -5,6 +5,7 @@ import platform
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -162,6 +163,41 @@ def test_selene_engine_accepts_generic_runtime_plugin_shape() -> None:
     assert isinstance(engine_builder, pecos.QisEngineBuilder)
 
 
+def test_default_runtime_falls_back_to_installed_plugin_package() -> None:
+    """A failed Cargo lookup configures the real builder from the installed plugin."""
+    import pecos_rslib
+    from pecos._engine_builders import _configure_selene_runtime
+    from selene_simple_runtime_plugin import SimpleRuntimePlugin
+
+    class FailingCargoRuntimeBuilder:
+        def __init__(self) -> None:
+            self.builder = pecos_rslib.qis_engine()
+            self.plugin_call: tuple[str, list[str], list[str]] | None = None
+
+        def selene_runtime(self) -> object:
+            msg = "forced Cargo runtime discovery failure"
+            raise RuntimeError(msg)
+
+        def selene_runtime_plugin(
+            self,
+            library_file: str,
+            init_args: list[str],
+            library_search_dirs: list[str],
+        ) -> object:
+            self.plugin_call = (library_file, init_args, library_search_dirs)
+            return self.builder.selene_runtime_plugin(
+                library_file,
+                init_args,
+                library_search_dirs,
+            )
+
+    builder = FailingCargoRuntimeBuilder()
+    _configure_selene_runtime(builder, None)
+
+    assert builder.plugin_call is not None
+    assert Path(builder.plugin_call[0]) == SimpleRuntimePlugin().library_file
+
+
 def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
     """Test that sim(Guppy(...)).classical(selene_engine()) routes HUGR through the QIS path."""
     import pecos
@@ -180,8 +216,7 @@ def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
     assert len(results["measurement_0"]) == 10
 
 
-def test_selene_engine_is_cwd_independent(tmp_path) -> None:
-    """The installed runtime plugin resolves when the process starts outside the checkout."""
+def _run_selene_cwd_probe(tmp_path: Path, cargo_target_dir: Path | None = None) -> None:
     probe = tmp_path / "selene_cwd_probe.py"
     probe.write_text(
         textwrap.dedent(
@@ -209,6 +244,8 @@ def test_selene_engine_is_cwd_independent(tmp_path) -> None:
         encoding="utf-8",
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith(("PECOS", "CARGO"))}
+    if cargo_target_dir is not None:
+        env["CARGO_TARGET_DIR"] = str(cargo_target_dir)
 
     subprocess.run(
         [sys.executable, str(probe)],
@@ -218,6 +255,19 @@ def test_selene_engine_is_cwd_independent(tmp_path) -> None:
         capture_output=True,
         text=True,
     )
+
+
+def test_selene_engine_is_cwd_independent(tmp_path: Path) -> None:
+    """The runtime resolves when the process starts outside the checkout."""
+    _run_selene_cwd_probe(tmp_path)
+
+
+def test_selene_engine_uses_plugin_when_cargo_target_is_empty(tmp_path: Path) -> None:
+    """An empty explicit Cargo target forces the module-relative runtime fallback."""
+    empty_cargo_target = tmp_path / "empty-cargo-target"
+    empty_cargo_target.mkdir()
+
+    _run_selene_cwd_probe(tmp_path, empty_cargo_target)
 
 
 def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:

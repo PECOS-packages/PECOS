@@ -228,6 +228,8 @@ pub(crate) mod test_env {
     use std::ffi::{OsStr, OsString};
     use std::sync::Mutex;
 
+    // Environment variables are process-wide. Every test in this crate that
+    // reads or mutates environment state must hold this lock.
     pub(crate) static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     pub(crate) struct EnvVarGuard {

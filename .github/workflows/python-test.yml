@@ -229,7 +229,9 @@ jobs:
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.job-timeout }}
+    # The || guard keeps a future entry that forgets job-timeout at the
+    # historical 20 minutes instead of GitHub's 360-minute default.
+    timeout-minutes: ${{ matrix.job-timeout || 20 }}
     strategy:
       fail-fast: false
       matrix:

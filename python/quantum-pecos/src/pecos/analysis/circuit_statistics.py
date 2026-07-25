@@ -14,9 +14,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from statistics import fmean, pstdev
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from pecos.circuits.quantum_circuit import Location
 from pecos.engines.cvm import DefaultClassicalSemantics
@@ -38,6 +39,39 @@ class OperationStatistic:
     key: str
     count: int | None = None
     duration: float | None = None
+
+
+# Numeric value stored for a count or duration.
+StatisticValue = int | float
+
+
+class ExecutionViews(TypedDict):
+    """Maximum, minimum, and actual runtime values for one metric."""
+
+    max: dict[str, StatisticValue]
+    min: dict[str, StatisticValue]
+    runtime: dict[str, StatisticValue]
+
+
+class CircuitRunStatistics(TypedDict):
+    """Counts and durations collected for one circuit execution."""
+
+    count: ExecutionViews
+    duration: ExecutionViews
+
+
+class RuntimeSummary(TypedDict):
+    """Runtime-duration summary across completed runs."""
+
+    runtime: list[StatisticValue]
+    avg_runtime: tuple[float, float]
+
+
+class CircuitStatisticsData(TypedDict):
+    """Complete circuit-statistics result schema."""
+
+    runs: list[CircuitRunStatistics]
+    total: RuntimeSummary
 
 
 OperationClassifier = Callable[
@@ -84,11 +118,12 @@ class CircuitStatistics:
     * ``min`` includes only unconditional operations.
     * ``runtime`` evaluates conditions against the current classical output.
 
-    Call :meth:`new` before each run, :meth:`analyze` for every executed tick,
-    and :meth:`finalize` after the run. The legacy hybrid engine calls
-    :meth:`analyze`; execution wrappers remain responsible for the per-run
-    lifecycle.
+    :class:`~pecos.HybridEngine` manages the per-run lifecycle and passes actual
+    operation execution decisions to :meth:`analyze_operation`. Manual callers
+    can use :meth:`start_run`, :meth:`analyze`, and :meth:`finish_run`.
     """
+
+    supports_operation_events = True
 
     def __init__(
         self,
@@ -117,8 +152,24 @@ class CircuitStatistics:
             msg = "classifier must be callable."
             raise TypeError(msg)
         self.classifier = classifier
-        self.data: dict[str, Any] = {"runs": []}
-        self._current_data: dict[str, Any] | None = None
+        self.data: CircuitStatisticsData = {
+            "runs": [],
+            "total": {
+                "runtime": [],
+                "avg_runtime": (float("nan"), float("nan")),
+            },
+        }
+        self._current_data: CircuitRunStatistics | None = None
+
+    @property
+    def run_active(self) -> bool:
+        """Whether a run is currently accepting operation statistics."""
+        return self._current_data is not None
+
+    @property
+    def results(self) -> CircuitStatisticsData:
+        """Return a defensive copy of the collected result."""
+        return deepcopy(self.data)
 
     def set_classical_semantics(
         self,
@@ -142,9 +193,16 @@ class CircuitStatistics:
             width=self.regwidth,
         )
 
-    def new(self) -> None:
-        """Start collecting statistics for a new circuit run."""
-        current_data = {
+    def start_run(self) -> None:
+        """Start collecting a new run.
+
+        Raises:
+            RuntimeError: If the previous run has not been finished.
+        """
+        if self.run_active:
+            msg = "Finish the active run before starting another."
+            raise RuntimeError(msg)
+        current_data: CircuitRunStatistics = {
             "count": {
                 "max": {},
                 "min": {},
@@ -159,11 +217,30 @@ class CircuitStatistics:
         self.data["runs"].append(current_data)
         self._current_data = current_data
 
-    def _current_metric(self, metric: str) -> dict[str, dict[str, float | int]]:
+    def new(self) -> None:
+        """Alias for :meth:`start_run`."""
+        self.start_run()
+
+    def _current_metric(self, metric: Literal["count", "duration"]) -> ExecutionViews:
         if self._current_data is None:
-            msg = "Call new() before collecting circuit statistics."
+            msg = "Call start_run() before collecting circuit statistics."
             raise RuntimeError(msg)
         return self._current_data[metric]
+
+    @staticmethod
+    def _record(
+        values: ExecutionViews,
+        key: str,
+        value: StatisticValue,
+        *,
+        conditional: bool,
+        executed: bool,
+    ) -> None:
+        values["max"][key] = values["max"].get(key, 0) + value
+        if not conditional:
+            values["min"][key] = values["min"].get(key, 0) + value
+        if executed:
+            values["runtime"][key] = values["runtime"].get(key, 0) + value
 
     def add_count(
         self,
@@ -173,12 +250,13 @@ class CircuitStatistics:
         output: dict[str, Any],
     ) -> None:
         """Record one condition-aware count contribution."""
-        counts = self._current_metric("count")
-        counts["max"][key] = counts["max"].get(key, 0) + count
-        if condition is None:
-            counts["min"][key] = counts["min"].get(key, 0) + count
-        if self.eval_condition(condition, output):
-            counts["runtime"][key] = counts["runtime"].get(key, 0) + count
+        self._record(
+            self._current_metric("count"),
+            key,
+            count,
+            conditional=bool(condition),
+            executed=self.eval_condition(condition, output),
+        )
 
     def add_duration(
         self,
@@ -188,12 +266,45 @@ class CircuitStatistics:
         output: dict[str, Any],
     ) -> None:
         """Record one condition-aware duration contribution."""
-        durations = self._current_metric("duration")
-        durations["max"][key] = durations["max"].get(key, 0.0) + duration
-        if condition is None:
-            durations["min"][key] = durations["min"].get(key, 0.0) + duration
-        if self.eval_condition(condition, output):
-            durations["runtime"][key] = durations["runtime"].get(key, 0.0) + duration
+        self._record(
+            self._current_metric("duration"),
+            key,
+            duration,
+            conditional=bool(condition),
+            executed=self.eval_condition(condition, output),
+        )
+
+    def analyze_operation(
+        self,
+        symbol: str,
+        locations: set[Location],
+        metadata: Mapping[str, Any],
+        *,
+        executed: bool,
+    ) -> None:
+        """Record one non-skipped operation using the engine's decision."""
+        self._current_metric("count")
+        conditional = bool(metadata.get("cond")) or bool(metadata.get("cond2"))
+        for contribution in self.classifier(symbol, locations, metadata):
+            if not isinstance(contribution, OperationStatistic):
+                msg = "classifier must return OperationStatistic objects."
+                raise TypeError(msg)
+            if contribution.count is not None:
+                self._record(
+                    self._current_metric("count"),
+                    contribution.key,
+                    contribution.count,
+                    conditional=conditional,
+                    executed=executed,
+                )
+            if contribution.duration is not None:
+                self._record(
+                    self._current_metric("duration"),
+                    contribution.key,
+                    contribution.duration,
+                    conditional=conditional,
+                    executed=executed,
+                )
 
     def analyze(
         self,
@@ -205,47 +316,61 @@ class CircuitStatistics:
         del time
         self._current_metric("count")
         for symbol, locations, metadata in tick_circuit.items():
+            if metadata.get("skip"):
+                continue
             condition = metadata.get("cond")
-            for contribution in self.classifier(
+            condition2 = metadata.get("cond2")
+            executed = self.eval_condition(condition, output)
+            if condition2:
+                executed = executed and self.eval_condition(condition2, output)
+            self.analyze_operation(
                 symbol,
                 locations,
                 metadata,
-            ):
-                if not isinstance(contribution, OperationStatistic):
-                    msg = "classifier must return OperationStatistic objects."
-                    raise TypeError(msg)
-                if contribution.count is not None:
-                    self.add_count(
-                        contribution.key,
-                        contribution.count,
-                        condition,
-                        output,
-                    )
-                if contribution.duration is not None:
-                    self.add_duration(
-                        contribution.key,
-                        contribution.duration,
-                        condition,
-                        output,
-                    )
+                executed=executed,
+            )
 
-    def finalize(self) -> None:
-        """Update aggregate runtime-duration statistics across all runs."""
+    def _update_summary(self) -> None:
         runtimes = [sum(run["duration"]["runtime"].values()) for run in self.data["runs"]]
-        if runtimes:
-            average = fmean(runtimes)
-            deviation = pstdev(runtimes)
-        else:
-            average = deviation = float("nan")
+        average = (fmean(runtimes), pstdev(runtimes)) if runtimes else (float("nan"), float("nan"))
         self.data["total"] = {
             "runtime": runtimes,
-            "avg_runtime": (average, deviation),
+            "avg_runtime": average,
         }
+
+    def finish_run(self) -> None:
+        """Finish the active run and update aggregate runtime statistics."""
+        if not self.run_active:
+            msg = "Call start_run() before finishing circuit statistics."
+            raise RuntimeError(msg)
+        self._update_summary()
+        self._current_data = None
+
+    def abort_run(self) -> None:
+        """Discard the active run after an unsuccessful engine execution."""
+        if not self.run_active:
+            msg = "Call start_run() before aborting circuit statistics."
+            raise RuntimeError(msg)
+        if not self.data["runs"] or self.data["runs"][-1] is not self._current_data:
+            msg = "The active circuit-statistics run is not the latest run."
+            raise RuntimeError(msg)
+        self.data["runs"].pop()
+        self._current_data = None
+        self._update_summary()
+
+    def finalize(self) -> None:
+        """Alias for :meth:`finish_run`."""
+        self.finish_run()
 
 
 __all__ = [
+    "CircuitRunStatistics",
     "CircuitStatistics",
+    "CircuitStatisticsData",
+    "ExecutionViews",
     "OperationClassifier",
     "OperationStatistic",
+    "RuntimeSummary",
+    "StatisticValue",
     "classify_operations",
 ]

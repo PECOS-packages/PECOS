@@ -5,6 +5,7 @@ Concepts in PECOS are organized around the following namespaces:
 
 =================== =================================================
 ``circuits``        Circuits of different abstraction levels.
+``analysis``        Inspect circuits and summarize execution statistics.
 ``qeccs``           Represent QEC protocols.
 ``error_gens``      Used to specify error models and generate errors.
 ``simulators``      Simulate states and operations.
@@ -20,6 +21,7 @@ Classes and functions available in these namespaces are described in the followi
    :maxdepth: 2
 
    quantum_circuits
+   analysis
    qeccs
    logical_circuits
    simulators

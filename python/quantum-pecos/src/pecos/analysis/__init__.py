@@ -29,9 +29,14 @@ from pecos.analysis import fault_tolerance_checks as fault_tolerance
 from pecos.analysis import pseudo_threshold_tools as pseudo_threshold
 from pecos.analysis import threshold_tools as threshold
 from pecos.analysis.circuit_statistics import (
+    CircuitRunStatistics,
     CircuitStatistics,
+    CircuitStatisticsData,
+    ExecutionViews,
     OperationClassifier,
     OperationStatistic,
+    RuntimeSummary,
+    StatisticValue,
     classify_operations,
 )
 from pecos.analysis.stabilizer_verification import VerifyStabilizers
@@ -46,9 +51,14 @@ from pecos.analysis.tool_anticommute import anticommute
 from pecos.analysis.tool_collection import fault_tolerance_check
 
 __all__ = [
+    "CircuitRunStatistics",
     "CircuitStatistics",
+    "CircuitStatisticsData",
+    "ExecutionViews",
     "OperationClassifier",
     "OperationStatistic",
+    "RuntimeSummary",
+    "StatisticValue",
     "VerifyStabilizers",
     "anticommute",
     "classify_operations",

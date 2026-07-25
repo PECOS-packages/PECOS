@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING
 
 import pecos as pc
 from pecos import BitInt, BitUInt
-from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.rng_model import RNGModel
+from pecos.engines.cvm.semantics import DefaultClassicalSemantics
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.exceptions import NotSupportedGateError
 from pecos.noise.fake_error_model import FakeErrorModel
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from typing import Protocol
 
     from pecos.circuits import QuantumCircuit
+    from pecos.engines.cvm.semantics import ClassicalSemantics
     from pecos.noise.parent_class_error_gen import ParentErrorModel
     from pecos.protocols import SimulatorProtocol
     from pecos.typing import GateParams
@@ -65,18 +66,25 @@ class HybridEngine:
         *,
         debug: bool = False,
         regwidth: int = 32,
+        classical_semantics: ClassicalSemantics | None = None,
     ) -> None:
-        """Initialize hybrid engine with seed, debug mode, and register width.
+        """Initialize the legacy hybrid engine.
 
         Args:
-        seed: Random seed for reproducibility. Can be bool True for random seed, int for specific seed, or None.
-        debug: Enable debug mode for additional output.
-        regwidth: Width of classical registers in bits.
+            seed: Random seed for reproducibility. Can be bool True for a random
+                seed, an integer for a specific seed, or None.
+            debug: Enable debug mode for additional output.
+            regwidth: Width of classical registers in bits.
+            classical_semantics: Classical storage and expression behavior.
+                Defaults to PECOS's signed ``BitInt`` semantics.
         """
         self.debug = debug
         self.state = None
         self.circuit = None
         self.regwidth = regwidth
+        self.classical_semantics = (
+            classical_semantics if classical_semantics is not None else DefaultClassicalSemantics()
+        )
 
         if isinstance(seed, bool) and seed is True:
             self.seed = struct.unpack("<L", os.urandom(4))[0]
@@ -125,7 +133,7 @@ class HybridEngine:
         Returns:
             Tuple of final simulator state and output dictionary.
         """
-        output = set_output(state, circuit, output_spec, output)
+        output = self.classical_semantics.set_output(state, circuit, output_spec, output)
         output["JOB_shotnum"] = shot_id
         output_export = {}
 
@@ -234,9 +242,24 @@ class HybridEngine:
             if params.get("skip"):
                 continue
 
-            eval_cond2 = eval_condition(params.get("cond2"), output) if params.get("cond2") else True
+            eval_cond2 = (
+                self.classical_semantics.eval_condition(
+                    params.get("cond2"),
+                    output,
+                    width=self.regwidth,
+                )
+                if params.get("cond2")
+                else True
+            )
 
-            if eval_condition(params.get("cond"), output) and eval_cond2:
+            if (
+                self.classical_semantics.eval_condition(
+                    params.get("cond"),
+                    output,
+                    width=self.regwidth,
+                )
+                and eval_cond2
+            ):
                 # Run quantum simulator
                 if symbol == "cop":
                     if (
@@ -255,7 +278,7 @@ class HybridEngine:
                             eval_cfunc(self, params, output)
 
                     elif params.get("expr"):
-                        eval_cop(
+                        self.classical_semantics.eval_cop(
                             params.get("expr"),
                             output,
                             width=self.regwidth,

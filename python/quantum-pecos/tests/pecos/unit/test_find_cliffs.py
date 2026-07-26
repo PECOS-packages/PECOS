@@ -1,3 +1,6 @@
+import importlib
+import warnings
+
 import pecos as pc
 import pytest
 from pecos.analysis import (
@@ -22,6 +25,24 @@ from pecos.analysis import (
 )
 def test_r1xy_identity_recognition_is_symmetric_around_tau_multiples(theta, phi) -> None:
     assert r1xy2cliff(theta, phi, atol=1e-9) == "I"
+
+
+@pytest.mark.parametrize(
+    ("theta", "atol", "expected"),
+    [
+        (-5e-13, 1e-12, "I"),
+        (-1e-5, 1e-12, False),
+        (-5e-10, 1e-9, "I"),
+        (-5e-8, 1e-9, False),
+    ],
+)
+def test_identity_recognition_uses_only_requested_absolute_tolerance(
+    theta,
+    atol,
+    expected,
+) -> None:
+    assert r1xy2cliff(theta, 0.37, atol=atol) == expected
+    assert rz2cliff(theta, atol=atol) == expected
 
 
 @pytest.mark.parametrize(
@@ -97,3 +118,12 @@ def test_matrix_normalization_tolerance_is_configurable() -> None:
 )
 def test_every_canonical_matrix_is_identified(expected, matrix) -> None:
     assert m2cliff(matrix) == expected
+
+
+def test_tools_compatibility_module_reexports_dtype() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        legacy_find_cliffs = importlib.import_module("pecos.tools.find_cliffs")
+
+    assert legacy_find_cliffs.dtype == "complex"
+    assert "dtype" in legacy_find_cliffs.__all__

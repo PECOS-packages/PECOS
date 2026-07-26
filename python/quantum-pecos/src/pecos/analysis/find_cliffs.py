@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "cliff_str2matrix",
+    "dtype",
     "m2cliff",
     "mnormal",
     "r1xy2cliff",
@@ -135,7 +136,7 @@ def rz_matrix(theta: float) -> Array:
 
 def mnormal(m: Array, *, atol: float = 1e-12) -> Array:
     """Normalizes a Array to help with comparing matrices up to global phases."""
-    unit = m[0, 0] if not pc.isclose(m[0, 0], 0.0, atol=atol) else m[0, 1]
+    unit = m[0, 0] if not pc.isclose(m[0, 0], 0.0, rtol=0.0, atol=atol) else m[0, 1]
 
     return m / unit
 
@@ -151,7 +152,7 @@ def m2cliff(
     m = mnormal(m, atol=resolved_normalization_atol)
 
     for sym, c in cliff_str2matrix.items():
-        if pc.isclose(c, m, atol=atol).all():
+        if pc.isclose(c, m, rtol=0.0, atol=atol).all():
             return sym
     return False
 
@@ -160,7 +161,7 @@ def _is_identity_angle(theta: float, *, atol: float) -> bool:
     """Return whether an angle is close to an integer multiple of tau."""
     remainder = theta % pc.f64.tau
     return bool(
-        pc.isclose(remainder, 0.0, atol=atol) or pc.isclose(remainder, pc.f64.tau, atol=atol),
+        pc.isclose(remainder, 0.0, rtol=0.0, atol=atol) or pc.isclose(remainder, pc.f64.tau, rtol=0.0, atol=atol),
     )
 
 
@@ -178,7 +179,12 @@ def r1xy2cliff(
             return "I"
         for cangs, csym in r1xy_ang2str.items():
             a, b = cangs
-            if pc.isclose(a, theta, atol=atol) and pc.isclose(b, phi, atol=atol):
+            if pc.isclose(a, theta, rtol=0.0, atol=atol) and pc.isclose(
+                b,
+                phi,
+                rtol=0.0,
+                atol=atol,
+            ):
                 return csym
 
     m = r1xy_matrix(theta, phi)
@@ -203,7 +209,7 @@ def rz2cliff(
             return "I"
         for cangs, csym in rz_ang2str.items():
             a = cangs[0]
-            if pc.isclose(a, theta, atol=atol):
+            if pc.isclose(a, theta, rtol=0.0, atol=atol):
                 return csym
 
     m = rz_matrix(theta)

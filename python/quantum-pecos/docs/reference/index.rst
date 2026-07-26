@@ -16,6 +16,7 @@ Modules
    :toctree: _autosummary
    :recursive:
 
+   pecos.analysis
    pecos.circuits
    pecos.classical_interpreters
    pecos.decoders

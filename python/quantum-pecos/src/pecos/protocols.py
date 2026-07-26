@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator, Sequence
+    from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
     from typing import Any
 
     from pecos.circuits import LogicalCircuit, QuantumCircuit
@@ -113,6 +113,41 @@ class CircuitInspector(Protocol):
             time: Current time step.
             output: Output dictionary to store analysis results.
         """
+        ...
+
+
+class OperationEventInspector(Protocol):
+    """Inspector receiving exact per-operation execution events.
+
+    The legacy hybrid engine only enables this interface when
+    ``supports_operation_events`` is explicitly true and every lifecycle
+    member is available.
+    """
+
+    supports_operation_events: bool
+    run_active: bool
+
+    def start_run(self) -> None:
+        """Start an engine-managed inspection run."""
+        ...
+
+    def finish_run(self) -> None:
+        """Commit a successfully completed inspection run."""
+        ...
+
+    def abort_run(self) -> None:
+        """Discard an unsuccessful engine-managed inspection run."""
+        ...
+
+    def analyze_operation(
+        self,
+        symbol: str,
+        locations: LocationSet,
+        metadata: Mapping[str, Any],
+        *,
+        executed: bool,
+    ) -> None:
+        """Record one non-skipped operation and its execution decision."""
         ...
 
 

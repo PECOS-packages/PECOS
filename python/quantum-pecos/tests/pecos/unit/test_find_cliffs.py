@@ -1,0 +1,99 @@
+import pecos as pc
+import pytest
+from pecos.analysis import (
+    cliff_str2matrix,
+    m2cliff,
+    r1xy2cliff,
+    r1xy_ang2str,
+    rz2cliff,
+    rz_ang2str,
+)
+
+
+@pytest.mark.parametrize(
+    ("theta", "phi"),
+    [
+        (-5e-11, 0.37),
+        (5e-11, -0.81),
+        (pc.f64.tau - 5e-11, 1.23),
+        (pc.f64.tau + 5e-11, -1.42),
+        (-pc.f64.tau - 5e-11, 0.19),
+    ],
+)
+def test_r1xy_identity_recognition_is_symmetric_around_tau_multiples(theta, phi) -> None:
+    assert r1xy2cliff(theta, phi, atol=1e-9) == "I"
+
+
+@pytest.mark.parametrize(
+    ("theta", "expected"),
+    [
+        (-5e-11, "I"),
+        (5e-11, "I"),
+        (pc.f64.tau - 5e-11, "I"),
+        (pc.f64.tau + 5e-11, "I"),
+        (-pc.f64.tau - 5e-11, "I"),
+        (pc.f64.frac_pi_2 + 5e-11, "SZ"),
+    ],
+)
+def test_rz_recognition_respects_requested_tolerance(theta, expected) -> None:
+    assert rz2cliff(theta, atol=1e-9) == expected
+
+
+@pytest.mark.parametrize(
+    ("angles", "expected"),
+    list(r1xy_ang2str.items()),
+)
+def test_r1xy_matrix_fallback_matches_conversion_table(angles, expected) -> None:
+    theta, phi = angles
+    assert (
+        r1xy2cliff(
+            theta,
+            phi,
+            atol=1e-9,
+            use_conv_table=False,
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("angles", "expected"),
+    list(rz_ang2str.items()),
+)
+def test_rz_matrix_fallback_matches_conversion_table(angles, expected) -> None:
+    assert (
+        rz2cliff(
+            angles[0],
+            atol=1e-9,
+            use_conv_table=False,
+        )
+        == expected
+    )
+
+
+def test_matrix_fallback_propagates_tolerance() -> None:
+    theta = 3 * pc.f64.pi + 5e-11
+
+    assert r1xy2cliff(theta, 0.0, atol=1e-9, use_conv_table=False) == "X"
+    assert r1xy2cliff(theta, 0.0, atol=1e-12, use_conv_table=False) is False
+
+
+def test_matrix_normalization_tolerance_is_configurable() -> None:
+    noisy_x = pc.array(
+        [
+            [5e-11, 1.0],
+            [1.0, 0.0],
+        ],
+        dtype="complex",
+    )
+
+    assert m2cliff(noisy_x, atol=1e-9, normalization_atol=1e-10) == "X"
+    assert m2cliff(noisy_x, atol=1e-9, normalization_atol=1e-12) is False
+
+
+@pytest.mark.parametrize(
+    ("expected", "matrix"),
+    list(cliff_str2matrix.items()),
+)
+def test_every_canonical_matrix_is_identified(expected, matrix) -> None:
+    assert m2cliff(matrix) == expected

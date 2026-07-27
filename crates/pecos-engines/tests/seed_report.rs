@@ -70,7 +70,7 @@ fn seed_report_from_json_str_parses_valid_report() {
 }
 
 /// Tests run_with_workers_seed_report method.
-/// Ensures the method kicks the job off correctly and creates a 
+/// Ensures the method kicks the job off correctly and creates a
 /// SeedReport with the right properties.
 #[test]
 fn run_with_seed_report_returns_expected_worker_metadata() {
@@ -142,7 +142,7 @@ fn run_with_seed_report_is_deterministic_for_same_seed_workers_and_shots() {
     let seeds_a: Vec<u64> = report_a.workers.iter().map(|w| w.seed).collect();
     let seeds_c: Vec<u64> = report_c.workers.iter().map(|w| w.seed).collect();
 
-    assert_ne!(seeds_a,seeds_c); 
+    assert_ne!(seeds_a,seeds_c);
 
     for (worker_a, worker_b) in report_a.workers.iter().zip(report_b.workers.iter()) {
         assert_eq!(worker_a.worker_idx, worker_b.worker_idx);

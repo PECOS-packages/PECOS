@@ -431,7 +431,7 @@ impl MonteCarloEngine {
         let combined_results = ShotVec::from_measurements(&shot_results);
 
         debug!("Monte Carlo simulation completed successfully");
-        
+
         if save_seed_report {
             Self::save_seed_report_json(&seed_report, "seed_report.json")?;
             debug!("Seed report successfully saved!");

@@ -45,6 +45,36 @@ def test_identity_recognition_uses_only_requested_absolute_tolerance(
     assert rz2cliff(theta, atol=atol) == expected
 
 
+@pytest.mark.parametrize("atol", [1e-12, 1e-9])
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_r1xy_table_matching_uses_only_requested_absolute_tolerance(
+    atol,
+    direction,
+) -> None:
+    theta = pc.f64.frac_pi_2
+    phi = pc.f64.frac_pi_2
+    inside_offset = direction * atol / 2
+    outside_offset = direction * 1e-5
+
+    assert r1xy2cliff(theta + inside_offset, phi, atol=atol) == "SY"
+    assert r1xy2cliff(theta, phi + inside_offset, atol=atol) == "SY"
+    assert r1xy2cliff(theta + outside_offset, phi, atol=atol) is False
+    assert r1xy2cliff(theta, phi + outside_offset, atol=atol) is False
+
+
+@pytest.mark.parametrize("atol", [1e-12, 1e-9])
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_rz_table_matching_uses_only_requested_absolute_tolerance(
+    atol,
+    direction,
+) -> None:
+    inside_offset = direction * atol / 2
+    outside_offset = direction * 1e-5
+
+    assert rz2cliff(pc.f64.pi + inside_offset, atol=atol) == "Z"
+    assert rz2cliff(pc.f64.pi + outside_offset, atol=atol) is False
+
+
 @pytest.mark.parametrize(
     ("theta", "expected"),
     [

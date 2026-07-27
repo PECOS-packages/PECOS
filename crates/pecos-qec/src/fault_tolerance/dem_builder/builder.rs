@@ -1124,115 +1124,37 @@ impl<'a> DemBuilder<'a> {
         gate_type: GateType,
         qubits: &[usize],
     ) -> Result<(), DemBuilderError> {
+        use crate::fault_tolerance::symbolic_replay::{
+            ArityError, Dispatch, apply_unitary_clifford,
+        };
+
+        let arity_error = |err: ArityError| match err {
+            ArityError::TooFew { required, actual } => {
+                DemBuilderError::ConfigurationError(format!(
+                    "measurement crosstalk replay expected gate {gate_type:?} at node {node} to have at least {required} qubit(s), got {actual}"
+                ))
+            }
+            ArityError::OddPairing { actual } => DemBuilderError::ConfigurationError(format!(
+                "measurement crosstalk replay expected gate {gate_type:?} at node {node} to have an even number of qubits, got {actual}"
+            )),
+        };
+
+        if apply_unitary_clifford(sim, gate_type, qubits).map_err(arity_error)? == Dispatch::Applied
+        {
+            return Ok(());
+        }
+
         let require = |n: usize| -> Result<(), DemBuilderError> {
             if qubits.len() < n {
-                return Err(DemBuilderError::ConfigurationError(format!(
-                    "measurement crosstalk replay expected gate {:?} at node {} to have at least {} qubit(s), got {}",
-                    gate_type,
-                    node,
-                    n,
-                    qubits.len()
-                )));
+                return Err(arity_error(ArityError::TooFew {
+                    required: n,
+                    actual: qubits.len(),
+                }));
             }
             Ok(())
         };
-        let pairs = || -> Result<Vec<(usize, usize)>, DemBuilderError> {
-            require(2)?;
-            if !qubits.len().is_multiple_of(2) {
-                return Err(DemBuilderError::ConfigurationError(format!(
-                    "measurement crosstalk replay expected gate {:?} at node {} to have an even number of qubits, got {}",
-                    gate_type,
-                    node,
-                    qubits.len()
-                )));
-            }
-            Ok(qubits
-                .chunks_exact(2)
-                .map(|pair| (pair[0], pair[1]))
-                .collect())
-        };
 
         match gate_type {
-            GateType::H => {
-                require(1)?;
-                sim.h(qubits);
-            }
-            GateType::F => {
-                require(1)?;
-                sim.sx(qubits);
-                sim.sz(qubits);
-            }
-            GateType::Fdg => {
-                require(1)?;
-                sim.szdg(qubits);
-                sim.sxdg(qubits);
-            }
-            GateType::SX => {
-                require(1)?;
-                sim.sx(qubits);
-            }
-            GateType::SXdg => {
-                require(1)?;
-                sim.sxdg(qubits);
-            }
-            GateType::SY => {
-                require(1)?;
-                sim.sy(qubits);
-            }
-            GateType::SYdg => {
-                require(1)?;
-                sim.sydg(qubits);
-            }
-            GateType::SZ => {
-                require(1)?;
-                sim.sz(qubits);
-            }
-            GateType::SZdg => {
-                require(1)?;
-                sim.szdg(qubits);
-            }
-            GateType::X => {
-                require(1)?;
-                sim.x(qubits);
-            }
-            GateType::Y => {
-                require(1)?;
-                sim.y(qubits);
-            }
-            GateType::Z => {
-                require(1)?;
-                sim.z(qubits);
-            }
-            GateType::CX => {
-                sim.cx(&pairs()?);
-            }
-            GateType::CY => {
-                sim.cy(&pairs()?);
-            }
-            GateType::CZ => {
-                sim.cz(&pairs()?);
-            }
-            GateType::SXX => {
-                sim.sxx(&pairs()?);
-            }
-            GateType::SXXdg => {
-                sim.sxxdg(&pairs()?);
-            }
-            GateType::SYY => {
-                sim.syy(&pairs()?);
-            }
-            GateType::SYYdg => {
-                sim.syydg(&pairs()?);
-            }
-            GateType::SZZ => {
-                sim.szz(&pairs()?);
-            }
-            GateType::SZZdg => {
-                sim.szzdg(&pairs()?);
-            }
-            GateType::SWAP => {
-                sim.swap(&pairs()?);
-            }
             GateType::MZ | GateType::MeasureFree => {
                 require(1)?;
                 sim.mz(qubits);

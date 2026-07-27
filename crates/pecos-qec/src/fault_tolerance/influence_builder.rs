@@ -33,6 +33,7 @@
 use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, DemOutputMetadata};
 use super::propagator::types::{DetectorId, MeasurementId};
 use super::propagator::{DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply_gate};
+use super::symbolic_replay::{Dispatch, apply_unitary_clifford};
 use pecos_core::QubitId;
 use pecos_simulators::{PauliProp, SymbolicSparseStab};
 use smallvec::SmallVec;
@@ -275,75 +276,20 @@ impl<'a> InfluenceBuilder<'a> {
             if let Some(op) = self.dag.gate(node) {
                 let qubits: Vec<usize> = op.qubits.iter().map(pecos_core::QubitId::index).collect();
 
+                // A malformed gate here means the DAG itself is wrong, and
+                // this path has no error channel, so report it loudly.
+                let dispatch = apply_unitary_clifford(&mut sim, op.gate_type, &qubits)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "symbolic simulation got malformed gate {:?} at node {node}: {err:?}",
+                            op.gate_type
+                        )
+                    });
+                if dispatch == Dispatch::Applied {
+                    continue;
+                }
+
                 match op.gate_type {
-                    pecos_quantum::GateType::H => {
-                        sim.h(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::F => {
-                        sim.sx(&[qubits[0]]);
-                        sim.sz(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::Fdg => {
-                        sim.szdg(&[qubits[0]]);
-                        sim.sxdg(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SX => {
-                        sim.sx(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SXdg => {
-                        sim.sxdg(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SY => {
-                        sim.sy(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SYdg => {
-                        sim.sydg(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SZ => {
-                        sim.sz(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SZdg => {
-                        sim.szdg(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::X => {
-                        sim.x(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::Y => {
-                        sim.y(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::Z => {
-                        sim.z(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::CX => {
-                        sim.cx(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::CY => {
-                        sim.cy(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::CZ => {
-                        sim.cz(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SXX => {
-                        sim.sxx(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SXXdg => {
-                        sim.sxxdg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SYY => {
-                        sim.syy(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SYYdg => {
-                        sim.syydg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SZZ => {
-                        sim.szz(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SZZdg => {
-                        sim.szzdg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SWAP => {
-                        sim.swap(&[(qubits[0], qubits[1])]);
-                    }
                     pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => {
                         sim.mz(&[qubits[0]]);
                         node_to_meas_idx[node] = Some(meas_idx);

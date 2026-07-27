@@ -1,6 +1,5 @@
 use pecos_engines::monte_carlo::engine::{MonteCarloEngine,SeedReport};
 use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
-//use super::builder::MonteCarloEngineBuilder;
 
 /// Tests that importing a valid SeedReport from JSON file works correctly.
 #[test]

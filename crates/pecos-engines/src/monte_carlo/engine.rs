@@ -457,12 +457,8 @@ impl MonteCarloEngine {
 
      pub fn rerun_from_seed_report(
         &mut self,
-        seed_report_filename: &str,
+        seed_report: &SeedReport,
     ) -> Result<ShotVec, PecosError> {
-
-        // Import seed report from user's file.
-        let seed_report = SeedReport::from_json_file(Path::new(seed_report_filename))?;
-        debug!("SeedReport successfully imported!");
 
         // Import shot count, worker count, and all seeds from seed report.
         let num_shots = seed_report.num_shots;

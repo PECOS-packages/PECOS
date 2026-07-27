@@ -20,6 +20,19 @@ import pecos as pc
 if TYPE_CHECKING:
     from pecos import Array
 
+__all__ = [
+    "cliff_str2matrix",
+    "dtype",
+    "m2cliff",
+    "mnormal",
+    "r1xy2cliff",
+    "r1xy_ang2str",
+    "r1xy_matrix",
+    "rz2cliff",
+    "rz_ang2str",
+    "rz_matrix",
+]
+
 dtype = "complex"
 
 cliff_str2matrix = {
@@ -123,20 +136,33 @@ def rz_matrix(theta: float) -> Array:
 
 def mnormal(m: Array, *, atol: float = 1e-12) -> Array:
     """Normalizes a Array to help with comparing matrices up to global phases."""
-    # Use isclose for complex comparison (from pecos.num)
-    unit = m[0, 0] if not pc.isclose(m[0, 0], 0.0, atol=atol) else m[0, 1]
+    unit = m[0, 0] if not pc.isclose(m[0, 0], 0.0, rtol=0.0, atol=atol) else m[0, 1]
 
     return m / unit
 
 
-def m2cliff(m: Array, *, atol: float = 1e-12) -> str | bool:
+def m2cliff(
+    m: Array,
+    *,
+    atol: float = 1e-12,
+    normalization_atol: float | None = None,
+) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given a matrix."""
-    m = mnormal(m)
+    resolved_normalization_atol = atol if normalization_atol is None else normalization_atol
+    m = mnormal(m, atol=resolved_normalization_atol)
 
     for sym, c in cliff_str2matrix.items():
-        if pc.isclose(c, m, atol=atol).all():
+        if pc.isclose(c, m, rtol=0.0, atol=atol).all():
             return sym
     return False
+
+
+def _is_identity_angle(theta: float, *, atol: float) -> bool:
+    """Return whether an angle is close to an integer multiple of tau."""
+    remainder = theta % pc.f64.tau
+    return bool(
+        pc.isclose(remainder, 0.0, rtol=0.0, atol=atol) or pc.isclose(remainder, pc.f64.tau, rtol=0.0, atol=atol),
+    )
 
 
 def r1xy2cliff(
@@ -144,37 +170,52 @@ def r1xy2cliff(
     phi: float,
     *,
     atol: float = 1e-12,
+    normalization_atol: float | None = None,
     use_conv_table: bool = True,
 ) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given the angles of a R1XY gate."""
     if use_conv_table:
-        if pc.isclose(theta % pc.f64.tau, 0.0, atol=atol):
+        if _is_identity_angle(theta, atol=atol):
             return "I"
         for cangs, csym in r1xy_ang2str.items():
             a, b = cangs
-            if pc.isclose(a, theta, atol=atol) and pc.isclose(b, phi, atol=atol):
+            if pc.isclose(a, theta, rtol=0.0, atol=atol) and pc.isclose(
+                b,
+                phi,
+                rtol=0.0,
+                atol=atol,
+            ):
                 return csym
 
     m = r1xy_matrix(theta, phi)
 
-    return m2cliff(m)
+    return m2cliff(
+        m,
+        atol=atol,
+        normalization_atol=normalization_atol,
+    )
 
 
 def rz2cliff(
     theta: float,
     *,
     atol: float = 1e-12,
+    normalization_atol: float | None = None,
     use_conv_table: bool = True,
 ) -> str | bool:
     """Identifies (ignoring global phases) a Clifford given the angles of a RZ gate."""
     if use_conv_table:
-        if pc.isclose(theta % pc.f64.tau, 0.0, atol=atol):
+        if _is_identity_angle(theta, atol=atol):
             return "I"
         for cangs, csym in rz_ang2str.items():
             a = cangs[0]
-            if pc.isclose(a, theta, atol=atol):
+            if pc.isclose(a, theta, rtol=0.0, atol=atol):
                 return csym
 
     m = rz_matrix(theta)
 
-    return m2cliff(m)
+    return m2cliff(
+        m,
+        atol=atol,
+        normalization_atol=normalization_atol,
+    )

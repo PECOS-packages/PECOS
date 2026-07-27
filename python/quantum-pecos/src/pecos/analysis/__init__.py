@@ -39,6 +39,17 @@ from pecos.analysis.circuit_statistics import (
     StatisticValue,
     classify_operations,
 )
+from pecos.analysis.find_cliffs import (
+    cliff_str2matrix,
+    m2cliff,
+    mnormal,
+    r1xy2cliff,
+    r1xy_ang2str,
+    r1xy_matrix,
+    rz2cliff,
+    rz_ang2str,
+    rz_matrix,
+)
 from pecos.analysis.stabilizer_verification import VerifyStabilizers
 from pecos.analysis.threshold_curve import threshold_fit
 from pecos.analysis.threshold_tools import (
@@ -62,12 +73,21 @@ __all__ = [
     "VerifyStabilizers",
     "anticommute",
     "classify_operations",
+    "cliff_str2matrix",
     "codecapacity_logical_rate",
     "codecapacity_logical_rate2",
     "codecapacity_logical_rate3",
     "fault_tolerance",
     "fault_tolerance_check",
+    "m2cliff",
+    "mnormal",
     "pseudo_threshold",
+    "r1xy2cliff",
+    "r1xy_ang2str",
+    "r1xy_matrix",
+    "rz2cliff",
+    "rz_ang2str",
+    "rz_matrix",
     "threshold",
     "threshold_code_capacity",
     "threshold_fit",

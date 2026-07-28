@@ -3444,8 +3444,16 @@ impl From<&TickCircuit> for DagCircuit {
                     let node = dag.add_gate(split_gate.clone());
                     split_nodes.push(node);
 
-                    // For MZ gates, map each qubit's record to this node
-                    if split_gate.gate_type == GateType::MZ {
+                    // Every measurement consumes a record, `MeasureFree`
+                    // included -- `TickHandle::mz_free` advances
+                    // `next_meas_record` exactly like `mz`. Counting only `MZ`
+                    // here left later records unmappable, so annotations
+                    // referencing them silently resolved to nothing.
+                    //
+                    // `MeasureLeaked` is a measurement too and is still
+                    // excluded here; that inconsistency is tracked in #387
+                    // along with the remaining silent drops below.
+                    if matches!(split_gate.gate_type, GateType::MZ | GateType::MeasureFree) {
                         for _q in &split_gate.qubits {
                             meas_record_to_node.insert(meas_record_idx, node);
                             meas_record_idx += 1;
@@ -6779,5 +6787,43 @@ mod tests {
             .meas_ref(kept[0].tick, kept[0].gate_idx, kept[0].qubit)
             .expect("ref must resolve");
         assert_eq!(recovered.record_idx, 2);
+    }
+
+    /// A measurement record that `mz()` handed out must still resolve after the
+    /// DAG conversion. `MeasureFree` consumes a record, so counting only `MZ`
+    /// during conversion left later records unmappable and the annotation
+    /// resolved to nothing at all.
+    #[test]
+    fn annotation_records_survive_conversion_across_measure_free() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2, 3]);
+        let _freed = circuit.tick().mz_free(&[0, 1]);
+        let kept = circuit.tick().mz(&[2, 3]);
+        assert_eq!(
+            kept[0].record_idx, 2,
+            "MZ after two MeasureFree is record 2"
+        );
+        circuit.observable(&kept);
+
+        let dag = crate::DagCircuit::from(&circuit);
+        let nodes: Vec<Vec<usize>> = dag
+            .annotations()
+            .iter()
+            .filter_map(|ann| match &ann.kind {
+                AnnotationKind::Observable { measurement_nodes } => Some(measurement_nodes.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].len(),
+            2,
+            "both records must resolve; an empty annotation silently drops the observable"
+        );
+        assert_ne!(
+            nodes[0][0], nodes[0][1],
+            "records must map to distinct nodes"
+        );
     }
 }

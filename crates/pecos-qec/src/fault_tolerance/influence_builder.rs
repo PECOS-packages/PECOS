@@ -1252,3 +1252,58 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod batched_node_tests {
+    use super::InfluenceBuilder;
+    use pecos_core::gates::Gate;
+    use pecos_quantum::DagCircuit;
+
+    /// A `DagCircuit` node may carry several gate instances -- `gate_count`
+    /// counts them individually, and `Gate::h(&[0, 1])` builds exactly that.
+    /// The symbolic simulation used to apply only `qubits[0]` and silently drop
+    /// the rest, which disagreed with `DagFaultAnalyzer`'s `apply_gate` (it
+    /// passes the whole slice) inside the very same `build_dem_from_circuit`
+    /// call. Both now apply every instance.
+    #[test]
+    fn batched_gate_nodes_apply_to_every_instance() {
+        let mut batched = DagCircuit::new();
+        batched.pz(&[0, 1]);
+        batched.add_gate_auto_wire(Gate::h(&[0usize, 1usize]));
+        let _ = batched.mz(&[0, 1]);
+
+        let mut split = DagCircuit::new();
+        split.pz(&[0, 1]);
+        split.h(&[0, 1]);
+        let _ = split.mz(&[0, 1]);
+
+        assert_eq!(
+            batched.gate_count(),
+            split.gate_count(),
+            "the two circuits must describe the same gate count"
+        );
+
+        let batched_det: Vec<bool> = InfluenceBuilder::new(&batched)
+            .run_symbolic_simulation()
+            .history
+            .iter()
+            .map(|result| result.is_deterministic)
+            .collect();
+        let split_det: Vec<bool> = InfluenceBuilder::new(&split)
+            .run_symbolic_simulation()
+            .history
+            .iter()
+            .map(|result| result.is_deterministic)
+            .collect();
+
+        assert_eq!(
+            batched_det, split_det,
+            "a batched gate node must replay like the same gates split across nodes"
+        );
+        assert!(
+            batched_det.iter().all(|deterministic| !deterministic),
+            "H on both qubits makes both Z measurements random; a deterministic \
+             outcome means an instance of the batched gate was dropped"
+        );
+    }
+}

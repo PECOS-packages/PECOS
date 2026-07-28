@@ -1,7 +1,7 @@
-use pecos_engines::monte_carlo::engine::{MonteCarloEngine,SeedReport};
 use pecos_engines::monte_carlo::engine::ExternalClassicalEngine;
+use pecos_engines::monte_carlo::engine::{MonteCarloEngine, SeedReport};
 
-/// Tests that importing a valid SeedReport from JSON file works correctly.
+/// Tests that importing a valid `SeedReport` from JSON file works correctly.
 #[test]
 fn seed_report_from_json_file_reads_valid_report() {
     let dir = tempfile::tempdir().unwrap();
@@ -31,7 +31,7 @@ fn seed_report_from_json_file_reads_valid_report() {
     assert_eq!(report.workers.len(), 2);
 }
 
-/// Tests that importing a missing SeedReport JSON file fails as expected.
+/// Tests that importing a missing `SeedReport` JSON file fails as expected.
 #[test]
 fn seed_report_from_json_file_returns_error_for_missing_file() {
     let err = SeedReport::from_json_file("does-not-exist-seed-report.json").unwrap_err();
@@ -69,16 +69,13 @@ fn seed_report_from_json_str_parses_valid_report() {
     assert_eq!(report.workers[1].seed, 435);
 }
 
-/// Tests run_with_workers_seed_report method.
+/// Tests `run_with_workers_seed_report` method.
 /// Ensures the method kicks the job off correctly and creates a
-/// SeedReport with the right properties.
+/// `SeedReport` with the right properties.
 #[test]
 fn run_with_seed_report_returns_expected_worker_metadata() {
-
     fn make_test_monte_carlo_engine() -> MonteCarloEngine {
-        MonteCarloEngine::new_with_defaults(Box::new(
-            ExternalClassicalEngine::new(),
-        ))
+        MonteCarloEngine::new_with_defaults(Box::new(ExternalClassicalEngine::new()))
     }
 
     let mut engine = make_test_monte_carlo_engine();
@@ -108,11 +105,8 @@ fn run_with_seed_report_returns_expected_worker_metadata() {
 /// The run with a different seed ('c') should disagree with the others.
 #[test]
 fn run_with_seed_report_is_deterministic_for_same_seed_workers_and_shots() {
-
     fn make_test_monte_carlo_engine() -> MonteCarloEngine {
-        MonteCarloEngine::new_with_defaults(Box::new(
-            ExternalClassicalEngine::new(),
-        ))
+        MonteCarloEngine::new_with_defaults(Box::new(ExternalClassicalEngine::new()))
     }
 
     let mut engine_a = make_test_monte_carlo_engine();
@@ -123,17 +117,11 @@ fn run_with_seed_report_is_deterministic_for_same_seed_workers_and_shots() {
     engine_b.set_seed(42);
     engine_c.set_seed(43);
 
-    let (_shots_a, report_a) = engine_a
-        .run_with_workers_seed_report(10, 2, false)
-        .unwrap();
+    let (_shots_a, report_a) = engine_a.run_with_workers_seed_report(10, 2, false).unwrap();
 
-    let (_shots_b, report_b) = engine_b
-        .run_with_workers_seed_report(10, 2, false)
-        .unwrap();
+    let (_shots_b, report_b) = engine_b.run_with_workers_seed_report(10, 2, false).unwrap();
 
-    let (_shots_c, report_c) = engine_c
-        .run_with_workers_seed_report(10, 2, false)
-        .unwrap();
+    let (_shots_c, report_c) = engine_c.run_with_workers_seed_report(10, 2, false).unwrap();
 
     assert_eq!(report_a.root_seed, report_b.root_seed);
     assert_eq!(report_a.base_seed, report_b.base_seed);
@@ -142,7 +130,7 @@ fn run_with_seed_report_is_deterministic_for_same_seed_workers_and_shots() {
     let seeds_a: Vec<u64> = report_a.workers.iter().map(|w| w.seed).collect();
     let seeds_c: Vec<u64> = report_c.workers.iter().map(|w| w.seed).collect();
 
-    assert_ne!(seeds_a,seeds_c);
+    assert_ne!(seeds_a, seeds_c);
 
     for (worker_a, worker_b) in report_a.workers.iter().zip(report_b.workers.iter()) {
         assert_eq!(worker_a.worker_idx, worker_b.worker_idx);
@@ -155,11 +143,8 @@ fn run_with_seed_report_is_deterministic_for_same_seed_workers_and_shots() {
 /// the same results as the original job.
 #[test]
 fn rerun_from_seed_report_reproduces_original_results() {
-
     fn make_test_monte_carlo_engine() -> MonteCarloEngine {
-        MonteCarloEngine::new_with_defaults(Box::new(
-            ExternalClassicalEngine::new(),
-        ))
+        MonteCarloEngine::new_with_defaults(Box::new(ExternalClassicalEngine::new()))
     }
 
     let mut original_engine = make_test_monte_carlo_engine();
@@ -171,9 +156,7 @@ fn rerun_from_seed_report_reproduces_original_results() {
 
     let mut replay_engine = make_test_monte_carlo_engine();
 
-    let replayed_results = replay_engine
-        .rerun_from_seed_report(&report)
-        .unwrap();
+    let replayed_results = replay_engine.rerun_from_seed_report(&report).unwrap();
 
     assert_eq!(replayed_results, original_results);
 }
@@ -182,11 +165,8 @@ fn rerun_from_seed_report_reproduces_original_results() {
 /// produces the same results as the original job.
 #[test]
 fn rerun_from_seed_report_loaded_from_json_reproduces_original_results() {
-
     fn make_test_monte_carlo_engine() -> MonteCarloEngine {
-        MonteCarloEngine::new_with_defaults(Box::new(
-            ExternalClassicalEngine::new(),
-        ))
+        MonteCarloEngine::new_with_defaults(Box::new(ExternalClassicalEngine::new()))
     }
 
     let mut original_engine = make_test_monte_carlo_engine();

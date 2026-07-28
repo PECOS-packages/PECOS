@@ -271,7 +271,11 @@ impl MonteCarloEngine {
     /// # Panics
     /// - If `num_shots` is zero.
     /// - If `num_workers` is zero.
-    pub fn run_with_workers(&mut self, num_shots: usize, num_workers: usize) -> Result<ShotVec, PecosError> {
+    pub fn run_with_workers(
+        &mut self,
+        num_shots: usize,
+        num_workers: usize,
+    ) -> Result<ShotVec, PecosError> {
         let (shots, _) = self.run_with_workers_seed_report(num_shots, num_workers, false)?;
         Ok(shots)
     }
@@ -448,18 +452,16 @@ impl MonteCarloEngine {
         seed_report: &SeedReport,
         filename: &str,
     ) -> Result<(), PecosError> {
-        let json = serde_json::to_vec(seed_report).map_err(|e| {
-            PecosError::Processing(format!("Failed to serialize seed report: {e}"))
-        })?;
+        let json = serde_json::to_vec(seed_report)
+            .map_err(|e| PecosError::Processing(format!("Failed to serialize seed report: {e}")))?;
         std::fs::write(filename, json)?;
         Ok(())
     }
 
-     pub fn rerun_from_seed_report(
+    pub fn rerun_from_seed_report(
         &mut self,
         seed_report: &SeedReport,
     ) -> Result<ShotVec, PecosError> {
-
         // Import shot count, worker count, and all seeds from seed report.
         let num_shots = seed_report.num_shots;
         let num_workers = seed_report.num_workers;
@@ -846,9 +848,8 @@ impl SeedReport {
     /// Returns `PecosError::Input` when the JSON is malformed or does not match
     /// the expected seed report schema.
     pub fn from_json_str(json: &str) -> Result<Self, PecosError> {
-        serde_json::from_str(json).map_err(|err| {
-            PecosError::Input(format!("Failed to parse seed report JSON: {err}"))
-        })
+        serde_json::from_str(json)
+            .map_err(|err| PecosError::Input(format!("Failed to parse seed report JSON: {err}")))
     }
 
     /// Reads and deserializes a `SeedReport` from a JSON file.
@@ -856,9 +857,8 @@ impl SeedReport {
     /// Returns `PecosError::Input` when the file cannot be read or the file
     /// contents cannot be parsed as a seed report.
     pub fn from_json_file<P: AsRef<Path>>(path: P) -> Result<Self, PecosError> {
-        let json = fs::read_to_string(path).map_err(|err| {
-            PecosError::Input(format!("Failed to read seed report JSON: {err}"))
-        })?;
+        let json = fs::read_to_string(path)
+            .map_err(|err| PecosError::Input(format!("Failed to read seed report JSON: {err}")))?;
         Self::from_json_str(&json)
     }
 }

@@ -1441,6 +1441,41 @@ impl TickCircuit {
         self.ticks[..tick_idx].iter().map(Tick::len).sum::<usize>() + gate_idx
     }
 
+    /// Recover the [`TickMeasRef`] for a measurement identified by its tick,
+    /// gate-batch index and qubit.
+    ///
+    /// Callers that hold only `(tick, gate_idx, qubit)` -- notably the Python
+    /// bindings, whose measurement handles are plain tuples -- need the record
+    /// index and [`MeasId`] that `mz()` assigned. Fabricating a `TickMeasRef`
+    /// with placeholder values instead silently collapses every reference onto
+    /// record 0, which corrupts detector and observable annotations built from
+    /// them (issue #382).
+    ///
+    /// `gate_idx` indexes gate *batches* within the tick, and a batch may
+    /// accumulate qubits from several `mz()` calls, so the qubit selects the
+    /// entry within the batch.
+    ///
+    /// Returns `None` when the tick or batch does not exist, when the batch is
+    /// not a measurement, when it carries no measurement ids, or when the qubit
+    /// was not measured by it.
+    #[must_use]
+    pub fn meas_ref(&self, tick: usize, gate_idx: usize, qubit: QubitId) -> Option<TickMeasRef> {
+        let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
+        let gate = batch.as_gate();
+        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
+            return None;
+        }
+        let position = gate.qubits.iter().position(|&q| q == qubit)?;
+        let meas_id = gate.meas_ids.get(position).copied()?;
+        Some(TickMeasRef {
+            tick,
+            gate_idx,
+            qubit,
+            record_idx: meas_id.index(),
+            meas_id,
+        })
+    }
+
     /// Get a tick by index.
     #[must_use]
     pub fn get_tick(&self, idx: usize) -> Option<&Tick> {
@@ -6620,5 +6655,55 @@ mod tests {
             }
             _ => panic!("Expected detector"),
         }
+    }
+
+    /// `meas_ref` must recover exactly what `mz()` handed out, because the
+    /// Python bindings hold only `(tick, gate_idx, qubit)` and rebuild the ref
+    /// from it. Fabricating the record index there collapsed every annotation
+    /// reference onto record 0 (issue #382).
+    #[test]
+    fn meas_ref_recovers_what_mz_returned() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2]);
+        let first = circuit.tick().mz(&[0, 1, 2]);
+        let second = circuit.tick().mz(&[1]);
+
+        for expected in first.iter().chain(&second) {
+            let recovered = circuit
+                .meas_ref(expected.tick, expected.gate_idx, expected.qubit)
+                .expect("mz() refs must resolve");
+            assert_eq!(
+                recovered.record_idx, expected.record_idx,
+                "record index for qubit {:?}",
+                expected.qubit
+            );
+            assert_eq!(recovered.meas_id, expected.meas_id);
+        }
+
+        let records: Vec<usize> = first.iter().map(|r| r.record_idx).collect();
+        assert_eq!(
+            records,
+            vec![0, 1, 2],
+            "a batched mz must hand out distinct record indices"
+        );
+        assert_eq!(second[0].record_idx, 3);
+    }
+
+    #[test]
+    fn meas_ref_rejects_refs_that_name_no_measurement() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        let refs = circuit.tick().mz(&[0]);
+        let good = refs[0];
+
+        assert!(
+            circuit
+                .meas_ref(good.tick, good.gate_idx, QubitId(7))
+                .is_none()
+        );
+        assert!(circuit.meas_ref(good.tick, 99, good.qubit).is_none());
+        assert!(circuit.meas_ref(99, good.gate_idx, good.qubit).is_none());
+        // tick 0 holds the prep, not a measurement
+        assert!(circuit.meas_ref(0, 0, QubitId(0)).is_none());
     }
 }

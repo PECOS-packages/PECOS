@@ -1460,20 +1460,37 @@ impl TickCircuit {
     /// was not measured by it.
     #[must_use]
     pub fn meas_ref(&self, tick: usize, gate_idx: usize, qubit: QubitId) -> Option<TickMeasRef> {
-        let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
-        let gate = batch.as_gate();
-        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
-            return None;
+        // `record_idx` is a positional ordinal -- the cumulative count of
+        // measured qubits in circuit order -- while `MeasId` is a stable
+        // identity that `mz_with_ids` lets callers supply from an external
+        // source (e.g. Guppy result ids). They coincide only when `mz`
+        // auto-assigns them, so the ordinal must be counted, not read off the
+        // id.
+        let mut records_before = 0usize;
+        for (tick_idx, current_tick) in self.iter_ticks() {
+            for (batch_idx, batch) in current_tick.iter_gate_batches().enumerate() {
+                let gate = batch.as_gate();
+                let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
+                if tick_idx == tick && batch_idx == gate_idx {
+                    if !is_measurement {
+                        return None;
+                    }
+                    let position = gate.qubits.iter().position(|&q| q == qubit)?;
+                    let meas_id = gate.meas_ids.get(position).copied()?;
+                    return Some(TickMeasRef {
+                        tick,
+                        gate_idx,
+                        qubit,
+                        record_idx: records_before + position,
+                        meas_id,
+                    });
+                }
+                if is_measurement {
+                    records_before += gate.qubits.len();
+                }
+            }
         }
-        let position = gate.qubits.iter().position(|&q| q == qubit)?;
-        let meas_id = gate.meas_ids.get(position).copied()?;
-        Some(TickMeasRef {
-            tick,
-            gate_idx,
-            qubit,
-            record_idx: meas_id.index(),
-            meas_id,
-        })
+        None
     }
 
     /// Get a tick by index.
@@ -3427,8 +3444,12 @@ impl From<&TickCircuit> for DagCircuit {
                     let node = dag.add_gate(split_gate.clone());
                     split_nodes.push(node);
 
-                    // For MZ gates, map each qubit's record to this node
-                    if split_gate.gate_type == GateType::MZ {
+                    // Every measurement consumes a record, `MeasureFree`
+                    // included -- `TickHandle::mz_free` advances
+                    // `next_meas_record` exactly like `mz`. Counting only `MZ`
+                    // here shifted every later record and silently remapped
+                    // annotations onto the wrong measurements (issue #382).
+                    if matches!(split_gate.gate_type, GateType::MZ | GateType::MeasureFree) {
                         for _q in &split_gate.qubits {
                             meas_record_to_node.insert(meas_record_idx, node);
                             meas_record_idx += 1;
@@ -3471,9 +3492,22 @@ impl From<&TickCircuit> for DagCircuit {
                     measurement_nodes,
                     coords,
                 } => {
+                    // Dropping unresolved records silently produced an
+                    // annotation over fewer measurements than the caller asked
+                    // for -- in the worst case an empty one that still
+                    // suppressed the record-based fallback (issue #382).
                     let dag_nodes: Vec<usize> = measurement_nodes
                         .iter()
-                        .filter_map(|&rec| meas_record_to_node.get(&rec).copied())
+                        .map(|&rec| {
+                            *meas_record_to_node.get(&rec).unwrap_or_else(|| {
+                                panic!(
+                                    "annotation references measurement record {rec}, which this \
+                                     circuit does not have ({} records); the annotation and the \
+                                     circuit disagree",
+                                    meas_record_to_node.len()
+                                )
+                            })
+                        })
                         .collect();
                     AnnotationKind::Detector {
                         measurement_nodes: dag_nodes,
@@ -3481,9 +3515,22 @@ impl From<&TickCircuit> for DagCircuit {
                     }
                 }
                 AnnotationKind::Observable { measurement_nodes } => {
+                    // Dropping unresolved records silently produced an
+                    // annotation over fewer measurements than the caller asked
+                    // for -- in the worst case an empty one that still
+                    // suppressed the record-based fallback (issue #382).
                     let dag_nodes: Vec<usize> = measurement_nodes
                         .iter()
-                        .filter_map(|&rec| meas_record_to_node.get(&rec).copied())
+                        .map(|&rec| {
+                            *meas_record_to_node.get(&rec).unwrap_or_else(|| {
+                                panic!(
+                                    "annotation references measurement record {rec}, which this \
+                                     circuit does not have ({} records); the annotation and the \
+                                     circuit disagree",
+                                    meas_record_to_node.len()
+                                )
+                            })
+                        })
                         .collect();
                     AnnotationKind::Observable {
                         measurement_nodes: dag_nodes,
@@ -6705,5 +6752,92 @@ mod tests {
         assert!(circuit.meas_ref(99, good.gate_idx, good.qubit).is_none());
         // tick 0 holds the prep, not a measurement
         assert!(circuit.meas_ref(0, 0, QubitId(0)).is_none());
+    }
+
+    /// `record_idx` is a positional ordinal; `MeasId` is a stable identity that
+    /// callers may supply from an external source (the `mz_with_ids` binding
+    /// stamps Guppy result ids this way). Reading the ordinal off the id made a
+    /// measurement stamped `MeasId(10)` claim record 10 when it was record 0.
+    #[test]
+    fn meas_ref_record_ordinal_is_independent_of_meas_id() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1]);
+        circuit.tick();
+        let tick_idx = circuit.num_ticks() - 1;
+        let mut gate = Gate::mz(&[0usize, 1usize]);
+        gate.meas_ids = smallvec::smallvec![MeasId(10), MeasId(20)];
+        let gate_idx = circuit
+            .get_tick_mut(tick_idx)
+            .expect("tick exists")
+            .try_add_gate(gate)
+            .expect("measurement is a valid gate");
+
+        let first = circuit
+            .meas_ref(tick_idx, gate_idx, QubitId(0))
+            .expect("ref must resolve");
+        let second = circuit
+            .meas_ref(tick_idx, gate_idx, QubitId(1))
+            .expect("ref must resolve");
+
+        assert_eq!(first.record_idx, 0, "first measurement is record 0, not 10");
+        assert_eq!(
+            second.record_idx, 1,
+            "second measurement is record 1, not 20"
+        );
+        assert_eq!(first.meas_id, MeasId(10), "the stable id is preserved");
+        assert_eq!(second.meas_id, MeasId(20));
+    }
+
+    /// `MeasureFree` consumes a measurement record exactly like `MZ`, so a
+    /// later `MZ` must not be renumbered as though the free measurements never
+    /// happened.
+    #[test]
+    fn measure_free_consumes_a_record_ordinal() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2]);
+        let freed = circuit.tick().mz_free(&[0, 1]);
+        let kept = circuit.tick().mz(&[2]);
+
+        assert_eq!(freed[0].record_idx, 0);
+        assert_eq!(freed[1].record_idx, 1);
+        assert_eq!(
+            kept[0].record_idx, 2,
+            "MZ after two MeasureFree is record 2"
+        );
+
+        let recovered = circuit
+            .meas_ref(kept[0].tick, kept[0].gate_idx, kept[0].qubit)
+            .expect("ref must resolve");
+        assert_eq!(recovered.record_idx, 2);
+    }
+
+    /// The DAG conversion must map every annotation record onto a distinct
+    /// measurement node, including across `MeasureFree`. Counting only `MZ`
+    /// shifted later records and silently remapped the annotation.
+    #[test]
+    fn dag_conversion_maps_annotation_records_across_measure_free() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2, 3]);
+        let _freed = circuit.tick().mz_free(&[0, 1]);
+        let kept = circuit.tick().mz(&[2, 3]);
+        circuit.observable(&kept);
+
+        let dag = crate::DagCircuit::from(&circuit);
+        let observable_nodes: Vec<Vec<usize>> = dag
+            .annotations()
+            .iter()
+            .filter_map(|ann| match &ann.kind {
+                AnnotationKind::Observable { measurement_nodes } => Some(measurement_nodes.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(observable_nodes.len(), 1);
+        let nodes = &observable_nodes[0];
+        assert_eq!(nodes.len(), 2, "both measurements must survive the remap");
+        assert_ne!(
+            nodes[0], nodes[1],
+            "records must map to distinct measurement nodes, not collapse"
+        );
     }
 }

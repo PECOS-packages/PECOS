@@ -52,6 +52,12 @@ struct ParsedObservable {
     id: u32,
     records: Vec<i32>,
     meas_ids: Vec<usize>,
+    /// Human-readable name from the metadata JSON's `label` field.
+    ///
+    /// The metadata format has always carried this and callers already write
+    /// it, but it used to be parsed and dropped, leaving circuit annotations as
+    /// the only way to get a label onto an observable.
+    label: Option<String>,
 }
 
 // ============================================================================
@@ -537,6 +543,7 @@ impl<'a> DemBuilder<'a> {
                 id: id as u32,
                 records,
                 meas_ids: Vec::new(),
+                label: None,
             })
             .collect();
         self.clear_exact_branch_cache();
@@ -810,7 +817,10 @@ impl<'a> DemBuilder<'a> {
         // Observable IDs are not shifted by tracked Paulis.
         for obs in &self.observables {
             let records = self.effective_record_offsets(&obs.records, &obs.meas_ids);
-            let def = DemOutput::new(obs.id).with_records(records.iter().copied());
+            let mut def = DemOutput::new(obs.id).with_records(records.iter().copied());
+            if let Some(label) = &obs.label {
+                def = def.with_label(label.clone());
+            }
             dem.add_observable(def);
         }
 
@@ -2654,11 +2664,23 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     )?;
 
     let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
+    // A present-but-malformed label is rejected rather than silently treated as
+    // absent; the richer DEM metadata parser already holds that line.
+    let label = match object.get("label") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(label)) => Some(label.clone()),
+        Some(other) => {
+            return Err(DemBuilderError::ParseError(format!(
+                "observable label must be a string or null, got {other}"
+            )));
+        }
+    };
 
     Ok(ParsedObservable {
         id,
         records,
         meas_ids,
+        label,
     })
 }
 
@@ -5190,5 +5212,54 @@ mod tests {
             dem(&["sy"], &["szdg", "sxdg"], true),
             "X-basis variant must distinguish F from SY (the Z-blind pair)"
         );
+    }
+
+    /// The observables metadata format carries a `label`, and callers already
+    /// write one, but the parser dropped it -- so a label could only ever reach
+    /// a DEM through a circuit annotation. That coupling meant the metadata
+    /// format was not self-sufficient.
+    #[test]
+    fn test_observable_label_comes_from_metadata_without_annotations() {
+        use pecos_num::graph::Attribute;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let _meas = circuit.mz(&[0]);
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "observables",
+            Attribute::String(r#"[{"id":0,"records":[-1],"label":"from_metadata"}]"#.to_string()),
+        );
+        circuit.set_attr("detectors", Attribute::String("[]".to_string()));
+
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.5, 0.0);
+        assert_eq!(dem.num_observables(), 1);
+        assert_eq!(
+            dem.observables().next().unwrap().label.as_deref(),
+            Some("from_metadata"),
+            "the label declared in observables metadata must reach the DEM"
+        );
+    }
+
+    /// A malformed label is rejected rather than silently treated as absent.
+    #[test]
+    fn test_observable_metadata_rejects_non_string_label() {
+        let err = super::parse_observables_json(r#"[{"id":0,"records":[-1],"label":42}]"#)
+            .expect_err("a non-string label must be rejected");
+        assert!(
+            err.to_string()
+                .contains("observable label must be a string"),
+            "error should name the problem, got: {err}"
+        );
+    }
+
+    /// An explicit null label is equivalent to omitting it.
+    #[test]
+    fn test_observable_metadata_accepts_null_label() {
+        let parsed = super::parse_observables_json(r#"[{"id":0,"records":[-1],"label":null}]"#)
+            .expect("null label is allowed");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].label, None);
     }
 }

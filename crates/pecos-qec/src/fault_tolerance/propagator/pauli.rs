@@ -20,6 +20,7 @@ use pecos_core::gate_type::GateType;
 use pecos_core::{half_turn_decomposition, try_simplify_r1xy, try_simplify_rotation};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
+use smallvec::SmallVec;
 
 // ============================================================================
 // Direction and Unified Propagation
@@ -34,6 +35,27 @@ pub enum Direction {
     /// Backward propagation: P → G† P G
     /// Propagate from later ticks to earlier ticks.
     Backward,
+}
+
+/// Split a gate node's qubit list into its consecutive two-qubit pairs.
+///
+/// A `DagCircuit` node may carry several gate instances -- `DagCircuit::gate_count`
+/// counts them individually -- so a two-qubit gate must act on every pair, not
+/// just the first. `SXX`/`SYY`/`SZZ` and their adjoints previously took only
+/// `(qubits[0], qubits[1])` while `CX`/`CY`/`CZ`/`SWAP` took all pairs, which
+/// made backward propagation disagree with forward symbolic simulation on
+/// batched nodes.
+///
+/// Returns a `SmallVec` sized for the overwhelmingly common single-pair node,
+/// so routing the six non-self-adjoint arms through this helper does not put a
+/// heap allocation on the analyzer's traversal path.
+fn consecutive_pairs(
+    qubits: &[pecos_core::QubitId],
+) -> SmallVec<[(pecos_core::QubitId, pecos_core::QubitId); 1]> {
+    qubits
+        .chunks_exact(2)
+        .map(|pair| (pair[0], pair[1]))
+        .collect()
 }
 
 /// Applies a gate to a `PauliProp` in the specified direction.
@@ -162,86 +184,60 @@ fn apply_named_gate(
 
         // Self-adjoint two-qubit gates - same in both directions
         GateType::CX => {
-            let pairs: Vec<_> = qubits
-                .chunks(2)
-                .filter(|c| c.len() == 2)
-                .map(|c| (c[0], c[1]))
-                .collect();
-            prop.cx(&pairs);
+            prop.cx(&consecutive_pairs(qubits));
         }
         GateType::CY => {
-            let pairs: Vec<_> = qubits
-                .chunks(2)
-                .filter(|c| c.len() == 2)
-                .map(|c| (c[0], c[1]))
-                .collect();
-            prop.cy(&pairs);
+            prop.cy(&consecutive_pairs(qubits));
         }
         GateType::CZ => {
-            let pairs: Vec<_> = qubits
-                .chunks(2)
-                .filter(|c| c.len() == 2)
-                .map(|c| (c[0], c[1]))
-                .collect();
-            prop.cz(&pairs);
+            prop.cz(&consecutive_pairs(qubits));
         }
         GateType::SWAP => {
-            let pairs: Vec<_> = qubits
-                .chunks(2)
-                .filter(|c| c.len() == 2)
-                .map(|c| (c[0], c[1]))
-                .collect();
-            prop.swap(&pairs);
+            prop.swap(&consecutive_pairs(qubits));
         }
 
         // Non-self-adjoint two-qubit Clifford gates - swap with adjoint for backward
         GateType::SXX => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.sxx(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.sxxdg(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.sxx(&pairs),
+                Direction::Backward => prop.sxxdg(&pairs),
+            };
         }
         GateType::SXXdg => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.sxxdg(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.sxx(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.sxxdg(&pairs),
+                Direction::Backward => prop.sxx(&pairs),
+            };
         }
         GateType::SYY => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.syy(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.syydg(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.syy(&pairs),
+                Direction::Backward => prop.syydg(&pairs),
+            };
         }
         GateType::SYYdg => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.syydg(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.syy(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.syydg(&pairs),
+                Direction::Backward => prop.syy(&pairs),
+            };
         }
         GateType::SZZ => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.szz(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.szzdg(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.szz(&pairs),
+                Direction::Backward => prop.szzdg(&pairs),
+            };
         }
         GateType::SZZdg => {
-            if qubits.len() >= 2 {
-                match direction {
-                    Direction::Forward => prop.szzdg(&[(qubits[0], qubits[1])]),
-                    Direction::Backward => prop.szz(&[(qubits[0], qubits[1])]),
-                };
-            }
+            let pairs = consecutive_pairs(qubits);
+            match direction {
+                Direction::Forward => prop.szzdg(&pairs),
+                Direction::Backward => prop.szz(&pairs),
+            };
         }
 
         _ => return false,
@@ -474,4 +470,115 @@ pub fn init_pauli_prop_with_fault(fault: &PauliFault) -> PauliProp {
         }
     }
     prop
+}
+
+#[cfg(test)]
+mod batched_pair_tests {
+    use super::{Direction, apply_gate};
+    use pecos_core::gates::Gate;
+    use pecos_quantum::GateType;
+    use pecos_simulators::PauliProp;
+
+    /// Seed the tracked Pauli on qubits 0 and 2, one per pair.
+    ///
+    /// The seed must ANTICOMMUTE with the gate on at least one pair, or the
+    /// comparison is vacuous: `Z` alone is fixed by `CX`/`CY`/`CZ`/`SZZ`/
+    /// `SZZdg`, and `X` alone is fixed by `SXX`. Sweeping X, Z and Y gives
+    /// every gate below at least one seed it actually moves.
+    fn seeded(seed: (bool, bool)) -> PauliProp {
+        let mut prop = PauliProp::new();
+        let (track_x, track_z) = seed;
+        if track_x {
+            prop.track_x(&[0, 2]);
+        }
+        if track_z {
+            prop.track_z(&[0, 2]);
+        }
+        prop
+    }
+
+    fn signature(prop: &PauliProp) -> Vec<(bool, bool)> {
+        (0..4)
+            .map(|q| (prop.contains_x(q), prop.contains_z(q)))
+            .collect()
+    }
+
+    /// A batched two-qubit node must propagate through every pair. `SXX`/`SYY`/
+    /// `SZZ` and their adjoints once took only `(qubits[0], qubits[1])` while
+    /// `CX`/`CY`/`CZ`/`SWAP` took all pairs, so backward propagation silently
+    /// disagreed with forward symbolic simulation on batched nodes.
+    #[test]
+    fn batched_two_qubit_gates_propagate_through_every_pair() {
+        const SEEDS: [(bool, bool); 3] = [(true, false), (false, true), (true, true)];
+        for gate_type in [
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
+            GateType::SZZ,
+            GateType::SZZdg,
+            GateType::CX,
+            GateType::CY,
+            GateType::CZ,
+            GateType::SWAP,
+        ] {
+            for direction in [Direction::Forward, Direction::Backward] {
+                for seed in SEEDS {
+                    let batched = {
+                        let mut prop = seeded(seed);
+                        let gate =
+                            Gate::simple(gate_type, vec![0.into(), 1.into(), 2.into(), 3.into()]);
+                        apply_gate(&mut prop, &gate, direction);
+                        signature(&prop)
+                    };
+                    let split = {
+                        let mut prop = seeded(seed);
+                        for pair in [[0usize, 1], [2, 3]] {
+                            let gate =
+                                Gate::simple(gate_type, vec![pair[0].into(), pair[1].into()]);
+                            apply_gate(&mut prop, &gate, direction);
+                        }
+                        signature(&prop)
+                    };
+                    assert_eq!(
+                        batched, split,
+                        "{gate_type:?} ({direction:?}, seed {seed:?}): a batched node must \
+                         propagate like the same pairs split across nodes"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Guards the guard: every gate above must be moved by at least one seed,
+    /// otherwise the comparison could pass while an arm drops the second pair.
+    #[test]
+    fn every_seed_sweep_actually_moves_each_gate() {
+        const SEEDS: [(bool, bool); 3] = [(true, false), (false, true), (true, true)];
+        for gate_type in [
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
+            GateType::SZZ,
+            GateType::SZZdg,
+            GateType::CX,
+            GateType::CY,
+            GateType::CZ,
+            GateType::SWAP,
+        ] {
+            let moves_second_pair = SEEDS.iter().any(|&seed| {
+                let mut prop = seeded(seed);
+                let before = signature(&prop);
+                let gate = Gate::simple(gate_type, vec![2.into(), 3.into()]);
+                apply_gate(&mut prop, &gate, Direction::Forward);
+                signature(&prop) != before
+            });
+            assert!(
+                moves_second_pair,
+                "{gate_type:?}: no seed changes the second pair, so the batched \
+                 comparison would be vacuous for this gate"
+            );
+        }
+    }
 }

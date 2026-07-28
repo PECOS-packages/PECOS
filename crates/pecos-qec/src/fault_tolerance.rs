@@ -29,6 +29,7 @@ pub mod pauli_frame;
 pub mod pauli_prop_checker;
 pub mod propagator;
 pub mod stabilizer_flip_checker;
+mod symbolic_replay;
 pub mod targeted_lookup_decoder;
 
 use pecos_core::QubitId;

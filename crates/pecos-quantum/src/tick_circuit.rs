@@ -1460,37 +1460,32 @@ impl TickCircuit {
     /// was not measured by it.
     #[must_use]
     pub fn meas_ref(&self, tick: usize, gate_idx: usize, qubit: QubitId) -> Option<TickMeasRef> {
-        // `record_idx` is a positional ordinal -- the cumulative count of
-        // measured qubits in circuit order -- while `MeasId` is a stable
-        // identity that `mz_with_ids` lets callers supply from an external
-        // source (e.g. Guppy result ids). They coincide only when `mz`
-        // auto-assigns them, so the ordinal must be counted, not read off the
-        // id.
-        let mut records_before = 0usize;
-        for (tick_idx, current_tick) in self.iter_ticks() {
-            for (batch_idx, batch) in current_tick.iter_gate_batches().enumerate() {
-                let gate = batch.as_gate();
-                let is_measurement = matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
-                if tick_idx == tick && batch_idx == gate_idx {
-                    if !is_measurement {
-                        return None;
-                    }
-                    let position = gate.qubits.iter().position(|&q| q == qubit)?;
-                    let meas_id = gate.meas_ids.get(position).copied()?;
-                    return Some(TickMeasRef {
-                        tick,
-                        gate_idx,
-                        qubit,
-                        record_idx: records_before + position,
-                        meas_id,
-                    });
-                }
-                if is_measurement {
-                    records_before += gate.qubits.len();
-                }
-            }
+        // The `MeasId` stored alongside each measured qubit is what `mz` /
+        // `mz_free` assigned at call time, so reading it back recovers the
+        // record index directly. Reconstructing the ordinal by walking stored
+        // ticks and batches instead is wrong: a later measurement can be
+        // appended to an earlier compatible batch, and `tick_at` allows filling
+        // ticks out of order, so storage order is not allocation order.
+        //
+        // Limitation: `mz_with_ids` lets callers supply external stable ids
+        // (Guppy result ids) that are not positional, and for those the record
+        // index and the id genuinely differ. `TickCircuit` does not store the
+        // positional ordinal separately, so that case cannot be resolved here;
+        // it is tracked in #387 along with the reverse-conversion conflation.
+        let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
+        let gate = batch.as_gate();
+        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
+            return None;
         }
-        None
+        let position = gate.qubits.iter().position(|&q| q == qubit)?;
+        let meas_id = gate.meas_ids.get(position).copied()?;
+        Some(TickMeasRef {
+            tick,
+            gate_idx,
+            qubit,
+            record_idx: meas_id.index(),
+            meas_id,
+        })
     }
 
     /// Get a tick by index.
@@ -6732,38 +6727,41 @@ mod tests {
         assert!(circuit.meas_ref(0, 0, QubitId(0)).is_none());
     }
 
-    /// `record_idx` is a positional ordinal; `MeasId` is a stable identity that
-    /// callers may supply from an external source (the `mz_with_ids` binding
-    /// stamps Guppy result ids this way). Reading the ordinal off the id made a
-    /// measurement stamped `MeasId(10)` claim record 10 when it was record 0.
+    /// Storage order is not allocation order, so `meas_ref` must not
+    /// reconstruct the record index by walking ticks and batches.
+    ///
+    /// A later measurement can be appended to an earlier compatible batch, and
+    /// `tick_at` allows filling ticks out of sequence. Reading the `MeasId`
+    /// that `mz`/`mz_free` stored alongside the qubit is order-independent;
+    /// counting stored batches silently returned another measurement's index.
     #[test]
-    fn meas_ref_record_ordinal_is_independent_of_meas_id() {
+    fn meas_ref_is_independent_of_batch_and_tick_storage_order() {
         let mut circuit = TickCircuit::new();
-        circuit.tick().pz(&[0, 1]);
-        circuit.tick();
-        let tick_idx = circuit.num_ticks() - 1;
-        let mut gate = Gate::mz(&[0usize, 1usize]);
-        gate.meas_ids = smallvec::smallvec![MeasId(10), MeasId(20)];
-        let gate_idx = circuit
-            .get_tick_mut(tick_idx)
-            .expect("tick exists")
-            .try_add_gate(gate)
-            .expect("measurement is a valid gate");
-
-        let first = circuit
-            .meas_ref(tick_idx, gate_idx, QubitId(0))
-            .expect("ref must resolve");
-        let second = circuit
-            .meas_ref(tick_idx, gate_idx, QubitId(1))
-            .expect("ref must resolve");
-
-        assert_eq!(first.record_idx, 0, "first measurement is record 0, not 10");
+        circuit.tick().pz(&[0, 1, 2]);
+        // Interleave so the third measurement merges into the first batch.
+        let first = circuit.tick().mz(&[0]);
+        let freed = circuit.tick_at(1).mz_free(&[1]);
+        let third = circuit.tick_at(1).mz(&[2]);
         assert_eq!(
-            second.record_idx, 1,
-            "second measurement is record 1, not 20"
+            (
+                first[0].record_idx,
+                freed[0].record_idx,
+                third[0].record_idx
+            ),
+            (0, 1, 2),
+            "records are allocated in call order"
         );
-        assert_eq!(first.meas_id, MeasId(10), "the stable id is preserved");
-        assert_eq!(second.meas_id, MeasId(20));
+
+        for expected in [first[0], freed[0], third[0]] {
+            let recovered = circuit
+                .meas_ref(expected.tick, expected.gate_idx, expected.qubit)
+                .expect("every ref mz() handed out must resolve");
+            assert_eq!(
+                recovered.record_idx, expected.record_idx,
+                "qubit {:?} must recover the record it was allocated",
+                expected.qubit
+            );
+        }
     }
 
     /// `MeasureFree` consumes a measurement record exactly like `MZ`, so a

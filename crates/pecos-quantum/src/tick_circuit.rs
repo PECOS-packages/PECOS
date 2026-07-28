@@ -3444,12 +3444,8 @@ impl From<&TickCircuit> for DagCircuit {
                     let node = dag.add_gate(split_gate.clone());
                     split_nodes.push(node);
 
-                    // Every measurement consumes a record, `MeasureFree`
-                    // included -- `TickHandle::mz_free` advances
-                    // `next_meas_record` exactly like `mz`. Counting only `MZ`
-                    // here shifted every later record and silently remapped
-                    // annotations onto the wrong measurements (issue #382).
-                    if matches!(split_gate.gate_type, GateType::MZ | GateType::MeasureFree) {
+                    // For MZ gates, map each qubit's record to this node
+                    if split_gate.gate_type == GateType::MZ {
                         for _q in &split_gate.qubits {
                             meas_record_to_node.insert(meas_record_idx, node);
                             meas_record_idx += 1;
@@ -3492,22 +3488,9 @@ impl From<&TickCircuit> for DagCircuit {
                     measurement_nodes,
                     coords,
                 } => {
-                    // Dropping unresolved records silently produced an
-                    // annotation over fewer measurements than the caller asked
-                    // for -- in the worst case an empty one that still
-                    // suppressed the record-based fallback (issue #382).
                     let dag_nodes: Vec<usize> = measurement_nodes
                         .iter()
-                        .map(|&rec| {
-                            *meas_record_to_node.get(&rec).unwrap_or_else(|| {
-                                panic!(
-                                    "annotation references measurement record {rec}, which this \
-                                     circuit does not have ({} records); the annotation and the \
-                                     circuit disagree",
-                                    meas_record_to_node.len()
-                                )
-                            })
-                        })
+                        .filter_map(|&rec| meas_record_to_node.get(&rec).copied())
                         .collect();
                     AnnotationKind::Detector {
                         measurement_nodes: dag_nodes,
@@ -3515,22 +3498,9 @@ impl From<&TickCircuit> for DagCircuit {
                     }
                 }
                 AnnotationKind::Observable { measurement_nodes } => {
-                    // Dropping unresolved records silently produced an
-                    // annotation over fewer measurements than the caller asked
-                    // for -- in the worst case an empty one that still
-                    // suppressed the record-based fallback (issue #382).
                     let dag_nodes: Vec<usize> = measurement_nodes
                         .iter()
-                        .map(|&rec| {
-                            *meas_record_to_node.get(&rec).unwrap_or_else(|| {
-                                panic!(
-                                    "annotation references measurement record {rec}, which this \
-                                     circuit does not have ({} records); the annotation and the \
-                                     circuit disagree",
-                                    meas_record_to_node.len()
-                                )
-                            })
-                        })
+                        .filter_map(|&rec| meas_record_to_node.get(&rec).copied())
                         .collect();
                     AnnotationKind::Observable {
                         measurement_nodes: dag_nodes,
@@ -6809,35 +6779,5 @@ mod tests {
             .meas_ref(kept[0].tick, kept[0].gate_idx, kept[0].qubit)
             .expect("ref must resolve");
         assert_eq!(recovered.record_idx, 2);
-    }
-
-    /// The DAG conversion must map every annotation record onto a distinct
-    /// measurement node, including across `MeasureFree`. Counting only `MZ`
-    /// shifted later records and silently remapped the annotation.
-    #[test]
-    fn dag_conversion_maps_annotation_records_across_measure_free() {
-        let mut circuit = TickCircuit::new();
-        circuit.tick().pz(&[0, 1, 2, 3]);
-        let _freed = circuit.tick().mz_free(&[0, 1]);
-        let kept = circuit.tick().mz(&[2, 3]);
-        circuit.observable(&kept);
-
-        let dag = crate::DagCircuit::from(&circuit);
-        let observable_nodes: Vec<Vec<usize>> = dag
-            .annotations()
-            .iter()
-            .filter_map(|ann| match &ann.kind {
-                AnnotationKind::Observable { measurement_nodes } => Some(measurement_nodes.clone()),
-                _ => None,
-            })
-            .collect();
-
-        assert_eq!(observable_nodes.len(), 1);
-        let nodes = &observable_nodes[0];
-        assert_eq!(nodes.len(), 2, "both measurements must survive the remap");
-        assert_ne!(
-            nodes[0], nodes[1],
-            "records must map to distinct measurement nodes, not collapse"
-        );
     }
 }

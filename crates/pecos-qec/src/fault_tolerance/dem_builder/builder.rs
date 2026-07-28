@@ -52,6 +52,12 @@ struct ParsedObservable {
     id: u32,
     records: Vec<i32>,
     meas_ids: Vec<usize>,
+    /// Human-readable name from the metadata JSON's `label` field.
+    ///
+    /// The metadata format has always carried this and callers already write
+    /// it, but it used to be parsed and dropped, leaving circuit annotations as
+    /// the only way to get a label onto an observable (issue #377).
+    label: Option<String>,
 }
 
 // ============================================================================
@@ -537,6 +543,7 @@ impl<'a> DemBuilder<'a> {
                 id: id as u32,
                 records,
                 meas_ids: Vec::new(),
+                label: None,
             })
             .collect();
         self.clear_exact_branch_cache();
@@ -810,7 +817,10 @@ impl<'a> DemBuilder<'a> {
         // Observable IDs are not shifted by tracked Paulis.
         for obs in &self.observables {
             let records = self.effective_record_offsets(&obs.records, &obs.meas_ids);
-            let def = DemOutput::new(obs.id).with_records(records.iter().copied());
+            let mut def = DemOutput::new(obs.id).with_records(records.iter().copied());
+            if let Some(label) = &obs.label {
+                def = def.with_label(label.clone());
+            }
             dem.add_observable(def);
         }
 
@@ -2654,11 +2664,16 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     )?;
 
     let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
+    let label = object
+        .get("label")
+        .and_then(serde_json::Value::as_str)
+        .map(std::string::ToString::to_string);
 
     Ok(ParsedObservable {
         id,
         records,
         meas_ids,
+        label,
     })
 }
 
@@ -5268,6 +5283,36 @@ mod tests {
             "with no observables metadata the annotation defines L0 over m0 \
              alone, so it flips at p_meas; got:\n{}",
             dem.to_string()
+        );
+    }
+
+    /// Issue #377: an observable label declared in metadata JSON must reach the
+    /// DEM without an annotation supplying it.
+    ///
+    /// The metadata format has always carried `label` and callers already write
+    /// it, but the parser dropped it, so annotations were the only route. That
+    /// coupling is what made excluding annotations lose labels.
+    #[test]
+    fn test_observable_label_comes_from_metadata_without_annotations() {
+        use pecos_num::graph::Attribute;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let _meas = circuit.mz(&[0]);
+        circuit.set_attr("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_attr(
+            "observables",
+            Attribute::String(r#"[{"id":0,"records":[-1],"label":"from_metadata"}]"#.to_string()),
+        );
+        circuit.set_attr("detectors", Attribute::String("[]".to_string()));
+
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.5, 0.0);
+        assert_eq!(dem.num_observables(), 1);
+        assert_eq!(
+            dem.observables().next().unwrap().label.as_deref(),
+            Some("from_metadata"),
+            "the label declared in observables metadata must reach the DEM"
         );
     }
 }

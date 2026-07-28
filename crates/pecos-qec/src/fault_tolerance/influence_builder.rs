@@ -251,12 +251,11 @@ impl<'a> InfluenceBuilder<'a> {
                         meta_node,
                     );
                 }
-                pecos_quantum::AnnotationKind::Observable { .. } => {
-                    // Excluded: metadata JSON declares the observables.
-                }
-                pecos_quantum::AnnotationKind::Detector { .. } => {
-                    // Detectors handled separately by DemSamplerBuilder
-                }
+                // Observables when `include_observables` is false: metadata
+                // JSON declares them. Detectors: handled separately by
+                // `DemSamplerBuilder`.
+                pecos_quantum::AnnotationKind::Observable { .. }
+                | pecos_quantum::AnnotationKind::Detector { .. } => {}
             }
         }
         self

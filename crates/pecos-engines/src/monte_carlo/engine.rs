@@ -458,6 +458,17 @@ impl MonteCarloEngine {
         Ok(())
     }
 
+    /// Replays a Monte Carlo simulation using the worker configuration and seeds
+    /// recorded in `seed_report`.
+    ///
+    /// The returned shots are ordered deterministically by worker and shot index.
+    ///
+    /// # Errors
+    /// Returns a `PecosError` if the worker pool cannot be created or any shot fails.
+    ///
+    /// # Panics
+    /// Panics if the report specifies zero shots or workers, or does not contain a
+    /// seed record for every worker.
     pub fn rerun_from_seed_report(
         &mut self,
         seed_report: &SeedReport,
@@ -845,6 +856,10 @@ pub struct SeedReport {
 impl SeedReport {
     /// Deserializes a `SeedReport` from a JSON string.
     ///
+    /// # Returns
+    /// `SeedReport` imported from the JSON string.
+    ///
+    /// # Errors
     /// Returns `PecosError::Input` when the JSON is malformed or does not match
     /// the expected seed report schema.
     pub fn from_json_str(json: &str) -> Result<Self, PecosError> {
@@ -854,6 +869,10 @@ impl SeedReport {
 
     /// Reads and deserializes a `SeedReport` from a JSON file.
     ///
+    /// # Returns
+    /// `SeedReport` imported from a JSON file.
+    ///
+    /// # Errors
     /// Returns `PecosError::Input` when the file cannot be read or the file
     /// contents cannot be parsed as a seed report.
     pub fn from_json_file<P: AsRef<Path>>(path: P) -> Result<Self, PecosError> {

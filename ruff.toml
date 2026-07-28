@@ -102,6 +102,13 @@ ignore = [
 [lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # imported but unused - Expected for __init__.py re-exports
 
+# Standalone offline oracle-fixture generators inside Rust crate test dirs -
+# scripts run via uv, not an importable package
+"crates/*/tests/fixtures/*.py" = [
+    "INP001",   # Implicit namespace package - standalone scripts, not a package
+    "S311",     # Standard pseudo-random - fixed-seed case sampling, not crypto
+]
+
 # Main pecos __init__.py - special case for module initialization
 "python/quantum-pecos/src/pecos/__init__.py" = [
     "A004",     # Import shadows builtin - intentional numpy-like API (abs, all, any, max, min, sum, round)
@@ -197,6 +204,14 @@ ignore = [
     "SLF001",   # Private member access - accessing internal circuit/tick data
     "PLW0127",  # Self-assignment - intentional pattern for influence propagation
 ]
+# QEC tests that unit-test internal decoder methods directly (kept private; not
+# promoted to the public API just to be testable)
+"python/quantum-pecos/tests/qec/surface/test_surface_decoder.py" = [
+    "SLF001",   # Private member access - unit-testing internal DEM detection-event methods
+]
+"python/quantum-pecos/tests/qec/surface/test_logical_subgraph_region_comparison.py" = [
+    "SLF001",   # Private member access - unit-testing the internal graphlike-decomposition recommendation
+]
 # SLR qeclib visualization - matplotlib lazy imports
 "python/quantum-pecos/src/pecos/slr/qeclib/color488/plot_layout.py" = [
     "PLC0415",  # Import inside function - matplotlib optional
@@ -269,6 +284,18 @@ ignore = [
     "BLE001",   # Examples may catch broad optional-dependency/runtime failures
     "S108",     # Examples commonly default to /tmp output paths
     "S311",     # Example sweeps use deterministic pseudo-random circuits, not crypto
+]
+# Experimental SLR/zlup crate scripts are scripts, not packages -- same relaxations
+# as the top-level scripts/ (other rules, e.g. pathlib usage, are still enforced).
+"exp/**/scripts/**/*.py" = [
+    "ANN",      # Command-line scripts do not need library-level annotations
+    "D",        # Top-level module docstrings document scripts
+    "EXE001",   # Scripts are commonly invoked through `python path/to/script.py`
+    "INP001",   # Script files are not import packages
+    "S603",     # Scripts may call trusted local tools (cargo, mdbook)
+    "PLC0415",  # Lazy imports keep optional dependencies out of import time
+    "S301",     # Scripts may read trusted local data artifacts
+    "BLE001",   # CLI/report scripts often convert broad failures into user-facing output
 ]
 
 

@@ -92,9 +92,17 @@ def test_measurement_unrolling_qir() -> None:
 
     assert "; Permutation: a[0] -> c[2], b[1] -> a[0], c[2] -> b[1]" in qir, qir
     assert "; Permutation: a <-> c" in qir, qir
-    mz = re.findall(r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), %Result\*", qir)
+    # QIR uses opaque pointers; a qubit constant is
+    # `ptr inttoptr (i64 N to ptr)`, except index 0 which is `ptr null`.
+    mz = [
+        int(m) if m else 0
+        for m in re.findall(
+            r"call void @__quantum__qis__mz__body\(ptr (?:null|inttoptr \(i64 (\d+) to ptr\)), ptr",
+            qir,
+        )
+    ]
     # Measure(a) after both permutes -> a relabelled onto c's qubits
     # plus the element cycle: realized as q6, q7, q4.
-    assert mz == ["6", "7", "4"], qir
+    assert mz == [6, 7, 4], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"

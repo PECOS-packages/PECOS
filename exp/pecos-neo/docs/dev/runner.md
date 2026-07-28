@@ -296,7 +296,7 @@ let handlers = EventHandlers::new()
     .on_signal(|sig: &MySignal| { /* observe */ });
 
 // Pass to sim_neo (cloned per worker in parallel mode)
-sim_neo(circuit).event_handlers(handlers).workers(4).shots(1000).run();
+sim_neo(circuit).auto().event_handlers(handlers).sampling(monte_carlo(1000).workers(4)).run();
 
 // Or merge into a CircuitRunner
 let runner = CircuitRunner::<SparseStab>::new().with_event_handlers(handlers);

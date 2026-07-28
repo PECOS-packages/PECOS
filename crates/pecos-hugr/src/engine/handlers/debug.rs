@@ -21,21 +21,30 @@ use log::debug;
 use tket::hugr::{Hugr, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 
 impl HugrEngine {
     /// Handle tket.debug operations.
-    pub(crate) fn handle_debug_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_debug_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.debug operation: {op_name} at {node:?}");
 
         if op_name == "StateResult" {
             // StateResult: array<N, Qubit> -> array<N, Qubit>
             // Pass-through for simulation; optionally log state info
-            self.propagate_qubit_array(hugr, node);
+            if !self.propagate_qubit_array(hugr, node) {
+                debug!("StateResult at {node:?}: input not resolved, deferring");
+                return HandlerOutcome::Defer;
+            }
             debug!("StateResult at {node:?} (no-op for simulation)");
-            true
+            HandlerOutcome::Processed
         } else {
             debug!("Unknown tket.debug operation: {op_name}");
-            false
+            HandlerOutcome::Defer
         }
     }
 }

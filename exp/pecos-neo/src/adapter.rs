@@ -340,6 +340,14 @@ where
     fn num_qubits(&self) -> usize {
         self.num_qubits
     }
+
+    fn shot_results(&self) -> Option<pecos_results::Shot> {
+        Some(
+            self.engine
+                .get_results()
+                .expect("classical engine failed to produce results for a completed shot"),
+        )
+    }
 }
 
 /// Runner adapter for executing pecos-neo command sources through a

@@ -35,7 +35,7 @@ use pecos_core::gate_type::GateType;
 use pecos_quantum::hugr_convert::{
     hugr_op_to_gate_type, is_rotation_gate, try_extract_rotation_angle,
 };
-use tket::hugr::ops::OpType;
+use tket::hugr::ops::{OpTrait, OpType};
 use tket::hugr::{Hugr, HugrView, Node};
 
 use super::types::{
@@ -216,6 +216,13 @@ pub fn extract_dataflow_block_info(
     // Find TailLoop nodes inside this block
     let tailloop_nodes = find_tailloop_nodes_in_block(hugr, node);
 
+    // LoadConstant children execute like every other op: block emptiness
+    // and completion must count them.
+    let load_constants: BTreeSet<Node> = hugr
+        .children(node)
+        .filter(|&child| matches!(hugr.get_optype(child), OpType::LoadConstant(_)))
+        .collect();
+
     debug!(
         "DataflowBlock {:?}: {} inputs, {} successors, {} quantum ops, {} calls, {} conditionals, {} bool_ops, {} classical_ops, {} extension_ops, {} tailloops",
         node,
@@ -242,6 +249,7 @@ pub fn extract_dataflow_block_info(
         classical_ops,
         extension_ops,
         tailloop_nodes,
+        load_constants,
         input_node,
         output_node,
     }
@@ -274,8 +282,16 @@ pub fn find_block_successors(hugr: &Hugr, block: Node, num_successors: usize) ->
         }
     }
 
-    // Convert Option<Node> to Node, filtering out None entries
-    successors.into_iter().flatten().collect()
+    // Positions are tag indices: compacting out a None would shift every
+    // later successor onto the wrong tag. Truncate at the first gap instead
+    // (the downstream out-of-range check then fails loud for tags past it).
+    let valid = successors.iter().take_while(|s| s.is_some()).count();
+    if valid != num_successors {
+        debug!(
+            "find_block_successors: block {block:?} has unconnected successor port {valid}              of {num_successors}; truncating (tags past it will error loudly)"
+        );
+    }
+    successors.into_iter().take(valid).flatten().collect()
 }
 
 /// Find all nodes inside CFG blocks (should be deferred until block is active).
@@ -336,6 +352,22 @@ pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
             let classical_ops = find_classical_ops_in_block(hugr, node);
             let bool_ops = find_bool_ops_in_block(hugr, node);
             let conditional_nodes = find_conditional_nodes_in_block(hugr, node);
+            // Nested containers: direct TailLoop/CFG children of the body.
+            // Nothing else queues them once the body is gated, and body
+            // completion must wait for them.
+            let mut tailloop_nodes = BTreeSet::new();
+            let mut cfg_nodes = BTreeSet::new();
+            for child in hugr.children(node) {
+                match hugr.get_optype(child) {
+                    OpType::TailLoop(_) => {
+                        tailloop_nodes.insert(child);
+                    }
+                    OpType::CFG(_) => {
+                        cfg_nodes.insert(child);
+                    }
+                    _ => {}
+                }
+            }
 
             debug!(
                 "Found TailLoop node {:?} with {} inputs, {} outputs, {} quantum ops, {} calls, {} extension ops, {} classical ops, {} bool ops, {} conditionals",
@@ -365,6 +397,8 @@ pub fn extract_tailloops(hugr: &Hugr) -> BTreeMap<Node, TailLoopInfo> {
                     classical_ops,
                     bool_ops,
                     conditional_nodes,
+                    tailloop_nodes,
+                    cfg_nodes,
                     num_inputs,
                     num_outputs,
                 },
@@ -478,11 +512,25 @@ pub fn find_nodes_inside_func_defns(
 ) -> BTreeSet<Node> {
     let mut inside_func_defns = BTreeSet::new();
 
-    // Find which FuncDefns are called (not the entrypoint)
-    let called_func_defns: BTreeSet<Node> = call_targets.values().copied().collect();
+    // Gate EVERY FuncDefn body except the entrypoint's: called functions
+    // activate through Call/scan frames, and a DEAD (uncalled) function
+    // must not execute at top level at all -- it would race the real
+    // program and clobber its return values. Guppy packages carry the
+    // entrypoint on the HUGR; fall back to the old called-only gating for
+    // HUGRs whose entrypoint is not a FuncDefn (e.g. module-rooted test
+    // graphs).
+    let entrypoint = hugr.entrypoint();
+    if func_defns.contains_key(&entrypoint) {
+        for &func_defn_node in func_defns.keys() {
+            if func_defn_node != entrypoint {
+                collect_descendants(hugr, func_defn_node, &mut inside_func_defns);
+            }
+        }
+        return inside_func_defns;
+    }
 
+    let called_func_defns: BTreeSet<Node> = call_targets.values().copied().collect();
     for &func_defn_node in func_defns.keys() {
-        // Only defer nodes inside FuncDefns that are called (not the entrypoint)
         if called_func_defns.contains(&func_defn_node) {
             collect_descendants(hugr, func_defn_node, &mut inside_func_defns);
         }
@@ -565,117 +613,206 @@ pub fn extract_quantum_ops(hugr: &Hugr) -> BTreeMap<Node, QuantumOp> {
 
 // --- Classical operation extraction ---
 
-/// Extract classical operations from the HUGR (logic, arithmetic, etc.).
+/// Classification result: op type, input count, output count, and integer
+/// width/signedness where applicable.
+pub type ClassicalOpClassification = (ClassicalOpType, usize, usize, Option<(u8, bool)>);
+
+/// Classify an extension op as a tracked classical operation.
 ///
-/// This identifies operations from extensions like:
-/// - `logic`: And, Or, Not, Xor, Eq
-/// - `arithmetic.int`: iadd, isub, imul, etc.
-/// - `arithmetic.float`: fadd, fsub, fmul, etc.
-/// - `arithmetic.conversions`: int/float conversions
-/// - `prelude`: `MakeTuple`, `UnpackTuple`
+/// Covers `logic`, `arithmetic.int`, `arithmetic.float`,
+/// `arithmetic.conversions`, `prelude` tuples, and copyable `Tag` sums.
+///
+/// This is THE single source of truth for what counts as a classical op:
+/// both the global classical-op map ([`extract_classical_ops`]) and the
+/// per-CFG-block classical sets (`collect_classical_ops_recursive`) use it.
+/// If the two ever disagree, a node can end up tracked for block completion
+/// but never queued for execution (deadlocking the block), or queued but
+/// not tracked (letting the block complete before the op ran, silently
+/// truncating everything downstream).
 #[allow(clippy::too_many_lines)]
+pub fn classify_classical_op(op: &OpType) -> Option<ClassicalOpClassification> {
+    // HUGR `Tag` nodes build tagged sum values (variants, options, branch
+    // selectors). They execute as classical ops over linear payloads too:
+    // qubit inputs become ClassicalValue::QubitRef payload elements (the
+    // executor falls back to the qubit wire map for missing inputs). This
+    // matters because a Sum value that never materializes starves every
+    // value-based consumer -- e.g. an iterator's Option result built by a
+    // Tag over (qubit, state) would leave the caller's match unresolvable.
+    if let OpType::Tag(_) = op {
+        let sig = op.dataflow_signature()?;
+        return Some((ClassicalOpType::TagSum, sig.input_count(), 1, None));
+    }
+
+    // LoadFunction produces a first-class function value for its static
+    // FuncDefn target (consumed by higher-order ops like scan).
+    if let OpType::LoadFunction(_) = op {
+        return Some((ClassicalOpType::LoadFunc, 0, 1, None));
+    }
+
+    let ext_op = op.as_extension_op()?;
+
+    let ext_id = ext_op.extension_id();
+    let ext_name = ext_id.as_ref() as &str;
+    let op_name = ext_op.unqualified_id().to_string();
+
+    // Map extension operations to ClassicalOpType
+    let classified = match ext_name {
+        // Logic extension
+        "logic" => match op_name.as_str() {
+            "And" => (ClassicalOpType::And, 2, 1, None),
+            "Or" => (ClassicalOpType::Or, 2, 1, None),
+            "Not" => (ClassicalOpType::Not, 1, 1, None),
+            "Xor" => (ClassicalOpType::Xor, 2, 1, None),
+            "Eq" => (ClassicalOpType::Eq, 2, 1, None),
+            _ => return None,
+        },
+        // Integer arithmetic extension
+        "arithmetic.int" => {
+            // Parse operation name to extract signedness info
+            // Operations like "iadd", "isub" are signed; "iadd_u" are unsigned
+            let is_signed = !op_name.ends_with("_u");
+            // The op's width comes from its BoundedNat type arg
+            // (log_width: int<N> has 2^N bits); absent args mean the
+            // generic default of 64-bit.
+            let lw = ext_op
+                .args()
+                .iter()
+                .find_map(|arg| match arg {
+                    tket::hugr::types::TypeArg::BoundedNat(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+                .unwrap_or(6);
+            match op_name.trim_end_matches("_u").trim_end_matches("_s") {
+                "iadd" => (ClassicalOpType::Iadd, 2, 1, Some((lw, is_signed))), // default 64-bit
+                "isub" => (ClassicalOpType::Isub, 2, 1, Some((lw, is_signed))),
+                "imul" => (ClassicalOpType::Imul, 2, 1, Some((lw, is_signed))),
+                "idiv" => (ClassicalOpType::Idiv, 2, 1, Some((lw, is_signed))),
+                "idiv_checked" => (ClassicalOpType::IdivChecked, 2, 1, Some((lw, is_signed))),
+                "imod" => (ClassicalOpType::Imod, 2, 1, Some((lw, is_signed))),
+                "imod_checked" => (ClassicalOpType::ImodChecked, 2, 1, Some((lw, is_signed))),
+                "idivmod" => (ClassicalOpType::Idivmod, 2, 2, Some((lw, is_signed))),
+                "idivmod_checked" => (ClassicalOpType::IdivmodChecked, 2, 1, Some((lw, is_signed))),
+                "ipow" => (ClassicalOpType::Ipow, 2, 1, Some((lw, is_signed))),
+                "ineg" => (ClassicalOpType::Ineg, 1, 1, Some((lw, true))),
+                "iabs" => (ClassicalOpType::Iabs, 1, 1, Some((lw, is_signed))),
+                "ieq" => (ClassicalOpType::Ieq, 2, 1, Some((lw, is_signed))),
+                "ine" => (ClassicalOpType::Ine, 2, 1, Some((lw, is_signed))),
+                "ilt" => (ClassicalOpType::Ilt, 2, 1, Some((lw, is_signed))),
+                "ile" => (ClassicalOpType::Ile, 2, 1, Some((lw, is_signed))),
+                "igt" => (ClassicalOpType::Igt, 2, 1, Some((lw, is_signed))),
+                "ige" => (ClassicalOpType::Ige, 2, 1, Some((lw, is_signed))),
+                "iand" => (ClassicalOpType::Iand, 2, 1, Some((lw, is_signed))),
+                "ior" => (ClassicalOpType::Ior, 2, 1, Some((lw, is_signed))),
+                "ixor" => (ClassicalOpType::Ixor, 2, 1, Some((lw, is_signed))),
+                "inot" => (ClassicalOpType::Inot, 1, 1, Some((lw, is_signed))),
+                "ishl" => (ClassicalOpType::Ishl, 2, 1, Some((lw, is_signed))),
+                "ishr" => (ClassicalOpType::Ishr, 2, 1, Some((lw, is_signed))),
+                _ => return None,
+            }
+        }
+        // Float arithmetic extension
+        "arithmetic.float" => match op_name.as_str() {
+            "fadd" => (ClassicalOpType::Fadd, 2, 1, None),
+            "fsub" => (ClassicalOpType::Fsub, 2, 1, None),
+            "fmul" => (ClassicalOpType::Fmul, 2, 1, None),
+            "fdiv" => (ClassicalOpType::Fdiv, 2, 1, None),
+            "fneg" => (ClassicalOpType::Fneg, 1, 1, None),
+            "fabs" => (ClassicalOpType::Fabs, 1, 1, None),
+            "ffloor" => (ClassicalOpType::Ffloor, 1, 1, None),
+            "fceil" => (ClassicalOpType::Fceil, 1, 1, None),
+            "feq" => (ClassicalOpType::Feq, 2, 1, None),
+            "fne" => (ClassicalOpType::Fne, 2, 1, None),
+            "flt" => (ClassicalOpType::Flt, 2, 1, None),
+            "fle" => (ClassicalOpType::Fle, 2, 1, None),
+            "fgt" => (ClassicalOpType::Fgt, 2, 1, None),
+            "fge" => (ClassicalOpType::Fge, 2, 1, None),
+            _ => return None,
+        },
+        // Conversion extension
+        "arithmetic.conversions" => {
+            let lw = ext_op
+                .args()
+                .iter()
+                .find_map(|arg| match arg {
+                    tket::hugr::types::TypeArg::BoundedNat(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+                .unwrap_or(6);
+            match op_name.as_str() {
+                "convert_s" => (ClassicalOpType::ConvertIntToFloat, 1, 1, Some((lw, true))),
+                "convert_u" => (ClassicalOpType::ConvertIntToFloat, 1, 1, Some((lw, false))),
+                // trunc_s/trunc_u return sum_with_error(int), not a raw int
+                "trunc_s" => (
+                    ClassicalOpType::ConvertFloatToIntChecked,
+                    1,
+                    1,
+                    Some((lw, true)),
+                ),
+                "trunc_u" => (
+                    ClassicalOpType::ConvertFloatToIntChecked,
+                    1,
+                    1,
+                    Some((lw, false)),
+                ),
+                "itobool" => (ClassicalOpType::ItoBool, 1, 1, Some((0, false))),
+                "ifrombool" => (ClassicalOpType::IfromBool, 1, 1, Some((0, false))),
+                _ => return None,
+            }
+        }
+        // Prelude extension (tuples, etc.)
+        "prelude" => {
+            // Use the dataflow-signature port counts, NOT hugr.num_inputs/
+            // num_outputs: the portgraph counts include the order port, and
+            // an inflated num_inputs makes handle_classical_op wait forever
+            // on an order-port "value" that never arrives (starving every
+            // consumer downstream of the tuple).
+            let sig = op.dataflow_signature()?;
+            // Tuples that carry LINEAR values (qubits) are wire routing,
+            // not classical computation: the classical executor can never
+            // produce values for them (they would defer forever and block
+            // CFG-block completion). Qubit flow through them is resolved
+            // structurally by wire tracing instead.
+            if sig
+                .input()
+                .iter()
+                .chain(sig.output().iter())
+                .any(|t| !t.copyable())
+            {
+                return None;
+            }
+            let num_inputs = sig.input_count();
+            let num_outputs = sig.output_count();
+            match op_name.as_str() {
+                "MakeTuple" => (ClassicalOpType::MakeTuple, num_inputs, 1, None),
+                "UnpackTuple" => (ClassicalOpType::UnpackTuple, 1, num_outputs, None),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+
+    Some(classified)
+}
+
+/// Extract classical operations from the HUGR (logic, arithmetic, tuples).
 pub fn extract_classical_ops(hugr: &Hugr) -> BTreeMap<Node, ClassicalOp> {
     let mut operations = BTreeMap::new();
 
     for node in hugr.nodes() {
         let op = hugr.get_optype(node);
-
-        // Check if this is an extension operation
-        let Some(ext_op) = op.as_extension_op() else {
-            continue;
-        };
-
-        let ext_id = ext_op.extension_id();
-        let ext_name = ext_id.as_ref() as &str;
-        let op_name = ext_op.unqualified_id().to_string();
-
-        // Map extension operations to ClassicalOpType
-        let (op_type, num_inputs, num_outputs, int_info) = match ext_name {
-            // Logic extension
-            "logic" => match op_name.as_str() {
-                "And" => (ClassicalOpType::And, 2, 1, None),
-                "Or" => (ClassicalOpType::Or, 2, 1, None),
-                "Not" => (ClassicalOpType::Not, 1, 1, None),
-                "Xor" => (ClassicalOpType::Xor, 2, 1, None),
-                "Eq" => (ClassicalOpType::Eq, 2, 1, None),
-                _ => continue,
-            },
-            // Integer arithmetic extension
-            "arithmetic.int" => {
-                // Parse operation name to extract signedness info
-                // Operations like "iadd", "isub" are signed; "iadd_u" are unsigned
-                let is_signed = !op_name.ends_with("_u");
-                match op_name.trim_end_matches("_u").trim_end_matches("_s") {
-                    "iadd" => (ClassicalOpType::Iadd, 2, 1, Some((6, is_signed))), // default 64-bit
-                    "isub" => (ClassicalOpType::Isub, 2, 1, Some((6, is_signed))),
-                    "imul" => (ClassicalOpType::Imul, 2, 1, Some((6, is_signed))),
-                    "idiv" | "idiv_checked" => (ClassicalOpType::Idiv, 2, 1, Some((6, is_signed))),
-                    "imod" => (ClassicalOpType::Imod, 2, 1, Some((6, is_signed))),
-                    "ineg" => (ClassicalOpType::Ineg, 1, 1, Some((6, true))),
-                    "iabs" => (ClassicalOpType::Iabs, 1, 1, Some((6, is_signed))),
-                    "ieq" => (ClassicalOpType::Ieq, 2, 1, Some((6, is_signed))),
-                    "ine" => (ClassicalOpType::Ine, 2, 1, Some((6, is_signed))),
-                    "ilt" => (ClassicalOpType::Ilt, 2, 1, Some((6, is_signed))),
-                    "ile" => (ClassicalOpType::Ile, 2, 1, Some((6, is_signed))),
-                    "igt" => (ClassicalOpType::Igt, 2, 1, Some((6, is_signed))),
-                    "ige" => (ClassicalOpType::Ige, 2, 1, Some((6, is_signed))),
-                    "iand" => (ClassicalOpType::Iand, 2, 1, Some((6, is_signed))),
-                    "ior" => (ClassicalOpType::Ior, 2, 1, Some((6, is_signed))),
-                    "ixor" => (ClassicalOpType::Ixor, 2, 1, Some((6, is_signed))),
-                    "inot" => (ClassicalOpType::Inot, 1, 1, Some((6, is_signed))),
-                    "ishl" => (ClassicalOpType::Ishl, 2, 1, Some((6, is_signed))),
-                    "ishr" => (ClassicalOpType::Ishr, 2, 1, Some((6, is_signed))),
-                    _ => continue,
-                }
-            }
-            // Float arithmetic extension
-            "arithmetic.float" => match op_name.as_str() {
-                "fadd" => (ClassicalOpType::Fadd, 2, 1, None),
-                "fsub" => (ClassicalOpType::Fsub, 2, 1, None),
-                "fmul" => (ClassicalOpType::Fmul, 2, 1, None),
-                "fdiv" => (ClassicalOpType::Fdiv, 2, 1, None),
-                "fneg" => (ClassicalOpType::Fneg, 1, 1, None),
-                "fabs" => (ClassicalOpType::Fabs, 1, 1, None),
-                "ffloor" => (ClassicalOpType::Ffloor, 1, 1, None),
-                "fceil" => (ClassicalOpType::Fceil, 1, 1, None),
-                "feq" => (ClassicalOpType::Feq, 2, 1, None),
-                "fne" => (ClassicalOpType::Fne, 2, 1, None),
-                "flt" => (ClassicalOpType::Flt, 2, 1, None),
-                "fle" => (ClassicalOpType::Fle, 2, 1, None),
-                "fgt" => (ClassicalOpType::Fgt, 2, 1, None),
-                "fge" => (ClassicalOpType::Fge, 2, 1, None),
-                _ => continue,
-            },
-            // Conversion extension
-            "arithmetic.conversions" => match op_name.as_str() {
-                "convert_s" | "convert_u" => (ClassicalOpType::ConvertIntToFloat, 1, 1, None),
-                "trunc_s" | "trunc_u" => (ClassicalOpType::ConvertFloatToInt, 1, 1, None),
-                _ => continue,
-            },
-            // Prelude extension (tuples, etc.)
-            "prelude" => {
-                let num_inputs = hugr.num_inputs(node);
-                let num_outputs = hugr.num_outputs(node);
-                match op_name.as_str() {
-                    "MakeTuple" => (ClassicalOpType::MakeTuple, num_inputs, 1, None),
-                    "UnpackTuple" => (ClassicalOpType::UnpackTuple, 1, num_outputs, None),
-                    _ => continue,
-                }
-            }
-            _ => continue,
-        };
-
-        operations.insert(
-            node,
-            ClassicalOp {
+        if let Some((op_type, num_inputs, num_outputs, int_info)) = classify_classical_op(op) {
+            operations.insert(
                 node,
-                op_type,
-                num_inputs,
-                num_outputs,
-                int_info,
-                const_value: None,
-            },
-        );
+                ClassicalOp {
+                    node,
+                    op_type,
+                    num_inputs,
+                    num_outputs,
+                    int_info,
+                    const_value: None,
+                },
+            );
+        }
     }
 
     operations
@@ -690,10 +827,26 @@ pub fn find_quantum_ops_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
     ops
 }
 
-/// Recursively collect quantum operations in a subtree.
+/// Recursively collect quantum operations in a subtree, stopping at nested
+/// control-flow containers.
+///
+/// Ops inside a nested Conditional/TailLoop/CFG/FuncDefn belong to THAT
+/// container's activation: collecting them here queues them when the outer
+/// block activates -- before the case is selected or the loop iterates --
+/// which executes unselected-branch gates (observed as phantom extra
+/// allocations and measurements). Completion tracking covers the nested
+/// work through the container node itself (conditionals gate on
+/// no-active-case; Calls/TailLoops are marked processed only at completion).
 fn collect_quantum_ops_recursive(hugr: &Hugr, node: Node, ops: &mut BTreeSet<Node>) {
     for child in hugr.children(node) {
         let op = hugr.get_optype(child);
+
+        if matches!(
+            op,
+            OpType::Conditional(_) | OpType::TailLoop(_) | OpType::CFG(_) | OpType::FuncDefn(_)
+        ) {
+            continue;
+        }
 
         // Check if this is a quantum extension operation
         if let Some(ext_op) = op.as_extension_op() {
@@ -705,7 +858,8 @@ fn collect_quantum_ops_recursive(hugr: &Hugr, node: Node, ops: &mut BTreeSet<Nod
                 }
             }
         }
-        // Recurse into nested containers
+        // Recurse into nested dataflow structure (blocks, cases reached via
+        // their own container's collection; plain dataflow wrappers here)
         collect_quantum_ops_recursive(hugr, child, ops);
     }
 }
@@ -724,8 +878,12 @@ fn collect_call_nodes_recursive(hugr: &Hugr, node: Node, calls: &mut BTreeSet<No
         if matches!(op, OpType::Call(_)) {
             calls.insert(child);
         }
-        // Recurse into nested containers (but not into FuncDefns)
-        if !matches!(op, OpType::FuncDefn(_)) {
+        // Recurse into nested containers, but not into FuncDefns or
+        // Conditionals: case-contained Calls belong to the case's own
+        // activation (expand_conditional tracks and queues them) --
+        // collecting them here lets the outer container queue or wait on
+        // unselected-branch work.
+        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
             collect_call_nodes_recursive(hugr, child, calls);
         }
     }
@@ -793,8 +951,10 @@ fn collect_bool_ops_recursive(hugr: &Hugr, node: Node, bool_ops: &mut BTreeSet<N
                 bool_ops.insert(child);
             }
         }
-        // Recurse into nested containers (but not into FuncDefns)
-        if !matches!(op, OpType::FuncDefn(_)) {
+        // Recurse into nested containers, but not into FuncDefns or
+        // Conditionals (case bools belong to the case's own activation --
+        // see collect_call_nodes_recursive).
+        if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
             collect_bool_ops_recursive(hugr, child, bool_ops);
         }
     }
@@ -809,26 +969,15 @@ pub fn find_classical_ops_in_block(hugr: &Hugr, block: Node) -> BTreeSet<Node> {
 }
 
 /// Recursively collect classical operation nodes in a subtree.
+///
+/// Uses [`classify_classical_op`] so the per-block classical sets match the
+/// global classical-op map exactly (see that function's docs for why a
+/// mismatch deadlocks or silently truncates CFG-block execution).
 fn collect_classical_ops_recursive(hugr: &Hugr, node: Node, classical_ops: &mut BTreeSet<Node>) {
     for child in hugr.children(node) {
         let op = hugr.get_optype(child);
-        if let Some(ext_op) = op.as_extension_op() {
-            let ext_id = ext_op.extension_id();
-            let ext_name = ext_id.as_ref() as &str;
-            // Classical ops are from these extensions
-            if matches!(
-                ext_name,
-                "logic" | "arithmetic.int" | "arithmetic.float" | "arithmetic.conversions"
-            ) {
-                classical_ops.insert(child);
-            }
-            // Also check prelude for MakeTuple/UnpackTuple
-            if ext_name == "prelude" {
-                let op_name = ext_op.unqualified_id().to_string();
-                if op_name == "MakeTuple" || op_name == "UnpackTuple" {
-                    classical_ops.insert(child);
-                }
-            }
+        if classify_classical_op(op).is_some() {
+            classical_ops.insert(child);
         }
         // Recurse into nested containers (but not into FuncDefns or Conditionals)
         if !matches!(op, OpType::FuncDefn(_) | OpType::Conditional(_)) {
@@ -902,38 +1051,6 @@ pub fn get_container_type(hugr: &Hugr, node: Node) -> ContainerType {
         OpType::DataflowBlock(_) => ContainerType::DataflowBlock,
         _ => ContainerType::Other,
     }
-}
-
-/// Check if all quantum predecessors of a node have been processed.
-/// This includes quantum operations, Conditionals, CFGs, `TailLoops`, and Call nodes.
-pub fn all_predecessors_ready(
-    hugr: &Hugr,
-    node: Node,
-    quantum_ops: &BTreeMap<Node, QuantumOp>,
-    conditionals: &BTreeMap<Node, ConditionalInfo>,
-    cfgs: &BTreeMap<Node, CfgInfo>,
-    processed: &BTreeSet<Node>,
-) -> bool {
-    for pred_node in hugr.input_neighbours(node) {
-        // Check quantum ops
-        if quantum_ops.contains_key(&pred_node) && !processed.contains(&pred_node) {
-            return false;
-        }
-        // Check conditionals (they also produce qubit outputs)
-        if conditionals.contains_key(&pred_node) && !processed.contains(&pred_node) {
-            return false;
-        }
-        // Check CFG nodes (they also produce qubit outputs)
-        if cfgs.contains_key(&pred_node) && !processed.contains(&pred_node) {
-            return false;
-        }
-        // Check Call nodes and TailLoop nodes (they also produce qubit/array outputs)
-        let op = hugr.get_optype(pred_node);
-        if matches!(op, OpType::Call(_) | OpType::TailLoop(_)) && !processed.contains(&pred_node) {
-            return false;
-        }
-    }
-    true
 }
 
 #[cfg(test)]

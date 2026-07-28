@@ -1,6 +1,6 @@
 //! LLVM detection and management
 //!
-//! This module provides functionality to locate, install, and configure LLVM 14
+//! This module provides functionality to locate, install, and configure LLVM 21.1
 //! for PECOS across different platforms.
 
 pub mod config;
@@ -30,28 +30,158 @@ pub fn get_pecos_command() -> &'static str {
     "cargo run -p pecos --"
 }
 
-/// LLVM version required by PECOS
-pub const REQUIRED_VERSION: &str = "14";
+/// LLVM version required by PECOS.
+pub const REQUIRED_VERSION: &str = "21.1";
 
-/// Find LLVM 14 installation on the system.
+/// Cargo/llvm-sys environment variable for the required LLVM version.
+pub const LLVM_SYS_PREFIX_ENV: &str = "LLVM_SYS_211_PREFIX";
+
+/// Convert a path into a stable string for build environment variables and
+/// Cargo config values.
 ///
-/// This function searches for LLVM 14 in the following priority order:
-/// 1. PECOS deps directory: `~/.pecos/deps/llvm/`
+/// Windows `canonicalize()` returns verbatim paths such as `\\?\C:\...`.
+/// Most Rust and Windows APIs accept those, but bindgen's libclang loader does
+/// not treat them as valid DLL search directories. Cargo config also does not
+/// need the verbatim prefix, so strip it while keeping the path absolute.
+#[must_use]
+pub fn path_to_env_string(path: &Path) -> String {
+    normalize_path_string(&path.to_string_lossy())
+}
+
+/// Normalize a stored path string before turning it back into a [`PathBuf`].
+#[must_use]
+pub fn normalize_path_string(path: &str) -> String {
+    let path = path.replace('\\', "/");
+
+    if let Some(rest) = path.strip_prefix("//?/UNC/") {
+        return format!("//{rest}");
+    }
+
+    if let Some(rest) = path.strip_prefix("//?/")
+        && is_windows_drive_path(rest)
+    {
+        return rest.to_string();
+    }
+
+    path
+}
+
+fn is_windows_drive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+}
+
+/// Return whether an `llvm-config --version` string is compatible with PECOS.
+#[must_use]
+pub fn is_required_llvm_version(version: &str) -> bool {
+    let version = version.trim();
+    version == REQUIRED_VERSION
+        || version
+            .strip_prefix(REQUIRED_VERSION)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
+
+/// An LLVM tool resolved via a bare `PATH` lookup, with the version it reports.
+///
+/// Used to warn when a wrong-version tool (e.g. a system LLVM 14 `llvm-as`)
+/// would be picked up at runtime instead of LLVM 21.1 — external tools such as
+/// Selene resolve `llvm-as` straight from `PATH`, so a stale system LLVM ahead
+/// of the PECOS one silently produces wrong results.
+#[derive(Debug, Clone)]
+pub struct PathToolReport {
+    /// Tool name, e.g. `"llvm-as"`.
+    pub tool: String,
+    /// Location resolved from `PATH`.
+    pub path: PathBuf,
+    /// Version string reported by `<tool> --version`, if one could be parsed.
+    pub version: Option<String>,
+    /// Whether the reported version satisfies the required LLVM version.
+    pub is_required: bool,
+}
+
+/// Resolve an executable via `PATH`, mirroring how a bare `Command::new(name)`
+/// (and external tools like Selene) find it.
+#[must_use]
+pub fn which_on_path(exe_name: &str) -> Option<PathBuf> {
+    let exe = if cfg!(windows) {
+        format!("{exe_name}.exe")
+    } else {
+        exe_name.to_string()
+    };
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .map(|dir| dir.join(&exe))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Parse an LLVM `--version` output into a bare `X.Y.Z` version string.
+///
+/// Handles both `llvm-config --version` (prints `21.1.8`) and tools like
+/// `llvm-as --version` (whose output contains `LLVM version 21.1.8`) by
+/// returning the first dotted numeric token (at least `major.minor`).
+#[must_use]
+pub fn parse_llvm_version_output(output: &str) -> Option<String> {
+    output
+        .split_whitespace()
+        .find(|token| {
+            let mut parts = token.split('.');
+            token.starts_with(|c: char| c.is_ascii_digit())
+                && parts.clone().count() >= 2
+                && parts.all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(str::to_string)
+}
+
+/// Run `<tool_path> --version` and parse the LLVM version it reports.
+#[must_use]
+pub fn get_tool_llvm_version(tool_path: &Path) -> Option<String> {
+    let output = Command::new(tool_path).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_llvm_version_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Inspect the LLVM tools a bare `PATH` lookup resolves, reporting each one's
+/// version and whether it is the required LLVM. A tool not found on `PATH` is
+/// omitted from the result.
+#[must_use]
+pub fn inspect_path_llvm_tools(tools: &[&str]) -> Vec<PathToolReport> {
+    tools
+        .iter()
+        .filter_map(|&tool| {
+            let path = which_on_path(tool)?;
+            let version = get_tool_llvm_version(&path);
+            let is_required = version.as_deref().is_some_and(is_required_llvm_version);
+            Some(PathToolReport {
+                tool: tool.to_string(),
+                path,
+                version,
+                is_required,
+            })
+        })
+        .collect()
+}
+
+/// Find a compatible LLVM installation on the system.
+///
+/// This function searches for LLVM in the following priority order:
+/// 1. PECOS deps directory: `~/.pecos/deps/llvm-{version}/`
 /// 2. Legacy PECOS path: `~/.pecos/llvm/` (prints deprecation warning)
-///    - Windows also checks: `~/.pecos/LLVM-14`
+///    - Windows also checks: `~/.pecos/LLVM-{version}`
 /// 3. Project-local installation (`llvm/` directory relative to repository root)
 /// 4. System installations (platform-specific locations)
 ///
 /// # Returns
-/// - `Some(PathBuf)` if LLVM 14 is found and valid
-/// - `None` if LLVM 14 is not found
+/// - `Some(PathBuf)` if a compatible LLVM is found and valid
+/// - `None` if a compatible LLVM is not found
 #[must_use]
-pub fn find_llvm_14(repo_root: Option<PathBuf>) -> Option<PathBuf> {
-    // 1. Check new deps path: ~/.pecos/deps/llvm/
+pub fn find_llvm(repo_root: Option<PathBuf>) -> Option<PathBuf> {
+    // 1. Check versioned deps path: ~/.pecos/deps/llvm-{version}/
     if let Ok(deps_llvm) = crate::home::get_llvm_dir_path()
-        && is_valid_llvm_14(&deps_llvm)
+        && let Some(llvm_prefix) = valid_llvm_prefix(&deps_llvm)
     {
-        return Some(deps_llvm);
+        return Some(llvm_prefix);
     }
 
     // 2. Check legacy top-level path: ~/.pecos/llvm/
@@ -60,49 +190,81 @@ pub fn find_llvm_14(repo_root: Option<PathBuf>) -> Option<PathBuf> {
 
         #[cfg(target_os = "windows")]
         {
-            let user_llvm_new = pecos_dir.join("LLVM-14");
-            if is_valid_llvm_14(&user_llvm_new) {
-                crate::home::print_legacy_warning("LLVM", &user_llvm_new);
-                return Some(user_llvm_new);
+            let user_llvm_new = pecos_dir.join(format!("LLVM-{REQUIRED_VERSION}"));
+            if let Some(llvm_prefix) = valid_llvm_prefix(&user_llvm_new) {
+                crate::home::print_legacy_warning("LLVM", &llvm_prefix);
+                return Some(llvm_prefix);
             }
         }
 
         let user_llvm_legacy = pecos_dir.join("llvm");
-        if is_valid_llvm_14(&user_llvm_legacy) {
-            crate::home::print_legacy_warning("LLVM", &user_llvm_legacy);
-            return Some(user_llvm_legacy);
+        if let Some(llvm_prefix) = valid_llvm_prefix(&user_llvm_legacy) {
+            crate::home::print_legacy_warning("LLVM", &llvm_prefix);
+            return Some(llvm_prefix);
         }
     }
 
     // 3. Check for project-local LLVM
     if let Some(root) = repo_root {
         let local_llvm = root.join("llvm");
-        if is_valid_llvm_14(&local_llvm) {
-            return Some(local_llvm);
+        if let Some(llvm_prefix) = valid_llvm_prefix(&local_llvm) {
+            return Some(llvm_prefix);
         }
     }
 
     // 4. Check system installations
-    find_system_llvm_14()
+    find_system_llvm()
 }
 
-/// Find LLVM 14 in system-wide locations (platform-specific)
-fn find_system_llvm_14() -> Option<PathBuf> {
+fn valid_llvm_prefix(path: &Path) -> Option<PathBuf> {
+    if is_valid_llvm(path) {
+        return Some(path.to_path_buf());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let conda_library_prefix = path.join("Library");
+        if is_valid_llvm(&conda_library_prefix) {
+            return Some(conda_library_prefix);
+        }
+    }
+
+    None
+}
+
+/// Find the LLVM installation Cargo should use for this project.
+///
+/// An explicit `.cargo/config.toml` setting takes priority because `cargo`
+/// applies it to build scripts. If no valid project config exists, this falls
+/// back to the normal managed/system detection order.
+#[must_use]
+pub fn find_configured_or_detected_llvm(repo_root: Option<PathBuf>) -> Option<PathBuf> {
+    if let Some(configured_path) = config::read_configured_llvm_path()
+        && is_valid_llvm(&configured_path)
+    {
+        return Some(configured_path);
+    }
+
+    find_llvm(repo_root)
+}
+
+/// Find LLVM in system-wide locations (platform-specific)
+fn find_system_llvm() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("brew").args(["--prefix", "llvm@14"]).output()
+        if let Ok(output) = Command::new("brew").args(["--prefix", "llvm@21"]).output()
             && output.status.success()
         {
             let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let path = PathBuf::from(path_str);
-            if is_valid_llvm_14(&path) {
+            if is_valid_llvm(&path) {
                 return Some(path);
             }
         }
 
-        for path_str in ["/opt/homebrew/opt/llvm@14", "/usr/local/opt/llvm@14"] {
+        for path_str in ["/opt/homebrew/opt/llvm@21", "/usr/local/opt/llvm@21"] {
             let llvm_path = PathBuf::from(path_str);
-            if is_valid_llvm_14(&llvm_path) {
+            if is_valid_llvm(&llvm_path) {
                 return Some(llvm_path);
             }
         }
@@ -110,23 +272,23 @@ fn find_system_llvm_14() -> Option<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        if let Ok(output) = Command::new("llvm-config-14").arg("--prefix").output()
+        if let Ok(output) = Command::new("llvm-config-21").arg("--prefix").output()
             && output.status.success()
         {
             let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let path = PathBuf::from(path_str);
-            if is_valid_llvm_14(&path) {
+            if is_valid_llvm(&path) {
                 return Some(path);
             }
         }
 
         for path_str in [
-            "/usr/lib/llvm-14",
-            "/usr/local/llvm-14",
-            "/usr/lib/x86_64-linux-gnu/llvm-14",
+            "/usr/lib/llvm-21",
+            "/usr/local/llvm-21",
+            "/usr/lib/x86_64-linux-gnu/llvm-21",
         ] {
             let llvm_path = PathBuf::from(path_str);
-            if is_valid_llvm_14(&llvm_path) {
+            if is_valid_llvm(&llvm_path) {
                 return Some(llvm_path);
             }
         }
@@ -137,11 +299,11 @@ fn find_system_llvm_14() -> Option<PathBuf> {
         for path_str in [
             "C:\\Program Files\\LLVM",
             "C:\\LLVM",
-            "C:\\Program Files\\LLVM-14",
-            "C:\\LLVM-14",
+            "C:\\Program Files\\LLVM-21",
+            "C:\\LLVM-21",
         ] {
             let llvm_path = PathBuf::from(path_str);
-            if is_valid_llvm_14(&llvm_path) {
+            if is_valid_llvm(&llvm_path) {
                 return Some(llvm_path);
             }
         }
@@ -150,9 +312,9 @@ fn find_system_llvm_14() -> Option<PathBuf> {
     None
 }
 
-/// Check if a given path contains a valid LLVM 14 installation
+/// Check if a given path contains a compatible LLVM installation
 #[must_use]
-pub fn is_valid_llvm_14(path: &Path) -> bool {
+pub fn is_valid_llvm(path: &Path) -> bool {
     if !path.exists() {
         return false;
     }
@@ -171,7 +333,7 @@ pub fn is_valid_llvm_14(path: &Path) -> bool {
         && output.status.success()
     {
         let version = String::from_utf8_lossy(&output.stdout);
-        return version.starts_with("14.");
+        return is_required_llvm_version(&version);
     }
 
     false
@@ -183,13 +345,7 @@ pub fn is_valid_llvm_14(path: &Path) -> bool {
 ///
 /// Returns an error if LLVM is not found or version cannot be determined
 pub fn get_llvm_version(path: &Path) -> Result<String> {
-    #[cfg(target_os = "windows")]
-    let llvm_config = path.join("bin").join("llvm-config.exe");
-
-    #[cfg(not(target_os = "windows"))]
-    let llvm_config = path.join("bin").join("llvm-config");
-
-    let output = Command::new(&llvm_config)
+    let output = Command::new(llvm_config_path(path))
         .arg("--version")
         .output()
         .map_err(|e| Error::Llvm(format!("Failed to run llvm-config: {e}")))?;
@@ -201,11 +357,83 @@ pub fn get_llvm_version(path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Get LLVM's configured shared/static library mode.
+///
+/// # Errors
+///
+/// Returns an error if `llvm-config --shared-mode` fails.
+pub fn get_llvm_shared_mode(path: &Path) -> Result<String> {
+    let output = Command::new(llvm_config_path(path))
+        .arg("--shared-mode")
+        .output()
+        .map_err(|e| Error::Llvm(format!("Failed to run llvm-config: {e}")))?;
+
+    if !output.status.success() {
+        return Err(Error::Llvm(
+            "llvm-config --shared-mode returned non-zero status".into(),
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Get the shared LLVM library names reported by `llvm-config`, if available.
+#[must_use]
+pub fn get_llvm_shared_libraries(path: &Path) -> Option<String> {
+    let output = Command::new(llvm_config_path(path))
+        .args(["--libnames", "--link-shared", "core"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let libraries = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if libraries.is_empty() {
+        None
+    } else {
+        Some(libraries)
+    }
+}
+
+/// Get LLVM's library directory as reported by `llvm-config --libdir`.
+///
+/// # Errors
+///
+/// Returns an error if `llvm-config --libdir` fails.
+pub fn get_llvm_libdir(path: &Path) -> Result<PathBuf> {
+    let output = Command::new(llvm_config_path(path))
+        .arg("--libdir")
+        .output()
+        .map_err(|e| Error::Llvm(format!("Failed to run llvm-config: {e}")))?;
+
+    if !output.status.success() {
+        return Err(Error::Llvm(
+            "llvm-config --libdir returned non-zero status".into(),
+        ));
+    }
+
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
+}
+
+fn llvm_config_path(path: &Path) -> PathBuf {
+    let exe_name = if cfg!(windows) {
+        "llvm-config.exe"
+    } else {
+        "llvm-config"
+    };
+
+    path.join("bin").join(exe_name)
+}
+
 /// Find a specific LLVM tool by name
 #[must_use]
 pub fn find_tool(tool_name: &str) -> Option<PathBuf> {
     let repo_root = get_repo_root_from_manifest();
-    let llvm_path = find_llvm_14(repo_root)?;
+    let llvm_path = find_configured_or_detected_llvm(repo_root)?;
 
     let tool_path = if cfg!(windows) {
         llvm_path.join("bin").join(format!("{tool_name}.exe"))
@@ -273,26 +501,28 @@ fn find_cargo_project_root_from(start: &Path) -> Option<PathBuf> {
     first_match
 }
 
-/// Print a helpful error message when LLVM 14 is not found
+/// Print a helpful error message when the required LLVM version is not found
 pub fn print_llvm_not_found_error() {
     let cmd = get_pecos_command();
 
     eprintln!("\n═══════════════════════════════════════════════════════════════");
-    eprintln!("ERROR: LLVM 14 not found!");
+    eprintln!("ERROR: LLVM {REQUIRED_VERSION} not found!");
     eprintln!("═══════════════════════════════════════════════════════════════");
     eprintln!();
-    eprintln!("PECOS requires LLVM version 14 for QIS program execution.");
+    eprintln!("PECOS requires LLVM version {REQUIRED_VERSION} for QIS program execution.");
     eprintln!();
-    eprintln!("Option 1 - Install LLVM 14 for PECOS (recommended):");
-    eprintln!();
-    eprintln!("    {cmd} install llvm");
-    eprintln!();
+    if installer::managed_install_unavailable_reason().is_none() {
+        eprintln!("Option 1 - Install LLVM {REQUIRED_VERSION} for PECOS (recommended):");
+        eprintln!();
+        eprintln!("    {cmd} install llvm");
+        eprintln!();
+    }
 
     #[cfg(target_os = "macos")]
     {
-        eprintln!("Option 2 - Use system LLVM via Homebrew:");
+        eprintln!("Use system LLVM via Homebrew:");
         eprintln!();
-        eprintln!("    brew install llvm@14");
+        eprintln!("    brew install llvm@21");
         eprintln!("    {cmd} llvm configure");
         eprintln!();
     }
@@ -301,14 +531,18 @@ pub fn print_llvm_not_found_error() {
     {
         eprintln!("Option 2 - Use system LLVM via package manager:");
         eprintln!();
-        eprintln!("    sudo apt install llvm-14  # Debian/Ubuntu");
+        eprintln!("    Install LLVM 21.1 through your distribution packages if available");
         eprintln!("    {cmd} llvm configure");
         eprintln!();
     }
 
     #[cfg(target_os = "windows")]
     {
-        eprintln!("For Windows, use the PECOS installer (Option 1) above.");
+        eprintln!("The official Windows LLVM installer is not sufficient for PECOS.");
+        eprintln!("Use scripts\\ci\\install-llvm-21-windows.ps1 for the conda-forge");
+        eprintln!("LLVM 21.1 toolchain, then configure its Library prefix:");
+        eprintln!();
+        eprintln!("    {cmd} llvm configure %USERPROFILE%\\.pecos\\deps\\llvm-21.1\\Library");
         eprintln!();
     }
 
@@ -419,5 +653,77 @@ mod tests {
 
         let result = find_cargo_project_root_from(&deep);
         assert_eq!(result.as_deref(), Some(root));
+    }
+
+    #[test]
+    fn required_llvm_version_matches_only_21_1_series() {
+        assert!(is_required_llvm_version("21.1"));
+        assert!(is_required_llvm_version("21.1.8"));
+        assert!(is_required_llvm_version("21.1.8git"));
+        assert!(!is_required_llvm_version("21.0.9"));
+        assert!(!is_required_llvm_version("21.10.0"));
+        assert!(!is_required_llvm_version("22.0.0"));
+    }
+
+    #[test]
+    fn parse_llvm_version_handles_config_and_tool_output() {
+        // `llvm-config --version` prints the bare version.
+        assert_eq!(
+            parse_llvm_version_output("21.1.8\n").as_deref(),
+            Some("21.1.8")
+        );
+        // `llvm-as --version` prints a block; the first dotted numeric token is
+        // the LLVM version, not the target triple or CPU line.
+        let llvm_as = "  LLVM (http://llvm.org/):\n    LLVM version 14.0.0\n    \
+                       Optimized build.\n    Default target: x86_64-pc-linux-gnu\n";
+        assert_eq!(
+            parse_llvm_version_output(llvm_as).as_deref(),
+            Some("14.0.0")
+        );
+        assert_eq!(parse_llvm_version_output("no version here"), None);
+    }
+
+    #[test]
+    fn path_tool_report_flags_wrong_version() {
+        // Version parsing + is_required together decide whether a PATH tool is
+        // acceptable; a system LLVM 14 must be flagged, 21.1.x accepted.
+        assert!(!is_required_llvm_version(
+            &parse_llvm_version_output("LLVM version 14.0.0").unwrap()
+        ));
+        assert!(is_required_llvm_version(
+            &parse_llvm_version_output("LLVM version 21.1.8").unwrap()
+        ));
+    }
+
+    #[test]
+    fn normalize_path_string_strips_windows_verbatim_drive_prefix() {
+        assert_eq!(
+            normalize_path_string(r"\\?\C:\Users\runneradmin\.pecos\deps\llvm-21.1\Library"),
+            "C:/Users/runneradmin/.pecos/deps/llvm-21.1/Library"
+        );
+        assert_eq!(
+            normalize_path_string("//?/C:/Users/runneradmin/.pecos/deps/llvm-21.1/Library"),
+            "C:/Users/runneradmin/.pecos/deps/llvm-21.1/Library"
+        );
+    }
+
+    #[test]
+    fn normalize_path_string_strips_windows_verbatim_unc_prefix() {
+        assert_eq!(
+            normalize_path_string(r"\\?\UNC\server\share\llvm-21.1"),
+            "//server/share/llvm-21.1"
+        );
+    }
+
+    #[test]
+    fn normalize_path_string_leaves_non_verbatim_paths_alone() {
+        assert_eq!(
+            normalize_path_string("/home/ciaranra/.pecos/deps/llvm-21.1"),
+            "/home/ciaranra/.pecos/deps/llvm-21.1"
+        );
+        assert_eq!(
+            normalize_path_string("//server/share/llvm-21.1"),
+            "//server/share/llvm-21.1"
+        );
     }
 }

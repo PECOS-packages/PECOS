@@ -25,9 +25,11 @@ pub mod fault_sampler;
 pub mod gadget_checker;
 pub mod influence_builder;
 pub mod lookup_decoder;
+pub mod pauli_frame;
 pub mod pauli_prop_checker;
 pub mod propagator;
 pub mod stabilizer_flip_checker;
+mod symbolic_replay;
 pub mod targeted_lookup_decoder;
 
 use pecos_core::QubitId;
@@ -47,6 +49,7 @@ pub use gadget_checker::{
     GadgetSyndromeAnalysis,
 };
 pub use influence_builder::InfluenceBuilder;
+pub use pauli_frame::{PauliFrameLookup, PauliFrameLookupError};
 pub use pauli_prop_checker::{
     DecoderAnalysis, FaultClass, FaultToleranceAnalysis, FaultToleranceFailure, FollowUpConfig,
     MeasurementRound, PauliPropChecker, PropagationResult, SyndromeAnalysis, SyndromeClass,

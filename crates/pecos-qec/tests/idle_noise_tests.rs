@@ -37,6 +37,16 @@ fn build_idle_then_measure(num_idles: usize) -> DagCircuit {
     dag
 }
 
+fn build_nanosecond_idle_x_basis_measure() -> DagCircuit {
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.h(&[0]);
+    dag.idle(TimeUnits::new(20), &[0]);
+    dag.h(&[0]);
+    dag.mz(&[0]);
+    dag
+}
+
 #[test]
 fn idle_locations_contribute_mechanisms_when_rates_set() {
     let dag = build_idle_then_measure(2);
@@ -177,6 +187,80 @@ fn explicit_uniform_idle_noise_is_noisy() {
         sim.num_mechanisms() > 0,
         "explicit p_idle should produce idle-location mechanisms",
     );
+}
+
+#[test]
+fn nanosecond_timeunit_idle_duration_is_preserved_in_fault_locations() {
+    let dag = build_nanosecond_idle_x_basis_measure();
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+
+    let idle = influence
+        .locations
+        .iter()
+        .find(|loc| loc.gate_type == GateType::Idle)
+        .expect("idle location");
+
+    assert!((idle.idle_duration - 20.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn linear_memory_z_noise_uses_idle_duration_in_dem() {
+    let dag = build_nanosecond_idle_x_basis_measure();
+    let analyzer = DagFaultAnalyzer::new(&dag);
+    let influence = analyzer.build_influence_map();
+
+    let dem = DemBuilder::new(&influence)
+        .with_noise_config(NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear_rate(1.0e-3))
+        .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
+        .unwrap()
+        .build();
+
+    assert!(
+        dem.num_contributions() > 0,
+        "linear Z-memory noise on an idle should produce DEM contributions",
+    );
+}
+
+#[test]
+fn idle_memory_pauli_probabilities_match_linear_and_quadratic_model() {
+    let linear = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_linear_rate(1.0e-3)
+        .idle_pauli_probs(20.0);
+    assert_eq!(linear.px.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(linear.py.to_bits(), 0.0_f64.to_bits());
+    assert!((linear.pz - 0.02).abs() < 1e-15);
+
+    let quadratic = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_quadratic_rate(0.1)
+        .idle_pauli_probs(2.0);
+    assert_eq!(quadratic.px.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(quadratic.py.to_bits(), 0.0_f64.to_bits());
+    assert!((quadratic.pz - 0.4).abs() < 1e-15);
+
+    let pauli = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_pauli_linear_rates(1.0e-3, 2.0e-3, 3.0e-3)
+        .set_idle_pauli_quadratic_rates(1.0e-4, 2.0e-4, 3.0e-4)
+        .idle_memory_pauli_probs(10.0);
+    assert!((pauli.px - 0.02).abs() < 1e-15);
+    assert!((pauli.py - 0.04).abs() < 1e-15);
+    assert!((pauli.pz - 0.06).abs() < 1e-15);
+}
+
+#[test]
+fn idle_memory_pauli_probabilities_support_quadratic_sine_model() {
+    let z_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_quadratic_sine_rate(0.2)
+        .idle_memory_pauli_probs(3.0);
+    assert_eq!(z_sine.px.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(z_sine.py.to_bits(), 0.0_f64.to_bits());
+    assert!((z_sine.pz - 0.6_f64.sin().powi(2)).abs() < 1e-15);
+
+    let pauli_sine = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_idle_pauli_quadratic_sine_rates(0.1, 0.2, 0.3)
+        .idle_memory_pauli_probs(2.0);
+    assert!((pauli_sine.px - 0.2_f64.sin().powi(2)).abs() < 1e-15);
+    assert!((pauli_sine.py - 0.4_f64.sin().powi(2)).abs() < 1e-15);
+    assert!((pauli_sine.pz - 0.6_f64.sin().powi(2)).abs() < 1e-15);
 }
 
 #[test]

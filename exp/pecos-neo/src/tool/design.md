@@ -41,7 +41,7 @@ builder-of-builders pattern:
 sim_neo(circuit)
     .classical(qasm_engine())
     .quantum(stabilizer())
-    .sampling(importance_sampling())
+    .sampling(importance_sampling(10_000))
     .build()
     .run();
 ```
@@ -186,8 +186,9 @@ Convenience function that creates a simulation-configured builder:
 /// # Example
 /// ```
 /// let results = sim_neo(circuit)
+///     .auto()
 ///     .noise(SingleQubitChannel::depolarizing(0.01))
-///     .shots(1000)
+///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
 ///     .run();
@@ -205,22 +206,20 @@ Builder that configures a Tool for simulation:
 pub struct SimNeoBuilder {
     circuit: CommandQueue,
     noise: Option<ComposableNoiseModel>,
-    shots: usize,
     seed: Option<u64>,
-    workers: usize,
-    importance_sampling: Option<ImportanceConfig>,
+    sampling: Option<Sampling>, // monte_carlo(shots).workers(n) | importance_sampling(shots)
 }
 
 impl SimNeoBuilder {
     pub fn new(circuit: CommandQueue) -> Self { ... }
 
     // Configuration (consumes self, returns Self)
-    pub fn shots(mut self, shots: usize) -> Self { ... }
     pub fn seed(mut self, seed: u64) -> Self { ... }
-    pub fn workers(mut self, workers: usize) -> Self { ... }
-    pub fn auto_workers(mut self) -> Self { ... }
     pub fn noise(mut self, noise: impl Into<ComposableNoiseModel>) -> Self { ... }
-    pub fn importance_sampling(mut self, base_rate: f64, boost: f64) -> Self { ... }
+    // Sampling strategy carries its own shots/workers:
+    //   .sampling(monte_carlo(1000).workers(8))
+    //   .sampling(importance_sampling(10_000).with_boost(10.0))
+    pub fn sampling(mut self, sampling: impl Into<Sampling>) -> Self { ... }
 
     /// Build the simulation handle
     pub fn build(self) -> Simulation {
@@ -271,17 +270,17 @@ impl Simulation {
 
 ```rust
 // Pattern 1: One-shot (builder consumed)
-let results = sim_neo(circuit)
+let results = sim_neo(circuit).auto()
     .noise(depolarizing(0.01))
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .seed(42)
     .build()
     .run();
 
 // Pattern 2: Build once, run many
-let mut sim = sim_neo(circuit)
+let mut sim = sim_neo(circuit).auto()
     .noise(depolarizing(0.01))
-    .shots(1000)
+    .sampling(monte_carlo(1000))
     .build();
 
 let results1 = sim.run();

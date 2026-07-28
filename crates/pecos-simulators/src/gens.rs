@@ -264,10 +264,10 @@ impl<S: IndexSet> GensGeneric<S> {
         signs_minus: S,
         signs_i: S,
     ) -> Self {
-        debug_assert!(col_x.len() == num_qubits);
-        debug_assert!(col_z.len() == num_qubits);
-        debug_assert!(row_x.len() == num_qubits);
-        debug_assert!(row_z.len() == num_qubits);
+        debug_assert_eq!(col_x.len(), num_qubits);
+        debug_assert_eq!(col_z.len(), num_qubits);
+        debug_assert_eq!(row_x.len(), num_qubits);
+        debug_assert_eq!(row_z.len(), num_qubits);
         Self {
             num_qubits,
             col_x,

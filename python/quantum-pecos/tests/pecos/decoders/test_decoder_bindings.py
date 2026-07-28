@@ -157,6 +157,16 @@ class TestPyMatchingDecoder:
         assert decoder.num_nodes >= 3
         assert decoder.num_edges >= 4
 
+    def test_from_dem_with_correlations(self) -> None:
+        """Test construction from DEM with decomposition correlations enabled."""
+        from pecos_rslib.decoders import PyMatchingDecoder
+
+        dem = "error(0.1) D0 D1 ^ D2 L0"
+        decoder = PyMatchingDecoder.from_dem_with_correlations(dem)
+
+        result = decoder.decode([0, 0, 0])
+        assert result.correction == [0]
+
 
 class TestFusionBlossomDecoder:
     """Tests for FusionBlossomDecoder (mirrors fusion_blossom)."""

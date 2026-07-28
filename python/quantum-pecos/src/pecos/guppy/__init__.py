@@ -46,6 +46,7 @@ from pecos.guppy.transversal import (
     make_surface_transversal_cnot,
     make_surface_transversal_cnot_with_x,
 )
+from pecos.guppy.variant import variant_scoped
 
 __all__ = [
     # Surface code
@@ -72,4 +73,6 @@ __all__ = [
     "make_color_transversal_cnot_with_x_d3",
     "make_surface_transversal_cnot",
     "make_surface_transversal_cnot_with_x",
+    # Variant-scoped program factories
+    "variant_scoped",
 ]

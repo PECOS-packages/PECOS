@@ -47,76 +47,35 @@ class GuppyPipelineTest:
             result_obj = builder.run(shots)
             result_dict = result_obj.to_dict()
 
-            # Format results to match expected structure
-            measurements = []
-            if "measurements" in result_dict:
-                # measurements is a list of lists like [[1], [0, 1], ...]
-                # For functions returning single bool, extract the last measurement per shot
-                raw_measurements = result_dict["measurements"]
-                if raw_measurements and isinstance(raw_measurements[0], list):
-                    # Check if function returns single bool or tuple
-                    import inspect
+            # Format results to match expected structure.
+            # "measurements" holds one row per shot like [[1], [0, 1], ...];
+            # a missing key is a hard failure (reported via the except below).
+            raw_measurements = result_dict["measurements"]
+            if raw_measurements and isinstance(raw_measurements[0], list):
+                # Check if function returns single bool or tuple
+                import inspect
 
-                    actual_func = func
-                    if hasattr(func, "wrapped") and hasattr(
-                        func.wrapped,
-                        "python_func",
-                    ):
-                        actual_func = func.wrapped.python_func
-                    try:
-                        sig = inspect.signature(actual_func)
-                        return_type = sig.return_annotation
-                        is_tuple_return = hasattr(return_type, "__origin__") and return_type.__origin__ is tuple
-                    except (ValueError, TypeError):
-                        is_tuple_return = False
-
-                    if is_tuple_return:
-                        # Return full measurement tuples
-                        measurements = [tuple(m) for m in raw_measurements]
-                    else:
-                        # For single bool return, take the last measurement from each shot
-                        measurements = [m[-1] if m else 0 for m in raw_measurements]
-                else:
-                    measurements = raw_measurements
-            elif "measurement_0" in result_dict:
-                # Handle multiple measurements
-                num_shots = len(result_dict["measurement_0"])
-                measurement_keys = sorted(
-                    [k for k in result_dict if k.startswith("measurement_")],
-                )
-                num_measurements = len(measurement_keys)
-
-                for i in range(num_shots):
-                    result_tuple = [bool(result_dict[key][i]) for key in measurement_keys]
-
-                    # Check function signature to determine if it returns a tuple
-                    # For now, if there's more than one measurement but function returns single bool,
-                    # take the last measurement as the return value
-                    import inspect
-
-                    # For Guppy functions, we need to check the wrapped function
-                    actual_func = func
-                    if hasattr(func, "wrapped") and hasattr(
-                        func.wrapped,
-                        "python_func",
-                    ):
-                        actual_func = func.wrapped.python_func
-
+                actual_func = func
+                if hasattr(func, "wrapped") and hasattr(
+                    func.wrapped,
+                    "python_func",
+                ):
+                    actual_func = func.wrapped.python_func
+                try:
                     sig = inspect.signature(actual_func)
                     return_type = sig.return_annotation
-
-                    # Check if return type is a tuple
                     is_tuple_return = hasattr(return_type, "__origin__") and return_type.__origin__ is tuple
-                    if is_tuple_return or num_measurements == 1:
-                        # For tuple returns or single measurement, use all measurements
-                        measurements.append(
-                            (tuple(result_tuple) if len(result_tuple) > 1 else result_tuple[0]),
-                        )
-                    else:
-                        # For single bool return with multiple measurements, take the last one
-                        measurements.append(result_tuple[-1])
-            elif "result" in result_dict:
-                measurements = result_dict["result"]
+                except (ValueError, TypeError):
+                    is_tuple_return = False
+
+                if is_tuple_return:
+                    # Return full measurement tuples
+                    measurements = [tuple(m) for m in raw_measurements]
+                else:
+                    # For single bool return, take the last measurement from each shot
+                    measurements = [m[-1] if m else 0 for m in raw_measurements]
+            else:
+                measurements = raw_measurements
 
             func_name = getattr(
                 func,
@@ -134,11 +93,11 @@ class GuppyPipelineTest:
                 "error": None,
             }
         except Exception as e:
-            results["hugr_llvm"] = {
-                "success": False,
-                "result": None,
-                "error": str(e),
-            }
+            # A pipeline failure must FAIL the test: every semantic
+            # assertion in this file is gated behind success, so converting
+            # exceptions into success=False used to make any engine
+            # regression pass everything.
+            pytest.fail(f"guppy pipeline failed for {func}: {e}")
 
         return results
 
@@ -181,14 +140,12 @@ class TestBasicQuantumOperations:
             hadamard_test,
             shots=50,
         )
-        assert results.get("hugr_llvm", {}).get(
-            "success",
-            False,
-        ), f"HUGR-LLVM failed: {results.get('hugr_llvm', {}).get('error')}"
-        # PHIR might not be available on all systems
-        if "phir" in results:
-            # print(f"PHIR result: {results['phir']}")
-            pass
+        rows = results["hugr_llvm"]["result"]["results"]
+        assert len(rows) == 50
+        # H|0> is an exact 50/50 superposition: both outcomes must appear
+        # with a near-even split.
+        ones = sum(int(r) for r in rows)
+        assert 12 <= ones <= 38, f"H distribution off: {ones}/50 ones"
 
     def test_pauli_gates(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Test all Pauli gates (X, Y, Z)."""
@@ -268,7 +225,9 @@ class TestBasicQuantumOperations:
                 decoded_measurements = decode_integer_results(measurements, 2)
             correlated = sum(1 for (a, b) in decoded_measurements if a == b)
             correlation_rate = correlated / len(decoded_measurements)
-            assert correlation_rate > 0.8, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
+            assert (
+                correlation_rate == 1.0
+            ), f"Bell correlation is EXACT on a noiseless statevector, got {correlation_rate:.2%}"
 
         # Verify PHIR pipeline results if available
         if results.get("phir", {}).get("success"):
@@ -277,7 +236,9 @@ class TestBasicQuantumOperations:
             decoded_measurements = decode_integer_results(measurements, 2)
             correlated = sum(1 for (a, b) in decoded_measurements if a == b)
             correlation_rate = correlated / len(decoded_measurements)
-            assert correlation_rate > 0.8, f"PHIR Bell state should be highly correlated, got {correlation_rate:.2%}"
+            assert (
+                correlation_rate == 1.0
+            ), f"PHIR Bell correlation is EXACT on a noiseless statevector, got {correlation_rate:.2%}"
 
 
 # ============================================================================
@@ -305,22 +266,26 @@ class TestClassicalComputation:
             result = measure(q)  # Will be True
             return result or False
 
-        # Test AND operation
-        pipeline_tester.test_function_on_both_pipelines(
+        # AND: measure(|0>) is deterministically 0
+        results_and = pipeline_tester.test_function_on_both_pipelines(
             boolean_and_test,
             shots=10,
         )
+        rows = results_and["hugr_llvm"]["result"]["results"]
+        assert [int(r) for r in rows] == [0] * 10, f"AND path measurements: {rows}"
 
-        # Test OR operation
-        pipeline_tester.test_function_on_both_pipelines(
+        # OR: measure(X|0>) is deterministically 1
+        results_or = pipeline_tester.test_function_on_both_pipelines(
             boolean_or_test,
             shots=10,
         )
+        rows = results_or["hugr_llvm"]["result"]["results"]
+        assert [int(r) for r in rows] == [1] * 10, f"OR path measurements: {rows}"
 
-    def test_classical_arithmetic(self, pipeline_tester: GuppyPipelineTest) -> None:
-        """Test basic arithmetic operations."""
+    def test_classical_arithmetic(self) -> None:
+        """Pure-classical programs surface the entrypoint's return value
+        under the "return" key (no measurements, no result() calls)."""
 
-        # NOTE: This may fail on current pipelines due to limited classical support
         @guppy
         def arithmetic_test() -> int:
             # Simple arithmetic that doesn't depend on quantum measurements
@@ -328,16 +293,11 @@ class TestClassicalComputation:
             b = 3
             return a + b
 
-        results = pipeline_tester.test_function_on_both_pipelines(
-            arithmetic_test,
-            shots=5,
-        )
+        from pecos import Guppy, sim
+        from pecos_rslib import state_vector
 
-        # Document current limitations
-        if not results.get("hugr_llvm", {}).get("success"):
-            pass
-        if not results.get("phir", {}).get("success"):
-            pass
+        results = sim(Guppy(arithmetic_test)).qubits(1).quantum(state_vector()).seed(1).run(5).to_dict()
+        assert list(results["return"]) == [8] * 5, f"keys: {sorted(results)}"
 
 
 # ============================================================================
@@ -398,10 +358,17 @@ class TestHybridPrograms:
 
             return result1, measure(q2)
 
-        pipeline_tester.test_function_on_both_pipelines(
+        results = pipeline_tester.test_function_on_both_pipelines(
             feedback_circuit,
             shots=50,
         )
+        rows = results["hugr_llvm"]["result"]["results"]
+        # The correction makes q2 EQUAL q1 on every shot -- this is the
+        # engine's core measurement-feedback path.
+        assert all(int(a) == int(b) for (a, b) in rows), f"feedback broke: {rows[:10]}"
+        # And H gives both branches: both outcomes must appear over 50 shots.
+        ones = sum(int(a) for (a, _) in rows)
+        assert 10 <= ones <= 40, f"H distribution off: {ones}/50 ones"
 
 
 # ============================================================================
@@ -451,16 +418,20 @@ class TestAdvancedAlgorithms:
 
         results = pipeline_tester.test_function_on_both_pipelines(qft_2qubit, shots=100)
 
-        if results.get("hugr_llvm", {}).get("success"):
-            # QFT of |01⟩ should give a specific pattern
-            measurements = results["hugr_llvm"]["result"]["results"]
-            # print(f"QFT results distribution: {set(measurements)}")
-            # The test passes if we get results without errors
-            assert len(measurements) == 100
+        # QFT of a computational basis state measured in the computational
+        # basis is UNIFORM over all four outcomes (phases are invisible
+        # here, so this pins the H layers and plumbing, not the CRZ angle).
+        measurements = results["hugr_llvm"]["result"]["results"]
+        assert len(measurements) == 100
+        from collections import Counter
+
+        counts = Counter(tuple(int(v) for v in row) for row in measurements)
+        assert set(counts) == {(0, 0), (0, 1), (1, 0), (1, 1)}, f"missing outcomes: {counts}"
+        assert all(10 <= c <= 45 for c in counts.values()), f"non-uniform: {counts}"
 
     def test_deutsch_josza_algorithm(self, pipeline_tester: GuppyPipelineTest) -> None:
         """Test Deutsch-Josza algorithm for 2-bit function."""
-        from guppylang.std.quantum import cx, h, measure, qubit, x
+        from guppylang.std.quantum import cx, discard, h, measure, qubit, x
 
         @guppy
         def deutsch_josza_constant() -> tuple[bool, bool]:
@@ -485,8 +456,10 @@ class TestAdvancedAlgorithms:
             h(q0)
             h(q1)
 
-            # Measure input qubits (ancilla can be discarded)
-            return measure(q0), measure(q1)
+            # Measure input qubits; the ancilla is discarded (linearity)
+            r = measure(q0), measure(q1)
+            discard(anc)
+            return r
 
         @guppy
         def deutsch_josza_balanced() -> tuple[bool, bool]:
@@ -513,8 +486,10 @@ class TestAdvancedAlgorithms:
             h(q0)
             h(q1)
 
-            # Measure input qubits
-            return measure(q0), measure(q1)
+            # Measure input qubits; the ancilla is discarded (linearity)
+            r = measure(q0), measure(q1)
+            discard(anc)
+            return r
 
         # Test constant function
         results_const = pipeline_tester.test_function_on_both_pipelines(
@@ -523,10 +498,8 @@ class TestAdvancedAlgorithms:
         )
         if results_const.get("hugr_llvm", {}).get("success"):
             measurements = results_const["hugr_llvm"]["result"]["results"]
-            # Decode integer-encoded results
-            decoded_measurements = decode_integer_results(measurements, 2)
-            # For constant function, should measure |00⟩ with high probability
-            zeros = sum(1 for (a, b) in decoded_measurements if not a and not b)
+            # Rows are already per-shot (q0, q1) bit tuples
+            zeros = sum(1 for (a, b) in measurements if not a and not b)
             assert zeros > 95, f"Constant oracle should give |00⟩, got {zeros}/100"
 
         # Test balanced function
@@ -536,10 +509,8 @@ class TestAdvancedAlgorithms:
         )
         if results_bal.get("hugr_llvm", {}).get("success"):
             measurements = results_bal["hugr_llvm"]["result"]["results"]
-            # Decode integer-encoded results
-            decoded_measurements = decode_integer_results(measurements, 2)
-            # For balanced function, should never measure |00⟩
-            zeros = sum(1 for (a, b) in decoded_measurements if not a and not b)
+            # Rows are already per-shot (q0, q1) bit tuples
+            zeros = sum(1 for (a, b) in measurements if not a and not b)
             assert zeros < 5, f"Balanced oracle should not give |00⟩, got {zeros}/100"
 
     def test_grover_search(self, pipeline_tester: GuppyPipelineTest) -> None:
@@ -600,4 +571,4 @@ class TestAdvancedAlgorithms:
                 decoded_measurements = decode_integer_results(measurements, 2)
             # Should find |11⟩ with high probability after 1 Grover iteration
             found = sum(1 for (a, b) in decoded_measurements if a and b)
-            assert found > 70, f"Grover should amplify |11⟩, got {found}/100"
+            assert found == 100, f"2-qubit Grover with one iteration is deterministic |11>, got {found}/100"

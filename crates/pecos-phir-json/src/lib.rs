@@ -152,6 +152,31 @@ mod tests {
 
     #[cfg(feature = "v0_1")]
     #[test]
+    fn test_oversized_signed_register_fails_fast_in_engine() {
+        // A signed size==64 register is i(S+1) = i65, which does not fit the
+        // 64-bit backing integer. The engine must reject it at construction
+        // (fail fast) rather than swallow the definition error and silently
+        // recreate the register as i32 on first assignment. Regression test for
+        // issue #345 (engine-path variable-definition error swallowing).
+        let program = r#"{
+    "format": "PHIR/JSON",
+    "version": "0.1.0",
+    "ops": [
+        {"data": "cvar_define", "data_type": "i64", "variable": "x", "size": 64},
+        {"cop": "=", "returns": ["x"], "args": [9223372036854775807]},
+        {"cop": "Result", "args": ["x"], "returns": ["out"]}
+    ]
+}"#;
+        let err = PhirJsonEngine::from_json(program)
+            .expect_err("oversized signed register must fail fast at construction");
+        assert!(
+            err.to_string().contains("does not fit"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn test_phir_json_engine_basic() -> Result<(), PecosError> {
         let dir = tempdir().map_err(PecosError::IO)?;
@@ -255,7 +280,7 @@ mod tests {
             phir_engine
                 .processor
                 .environment
-                .add_variable("result", v0_1::environment::DataType::I32, 32)
+                .add_variable("result", v0_1::environment::DataType::I32, 31)
                 .ok();
             phir_engine.processor.environment.set("result", 1).ok();
 

@@ -126,14 +126,22 @@ class Guppy:
         self._func = func
         self._program = None
 
+    @property
+    def wrapped_function(self) -> GuppyFunction:
+        """The wrapped ``@guppy`` definition (for compilation/certification)."""
+        return self._func
+
     def _to_program(self) -> "CompiledHugr":
         """Convert to the underlying Rust program type."""
         if self._program is None:
             hugr_package = self._func.compile()
-            # Use JSON format (via to_str) instead of binary format (to_bytes)
-            # The JSON format is more reliably parsed and supports all HUGR features
-            # including CFG loops (while statements)
-            hugr_bytes = hugr_package.to_str().encode("utf-8")
+            # Use the BINARY HUGR envelope (Model format). The Selene/QIS engine's
+            # HUGR reader does not accept hugr-py 0.16's S-expression *text* envelope
+            # (`to_str`) -- loading it fails with "Failed to read HUGR" -- whereas the
+            # binary Model form round-trips cleanly, including CFG loops (while
+            # statements). (The `Hugr.from_bytes` sim loader is more permissive and
+            # accepts either, but the QIS engine path used for DEM tracing is not.)
+            hugr_bytes = hugr_package.to_bytes()
             self._program = pecos_rslib.Hugr.from_bytes(hugr_bytes)
         return self._program
 
@@ -157,6 +165,11 @@ class Hugr:
         """Initialize with HUGR bytes."""
         self._data = data
         self._program = None
+
+    @property
+    def hugr_bytes(self) -> bytes:
+        """The HUGR envelope bytes this program wraps."""
+        return self._data
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Hugr":

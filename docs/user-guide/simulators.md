@@ -131,21 +131,21 @@ The default simulator, optimized for QEC workloads with sparse stabilizer tablea
     results = sim(Qasm(circuit)).run(1000)
 
     # Or explicitly select it
-    from pecos.simulators import SparseStab
+    from pecos.simulators import sparse_stab
 
-    results = sim(Qasm(circuit)).quantum(SparseStab).run(1000)
+    results = sim(Qasm(circuit)).quantum(sparse_stab()).run(1000)
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
     ```rust
     // SparseStab is used by default
-    let results = sim(program.clone()).run(1000)?;
+    let results = sim(program.clone()).shots(1000).run()?;
 
     // Or explicitly select it
     let results = sim(program)
         .quantum(sparse_stab())
-        .run(1000)?;
+        .shots(1000).run()?;
     ```
 
 **Strengths:**
@@ -165,7 +165,10 @@ Pure Python reference implementation—useful for learning and debugging but slo
 ```python
 from pecos.simulators import SparseStabPy
 
-results = sim(Qasm(circuit)).quantum(SparseStabPy).run(100)
+state = SparseStabPy(num_qubits=2)
+state.run_gate("H", {0})
+state.run_gate("CNOT", {(0, 1)})
+measurement = state.run_gate("Measure", {0})
 ```
 
 ### Stabilizer
@@ -173,9 +176,9 @@ results = sim(Qasm(circuit)).quantum(SparseStabPy).run(100)
 Dense Rust stabilizer backend for Clifford circuits.
 
 ```python
-from pecos.simulators import Stabilizer
+from pecos.simulators import stabilizer
 
-results = sim(Qasm(circuit)).quantum(Stabilizer).run(100)
+results = sim(Qasm(circuit)).quantum(stabilizer()).run(100)
 ```
 
 **Strengths:**
@@ -199,9 +202,9 @@ Pure Rust state vector implementation.
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos.simulators import StateVec
+    from pecos.simulators import state_vector
 
-    results = sim(Qasm(circuit)).quantum(StateVec).run(100)
+    results = sim(Qasm(circuit)).quantum(state_vector()).run(100)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -209,7 +212,7 @@ Pure Rust state vector implementation.
     ```rust
     let results = sim(program)
         .quantum(state_vector())
-        .run(100)?;
+        .shots(100).run()?;
     ```
 
 **Strengths:**
@@ -222,9 +225,9 @@ Pure Rust state vector implementation.
 Rust backend specialized for Clifford circuits plus Z-axis rotations.
 
 ```python
-from pecos.simulators import StabVec
+from pecos.simulators import stab_vec
 
-results = sim(Qasm(circuit)).quantum(StabVec).run(100)
+results = sim(Qasm(circuit)).quantum(stab_vec()).run(100)
 ```
 
 **Strengths:**
@@ -287,7 +290,7 @@ Density matrix simulators represent mixed quantum states, enabling simulation of
 ```python
 from pecos.simulators import density_matrix
 
-results = sim(Qasm(circuit)).quantum(density_matrix).run(100)
+results = sim(Qasm(circuit)).quantum(density_matrix()).run(100)
 ```
 
 **Use cases:**
@@ -347,10 +350,10 @@ Returns random measurement results, ignoring all gates. Useful for testing.
 === ":fontawesome-brands-python: Python"
 
     ```python
-    from pecos.simulators import CoinToss
+    from pecos.simulators import coin_toss
 
     # Test classical logic with random quantum outcomes
-    results = sim(Qasm(circuit)).quantum(CoinToss).run(1000)
+    results = sim(Qasm(circuit)).quantum(coin_toss()).run(1000)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -395,7 +398,7 @@ The `sim()` API lets you switch simulators easily:
 
     ```python
     from pecos import sim, Qasm
-    from pecos.simulators import SparseStab, StateVec, Stabilizer
+    from pecos.simulators import sparse_stab, state_vector, stabilizer
 
     circuit = Qasm(
         """
@@ -413,8 +416,9 @@ The `sim()` API lets you switch simulators easily:
     results = sim(circuit).run(1000)
 
     # Explicit simulator selection
-    results = sim(circuit).quantum(StateVec).run(1000)
-    results = sim(circuit).quantum(Stabilizer).run(1000)
+    results = sim(circuit).quantum(sparse_stab()).run(1000)
+    results = sim(circuit).quantum(state_vector()).run(1000)
+    results = sim(circuit).quantum(stabilizer()).run(1000)
     ```
 
 === ":fontawesome-brands-rust: Rust"
@@ -431,16 +435,16 @@ The `sim()` API lets you switch simulators easily:
     "#);
 
     // Default (sparse stabilizer for Clifford circuits)
-    let results = sim(circuit.clone()).run(1000)?;
+    let results = sim(circuit.clone()).shots(1000).run()?;
 
     // Explicit simulator selection
     let results = sim(circuit.clone())
         .quantum(state_vector())
-        .run(1000)?;
+        .shots(1000).run()?;
 
     let results = sim(circuit)
         .quantum(sparse_stab())
-        .run(1000)?;
+        .shots(1000).run()?;
     ```
 
 ## Direct Simulator Access

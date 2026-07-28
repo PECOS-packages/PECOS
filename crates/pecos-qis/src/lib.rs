@@ -34,7 +34,7 @@
 //!
 //! # LLVM Setup
 //!
-//! This crate requires LLVM 14 for QIR (Quantum Intermediate Representation) support.
+//! This crate requires LLVM 21.1 for QIR (Quantum Intermediate Representation) support.
 //!
 //! If the build fails, run:
 //!
@@ -221,4 +221,43 @@ pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
     Ok(qis_engine()
         .runtime(selene_soft_rz_runtime()?)
         .interface(helios_interface_builder()))
+}
+
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::ffi::{OsStr, OsString};
+    use std::sync::Mutex;
+
+    // Environment variables are process-wide. Every test in this crate that
+    // reads or mutates environment state must hold this lock.
+    pub(crate) static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    pub(crate) struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        pub(crate) fn set(key: &'static str, value: impl AsRef<OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            // SAFETY: Environment-mutating tests hold ENV_MUTEX for the guard's lifetime.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: Environment-mutating tests hold ENV_MUTEX for the guard's lifetime.
+            unsafe {
+                if let Some(previous) = &self.previous {
+                    std::env::set_var(self.key, previous);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 }

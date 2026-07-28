@@ -7,10 +7,14 @@ env:
   RUSTFLAGS: -C debuginfo=0
   RUST_BACKTRACE: 1
   PYTHONUTF8: 1
+  LLVM_VERSION: "21.1"
+  LLVM_RELEASE_VERSION: "21.1.8"
+  # Force the MWPF decoder feature on in CI so we exercise the cmake-dependent
+  # build path and catch regressions. GitHub-hosted runners ship cmake.
+  PECOS_BUILD_MWPF: "1"
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
-  LLVM_VERSION: "14.0.6"
 
 on:
   push:
@@ -79,7 +83,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
         enable-cache: true
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -112,8 +116,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -122,7 +126,7 @@ jobs:
       if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Sync Python dependencies
@@ -133,7 +137,10 @@ jobs:
 
   python-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The full post-merge core suite passed at ~40m in late June and has since
+    # grown past 45m (timing out at ~83% of the suite on every dev push since
+    # 2026-07-07). 75m restores the original ~35% headroom.
+    timeout-minutes: 75
     steps:
     - name: Harden the runner (egress audit)
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -163,7 +170,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
         enable-cache: true
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -198,8 +205,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       if: github.event_name != 'pull_request'
@@ -209,7 +216,7 @@ jobs:
       if: github.event_name != 'pull_request' && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Run core Python tests (post-merge)
@@ -222,7 +229,9 @@ jobs:
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # The || guard keeps a future entry that forgets job-timeout at the
+    # historical 20 minutes instead of GitHub's 360-minute default.
+    timeout-minutes: ${{ matrix.job-timeout || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -232,16 +241,22 @@ jobs:
             artifact-name: python-compat-smoke-ubuntu
             build-llvm: true
             build-quantum-pecos: true
+            job-timeout: 20
+          # 30 minutes: Windows runner preparation (disk cleanup) varies by
+          # several minutes and the pecos-rslib wheel compile alone takes
+          # 10-12, so 20 minutes cancelled a healthy build (issue #360).
           - os: windows-2022
             python-version: "3.10"
             artifact-name: python-compat-smoke-windows
             build-llvm: false
             build-quantum-pecos: false
+            job-timeout: 30
           - os: macOS-latest
             python-version: "3.10"
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
+            job-timeout: 20
 
     steps:
     - name: Harden the runner (egress audit)
@@ -262,6 +277,14 @@ jobs:
         tool-cache: false
         swap-storage: true
 
+    - name: Free Disk Space (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "C:\hostedtoolcache\CodeQL" -Recurse -Force -ErrorAction SilentlyContinue
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
       with:
@@ -274,7 +297,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
         enable-cache: true
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -313,8 +336,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -323,7 +346,7 @@ jobs:
       if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Install Python build tooling
@@ -415,7 +438,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
 
     - name: Set up Rust (Windows)
       if: runner.os == 'Windows' && matrix.include-llvm
@@ -444,8 +467,8 @@ jobs:
       if: matrix.include-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       if: matrix.include-llvm
@@ -455,7 +478,7 @@ jobs:
       if: matrix.include-llvm && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Download Python compatibility smoke artifacts
@@ -477,14 +500,17 @@ jobs:
           uv pip install --system --force-reinstall "${llvm_wheels[0]}"
         fi
         if [ "${{ matrix.include-pecos }}" = "true" ]; then
-          uv pip install --system \
-            "phir>=0.3.3" \
-            "networkx>=2.1.0" \
-            "guppylang>=0.21.6" \
-            "tket<0.12.16" \
-            "hugr>=0.13.0" \
-            "selene-sim~=0.2.0"
-          uv pip install --system --force-reinstall --no-deps ./python-compat-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+          # One resolver invocation: the freshly built quantum-pecos wheel plus
+          # the already-installed local native wheels (re-passed so they satisfy
+          # its exact pecos-rslib/-llvm pins, which do not exist on PyPI for
+          # unreleased versions). All other dependencies resolve from the
+          # wheel's own Requires-Dist -- no hand-maintained pin list that can
+          # drift from the package metadata.
+          uv pip install --system --force-reinstall \
+            ./python-compat-smoke-artifacts/pecos-rslib/pecos_rslib-*.whl \
+            ./python-compat-smoke-artifacts/pecos-rslib-llvm/pecos_rslib_llvm-*.whl \
+            ./python-compat-smoke-artifacts/quantum-pecos/quantum_pecos-*.whl
+          uv pip check --system
         fi
 
     - name: Run Python compatibility smoke test
@@ -501,8 +527,18 @@ jobs:
           fi
         fi
 
+    - name: Execute WASM compatibility smoke test
+      run: python scripts/ci/smoke_wasm_foreign_object.py
+
+  # Post-merge lanes excluded from the PR fast path: the slow integration
+  # tests and the optional-dependency suite (guppy/selene/QIR runtime tests
+  # marked `optional_dependency`).
   python-slow-postmerge:
-    if: github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+    # workflow_dispatch escape hatch: the optional-dependency suite
+    # (guppy/selene/QIR) otherwise has NO pre-merge path -- a branch whose
+    # risk lives in that suite could only get its first CI signal after
+    # landing. Dispatch is manual-only; the PR fast path is unaffected.
+    if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -536,7 +572,7 @@ jobs:
     - name: Install the latest version of uv
       uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
-        version: "0.11.14"
+        version-file: ".github/uv.toml"
         enable-cache: true
         save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
@@ -566,8 +602,8 @@ jobs:
       id: cache-llvm
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
-        key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v2
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
     - name: Ensure LLVM ${{ env.LLVM_VERSION }}
       run: just ci-env
@@ -576,11 +612,19 @@ jobs:
       if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
-        path: ~/.pecos/deps/llvm-14
+        path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Build core Python packages
-      run: just python-ci-build
+      # python-ci-build-test, not python-ci-build: pytest COLLECTION imports
+      # every module under tests/, and tests/qec imports pecos_rslib_exp at
+      # module level -- without the exp wheel the whole lane dies in
+      # collection (it has failed this way on dev since the qec tests
+      # landed).
+      run: just python-ci-build-test
+
+    - name: Run optional-dependency Python tests
+      run: just pytest-dep
 
     - name: Run slow Python tests
       run: just pytest-slow
@@ -617,6 +661,11 @@ jobs:
             exit 1
           }
 
+      # pecos-build (where the toml_edit work lives) and pecos-core are
+      # publishable and need no LLVM/FFI/external toolchain -- the right
+      # minimal canary. LLVM-needing crates additionally require the upstream
+      # llvm-sys LLVM_SYS_211_PREFIX (a universal llvm-sys requirement, not a
+      # PECOS workaround) and are out of scope for this contract lane.
       - name: Vanilla cargo check (publishable crates, no just/bootstrap)
         shell: pwsh
         run: |

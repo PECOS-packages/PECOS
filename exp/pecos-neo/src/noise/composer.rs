@@ -511,7 +511,7 @@ impl From<super::GeneralNoiseModelBuilder> for ComposableNoiseModel {
     /// let circuit = CommandQueue::new();
     ///
     /// // Both of these work:
-    /// sim_neo(circuit.clone()).noise(GeneralNoiseModelBuilder::new().with_p1(0.01).build());
+    /// sim_neo(circuit.clone()).auto().noise(GeneralNoiseModelBuilder::new().with_p1(0.01).build());
     /// sim_neo(circuit).noise(GeneralNoiseModelBuilder::new().with_p1(0.01));  // No .build()!
     /// ```
     fn from(builder: super::GeneralNoiseModelBuilder) -> Self {

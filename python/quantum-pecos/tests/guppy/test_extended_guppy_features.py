@@ -55,11 +55,9 @@ class ExtendedGuppyTester:
     ) -> dict[str, Any]:
         """Test a Guppy function and return results."""
         if not self.backends.get("rust_backend", False):
-            return {
-                "success": False,
-                "error": "Rust backend not available",
-                "result": None,
-            }
+            # Skipping is honest; returning success=False used to
+            # green-pass every assertion gated behind `if success`.
+            pytest.skip("Rust backend not available")
 
         try:
             # Use sim() API
@@ -70,7 +68,7 @@ class ExtendedGuppyTester:
             result_dict = builder.run(shots).to_dict()
 
             # Format results - measurements is [[m0], [m0], ...] or [[m0, m1], ...]
-            raw_measurements = result_dict.get("measurements", [])
+            raw_measurements = result_dict["measurements"]
             if raw_measurements and isinstance(raw_measurements[0], list):
                 if len(raw_measurements[0]) == 1:
                     # Single measurement - [[1], [0], ...] -> [1, 0, ...]
@@ -87,11 +85,10 @@ class ExtendedGuppyTester:
                 "error": None,
             }
         except Exception as e:
-            return {
-                "success": False,
-                "result": None,
-                "error": str(e),
-            }
+            # A pipeline failure must FAIL the test: the semantic assertions
+            # in this file are gated behind success, so returning
+            # success=False used to make any engine regression pass.
+            pytest.fail(f"guppy pipeline failed for {func}: {e}")
 
 
 @pytest.fixture
@@ -131,9 +128,14 @@ class TestPhaseAndRotationGates:
             return r1, r2
 
         result = tester.test_function(phase_gate_test, shots=100)
-        if result["success"]:
-            pass
-            # print(f"Phase gate test results: {result['result']['results'][:10]}...")
+        rows = result["result"]["results"]
+        assert len(rows) == 100
+        # H;S;H and H;T;T;H both give an exact 50/50 distribution; a broken
+        # S or T (e.g. silently applied as identity) gives all-zeros.
+        r1_ones = sum(r[0] for r in rows)
+        r2_ones = sum(r[1] for r in rows)
+        assert 30 <= r1_ones <= 70, f"S-gate distribution off: {r1_ones}/100 ones"
+        assert 30 <= r2_ones <= 70, f"T^2-gate distribution off: {r2_ones}/100 ones"
 
     def test_phase_gate_inverses(self, tester: ExtendedGuppyTester) -> None:
         """Test S† and T† (inverse phase gates)."""
@@ -180,11 +182,16 @@ class TestPhaseAndRotationGates:
             return r1, r2
 
         result = tester.test_function(rotation_test, shots=100)
-        if result["success"]:
-            # RY(pi/2) on |0⟩ creates equal superposition, so roughly 50/50 distribution
-            # RZ just adds phase, results will vary
-            result["result"]["results"]
-            # print(f"Rotation gate test results (first 10): {results[:10]}")
+        rows = result["result"]["results"]
+        assert len(rows) == 100
+        # RY(pi/2)|0> is an equal superposition: both outcomes must appear
+        # with a near-even split (a dropped rotation gives all-zeros).
+        r1_ones = sum(r[0] for r in rows)
+        assert 30 <= r1_ones <= 70, f"RY(pi/2) distribution off: {r1_ones}/100 ones"
+        # H;RZ(pi/4);H gives P(1) = sin^2(pi/8) ~ 0.146: assert the skewed
+        # but non-degenerate distribution.
+        r2_ones = sum(r[1] for r in rows)
+        assert 3 <= r2_ones <= 35, f"RZ(pi/4) distribution off: {r2_ones}/100 ones"
 
 
 # ============================================================================
@@ -207,6 +214,7 @@ class TestMultiQubitGates:
             x(q1)  # Set control to |1⟩
             cy(q1, q2)  # Apply Y to q2 since control is |1⟩
             r1 = measure(q2)  # Should be |1⟩
+            discard(q1)  # Control no longer needed (linearity)
 
             # Test CZ gate
             q3 = qubit()
@@ -237,23 +245,22 @@ class TestQubitArrays:
 
     def test_qubit_array_creation_and_access(self, tester: ExtendedGuppyTester) -> None:
         """Test creating and accessing qubit arrays."""
+        from guppylang.std.builtins import array
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def array_test() -> tuple[bool, bool, bool, bool]:
             # Create array of 4 qubits
-            qubits = qubit_array(4)
+            qubits = array(qubit() for _ in range(4))
 
             # Apply different gates to different qubits
             x(qubits[1])  # Flip second qubit
             x(qubits[3])  # Flip fourth qubit
 
-            # Measure all
-            return (
-                measure(qubits[0]),
-                measure(qubits[1]),
-                measure(qubits[2]),
-                measure(qubits[3]),
-            )
+            # Measure all (elements cannot move out of a subscript;
+            # measure the array and index the copyable bits)
+            bits = measure_array(qubits)
+            return bits[0], bits[1], bits[2], bits[3]
 
         result = tester.test_function(array_test, shots=100)
         if result["success"]:
@@ -264,29 +271,31 @@ class TestQubitArrays:
 
     def test_qubit_array_loops(self, tester: ExtendedGuppyTester) -> None:
         """Test looping over qubit arrays."""
+        from guppylang.std.builtins import array
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def array_loop_test() -> int:
-            n = 5
-            qubits = qubit_array(n)
+            qubits = array(qubit() for _ in range(5))
 
             # Apply H to all qubits
-            for i in range(n):
+            for i in range(5):
                 h(qubits[i])
 
             # Count how many measure to |1⟩
+            bits = measure_array(qubits)
             count = 0
-            for i in range(n):
-                if measure(qubits[i]):
+            for i in range(5):
+                if bits[i]:
                     count += 1
-
             return count
 
         result = tester.test_function(array_loop_test, shots=100)
         if result["success"]:
-            # With 5 qubits in superposition, expect average ~2.5
-            counts = result["result"]["results"]
-            avg = sum(counts) / len(counts)
+            # Each shot yields the 5 measured bits; with 5 qubits in
+            # superposition the mean ones-per-shot is ~2.5
+            rows = result["result"]["results"]
+            avg = sum(sum(row) for row in rows) / len(rows)
             assert 1.5 < avg < 3.5, f"Superposition statistics off, avg={avg}"
 
 
@@ -324,8 +333,8 @@ class TestClassicalDataTypes:
             correlated = sum(1 for (a, b) in measurements if a == b)
             assert correlated > 80, f"Tuple ops failed, correlation={correlated}/100"
 
-    def test_boolean_expressions(self, tester: ExtendedGuppyTester) -> None:
-        """Test complex boolean expressions."""
+    def test_boolean_expressions(self) -> None:
+        """Pure-classical boolean returns surface under the "return" key."""
 
         @guppy
         def boolean_expr_test() -> bool:
@@ -336,11 +345,13 @@ class TestClassicalDataTypes:
             # Complex boolean expression
             return (a and b) or (not b and c) or (a and not c)
 
-        result = tester.test_function(boolean_expr_test, shots=10)
-        if result["success"]:
-            results = result["result"]["results"]
-            # (True and False) or (True and True) or (True and False) = True
-            assert all(r for r in results), f"Boolean expression failed: {results}"
+        from pecos import Guppy, sim
+        from pecos_rslib import state_vector
+
+        results = sim(Guppy(boolean_expr_test)).qubits(1).quantum(state_vector()).seed(1).run(10).to_dict()
+        # (True and False) or (True and True) or (True and False) = True
+        values = [bool(v) for v in results["return"]]
+        assert values == [True] * 10, f"Boolean expression failed: {values}"
 
 
 # ============================================================================
@@ -383,40 +394,38 @@ class TestControlFlow:
                     expected_pattern,
                 ), f"Pattern mismatch: {shot_result}"
 
-    @pytest.mark.skip(
-        reason="While loops with compound conditions need more work in HUGR interpreter",
-    )
-    def test_while_with_quantum(self, tester: ExtendedGuppyTester) -> None:
-        """Test while loops with quantum operations."""
+    def test_while_with_quantum(self) -> None:
+        """A repeat-until-success while loop with a compound condition.
+
+        The measurement count varies per shot, so raw measurements cannot
+        aggregate into rectangular results -- report through result(),
+        which is exactly what the engine's captured-result path is for.
+        """
+        from guppylang.std.builtins import result
 
         @guppy
-        def while_quantum_test() -> int:
+        def while_quantum_test() -> None:
             count = 0
             tries = 0
 
-            # Keep trying until we get a |1⟩ measurement
+            # Keep trying until we get a |1> measurement (max 10 tries)
             while count == 0 and tries < 10:
                 q = qubit()
-                h(q)  # 50% chance of |1⟩
+                h(q)  # 50% chance of |1>
                 if measure(q):
                     count = 1
                 tries += 1
 
-            return tries
+            result("tries", tries)
 
-        result = tester.test_function(while_quantum_test, shots=100)
-        if result["success"]:
-            # Function returns measurements, not the tries count
-            # Results are tuples of measurements (number varies per shot based on loop iterations)
-            # We can count the number of measurements to approximate tries, but can't directly verify the int return
-            # Just verify that we got measurement results
-            measurements = result["result"]["results"]
-            assert len(measurements) == 100, f"Expected 100 shots, got {len(measurements)}"
-            # Each shot should have at least one measurement (at least 1 try)
-            for shot_measurements in measurements:
-                if isinstance(shot_measurements, tuple):
-                    assert len(shot_measurements) >= 1, "Should have at least 1 measurement per shot"
-                # Can't verify avg_tries since we don't get the integer return value
+        results = sim(Guppy(while_quantum_test)).qubits(2).quantum(state_vector()).seed(11).run(100).to_dict()
+        tries = [int(t) for t in results["tries"]]
+        assert len(tries) == 100
+        # Geometric with p=1/2 capped at 10: every value in [1, 10], and
+        # the mean is ~2 (assert a generous but non-vacuous band).
+        assert all(1 <= t <= 10 for t in tries), f"out-of-range tries: {sorted(set(tries))}"
+        mean = sum(tries) / len(tries)
+        assert 1.5 < mean < 3.0, f"RUS try distribution off: mean={mean}"
 
     def test_early_return(self, tester: ExtendedGuppyTester) -> None:
         """Test early return from functions."""
@@ -456,17 +465,20 @@ class TestQuantumAlgorithms:
 
     def test_ghz_state_creation(self, tester: ExtendedGuppyTester) -> None:
         """Test GHZ state creation for multiple qubits."""
+        from guppylang.std.builtins import array
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def create_ghz3() -> tuple[bool, bool, bool]:
             # Create 3-qubit GHZ state: (|000⟩ + |111⟩)/√2
-            qubits = qubit_array(3)
+            qubits = array(qubit() for _ in range(3))
 
             h(qubits[0])
             cx(qubits[0], qubits[1])
             cx(qubits[1], qubits[2])
 
-            return measure(qubits[0]), measure(qubits[1]), measure(qubits[2])
+            bits = measure_array(qubits)
+            return bits[0], bits[1], bits[2]
 
         result = tester.test_function(create_ghz3, shots=100)
         if result["success"]:
@@ -496,7 +508,9 @@ class TestQuantumAlgorithms:
             # Measure in X basis (apply H before measuring)
             h(control)
 
-            return measure(control)
+            r = measure(control)
+            discard(target)  # linearity: target is no longer needed
+            return r
 
         result = tester.test_function(phase_kickback_test, shots=100)
         if result["success"]:
@@ -613,15 +627,10 @@ class TestQuantumAlgorithms:
         ones = sum(measurements_interference)
         prob_one = ones / len(measurements_interference)
 
-        # The S gate behavior might vary by implementation
-        # If S gate is not working as expected, we might get 50/50
-        # For now, just verify we get measurements
-        assert 0 <= prob_one <= 1, f"Probability should be between 0 and 1, got {prob_one:.3f}"
-
-        # Note: In ideal case, H-S-H on |0⟩ should give |0⟩ with high probability
-        # But current implementation seems to give 50/50, which suggests
-        # either S gate implementation differs or there's a phase issue
-        # This would need deeper investigation into the simulator's S gate
+        # H;S;H on |0> is EXACTLY 50/50: S maps |+> to (|0> + i|1>)/sqrt(2),
+        # and the final H yields P(1) = |1 - i|^2 / 4 = 1/2. (An S applied
+        # as identity would give all-zeros; as Z, all-ones.)
+        assert 0.4 <= prob_one <= 0.6, f"H;S;H must be 50/50, got {prob_one:.3f}"
 
 
 # ============================================================================
@@ -691,34 +700,32 @@ class TestPerformance:
 
     def test_many_qubits(self, tester: ExtendedGuppyTester) -> None:
         """Test handling many qubits."""
+        from guppylang.std.builtins import array
+        from guppylang.std.quantum import measure_array
 
         @guppy
         def many_qubits_test() -> int:
             # Create 10 qubits
-            n = 10
-            qubits = qubit_array(n)
+            qubits = array(qubit() for _ in range(10))
 
             # Apply H to all
-            for i in range(n):
+            for i in range(10):
                 h(qubits[i])
 
             # Count ones
+            bits = measure_array(qubits)
             count = 0
-            for i in range(n):
-                if measure(qubits[i]):
+            for i in range(10):
+                if bits[i]:
                     count += 1
-
             return count
 
         result = tester.test_function(many_qubits_test, shots=50)
         if result["success"]:
-            counts = result["result"]["results"]
-            avg = sum(counts) / len(counts)
+            rows = result["result"]["results"]
+            avg = sum(sum(row) for row in rows) / len(rows)
             assert 3 < avg < 7, f"Many qubit statistics off, avg={avg}"
 
-    @pytest.mark.skip(
-        reason="For-loop in function body returns empty results in HUGR interpreter",
-    )
     def test_deep_circuit(self, tester: ExtendedGuppyTester) -> None:
         """Test deep circuit with many gates."""
 

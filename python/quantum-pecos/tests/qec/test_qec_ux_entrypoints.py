@@ -19,7 +19,7 @@ def test_sim_neo_stack_runs_from_exp() -> None:
         pecos_rslib_exp.sim_neo(tc)
         .quantum(pecos_rslib_exp.stabilizer())
         .noise(pecos_rslib_exp.depolarizing())
-        .shots(2)
+        .sampling(pecos_rslib_exp.monte_carlo(2))
         .seed(123)
         .run()
     )
@@ -54,6 +54,77 @@ def test_surface_code_memory_runs_native_zero_noise_quick_start() -> None:
     assert result.num_rounds == 1
     assert result.logical_error_rate == 0.0
     assert result.raw_error_rate == 0.0
+    assert result.interaction_basis == "cx"
+
+
+def test_surface_code_memory_accepts_szz_interaction_basis() -> None:
+    from pecos.qec.surface import surface_code_memory
+
+    result = surface_code_memory(
+        distance=3,
+        physical_error_rate=0.0,
+        shots=4,
+        rounds=1,
+        seed=123,
+        interaction_basis="szz",
+    )
+
+    assert result.interaction_basis == "szz"
+    assert result.logical_error_rate == 0.0
+    assert result.raw_error_rate == 0.0
+
+
+# The traced-qis runtime plumbing is runtime-generic; these tests select a
+# non-default PECOS-built runtime by name to prove the runtime argument is
+# actually threaded through rather than silently falling back to the default.
+_NON_DEFAULT_RUNTIME = "selene_soft_rz_runtime"
+
+
+def test_surface_code_memory_accepts_traced_qis_runtime() -> None:
+    from pecos.qec.surface import surface_code_memory
+
+    result = surface_code_memory(
+        distance=3,
+        physical_error_rate=0.0,
+        shots=4,
+        rounds=1,
+        seed=123,
+        circuit_source="traced_qis",
+        runtime=_NON_DEFAULT_RUNTIME,
+        decoder_type="pymatching_uncorrelated",
+    )
+
+    assert result.logical_error_rate == 0.0
+    assert result.raw_error_rate == 0.0
+
+
+def test_surface_decoder_accepts_traced_qis_runtime() -> None:
+    from pecos.qec.surface import NoiseModel, SurfaceDecoder, SurfacePatch
+
+    decoder = SurfaceDecoder(
+        SurfacePatch.create(distance=3),
+        num_rounds=1,
+        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        decoder_type="pymatching_uncorrelated",
+        circuit_level_dem_source="traced_qis",
+        runtime=_NON_DEFAULT_RUNTIME,
+    )
+
+    assert decoder.get_dem("Z")
+
+
+def test_build_native_sampler_accepts_traced_qis_runtime() -> None:
+    from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
+
+    sampler = build_native_sampler(
+        SurfacePatch.create(distance=3),
+        num_rounds=1,
+        noise=NoiseModel(p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0),
+        circuit_source="traced_qis",
+        runtime=_NON_DEFAULT_RUNTIME,
+    )
+
+    assert sampler.dem_string
 
 
 def test_surface_code_memory_rejects_ambiguous_noise_inputs() -> None:

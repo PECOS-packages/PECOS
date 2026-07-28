@@ -18,7 +18,7 @@ pub enum PromptMode {
 
 /// Prompt the user with a yes/no question.
 ///
-/// - `message`: The question to display (e.g. "Install LLVM 14 to ~/.pecos/deps/llvm/ (~400MB)?")
+/// - `message`: The question to display (e.g. "Install LLVM 21.1 to ~/.pecos/deps/llvm-21.1/?")
 /// - `default_yes`: Whether the default answer is yes (`[Y/n]`) or no (`[y/N]`)
 /// - `mode`: How to resolve the prompt
 ///

@@ -275,9 +275,16 @@ class PyPHIR:
 
                 if name == "cvar_define":
                     data_type = o["data_type"]
-                    size = int(data_type[1:])
+                    type_width = int(data_type[1:])
                     if "size" in o:
                         size = o["size"]
+                    elif data_type in signed_data_types:
+                        # A signed size-S register is an i(S+1) integer, so the
+                        # full backing type iN holds N-1 data bits plus a sign
+                        # bit -- default a bare signed register to size N-1.
+                        size = type_width - 1
+                    else:
+                        size = type_width
                     data = d.CVarDefine(
                         data_type=data_type,
                         variable=o["variable"],

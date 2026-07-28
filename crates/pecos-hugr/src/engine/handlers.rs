@@ -63,6 +63,37 @@ use tket::hugr::{Hugr, HugrView, Node};
 
 use super::HugrEngine;
 
+/// Outcome of an extension-op handler.
+///
+/// This replaces the old boolean contract (`true` = handled, `false` =
+/// defer) so that fatal faults are a first-class result instead of a side
+/// channel: a handler that cannot ever produce a value must not choose
+/// between fabricating one and silently deferring forever.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HandlerOutcome {
+    /// The op executed; its outputs (if any) are stored on its wires.
+    Processed,
+    /// Inputs not ready, or the op is unknown to the engine: park the node
+    /// for retry. A node that defers forever surfaces in the stall report.
+    Defer,
+    /// Fatal fault: poison the execution with this message.
+    Fault(String),
+}
+
+/// Outcome of the classical-op executor ([`HugrEngine::handle_classical_op`]).
+///
+/// Same three-way contract as [`HandlerOutcome`], but `Processed` carries
+/// the computed `(output_port, value)` pairs for the caller to store.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ClassicalOutcome {
+    /// The op executed; store these `(port, value)` pairs on its wires.
+    Outputs(Vec<(usize, crate::engine::types::ClassicalValue)>),
+    /// Inputs not ready or unconvertible: park the node for retry.
+    Defer,
+    /// Fatal fault: poison the execution with this message.
+    Fault(String),
+}
+
 impl HugrEngine {
     /// Handle extension operations from various tket extensions.
     ///
@@ -94,11 +125,13 @@ impl HugrEngine {
     ///
     /// # Returns
     ///
-    /// Returns `true` if the operation was handled, `false` otherwise.
-    pub(crate) fn handle_extension_op(&mut self, hugr: &Hugr, node: Node) -> bool {
+    /// Returns the [`HandlerOutcome`]: `Processed` when the op executed,
+    /// `Defer` when its inputs are not ready yet or the op is unknown (the
+    /// caller parks such nodes for retry), `Fault` for a fatal fault.
+    pub(crate) fn handle_extension_op(&mut self, hugr: &Hugr, node: Node) -> HandlerOutcome {
         let op = hugr.get_optype(node);
         let Some(ext_op) = op.as_extension_op() else {
-            return false;
+            return HandlerOutcome::Defer;
         };
 
         let ext_id = ext_op.extension_id();
@@ -114,7 +147,7 @@ impl HugrEngine {
             "tket.debug" => self.handle_debug_op(hugr, node, &op_name),
             "tket.bool" => self.handle_bool_op(hugr, node, &op_name),
             "tket.rotation" => self.handle_rotation_op(hugr, node, &op_name),
-            "tket.modifier" => self.handle_modifier_op(hugr, node, &op_name),
+            "tket.modifier" => Self::handle_modifier_op(node, &op_name),
             "tket.wasm" => self.handle_wasm_op(hugr, node, &op_name),
             "tket.guppy" => self.handle_guppy_op(hugr, node, &op_name),
             "tket.global_phase" => self.handle_global_phase_op(hugr, node, &op_name),
@@ -126,7 +159,7 @@ impl HugrEngine {
             "arithmetic.float" => self.handle_float_op(hugr, node, &op_name),
             "arithmetic.int" => self.handle_int_op(hugr, node, &op_name),
             "arithmetic.conversions" => self.handle_conversions_op(hugr, node, &op_name),
-            _ => false,
+            _ => HandlerOutcome::Defer,
         }
     }
 }

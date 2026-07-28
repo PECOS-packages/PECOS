@@ -11,7 +11,7 @@
 //! doesn't perform quantum simulation but manages program execution flow.
 
 use log::trace;
-use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
+use pecos_qis_ffi_types::{LoweredQuantumOp, Operation, OperationCollector, QuantumOp};
 use std::collections::BTreeMap;
 
 /// Result type for runtime operations
@@ -192,14 +192,34 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
 
     /// Reset the runtime for a new execution
     ///
+    /// A reset clears execution state; it does NOT start a shot. Shot
+    /// boundaries are delivered exactly once per shot via `shot_start` /
+    /// `shot_end`, so a runtime keying on shot identity never sees phantom
+    /// shot-0 starts from resets (the engine may reset more than once
+    /// between shots).
+    ///
     /// # Errors
     /// Returns an error if the runtime cannot be reset.
     fn reset(&mut self) -> Result<()> {
-        self.shot_start(0, None)
+        let state = self.get_classical_state_mut();
+        state.pc = 0;
+        state.call_stack.clear();
+        state.measurements.clear();
+        state.variables.clear();
+        state.shot_id = None;
+        Ok(())
     }
 
     /// Get the number of qubits used by the program
     fn num_qubits(&self) -> usize;
+
+    /// Provide an external qubit-count hint before runtime initialization.
+    ///
+    /// Dynamic programs discover qubits while the program runs, but some
+    /// runtime plugins need the total device size during initialization.
+    fn set_num_qubits(&mut self, _num_qubits: usize) {
+        // Default implementation does nothing.
+    }
 
     /// Set the maximum number of operations to batch
     ///
@@ -208,6 +228,71 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
     fn set_batch_size(&mut self, size: usize) {
         // Default implementation does nothing
         let _ = size;
+    }
+
+    /// Whether this runtime can lower freshly collected program operations.
+    ///
+    /// Dynamic QIS execution yields PECOS `Operation`s from the running program.
+    /// Most runtimes leave those operations for the engine to lower directly.
+    /// Selene runtime plugins opt in here so the operation stream flows through
+    /// the runtime scheduler before it reaches the PECOS quantum/noise stack.
+    fn supports_operation_lowering(&self) -> bool {
+        false
+    }
+
+    /// Lower freshly collected program operations through the runtime.
+    ///
+    /// Implementations that return `true` from `supports_operation_lowering`
+    /// should accept the given operations, drain any runtime-ready scheduled
+    /// operations, and return them as PECOS quantum operations.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot accept or lower the operations.
+    fn lower_operations(&mut self, _operations: &[Operation]) -> Result<Vec<QuantumOp>> {
+        Err(RuntimeError::ExecutionError(
+            "runtime does not support operation lowering".to_string(),
+        ))
+    }
+
+    /// Lower freshly collected program operations through the runtime with provenance.
+    ///
+    /// Runtimes that can preserve source/scheduler metadata should override this
+    /// method. The default preserves the existing `lower_operations` behavior and
+    /// attaches empty metadata to every lowered operation.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot accept or lower the operations.
+    fn lower_operations_with_metadata(
+        &mut self,
+        operations: &[Operation],
+    ) -> Result<Vec<LoweredQuantumOp>> {
+        self.lower_operations(operations)
+            .map(|ops| ops.into_iter().map(LoweredQuantumOp::from).collect())
+    }
+
+    /// Flush and drain any operations the runtime scheduler is still holding.
+    ///
+    /// A scheduling runtime may defer operations across lowering batches.
+    /// The engine calls this at shot completion, before certifying the trace
+    /// complete: a non-empty result means lowered operations exist that no
+    /// batch will ever carry, so the shot must fail rather than certify.
+    /// Implementations must force their scheduler to release held work (e.g.
+    /// a terminal barrier) before collecting, not merely poll for ready
+    /// operations.
+    ///
+    /// The default fails closed: the engine only calls this for runtimes
+    /// returning `true` from `supports_operation_lowering`, and a lowering
+    /// runtime that has not implemented the drain protocol cannot be
+    /// certified drained. Non-lowering runtimes are never asked.
+    ///
+    /// # Errors
+    /// Returns an error if the runtime cannot prove its scheduler is drained.
+    fn drain_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
+        Err(RuntimeError::ExecutionError(
+            "lowering runtime does not implement drain_pending_operations; \
+             cannot verify the scheduler is drained"
+                .to_string(),
+        ))
     }
 
     /// Check if the runtime needs to re-execute with known measurements

@@ -71,7 +71,10 @@ use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
 use wide::u64x4;
 
-use super::types::{NoiseConfig, PerGateTypeNoise, combine_probabilities};
+use super::types::{
+    NoiseConfig, PauliWeights, PerGateTypeNoise, ReplacementBranchApproximation,
+    combine_probabilities,
+};
 
 // ============================================================================
 // DEM Mechanism (used during building)
@@ -423,10 +426,8 @@ impl SamplingEngine {
                     .locations
                     .iter()
                     .find(|l| l.node == loc.node && l.before == loc.before)
-                    .map_or(1, |l| l.idle_duration.max(1));
-                // Duration values are small integers; precision loss is not a concern.
-                #[allow(clippy::cast_precision_loss)]
-                Some(noise.idle_pauli_probs(duration as f64))
+                    .map_or(0.0, |l| l.idle_duration.max(0.0));
+                Some(noise.idle_pauli_probs(duration))
             } else {
                 None
             };
@@ -463,7 +464,18 @@ impl SamplingEngine {
                 // Custom per-Pauli weights: p * weight_for(pauli)
                 events
                     .iter()
-                    .map(|event| p * weights.weight_for(&event.pauli))
+                    .map(|event| {
+                        let weight = if n_qubits == 2 {
+                            weights.two_qubit_weight_for(
+                                loc.gate_type,
+                                &event.pauli,
+                                noise.p2_replacement_approximation,
+                            )
+                        } else {
+                            weights.weight_for(&event.pauli)
+                        };
+                        p * weight
+                    })
                     .collect()
             } else {
                 // Default uniform: p / num_events
@@ -1835,9 +1847,14 @@ pub(crate) struct SamplingEngineBuilder<'a> {
     per_gate: Option<PerGateTypeNoise>,
     influence_map: &'a DagFaultInfluenceMap,
     p1: f64,
+    p1_gate_rates: BTreeMap<GateType, f64>,
     p2: f64,
+    p2_gate_rates: BTreeMap<GateType, f64>,
     p_meas: f64,
     p_prep: f64,
+    p1_weights: Option<PauliWeights>,
+    p2_weights: Option<PauliWeights>,
+    p2_replacement_approximation: ReplacementBranchApproximation,
     idle_noise: Option<NoiseConfig>,
     detector_records: Vec<Vec<i32>>,
     observable_records: Vec<Vec<i32>>,
@@ -1858,9 +1875,14 @@ impl<'a> SamplingEngineBuilder<'a> {
         Self {
             influence_map,
             p1: 0.01,
+            p1_gate_rates: BTreeMap::new(),
             p2: 0.01,
+            p2_gate_rates: BTreeMap::new(),
             p_meas: 0.01,
             p_prep: 0.01,
+            p1_weights: None,
+            p2_weights: None,
+            p2_replacement_approximation: ReplacementBranchApproximation::default(),
             idle_noise: None,
             per_gate: None,
             detector_records: Vec::new(),
@@ -1874,9 +1896,31 @@ impl<'a> SamplingEngineBuilder<'a> {
     #[must_use]
     pub fn with_noise(mut self, p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
         self.p1 = p1;
+        self.p1_gate_rates.clear();
         self.p2 = p2;
+        self.p2_gate_rates.clear();
         self.p_meas = p_meas;
         self.p_prep = p_prep;
+        self.p1_weights = None;
+        self.p2_weights = None;
+        self.p2_replacement_approximation = ReplacementBranchApproximation::default();
+        self.idle_noise = None;
+        self
+    }
+
+    /// Set the full noise model, including biased Pauli weights.
+    #[must_use]
+    pub fn with_noise_config(mut self, noise: NoiseConfig) -> Self {
+        self.p1 = noise.p1;
+        self.p1_gate_rates = noise.p1_gate_rates.clone();
+        self.p2 = noise.p2;
+        self.p2_gate_rates = noise.p2_gate_rates.clone();
+        self.p_meas = noise.p_meas;
+        self.p_prep = noise.p_prep;
+        self.p1_weights.clone_from(&noise.p1_weights);
+        self.p2_weights.clone_from(&noise.p2_weights);
+        self.p2_replacement_approximation = noise.p2_replacement_approximation;
+        self.idle_noise = noise.uses_dedicated_idle_noise().then_some(noise);
         self
     }
 
@@ -1964,6 +2008,16 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Build the [`SamplingEngine`].
     #[must_use]
     pub fn build(self) -> SamplingEngine {
+        if self.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
+            && self
+                .p2_weights
+                .as_ref()
+                .is_some_and(super::types::PauliWeights::has_replacement_entries)
+        {
+            panic!(
+                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+            );
+        }
         let num_detectors = self.detector_records.len();
         let influence_observable_ids = self.influence_map.observable_ids();
         let num_influence_observables = self.influence_map.num_observables();
@@ -2088,7 +2142,9 @@ impl<'a> SamplingEngineBuilder<'a> {
         }
 
         // Process two-qubit gates as pairs
-        let has_any_2q_noise = self.per_gate.is_some() || self.p2 > 0.0;
+        let has_any_2q_noise = self.per_gate.is_some()
+            || self.p2 > 0.0
+            || self.p2_gate_rates.values().any(|rate| *rate > 0.0);
         if has_any_2q_noise {
             for loc_indices in cx_groups.values() {
                 for pair in loc_indices.chunks(2) {
@@ -2279,7 +2335,16 @@ impl<'a> SamplingEngineBuilder<'a> {
                 ]
             }
         } else {
-            [self.p1 / 3.0; 3]
+            let p1_total = self.p1_gate_rates.get(&gate).copied().unwrap_or(self.p1);
+            if let Some(weights) = &self.p1_weights {
+                use pecos_core::pauli::{X, Y, Z};
+                return [
+                    p1_total * weights.weight_for(&X(0)),
+                    p1_total * weights.weight_for(&Y(0)),
+                    p1_total * weights.weight_for(&Z(0)),
+                ];
+            }
+            [p1_total / 3.0; 3]
         }
     }
 
@@ -2298,8 +2363,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 return rates;
             }
             if pg.base.uses_dedicated_idle_noise() {
-                #[allow(clippy::cast_precision_loss)]
-                let duration = loc.idle_duration.max(1) as f64;
+                let duration = loc.idle_duration.max(0.0);
                 let probs = pg.base.idle_pauli_probs(duration);
                 return [probs.px, probs.py, probs.pz];
             }
@@ -2309,8 +2373,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         if let Some(noise) = &self.idle_noise
             && noise.uses_dedicated_idle_noise()
         {
-            #[allow(clippy::cast_precision_loss)]
-            let duration = loc.idle_duration.max(1) as f64;
+            let duration = loc.idle_duration.max(0.0);
             let probs = noise.idle_pauli_probs(duration);
             return [probs.px, probs.py, probs.pz];
         }
@@ -2328,7 +2391,21 @@ impl<'a> SamplingEngineBuilder<'a> {
                 std::array::from_fn(|i| pg.rate_2q(gate, i))
             }
         } else {
-            [self.p2 / 15.0; 15]
+            let p2_total = self.p2_gate_rates.get(&gate).copied().unwrap_or(self.p2);
+            if let Some(weights) = &self.p2_weights {
+                return std::array::from_fn(|idx| {
+                    let flat = idx + 1;
+                    let p1 = flat / 4;
+                    let p2 = flat % 4;
+                    p2_total
+                        * weights.two_qubit_weight_for(
+                            gate,
+                            &pauli_pair_for_weight(p1, p2),
+                            self.p2_replacement_approximation,
+                        )
+                });
+            }
+            [p2_total / 15.0; 15]
         }
     }
 
@@ -2534,6 +2611,26 @@ where
     } else {
         values.push(value);
     }
+}
+
+fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
+    let mut paulis = Vec::new();
+    let pauli_from_index = |idx| match idx {
+        0 => pecos_core::Pauli::I,
+        1 => pecos_core::Pauli::X,
+        2 => pecos_core::Pauli::Y,
+        3 => pecos_core::Pauli::Z,
+        _ => unreachable!("Pauli index must be 0-3"),
+    };
+    let pa1 = pauli_from_index(p1);
+    let pa2 = pauli_from_index(p2);
+    if pa1 != pecos_core::Pauli::I {
+        paulis.push((pa1, pecos_core::QubitId::from(0usize)));
+    }
+    if pa2 != pecos_core::Pauli::I {
+        paulis.push((pa2, pecos_core::QubitId::from(1usize)));
+    }
+    pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
 }
 
 /// XORs two [`DemMechanism`]s (symmetric difference of detectors and standard observables).
@@ -3030,7 +3127,7 @@ mod tests {
         // sample_statistics_with_rng uses auto-selection internally
         let mut rng = SmallRng::seed_from_u64(42);
         let stats = sampler.sample_statistics_with_rng(10000, &mut rng);
-        assert!(stats.total_shots == 10000);
+        assert_eq!(stats.total_shots, 10000);
     }
 
     #[test]
@@ -3060,7 +3157,7 @@ mod tests {
         // sample_statistics_with_rng uses auto-selection internally
         let mut rng = SmallRng::seed_from_u64(42);
         let stats = sampler.sample_statistics_with_rng(10000, &mut rng);
-        assert!(stats.total_shots == 10000);
+        assert_eq!(stats.total_shots, 10000);
     }
 
     #[test]
@@ -3267,6 +3364,6 @@ mod tests {
 
         let stats = sampler.sample_statistics(1000, 42);
         // Just verify it runs without panicking
-        assert!(stats.total_shots == 1000);
+        assert_eq!(stats.total_shots, 1000);
     }
 }

@@ -27,8 +27,6 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
         ValueError: If function is not a Guppy function
         RuntimeError: If compilation fails
     """
-    from guppylang import guppy as guppy_module
-
     # Check if this is a Guppy function
     is_guppy = (
         hasattr(guppy_function, "_guppy_compiled")
@@ -41,111 +39,39 @@ def compile_guppy_to_hugr(guppy_function: Callable) -> bytes:
         msg = "Function must be decorated with @guppy"
         raise ValueError(msg)
 
+    from pecos._compilation.hugr_cache import (
+        definition_takes_parameters,
+        lookup_cached_hugr_bytes,
+        store_cached_hugr_bytes,
+    )
+
+    cached = lookup_cached_hugr_bytes(guppy_function)
+    if cached is not None:
+        return cached
+
+    # guppylang's compile()/compile_function() both return a hugr `Package`.
+    # Parametric functions must use compile_function() (compile() needs entry-point
+    # arguments); non-parametric functions use compile() for the entry point.
+    # Only the entry-point form is cached: the two forms are not
+    # interchangeable, and guppy_to_hugr only ever produces the entry-point one.
+    has_params = definition_takes_parameters(guppy_function)
     try:
-        # Check if this is a parametric function (has arguments)
-        import inspect
-
-        sig = inspect.signature(
-            (guppy_function.__wrapped__ if hasattr(guppy_function, "__wrapped__") else guppy_function),
-        )
-        has_params = len(sig.parameters) > 0
-
-        if has_params:
-            # For parametric functions, use compile_function() which allows parameters
-            if hasattr(guppy_function, "compile_function"):
-                compiled = guppy_function.compile_function()
-            else:
-                # Fall back to regular compile and let it handle the error
-                compiled = guppy_function.compile()
-        else:
-            # For non-parametric functions, use compile() for entrypoint
-            if hasattr(guppy_function, "compile"):
-                # New API: function.compile()
-                compiled = guppy_function.compile()
-            else:
-                # Old API: guppy.compile(function)
-                compiled = guppy_module.compile(guppy_function)
-
-        # Handle the return value - it might be a FuncDefnPointer or similar
-        # Use the new HUGR envelope methods (to_str/to_bytes) instead of deprecated to_json
-        if hasattr(compiled, "to_str"):
-            # Use string format for JSON compatibility with HUGR 0.13 compiler
-            return compiled.to_str().encode("utf-8")
-        if hasattr(compiled, "to_json"):
-            # Fallback to to_json for older versions (with deprecation warning)
-            return compiled.to_json().encode("utf-8")
-
-        if hasattr(compiled, "package"):
-            if hasattr(compiled.package, "to_str"):
-                return compiled.package.to_str().encode("utf-8")
-            if hasattr(compiled.package, "to_json"):
-                return compiled.package.to_json().encode("utf-8")
-            return compiled.package.to_bytes()
-
-        if hasattr(compiled, "to_package"):
-            package = compiled.to_package()
-            if hasattr(package, "to_str"):
-                return package.to_str().encode("utf-8")
-            if hasattr(package, "to_json"):
-                return package.to_json().encode("utf-8")
-            return package.to_bytes()
-
-        # Try to serialize directly
-        return compiled.to_bytes()
+        compiled = guppy_function.compile_function() if has_params else guppy_function.compile()
     except Exception as e:
         msg = f"Failed to compile Guppy to HUGR: {e}"
         raise RuntimeError(msg) from e
 
-
-# Step 2: HUGR -> LLVM/QIR
-def _update_tket_wasm_version(hugr_bytes: bytes) -> bytes:
-    """Update tket.wasm version from 0.3.0 to 0.4.1 for compatibility.
-
-    Args:
-        hugr_bytes: HUGR package bytes
-
-    Returns:
-        Updated HUGR bytes with tket.wasm 0.4.1
-    """
-    import json
-
-    hugr_str = hugr_bytes.decode("utf-8")
-
-    # Check if it starts with the envelope header
-    if hugr_str.startswith("HUGRiHJv"):
-        # Find where the JSON starts
-        json_start = hugr_str.find("{", 8)
-        if json_start != -1:
-            header = hugr_str[:json_start]
-            json_part = hugr_str[json_start:]
-
-            # Parse the JSON
-            hugr_data = json.loads(json_part)
-
-            # Update version in extensions
-            if "extensions" in hugr_data:
-                for ext in hugr_data["extensions"]:
-                    if ext.get("name") == "tket.wasm" and ext.get("version") == "0.3.0":
-                        ext["version"] = "0.4.1"
-
-            # Update version in module metadata
-            if hugr_data.get("modules"):
-                module = hugr_data["modules"][0]
-                if "metadata" in module:
-                    for meta_item in module["metadata"]:
-                        if isinstance(meta_item, dict) and "core.used_extensions" in meta_item:
-                            for ext in meta_item["core.used_extensions"]:
-                                if ext.get("name") == "tket.wasm" and ext.get("version") == "0.3.0":
-                                    ext["version"] = "0.4.1"
-
-            # Reconstruct the HUGR envelope
-            modified_json = json.dumps(hugr_data, separators=(",", ":"))
-            modified_hugr = header + modified_json
-            return modified_hugr.encode("utf-8")
-
+    # Serialize the Package as the BINARY HUGR envelope (Model format). The Selene/QIS
+    # engine's HUGR reader rejects hugr-py 0.16's S-expression *text* envelope
+    # (`to_str`) with "Failed to read HUGR", whereas the binary Model form round-trips
+    # cleanly, including CFG loops (while statements).
+    hugr_bytes = compiled.to_bytes()
+    if not has_params:
+        store_cached_hugr_bytes(guppy_function, hugr_bytes)
     return hugr_bytes
 
 
+# Step 2: HUGR -> LLVM/QIR
 def compile_hugr_to_qis(
     hugr_bytes: bytes,
     *,
@@ -166,7 +92,7 @@ def compile_hugr_to_qis(
     """
     # Try to use PECOS's HUGR to LLVM compiler
     try:
-        from pecos_rslib import compile_hugr_to_qis
+        from pecos_rslib_llvm import compile_hugr_to_qis
 
         rust_backend_available = True
     except ImportError:

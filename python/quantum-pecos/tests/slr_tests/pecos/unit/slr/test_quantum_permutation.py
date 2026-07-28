@@ -65,14 +65,22 @@ def test_quantum_permutation_qasm(quantum_permutation_program: tuple) -> None:
 # `; Permutation:` comment is preserved. The bespoke
 # @set_creg_bit/@mz_to_creg_bit helpers the old tests pinned were
 # removed by the static CReg model (measurement is the standard 2-arg
-# `@__quantum__qis__mz__body(%Qubit*, %Result*)`).
+# `@__quantum__qis__mz__body(ptr, ptr)`).
+#
+# QIR uses LLVM opaque pointers: a qubit/result constant is
+# `ptr inttoptr (i64 N to ptr)`, except index 0 which is `ptr null`.
+
+_QARG = r"ptr (?:null|inttoptr \(i64 (\d+) to ptr\))"
+
+
+def _idx(m: str) -> int:
+    """Decode a captured pointer index; the empty capture is `ptr null` = 0."""
+    return int(m) if m else 0
 
 
 def _q(name: str, qir: str) -> list[int]:
     """All qubit indices a single-qubit `name` gate is applied to."""
-    return [
-        int(m) for m in re.findall(rf"call void @__quantum__qis__{name}__body\(%Qubit\* inttoptr \(i64 (\d+) ", qir)
-    ]
+    return [_idx(m) for m in re.findall(rf"call void @__quantum__qis__{name}__body\({_QARG}\)", qir)]
 
 
 @pytest.mark.optional_dependency
@@ -86,12 +94,10 @@ def test_quantum_permutation_qir(quantum_permutation_program: tuple) -> None:
     # Qubits: a[0]=0, a[1]=1, b[0]=2, b[1]=3. After the swap, H(a[0])
     # targets b[0]'s qubit (2) and CX(a[0], a[1]) -> cnot(2, 1).
     assert _q("h", qir) == [2], qir
-    cnot = re.findall(
-        r"call void @__quantum__qis__cnot__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    assert cnot == [("2", "1")], qir
+    cnot = [
+        (_idx(c), _idx(t)) for c, t in re.findall(rf"call void @__quantum__qis__cnot__body\({_QARG}, {_QARG}\)", qir)
+    ]
+    assert cnot == [(2, 1)], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
@@ -126,11 +132,8 @@ def test_permutation_with_bell_circuit_qir() -> None:
     assert _q("h", qir) == [3], qir
     # Standard 2-arg measurement (the removed @mz_to_creg_bit is
     # gone): Measure(a[0]) reads q3, Measure(a[1]) reads q1.
-    mz = re.findall(
-        r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), %Result\*",
-        qir,
-    )
-    assert mz == ["3", "1"], qir
+    mz = [_idx(m) for m in re.findall(rf"call void @__quantum__qis__mz__body\({_QARG}, ptr", qir)]
+    assert mz == [3, 1], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
@@ -178,17 +181,12 @@ def test_comprehensive_qir_verification() -> None:
     assert _q("x", qir) == [1, 0], qir  # initial a[1]=1, then ->a[0]=0
     assert _q("y", qir) == [2, 3], qir  # initial b[0]=2, then ->b[1]=3
     assert _q("z", qir) == [3, 1], qir  # initial b[1]=3, then ->a[1]=1
-    cnot = re.findall(
-        r"call void @__quantum__qis__cnot__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), "
-        r"%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\)\)",
-        qir,
-    )
-    assert cnot == [("2", "1")], qir
-    mz = re.findall(
-        r"call void @__quantum__qis__mz__body\(%Qubit\* inttoptr \(i64 (\d+) to %Qubit\*\), %Result\*",
-        qir,
-    )
-    assert mz == ["2", "1"], qir
+    cnot = [
+        (_idx(c), _idx(t)) for c, t in re.findall(rf"call void @__quantum__qis__cnot__body\({_QARG}, {_QARG}\)", qir)
+    ]
+    assert cnot == [(2, 1)], qir
+    mz = [_idx(m) for m in re.findall(rf"call void @__quantum__qis__mz__body\({_QARG}, ptr", qir)]
+    assert mz == [2, 1], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 
@@ -216,13 +214,13 @@ def test_rotation_gates_with_permutation() -> None:
     qir = SlrConverter(prog).qir()
 
     assert "; Permutation: a[0] -> b[0], b[0] -> a[0]" in qir
-    rx = re.findall(r"call void @__quantum__qis__rx__body\(double [^,]+, %Qubit\* inttoptr \(i64 (\d+) ", qir)
-    ry = re.findall(r"call void @__quantum__qis__ry__body\(double [^,]+, %Qubit\* inttoptr \(i64 (\d+) ", qir)
-    assert rx == ["0", "2"], qir  # initial a[0]=0, then ->b[0]=2
-    assert ry == ["1", "0"], qir  # initial a[1]=1, then ->a[0]=0
+    rx = [_idx(m) for m in re.findall(rf"call void @__quantum__qis__rx__body\(double [^,]+, {_QARG}\)", qir)]
+    ry = [_idx(m) for m in re.findall(rf"call void @__quantum__qis__ry__body\(double [^,]+, {_QARG}\)", qir)]
+    assert rx == [0, 2], qir  # initial a[0]=0, then ->b[0]=2
+    assert ry == [1, 0], qir  # initial a[1]=1, then ->a[0]=0
     assert _q("t", qir) == [1], qir  # T(a[1]) unpermuted
-    tdg = re.findall(r"call void @__quantum__qis__t__adj\(%Qubit\* inttoptr \(i64 (\d+) ", qir)
-    assert tdg == ["3"], qir  # Tdg(b[1]) unpermuted
+    tdg = [_idx(m) for m in re.findall(rf"call void @__quantum__qis__t__adj\({_QARG}\)", qir)]
+    assert tdg == [3], qir  # Tdg(b[1]) unpermuted
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"
 

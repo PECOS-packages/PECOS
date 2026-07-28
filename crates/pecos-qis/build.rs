@@ -20,9 +20,16 @@ fn main() {
     validate_llvm();
 
     // Embed LLVM bin path at compile time for runtime use
-    if let Ok(llvm_prefix) = env::var("LLVM_SYS_140_PREFIX") {
+    if let Ok(llvm_prefix) = env::var(pecos_build::llvm::LLVM_SYS_PREFIX_ENV) {
         let llvm_bin = PathBuf::from(&llvm_prefix).join("bin");
         println!("cargo:rustc-env=PECOS_LLVM_BIN_PATH={}", llvm_bin.display());
+    }
+
+    // Embed the build target triple so the QIS program-cache key can scope cached
+    // shared objects to the exact target ABI (e.g. distinguish
+    // x86_64-unknown-linux-gnu from -musl), not just arch/os.
+    if let Ok(target) = env::var("TARGET") {
+        println!("cargo:rustc-env=PECOS_QIS_TARGET={target}");
     }
 
     // Build Selene-specific components only when the selene feature is enabled
@@ -32,57 +39,82 @@ fn main() {
 
 #[cfg(feature = "llvm")]
 fn validate_llvm() {
-    use pecos_build::llvm::is_valid_llvm_14;
+    use pecos_build::llvm::{LLVM_SYS_PREFIX_ENV, REQUIRED_VERSION, is_valid_llvm};
 
-    // Check if LLVM_SYS_140_PREFIX is already set and valid
-    if let Ok(sys_prefix) = env::var("LLVM_SYS_140_PREFIX") {
+    // Check if LLVM_SYS_PREFIX_ENV is already set and valid
+    if let Ok(sys_prefix) = env::var(LLVM_SYS_PREFIX_ENV) {
         let path = PathBuf::from(&sys_prefix);
-        if is_valid_llvm_14(&path) {
+        if is_valid_llvm(&path) {
             // LLVM is configured and valid, we're good!
             return;
         }
         eprintln!("\n═══════════════════════════════════════════════════════════════");
-        eprintln!("ERROR: Invalid LLVM_SYS_140_PREFIX");
+        eprintln!("ERROR: Invalid {LLVM_SYS_PREFIX_ENV}");
         eprintln!("═══════════════════════════════════════════════════════════════");
         eprintln!();
-        eprintln!("LLVM_SYS_140_PREFIX is set to: {sys_prefix}");
-        eprintln!("But this is not a valid LLVM 14 installation.");
+        eprintln!("{LLVM_SYS_PREFIX_ENV} is set to: {sys_prefix}");
+        eprintln!("But this is not a valid LLVM {REQUIRED_VERSION} installation.");
         eprintln!();
         eprintln!("Please either:");
-        eprintln!("  1. Fix the path to point to a valid LLVM 14 installation");
+        eprintln!("  1. Fix the path to point to a valid LLVM {REQUIRED_VERSION} installation");
         eprintln!("  2. Unset it and configure LLVM:");
-        eprintln!("     unset LLVM_SYS_140_PREFIX");
+        eprintln!("     unset {LLVM_SYS_PREFIX_ENV}");
         eprintln!("     pecos llvm configure");
         eprintln!("═══════════════════════════════════════════════════════════════\n");
-        panic!("Invalid LLVM_SYS_140_PREFIX. See error message above.");
+        panic!("Invalid {LLVM_SYS_PREFIX_ENV}. See error message above.");
     }
 
-    // LLVM_SYS_140_PREFIX not set - print setup instructions
-    print_llvm_not_found_error_extended();
-    panic!("LLVM 14 not configured. See error message above for setup instructions.");
+    // LLVM_SYS_PREFIX_ENV not set. Reaching here means llvm-sys already located
+    // a usable LLVM (via PATH llvm-config) without an explicit prefix. If a
+    // valid LLVM 21.1 exists, auto-configure .cargo/config.toml so the prefix is
+    // pinned for future builds, and set it now so the PECOS_LLVM_BIN_PATH embed
+    // below resolves. Installing a missing LLVM stays with `pecos setup`.
+    if let Ok(path) = pecos_build::llvm::config::auto_configure_llvm(None) {
+        eprintln!(
+            "pecos-qis: auto-configured .cargo/config.toml to use LLVM {REQUIRED_VERSION} at {}",
+            path.display()
+        );
+        // SAFETY: build scripts run single-threaded; set the prefix so the
+        // bin-path embed step (which reads this env var) picks it up.
+        unsafe {
+            env::set_var(
+                LLVM_SYS_PREFIX_ENV,
+                pecos_build::llvm::path_to_env_string(&path),
+            );
+        }
+    } else {
+        print_llvm_not_found_error_extended();
+        panic!(
+            "LLVM {REQUIRED_VERSION} not configured. See error message above for setup instructions."
+        );
+    }
 }
 
 #[cfg(feature = "llvm")]
 fn print_llvm_not_found_error_extended() {
+    use pecos_build::llvm::{LLVM_SYS_PREFIX_ENV, REQUIRED_VERSION};
+
     eprintln!("\n═══════════════════════════════════════════════════════════════");
-    eprintln!("LLVM 14 Setup Required");
+    eprintln!("LLVM {REQUIRED_VERSION} Setup Required");
     eprintln!("═══════════════════════════════════════════════════════════════");
     eprintln!();
-    eprintln!("PECOS needs LLVM 14. Choose one of these installation methods:");
+    eprintln!("PECOS needs LLVM {REQUIRED_VERSION}. Choose one of these installation methods:");
     eprintln!();
     eprintln!("Option 1: Use pecos setup (recommended)");
     eprintln!("  pecos setup");
     eprintln!("  cargo build");
     eprintln!();
     eprintln!("  This detects and installs all missing dependencies.");
-    eprintln!("  (LLVM 14: ~400 MB download, installs to ~/.pecos/deps/llvm-14/)");
+    eprintln!(
+        "  (LLVM {REQUIRED_VERSION}: several hundred MB download, installs to ~/.pecos/deps/llvm-{REQUIRED_VERSION}/)"
+    );
     eprintln!();
 
     #[cfg(target_os = "macos")]
     {
         eprintln!("Option 2: Install via Homebrew");
-        eprintln!("  # Install LLVM 14");
-        eprintln!("  brew install llvm@14");
+        eprintln!("  # Install LLVM 21");
+        eprintln!("  brew install llvm@21");
         eprintln!();
         eprintln!("  # Configure PECOS to use it");
         eprintln!("  pecos llvm configure");
@@ -100,14 +132,14 @@ fn print_llvm_not_found_error_extended() {
         eprintln!();
         eprintln!("  Debian/Ubuntu:");
         eprintln!("    sudo apt update");
-        eprintln!("    sudo apt install llvm-14 llvm-14-dev");
+        eprintln!("    sudo apt install llvm-21 llvm-21-dev");
         eprintln!();
         eprintln!("  Fedora/RHEL:");
-        eprintln!("    sudo dnf install llvm14 llvm14-devel");
+        eprintln!("    sudo dnf install llvm21 llvm21-devel");
         eprintln!();
         eprintln!("  Arch Linux:");
-        eprintln!("    # LLVM 14 may need to be built from AUR");
-        eprintln!("    yay -S llvm14");
+        eprintln!("    # LLVM 21 may need to come from an alternate repository");
+        eprintln!("    yay -S llvm21");
         eprintln!();
         eprintln!("  Then configure and build:");
         eprintln!("    pecos llvm configure");
@@ -127,7 +159,7 @@ fn print_llvm_not_found_error_extended() {
         eprintln!("    https://github.com/vovkos/llvm-package-windows");
         eprintln!();
         eprintln!("  After extracting to C:\\LLVM (or similar):");
-        eprintln!("    set LLVM_SYS_140_PREFIX=C:\\LLVM");
+        eprintln!("    set {LLVM_SYS_PREFIX_ENV}=C:\\LLVM");
         eprintln!("    pecos llvm configure");
         eprintln!("    cargo build");
         eprintln!();
@@ -137,9 +169,9 @@ fn print_llvm_not_found_error_extended() {
     eprintln!("  Instead of 'configure', you can set environment variables:");
     eprintln!();
     #[cfg(target_os = "windows")]
-    eprintln!("    set LLVM_SYS_140_PREFIX=C:\\path\\to\\llvm");
+    eprintln!("    set {LLVM_SYS_PREFIX_ENV}=C:\\path\\to\\llvm");
     #[cfg(not(target_os = "windows"))]
-    eprintln!("    export LLVM_SYS_140_PREFIX=/path/to/llvm");
+    eprintln!("    export {LLVM_SYS_PREFIX_ENV}=/path/to/llvm");
     #[cfg(not(target_os = "windows"))]
     eprintln!("  Or add llvm-config to PATH:");
     #[cfg(not(target_os = "windows"))]

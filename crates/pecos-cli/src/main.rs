@@ -24,7 +24,7 @@ use pecos_build::cuda::find_cuda;
 #[cfg(feature = "runtime")]
 use pecos_build::cuquantum::{find_cuquantum, get_cuquantum_version};
 #[cfg(feature = "runtime")]
-use pecos_build::llvm::get_llvm_version;
+use pecos_build::llvm::{LLVM_SYS_PREFIX_ENV, get_llvm_version};
 #[cfg(feature = "runtime")]
 use std::io::Write;
 
@@ -97,7 +97,7 @@ enum Commands {
         #[command(subcommand)]
         command: GpuCommands,
     },
-    /// LLVM 14 inspection, validation, and configuration
+    /// LLVM 21.1 inspection, validation, and configuration
     Llvm {
         #[command(subcommand)]
         command: LlvmCommands,
@@ -168,8 +168,18 @@ enum Commands {
     /// Migrate legacy deps from ~/.pecos/ to ~/.pecos/deps/
     ///
     /// Moves LLVM, CUDA, and cuQuantum installations from the old top-level
-    /// paths into the unified deps/ directory.
-    Migrate,
+    /// paths into the unified deps/ directory. Legacy LLVM installations that
+    /// are not valid LLVM 21.1 installs can be removed before installing the
+    /// current managed LLVM.
+    Migrate {
+        /// Accept all prompts without asking
+        #[arg(long, conflicts_with = "no")]
+        yes: bool,
+
+        /// Decline all prompts without asking
+        #[arg(long, conflicts_with = "yes")]
+        no: bool,
+    },
     /// Install optional dependencies (cuda, llvm, cuquantum)
     ///
     /// Example: pecos install cuda cuquantum
@@ -189,6 +199,10 @@ enum Commands {
         /// Skip automatic configuration after installation (applies to llvm)
         #[arg(long)]
         no_configure: bool,
+
+        /// Accept installation prompts
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Uninstall optional dependencies (cuda, llvm, cuquantum)
     ///
@@ -722,13 +736,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             cli::setup_cmd::run(mode, *skip_llvm, *skip_cuda, *skip_cmake, *quiet)?;
         }
-        Commands::Migrate => cli::migrate_cmd::run()?,
+        Commands::Migrate { yes, no } => {
+            let mode = if *yes {
+                pecos_build::prompt::PromptMode::AcceptAll
+            } else if *no {
+                pecos_build::prompt::PromptMode::DeclineAll
+            } else {
+                pecos_build::prompt::PromptMode::Interactive
+            };
+            cli::migrate_cmd::run(mode)?;
+        }
         Commands::Install {
             targets,
             force,
             all,
             no_configure,
-        } => cli::install_cmd::run(targets, *force, *all, *no_configure)?,
+            yes,
+        } => cli::install_cmd::run(targets, *force, *all, *no_configure, *yes)?,
         Commands::Uninstall { targets, all, yes } => {
             cli::uninstall_cmd::run(targets, *all, *yes)?;
         }
@@ -903,8 +927,8 @@ fn run_doctor() {
     let mut problems: Vec<String> = Vec::new();
     let mut hints: Vec<String> = Vec::new();
 
-    // --- LLVM 14 ---
-    println!("LLVM 14:");
+    // --- LLVM 21.1 ---
+    println!("LLVM 21.1:");
     let llvm_config = pecos_build::llvm::config::validate_llvm_config();
     if let Some(ref path) = llvm_config.detected_path {
         let version = get_llvm_version(path).unwrap_or_else(|_| "unknown".into());
@@ -915,11 +939,15 @@ fn run_doctor() {
         );
     } else {
         print_check("installed", false, "not found");
-        problems.push("LLVM 14 not installed. Run: pecos install llvm".into());
+        if let Some(reason) = pecos_build::llvm::installer::managed_install_unavailable_reason() {
+            problems.push(format!("LLVM 21.1 not installed. {reason}"));
+        } else {
+            problems.push("LLVM 21.1 not installed. Run: pecos install llvm".into());
+        }
     }
 
     if let Some(ref path) = llvm_config.configured_path {
-        if llvm_config.path_is_valid_llvm14 {
+        if llvm_config.path_is_valid_llvm {
             print_check(".cargo/config.toml", true, &format!("{}", path.display()));
         } else if !llvm_config.path_exists {
             print_check(
@@ -932,33 +960,81 @@ fn run_doctor() {
             print_check(
                 ".cargo/config.toml",
                 false,
-                &format!("path exists but is not valid LLVM 14: {}", path.display()),
+                &format!("path exists but is not valid LLVM 21.1: {}", path.display()),
             );
             problems.push(
-                "LLVM path in .cargo/config.toml is not valid LLVM 14. Run: pecos llvm configure"
+                "LLVM path in .cargo/config.toml is not valid LLVM 21.1. Run: pecos llvm configure"
                     .into(),
             );
         }
     } else {
-        print_check(".cargo/config.toml", false, "LLVM_SYS_140_PREFIX not set");
+        print_check(
+            ".cargo/config.toml",
+            false,
+            &format!("{LLVM_SYS_PREFIX_ENV} not set"),
+        );
         if llvm_config.detected_path.is_some() {
             problems.push("LLVM installed but not configured. Run: pecos llvm configure".into());
         }
     }
 
-    if let Ok(env_val) = std::env::var("LLVM_SYS_140_PREFIX") {
+    if llvm_config.stale_llvm_prefix_envs.is_empty() {
+        print_check(".cargo/config.toml stale LLVM keys", true, "none");
+    } else {
+        print_check(
+            ".cargo/config.toml stale LLVM keys",
+            false,
+            &llvm_config.stale_llvm_prefix_envs.join(", "),
+        );
+        problems.push(
+            "Stale LLVM settings found in .cargo/config.toml. Run: pecos llvm configure".into(),
+        );
+    }
+
+    if let Ok(env_val) = std::env::var(LLVM_SYS_PREFIX_ENV) {
         let env_path = std::path::Path::new(&env_val);
         if env_path.exists() {
-            print_check("LLVM_SYS_140_PREFIX env", true, &env_val);
+            print_check(&format!("{LLVM_SYS_PREFIX_ENV} env"), true, &env_val);
         } else {
             print_check(
-                "LLVM_SYS_140_PREFIX env",
+                &format!("{LLVM_SYS_PREFIX_ENV} env"),
                 false,
                 &format!("set but path missing: {env_val}"),
             );
             problems.push(format!(
-                "LLVM_SYS_140_PREFIX={env_val} but path does not exist"
+                "{LLVM_SYS_PREFIX_ENV}={env_val} but path does not exist"
             ));
+        }
+    }
+
+    // Warn when a wrong-version LLVM tool would be resolved from PATH. External
+    // tools (Selene's llvm-as) and PECOS's own runtime PATH fallback pick these
+    // up, so a system LLVM ahead of 21.1 silently breaks QIS execution.
+    for report in pecos_build::llvm::inspect_path_llvm_tools(&["llvm-as", "llvm-config"]) {
+        let label = format!("PATH {}", report.tool);
+        match report.version {
+            Some(ref v) if report.is_required => {
+                print_check(&label, true, &format!("{v} at {}", report.path.display()));
+            }
+            Some(ref v) => {
+                print_check(
+                    &label,
+                    false,
+                    &format!("{v} at {} (need 21.1)", report.path.display()),
+                );
+                problems.push(format!(
+                    "{} on PATH is LLVM {v}, not 21.1 ({}). External tools like Selene resolve it from PATH; put LLVM 21.1's bin directory ahead on PATH.",
+                    report.tool,
+                    report.path.display()
+                ));
+            }
+            None => {
+                print_check(
+                    &label,
+                    false,
+                    &format!("version unknown at {}", report.path.display()),
+                );
+            }
         }
     }
     println!();

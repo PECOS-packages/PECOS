@@ -1,5 +1,6 @@
 pub mod prelude;
 pub mod quality_rng;
+mod rapid_rng;
 pub mod rng;
 pub mod rng_ext;
 pub mod rng_manageable;

@@ -1,0 +1,177 @@
+{
+  "type": "Program",
+  "name": "main",
+  "allocator": {
+    "type": "AllocatorDecl",
+    "name": "q",
+    "capacity": 5
+  },
+  "declarations": [
+    {
+      "type": "AllocatorDecl",
+      "name": "ancilla",
+      "capacity": 2,
+      "parent": "q"
+    },
+    {
+      "type": "AllocatorDecl",
+      "name": "data",
+      "capacity": 3,
+      "parent": "q"
+    },
+    {
+      "type": "AllocatorDecl",
+      "name": "q",
+      "capacity": 5
+    }
+  ],
+  "body": [
+    {
+      "type": "PrepareOp",
+      "allocator": "q"
+    },
+    {
+      "type": "TickStmt",
+      "label": "syndrome_round",
+      "body": [
+        {
+          "type": "GateOp",
+          "gate": "H",
+          "targets": [
+            {
+              "type": "SlotRef",
+              "allocator": "ancilla",
+              "index": 0
+            }
+          ]
+        },
+        {
+          "type": "GateOp",
+          "gate": "CX",
+          "targets": [
+            {
+              "type": "SlotRef",
+              "allocator": "ancilla",
+              "index": 0
+            },
+            {
+              "type": "SlotRef",
+              "allocator": "data",
+              "index": 0
+            }
+          ]
+        },
+        {
+          "type": "GateOp",
+          "gate": "CX",
+          "targets": [
+            {
+              "type": "SlotRef",
+              "allocator": "ancilla",
+              "index": 0
+            },
+            {
+              "type": "SlotRef",
+              "allocator": "data",
+              "index": 1
+            }
+          ]
+        },
+        {
+          "type": "GateOp",
+          "gate": "H",
+          "targets": [
+            {
+              "type": "SlotRef",
+              "allocator": "ancilla",
+              "index": 0
+            }
+          ]
+        },
+        {
+          "type": "GateOp",
+          "gate": "H",
+          "targets": [
+            {
+              "type": "SlotRef",
+              "allocator": "ancilla",
+              "index": 1
+            }
+          ]
+        },
+        {
+          "type": "GateOp",
+          "gate": "CX",
+          "targets": [
+            {
+              "type": "SlotRef",
+              "allocator": "ancilla",
+              "index": 1
+            },
+            {
+              "type": "SlotRef",
+              "allocator": "data",
+              "index": 1
+            }
+          ]
+        },
+        {
+          "type": "GateOp",
+          "gate": "CX",
+          "targets": [
+            {
+              "type": "SlotRef",
+              "allocator": "ancilla",
+              "index": 1
+            },
+            {
+              "type": "SlotRef",
+              "allocator": "data",
+              "index": 2
+            }
+          ]
+        },
+        {
+          "type": "GateOp",
+          "gate": "H",
+          "targets": [
+            {
+              "type": "SlotRef",
+              "allocator": "ancilla",
+              "index": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "MeasureOp",
+      "targets": [
+        {
+          "type": "SlotRef",
+          "allocator": "ancilla",
+          "index": 0
+        },
+        {
+          "type": "SlotRef",
+          "allocator": "ancilla",
+          "index": 1
+        }
+      ],
+      "results": [
+        {
+          "type": "BitRef",
+          "register": "c0",
+          "index": 0
+        },
+        {
+          "type": "BitRef",
+          "register": "c1",
+          "index": 0
+        }
+      ],
+      "result_type": "u1"
+    }
+  ],
+  "returns": []
+}

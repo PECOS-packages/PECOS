@@ -77,10 +77,14 @@
 mod builder;
 mod engine;
 mod loader;
+mod result_tags;
 
 pub use builder::{HugrEngineBuilder, hugr_engine, hugr_sim};
 pub use engine::{CapturedResult, ClassicalValue, FutureId, HugrEngine, ResultValue, RngContextId};
 pub use loader::{load_hugr_from_bytes, load_hugr_from_file};
+pub use result_tags::{
+    extract_result_tag_measurements, has_nontrivial_control_flow, measurement_op_count,
+};
 
 // Re-export key types for convenience
 pub use pecos_engines::prelude::{ByteMessage, ClassicalEngine, ControlEngine, Engine};

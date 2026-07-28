@@ -4,7 +4,7 @@ use pecos_build::cuda::find_cuda;
 use pecos_build::cuquantum::find_cuquantum;
 use pecos_build::deps::list_dependencies;
 use pecos_build::home::{get_cache_dir, get_deps_dir};
-use pecos_build::llvm::{find_llvm_14, get_llvm_version, get_repo_root_from_manifest};
+use pecos_build::llvm::{find_llvm, get_llvm_version, get_repo_root_from_manifest};
 use std::fs;
 use std::path::Path;
 
@@ -16,13 +16,15 @@ pub fn run(verbose: bool) {
 
     // LLVM status
     let repo_root = get_repo_root_from_manifest();
-    if let Some(llvm_path) = find_llvm_14(repo_root) {
+    if let Some(llvm_path) = find_llvm(repo_root) {
         let version = get_llvm_version(&llvm_path)
             .map(|v| format!(" ({v})"))
             .unwrap_or_default();
-        println!("LLVM 14:     {}{version}", llvm_path.display());
+        println!("LLVM 21.1:     {}{version}", llvm_path.display());
+    } else if pecos_build::llvm::installer::managed_install_unavailable_reason().is_some() {
+        println!("LLVM 21.1:     not found (configure shared LLVM 21 manually)");
     } else {
-        println!("LLVM 14:     not found (install with: pecos install llvm)");
+        println!("LLVM 21.1:     not found (install with: pecos install llvm)");
     }
 
     // CUDA status

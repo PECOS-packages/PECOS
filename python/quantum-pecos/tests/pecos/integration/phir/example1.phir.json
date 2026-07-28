@@ -11,7 +11,7 @@
     {"data": "qvar_define", "data_type": "qubits", "variable": "w", "size": 2},
     {"data": "cvar_define", "data_type": "i32", "variable": "a", "size": 12},
     {"data": "cvar_define", "data_type": "i32", "variable": "b", "size": 20},
-    {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 32},
+    {"data": "cvar_define", "data_type": "i32", "variable": "c", "size": 31},
     {"data": "cvar_define", "data_type": "i32", "variable": "d", "size": 6},
     {"data": "cvar_define", "data_type": "i32", "variable": "e", "size": 16},
     {"data": "cvar_define", "data_type": "i32", "variable": "f", "size": 16},

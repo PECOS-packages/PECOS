@@ -42,6 +42,9 @@
 //! has_syndrome, causes_logical = influence_map.classify_fault(0, 1)  # loc 0, X fault
 //! ```
 
+use crate::pecos_array::{Array, ArrayData};
+use pecos_core::gate_type::GateType;
+use pecos_qec::fault_tolerance::PauliFrameLookup as RustPauliFrameLookup;
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
     ContributionEffectSummary as RustContributionEffectSummary,
@@ -51,7 +54,9 @@ use pecos_qec::fault_tolerance::dem_builder::{
     DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
     DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
     EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
-    FaultSourceType as RustFaultSourceType, NoiseConfig, ParsedDem as RustParsedDem,
+    FaultSourceType as RustFaultSourceType, MeasurementCrosstalkDemMode,
+    MeasurementCrosstalkTransitionModel, NoiseConfig, PAULI_2Q_ORDER, ParsedDem as RustParsedDem,
+    PauliWeights, ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
@@ -66,9 +71,357 @@ use pecos_quantum::DagCircuit;
 use pecos_quantum::QubitId;
 use pyo3::Py;
 use pyo3::prelude::*;
+use std::collections::BTreeMap;
+use std::str::FromStr;
 
 type PyDemMechanismTuple = (f64, Vec<u32>, Vec<u32>);
 type PyDemFitResult = (Vec<PyDemMechanismTuple>, Vec<f64>);
+/// Per-shot detector rows paired with per-shot observable/DEM-output rows.
+type PyDetectorObservableRows = (Vec<Vec<bool>>, Vec<Vec<bool>>);
+
+fn parse_p1_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
+    use pecos_core::pauli::{X, Y, Z};
+
+    let mut entries = Vec::with_capacity(weights.len());
+    let mut sum = 0.0;
+    for (label, weight) in weights {
+        let label = label.trim().to_ascii_uppercase();
+        let pauli = match label.as_str() {
+            "X" => X(0),
+            "Y" => Y(0),
+            "Z" => Z(0),
+            _ => {
+                let msg = format!("p1_weights keys must be one of ['X', 'Y', 'Z'], got {label:?}");
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+        };
+        if !weight.is_finite() || weight < 0.0 {
+            let msg =
+                format!("p1_weights[{label:?}] must be finite and non-negative, got {weight}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        sum += weight;
+        entries.push((pauli, weight));
+    }
+    if (sum - 1.0).abs() >= 1.0e-6 {
+        let msg = format!("p1_weights relative probabilities must sum to 1.0, got {sum}");
+        return Err(pyo3::exceptions::PyValueError::new_err(msg));
+    }
+    Ok(PauliWeights::new(entries))
+}
+
+fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
+    use pecos_core::pauli::{X, Y, Z};
+
+    let mut entries = Vec::with_capacity(weights.len());
+    let mut replacement_entries = Vec::new();
+    let mut sum = 0.0;
+    for (label, weight) in weights {
+        let label = label.trim().to_ascii_uppercase();
+        let (replacement, label) = match label.strip_prefix('*') {
+            Some(stripped) => (true, stripped.to_string()),
+            None => (false, label),
+        };
+        let replacement_identity = replacement && label == "II";
+        if !replacement_identity && !PAULI_2Q_ORDER.contains(&label.as_str()) {
+            let msg = format!(
+                "p2_weights keys must be one of {PAULI_2Q_ORDER:?} or prefixed with '*' for replacement branches, got {label:?}"
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        if !weight.is_finite() || weight < 0.0 {
+            let msg =
+                format!("p2_weights[{label:?}] must be finite and non-negative, got {weight}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        let mut pauli = None;
+        for (qubit, ch) in label.chars().enumerate() {
+            let term = match ch {
+                'I' => None,
+                'X' => Some(X(qubit)),
+                'Y' => Some(Y(qubit)),
+                'Z' => Some(Z(qubit)),
+                _ => unreachable!("validated p2_weights label contains only I/X/Y/Z"),
+            };
+            pauli = match (pauli, term) {
+                (None, None) => None,
+                (Some(existing), None) => Some(existing),
+                (None, Some(term)) => Some(term),
+                (Some(existing), Some(term)) => Some(existing & term),
+            };
+        }
+        let pauli = if let Some(pauli) = pauli {
+            pauli
+        } else if replacement {
+            pecos_core::PauliString::with_phase_and_paulis(
+                pecos_core::QuarterPhase::PlusOne,
+                Vec::new(),
+            )
+        } else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "plain p2_weights cannot contain identity pair 'II'; use '*II' for a replacement branch that only omits the gate",
+            ));
+        };
+        sum += weight;
+        if replacement {
+            replacement_entries.push((pauli, weight));
+        } else {
+            entries.push((pauli, weight));
+        }
+    }
+    if (sum - 1.0).abs() >= 1.0e-6 {
+        let msg = format!("p2_weights relative probabilities must sum to 1.0, got {sum}");
+        return Err(pyo3::exceptions::PyValueError::new_err(msg));
+    }
+    Ok(PauliWeights::with_replacement(entries, replacement_entries))
+}
+
+fn parse_replacement_approximation(
+    value: Option<String>,
+) -> PyResult<ReplacementBranchApproximation> {
+    let Some(value) = value else {
+        return Ok(ReplacementBranchApproximation::default());
+    };
+    match value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_")
+        .as_str()
+    {
+        "pauli_twirl_omitted_gate" | "pauli_twirl" | "twirl" => {
+            Ok(ReplacementBranchApproximation::PauliTwirlOmittedGate)
+        }
+        "branch_impact" | "replacement_branch_impact" | "impact" => {
+            Ok(ReplacementBranchApproximation::BranchImpact)
+        }
+        "exact_branch_replay" | "exact_replay" | "exact_branch" | "exact" => {
+            Ok(ReplacementBranchApproximation::ExactBranchReplay)
+        }
+        "ignore_gate_removal" | "ignore_removal" | "post_gate" | "postgate" => {
+            Ok(ReplacementBranchApproximation::IgnoreGateRemoval)
+        }
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "p2_replacement_approximation must be 'pauli_twirl_omitted_gate', 'branch_impact', 'exact_branch_replay', or 'ignore_gate_removal'",
+        )),
+    }
+}
+
+fn parse_p2_gate_rates(rates: BTreeMap<String, f64>) -> PyResult<BTreeMap<GateType, f64>> {
+    let mut parsed = BTreeMap::new();
+    for (label, rate) in rates {
+        if !rate.is_finite() || rate < 0.0 {
+            let msg =
+                format!("p2_gate_rates[{label:?}] must be finite and non-negative, got {rate}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        let gate_type = GateType::from_str(label.trim()).map_err(|err| {
+            let msg = format!("unsupported p2_gate_rates gate label {label:?}: {err}");
+            pyo3::exceptions::PyValueError::new_err(msg)
+        })?;
+        if !gate_type.is_two_qubit() {
+            let msg = format!("p2_gate_rates keys must name two-qubit gates, got {label:?}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        parsed.insert(gate_type, rate);
+    }
+    Ok(parsed)
+}
+
+fn parse_p1_gate_rates(rates: BTreeMap<String, f64>) -> PyResult<BTreeMap<GateType, f64>> {
+    let mut parsed = BTreeMap::new();
+    for (label, rate) in rates {
+        if !rate.is_finite() || rate < 0.0 {
+            let msg =
+                format!("p1_gate_rates[{label:?}] must be finite and non-negative, got {rate}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        let gate_type = GateType::from_str(label.trim()).map_err(|err| {
+            let msg = format!("unsupported p1_gate_rates gate label {label:?}: {err}");
+            pyo3::exceptions::PyValueError::new_err(msg)
+        })?;
+        if !gate_type.is_single_qubit() {
+            let msg = format!("p1_gate_rates keys must name single-qubit gates, got {label:?}");
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        parsed.insert(gate_type, rate);
+    }
+    Ok(parsed)
+}
+
+fn parse_measurement_crosstalk_dem_mode(
+    value: Option<String>,
+) -> PyResult<MeasurementCrosstalkDemMode> {
+    let Some(value) = value else {
+        return Ok(MeasurementCrosstalkDemMode::default());
+    };
+    match value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_")
+        .as_str()
+    {
+        "omitted" | "omit" | "none" | "off" => Ok(MeasurementCrosstalkDemMode::Omitted),
+        "exact_deterministic" | "exact" | "deterministic" => {
+            Ok(MeasurementCrosstalkDemMode::ExactDeterministic)
+        }
+        "exact_deterministic_leakage_as_depolarizing"
+        | "exact_leakage_as_depolarizing"
+        | "deterministic_leakage_as_depolarizing"
+        | "leakage_as_depolarizing" => {
+            Ok(MeasurementCrosstalkDemMode::ExactDeterministicLeakageAsDepolarizing)
+        }
+        "averaged_hidden_leakage_as_depolarizing"
+        | "average_hidden_leakage_as_depolarizing"
+        | "state_averaged_leakage_as_depolarizing"
+        | "averaged_leakage_as_depolarizing" => {
+            Ok(MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing)
+        }
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "measurement_crosstalk_dem_mode must be 'omitted', 'exact_deterministic', 'exact_deterministic_leakage_as_depolarizing', or 'averaged_hidden_leakage_as_depolarizing'",
+        )),
+    }
+}
+
+fn parse_measurement_crosstalk_transition_model(
+    value: Option<BTreeMap<String, f64>>,
+) -> PyResult<MeasurementCrosstalkTransitionModel> {
+    let Some(value) = value else {
+        return Ok(MeasurementCrosstalkTransitionModel::default());
+    };
+    let mut model = MeasurementCrosstalkTransitionModel::default();
+    for (key, probability) in value {
+        if !probability.is_finite() || probability < 0.0 {
+            let msg = format!(
+                "measurement crosstalk transition probability for {key:?} must be finite and non-negative"
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
+        match key.trim().to_ascii_uppercase().replace(' ', "").as_str() {
+            "0->0" | "1->1" => {}
+            "0->1" => model.p_0_to_1 = probability,
+            "0->L" => model.p_0_to_leak = probability,
+            "1->0" => model.p_1_to_0 = probability,
+            "1->L" => model.p_1_to_leak = probability,
+            _ => {
+                let msg = format!(
+                    "unsupported measurement crosstalk transition key {key:?}; expected 0->0, 0->1, 0->L, 1->0, 1->1, or 1->L"
+                );
+                return Err(pyo3::exceptions::PyValueError::new_err(msg));
+            }
+        }
+    }
+    if !model.is_valid() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "measurement crosstalk transition rows must sum to <= 1",
+        ));
+    }
+    Ok(model)
+}
+
+fn apply_noise_options(
+    mut noise: NoiseConfig,
+    p_idle: Option<f64>,
+    t1: Option<f64>,
+    t2: Option<f64>,
+    idle_rz: Option<f64>,
+    p_idle_linear_rate: Option<f64>,
+    p_idle_quadratic_rate: Option<f64>,
+    p_idle_x_linear_rate: Option<f64>,
+    p_idle_y_linear_rate: Option<f64>,
+    p_idle_z_linear_rate: Option<f64>,
+    p_idle_x_quadratic_rate: Option<f64>,
+    p_idle_y_quadratic_rate: Option<f64>,
+    p_idle_z_quadratic_rate: Option<f64>,
+    p_idle_quadratic_sine_rate: Option<f64>,
+    p_idle_x_quadratic_sine_rate: Option<f64>,
+    p_idle_y_quadratic_sine_rate: Option<f64>,
+    p_idle_z_quadratic_sine_rate: Option<f64>,
+    p1_weights: Option<BTreeMap<String, f64>>,
+    p2_weights: Option<BTreeMap<String, f64>>,
+    p2_replacement_approximation: Option<String>,
+    p_meas_crosstalk_local: Option<f64>,
+    p_meas_crosstalk_global: Option<f64>,
+    p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
+    measurement_crosstalk_dem_mode: Option<String>,
+    p2_gate_rates: Option<BTreeMap<String, f64>>,
+    p1_gate_rates: Option<BTreeMap<String, f64>>,
+) -> PyResult<NoiseConfig> {
+    noise.p_idle = p_idle.unwrap_or(0.0);
+    if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
+        noise = noise.set_t1_t2(t1_val, t2_val);
+    }
+    if let Some(rz) = idle_rz {
+        noise = noise.set_idle_rz(rz);
+    }
+    if let Some(rate) = p_idle_linear_rate {
+        noise = noise.set_idle_linear_rate(rate);
+    }
+    if let Some(rate) = p_idle_quadratic_rate {
+        noise = noise.set_idle_quadratic_rate(rate);
+    }
+    if let Some(rate) = p_idle_x_linear_rate {
+        noise.p_idle_x_linear_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_y_linear_rate {
+        noise.p_idle_y_linear_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_z_linear_rate {
+        noise.p_idle_linear_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_x_quadratic_rate {
+        noise.p_idle_x_quadratic_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_y_quadratic_rate {
+        noise.p_idle_y_quadratic_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_z_quadratic_rate {
+        noise.p_idle_quadratic_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_quadratic_sine_rate {
+        noise = noise.set_idle_quadratic_sine_rate(rate);
+    }
+    if let Some(rate) = p_idle_x_quadratic_sine_rate {
+        noise.p_idle_x_quadratic_sine_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_y_quadratic_sine_rate {
+        noise.p_idle_y_quadratic_sine_rate = rate.max(0.0);
+    }
+    if let Some(rate) = p_idle_z_quadratic_sine_rate {
+        noise.p_idle_quadratic_sine_rate = rate.max(0.0);
+    }
+    if let Some(weights) = p1_weights {
+        noise = noise.set_p1_weights(parse_p1_weights(weights)?);
+    }
+    if let Some(weights) = p2_weights {
+        noise = noise.set_p2_weights(parse_p2_weights(weights)?);
+    }
+    if let Some(rates) = p2_gate_rates {
+        for (gate_type, rate) in parse_p2_gate_rates(rates)? {
+            noise = noise.set_p2_gate_rate(gate_type, rate);
+        }
+    }
+    if let Some(rates) = p1_gate_rates {
+        for (gate_type, rate) in parse_p1_gate_rates(rates)? {
+            noise = noise.set_p1_gate_rate(gate_type, rate);
+        }
+    }
+    noise = noise.set_p2_replacement_approximation(parse_replacement_approximation(
+        p2_replacement_approximation,
+    )?);
+    if let Some(rate) = p_meas_crosstalk_local {
+        noise = noise.set_measurement_crosstalk_local_rate(rate);
+    }
+    if let Some(rate) = p_meas_crosstalk_global {
+        noise = noise.set_measurement_crosstalk_global_rate(rate);
+    }
+    noise = noise.set_measurement_crosstalk_transition_model(
+        parse_measurement_crosstalk_transition_model(p_meas_crosstalk_model)?,
+    );
+    noise = noise.set_measurement_crosstalk_dem_mode(parse_measurement_crosstalk_dem_mode(
+        measurement_crosstalk_dem_mode,
+    )?);
+    Ok(noise)
+}
 
 // Adapter for decoder factories that require `Send + Sync` trait objects.
 // Decoder implementations own their state; Python access remains GIL-mediated.
@@ -76,11 +429,11 @@ struct SendWrapper(Box<dyn pecos_decoders::ObservableDecoder>);
 unsafe impl Send for SendWrapper {}
 unsafe impl Sync for SendWrapper {}
 impl pecos_decoders::ObservableDecoder for SendWrapper {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoders::DecoderError> {
-        self.0.decode_to_observables(syndrome)
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoders::DecoderError> {
+        self.0.decode_obs(syndrome)
     }
 }
 
@@ -327,6 +680,16 @@ impl PyDagFaultInfluenceMap {
     /// Check if a fault at the given location flips any observable.
     fn has_observable_flips(&self, loc_idx: usize, pauli: u8) -> bool {
         self.inner.has_observable_flips(loc_idx, pauli)
+    }
+
+    /// Replace this map's non-detector DEM outputs with another map's outputs.
+    ///
+    /// This is the Python equivalent of the canonical Rust DEM builder's
+    /// annotation merge: detector influence from `DagFaultAnalyzer` is kept,
+    /// while observable/tracked-Pauli outputs from `InfluenceBuilder` are used
+    /// for DEM output propagation.
+    fn merge_dem_outputs_from(&mut self, other: &PyDagFaultInfluenceMap) {
+        self.inner.merge_dem_outputs_from(&other.inner);
     }
 
     /// Check if a fault at the given location flips any tracked Pauli.
@@ -703,6 +1066,178 @@ impl PyInfluenceBuilder {
 }
 
 // =============================================================================
+// Pauli Frame Lookup
+// =============================================================================
+
+#[pyclass(name = "PauliFrameLookup", module = "pecos_rslib.qec")]
+pub struct PyPauliFrameLookup {
+    inner: RustPauliFrameLookup,
+}
+
+#[pymethods]
+impl PyPauliFrameLookup {
+    /// Build a Pauli-frame lookup from positional tracked-Pauli annotations.
+    ///
+    /// Args:
+    ///     dag: A `DagCircuit` carrying tracked-Pauli meta-gates.
+    ///     detectors: Detector definitions as measurement-record offsets.
+    ///     observables: Observable definitions as measurement-record offsets.
+    #[staticmethod]
+    #[pyo3(signature = (dag, detectors, observables))]
+    fn from_circuit(
+        dag: &crate::dag_circuit_bindings::PyDagCircuit,
+        detectors: Vec<Vec<i32>>,
+        observables: Vec<Vec<i32>>,
+    ) -> PyResult<Self> {
+        let inner = RustPauliFrameLookup::from_circuit(&dag.inner, &detectors, &observables)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// Number of Pauli-twirl mask sites.
+    #[getter]
+    fn num_pauli_sites(&self) -> usize {
+        self.inner.num_pauli_sites()
+    }
+
+    /// Number of tracked-Pauli rows.
+    #[getter]
+    fn num_tracked_paulis(&self) -> usize {
+        self.inner.num_tracked_paulis()
+    }
+
+    /// Number of detector columns.
+    #[getter]
+    fn num_detectors(&self) -> usize {
+        self.inner.num_detectors()
+    }
+
+    /// Number of observable columns.
+    #[getter]
+    fn num_observables(&self) -> usize {
+        self.inner.num_observables()
+    }
+
+    /// Return one tracked-Pauli row as `(detectors, observables)`.
+    fn row(&self, tracked_idx: usize) -> PyResult<(Vec<u32>, Vec<u32>)> {
+        let Some((detectors, observables)) = self.inner.row_effects(tracked_idx) else {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "tracked_idx {tracked_idx} is out of range"
+            )));
+        };
+        Ok((detectors.to_vec(), observables.to_vec()))
+    }
+
+    /// Decode a Pauli mask array into tracked-row firings.
+    fn mask_firings(&self, pauli_masks: &Bound<'_, pyo3::PyAny>) -> PyResult<Vec<Vec<bool>>> {
+        let (values, rows, cols) = extract_pauli_mask_values(pauli_masks)?;
+        self.inner
+            .mask_firings(&values, rows, cols)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    /// Compute per-shot detector/observable XOR patterns for the given masks.
+    fn compute_mask_xor(
+        &self,
+        pauli_masks: &Bound<'_, pyo3::PyAny>,
+    ) -> PyResult<PyDetectorObservableRows> {
+        let (values, rows, cols) = extract_pauli_mask_values(pauli_masks)?;
+        self.inner
+            .compute_mask_xor(&values, rows, cols)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PauliFrameLookup(num_pauli_sites={}, num_tracked_paulis={}, num_detectors={}, num_observables={})",
+            self.num_pauli_sites(),
+            self.num_tracked_paulis(),
+            self.num_detectors(),
+            self.num_observables(),
+        )
+    }
+}
+
+fn extract_pauli_mask_values(
+    pauli_masks: &Bound<'_, pyo3::PyAny>,
+) -> PyResult<(Vec<u8>, usize, usize)> {
+    let array = Array::from_python_value(pauli_masks, None)?;
+    match &array.data {
+        ArrayData::I8(arr) => collect_signed_pauli_mask_values(arr),
+        ArrayData::I16(arr) => collect_signed_pauli_mask_values(arr),
+        ArrayData::I32(arr) => collect_signed_pauli_mask_values(arr),
+        ArrayData::I64(arr) => collect_signed_pauli_mask_values(arr),
+        ArrayData::U8(arr) => collect_unsigned_pauli_mask_values(arr),
+        ArrayData::U16(arr) => collect_unsigned_pauli_mask_values(arr),
+        ArrayData::U32(arr) => collect_unsigned_pauli_mask_values(arr),
+        ArrayData::U64(arr) => collect_unsigned_pauli_mask_values(arr),
+        ArrayData::Bool(_)
+        | ArrayData::F32(_)
+        | ArrayData::F64(_)
+        | ArrayData::Complex64(_)
+        | ArrayData::Complex128(_)
+        | ArrayData::Pauli(_)
+        | ArrayData::PauliString(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+            "pauli_masks must be an integer Array with values 0=I, 1=X, 2=Y, 3=Z",
+        )),
+    }
+}
+
+fn pauli_mask_shape<T>(arr: &ndarray::ArrayD<T>) -> PyResult<(usize, usize)> {
+    let shape = arr.shape();
+    if shape.len() != 2 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "pauli_masks must be 2-D with shape (num_shots, num_pauli_sites), got shape {shape:?}"
+        )));
+    }
+    Ok((shape[0], shape[1]))
+}
+
+fn collect_signed_pauli_mask_values<T>(
+    arr: &ndarray::ArrayD<T>,
+) -> PyResult<(Vec<u8>, usize, usize)>
+where
+    T: Copy + Into<i64>,
+{
+    let (rows, cols) = pauli_mask_shape(arr)?;
+    let mut values = Vec::with_capacity(arr.len());
+    for (idx, value) in arr.iter().copied().enumerate() {
+        let value = value.into();
+        if !(0..=3).contains(&value) {
+            let row = idx / cols;
+            let col = idx % cols;
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pauli_masks[{row}, {col}]={value} is outside 0..=3"
+            )));
+        }
+        values.push(u8::try_from(value).expect("validated pauli mask value fits in u8"));
+    }
+    Ok((values, rows, cols))
+}
+
+fn collect_unsigned_pauli_mask_values<T>(
+    arr: &ndarray::ArrayD<T>,
+) -> PyResult<(Vec<u8>, usize, usize)>
+where
+    T: Copy + Into<u64>,
+{
+    let (rows, cols) = pauli_mask_shape(arr)?;
+    let mut values = Vec::with_capacity(arr.len());
+    for (idx, value) in arr.iter().copied().enumerate() {
+        let value = value.into();
+        if value > 3 {
+            let row = idx / cols;
+            let col = idx % cols;
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pauli_masks[{row}, {col}]={value} is outside 0..=3"
+            )));
+        }
+        values.push(u8::try_from(value).expect("validated pauli mask value fits in u8"));
+    }
+    Ok((values, rows, cols))
+}
+
+// =============================================================================
 // Detector Error Model
 // =============================================================================
 
@@ -899,9 +1434,33 @@ fn contribution_record_to_pydict(
             RustDirectSourceFamily::TwoLocationPlainY => "TwoLocationPlainY",
             RustDirectSourceFamily::TwoLocationComponent => "TwoLocationComponent",
             RustDirectSourceFamily::TwoLocationOneSidedComponent => "TwoLocationOneSidedComponent",
+            RustDirectSourceFamily::TwoLocationReplacementBranchImpact => {
+                "TwoLocationReplacementBranchImpact"
+            }
+            RustDirectSourceFamily::TwoLocationExactReplacementBranch => {
+                "TwoLocationExactReplacementBranch"
+            }
+            RustDirectSourceFamily::MeasurementCrosstalk => "MeasurementCrosstalk",
             RustDirectSourceFamily::Other => "Other",
         };
         dict.set_item("direct_source_family", family_label)?;
+    }
+    dict.set_item("replacement_branch", contribution.replacement_branch)?;
+    if let Some(parts) = &contribution.source_component_effects {
+        dict.set_item(
+            "source_component_detectors",
+            parts
+                .iter()
+                .map(|part| part.detectors.to_vec())
+                .collect::<Vec<_>>(),
+        )?;
+        dict.set_item(
+            "source_component_dem_outputs",
+            parts
+                .iter()
+                .map(|part| part.dem_outputs.to_vec())
+                .collect::<Vec<_>>(),
+        )?;
     }
 
     match contribution.source_type {
@@ -952,26 +1511,80 @@ impl PyDetectorErrorModel {
     ///     >>> print(dem.to_string())
     ///     >>> sampler = dem.to_sampler()
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
+    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &pyo3::Bound<'_, pyo3::PyAny>,
         p1: f64,
         p2: f64,
         p_meas: f64,
         p_prep: f64,
+        p_idle: Option<f64>,
+        t1: Option<f64>,
+        t2: Option<f64>,
+        idle_rz: Option<f64>,
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
+        p1_weights: Option<BTreeMap<String, f64>>,
+        p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
+        p_meas_crosstalk_local: Option<f64>,
+        p_meas_crosstalk_global: Option<f64>,
+        p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
+        measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
         use pecos_qec::fault_tolerance::dem_builder::DemBuilder;
 
+        let noise = apply_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+            p1_weights,
+            p2_weights,
+            p2_replacement_approximation,
+            p_meas_crosstalk_local,
+            p_meas_crosstalk_global,
+            p_meas_crosstalk_model,
+            measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
+        )?;
         if let Ok(dag) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyDagCircuit>>()
         {
-            let inner = DemBuilder::try_from_circuit(&dag.inner, p1, p2, p_meas, p_prep)
+            let inner = DemBuilder::try_from_circuit_with_noise_config(&dag.inner, noise)
                 .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             Ok(Self { inner })
         } else if let Ok(tc) =
             circuit.extract::<pyo3::PyRef<'_, crate::dag_circuit_bindings::PyTickCircuit>>()
         {
-            let inner = DemBuilder::try_from_tick_circuit(&tc.inner, p1, p2, p_meas, p_prep)
+            let inner = DemBuilder::try_from_tick_circuit_with_noise_config(&tc.inner, noise)
                 .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             Ok(Self { inner })
         } else {
@@ -1032,16 +1645,53 @@ impl PyDetectorErrorModel {
         self.inner.to_string()
     }
 
-    /// Convert the DEM to a string with decomposed representations.
+    /// Convert the DEM to a string with source-decomposed representations.
     ///
-    /// For 2-detector mechanisms, outputs multiple equivalent representations
-    /// including L0 cancellation forms where available. Hyperedge errors
-    /// (affecting 3+ detectors) are decomposed into graphlike components.
+    /// Faults are decomposed only using component structure attached to the
+    /// original source contribution. Residual hyperedges remain hyperedges
+    /// instead of being rewritten by an ambient graphlike search.
     ///
     /// Returns:
     ///     A string in DEM format with decomposed representations.
     fn to_string_decomposed(&self) -> String {
         self.inner.to_string_decomposed()
+    }
+
+    /// Convert the DEM to source-decomposed text.
+    ///
+    /// Only decomposition components attached to the original fault source are
+    /// used. Residual hyperedges remain hyperedges instead of being rewritten
+    /// by an ambient graphlike search.
+    fn to_string_source_decomposed(&self) -> String {
+        self.inner.to_string_source_decomposed()
+    }
+
+    /// Convert the DEM to a source-informed graphlike decomposition.
+    ///
+    /// Source-carried components are recursively decomposed only using
+    /// graphlike pieces that are themselves source-carried components in this
+    /// DEM. Residual hyperedges remain hyperedges.
+    fn to_string_source_graphlike_decomposed(&self) -> String {
+        self.inner.to_string_source_graphlike_decomposed()
+    }
+
+    /// Convert the DEM to a terminal-only graphlike projection.
+    ///
+    /// Raw mechanisms are first grouped exactly as in `to_string()`. Each raw
+    /// effect is then projected to graphlike terminal components using detector
+    /// coordinates. This is a decoder-facing representation for graph matchers,
+    /// not source-proof decomposition.
+    fn to_string_terminal_graphlike_decomposed(&self) -> String {
+        self.inner.to_string_terminal_graphlike_decomposed()
+    }
+
+    /// Convert the DEM using the explicit historical graphlike-search renderer.
+    ///
+    /// This may decompose residual hyperedges by searching for graphlike
+    /// mechanisms elsewhere in the DEM, so it should be treated as a
+    /// compatibility/diagnostic representation rather than source proof.
+    fn to_string_graphlike_search_decomposed(&self) -> String {
+        self.inner.to_string_graphlike_search_decomposed()
     }
 
     /// Convert the DEM to a string with an explicit direct-2det render policy.
@@ -1147,6 +1797,19 @@ impl PyDetectorErrorModel {
             .collect()
     }
 
+    /// Returns per-contribution render records for the source-informed
+    /// graphlike renderer.
+    fn contribution_source_graphlike_render_records(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Py<pyo3::types::PyDict>>> {
+        self.inner
+            .contribution_source_graphlike_render_records()
+            .into_iter()
+            .map(|record| contribution_render_record_to_pydict(py, record, &self.inner))
+            .collect()
+    }
+
     /// Returns per-contribution render records under an explicit direct-2det
     /// render policy.
     fn contribution_render_records_with_two_detector_direct_policy(
@@ -1237,6 +1900,7 @@ pub struct PyDemBuilder {
     observables_json: Option<String>,
     num_measurements: Option<usize>,
     measurement_order: Option<Vec<usize>>,
+    exact_branch_circuit: Option<DagCircuit>,
 }
 
 #[pymethods]
@@ -1254,6 +1918,7 @@ impl PyDemBuilder {
             observables_json: None,
             num_measurements: None,
             measurement_order: None,
+            exact_branch_circuit: None,
         }
     }
 
@@ -1270,7 +1935,7 @@ impl PyDemBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -1282,17 +1947,57 @@ impl PyDemBuilder {
         t1: Option<f64>,
         t2: Option<f64>,
         idle_rz: Option<f64>,
-    ) -> PyRefMut<'_, Self> {
-        let mut noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
-        noise.p_idle = p_idle.unwrap_or(0.0);
-        if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
-            noise = noise.set_t1_t2(t1_val, t2_val);
-        }
-        if let Some(rz) = idle_rz {
-            noise = noise.set_idle_rz(rz);
-        }
-        slf.noise = noise;
-        slf
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
+        p1_weights: Option<BTreeMap<String, f64>>,
+        p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
+        p_meas_crosstalk_local: Option<f64>,
+        p_meas_crosstalk_global: Option<f64>,
+        p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
+        measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        slf.noise = apply_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+            p1_weights,
+            p2_weights,
+            p2_replacement_approximation,
+            p_meas_crosstalk_local,
+            p_meas_crosstalk_global,
+            p_meas_crosstalk_model,
+            measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
+        )?;
+        Ok(slf)
     }
 
     /// Set the detector definitions from JSON.
@@ -1351,6 +2056,20 @@ impl PyDemBuilder {
         slf
     }
 
+    /// Attach the original circuit for exact replacement-branch replay.
+    ///
+    /// This is only needed when using `p2_replacement_approximation="exact_branch_replay"`
+    /// with starred p2 replacement branches. The influence map still determines
+    /// ordinary Pauli propagation; the circuit context lets PECOS replay the
+    /// omitted-gate branch and fail loudly if it is not DEM-representable.
+    fn with_exact_branch_replay_circuit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        circuit: &crate::dag_circuit_bindings::PyDagCircuit,
+    ) -> PyRefMut<'py, Self> {
+        slf.exact_branch_circuit = Some(circuit.inner.clone());
+        slf
+    }
+
     /// Build the Detector Error Model.
     ///
     /// Returns:
@@ -1363,6 +2082,10 @@ impl PyDemBuilder {
     fn build(&self) -> PyResult<PyDetectorErrorModel> {
         let mut builder =
             RustDemBuilder::new(&self.influence_map).with_noise_config(self.noise.clone());
+
+        if let Some(ref circuit) = self.exact_branch_circuit {
+            builder = builder.with_exact_branch_replay_context(circuit);
+        }
 
         if let Some(num) = self.num_measurements {
             builder = builder.with_num_measurements(num);
@@ -1419,10 +2142,10 @@ struct WeightedUfObservableDecoder {
 }
 
 impl pecos_decoders::ObservableDecoder for WeightedUfObservableDecoder {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         let arr = ndarray::Array1::from_vec(syndrome.to_vec());
         // bits_per_step=1: grow one bit at a time, sorted by LLR weight.
         // bits_per_step=0 with non-empty LLRs causes the C++ UF decoder to
@@ -1433,7 +2156,7 @@ impl pecos_decoders::ObservableDecoder for WeightedUfObservableDecoder {
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
         Ok(self
             .dcm
-            .observables_mask_from_correction(result.decoding.as_slice().unwrap_or(&[])))
+            .observables_obsmask_from_correction(result.decoding.as_slice().unwrap_or(&[])))
     }
 }
 
@@ -1447,10 +2170,10 @@ struct RelabeledObservableDecoder {
 }
 
 impl pecos_decoders::ObservableDecoder for RelabeledObservableDecoder {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         // Relabel syndrome into the expanded vertex space (detectors + virtual + gap)
         let expected = self.decoder.num_nodes();
         let mut relabeled = vec![0u8; expected];
@@ -1467,10 +2190,10 @@ impl pecos_decoders::ObservableDecoder for RelabeledObservableDecoder {
             .decoder
             .decode(&arr.view())
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
-        let mut mask = 0u64;
+        let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
         for (i, &v) in result.observable.iter().enumerate() {
             if v != 0 {
-                mask |= 1 << i;
+                mask.set(i);
             }
         }
         Ok(mask)
@@ -1511,7 +2234,7 @@ fn create_observable_decoder(
     };
 
     match decoder_type {
-        "pymatching" => {
+        "pymatching" | "pymatching_correlated" => {
             // Default: correlated matching enabled (exploits X-Z correlations
             // from depolarizing noise for ~20% fewer errors at d>=5).
             let d = PyMatchingDecoder::from_dem_with_correlations(dem, true)
@@ -1582,6 +2305,11 @@ fn create_observable_decoder(
             use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
             let graph = DemMatchingGraph::from_dem_str(dem)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             // Use absolute weight scaling. Fusion Blossom uses integer weights;
             // we multiply by 1000 for precision (matching the internal 1000x
@@ -1624,6 +2352,11 @@ fn create_observable_decoder(
             use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder};
 
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             let config = FusionBlossomConfig {
@@ -1728,6 +2461,11 @@ fn create_observable_decoder(
             use pecos_decoders::{FusionBlossomConfig, FusionBlossomDecoder, PartitionConfig};
 
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             // Group detectors by time coordinate for round-contiguous relabeling.
@@ -2024,10 +2762,16 @@ fn create_observable_decoder(
                     |e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()),
                 )?;
 
+            // Reject negative-weight edges (error priors p > 0.5) as a Python error
+            // rather than panicking on the negative-weight assert; the
+            // >64-observable guard now lives in `from_matching_graph`.
+            pecos_decoders::UfDecoder::check_non_negative_weights(&graph)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let uf = pecos_decoders::UfDecoder::from_matching_graph(
                 &graph,
                 pecos_decoders::UfDecoderConfig::balanced(),
-            );
+            )
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let two_pass = TwoPassDecoder::new(uf, base_weights, corr_table);
             Ok(Box::new(two_pass))
         }
@@ -2056,6 +2800,11 @@ fn create_observable_decoder(
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let config = FusionBlossomConfig {
                 num_nodes: Some(graph.num_detectors),
@@ -2120,6 +2869,11 @@ fn create_observable_decoder(
             // Build Fusion Blossom as the matching backend.
             let graph = DemMatchingGraph::from_dem_str(dem)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let config = FusionBlossomConfig {
                 num_nodes: Some(graph.num_detectors),
                 num_observables: graph.num_observables,
@@ -2163,6 +2917,11 @@ fn create_observable_decoder(
                     })?;
 
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
             // Build Fusion Blossom.
@@ -2229,6 +2988,11 @@ fn create_observable_decoder(
 
             // Build Fusion Blossom from decomposed DEM.
             let graph = DemMatchingGraph::from_dem_str(dem)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            // Matching decoders pack observables into a u64; reject >64-observable
+            // DEMs rather than overflow-panicking in build_obs_masks.
+            graph
+                .ensure_observables_fit_u64()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             let config = FusionBlossomConfig {
                 num_nodes: Some(graph.num_detectors),
@@ -2556,19 +3320,19 @@ fn create_observable_decoder(
             }
             Ok(Box::new(EnsembleDecoder::new(members)))
         }
-        // Per-observable subgraph decoder: requires stab_coords from Python.
+        // Per-logical-operator subgraph decoder: requires stab_coords from Python.
         // This is NOT callable from the string-based create_observable_decoder API.
-        // Use the Python ObservableSubgraphDecoder class directly instead.
-        s if s == "observable_subgraph" || s.starts_with("observable_subgraph:") => {
+        // Use the Python LogicalSubgraphDecoder class directly instead.
+        s if s == "logical_subgraph" || s.starts_with("logical_subgraph:") => {
             Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "observable_subgraph decoder requires stab_coords. \
-                 Use pecos_rslib.qec.ObservableSubgraphDecoder class directly.",
+                "logical_subgraph decoder requires stab_coords. \
+                 Use pecos_rslib.qec.LogicalSubgraphDecoder class directly.",
             ))
         }
         _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
             "Unsupported decoder_type: {decoder_type}. \
              Supported: pymatching, tesseract, mwpf, pecos_uf (or pecos_uf:fast/balanced/accurate), \
-             observable_subgraph, ensemble:d1,d2,..., bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
+             logical_subgraph, ensemble:d1,d2,..., bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
         ))),
     }
 }
@@ -2610,14 +3374,53 @@ impl PySampleBatch {
         }
     }
 
-    /// Extract observable mask for one shot.
+    /// Reject a batch that cannot be represented by the legacy `u64` observable
+    /// APIs (more than 64 observable columns). Callers with >64 observables must
+    /// use the wide `LogicalSubgraphDecoder` decode/decode_count paths, which
+    /// return arbitrary-precision Python ints. Call this up front in every
+    /// `u64`-returning public method before [`Self::extract_obs_mask`].
+    fn ensure_narrow_observables(&self) -> PyResult<()> {
+        if self.obs_columns.len() > 64 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "SampleBatch has {} observable columns, exceeding the 64-observable limit of \
+                 this u64-based API; use the wide LogicalSubgraphDecoder decode/decode_count \
+                 paths (arbitrary-precision int) for more than 64 observables",
+                self.obs_columns.len()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Extract observable mask for one shot (`u64`; observables 0..=63 only).
+    ///
+    /// The caller must have rejected wide batches via
+    /// [`Self::ensure_narrow_observables`] first; with >64 observable columns the
+    /// `1u64 << obs_idx` below would overflow.
     fn extract_obs_mask(&self, shot: usize) -> u64 {
+        debug_assert!(
+            self.obs_columns.len() <= 64,
+            "extract_obs_mask requires <=64 observable columns; call ensure_narrow_observables first"
+        );
         let word_idx = shot / 64;
         let bit_mask = 1u64 << (shot % 64);
         let mut mask = 0u64;
         for (obs_idx, col) in self.obs_columns.iter().enumerate() {
             if col[word_idx] & bit_mask != 0 {
                 mask |= 1u64 << obs_idx;
+            }
+        }
+        mask
+    }
+
+    /// Extract the observable mask for one shot as a wide [`ObsMask`], with no
+    /// 64-observable cap (the columnar storage already supports >64 columns).
+    fn extract_obs_mask_wide(&self, shot: usize) -> pecos_decoder_core::obs_mask::ObsMask {
+        let word_idx = shot / 64;
+        let bit_mask = 1u64 << (shot % 64);
+        let mut mask = pecos_decoder_core::obs_mask::ObsMask::new();
+        for (obs_idx, col) in self.obs_columns.iter().enumerate() {
+            if col[word_idx] & bit_mask != 0 {
+                mask.set(obs_idx);
             }
         }
         mask
@@ -2638,8 +3441,12 @@ impl PySampleBatch {
         }
     }
 
-    /// Build from row-major data (from Python constructor).
-    fn from_row_major(detection_events: Vec<Vec<u8>>, observable_masks: Vec<u64>) -> Self {
+    /// Build from row-major data (from Python constructor). Observable masks are
+    /// wide [`ObsMask`]es, so more than 64 observables are stored without loss.
+    fn from_row_major(
+        detection_events: Vec<Vec<u8>>,
+        observable_masks: &[pecos_decoder_core::obs_mask::ObsMask],
+    ) -> Self {
         let num_shots = detection_events.len();
         let num_detectors = detection_events.first().map_or(0, Vec::len);
         let num_words = num_shots.div_ceil(64);
@@ -2656,20 +3463,19 @@ impl PySampleBatch {
             }
         }
 
-        // Find max observable index
+        // One observable column per observable index; sized to the highest set
+        // bit across all shots (supports >64 observables).
         let max_obs = observable_masks
             .iter()
-            .map(|m| 64 - m.leading_zeros() as usize)
+            .filter_map(|m| m.iter_set_bits().max())
             .max()
-            .unwrap_or(0);
+            .map_or(0, |b| b + 1);
         let mut obs_columns = vec![vec![0u64; num_words]; max_obs];
-        for (shot, &mask) in observable_masks.iter().enumerate() {
+        for (shot, mask) in observable_masks.iter().enumerate() {
             let word_idx = shot / 64;
             let bit_mask = 1u64 << (shot % 64);
-            for (obs_idx, obs_column) in obs_columns.iter_mut().enumerate().take(max_obs) {
-                if mask & (1u64 << obs_idx) != 0 {
-                    obs_column[word_idx] |= bit_mask;
-                }
+            for obs_idx in mask.iter_set_bits() {
+                obs_columns[obs_idx][word_idx] |= bit_mask;
             }
         }
 
@@ -2688,10 +3494,15 @@ impl PySampleBatch {
     ///
     /// Args:
     ///     detection_events: List of syndromes, each a list of u8 (0/1).
-    ///     observable_masks: List of u64 true observable flip masks.
+    ///     observable_masks: List of true observable flip masks as Python ints
+    ///         (arbitrary precision; bit ``i`` = observable ``i``, so more than 64
+    ///         observables are supported).
     #[new]
     #[pyo3(signature = (detection_events, observable_masks))]
-    fn new(detection_events: Vec<Vec<u8>>, observable_masks: Vec<u64>) -> PyResult<Self> {
+    fn new(
+        detection_events: Vec<Vec<u8>>,
+        observable_masks: Vec<pyo3::Bound<'_, pyo3::PyAny>>,
+    ) -> PyResult<Self> {
         if detection_events.len() != observable_masks.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "detection_events ({}) and observable_masks ({}) must have same length",
@@ -2709,7 +3520,11 @@ impl PySampleBatch {
                 )));
             }
         }
-        Ok(Self::from_row_major(detection_events, observable_masks))
+        let masks: Vec<pecos_decoder_core::obs_mask::ObsMask> = observable_masks
+            .iter()
+            .map(py_to_obsmask)
+            .collect::<PyResult<_>>()?;
+        Ok(Self::from_row_major(detection_events, &masks))
     }
 
     /// Number of shots in this batch.
@@ -2731,8 +3546,9 @@ impl PySampleBatch {
         Ok(buf)
     }
 
-    /// Get the expected observable mask for shot `i`.
+    /// Get the expected observable mask for shot `i` (`u64`; <=64 observables).
     fn get_observable_mask(&self, i: usize) -> PyResult<u64> {
+        self.ensure_narrow_observables()?;
         if i >= self.num_shots {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
                 "Shot index {i} out of range (num_shots={})",
@@ -2742,14 +3558,27 @@ impl PySampleBatch {
         Ok(self.extract_obs_mask(i))
     }
 
+    /// Observable mask for shot `i` as a Python ``int`` (arbitrary precision, so
+    /// more than 64 observables are not truncated).
+    fn get_observable_mask_wide(&self, py: Python<'_>, i: usize) -> PyResult<Py<pyo3::PyAny>> {
+        if i >= self.num_shots {
+            return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
+                "Shot index {i} out of range (num_shots={})",
+                self.num_shots
+            )));
+        }
+        obsmask_to_py(py, &self.extract_obs_mask_wide(i))
+    }
+
     /// Decode all samples with the given decoder type and return the error count.
     ///
     /// This runs entirely in Rust -- no per-shot Python crossing.
     ///
     /// Args:
     ///     dem: DEM string in standard DEM text format for the decoder.
-    ///     `decoder_type`: "pymatching", "tesseract", "`bp_osd`", "`bp_lsd`", "`union_find`",
-    ///                   "`relay_bp`", or "`min_sum_bp`".
+    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
+    ///                   "`pymatching_uncorrelated`", "tesseract", "`bp_osd`",
+    ///                   "`bp_lsd`", "`union_find`", "`relay_bp`", or "`min_sum_bp`".
     ///
     /// Returns:
     ///     Number of logical errors.
@@ -2760,12 +3589,52 @@ impl PySampleBatch {
         let mut syndrome = vec![0u8; self.num_detectors];
         for i in 0..self.num_shots {
             self.extract_syndrome(i, &mut syndrome);
-            let predicted = decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX);
-            if predicted != self.extract_obs_mask(i) {
+            // Wide ObsMask comparison: inline (one stack word) for the typical
+            // <=64 observables, correct without truncation beyond. A decode
+            // failure counts as a logical error (matching the prior sentinel).
+            let is_error = decoder
+                .decode_obs(&syndrome)
+                .map_or(true, |p| p != self.extract_obs_mask_wide(i));
+            if is_error {
                 errors += 1;
             }
         }
         Ok(errors)
+    }
+
+    /// Decode every shot and return the predicted observable mask per shot.
+    ///
+    /// Mirrors `decode_count` but returns the raw per-shot predictions instead
+    /// of an aggregate error count, so callers can localize disagreements
+    /// against a reference decoder.
+    ///
+    /// Args:
+    ///     dem: DEM string for the decoder.
+    ///     `decoder_type`: Decoder type string.
+    ///
+    /// Returns:
+    ///     List of predicted observable masks (Python ints; arbitrary precision,
+    ///     so more than 64 observables are not truncated), one per shot.
+    #[pyo3(signature = (dem, decoder_type="pymatching"))]
+    fn decode_each(
+        &self,
+        py: Python<'_>,
+        dem: &str,
+        decoder_type: &str,
+    ) -> PyResult<Vec<Py<pyo3::PyAny>>> {
+        let mut decoder = create_observable_decoder(dem, decoder_type)?;
+        let mut predictions = Vec::with_capacity(self.num_shots);
+        let mut syndrome = vec![0u8; self.num_detectors];
+        for i in 0..self.num_shots {
+            self.extract_syndrome(i, &mut syndrome);
+            // Propagate a decode failure rather than masking it as a sentinel
+            // observable value (which would read as a spurious disagreement).
+            let predicted = decoder
+                .decode_obs(&syndrome)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            predictions.push(obsmask_to_py(py, &predicted)?);
+        }
+        Ok(predictions)
     }
 
     /// Parallel decode: distributes samples across rayon workers.
@@ -2807,7 +3676,8 @@ impl PySampleBatch {
                 s
             })
             .collect();
-        let observable_masks: Vec<u64> = (0..n).map(|i| self.extract_obs_mask(i)).collect();
+        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
+            (0..n).map(|i| self.extract_obs_mask_wide(i)).collect();
 
         let total_errors: usize = pool.install(|| {
             (0..n)
@@ -2815,10 +3685,11 @@ impl PySampleBatch {
                 .map_init(
                     || create_observable_decoder(&dem_str, &dt).unwrap(),
                     |decoder, i| {
-                        let predicted = decoder
-                            .decode_to_observables(&detection_events[i])
-                            .unwrap_or(u64::MAX);
-                        usize::from(predicted != observable_masks[i])
+                        usize::from(
+                            decoder
+                                .decode_obs(&detection_events[i])
+                                .map_or(true, |p| p != observable_masks[i]),
+                        )
                     },
                 )
                 .sum()
@@ -2865,17 +3736,19 @@ impl PySampleBatch {
             .decode_batch_with_config(&flat, self.num_shots, num_detectors, config)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        // Count errors by comparing predictions to true observable masks
+        // Count errors by comparing predictions to true observable masks. The
+        // predicted mask is a wide ObsMask (inline for <=64 observables, correct
+        // beyond), so a DEM with more than 64 observables is not truncated.
         let num_observables = decoder.num_observables();
         let mut num_errors = 0usize;
         for (i, prediction) in result.predictions.iter().enumerate() {
-            let mut predicted_mask = 0u64;
+            let mut predicted = pecos_decoder_core::obs_mask::ObsMask::new();
             for (j, &v) in prediction.iter().enumerate() {
                 if v != 0 && j < num_observables {
-                    predicted_mask |= 1 << j;
+                    predicted.set(j);
                 }
             }
-            if predicted_mask != self.extract_obs_mask(i) {
+            if predicted != self.extract_obs_mask_wide(i) {
                 num_errors += 1;
             }
         }
@@ -2907,10 +3780,10 @@ impl PySampleBatch {
         for i in 0..self.num_shots {
             self.extract_syndrome(i, &mut syndrome);
             let t0 = Instant::now();
-            let predicted = decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX);
+            let predicted = decoder.decode_obs(&syndrome);
             let elapsed = t0.elapsed().as_secs_f64();
             per_shot_seconds.push(elapsed);
-            if predicted != self.extract_obs_mask(i) {
+            if predicted.map_or(true, |p| p != self.extract_obs_mask_wide(i)) {
                 num_errors += 1;
             }
         }
@@ -2966,8 +3839,8 @@ impl PySampleBatch {
                 s
             })
             .collect();
-        let observable_masks: Vec<u64> = (0..self.num_shots)
-            .map(|i| self.extract_obs_mask(i))
+        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> = (0..self.num_shots)
+            .map(|i| self.extract_obs_mask_wide(i))
             .collect();
 
         // Each worker decodes a slice of shots and returns (errors, per_shot_times).
@@ -2988,11 +3861,9 @@ impl PySampleBatch {
 
                     for i in start..end {
                         let t0 = std::time::Instant::now();
-                        let predicted = decoder
-                            .decode_to_observables(&detection_events[i])
-                            .unwrap_or(u64::MAX);
+                        let predicted = decoder.decode_obs(&detection_events[i]);
                         times.push(t0.elapsed().as_secs_f64());
-                        if predicted != observable_masks[i] {
+                        if predicted.map_or(true, |p| p != observable_masks[i]) {
                             errors += 1;
                         }
                     }
@@ -3135,7 +4006,8 @@ impl PyDemSampler {
     ///     >>> sampler = DemSampler.from_circuit(dag, p1=0.001, p2=0.01)
     ///     >>> sampler = DemSampler.from_circuit(tc, p2=0.01)  # TickCircuit also works
     #[staticmethod]
-    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, idle_rz=None))]
+    #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
+    #[allow(clippy::too_many_arguments)]
     fn from_circuit(
         circuit: &Bound<'_, pyo3::PyAny>,
         p1: f64,
@@ -3143,13 +4015,59 @@ impl PyDemSampler {
         p_meas: f64,
         p_prep: f64,
         p_idle: Option<f64>,
+        t1: Option<f64>,
+        t2: Option<f64>,
         idle_rz: Option<f64>,
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
+        p1_weights: Option<BTreeMap<String, f64>>,
+        p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
+        p_meas_crosstalk_local: Option<f64>,
+        p_meas_crosstalk_global: Option<f64>,
+        p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
+        measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
-        let mut noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
-        noise.p_idle = p_idle.unwrap_or(0.0);
-        if let Some(rz) = idle_rz {
-            noise = noise.set_idle_rz(rz);
-        }
+        let noise = apply_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+            p1_weights,
+            p2_weights,
+            p2_replacement_approximation,
+            p_meas_crosstalk_local,
+            p_meas_crosstalk_global,
+            p_meas_crosstalk_model,
+            measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
+        )?;
 
         // Accept both DagCircuit and TickCircuit
         if let Ok(dag) =
@@ -3259,7 +4177,7 @@ impl PyDemSampler {
     ///
     /// The `observables` argument defines observables.
     #[staticmethod]
-    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None))]
+    #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_detectors(
         influence_map: &PyDagFaultInfluenceMap,
@@ -3272,12 +4190,57 @@ impl PyDemSampler {
         p_idle: Option<f64>,
         t1: Option<f64>,
         t2: Option<f64>,
+        idle_rz: Option<f64>,
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
+        p1_weights: Option<BTreeMap<String, f64>>,
+        p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
+        p_meas_crosstalk_local: Option<f64>,
+        p_meas_crosstalk_global: Option<f64>,
+        p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
+        measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
-        let mut noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
-        noise.p_idle = p_idle.unwrap_or(0.0);
-        if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
-            noise = noise.set_t1_t2(t1_val, t2_val);
-        }
+        let noise = apply_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+            p1_weights,
+            p2_weights,
+            p2_replacement_approximation,
+            p_meas_crosstalk_local,
+            p_meas_crosstalk_global,
+            p_meas_crosstalk_model,
+            measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
+        )?;
         let inner = RustNewDemSamplerBuilder::new(&influence_map.inner)
             .with_noise_config(noise)
             .with_detectors(detectors, observables)
@@ -3397,6 +4360,63 @@ impl PyDemSampler {
         };
 
         self.inner.sample_batch(num_shots, &mut rng)
+    }
+
+    /// Sample multiple shots and XOR a known Pauli-frame mask into the outputs.
+    ///
+    /// Args:
+    ///     `num_shots`: Number of shots to sample.
+    ///     lookup: Pauli-frame lookup built from the same circuit metadata.
+    ///     `pauli_masks`: Integer array with shape `(num_shots, num_pauli_sites)`.
+    ///         Values are 0=I, 1=X, 2=Y, 3=Z.
+    ///     seed: Optional random seed for reproducibility.
+    ///
+    /// Returns:
+    ///     Tuple of (`all_detection_events`, `all_dem_output_flips`).
+    #[pyo3(signature = (num_shots, lookup, pauli_masks, seed=None))]
+    fn sample_batch_with_pauli_masks(
+        &self,
+        num_shots: usize,
+        lookup: &PyPauliFrameLookup,
+        pauli_masks: &Bound<'_, pyo3::PyAny>,
+        seed: Option<u64>,
+    ) -> PyResult<PyDetectorObservableRows> {
+        use pecos_random::PecosRng;
+        use rand::RngExt;
+
+        if lookup.inner.num_detectors() != self.inner.num_outputs() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pauli frame lookup has {} detector(s), sampler has {}",
+                lookup.inner.num_detectors(),
+                self.inner.num_outputs()
+            )));
+        }
+        if lookup.inner.num_observables() != self.inner.num_dem_outputs() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "pauli frame lookup has {} observable(s), sampler has {}",
+                lookup.inner.num_observables(),
+                self.inner.num_dem_outputs()
+            )));
+        }
+
+        let (mask_values, mask_rows, mask_cols) = extract_pauli_mask_values(pauli_masks)?;
+        let mut rng = match seed {
+            Some(s) => PecosRng::seed_from_u64(s),
+            None => PecosRng::seed_from_u64(rand::rng().random()),
+        };
+
+        let (mut det_events, mut obs_flips) = self.inner.sample_batch(num_shots, &mut rng);
+        lookup
+            .inner
+            .apply_mask_values(
+                &mask_values,
+                mask_rows,
+                mask_cols,
+                &mut det_events,
+                &mut obs_flips,
+            )
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok((det_events, obs_flips))
     }
 
     /// Sample direct tracked-Pauli flips.
@@ -3573,7 +4593,9 @@ impl PyDemSampler {
     /// Args:
     ///     dem: DEM string in standard DEM text format for the decoder.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     `decoder_type`: "pymatching" or "tesseract".
+    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
+    ///                   "`pymatching_uncorrelated`", "tesseract", or another
+    ///                   decoder accepted by `create_observable_decoder`.
     ///     seed: Optional random seed for reproducibility.
     ///
     /// Returns:
@@ -3601,9 +4623,14 @@ impl PyDemSampler {
         for _ in 0..num_shots {
             let (det_events, obs_flips) = self.inner.sample(&mut rng);
             let syndrome: Vec<u8> = det_events.iter().map(|&b| u8::from(b)).collect();
-            let predicted_mask = decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX);
-            let true_mask = self.inner.observable_mask_from_dem_output_flips(&obs_flips);
-            if (predicted_mask & observable_mask) != true_mask {
+            let mut predicted = decoder
+                .decode_obs(&syndrome)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            predicted &= &observable_mask;
+            let true_mask = self
+                .inner
+                .observable_mask_from_dem_output_flips(&obs_flips, &observable_mask);
+            if predicted != true_mask {
                 errors += 1;
             }
         }
@@ -3618,7 +4645,9 @@ impl PyDemSampler {
     /// Args:
     ///     dem: DEM string in standard DEM text format for the decoder.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     `decoder_type`: "pymatching", "tesseract", "`bp_osd`", "`bp_lsd`", or "`union_find`".
+    ///     `decoder_type`: "pymatching", "`pymatching_correlated`",
+    ///                   "`pymatching_uncorrelated`", "tesseract", "`bp_osd`",
+    ///                   "`bp_lsd`", or "`union_find`".
     ///     seed: Optional base random seed. Each thread gets seed + `thread_id`.
     ///     `num_workers`: Number of parallel workers (default: number of CPUs).
     ///
@@ -3675,10 +4704,13 @@ impl PyDemSampler {
                     for _ in 0..my_shots {
                         let (det_events, obs_flips) = my_sampler.sample(&mut my_rng);
                         let syndrome: Vec<u8> = det_events.iter().map(|&b| u8::from(b)).collect();
-                        let predicted =
-                            decoder.decode_to_observables(&syndrome).unwrap_or(u64::MAX);
-                        let truth = my_sampler.observable_mask_from_dem_output_flips(&obs_flips);
-                        if (predicted & observable_mask) != truth {
+                        let mut predicted = decoder
+                            .decode_obs(&syndrome)
+                            .unwrap_or_else(|_| observable_mask.clone());
+                        predicted &= &observable_mask;
+                        let truth = my_sampler
+                            .observable_mask_from_dem_output_flips(&obs_flips, &observable_mask);
+                        if predicted != truth {
                             errors += 1;
                         }
                     }
@@ -3730,7 +4762,7 @@ impl PyDemSamplerBuilder {
     }
 
     /// Set noise parameters.
-    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None))]
+    #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
         mut slf: PyRefMut<'_, Self>,
@@ -3742,17 +4774,57 @@ impl PyDemSamplerBuilder {
         t1: Option<f64>,
         t2: Option<f64>,
         idle_rz: Option<f64>,
-    ) -> PyRefMut<'_, Self> {
-        let mut noise = NoiseConfig::new(p1, p2, p_meas, p_prep);
-        noise.p_idle = p_idle.unwrap_or(0.0);
-        if let (Some(t1_val), Some(t2_val)) = (t1, t2) {
-            noise = noise.set_t1_t2(t1_val, t2_val);
-        }
-        if let Some(rz) = idle_rz {
-            noise = noise.set_idle_rz(rz);
-        }
-        slf.noise = noise;
-        slf
+        p_idle_linear_rate: Option<f64>,
+        p_idle_quadratic_rate: Option<f64>,
+        p_idle_x_linear_rate: Option<f64>,
+        p_idle_y_linear_rate: Option<f64>,
+        p_idle_z_linear_rate: Option<f64>,
+        p_idle_x_quadratic_rate: Option<f64>,
+        p_idle_y_quadratic_rate: Option<f64>,
+        p_idle_z_quadratic_rate: Option<f64>,
+        p_idle_quadratic_sine_rate: Option<f64>,
+        p_idle_x_quadratic_sine_rate: Option<f64>,
+        p_idle_y_quadratic_sine_rate: Option<f64>,
+        p_idle_z_quadratic_sine_rate: Option<f64>,
+        p1_weights: Option<BTreeMap<String, f64>>,
+        p2_weights: Option<BTreeMap<String, f64>>,
+        p2_replacement_approximation: Option<String>,
+        p_meas_crosstalk_local: Option<f64>,
+        p_meas_crosstalk_global: Option<f64>,
+        p_meas_crosstalk_model: Option<BTreeMap<String, f64>>,
+        measurement_crosstalk_dem_mode: Option<String>,
+        p2_gate_rates: Option<BTreeMap<String, f64>>,
+        p1_gate_rates: Option<BTreeMap<String, f64>>,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        slf.noise = apply_noise_options(
+            NoiseConfig::new(p1, p2, p_meas, p_prep),
+            p_idle,
+            t1,
+            t2,
+            idle_rz,
+            p_idle_linear_rate,
+            p_idle_quadratic_rate,
+            p_idle_x_linear_rate,
+            p_idle_y_linear_rate,
+            p_idle_z_linear_rate,
+            p_idle_x_quadratic_rate,
+            p_idle_y_quadratic_rate,
+            p_idle_z_quadratic_rate,
+            p_idle_quadratic_sine_rate,
+            p_idle_x_quadratic_sine_rate,
+            p_idle_y_quadratic_sine_rate,
+            p_idle_z_quadratic_sine_rate,
+            p1_weights,
+            p2_weights,
+            p2_replacement_approximation,
+            p_meas_crosstalk_local,
+            p_meas_crosstalk_global,
+            p_meas_crosstalk_model,
+            measurement_crosstalk_dem_mode,
+            p2_gate_rates,
+            p1_gate_rates,
+        )?;
+        Ok(slf)
     }
 
     /// Set detector definitions from JSON.
@@ -4410,40 +5482,122 @@ impl PyCssUfDecoder {
 // Observable Subgraph Decoder (Python class)
 // =============================================================================
 
-/// Per-observable subgraph decoder for transversal gates.
+/// Per-logical-operator subgraph decoder for transversal gates.
 ///
-/// Partitions a DEM into per-observable graphlike subgraphs using
+/// Partitions a DEM into per-logical-operator graphlike subgraphs using
 /// stabilizer coordinate information, then decodes each independently.
 ///
 /// Args:
 ///     dem: DEM string with detector coordinate declarations.
 ///     `stab_coords`: List of dicts, one per logical qubit. Each dict has
 ///         keys "X" and "Z" mapping to lists of (x, y) ancilla coordinates.
-///     `inner_decoder`: Inner decoder type string (default "`pecos_uf:fast`").
+///     `inner_decoder`: Inner decoder type string (default
+///         "`fusion_blossom_serial`", exact MWPM -- accurate and fast across
+///         distances, bundled). The best choice is circuit-dependent:
+///         `pecos_uf:bp` (PECOS-native belief-propagation + union-find,
+///         dependency-free) is competitive on memory and at small distance and is
+///         the right pick when you want the pure-native path, but its grow+peel
+///         matching is both LESS accurate and SLOWER at higher distance /
+///         multi-observable circuits. `belief_matching` matches fusion's accuracy
+///         but is slower.
 ///
 /// Example:
-///     >>> decoder = `ObservableSubgraphDecoder`(
+///     >>> decoder = `LogicalSubgraphDecoder`(
 ///     ...     `dem_str`,
 ///     ...     [{"X": [(1,0), (3,1)], "Z": [(0,3), (1,1)]}],
-///     ...     "`pecos_uf:fast`",
+///     ...     "`fusion_blossom_serial`",
 ///     ... )
 ///     >>> obs = decoder.decode(syndrome)
-#[pyclass(name = "ObservableSubgraphDecoder", module = "pecos_rslib.qec")]
-pub struct PyObservableSubgraphDecoder {
-    inner: pecos_decoder_core::observable_subgraph::ObservableSubgraphDecoder,
+/// Convert a wide observable mask to a Python integer (arbitrary precision).
+///
+/// `<= 64` observables become a plain `int` from the single `u64` (identical to
+/// the historical return); `> 64` observables become a big `int` built from the
+/// mask's little-endian words, with no truncation.
+fn obsmask_to_py(
+    py: Python<'_>,
+    mask: &pecos_decoder_core::obs_mask::ObsMask,
+) -> PyResult<Py<pyo3::PyAny>> {
+    if let Some(v) = mask.to_u64() {
+        return Ok(v.into_pyobject(py)?.into_any().unbind());
+    }
+    let mut bytes = Vec::with_capacity(mask.words().len() * 8);
+    for &word in mask.words() {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    let py_bytes = pyo3::types::PyBytes::new(py, &bytes);
+    let int_type = py.get_type::<pyo3::types::PyInt>();
+    Ok(int_type
+        .call_method1("from_bytes", (py_bytes, "little"))?
+        .unbind())
+}
+
+/// Convert a Python integer (arbitrary precision) to a wide observable mask.
+///
+/// Inverse of [`obsmask_to_py`]: reads the int's little-endian bytes and packs
+/// them into `u64` words, so observable indices >= 64 are preserved.
+fn py_to_obsmask(
+    value: &pyo3::Bound<'_, pyo3::PyAny>,
+) -> PyResult<pecos_decoder_core::obs_mask::ObsMask> {
+    let bit_length: usize = value.call_method0("bit_length")?.extract()?;
+    let nbytes = bit_length.div_ceil(8).max(1);
+    let bytes: Vec<u8> = value
+        .call_method1("to_bytes", (nbytes, "little"))?
+        .extract()?;
+    let words: Vec<u64> = bytes
+        .chunks(8)
+        .map(|chunk| {
+            let mut buf = [0u8; 8];
+            buf[..chunk.len()].copy_from_slice(chunk);
+            u64::from_le_bytes(buf)
+        })
+        .collect();
+    Ok(pecos_decoder_core::obs_mask::ObsMask::from_words(&words))
+}
+
+#[pyclass(name = "LogicalSubgraphDecoder", module = "pecos_rslib.qec")]
+pub struct PyLogicalSubgraphDecoder {
+    inner: pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder,
+    /// The inner per-observable decoder backend selected at construction
+    /// (e.g. `"fusion_blossom_serial"`). `decode_count_parallel` reuses this so
+    /// the parallel workers match the serial path unless the caller overrides.
+    inner_decoder: String,
 }
 
 #[pymethods]
-impl PyObservableSubgraphDecoder {
+impl PyLogicalSubgraphDecoder {
+    // Default inner is `fusion_blossom_serial`: exact MWPM on each per-observable
+    // subgraph, bundled (no optional dependency). This is now backed by a powered
+    // threshold/CI study (`examples/surface/inner_decoder_study.py`; memory +
+    // transversal-CX, d=3/5/7, 3 seeds pooled = 150-300k shots/cell, Jeffreys
+    // intervals), NOT just policy:
+    //   * Accuracy: fusion is statistically tied with pymatching/belief_matching/
+    //     tesseract (these per-observable DEMs are graphlike, so exact MWPM is
+    //     optimal) and STRICTLY beats `pecos_uf:bp` at every d>=5 cell -- 1.4-2.7x
+    //     lower LER with DISJOINT Jeffreys intervals, both families. Tied at d=3.
+    //   * Threshold: fusion ~0.9% vs `pecos_uf:bp` ~0.7% (bp also breaks down sooner).
+    //   * Speed: at d=7 bp's grow+peel blows up (CX 7.1ms/shot vs fusion 1.2ms);
+    //     "bp is the fast native one" is false at depth.
+    // Only `pymatching` is faster (~6x) but it is an EXTERNAL dep with zero accuracy
+    // or threshold gain, so it is the documented speed option, not the default.
+    // SCOPE: the study families are graphlike, so it does not distinguish fusion
+    // from hyperedge decoders (tesseract/mwpf) -- re-run with those if non-graphlike
+    // per-observable DEMs (biased/correlated noise) ever arise. See
+    // pecos-docs/design/inner-decoder-threshold-study.md.
+    //
+    // `pecos_uf:bp` remains the pure-native, dependency-free path (it does suppress
+    // with distance -- the predecoder bug that broke it at d>=5 is fixed -- just at
+    // a worse prefactor and lower threshold). See
+    // pecos-docs/design/lomatching-paper-additional-learnings.md and
+    // logical-subgraph-backprop-region-builder.md.
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="pecos_uf:fast", max_time_radius=None))]
+    #[pyo3(signature = (dem, stab_coords, inner_decoder="fusion_blossom_serial", max_time_radius=None))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
         inner_decoder: &str,
         max_time_radius: Option<i64>,
     ) -> PyResult<Self> {
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
         // Parse stab_coords from Python dicts
         let mut rust_stab_coords = Vec::with_capacity(stab_coords.len());
@@ -4462,7 +5616,7 @@ impl PyObservableSubgraphDecoder {
             });
         }
 
-        let inner = ObservableSubgraphDecoder::from_dem_windowed(
+        let inner = LogicalSubgraphDecoder::from_dem_windowed(
             dem,
             &rust_stab_coords,
             max_time_radius,
@@ -4476,20 +5630,69 @@ impl PyObservableSubgraphDecoder {
         )
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            inner_decoder: inner_decoder.to_string(),
+        })
+    }
+
+    /// Build from a precomputed per-observable detector membership instead of
+    /// from `stab_coords`.
+    ///
+    /// `membership` is a list (one entry per observable) of full-DEM detector
+    /// ids. This lets callers supply an alternative observing-region
+    /// construction (e.g. the paper's back-propagation / detecting-region set)
+    /// and decode with the same machinery for direct comparison.
+    #[staticmethod]
+    #[pyo3(signature = (dem, membership, inner_decoder="fusion_blossom_serial"))]
+    fn from_membership(
+        dem: &str,
+        membership: Vec<Vec<usize>>,
+        inner_decoder: &str,
+    ) -> PyResult<Self> {
+        use pecos_decoder_core::logical_subgraph::LogicalSubgraphDecoder;
+
+        let inner = LogicalSubgraphDecoder::from_membership(dem, &membership, |subgraph| {
+            let sub_dem = subgraph_to_dem_string(subgraph);
+            let decoder = create_observable_decoder(&sub_dem, inner_decoder)
+                .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
+            Ok(Box::new(SendWrapper(decoder))
+                as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
+        })
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+        Ok(Self {
+            inner,
+            inner_decoder: inner_decoder.to_string(),
+        })
     }
 
     /// Decode a syndrome and return observable flip predictions.
-    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<u64> {
+    ///
+    /// Returns a Python ``int`` (bit ``i`` = observable ``i``). The integer is
+    /// arbitrary precision, so decoders with more than 64 observables are
+    /// returned without truncation.
+    fn decode(&mut self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Py<pyo3::PyAny>> {
         use pecos_decoder_core::ObservableDecoder;
-        self.inner
-            .decode_to_observables(&syndrome)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        let mask = self
+            .inner
+            .decode_obs(&syndrome)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        obsmask_to_py(py, &mask)
     }
 
     /// Number of observables this decoder handles.
     fn num_observables(&self) -> usize {
         self.inner.num_observables()
+    }
+
+    /// The inner per-observable decoder backend selected at construction.
+    ///
+    /// `decode_count_parallel` reuses this unless the caller overrides it, so
+    /// the serial and parallel paths agree by default.
+    #[getter]
+    fn inner_decoder(&self) -> &str {
+        &self.inner_decoder
     }
 
     /// Decode a batch of syndromes and return observable predictions.
@@ -4498,16 +5701,21 @@ impl PyObservableSubgraphDecoder {
     ///     syndromes: 2D numpy array of shape (`num_shots`, `num_detectors`).
     ///
     /// Returns:
-    ///     List of observable flip masks (one per shot).
-    fn decode_batch(&mut self, syndromes: Vec<Vec<u8>>) -> PyResult<Vec<u64>> {
+    ///     List of observable flip masks (one Python ``int`` per shot; arbitrary
+    ///     precision, so more than 64 observables are not truncated).
+    fn decode_batch(
+        &mut self,
+        py: Python<'_>,
+        syndromes: Vec<Vec<u8>>,
+    ) -> PyResult<Vec<Py<pyo3::PyAny>>> {
         use pecos_decoder_core::ObservableDecoder;
         let mut results = Vec::with_capacity(syndromes.len());
         for syn in &syndromes {
-            let obs = self
+            let mask = self
                 .inner
-                .decode_to_observables(syn)
+                .decode_obs(syn)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            results.push(obs);
+            results.push(obsmask_to_py(py, &mask)?);
         }
         Ok(results)
     }
@@ -4529,8 +5737,8 @@ impl PyObservableSubgraphDecoder {
                 s
             })
             .collect();
-        let observable_masks: Vec<u64> = (0..batch.num_shots)
-            .map(|i| batch.extract_obs_mask(i))
+        let observable_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> = (0..batch.num_shots)
+            .map(|i| batch.extract_obs_mask_wide(i))
             .collect();
         self.inner
             .decode_count_batched(&detection_events, &observable_masks)
@@ -4540,18 +5748,20 @@ impl PyObservableSubgraphDecoder {
     /// Decode a `SampleBatch` in parallel using rayon.
     ///
     /// Creates per-worker decoder instances to avoid lock contention.
-    /// Requires the DEM string and inner decoder type for reconstruction.
-    #[pyo3(signature = (batch, dem, stab_coords, inner_decoder="pymatching", num_workers=None, max_time_radius=None))]
+    /// Requires the DEM string for reconstruction. `inner_decoder` defaults to
+    /// the backend selected at construction (so the parallel path matches the
+    /// serial `decode_count` path); pass an explicit value only to override it.
+    #[pyo3(signature = (batch, dem, stab_coords, inner_decoder=None, num_workers=None, max_time_radius=None))]
     fn decode_count_parallel(
         &self,
         batch: &PySampleBatch,
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
-        inner_decoder: &str,
+        inner_decoder: Option<&str>,
         num_workers: Option<usize>,
         max_time_radius: Option<i64>,
     ) -> PyResult<usize> {
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
         use rayon::prelude::*;
 
         // Parse stab_coords
@@ -4572,7 +5782,11 @@ impl PyObservableSubgraphDecoder {
         }
 
         let dem_str = dem.to_string();
-        let inner_str = inner_decoder.to_string();
+        // Reuse the backend chosen at construction unless the caller overrides,
+        // so parallel workers decode identically to the serial path.
+        let inner_str = inner_decoder
+            .unwrap_or(self.inner_decoder.as_str())
+            .to_string();
         let n = batch.num_shots;
 
         // Materialize row-major data for parallel decode.
@@ -4583,14 +5797,18 @@ impl PyObservableSubgraphDecoder {
                 s
             })
             .collect();
-        let masks: Vec<u64> = (0..n).map(|i| batch.extract_obs_mask(i)).collect();
+        let masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
+            (0..n).map(|i| batch.extract_obs_mask_wide(i)).collect();
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_workers.unwrap_or(0))
             .build()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-        let errors: usize = pool.install(|| {
+        // Propagate worker construction and decode errors instead of panicking
+        // across the FFI boundary or silently scoring a failed chunk as
+        // all-failures (which would inflate the reported logical error rate).
+        let errors: Result<usize, pecos_decoders::DecoderError> = pool.install(|| {
             // Split into chunks, each chunk gets its own decoder + batch decode
             let chunk_size = n.div_ceil(rayon::current_num_threads());
             (0..n)
@@ -4598,7 +5816,7 @@ impl PyObservableSubgraphDecoder {
                 .par_chunks(chunk_size.max(1))
                 .map(|chunk| {
                     // Build a fresh decoder for this worker
-                    let mut dec = ObservableSubgraphDecoder::from_dem_windowed(
+                    let mut dec = LogicalSubgraphDecoder::from_dem_windowed(
                         &dem_str,
                         &sc,
                         max_time_radius,
@@ -4611,20 +5829,19 @@ impl PyObservableSubgraphDecoder {
                             Ok(Box::new(SendWrapper(d))
                                 as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
                         },
-                    )
-                    .unwrap();
+                    )?;
 
                     // Collect chunk syndromes and masks for batch decode
                     let chunk_syns: Vec<Vec<u8>> =
                         chunk.iter().map(|&i| events[i].clone()).collect();
-                    let chunk_masks: Vec<u64> = chunk.iter().map(|&i| masks[i]).collect();
+                    let chunk_masks: Vec<pecos_decoder_core::obs_mask::ObsMask> =
+                        chunk.iter().map(|&i| masks[i].clone()).collect();
                     dec.decode_count_batched(&chunk_syns, &chunk_masks)
-                        .unwrap_or(chunk.len())
                 })
-                .sum()
+                .try_reduce(|| 0, |a, b| Ok(a + b))
         });
 
-        Ok(errors)
+        errors.map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Number of detectors in each subgraph.
@@ -4632,6 +5849,15 @@ impl PyObservableSubgraphDecoder {
         (0..self.inner.num_observables())
             .map(|i| self.inner.subgraph(i).map_or(0, |sg| sg.detector_map.len()))
             .collect()
+    }
+
+    /// Per-observable observing regions: a list (one entry per observable) of
+    /// sorted full-DEM detector ids in that observable's subgraph.
+    ///
+    /// Exposed for differential testing against reference implementations such
+    /// as `lomatching.get_detector_indices_for_subgraphs`.
+    fn observing_regions(&self) -> Vec<Vec<usize>> {
+        self.inner.observing_regions()
     }
 
     /// Diagnostics: (`num_edges`, `skipped_hyperedges`) for each subgraph.
@@ -4655,7 +5881,7 @@ impl PyObservableSubgraphDecoder {
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<(usize, usize)> {
         use pecos_decoder_core::ghost_protocol::extract_ghost_edges_from_dem;
-        use pecos_decoder_core::observable_subgraph::QubitStabCoords;
+        use pecos_decoder_core::logical_subgraph::QubitStabCoords;
 
         let mut sc = Vec::with_capacity(stab_coords.len());
         for dict in &stab_coords {
@@ -4678,10 +5904,15 @@ impl PyObservableSubgraphDecoder {
         Ok((edges.len(), num_qubits))
     }
 
-    /// Get the per-subgraph DEM strings (graphlike, suitable for windowed decoding).
+    /// Get the per-subgraph DEM strings (graphlike, local detector IDs 0..N).
     ///
-    /// Each string is a DEM with local detector IDs (0..N) that can be
-    /// passed to windowed or sandwich decoders.
+    /// NOTE: these strings carry NO `detector(...)` coordinate lines (subgraph
+    /// graphs drop coordinates), so they are NOT suitable for *time-windowed*
+    /// decoding -- a windowed decoder would see no detector times and collapse to
+    /// a single window. For windowing, use the coord-preserving
+    /// `LogicalSubgraphWindowPlan` path (the `WindowedLogicalSubgraphDecoder` /
+    /// logical-circuit windowed budget already do). These strings are fine for
+    /// full (non-windowed) per-subgraph decoding.
     fn subgraph_dems(&self) -> Vec<String> {
         (0..self.inner.num_observables())
             .map(|i| {
@@ -4705,38 +5936,41 @@ impl PyObservableSubgraphDecoder {
 }
 
 // =============================================================================
-// Windowed OSD Decoder (Python class)
+// Windowed logical-subgraph decoding Decoder (Python class)
 // =============================================================================
 
 /// Windowed observable subgraph decoder for deep circuits.
 ///
-/// Splits the DEM into time windows, runs OSD within each window.
+/// Splits the DEM into time windows, runs logical-subgraph decoder within each window.
 /// Prevents the observing region from spanning the full circuit.
+///
+/// Partitions the DEM per observable, then windows each subgraph with proper
+/// sliding-window core-commit (only correction edges whose both endpoints lie
+/// in a window's core are committed). The inner decoder is the native
+/// edge-tracking union-find decoder, which core-commit requires.
 ///
 /// Args:
 ///     dem: DEM string.
 ///     `stab_coords`: Stabilizer coordinates per logical qubit.
-///     `inner_decoder`: Inner MWPM decoder type.
 ///     step: Core window size in time steps.
-///     buffer: Buffer size on each side (0 = non-overlapping).
-#[pyclass(name = "WindowedOsdDecoder", module = "pecos_rslib.qec")]
-pub struct PyWindowedOsdDecoder {
-    inner: pecos_decoder_core::windowed_osd::WindowedOsdDecoder,
+///     buffer: Buffer size on each side for matching context (0 =
+///         non-overlapping; recommend ~code distance).
+#[pyclass(name = "WindowedLogicalSubgraphDecoder", module = "pecos_rslib.qec")]
+pub struct PyWindowedLogicalSubgraphDecoder {
+    inner: pecos_decoders::WindowedLogicalSubgraphDecoder,
 }
 
 #[pymethods]
-impl PyWindowedOsdDecoder {
+impl PyWindowedLogicalSubgraphDecoder {
     #[new]
-    #[pyo3(signature = (dem, stab_coords, inner_decoder="pymatching", step=8, buffer=4))]
+    #[pyo3(signature = (dem, stab_coords, step=8, buffer=4))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
-        inner_decoder: &str,
         step: usize,
         buffer: usize,
     ) -> PyResult<Self> {
-        use pecos_decoder_core::observable_subgraph::QubitStabCoords;
-        use pecos_decoder_core::windowed_osd::{WindowedOsdConfig, WindowedOsdDecoder};
+        use pecos_decoder_core::logical_subgraph::QubitStabCoords;
 
         let mut sc = Vec::with_capacity(stab_coords.len());
         for dict in &stab_coords {
@@ -4754,25 +5988,26 @@ impl PyWindowedOsdDecoder {
             });
         }
 
-        let config = WindowedOsdConfig { step, buffer };
+        let config = pecos_decoders::WindowedConfig {
+            step_size: step,
+            buffer_size: buffer,
+            ..Default::default()
+        };
 
-        let inner = WindowedOsdDecoder::from_dem(dem, &sc, &config, |subgraph| {
-            let sub_dem = subgraph_to_dem_string(subgraph);
-            let d = create_observable_decoder(&sub_dem, inner_decoder)
-                .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
-            Ok(Box::new(SendWrapper(d))
-                as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
-        })
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let inner =
+            pecos_decoders::WindowedLogicalSubgraphDecoder::from_dem(dem, &sc, None, config)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         Ok(Self { inner })
     }
 
-    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<u64> {
+    fn decode(&mut self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Py<pyo3::PyAny>> {
         use pecos_decoder_core::ObservableDecoder;
-        self.inner
-            .decode_to_observables(&syndrome)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        let mask = self
+            .inner
+            .decode_obs(&syndrome)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        obsmask_to_py(py, &mask)
     }
 
     fn decode_count(&mut self, batch: &PySampleBatch) -> PyResult<usize> {
@@ -4783,9 +6018,9 @@ impl PyWindowedOsdDecoder {
             batch.extract_syndrome(i, &mut syndrome);
             let predicted = self
                 .inner
-                .decode_to_observables(&syndrome)
+                .decode_obs(&syndrome)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            if predicted != batch.extract_obs_mask(i) {
+            if predicted != batch.extract_obs_mask_wide(i) {
                 errors += 1;
             }
         }
@@ -4793,7 +6028,7 @@ impl PyWindowedOsdDecoder {
     }
 
     fn num_windows(&self) -> usize {
-        self.inner.windows.len()
+        self.inner.num_windows()
     }
 }
 
@@ -4801,7 +6036,33 @@ impl PyWindowedOsdDecoder {
 // Logical Algorithm Decoder (Python class)
 // =============================================================================
 
-/// Decoder for logical quantum algorithms with per-segment OSD and
+/// Read a required `u32` bit field off a boundary-gate descriptor dict, returning
+/// a clear `PyErr` (not a panic) when a malformed descriptor omits the field.
+/// Shared by the two algorithm-decoder bindings below.
+fn req_bit(
+    dict: &pyo3::Bound<'_, pyo3::types::PyDict>,
+    key: &str,
+    gate_type: &str,
+) -> PyResult<u32> {
+    let bit: u32 = dict
+        .get_item(key)?
+        .ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "boundary gate '{gate_type}' missing required field '{key}'"
+            ))
+        })?
+        .extract()?;
+    // Every boundary-gate bit indexes a u64 observable frame (`1u64 << bit`), so
+    // it must be < 64 -- reject out-of-range here rather than shift-overflow later.
+    if bit >= 64 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "boundary gate '{gate_type}' field '{key}' = {bit} exceeds the 64-observable frame limit"
+        )));
+    }
+    Ok(bit)
+}
+
+/// Decoder for logical quantum algorithms with per-segment logical-subgraph decoder and
 /// Pauli frame propagation at transversal gate boundaries.
 ///
 /// Built from a descriptor dict produced by
@@ -4820,7 +6081,7 @@ impl PyLogicalAlgorithmDecoder {
     ///
     /// Args:
     ///     descriptor: Dict from ``LogicalCircuitBuilder.build_algorithm_descriptor()``.
-    ///     `inner_decoder`: Decoder type string for each segment's OSD inner decoder.
+    ///     `inner_decoder`: Decoder type string for each segment's logical-subgraph decoder inner decoder.
     #[new]
     #[pyo3(signature = (descriptor, inner_decoder="pymatching"))]
     fn new(
@@ -4830,9 +6091,9 @@ impl PyLogicalAlgorithmDecoder {
         use pecos_decoder_core::logical_algorithm::{
             AlgorithmDescriptor, BoundaryGate, LogicalAlgorithmDecoder, SegmentDescriptor,
         };
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
-        // Parse full DEM and stab_coords for full-circuit OSD
+        // Parse full DEM and stab_coords for full-circuit logical-subgraph decoder
         let full_dem: String = descriptor
             .get_item("full_dem")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("full_dem"))?
@@ -4851,7 +6112,9 @@ impl PyLogicalAlgorithmDecoder {
             .extract()?;
 
         // Parse stab_coords from the first segment (original orientation)
-        let first_seg = &seg_list[0];
+        let first_seg = seg_list.first().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("algorithm descriptor has no segments")
+        })?;
         let sc_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = first_seg
             .get_item("stab_coords")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("stab_coords"))?
@@ -4874,8 +6137,8 @@ impl PyLogicalAlgorithmDecoder {
 
         let inner_str = inner_decoder.to_string();
 
-        // Build full-circuit OSD from the full DEM
-        let full_osd = ObservableSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
+        // Build full-circuit logical-subgraph decoder from the full DEM
+        let full_osd = LogicalSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
             let d = create_observable_decoder(&sub_dem, &inner_str)
                 .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
@@ -4913,32 +6176,28 @@ impl PyLogicalAlgorithmDecoder {
                     .extract()?;
                 match gate_type.as_str() {
                     "Hadamard" => {
-                        let x: u32 = gate_dict.get_item("x_obs_bit")?.unwrap().extract()?;
-                        let z: u32 = gate_dict.get_item("z_obs_bit")?.unwrap().extract()?;
                         bg_vec.push(BoundaryGate::Hadamard {
-                            x_obs_bit: x,
-                            z_obs_bit: z,
+                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
+                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
                         });
                     }
                     "Cnot" => {
                         bg_vec.push(BoundaryGate::Cnot {
-                            ctrl_x_bit: gate_dict.get_item("ctrl_x_bit")?.unwrap().extract()?,
-                            ctrl_z_bit: gate_dict.get_item("ctrl_z_bit")?.unwrap().extract()?,
-                            tgt_x_bit: gate_dict.get_item("tgt_x_bit")?.unwrap().extract()?,
-                            tgt_z_bit: gate_dict.get_item("tgt_z_bit")?.unwrap().extract()?,
+                            ctrl_x_bit: req_bit(gate_dict, "ctrl_x_bit", &gate_type)?,
+                            ctrl_z_bit: req_bit(gate_dict, "ctrl_z_bit", &gate_type)?,
+                            tgt_x_bit: req_bit(gate_dict, "tgt_x_bit", &gate_type)?,
+                            tgt_z_bit: req_bit(gate_dict, "tgt_z_bit", &gate_type)?,
                         });
                     }
                     "SGate" => {
-                        let x: u32 = gate_dict.get_item("x_obs_bit")?.unwrap().extract()?;
-                        let z: u32 = gate_dict.get_item("z_obs_bit")?.unwrap().extract()?;
                         bg_vec.push(BoundaryGate::SGate {
-                            x_obs_bit: x,
-                            z_obs_bit: z,
+                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
+                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
                         });
                     }
                     "TGateInjection" => {
-                        let z: u32 = gate_dict.get_item("z_obs_bit")?.unwrap().extract()?;
-                        let a: u32 = gate_dict.get_item("ancilla_z_bit")?.unwrap().extract()?;
+                        let z = req_bit(gate_dict, "z_obs_bit", &gate_type)?;
+                        let a = req_bit(gate_dict, "ancilla_z_bit", &gate_type)?;
                         bg_vec.push(BoundaryGate::TGateInjection {
                             z_obs_bit: z,
                             ancilla_z_bit: a,
@@ -4967,32 +6226,33 @@ impl PyLogicalAlgorithmDecoder {
 
     // -- Batch mode --
 
-    /// Decode a single syndrome and return observable flip mask.
-    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<u64> {
+    /// Decode a single syndrome and return the observable flip mask as a Python
+    /// ``int`` (arbitrary precision; more than 64 observables are not truncated).
+    fn decode(&mut self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Py<pyo3::PyAny>> {
         self.inner.reset();
-        self.inner
-            .decode_shot(&syndrome)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        let mask = self
+            .inner
+            .decode_shot_obs(&syndrome)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        obsmask_to_py(py, &mask)
     }
 
-    /// Decode a batch of samples and count logical errors.
+    /// Decode a batch of samples and count logical errors (wide observable masks).
     fn decode_count(&mut self, batch: &PySampleBatch) -> PyResult<usize> {
-        let detection_events: Vec<Vec<u8>> = (0..batch.num_shots)
-            .map(|i| {
-                let mut s = vec![0u8; batch.num_detectors];
-                batch.extract_syndrome(i, &mut s);
-                s
-            })
-            .collect();
-        let observable_masks: Vec<u64> = (0..batch.num_shots)
-            .map(|i| batch.extract_obs_mask(i))
-            .collect();
-        pecos_decoder_core::logical_algorithm::streaming_decode_count(
-            &mut self.inner,
-            &detection_events,
-            &observable_masks,
-        )
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        let mut errors = 0usize;
+        let mut syndrome = vec![0u8; batch.num_detectors];
+        for i in 0..batch.num_shots {
+            batch.extract_syndrome(i, &mut syndrome);
+            self.inner.reset();
+            let predicted = self
+                .inner
+                .decode_shot_obs(&syndrome)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            if predicted != batch.extract_obs_mask_wide(i) {
+                errors += 1;
+            }
+        }
+        Ok(errors)
     }
 
     // -- Streaming mode --
@@ -5019,9 +6279,19 @@ impl PyLogicalAlgorithmDecoder {
         self.inner.reset();
     }
 
-    /// Current accumulated observable correction.
-    fn accumulated_obs(&self) -> u64 {
-        self.inner.accumulated_obs()
+    /// Current accumulated observable correction, narrowed to `u64`.
+    ///
+    /// Raises if the accumulated mask exceeds 64 observables; use
+    /// `accumulated_obs_mask` for the wide value.
+    fn accumulated_obs(&self) -> PyResult<u64> {
+        self.inner
+            .accumulated_obs()
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    /// Current accumulated observable correction as an arbitrary-precision int.
+    fn accumulated_obs_mask(&self, py: Python<'_>) -> PyResult<Py<pyo3::PyAny>> {
+        obsmask_to_py(py, self.inner.accumulated_obs_mask())
     }
 
     // -- Metadata --
@@ -5044,8 +6314,8 @@ impl PyLogicalAlgorithmDecoder {
 /// Budget-aware decoder for logical quantum circuits.
 ///
 /// Selects decode strategy based on available reaction time:
-/// - ``"unlimited"``: full-circuit OSD (Clifford circuits, offline)
-/// - ``"windowed"``: default windowed OSD (~1ms reaction time)
+/// - ``"unlimited"``: full-circuit logical-subgraph decoder (Clifford circuits, offline)
+/// - ``"windowed"``: default windowed logical-subgraph decoder (~1ms reaction time)
 /// - ``"10ms"``, ``"1000us"``, etc.: explicit reaction time budget
 ///
 /// The reaction time is the time available at feed-forward decision
@@ -5060,23 +6330,34 @@ impl PyLogicalAlgorithmDecoder {
 #[pyclass(name = "LogicalCircuitDecoder", module = "pecos_rslib.qec")]
 pub struct PyLogicalCircuitDecoder {
     inner: pecos_decoder_core::logical_algorithm::LogicalCircuitDecoder,
+    /// How the decode actually windows: "unlimited" (full circuit),
+    /// "full_fallback" (per-observable full decode behind a windowed budget),
+    /// or "real_windowed" (genuine sliding-window; not yet enabled).
+    effective_windowing: String,
+    /// Window count actually used, one entry per non-empty subgraph (1 == full
+    /// decode); not indexed by global observable id.
+    actual_num_windows: Vec<usize>,
+    /// Whether genuine time-windowing is *possible* for this circuit (deep
+    /// enough), independent of whether it is enabled. False for "unlimited".
+    can_window: bool,
 }
 
 #[pymethods]
 impl PyLogicalCircuitDecoder {
     #[new]
-    #[pyo3(signature = (descriptor, budget="unlimited", inner_decoder="pymatching"))]
+    #[pyo3(signature = (descriptor, budget="unlimited", inner_decoder="pymatching", strict=false))]
     fn new(
         descriptor: &pyo3::Bound<'_, pyo3::types::PyDict>,
         budget: &str,
         inner_decoder: &str,
+        strict: bool,
     ) -> PyResult<Self> {
         use pecos_decoder_core::decode_budget::DecodeBudget;
         use pecos_decoder_core::logical_algorithm::{
             AlgorithmDescriptor, BoundaryGate, FullCircuitStrategy, LogicalCircuitDecoder,
             SegmentDescriptor,
         };
-        use pecos_decoder_core::observable_subgraph::{ObservableSubgraphDecoder, QubitStabCoords};
+        use pecos_decoder_core::logical_subgraph::{LogicalSubgraphDecoder, QubitStabCoords};
 
         // Parse full DEM
         let full_dem: String = descriptor
@@ -5095,7 +6376,9 @@ impl PyLogicalCircuitDecoder {
             .extract()?;
 
         // Parse stab_coords from first segment
-        let first_seg = &seg_list[0];
+        let first_seg = seg_list.first().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>("algorithm descriptor has no segments")
+        })?;
         let sc_list: Vec<pyo3::Bound<'_, pyo3::types::PyDict>> = first_seg
             .get_item("stab_coords")?
             .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyKeyError, _>("stab_coords"))?
@@ -5118,7 +6401,7 @@ impl PyLogicalCircuitDecoder {
         let num_qubits = rust_sc.len();
 
         let inner_str = inner_decoder.to_string();
-        let full_osd = ObservableSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
+        let full_osd = LogicalSubgraphDecoder::from_dem(&full_dem, &rust_sc, |subgraph| {
             let sub_dem = subgraph_to_dem_string(subgraph);
             let d = create_observable_decoder(&sub_dem, &inner_str)
                 .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
@@ -5157,27 +6440,27 @@ impl PyLogicalCircuitDecoder {
                 match gate_type.as_str() {
                     "Hadamard" => {
                         bg_vec.push(BoundaryGate::Hadamard {
-                            x_obs_bit: gate_dict.get_item("x_obs_bit")?.unwrap().extract()?,
-                            z_obs_bit: gate_dict.get_item("z_obs_bit")?.unwrap().extract()?,
+                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
+                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
                         });
                     }
                     "Cnot" => {
                         bg_vec.push(BoundaryGate::Cnot {
-                            ctrl_x_bit: gate_dict.get_item("ctrl_x_bit")?.unwrap().extract()?,
-                            ctrl_z_bit: gate_dict.get_item("ctrl_z_bit")?.unwrap().extract()?,
-                            tgt_x_bit: gate_dict.get_item("tgt_x_bit")?.unwrap().extract()?,
-                            tgt_z_bit: gate_dict.get_item("tgt_z_bit")?.unwrap().extract()?,
+                            ctrl_x_bit: req_bit(gate_dict, "ctrl_x_bit", &gate_type)?,
+                            ctrl_z_bit: req_bit(gate_dict, "ctrl_z_bit", &gate_type)?,
+                            tgt_x_bit: req_bit(gate_dict, "tgt_x_bit", &gate_type)?,
+                            tgt_z_bit: req_bit(gate_dict, "tgt_z_bit", &gate_type)?,
                         });
                     }
                     "SGate" => {
                         bg_vec.push(BoundaryGate::SGate {
-                            x_obs_bit: gate_dict.get_item("x_obs_bit")?.unwrap().extract()?,
-                            z_obs_bit: gate_dict.get_item("z_obs_bit")?.unwrap().extract()?,
+                            x_obs_bit: req_bit(gate_dict, "x_obs_bit", &gate_type)?,
+                            z_obs_bit: req_bit(gate_dict, "z_obs_bit", &gate_type)?,
                         });
                     }
                     "TGateInjection" => {
-                        let z: u32 = gate_dict.get_item("z_obs_bit")?.unwrap().extract()?;
-                        let a: u32 = gate_dict.get_item("ancilla_z_bit")?.unwrap().extract()?;
+                        let z = req_bit(gate_dict, "z_obs_bit", &gate_type)?;
+                        let a = req_bit(gate_dict, "ancilla_z_bit", &gate_type)?;
                         bg_vec.push(BoundaryGate::TGateInjection {
                             z_obs_bit: z,
                             ancilla_z_bit: a,
@@ -5201,10 +6484,24 @@ impl PyLogicalCircuitDecoder {
 
         // Select budget: "unlimited" for full-circuit, "windowed" for
         // bounded-latency, or a cycle time in microseconds like "1000us".
-        let mut distance = 0usize;
-        while distance.saturating_mul(distance) < num_qubits {
-            distance += 1;
-        }
+        //
+        // Use the REAL physical code distance from the descriptor (used for the
+        // windowing step / latency bound). `num_qubits = rust_sc.len()` is the
+        // number of logical patches, NOT a distance -- deriving distance from it
+        // (e.g. sqrt) is wrong (a single d=7 patch would yield distance 1 and
+        // make `can_window`/`strict` dishonest). Fall back to the old patch-count
+        // heuristic only for legacy descriptors that predate the `distance` field.
+        let distance: usize = descriptor
+            .get_item("distance")?
+            .and_then(|v| v.extract::<usize>().ok())
+            .filter(|&d| d > 0)
+            .unwrap_or_else(|| {
+                let mut d = 0usize;
+                while d.saturating_mul(d) < num_qubits {
+                    d += 1;
+                }
+                d.max(1)
+            });
         let decode_budget = match budget {
             "unlimited" | "offline" => DecodeBudget::unlimited(),
             "windowed" => {
@@ -5234,72 +6531,144 @@ impl PyLogicalCircuitDecoder {
         };
 
         // Select strategy based on budget.
+        let mut effective_windowing = String::from("unlimited");
+        let mut actual_num_windows: Vec<usize> = Vec::new();
+        let mut can_window = false;
         let strategy: Box<dyn pecos_decoder_core::decode_budget::DecodeStrategy + Send + Sync> =
             if decode_budget.is_unlimited() {
-                // Unlimited: full-circuit OSD (maximum accuracy)
+                // Unlimited: full-circuit logical-subgraph decoder (maximum accuracy)
                 Box::new(FullCircuitStrategy::new(Box::new(full_osd)))
             } else {
-                // Windowed: per-subgraph sandwich decoding.
-                // Extract per-subgraph DEMs and detector maps from the full OSD.
-                use pecos_decoder_core::logical_algorithm::WindowedOsdStrategy;
+                // A bounded-latency ("windowed") budget was requested. Genuine
+                // per-observable sliding-window LOM decoding does not yet
+                // suppress (the windowed-LOM time-like-snake limitation; needs
+                // the anti-snake machinery), so we do an EXPLICIT full-decode
+                // fallback per observable -- accurate, but NOT bounded latency --
+                // and surface that honestly via `effective_windowing()` /
+                // `actual_num_windows()`. No silent fallback. `strict=True` turns
+                // the unmet latency budget into a hard error.
+                use pecos_decoder_core::logical_algorithm::WindowedLogicalSubgraphStrategy;
+                use pecos_decoder_core::logical_subgraph::window_plan::EffectiveWindowing;
 
-                let mut sub_dems = Vec::new();
-                let mut det_maps = Vec::new();
-                for i in 0..full_osd.num_observables() {
-                    if let Some(sg) = full_osd.subgraph(i) {
-                        sub_dems.push(subgraph_to_dem_string(&sg.graph));
-                        det_maps.push(sg.detector_map.clone());
-                    }
+                // Coord-preserving window plan (reports whether real windowing is
+                // even possible for this circuit depth).
+                let full_coords = pecos_decoder_core::DemMatchingGraph::from_dem_str(&full_dem)
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+                    .detector_coords;
+                let plan = full_osd.window_plan(&full_coords);
+                let step = decode_budget.code_distance.max(1);
+                can_window = plan.effective_windowing(step) == EffectiveWindowing::RealWindowed;
+
+                // `strict` rejects only when genuine windowing was POSSIBLE (the
+                // circuit is deep enough) but is being skipped. When `!can_window`
+                // the circuit is a single window anyway, so a full decode IS the
+                // bounded-latency answer -- no degradation to reject.
+                if strict && can_window {
+                    return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                        "bounded-latency ('windowed') budget requested with strict=True, \
+                         but accurate windowed logical-subgraph decoding is not yet \
+                         available (windowed-LOM anti-snake machinery pending). This \
+                         circuit is deep enough to time-window (can_window=True), so a \
+                         full per-observable decode would forgo the requested latency \
+                         bound. Use budget='unlimited', or pass strict=False to accept \
+                         the full-decode fallback."
+                            .to_string(),
+                    ));
                 }
 
-                let d = decode_budget.code_distance;
-                let buf = decode_budget.overlap_rounds.min(d * 2); // cap at 2d
-                let windowed_str = if buf > 0 {
-                    format!("windowed:step={d},buf={buf},wmax=2.5")
-                } else {
-                    // No overlap: use plain PM (faster, but accuracy limited
-                    // to non-overlapping windowed matching)
-                    format!("windowed:step={d},buf=0")
-                };
+                let sub_dems = plan.sub_dems();
+                let det_maps = plan.detector_maps();
+                let obs_indices: Vec<usize> =
+                    plan.entries().iter().map(|e| e.observable_idx).collect();
+                // The fallback runs a full (non-windowed) inner per observable, so
+                // the actual window count is 1 each by construction. (The Layer C
+                // real-windowed path must instead derive these from the windowed
+                // inners.) The label is single-sourced from the plan's enum.
+                effective_windowing = EffectiveWindowing::FullFallback.as_str().to_string();
+                actual_num_windows = vec![1usize; sub_dems.len()];
 
-                let wosd = WindowedOsdStrategy::new(sub_dems, det_maps, |dem_str| {
-                    let dec = create_observable_decoder(dem_str, &windowed_str)
-                        .map_err(|e| pecos_decoders::DecoderError::InternalError(e.to_string()))?;
-                    Ok(Box::new(SendWrapper(dec))
-                        as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
-                })
+                let fallback_inner = inner_decoder.to_string();
+                let wosd = WindowedLogicalSubgraphStrategy::new(
+                    sub_dems,
+                    det_maps,
+                    obs_indices,
+                    |dem_str| {
+                        let dec =
+                            create_observable_decoder(dem_str, &fallback_inner).map_err(|e| {
+                                pecos_decoders::DecoderError::InternalError(e.to_string())
+                            })?;
+                        Ok(Box::new(SendWrapper(dec))
+                            as Box<dyn pecos_decoders::ObservableDecoder + Send + Sync>)
+                    },
+                )
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
                 Box::new(wosd)
             };
 
         let inner = LogicalCircuitDecoder::new(algo_desc, strategy, decode_budget, num_qubits);
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            effective_windowing,
+            actual_num_windows,
+            can_window,
+        })
     }
 
-    /// Decode a single syndrome.
-    fn decode(&mut self, syndrome: Vec<u8>) -> PyResult<u64> {
+    /// How the decode actually windows: ``"unlimited"`` (full-circuit decode),
+    /// ``"full_fallback"`` (per-observable full decode behind a windowed
+    /// budget -- accurate but NOT bounded latency), or ``"real_windowed"``
+    /// (genuine sliding-window; not yet enabled pending the windowed-LOM
+    /// anti-snake machinery). Lets callers/tests assert the effective mode
+    /// instead of trusting a silent fallback.
+    #[getter]
+    fn effective_windowing(&self) -> &str {
+        &self.effective_windowing
+    }
+
+    /// Window count actually used, one entry per *non-empty* subgraph in
+    /// surviving-subgraph order (empty-region observables are dropped, so this
+    /// is not indexed by global observable id). ``1`` == full decode. All ``1``
+    /// in the current full-fallback path; empty for the unlimited budget.
+    #[getter]
+    fn actual_num_windows(&self) -> Vec<usize> {
+        self.actual_num_windows.clone()
+    }
+
+    /// Whether genuine time-windowing is *possible* for this circuit (deep
+    /// enough), independent of whether it is enabled. ``False`` for unlimited.
+    #[getter]
+    fn can_window(&self) -> bool {
+        self.can_window
+    }
+
+    /// Decode a single syndrome. Returns a Python ``int`` (arbitrary precision;
+    /// more than 64 observables are not truncated).
+    fn decode(&mut self, py: Python<'_>, syndrome: Vec<u8>) -> PyResult<Py<pyo3::PyAny>> {
         use pecos_decoder_core::ObservableDecoder;
-        self.inner
-            .decode_to_observables(&syndrome)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        let mask = self
+            .inner
+            .decode_obs(&syndrome)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        obsmask_to_py(py, &mask)
     }
 
-    /// Decode a batch and count errors.
+    /// Decode a batch and count errors (wide observable masks).
     fn decode_count(&mut self, batch: &PySampleBatch) -> PyResult<usize> {
-        let detection_events: Vec<Vec<u8>> = (0..batch.num_shots)
-            .map(|i| {
-                let mut s = vec![0u8; batch.num_detectors];
-                batch.extract_syndrome(i, &mut s);
-                s
-            })
-            .collect();
-        let observable_masks: Vec<u64> = (0..batch.num_shots)
-            .map(|i| batch.extract_obs_mask(i))
-            .collect();
-        self.inner
-            .decode_count(&detection_events, &observable_masks)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        use pecos_decoder_core::ObservableDecoder;
+        let mut errors = 0usize;
+        let mut syndrome = vec![0u8; batch.num_detectors];
+        for i in 0..batch.num_shots {
+            batch.extract_syndrome(i, &mut syndrome);
+            let predicted = self
+                .inner
+                .decode_obs(&syndrome)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            if predicted != batch.extract_obs_mask_wide(i) {
+                errors += 1;
+            }
+        }
+        Ok(errors)
     }
 
     /// Number of segments.
@@ -5525,6 +6894,7 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
     let base = decoder_type.split(':').next().unwrap_or(decoder_type);
     match base {
         "pymatching"
+        | "pymatching_correlated"
         | "pymatching_uncorrelated"
         | "fusion_blossom"
         | "fusion_blossom_serial"
@@ -5557,12 +6927,13 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyDagFaultInfluenceMap>()?;
     qec.add_class::<PyDagFaultAnalyzer>()?;
     qec.add_class::<PyInfluenceBuilder>()?;
+    qec.add_class::<PyPauliFrameLookup>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<PyCssUfDecoder>()?;
-    qec.add_class::<PyObservableSubgraphDecoder>()?;
-    qec.add_class::<PyWindowedOsdDecoder>()?;
+    qec.add_class::<PyLogicalSubgraphDecoder>()?;
+    qec.add_class::<PyWindowedLogicalSubgraphDecoder>()?;
     qec.add_class::<PyLogicalAlgorithmDecoder>()?;
     qec.add_class::<PyLogicalCircuitDecoder>()?;
     qec.add_class::<PyDecodeStats>()?;

@@ -17,6 +17,9 @@ Python program wrappers from pecos.programs.
 
 from __future__ import annotations
 
+from importlib import import_module
+from os import PathLike, fspath
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pecos_rslib
@@ -155,23 +158,21 @@ class QisEngineBuilder:
             self._builder = self._builder.program(program)
         return self
 
-    def selene_runtime(self, runtime_name: str | None = None) -> Self:
-        """Use Selene simple runtime.
+    def selene_runtime(self, runtime: object | None = None) -> Self:
+        """Use a Selene runtime.
 
         Args:
-            runtime_name: Optional runtime name. ``None`` and
-                ``"selene_simple_runtime"`` both select the default runtime.
+            runtime: Optional runtime selector. ``None`` selects the default
+                ``selene_simple_runtime``. A string without path separators is
+                treated as a built Selene runtime library name. A path-like
+                value, or any Selene runtime plugin object exposing
+                ``library_file``, ``get_init_args()``, and optional
+                ``library_search_dirs``, is passed through generically.
 
         Returns:
             Self for method chaining.
         """
-        if runtime_name not in (None, "selene_simple_runtime"):
-            msg = (
-                "Python QisEngineBuilder.selene_runtime(runtime_name=...) only "
-                "supports the default 'selene_simple_runtime' wrapper today."
-            )
-            raise NotImplementedError(msg)
-        self._builder = self._builder.selene_runtime()
+        self._builder = _configure_selene_runtime(self._builder, runtime)
         return self
 
     def interface(self, builder: object) -> Self:
@@ -231,23 +232,96 @@ def qis_engine() -> QisEngineBuilder:
     return QisEngineBuilder()
 
 
-def selene_engine(runtime_name: str | None = None) -> QisEngineBuilder:
+def _looks_like_library_path(value: str) -> bool:
+    path = Path(value)
+    return path.exists() or "/" in value or "\\" in value or path.suffix in {".so", ".dylib", ".dll"}
+
+
+def _materialize_plugin_candidate(candidate: object) -> tuple[object | None, Exception | None]:
+    try:
+        plugin = candidate() if isinstance(candidate, type) else candidate
+        library_file = getattr(plugin, "library_file", None)
+    except (AssertionError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
+        return None, error
+    return (plugin, None) if library_file is not None else (None, None)
+
+
+def _plugin_object_from_module(module: object) -> object:
+    selection_failures = []
+    exported_candidates = [getattr(module, exported_name, None) for exported_name in getattr(module, "__all__", ())]
+    for candidate in [*exported_candidates, module]:
+        plugin, failure = _materialize_plugin_candidate(candidate)
+        if plugin is not None:
+            return plugin
+        if failure is not None:
+            selection_failures.append(failure)
+
+    error = TypeError("Selene plugin module exposes no usable no-argument runtime plugin with 'library_file'.")
+    if selection_failures:
+        raise error from selection_failures[-1]
+    raise error
+
+
+def _configure_selene_runtime(builder: object, runtime: object | None) -> object:
+    if runtime is None:
+        # Issue #365: freshly built Cargo artifacts win for dev iteration; the
+        # installed plugin package is the stable cwd-independent fallback.
+        try:
+            return builder.selene_runtime()
+        except RuntimeError as original_error:
+            try:
+                plugin_module = import_module("selene_simple_runtime_plugin")
+                plugin = _plugin_object_from_module(plugin_module)
+                return _configure_selene_runtime(builder, plugin)
+            except Exception as fallback_error:
+                raise original_error from fallback_error
+
+    if isinstance(runtime, str):
+        if _looks_like_library_path(runtime):
+            return builder.selene_runtime_plugin(runtime)
+        try:
+            return builder.selene_runtime(runtime)
+        except RuntimeError as original_error:
+            try:
+                plugin_module = import_module(f"{runtime}_plugin")
+                plugin = _plugin_object_from_module(plugin_module)
+                return _configure_selene_runtime(builder, plugin)
+            except Exception as fallback_error:
+                raise original_error from fallback_error
+
+    if isinstance(runtime, PathLike):
+        return builder.selene_runtime_plugin(fspath(runtime))
+
+    library_file = getattr(runtime, "library_file", None)
+    if library_file is None:
+        msg = (
+            "Selene runtime must be None, a built runtime name, a shared-library path, "
+            "or a Selene runtime plugin object with a 'library_file' property."
+        )
+        raise TypeError(msg)
+
+    get_init_args = getattr(runtime, "get_init_args", None)
+    init_args = list(get_init_args()) if callable(get_init_args) else []
+    library_search_dirs = [fspath(path) for path in getattr(runtime, "library_search_dirs", [])]
+    return builder.selene_runtime_plugin(
+        fspath(library_file),
+        [str(arg) for arg in init_args],
+        library_search_dirs,
+    )
+
+
+def selene_engine(runtime: object | None = None) -> QisEngineBuilder:
     """Create a Selene-backed QIS engine builder.
 
     Args:
-        runtime_name: Optional built Selene runtime library name.
-            When omitted, the default simple Selene runtime is used.
+        runtime: Optional runtime selector. ``None`` selects the default
+            ``selene_simple_runtime``. A built runtime name, shared-library
+            path, or generic Selene runtime plugin object may also be supplied.
 
     Returns:
         QisEngineBuilder: A builder for Selene-backed QIS/HUGR simulations.
     """
-    if runtime_name not in (None, "selene_simple_runtime"):
-        msg = (
-            "Python selene_engine(runtime_name=...) is not currently supported by the wrapper. "
-            "Use the default runtime or call into pecos_rslib directly for custom runtime names."
-        )
-        raise NotImplementedError(msg)
-    return QisEngineBuilder().selene_runtime().interface(pecos_rslib.qis_helios_interface())
+    return QisEngineBuilder().selene_runtime(runtime).interface(pecos_rslib.qis_helios_interface())
 
 
 __all__ = [

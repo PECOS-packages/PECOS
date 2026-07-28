@@ -123,6 +123,13 @@ def test_mixed_permutation_qasm() -> None:
 # relabelled register's `[N x i1]` buffer). Works for whole-register
 # (QReg + CReg) and element-wise; pinned from the actual emitted QIR.
 
+_QARG = r"ptr (?:null|inttoptr \(i64 (\d+) to ptr\))"
+
+
+def _q(name: str, qir: str) -> list[int]:
+    """All qubit indices a single-qubit `name` gate is applied to."""
+    return [int(m) if m else 0 for m in re.findall(rf"call void @__quantum__qis__{name}__body\({_QARG}\)", qir)]
+
 
 @pytest.mark.optional_dependency
 def test_whole_register_permutation_qir() -> None:
@@ -135,11 +142,11 @@ def test_whole_register_permutation_qir() -> None:
     # Permute(a, b); b[2].set(1); a[3].set(0). After the swap, b[2]
     # resolves to a[2] and a[3] resolves to b[3].
     assert re.search(
-        r"%(\.\d+) = getelementptr \[5 x i1\], \[5 x i1\]\* %a, i64 0, i64 2\n\s*store i1 1, i1\* %\1",
+        r"%(\.\d+) = getelementptr \[5 x i1\], (?:ptr|\[5 x i1\]\*) %a, i64 0, i64 2\n\s*store i1 1, (?:ptr|i1\*) %\1",
         qir,
     ), f"b[2].set(1) should target a[2] after swap:\n{qir}"
     assert re.search(
-        r"%(\.\d+) = getelementptr \[5 x i1\], \[5 x i1\]\* %b, i64 0, i64 3\n\s*store i1 0, i1\* %\1",
+        r"%(\.\d+) = getelementptr \[5 x i1\], (?:ptr|\[5 x i1\]\*) %b, i64 0, i64 3\n\s*store i1 0, (?:ptr|i1\*) %\1",
         qir,
     ), f"a[3].set(0) should target b[3] after swap:\n{qir}"
 
@@ -156,9 +163,9 @@ def test_mixed_permutation_qir() -> None:
     assert "; Permutation: a <-> b" in qir, qir
     # QRegs a=0-2, b=3-5, c=6-8. First Permute([a[0],c[1]],[c[1],a[0]])
     # then whole Permute(a, b). Realized: H(a[0])->q3, X(b[1])->q1,
-    # Z(c[2])->q8.
-    assert re.findall(r"call void @__quantum__qis__h__body\(%Qubit\* inttoptr \(i64 (\d+) ", qir) == ["3"], qir
-    assert re.findall(r"call void @__quantum__qis__x__body\(%Qubit\* inttoptr \(i64 (\d+) ", qir) == ["1"], qir
-    assert re.findall(r"call void @__quantum__qis__z__body\(%Qubit\* inttoptr \(i64 (\d+) ", qir) == ["8"], qir
+    # Z(c[2])->q8. (QIR uses opaque pointers; index 0 is `ptr null`.)
+    assert _q("h", qir) == [3], qir
+    assert _q("x", qir) == [1], qir
+    assert _q("z", qir) == [8], qir
 
     assert qir == SlrConverter(prog).qir(), "QIR generation is not deterministic"

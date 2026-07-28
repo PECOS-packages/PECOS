@@ -185,6 +185,18 @@ impl TesseractDecoder {
         let num_errors = ffi::get_num_errors(&inner);
         let num_observables = ffi::get_num_observables(&inner);
 
+        // Tesseract reports its predicted observables as a u64 mask
+        // (`DecodingResult::observables_mask`), so it supports at most 64
+        // observables. Reject wider DEMs as an error rather than silently
+        // truncating observables 64.. into the u64.
+        if num_observables > 64 {
+            return Err(TesseractError::InvalidConfig(format!(
+                "this matching decoder packs observables into a u64 and supports at most 64 \
+                 observables, but the DEM has {num_observables}; use the 'pymatching' decoder \
+                 or LogicalSubgraphDecoder for wider observable sets"
+            )));
+        }
+
         Ok(Self {
             inner,
             config,
@@ -350,10 +362,10 @@ impl TesseractDecoder {
 }
 
 impl pecos_decoder_core::ObservableDecoder for TesseractDecoder {
-    fn decode_to_observables(
+    fn decode_obs(
         &mut self,
         syndrome: &[u8],
-    ) -> Result<u64, pecos_decoder_core::DecoderError> {
+    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
         let detections: Vec<u64> = syndrome
             .iter()
             .enumerate()
@@ -363,7 +375,9 @@ impl pecos_decoder_core::ObservableDecoder for TesseractDecoder {
         let result = self
             .decode_detections(&det_arr.view())
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
-        Ok(result.observables_mask)
+        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
+            result.observables_mask,
+        ))
     }
 }
 

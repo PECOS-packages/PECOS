@@ -126,14 +126,14 @@ For quick checks without compilation, use `just doctor`:
 
 ```bash
 $ just doctor
-LLVM 14:
-  [OK] installed: 14.0.6 at /home/user/.pecos/deps/llvm
-  [OK] .cargo/config.toml: LLVM_SYS_140_PREFIX configured
+LLVM 21.1:
+  [OK] installed: 21.1.8 at /home/user/.pecos/deps/llvm-21.1
+  [OK] .cargo/config.toml: LLVM_SYS_211_PREFIX configured
 
 Python:
   [OK] uv: uv 0.11.3
-  [OK] import pecos: v0.8.0.dev8
-  [OK] pecos_rslib: v0.2.0-dev.0
+  [OK] import pecos: v<version>
+  [OK] pecos_rslib: v<version>
 
 CUDA (optional):
   [--] CUDA: not found (optional)

@@ -44,16 +44,20 @@ use std::collections::BTreeMap;
 /// State for tracking wire values through the HUGR graph.
 ///
 /// This groups all wire-related state: qubit mappings, classical values,
-/// and qubit arrays. The propagation system uses this to track values
-/// as they flow from output ports to connected input ports.
+/// and conditional Sum payloads. The propagation system uses this to track
+/// values as they flow from output ports to connected input ports.
 #[derive(Debug, Default, Clone)]
 pub struct WireState {
     /// Map from (node, `output_port`) to qubit ID for tracking wire flow.
     pub wire_to_qubit: BTreeMap<WireKey, QubitId>,
     /// Classical wire values: tracks bool/integer/float values flowing through wires.
     pub classical_values: BTreeMap<WireKey, ClassicalValue>,
-    /// Maps array wire keys to lists of qubit IDs for qubit arrays.
-    pub qubit_arrays: BTreeMap<WireKey, Vec<QubitId>>,
+    /// Payload elements of a Conditional output resolved through the
+    /// structural Tag fallback, keyed by (conditional node, output port).
+    /// A DEDICATED map: storing these at "virtual" classical-value ports
+    /// aliased the Conditional's real output ports (payload for output 0
+    /// landed on output 1's wire key).
+    pub conditional_payloads: BTreeMap<WireKey, Vec<ClassicalValue>>,
     /// Next available qubit ID.
     pub next_qubit_id: usize,
 }
@@ -63,7 +67,7 @@ impl WireState {
     pub fn reset(&mut self) {
         self.wire_to_qubit.clear();
         self.classical_values.clear();
-        self.qubit_arrays.clear();
+        self.conditional_payloads.clear();
         self.next_qubit_id = 0;
     }
 }
@@ -187,6 +191,23 @@ pub enum ClassicalOpType {
     Imul,
     Idiv,
     Imod,
+    /// Combined Euclidean division+remainder: two outputs (q, r).
+    Idivmod,
+    /// Checked combined div+mod: `sum_with_error(tuple(q, r))`.
+    IdivmodChecked,
+    /// Exponentiation; the exponent is treated as unsigned per the spec.
+    Ipow,
+    /// `LoadFunction`: produce a `FuncRef` value for the static target.
+    LoadFunc,
+    /// Convert a 1-bit integer to bool.
+    ItoBool,
+    /// Convert a bool to a 1-bit integer.
+    IfromBool,
+    /// Checked division: `sum_with_error(int)` -- error variant (tag 0) on
+    /// division by zero, value variant (tag 1) otherwise
+    IdivChecked,
+    /// Checked modulo: `sum_with_error(int)` like [`Self::IdivChecked`]
+    ImodChecked,
     Ineg,
     Iabs,
     // Integer comparisons
@@ -229,6 +250,11 @@ pub enum ClassicalOpType {
     // Tuple operations
     MakeTuple,
     UnpackTuple,
+    // Sum construction (HUGR `Tag` nodes: variants, options, branch selectors)
+    TagSum,
+    /// Checked float->int truncation: `sum_with_error(int)` -- error variant
+    /// (tag 0) for NaN/infinite/out-of-range inputs
+    ConvertFloatToIntChecked,
 }
 
 /// Classical operation extracted from HUGR.
@@ -280,16 +306,34 @@ pub enum ClassicalValue {
     Float(f64),
     /// Tuple of values
     Tuple(Vec<ClassicalValue>),
+    /// Tagged sum value (HUGR variants: options, loop continue/break,
+    /// branch selectors). A tuple is the 1-variant special case and a
+    /// bool the 2-variant empty-payload special case; this carries the
+    /// general form.
+    Sum {
+        /// The variant tag.
+        tag: usize,
+        /// The payload values of the active variant.
+        values: Vec<ClassicalValue>,
+    },
     /// Array of values
     Array(Vec<ClassicalValue>),
     /// Future handle (for lazy measurements)
     Future(FutureId),
     /// Rotation angle (in half-turns, i.e., multiples of pi)
     Rotation(f64),
+    /// A first-class function value: the `FuncDefn` it references and the
+    /// type args instantiating it (produced by `LoadFunction`, consumed by
+    /// higher-order ops like scan -- generic scanned functions resolve
+    /// type-level naturals through these, symmetric with Call frames).
+    FuncRef(Node, Vec<tket::hugr::types::TypeArg>),
     /// RNG context handle
     RngContext(RngContextId),
     /// Qubit reference (for storing qubits in arrays)
     QubitRef(QubitId),
+    /// Borrowed-out slot in a borrow array (a hole left by
+    /// `collections.borrow_arr.borrow`; filled by `return`)
+    Borrowed,
 }
 
 impl ClassicalValue {
@@ -300,13 +344,17 @@ impl ClassicalValue {
             Self::Bool(b) => Some(u32::from(*b)),
             Self::Int(i) => u32::try_from(*i).ok(),
             Self::UInt(u) => u32::try_from(*u).ok(),
+            // A sum's control-flow decision value is its variant tag.
+            Self::Sum { tag, .. } => u32::try_from(*tag).ok(),
             Self::Float(_)
             | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::FuncRef(..)
+            | Self::Borrowed => None,
         }
     }
 
@@ -320,12 +368,17 @@ impl ClassicalValue {
             Self::Int(i) => Some(*i != 0),
             Self::UInt(u) => Some(*u != 0),
             Self::Float(f) => Some(*f != 0.0),
-            Self::Tuple(_)
+            // HUGR bools are 2-variant sums with empty payloads.
+            Self::Sum { tag, values } if values.is_empty() => Some(*tag != 0),
+            Self::Sum { .. }
+            | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::FuncRef(..)
+            | Self::Borrowed => None,
         }
     }
 
@@ -340,12 +393,15 @@ impl ClassicalValue {
             Self::Int(i) => Some(*i),
             Self::UInt(u) => i64::try_from(*u).ok(),
             Self::Float(f) => Some(*f as i64),
-            Self::Tuple(_)
+            Self::Sum { .. }
+            | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::FuncRef(..)
+            | Self::Borrowed => None,
         }
     }
 
@@ -360,12 +416,15 @@ impl ClassicalValue {
             Self::Int(i) => u64::try_from(*i).ok(),
             Self::UInt(u) => Some(*u),
             Self::Float(f) => Some(*f as u64),
-            Self::Tuple(_)
+            Self::Sum { .. }
+            | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::Rotation(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::FuncRef(..)
+            | Self::Borrowed => None,
         }
     }
 
@@ -381,11 +440,14 @@ impl ClassicalValue {
             Self::UInt(u) => Some(*u as f64),
             Self::Float(f) => Some(*f),
             Self::Rotation(r) => Some(*r), // Rotation can be interpreted as float (half-turns)
-            Self::Tuple(_)
+            Self::Sum { .. }
+            | Self::Tuple(_)
             | Self::Array(_)
             | Self::Future(_)
             | Self::RngContext(_)
-            | Self::QubitRef(_) => None,
+            | Self::QubitRef(_)
+            | Self::FuncRef(..)
+            | Self::Borrowed => None,
         }
     }
 
@@ -499,9 +561,17 @@ pub enum FutureState {
         qubit: QubitId,
         /// Index in `measurement_mappings` for result retrieval.
         measurement_index: usize,
+        /// True for `Future<int>` (`LazyMeasureLeaked`: 0/1/2-leaked);
+        /// false for `Future<bool>`. Read must produce the declared type.
+        int_valued: bool,
     },
-    /// The measurement result is available.
-    Resolved(u32),
+    /// The measurement result is available (same `int_valued` semantics).
+    Resolved {
+        /// The measurement outcome.
+        outcome: u32,
+        /// See [`FutureState::Pending::int_valued`].
+        int_valued: bool,
+    },
 }
 
 // --- Container Type Classification ---
@@ -579,6 +649,61 @@ impl RngContextState {
         #[allow(clippy::cast_precision_loss)]
         let result = bits as f64 / (1u64 << 53) as f64;
         result
+    }
+
+    /// Advance the generator by `steps` in O(log steps), exactly as if
+    /// `next_u64` had been called `steps` times.
+    ///
+    /// xorshift64 is a LINEAR map over GF(2): one step is multiplication
+    /// by a fixed 64x64 bit matrix, so stepping k times is the matrix
+    /// power M^k. Backtracking uses the generator's period 2^64 - 1
+    /// (all nonzero states form one cycle): k steps back == period - k
+    /// steps forward.
+    pub fn jump(&mut self, steps: u128) {
+        const PERIOD: u128 = (1u128 << 64) - 1;
+        let steps = steps % PERIOD;
+        if steps == 0 {
+            return;
+        }
+        // Row i of the one-step matrix = transform applied to basis 1<<i.
+        let step_matrix: [u64; 64] = std::array::from_fn(|i| {
+            let mut x = 1u64 << i;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        });
+        let mat_vec = |m: &[u64; 64], v: u64| -> u64 {
+            let mut out = 0u64;
+            for (i, row) in m.iter().enumerate() {
+                if (v >> i) & 1 == 1 {
+                    out ^= row;
+                }
+            }
+            out
+        };
+        let mat_mul = |a: &[u64; 64], b: &[u64; 64]| -> [u64; 64] {
+            std::array::from_fn(|i| mat_vec(a, b[i]))
+        };
+        // result = M^steps via binary exponentiation.
+        let identity: [u64; 64] = std::array::from_fn(|i| 1u64 << i);
+        let mut result = identity;
+        let mut base = step_matrix;
+        let mut e = steps;
+        while e > 0 {
+            if e & 1 == 1 {
+                result = mat_mul(&result, &base);
+            }
+            base = mat_mul(&base, &base);
+            e >>= 1;
+        }
+        self.state = mat_vec(&result, self.state);
+    }
+
+    /// Step `steps` BACKWARD, exactly undoing that many `next_u64` calls.
+    pub fn jump_back(&mut self, steps: u64) {
+        const PERIOD: u128 = (1u128 << 64) - 1;
+        self.jump(PERIOD - (u128::from(steps) % PERIOD));
     }
 }
 
@@ -665,6 +790,10 @@ pub struct DataflowBlockInfo {
     pub extension_ops: BTreeSet<Node>,
     /// All `TailLoop` nodes inside this block.
     pub tailloop_nodes: BTreeSet<Node>,
+    /// `LoadConstant` nodes inside this block: they execute like every
+    /// other op, so block emptiness and completion must count them (a
+    /// constants-only block used to transition before they ran).
+    pub load_constants: BTreeSet<Node>,
     /// Input node inside this block (kept for future wire tracing).
     #[allow(dead_code)]
     pub input_node: Option<Node>,
@@ -683,6 +812,10 @@ pub struct ActiveCfgInfo {
     pub current_block: Node,
     /// Blocks that have been fully processed.
     pub completed_blocks: BTreeSet<Node>,
+    /// Number of block transitions taken (loop-iteration ceiling: guppy
+    /// loops lower to CFG cycles, so a never-breaking classical loop would
+    /// otherwise spin forever).
+    pub transitions: u64,
 }
 
 // --- Function Call Types ---
@@ -716,9 +849,39 @@ pub struct ActiveCallInfo {
     pub call_node: Node,
     /// The `FuncDefn` being called.
     pub func_defn_node: Node,
+    /// The Call's instantiation type arguments, used to resolve type
+    /// variables inside the called body (e.g. `prelude.load_nat` of a
+    /// generic bounded-nat parameter such as a loop bound).
+    pub type_args: Vec<tket::hugr::types::TypeArg>,
 }
 
 // --- TailLoop Control Flow Types ---
+
+/// State of an in-flight higher-order array `scan`: the engine runs the
+/// scanned function once per element through the normal Call-frame
+/// machinery, so quantum ops inside the function (e.g. `measure_array`'s
+/// per-qubit measure) go through real measurement rounds.
+#[derive(Debug, Clone)]
+pub struct ActiveScanInfo {
+    /// The scan node itself.
+    pub scan_node: Node,
+    /// The scanned function.
+    pub func_defn_node: Node,
+    /// Elements not yet folded (front = next).
+    pub remaining: std::collections::VecDeque<ClassicalValue>,
+    /// Mapped outputs collected so far.
+    pub results: Vec<ClassicalValue>,
+    /// Current accumulator values (scan signature `*A`).
+    pub accs: Vec<ClassicalValue>,
+    /// Type args instantiating the scanned function (from its
+    /// `LoadFunction`), for resolving type-level variables in the body.
+    pub type_args: Vec<tket::hugr::types::TypeArg>,
+    /// For a scanned function with a plain DATAFLOW body (no CFG): the
+    /// body ops whose completion finishes one element. Empty for
+    /// CFG-bodied functions (their frame completes through
+    /// `complete_func_call_if_needed`).
+    pub frame_ops: std::collections::BTreeSet<Node>,
+}
 
 /// Information about a `TailLoop` node.
 ///
@@ -758,6 +921,10 @@ pub struct TailLoopInfo {
     pub bool_ops: BTreeSet<Node>,
     /// All Conditional nodes inside this `TailLoop` body.
     pub conditional_nodes: BTreeSet<Node>,
+    /// Nested `TailLoop` nodes directly inside this `TailLoop` body.
+    pub tailloop_nodes: BTreeSet<Node>,
+    /// Nested CFG nodes directly inside this `TailLoop` body.
+    pub cfg_nodes: BTreeSet<Node>,
     /// Total number of `TailLoop` input ports.
     pub num_inputs: usize,
     /// Total number of `TailLoop` output ports.

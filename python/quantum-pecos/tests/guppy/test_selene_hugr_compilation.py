@@ -1,13 +1,29 @@
-"""Test HUGR compilation through Selene (HUGR 0.13 compatible)."""
-
-import json
+"""Test HUGR compilation through Selene."""
 
 import pytest
 from guppylang.decorator import guppy as guppy_decorator
 from guppylang.std.quantum import cx, h, measure, qubit, x
+from hugr.package import Package
 from pecos import Guppy, sim
 from pecos.compilation_pipeline import compile_guppy_to_hugr
 from pecos_rslib import state_vector
+
+# compile_guppy_to_hugr returns the BINARY HUGR envelope (Model format): the
+# ASCII magic "HUGRiHJv", a format byte, then a compressed payload. It is not
+# UTF-8 text, so these tests validate it by parsing with hugr's own reader.
+HUGR_ENVELOPE_MAGIC = b"HUGRiHJv"
+
+
+def _op_names(pkg: Package) -> set[str]:
+    """Collect the op names appearing in all modules of a HUGR package."""
+    names = set()
+    for module in pkg.modules:
+        for node in module.nodes():
+            n = node[0] if isinstance(node, tuple) else node
+            op = module[n].op
+            op_def = getattr(op, "_op_def", None)
+            names.add(op_def.name if op_def is not None else type(op).__name__)
+    return names
 
 
 @pytest.mark.optional_dependency
@@ -71,33 +87,12 @@ class TestSeleneHUGRCompilation:
         assert hugr_bytes is not None, "Should produce HUGR bytes"
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
-        # Verify HUGR format
-        hugr_str = hugr_bytes.decode("utf-8")
+        # Verify HUGR envelope format and parse it with hugr's own reader
+        assert hugr_bytes.startswith(HUGR_ENVELOPE_MAGIC), "HUGR should be in envelope format"
 
-        # Check if it's envelope format or direct JSON
-        is_envelope = hugr_str.startswith("HUGRiHJv")
-        is_json = hugr_str.startswith("{")
-
-        assert is_envelope or is_json, "HUGR should be in valid format"
-
-        # Parse JSON content
-        if is_envelope:
-            json_start = hugr_str.find("{", 9)
-            assert json_start != -1, "Envelope should contain JSON"
-            json_content = hugr_str[json_start:]
-        else:
-            json_content = hugr_str
-
-        try:
-            hugr_json = json.loads(json_content)
-            assert isinstance(hugr_json, dict), "HUGR should be valid JSON object"
-
-            # Check for expected HUGR structure elements
-            # HUGR should have version info and graph structure
-            assert len(hugr_json) > 0, "HUGR JSON should not be empty"
-
-        except json.JSONDecodeError as e:
-            pytest.fail(f"HUGR should contain valid JSON: {e}")
+        pkg = Package.from_bytes(hugr_bytes)
+        assert len(pkg.modules) >= 1, "HUGR package should contain at least one module"
+        assert len(list(pkg.modules[0].nodes())) > 0, "HUGR module should have nodes"
 
     def test_complex_circuit_compilation(self) -> None:
         """Test compilation of more complex quantum circuits."""
@@ -135,14 +130,12 @@ class TestSeleneHUGRCompilation:
         assert hugr_bytes is not None, "Should produce HUGR bytes"
         assert len(hugr_bytes) > 100, "Complex circuit should produce substantial HUGR"
 
-        # Verify it contains quantum operations
-        hugr_str = hugr_bytes.decode("utf-8")
+        # Verify it contains the expected quantum operations
+        op_names = _op_names(Package.from_bytes(hugr_bytes))
 
-        # Look for quantum operation indicators
-        quantum_ops = ["quantum", "Quantum", "measure", "hadamard", "cnot"]
-        found_ops = [op for op in quantum_ops if op.lower() in hugr_str.lower()]
-
-        assert len(found_ops) > 0, "HUGR should contain quantum operation references"
+        assert "H" in op_names, f"HUGR should contain H ops, found {sorted(op_names)}"
+        assert "CX" in op_names, f"HUGR should contain CX ops, found {sorted(op_names)}"
+        assert any("Measure" in name for name in op_names), f"HUGR should contain measure ops, found {sorted(op_names)}"
 
     def test_parametric_circuit_compilation(self) -> None:
         """Test compilation of parametric quantum circuits."""
@@ -167,15 +160,10 @@ class TestSeleneHUGRCompilation:
         assert hugr_bytes is not None, "Should produce HUGR bytes"
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
-        # Check for loop/iteration structures in HUGR
-        hugr_str = hugr_bytes.decode("utf-8")
-
-        # HUGR might represent loops as specific node types
-
-        # At minimum, verify it's valid HUGR
-        assert "HUGRiHJv" in hugr_str or hugr_str.startswith(
-            "{",
-        ), "Should be valid HUGR format"
+        # Verify the parametric circuit still produces a loadable HUGR package
+        assert hugr_bytes.startswith(HUGR_ENVELOPE_MAGIC), "Should be valid HUGR envelope"
+        pkg = Package.from_bytes(hugr_bytes)
+        assert len(pkg.modules) >= 1, "HUGR package should contain at least one module"
 
 
 @pytest.mark.optional_dependency
@@ -245,10 +233,10 @@ class TestLLVMGeneration:
 
 @pytest.mark.optional_dependency
 class TestHUGRVersionCompatibility:
-    """Test HUGR version compatibility."""
+    """Test HUGR envelope format compatibility."""
 
     def test_hugr_version_detection(self) -> None:
-        """Test detection of HUGR version from compiled output."""
+        """Test detection of the HUGR envelope format from compiled output."""
 
         @guppy_decorator
         def version_test() -> bool:
@@ -257,31 +245,17 @@ class TestHUGRVersionCompatibility:
             return measure(q)
 
         hugr_bytes = compile_guppy_to_hugr(version_test)
-        hugr_str = hugr_bytes.decode("utf-8")
 
-        # Check for version indicators
-        if hugr_str.startswith("HUGRiHJv"):
-            # Envelope format - version in header
-            # Format: HUGRiHJv<version>...
-            version_part = hugr_str[8:10]  # Next chars might be version
-            assert len(version_part) > 0, "Should have version info in envelope"
-        elif hugr_str.startswith("{"):
-            # JSON format - might have version field
-            hugr_json = json.loads(hugr_str)
+        # Envelope header: 8-byte magic followed by a format byte
+        assert hugr_bytes.startswith(HUGR_ENVELOPE_MAGIC), "Envelope should start with the HUGR magic"
+        assert len(hugr_bytes) > len(HUGR_ENVELOPE_MAGIC), "Envelope should have a format header after the magic"
 
-            # Look for version field in various places
-            if "version" in hugr_json:
-                hugr_json["version"]
-            elif "hugr_version" in hugr_json:
-                hugr_json["hugr_version"]
-            elif "metadata" in hugr_json and "version" in hugr_json["metadata"]:
-                hugr_json["metadata"]["version"]
+        # The format must be one the hugr reader understands
+        pkg = Package.from_bytes(hugr_bytes)
+        assert len(pkg.modules) >= 1, "Envelope should decode to a package with modules"
 
-            # Version might not always be present, but structure should be valid
-            assert isinstance(hugr_json, dict), "Should be valid JSON structure"
-
-    def test_hugr_0_13_compatibility(self) -> None:
-        """Test compatibility with HUGR 0.13 format."""
+    def test_hugr_package_structure(self) -> None:
+        """Test that the compiled package has a well-formed module structure."""
 
         @guppy_decorator
         def compatibility_test() -> tuple[bool, bool]:
@@ -294,33 +268,15 @@ class TestHUGRVersionCompatibility:
         hugr_bytes = compile_guppy_to_hugr(compatibility_test)
         assert hugr_bytes is not None, "Should produce HUGR bytes"
 
-        # HUGR 0.13 specific checks
-        hugr_str = hugr_bytes.decode("utf-8")
+        pkg = Package.from_bytes(hugr_bytes)
+        assert len(pkg.modules) >= 1, "Package should contain at least one module"
 
-        # HUGR 0.13 uses specific node types and operation formats
-        # These might appear in the JSON structure
-        if "{" in hugr_str:
-            # Extract JSON part
-            json_start = hugr_str.find("{")
-            json_part = hugr_str[json_start:]
-
-            try:
-                hugr_json = json.loads(json_part)
-
-                # HUGR 0.13 should have nodes and edges structure
-                # The exact structure depends on the HUGR spec
-                assert isinstance(hugr_json, dict), "Should be valid HUGR structure"
-
-                # Check for common HUGR elements
-                hugr_keys = list(hugr_json.keys())
-                assert len(hugr_keys) > 0, "HUGR should have structure elements"
-
-            except json.JSONDecodeError:
-                # Not JSON format, but still valid HUGR
-                pass
+        module = pkg.modules[0]
+        assert len(list(module.nodes())) > 0, "Module should have nodes"
+        assert module.entrypoint is not None, "Module should have an entrypoint"
 
     def test_hugr_metadata_preservation(self) -> None:
-        """Test that metadata is preserved through compilation."""
+        """Test that the function name is preserved through compilation."""
 
         @guppy_decorator
         def metadata_test() -> bool:
@@ -329,12 +285,68 @@ class TestHUGRVersionCompatibility:
             h(q)
             return measure(q)
 
-        # Note: Guppy functions are frozen dataclasses, so we can't set attributes directly
-        # The metadata should come from the function definition itself
-
         hugr_bytes = compile_guppy_to_hugr(metadata_test)
-        hugr_str = hugr_bytes.decode("utf-8")
+        pkg = Package.from_bytes(hugr_bytes)
 
-        # Check if any metadata is preserved
-        # Function name should at least be preserved
-        assert "metadata_test" in hugr_str or len(hugr_bytes) > 50, "HUGR should preserve some function information"
+        # The guppy function must survive as a named function definition
+        func_names = []
+        for module in pkg.modules:
+            for node in module.nodes():
+                n = node[0] if isinstance(node, tuple) else node
+                f_name = getattr(module[n].op, "f_name", None)
+                if f_name:
+                    func_names.append(f_name)
+
+        assert any(
+            name.endswith("metadata_test") for name in func_names
+        ), f"HUGR should preserve the function name, found {func_names}"
+
+
+def test_hugr_compilation_is_cached_per_definition_across_entry_points() -> None:
+    """Both compile entry points share one per-definition HUGR byte cache.
+
+    One DEM build compiles the same program several times (generator
+    certificate, preflight digest check, trace execution); the cache makes
+    every compile after the first free without changing any bytes.
+    """
+    from pecos._compilation import guppy_to_hugr
+
+    @guppy_decorator
+    def cached_prog() -> None:
+        q = qubit()
+        _ = measure(q)
+
+    first = compile_guppy_to_hugr(cached_prog)
+    assert guppy_to_hugr(cached_prog) is first
+    assert compile_guppy_to_hugr(cached_prog) is first
+
+    @guppy_decorator
+    def other_prog() -> None:
+        q = qubit()
+        h(q)
+        _ = measure(q)
+
+    assert compile_guppy_to_hugr(other_prog) is not first
+
+
+def test_parametric_definitions_never_share_cache_entries() -> None:
+    """The library-form compile_function() bytes must not leak into
+    guppy_to_hugr, whose contract is the entry-point compile() form."""
+    from pecos._compilation import guppy_to_hugr
+
+    @guppy_decorator
+    def parametric_prog(flip: bool) -> None:  # pragma: no cover - compiled, not run
+        q = qubit()
+        if flip:
+            h(q)
+        _ = measure(q)
+
+    first = compile_guppy_to_hugr(parametric_prog)
+    assert first.startswith(HUGR_ENVELOPE_MAGIC)
+    # Not cached: a second pipeline compile produces a fresh object.
+    assert compile_guppy_to_hugr(parametric_prog) is not first
+
+    # guppy_to_hugr must still reject the parametric definition rather than
+    # serving the pipeline's library-form bytes.
+    with pytest.raises(RuntimeError, match="Failed to compile Guppy to HUGR"):
+        guppy_to_hugr(parametric_prog)

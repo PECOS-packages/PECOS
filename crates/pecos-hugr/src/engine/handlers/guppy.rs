@@ -21,11 +21,17 @@ use log::debug;
 use tket::hugr::{Hugr, Node};
 
 use crate::engine::HugrEngine;
+use crate::engine::handlers::HandlerOutcome;
 
 impl HugrEngine {
     /// Handle `tket.guppy` operations.
     #[allow(clippy::unused_self)] // Consistent with other handler methods; may use self in future
-    pub(crate) fn handle_guppy_op(&mut self, _hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_guppy_op(
+        &mut self,
+        _hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing tket.guppy operation: {op_name} at {node:?}");
 
         if op_name == "drop" {
@@ -33,15 +39,20 @@ impl HugrEngine {
             // Drop an affine type value (opposite of move semantics)
             // No-op for simulation - just consumes the value
             debug!("tket.guppy.drop at {node:?} (value consumed)");
-            true
+            HandlerOutcome::Processed
         } else {
             debug!("Unknown tket.guppy operation: {op_name}");
-            false
+            HandlerOutcome::Defer
         }
     }
 
     /// Handle `guppylang` extension operations.
-    pub(crate) fn handle_guppylang_op(&mut self, hugr: &Hugr, node: Node, op_name: &str) -> bool {
+    pub(crate) fn handle_guppylang_op(
+        &mut self,
+        hugr: &Hugr,
+        node: Node,
+        op_name: &str,
+    ) -> HandlerOutcome {
         debug!("Processing guppylang operation: {op_name} at {node:?}");
 
         match op_name {
@@ -50,19 +61,23 @@ impl HugrEngine {
                 // Log a warning but allow execution to continue
                 debug!("guppylang.unsupported at {node:?} - operation not supported");
                 // Pass through any inputs to outputs
-                self.propagate_all_inputs(hugr, node);
-                true
+                if !self.propagate_all_inputs(hugr, node) {
+                    return HandlerOutcome::Defer;
+                }
+                HandlerOutcome::Processed
             }
             "partial" => {
                 // partial: partial function application
                 // For simulation, treat as identity/pass-through
                 debug!("guppylang.partial at {node:?} - pass-through");
-                self.propagate_all_inputs(hugr, node);
-                true
+                if !self.propagate_all_inputs(hugr, node) {
+                    return HandlerOutcome::Defer;
+                }
+                HandlerOutcome::Processed
             }
             _ => {
                 debug!("Unknown guppylang operation: {op_name}");
-                false
+                HandlerOutcome::Defer
             }
         }
     }

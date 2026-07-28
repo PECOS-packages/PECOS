@@ -3,9 +3,12 @@
 
 """Smoke tests for the traced-QIS surface-code route after Clifford lowering."""
 
+import math
 import random
 
+import pytest
 from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 from pecos.quantum import TickCircuit
 from pecos_rslib_exp import (
@@ -79,7 +82,7 @@ TICK_2Q_METHODS = {
 def build_lowered_traced_qis_surface_code(rounds=3):
     patch = SurfacePatch.create(distance=3)
     tc = _build_surface_tick_circuit_for_native_model(patch, rounds, "Z", circuit_source="traced_qis")
-    tc.lower_clifford_rotations()
+    normalize_traced_qis_tick_circuit(tc, context="test traced-QIS surface code")
     return tc
 
 
@@ -211,6 +214,106 @@ def test_lowered_traced_qis_pipeline_sampling_and_catalog_smoke():
     assert len(catalog) > 0
     assert len(first_fault.locations) == 1
     assert len(first_fault.faults) == 1
+
+
+def test_normalize_traced_qis_tick_circuit_lowers_clifford_rzz():
+    tc = TickCircuit()
+    tc.tick().rzz(math.pi / 2, [(0, 1)])
+
+    normalize_traced_qis_tick_circuit(tc, context="test Clifford RZZ normalization")
+
+    gate_names = [
+        gate.gate_type.name for tick_index in range(tc.num_ticks()) for gate in tc.get_tick(tick_index).gate_batches()
+    ]
+    assert "RZZ" not in gate_names
+    assert "SZZ" in gate_names
+
+
+def test_normalize_traced_qis_tick_circuit_rejects_raw_rzz_after_lowering():
+    tc = TickCircuit()
+    tc.tick().rzz(math.pi / 4, [(0, 1)])
+
+    with pytest.raises(ValueError, match="still contains raw RZZ"):
+        normalize_traced_qis_tick_circuit(tc, context="test non-Clifford RZZ normalization")
+
+
+def _gate_names(tc):
+    return [
+        gate.gate_type.name for tick_index in range(tc.num_ticks()) for gate in tc.get_tick(tick_index).gate_batches()
+    ]
+
+
+def test_tick_circuit_pass_bindings_cancel_and_remove_simple_gates():
+    tc = TickCircuit()
+    tc.tick().h([0])
+    tc.tick().h([0])
+    tc.tick().i([1])
+
+    tc.cancel_inverses()
+    tc.remove_identity()
+
+    assert _gate_names(tc) == []
+
+
+def test_tick_circuit_pass_bindings_merge_and_lower_rotations():
+    tc = TickCircuit()
+    tc.tick().rz(math.pi / 4, [0])
+    tc.tick().rz(math.pi / 4, [0])
+
+    tc.merge_adjacent_rotations()
+    tc.lower_clifford_rotations()
+
+    assert _gate_names(tc) == ["SZ"]
+
+
+def test_tick_circuit_pass_bindings_absorb_basis_and_peephole():
+    absorbed = TickCircuit()
+    absorbed.tick().pz([0])
+    absorbed.tick().sz([0])
+    absorbed.tick().mz([0])
+    absorbed.absorb_basis_gates()
+    assert _gate_names(absorbed) == ["PZ", "MZ"]
+
+    optimized = TickCircuit()
+    optimized.tick().h([1])
+    optimized.tick().cx([(0, 1)])
+    optimized.tick().h([1])
+    optimized.peephole_optimize()
+    assert _gate_names(optimized) == ["CZ"]
+
+
+def test_tick_circuit_pass_bindings_simplify_single_qubit_clifford_chains():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    tc.simplify_single_qubit_clifford_chains()
+
+    assert _gate_names(tc) == ["F"]
+
+
+def test_normalize_traced_qis_tick_circuit_simplifies_single_qubit_clifford_chains():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    normalize_traced_qis_tick_circuit(tc, context="test one-qubit Clifford normalization")
+
+    assert _gate_names(tc) == ["F"]
+
+
+def test_normalize_traced_qis_tick_circuit_can_skip_single_qubit_clifford_simplification():
+    tc = TickCircuit()
+    tc.tick().sx([0])
+    tc.tick().sz([0])
+
+    normalize_traced_qis_tick_circuit(
+        tc,
+        context="test one-qubit Clifford normalization",
+        simplify_single_qubit_clifford_chains=False,
+    )
+
+    assert _gate_names(tc) == ["SX", "SZ"]
 
 
 def test_explicit_python_gate_names_map_to_rust_clifford_gates():

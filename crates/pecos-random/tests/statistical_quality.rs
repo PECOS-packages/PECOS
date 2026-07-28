@@ -136,12 +136,13 @@ fn generate_pcgrandom_bytes(seed: u64, count: usize) -> Vec<u8> {
 
 /// Generate random bytes using `RapidRng`
 fn generate_rapidrng_bytes(seed: u64, count: usize) -> Vec<u8> {
-    use rapidhash::rng::RapidRng;
-    let mut rng = RapidRng::new(seed);
+    use rand_core::{SeedableRng, TryRng};
+    // Raw from_seed preserves the legacy rapidhash-4.4 RapidRng::new stream.
+    let mut rng = rapidrand::RapidRng::from_seed(seed.to_le_bytes());
     let mut bytes = vec![0u8; count];
-    // RapidRng uses rand_core 0.9, so use the next() method directly
     for chunk in bytes.chunks_exact_mut(8) {
-        chunk.copy_from_slice(&rng.next().to_le_bytes());
+        let Ok(v) = rng.try_next_u64();
+        chunk.copy_from_slice(&v.to_le_bytes());
     }
     bytes
 }

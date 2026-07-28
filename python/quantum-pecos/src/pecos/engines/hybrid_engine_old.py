@@ -23,36 +23,35 @@ from typing import TYPE_CHECKING
 
 import pecos as pc
 from pecos import BitInt, BitUInt
-from pecos.engines.cvm.classical import eval_condition, eval_cop, set_output
 from pecos.engines.cvm.rng_model import RNGModel
+from pecos.engines.cvm.semantics import DefaultClassicalSemantics
 from pecos.engines.cvm.wasm import eval_cfunc, get_ccop
 from pecos.exceptions import NotSupportedGateError
 from pecos.noise.fake_error_model import FakeErrorModel
 
 if TYPE_CHECKING:
-    from typing import Protocol
+    from collections.abc import Mapping
+    from typing import Any, Protocol
 
     from pecos.circuits import QuantumCircuit
+    from pecos.circuits.quantum_circuit import Location
+    from pecos.engines.cvm.semantics import ClassicalSemantics
     from pecos.noise.parent_class_error_gen import ParentErrorModel
-    from pecos.protocols import SimulatorProtocol
+    from pecos.protocols import CircuitInspector, OperationEventInspector, SimulatorProtocol
     from pecos.typing import GateParams
 
-    class CircuitInspector(Protocol):
-        """Protocol for circuit inspector objects."""
+    class OperationAnalyzer(Protocol):
+        """Callback for an operation's actual execution decision."""
 
-        def analyze(
+        def __call__(
             self,
-            tick_circuit: QuantumCircuit,
-            time: int,
-            output: dict[str, BitInt],
+            symbol: str,
+            locations: set[Location],
+            metadata: Mapping[str, Any],
+            *,
+            executed: bool,
         ) -> None:
-            """Analyze a circuit at a specific time tick.
-
-            Args:
-                tick_circuit: Quantum circuit for the current time tick.
-                time: Current time step.
-                output: Output dictionary with binary arrays.
-            """
+            """Record whether one non-skipped operation executed."""
             ...
 
 
@@ -65,18 +64,25 @@ class HybridEngine:
         *,
         debug: bool = False,
         regwidth: int = 32,
+        classical_semantics: ClassicalSemantics | None = None,
     ) -> None:
-        """Initialize hybrid engine with seed, debug mode, and register width.
+        """Initialize the legacy hybrid engine.
 
         Args:
-        seed: Random seed for reproducibility. Can be bool True for random seed, int for specific seed, or None.
-        debug: Enable debug mode for additional output.
-        regwidth: Width of classical registers in bits.
+            seed: Random seed for reproducibility. Can be bool True for a random
+                seed, an integer for a specific seed, or None.
+            debug: Enable debug mode for additional output.
+            regwidth: Width of classical registers in bits.
+            classical_semantics: Classical storage and expression behavior.
+                Defaults to PECOS's signed ``BitInt`` semantics.
         """
         self.debug = debug
         self.state = None
         self.circuit = None
         self.regwidth = regwidth
+        self.classical_semantics = (
+            classical_semantics if classical_semantics is not None else DefaultClassicalSemantics()
+        )
 
         if isinstance(seed, bool) and seed is True:
             self.seed = struct.unpack("<L", os.urandom(4))[0]
@@ -107,7 +113,7 @@ class HybridEngine:
         error_circuits: dict[int, dict[str, QuantumCircuit | set[int]]] | None = None,
         output: dict[str, BitInt] | None = None,
         output_spec: dict[str, int] | None = None,
-        circ_inspector: CircuitInspector | None = None,
+        circ_inspector: CircuitInspector | OperationEventInspector | None = None,
     ) -> tuple[dict, dict]:
         """Run a quantum circuit with optional error modeling.
 
@@ -125,7 +131,76 @@ class HybridEngine:
         Returns:
             Tuple of final simulator state and output dictionary.
         """
-        output = set_output(state, circuit, output_spec, output)
+        operation_analyzer = None
+        engine_manages_inspector = False
+        finish_run = None
+        abort_run = None
+
+        if circ_inspector and getattr(circ_inspector, "supports_operation_events", False) is True:
+            start_run = getattr(circ_inspector, "start_run", None)
+            finish_run = getattr(circ_inspector, "finish_run", None)
+            abort_run = getattr(circ_inspector, "abort_run", None)
+            run_active = getattr(circ_inspector, "run_active", None)
+            candidate = getattr(circ_inspector, "analyze_operation", None)
+            invalid_members = [
+                name
+                for name, member in (
+                    ("start_run", start_run),
+                    ("finish_run", finish_run),
+                    ("abort_run", abort_run),
+                    ("analyze_operation", candidate),
+                )
+                if not callable(member)
+            ]
+            if not isinstance(run_active, bool):
+                invalid_members.append("run_active")
+            if invalid_members:
+                members = ", ".join(invalid_members)
+                msg = f"Operation-event inspector has invalid members: {members}."
+                raise TypeError(msg)
+
+            operation_analyzer = candidate
+            if not run_active:
+                start_run()
+                engine_manages_inspector = True
+
+        try:
+            result = self._run(
+                state,
+                circuit,
+                shot_id,
+                error_gen=error_gen,
+                error_params=error_params,
+                error_circuits=error_circuits,
+                output=output,
+                output_spec=output_spec,
+                circ_inspector=circ_inspector,
+                operation_analyzer=operation_analyzer,
+            )
+        except BaseException:
+            if engine_manages_inspector:
+                abort_run()
+            raise
+
+        if engine_manages_inspector:
+            finish_run()
+        return result
+
+    def _run(
+        self,
+        state: SimulatorProtocol,
+        circuit: QuantumCircuit,
+        shot_id: int,
+        error_gen: ParentErrorModel | None = None,
+        error_params: dict[str, float | dict[str, float]] | None = None,
+        error_circuits: dict[int, dict[str, QuantumCircuit | set[int]]] | None = None,
+        output: dict[str, BitInt] | None = None,
+        output_spec: dict[str, int] | None = None,
+        circ_inspector: CircuitInspector | OperationEventInspector | None = None,
+        operation_analyzer: OperationAnalyzer | None = None,
+    ) -> tuple[dict, dict]:
+        """Execute one circuit after inspector lifecycle setup."""
+        output = self.classical_semantics.set_output(state, circuit, output_spec, output)
         output["JOB_shotnum"] = shot_id
         output_export = {}
 
@@ -180,16 +255,20 @@ class HybridEngine:
 
             # ideal tick circuit
             # ------------------
-            self.run_circuit(
-                state,
-                output,
-                output_export,
-                tick_circuit,
-                error_gen,
-                removed_locations=removed,
-            )
+            self._operation_analyzer = operation_analyzer
+            try:
+                self.run_circuit(
+                    state,
+                    output,
+                    output_export,
+                    tick_circuit,
+                    error_gen,
+                    removed_locations=removed,
+                )
+            finally:
+                self._operation_analyzer = None
 
-            if circ_inspector:
+            if circ_inspector and operation_analyzer is None:
                 circ_inspector.analyze(tick_circuit, time, output)
 
             if after_errors:
@@ -234,9 +313,35 @@ class HybridEngine:
             if params.get("skip"):
                 continue
 
-            eval_cond2 = eval_condition(params.get("cond2"), output) if params.get("cond2") else True
+            eval_cond2 = (
+                self.classical_semantics.eval_condition(
+                    params.get("cond2"),
+                    output,
+                    width=self.regwidth,
+                )
+                if params.get("cond2")
+                else True
+            )
 
-            if eval_condition(params.get("cond"), output) and eval_cond2:
+            executed = (
+                self.classical_semantics.eval_condition(
+                    params.get("cond"),
+                    output,
+                    width=self.regwidth,
+                )
+                and eval_cond2
+            )
+
+            operation_analyzer = getattr(self, "_operation_analyzer", None)
+            if operation_analyzer is not None:
+                operation_analyzer(
+                    symbol,
+                    locations,
+                    params,
+                    executed=executed,
+                )
+
+            if executed:
                 # Run quantum simulator
                 if symbol == "cop":
                     if (
@@ -255,7 +360,7 @@ class HybridEngine:
                             eval_cfunc(self, params, output)
 
                     elif params.get("expr"):
-                        eval_cop(
+                        self.classical_semantics.eval_cop(
                             params.get("expr"),
                             output,
                             width=self.regwidth,

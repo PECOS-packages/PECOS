@@ -2166,7 +2166,7 @@ mod tests {
     #[test]
     fn test_exp_special_cases() {
         // Test special values
-        assert!(exp(f64::NEG_INFINITY) == 0.0);
+        assert_eq!(exp(f64::NEG_INFINITY).to_bits(), 0.0_f64.to_bits());
         assert!(exp(f64::INFINITY).is_infinite());
         assert!(exp(f64::NAN).is_nan());
     }

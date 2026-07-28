@@ -72,14 +72,14 @@ impl<D: EdgeTrackingDecoder> KMwpmDecoder<D> {
 }
 
 impl<D: EdgeTrackingDecoder> ObservableDecoder for KMwpmDecoder<D> {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         let k = self.config.k;
 
         // First matching: standard MWPM.
         let (obs1, edges1) = self.decoder.decode_with_matching(syndrome)?;
 
         if edges1.is_empty() {
-            return Ok(obs1);
+            return Ok(crate::obs_mask::ObsMask::from_u64(obs1));
         }
 
         // Collect K matchings via decoding tree.
@@ -207,7 +207,7 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for KMwpmDecoder<D> {
                 result |= mask;
             }
         }
-        Ok(result)
+        Ok(crate::obs_mask::ObsMask::from_u64(result))
     }
 }
 

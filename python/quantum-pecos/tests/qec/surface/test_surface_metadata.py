@@ -15,6 +15,7 @@ from pecos.qec.surface import (
     SurfacePatch,
     classify_stabilizer_boundary,
     describe_surface_memory_experiment,
+    extract_detection_events_and_observables,
     generate_tick_circuit_from_patch,
     get_detector_descriptors_from_tick_circuit,
     get_measurement_order_from_tick_circuit,
@@ -25,9 +26,37 @@ from pecos.qec.surface import (
     get_stabilizer_schedule_metadata,
     get_stabilizer_touch_label,
 )
+from pecos.qec.surface.circuit_builder import _metadata_record_offsets
 
 if TYPE_CHECKING:
     from pecos.qec.surface import SurfacePatchDescriptor
+
+
+class _MetadataOnlyTickCircuit:
+    def __init__(self, metadata: dict[str, str]) -> None:
+        self._metadata = metadata
+
+    def get_meta(self, key: str) -> str | None:
+        return self._metadata.get(key)
+
+
+def test_metadata_record_offsets_require_records_or_meas_ids() -> None:
+    """Local metadata consumers should not silently ignore malformed entries."""
+    assert _metadata_record_offsets({"records": []}, 3) == []
+    assert _metadata_record_offsets({"meas_ids": [1, 2]}, 5) == [-4, -3]
+
+    with pytest.raises(ValueError, match=r"records.*meas_ids"):
+        _metadata_record_offsets({"id": 0}, 3)
+
+    tick_circuit = _MetadataOnlyTickCircuit(
+        {
+            "detectors": json.dumps([{"id": 0, "coords": [0, 0, 0]}]),
+            "observables": "[]",
+            "num_measurements": "1",
+        },
+    )
+    with pytest.raises(ValueError, match=r"records.*meas_ids"):
+        extract_detection_events_and_observables(tick_circuit, [[0]])
 
 
 def test_surface_schedule_helpers_expose_region_and_touch_labels() -> None:
@@ -178,6 +207,38 @@ def test_tick_circuit_exposes_detector_descriptors() -> None:
     assert final_x["coords"] == [0, 0, 2]
 
 
+@pytest.mark.parametrize(
+    ("basis", "baseline_kind", "detector_y"),
+    [("Z", "X", 0), ("X", "Z", 1)],
+)
+def test_tick_circuit_uses_explicit_prep_syndrome_baseline(
+    basis: str,
+    baseline_kind: str,
+    detector_y: int,
+) -> None:
+    """Round-0 random-sign detectors should compare against prep syndrome measurements."""
+    patch = SurfacePatch.create(distance=3)
+    tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis=basis)
+    detectors = json.loads(tc.get_meta("detectors") or "[]")
+    num_measurements = int(tc.get_meta("num_measurements") or "0")
+    init_count = len(patch.x_stabilizers if baseline_kind == "X" else patch.z_stabilizers)
+
+    assert num_measurements == init_count + 2 * patch.num_ancilla + patch.num_data
+
+    init_tick_rounds = [
+        tc.get_tick_meta(tick_index, "syndrome_round")
+        for tick_index in range(tc.num_ticks())
+        if tc.get_tick_meta(tick_index, "syndrome_round") == -1
+    ]
+    assert init_tick_rounds
+
+    first_random_detector = next(det for det in detectors if det["coords"][1] == detector_y and det["coords"][2] == 0)
+    assert len(first_random_detector["records"]) == 2
+    record_indices = [num_measurements + int(record) for record in first_random_detector["records"]]
+    assert record_indices[0] >= init_count
+    assert record_indices[1] < init_count
+
+
 def test_tick_circuit_exposes_observable_descriptors() -> None:
     """Tick circuits should publish observable descriptors derived from logical metadata."""
     patch = SurfacePatch.create(distance=3)
@@ -199,19 +260,23 @@ def test_tick_circuit_exposes_observable_descriptors() -> None:
 
 
 def test_tick_circuit_exposes_measurement_order() -> None:
-    """Tick circuits should expose measurement order matching their MZ gates."""
+    """Tick circuits should expose measurement order matching measurement gates."""
     patch = SurfacePatch.create(distance=3)
     tc = generate_tick_circuit_from_patch(patch, num_rounds=2, basis="X")
 
     observed = get_measurement_order_from_tick_circuit(tc)
 
     expected: list[int] = []
+    has_measure_free = False
     for tick_index in range(tc.num_ticks()):
         tick = tc.get_tick(tick_index)
         if tick is None:
             continue
         for gate in tick.gate_batches():
-            if "MZ" not in str(gate.gate_type):
+            gate_type = str(gate.gate_type)
+            if "MeasureFree" in gate_type:
+                has_measure_free = True
+            if "MZ" not in gate_type and "MeasureFree" not in gate_type:
                 continue
             for qubit in gate.qubits:
                 if hasattr(qubit, "index"):
@@ -219,6 +284,7 @@ def test_tick_circuit_exposes_measurement_order() -> None:
                 else:
                     expected.append(int(qubit))
 
+    assert has_measure_free
     assert observed == expected
     assert len(observed) == int(tc.get_meta("num_measurements") or "0")
 
@@ -238,9 +304,11 @@ def test_tick_circuit_respects_ancilla_budget_in_measurement_order() -> None:
     batched_order = get_measurement_order_from_tick_circuit(batched_tc)
     num_ancilla = patch.geometry.num_ancilla
 
-    full_ancilla_measures = full_order[:num_ancilla]
-    batched_ancilla_measures = batched_order[:num_ancilla]
+    init_count = len(patch.x_stabilizers)
+    full_ancilla_measures = full_order[init_count : init_count + num_ancilla]
+    batched_ancilla_measures = batched_order[init_count : init_count + num_ancilla]
 
+    assert len(set(full_order[:init_count])) == init_count
     assert len(set(full_ancilla_measures)) == num_ancilla
     assert len(set(batched_ancilla_measures)) == 2
     assert max(batched_ancilla_measures) == patch.num_data + 1

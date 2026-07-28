@@ -68,7 +68,7 @@ def run_sweep(
 ) -> CoherentNoiseSweep:
     """Run a coherent noise sweep using sim_neo."""
     from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-    from pecos_rslib.qec import ObservableSubgraphDecoder
+    from pecos_rslib.qec import LogicalSubgraphDecoder
     from pecos_rslib_exp import depolarizing, sim_neo, stab_mps, statevec
 
     patch = SurfacePatch.create(distance=distance)
@@ -82,7 +82,7 @@ def run_sweep(
     num_meas = int(tc.get_meta("num_measurements"))
     dem_str = b.build_dem(p1=p_depol, p2=p_depol, p_meas=p_depol, p_prep=p_depol)
     sc = b.stab_coords()
-    osd = ObservableSubgraphDecoder(dem_str, sc, "pymatching")
+    decoder = LogicalSubgraphDecoder(dem_str, sc, "pymatching")
 
     sweep = CoherentNoiseSweep(
         distance=distance,
@@ -133,7 +133,7 @@ def run_sweep(
                         val ^= meas[idx]
                 if val:
                     obs_mask |= 1 << obs["id"]
-            pred = osd.decode([int(x) for x in det_events])
+            pred = decoder.decode([int(x) for x in det_events])
             if pred != obs_mask:
                 errors += 1
         decode_time = time.perf_counter() - t0

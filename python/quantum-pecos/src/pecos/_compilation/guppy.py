@@ -12,7 +12,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from guppylang import guppy
-from pecos_rslib import compile_hugr_to_qis
+from pecos_rslib_llvm import compile_hugr_to_qis
+
+from pecos._compilation.hugr_cache import (
+    definition_takes_parameters,
+    lookup_cached_hugr_bytes,
+    store_cached_hugr_bytes,
+)
 
 
 def _raise_external_compiler_error() -> None:
@@ -345,19 +351,31 @@ def guppy_to_hugr(guppy_func: Callable) -> bytes:
         msg = "Function must be decorated with @guppy"
         raise ValueError(msg)
 
+    # Parametric definitions never share cache entries: this entry point only
+    # produces (and its callers only expect) the entry-point compile() form,
+    # which rejects parameters.
+    is_parametric = definition_takes_parameters(guppy_func)
+    if not is_parametric:
+        cached = lookup_cached_hugr_bytes(guppy_func)
+        if cached is not None:
+            return cached
+
     # Compile Guppy → HUGR
     try:
         compiled = guppy_func.compile() if hasattr(guppy_func, "compile") else guppy.compile(guppy_func)
 
         if hasattr(compiled, "to_bytes"):
-            return compiled.to_bytes()
-        if hasattr(compiled, "package"):
-            return compiled.package.to_bytes()
-        if hasattr(compiled, "to_package"):
-            package = compiled.to_package()
-            return package.to_bytes()
-        msg = "Cannot serialize HUGR to binary format"
-        raise RuntimeError(msg)
+            hugr_bytes = compiled.to_bytes()
+        elif hasattr(compiled, "package"):
+            hugr_bytes = compiled.package.to_bytes()
+        elif hasattr(compiled, "to_package"):
+            hugr_bytes = compiled.to_package().to_bytes()
+        else:
+            msg = "Cannot serialize HUGR to binary format"
+            raise RuntimeError(msg)
     except Exception as e:
         msg = f"Failed to compile Guppy to HUGR: {e}"
         raise RuntimeError(msg) from e
+    if not is_parametric:
+        store_cached_hugr_bytes(guppy_func, hugr_bytes)
+    return hugr_bytes

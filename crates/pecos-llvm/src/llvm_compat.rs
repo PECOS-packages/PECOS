@@ -32,14 +32,13 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::types::{
-    ArrayType, BasicType, BasicTypeEnum, FloatType, IntType, PointerType, StructType,
-};
+use inkwell::types::{ArrayType, BasicTypeEnum, FloatType, IntType, PointerType, StructType};
 use inkwell::values::{
     ArrayValue, BasicValueEnum, FloatValue, FunctionValue, GlobalValue, IntValue, PointerValue,
 };
 use inkwell::{AddressSpace, IntPredicate};
 use pecos_core::prelude::PecosError;
+use std::num::NonZeroU32;
 
 pub type LLResult<T> = Result<T, PecosError>;
 
@@ -117,7 +116,9 @@ impl<'ctx> LLModule<'ctx> {
 
     /// Get the LLVM bitcode as bytes
     pub fn to_bitcode(&self) -> Vec<u8> {
-        self.module.write_bitcode_to_memory().as_slice().to_vec()
+        let buffer = self.module.write_bitcode_to_memory();
+        let bitcode = buffer.as_slice();
+        bitcode[..bitcode.len().saturating_sub(1)].to_vec()
     }
 
     /// Get an identified (opaque) type by name, creating it if it doesn't exist
@@ -137,7 +138,9 @@ impl<'ctx> LLModule<'ctx> {
             LLType::Array(t) => self.module.add_global(t, None, name),
             LLType::Int(t) => self.module.add_global(t, None, name),
             LLType::Float(t) => self.module.add_global(t, None, name),
-            LLType::Pointer(t) => self.module.add_global(t, None, name),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => {
+                self.module.add_global(t, None, name)
+            }
             LLType::Struct(t) => self.module.add_global(t, None, name),
             LLType::Void => panic!("Cannot create global variable of void type"),
         };
@@ -146,7 +149,7 @@ impl<'ctx> LLModule<'ctx> {
             match init_val {
                 LLValue::Int(v) => global.set_initializer(&v),
                 LLValue::Float(v) => global.set_initializer(&v),
-                LLValue::Pointer(v) => global.set_initializer(&v),
+                LLValue::Pointer(v) => global.set_initializer(&v.value()),
                 LLValue::Array(v) => global.set_initializer(&v),
             }
         }
@@ -156,8 +159,17 @@ impl<'ctx> LLModule<'ctx> {
 
     /// Add a function declaration (mirrors llvmlite's ir.Function)
     pub fn add_function(&mut self, name: &str, fn_type: LLFunctionType<'ctx>) -> LLFunction<'ctx> {
-        let function = self.module.add_function(name, fn_type.get(), None);
-        LLFunction { function }
+        let LLFunctionType {
+            fn_type,
+            ret_pointee_type,
+            param_pointee_types,
+        } = fn_type;
+        let function = self.module.add_function(name, fn_type, None);
+        LLFunction {
+            function,
+            ret_pointee_type,
+            param_pointee_types,
+        }
     }
 }
 
@@ -166,9 +178,11 @@ impl<'ctx> LLModule<'ctx> {
 // ============================================================================
 
 /// Wrapper for LLVM function types (mirrors llvmlite's ir.FunctionType)
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct LLFunctionType<'ctx> {
     fn_type: inkwell::types::FunctionType<'ctx>,
+    ret_pointee_type: Option<LLType<'ctx>>,
+    param_pointee_types: Vec<Option<LLType<'ctx>>>,
 }
 
 impl<'ctx> LLFunctionType<'ctx> {
@@ -187,12 +201,19 @@ impl<'ctx> LLFunctionType<'ctx> {
             }
             LLType::Int(t) => t.fn_type(&params, var_args),
             LLType::Float(t) => t.fn_type(&params, var_args),
-            LLType::Pointer(t) => t.fn_type(&params, var_args),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => t.fn_type(&params, var_args),
             LLType::Struct(t) => t.fn_type(&params, var_args),
             LLType::Array(t) => t.fn_type(&params, var_args),
         };
 
-        Self { fn_type }
+        Self {
+            fn_type,
+            ret_pointee_type: return_type.pointer_pointee_type(),
+            param_pointee_types: param_types
+                .iter()
+                .map(LLType::pointer_pointee_type)
+                .collect(),
+        }
     }
 
     #[must_use]
@@ -211,29 +232,145 @@ impl<'ctx> LLFunctionType<'ctx> {
             LLType::Void => context.void_type().fn_type(&params, var_args),
             LLType::Int(t) => t.fn_type(&params, var_args),
             LLType::Float(t) => t.fn_type(&params, var_args),
-            LLType::Pointer(t) => t.fn_type(&params, var_args),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => t.fn_type(&params, var_args),
             LLType::Struct(t) => t.fn_type(&params, var_args),
             LLType::Array(t) => t.fn_type(&params, var_args),
         };
 
-        Self { fn_type }
+        Self {
+            fn_type,
+            ret_pointee_type: return_type.pointer_pointee_type(),
+            param_pointee_types: param_types
+                .iter()
+                .map(LLType::pointer_pointee_type)
+                .collect(),
+        }
     }
 
     #[must_use]
     pub fn get(&self) -> inkwell::types::FunctionType<'ctx> {
         self.fn_type
     }
+
+    #[must_use]
+    pub fn ret_pointee_type(&self) -> Option<LLType<'ctx>> {
+        self.ret_pointee_type
+    }
+
+    #[must_use]
+    pub fn param_pointee_types(&self) -> &[Option<LLType<'ctx>>] {
+        &self.param_pointee_types
+    }
 }
 
-/// Wrapper for LLVM types that mirrors llvmlite's type hierarchy
+/// Wrapper for LLVM types that mirrors llvmlite's type hierarchy.
+///
+/// LLVM 21 uses opaque pointer types. `TypedPointer` carries one level of
+/// pointee metadata for APIs like load and GEP that still need the element
+/// type; nested pointers keep only the immediate pointer pointee.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LLType<'ctx> {
     Void,
     Int(IntType<'ctx>),
     Float(FloatType<'ctx>),
     Pointer(PointerType<'ctx>),
+    TypedPointer(PointerType<'ctx>, LLPointeeType<'ctx>),
     Struct(StructType<'ctx>),
     Array(ArrayType<'ctx>),
+}
+
+/// One-level pointee metadata for opaque LLVM pointer types.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LLPointeeType<'ctx> {
+    Int(IntType<'ctx>),
+    Float(FloatType<'ctx>),
+    Pointer(PointerType<'ctx>),
+    Struct(StructType<'ctx>),
+    Array(ArrayType<'ctx>),
+}
+
+impl<'ctx> LLPointeeType<'ctx> {
+    fn from_ll_type(ty: LLType<'ctx>) -> Option<Self> {
+        match ty {
+            LLType::Void => None,
+            LLType::Int(t) => Some(Self::Int(t)),
+            LLType::Float(t) => Some(Self::Float(t)),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => Some(Self::Pointer(t)),
+            LLType::Struct(t) => Some(Self::Struct(t)),
+            LLType::Array(t) => Some(Self::Array(t)),
+        }
+    }
+
+    fn to_ll_type(self) -> LLType<'ctx> {
+        match self {
+            Self::Int(t) => LLType::Int(t),
+            Self::Float(t) => LLType::Float(t),
+            Self::Pointer(t) => LLType::Pointer(t),
+            Self::Struct(t) => LLType::Struct(t),
+            Self::Array(t) => LLType::Array(t),
+        }
+    }
+}
+
+impl std::hash::Hash for LLPointeeType<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use inkwell::types::AsTypeRef;
+        match self {
+            LLPointeeType::Int(t) => {
+                1u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+            LLPointeeType::Float(t) => {
+                2u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+            LLPointeeType::Pointer(t) => {
+                3u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+            LLPointeeType::Struct(t) => {
+                4u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+            LLPointeeType::Array(t) => {
+                5u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+            }
+        }
+    }
+}
+
+fn basic_type_to_ll_type(ty: BasicTypeEnum<'_>) -> Option<LLType<'_>> {
+    match ty {
+        BasicTypeEnum::ArrayType(t) => Some(LLType::Array(t)),
+        BasicTypeEnum::FloatType(t) => Some(LLType::Float(t)),
+        BasicTypeEnum::IntType(t) => Some(LLType::Int(t)),
+        BasicTypeEnum::PointerType(t) => Some(LLType::Pointer(t)),
+        BasicTypeEnum::StructType(t) => Some(LLType::Struct(t)),
+        BasicTypeEnum::ScalableVectorType(_) | BasicTypeEnum::VectorType(_) => None,
+    }
+}
+
+#[must_use]
+pub fn gep_result_pointee_type<'ctx>(
+    pointee_type: LLType<'ctx>,
+    indices: &[IntValue<'ctx>],
+) -> Option<LLType<'ctx>> {
+    let mut current = pointee_type;
+    for index in indices.iter().skip(1) {
+        current = match current {
+            LLType::Array(t) => basic_type_to_ll_type(t.get_element_type())?,
+            LLType::Struct(t) => {
+                let field_index = u32::try_from(index.get_zero_extended_constant()?).ok()?;
+                basic_type_to_ll_type(t.get_field_type_at_index(field_index)?)?
+            }
+            LLType::Int(_) | LLType::Float(_) | LLType::Pointer(_) | LLType::TypedPointer(_, _) => {
+                current
+            }
+            LLType::Void => return None,
+        };
+    }
+    Some(current)
 }
 
 // inkwell 0.8.0 only derives `Hash` for `IntType`; the other type wrappers
@@ -255,6 +392,11 @@ impl std::hash::Hash for LLType<'_> {
             LLType::Pointer(t) => {
                 3u8.hash(state);
                 (t.as_type_ref() as usize).hash(state);
+            }
+            LLType::TypedPointer(t, pointee_type) => {
+                3u8.hash(state);
+                (t.as_type_ref() as usize).hash(state);
+                pointee_type.hash(state);
             }
             LLType::Struct(t) => {
                 4u8.hash(state);
@@ -282,13 +424,21 @@ impl<'ctx> LLType<'ctx> {
         match bits {
             // Use custom_width_int_type(1) instead of bool_type() to match llvmlite
             // llvmlite renders i1 constants as "i1 1" and "i1 0", not "i1 true" and "i1 false"
-            1 => LLType::Int(context.custom_width_int_type(1)),
+            1 => LLType::Int(
+                context
+                    .custom_width_int_type(NonZeroU32::new(1).expect("nonzero width"))
+                    .expect("i1 is a valid LLVM integer width"),
+            ),
             8 => LLType::Int(context.i8_type()),
             16 => LLType::Int(context.i16_type()),
             32 => LLType::Int(context.i32_type()),
             64 => LLType::Int(context.i64_type()),
             128 => LLType::Int(context.i128_type()),
-            _ => LLType::Int(context.custom_width_int_type(bits)),
+            _ => LLType::Int(
+                context
+                    .custom_width_int_type(NonZeroU32::new(bits).expect("nonzero width"))
+                    .expect("valid LLVM integer width"),
+            ),
         }
     }
 
@@ -304,7 +454,7 @@ impl<'ctx> LLType<'ctx> {
         match element_type {
             LLType::Int(t) => LLType::Array(t.array_type(count)),
             LLType::Float(t) => LLType::Array(t.array_type(count)),
-            LLType::Pointer(t) => LLType::Array(t.array_type(count)),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => LLType::Array(t.array_type(count)),
             LLType::Struct(t) => LLType::Array(t.array_type(count)),
             LLType::Array(t) => LLType::Array(t.array_type(count)),
             LLType::Void => panic!("Cannot create array of void type"),
@@ -315,16 +465,39 @@ impl<'ctx> LLType<'ctx> {
     #[must_use]
     pub fn as_pointer(&self, context: &'ctx Context) -> LLType<'ctx> {
         match self {
-            LLType::Void => {
-                // Void pointers are represented as i8*
-                LLType::Pointer(context.i8_type().ptr_type(AddressSpace::default()))
+            LLType::Void => LLType::Pointer(context.ptr_type(AddressSpace::default())),
+            LLType::Int(_) | LLType::Float(_) | LLType::Struct(_) | LLType::Array(_) => {
+                let ptr_type = context.ptr_type(AddressSpace::default());
+                LLType::TypedPointer(
+                    ptr_type,
+                    LLPointeeType::from_ll_type(*self).expect("non-void pointee"),
+                )
             }
-            LLType::Int(t) => LLType::Pointer(t.ptr_type(AddressSpace::default())),
-            LLType::Float(t) => LLType::Pointer(t.ptr_type(AddressSpace::default())),
-            LLType::Pointer(t) => LLType::Pointer(*t), // Already a pointer
-            LLType::Struct(t) => LLType::Pointer(t.ptr_type(AddressSpace::default())),
-            LLType::Array(t) => LLType::Pointer(t.ptr_type(AddressSpace::default())),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => {
+                LLType::TypedPointer(*t, LLPointeeType::Pointer(*t))
+            }
         }
+    }
+
+    /// Return tracked pointee metadata for typed opaque pointer types.
+    #[must_use]
+    pub fn pointer_pointee_type(&self) -> Option<LLType<'ctx>> {
+        match self {
+            LLType::TypedPointer(_, pointee_type) => Some(pointee_type.to_ll_type()),
+            _ => None,
+        }
+    }
+
+    /// Build an opaque pointer type with explicit one-level pointee metadata.
+    #[must_use]
+    pub fn typed_pointer(
+        pointer_type: PointerType<'ctx>,
+        pointee_type: LLType<'ctx>,
+    ) -> Option<Self> {
+        Some(LLType::TypedPointer(
+            pointer_type,
+            LLPointeeType::from_ll_type(pointee_type)?,
+        ))
     }
 
     /// Get the underlying inkwell type for function signatures
@@ -334,7 +507,7 @@ impl<'ctx> LLType<'ctx> {
             LLType::Void => None,
             LLType::Int(t) => Some((*t).into()),
             LLType::Float(t) => Some((*t).into()),
-            LLType::Pointer(t) => Some((*t).into()),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => Some((*t).into()),
             LLType::Struct(t) => Some((*t).into()),
             LLType::Array(t) => Some((*t).into()),
         }
@@ -353,7 +526,7 @@ impl<'ctx> LLType<'ctx> {
     #[must_use]
     pub fn as_pointer_type(&self) -> PointerType<'ctx> {
         match self {
-            LLType::Pointer(t) => *t,
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => *t,
             _ => panic!("Expected pointer type"),
         }
     }
@@ -372,12 +545,39 @@ impl<'ctx> LLType<'ctx> {
 // Value wrappers
 // ============================================================================
 
+/// Pointer value plus the pointee type needed by LLVM opaque-pointer APIs.
+#[derive(Clone, Copy)]
+pub struct LLPointerValue<'ctx> {
+    value: PointerValue<'ctx>,
+    pointee_type: Option<LLType<'ctx>>,
+}
+
+impl<'ctx> LLPointerValue<'ctx> {
+    #[must_use]
+    pub fn new(value: PointerValue<'ctx>, pointee_type: Option<LLType<'ctx>>) -> Self {
+        Self {
+            value,
+            pointee_type,
+        }
+    }
+
+    #[must_use]
+    pub fn value(self) -> PointerValue<'ctx> {
+        self.value
+    }
+
+    #[must_use]
+    pub fn pointee_type(self) -> Option<LLType<'ctx>> {
+        self.pointee_type
+    }
+}
+
 /// Wrapper for LLVM values that mirrors llvmlite's value types
 #[derive(Clone, Copy)]
 pub enum LLValue<'ctx> {
     Int(IntValue<'ctx>),
     Float(FloatValue<'ctx>),
-    Pointer(PointerValue<'ctx>),
+    Pointer(LLPointerValue<'ctx>),
     Array(ArrayValue<'ctx>),
 }
 
@@ -387,7 +587,7 @@ impl<'ctx> LLValue<'ctx> {
         match self {
             LLValue::Int(v) => (*v).into(),
             LLValue::Float(v) => (*v).into(),
-            LLValue::Pointer(v) => (*v).into(),
+            LLValue::Pointer(v) => v.value().into(),
             LLValue::Array(v) => (*v).into(),
         }
     }
@@ -411,7 +611,15 @@ impl<'ctx> LLValue<'ctx> {
     #[must_use]
     pub fn as_pointer_value(&self) -> PointerValue<'ctx> {
         match self {
-            LLValue::Pointer(v) => *v,
+            LLValue::Pointer(v) => v.value(),
+            _ => panic!("Expected pointer value"),
+        }
+    }
+
+    #[must_use]
+    pub fn pointer_pointee_type(&self) -> Option<LLType<'ctx>> {
+        match self {
+            LLValue::Pointer(v) => v.pointee_type(),
             _ => panic!("Expected pointer value"),
         }
     }
@@ -430,8 +638,11 @@ impl<'ctx> LLValue<'ctx> {
 // ============================================================================
 
 /// Wrapper around inkwell's `FunctionValue` that mirrors llvmlite's ir.Function
+#[derive(Clone)]
 pub struct LLFunction<'ctx> {
     function: FunctionValue<'ctx>,
+    ret_pointee_type: Option<LLType<'ctx>>,
+    param_pointee_types: Vec<Option<LLType<'ctx>>>,
 }
 
 impl<'ctx> LLFunction<'ctx> {
@@ -450,19 +661,52 @@ impl<'ctx> LLFunction<'ctx> {
             LLType::Void => module.context().void_type().fn_type(&param_types, false),
             LLType::Int(t) => t.fn_type(&param_types, false),
             LLType::Float(t) => t.fn_type(&param_types, false),
-            LLType::Pointer(t) => t.fn_type(&param_types, false),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => t.fn_type(&param_types, false),
             LLType::Struct(t) => t.fn_type(&param_types, false),
             LLType::Array(t) => t.fn_type(&param_types, false),
         };
 
         let function = module.get_mut().add_function(name, fn_type, None);
+        let ret_pointee_type = return_type.pointer_pointee_type();
 
-        Self { function }
+        Self {
+            function,
+            ret_pointee_type,
+            param_pointee_types: arg_types.iter().map(LLType::pointer_pointee_type).collect(),
+        }
     }
 
     #[must_use]
     pub fn get(&self) -> FunctionValue<'ctx> {
         self.function
+    }
+
+    #[must_use]
+    pub fn ret_pointee_type(&self) -> Option<LLType<'ctx>> {
+        self.ret_pointee_type
+    }
+
+    #[must_use]
+    pub fn param_pointee_type(&self, index: usize) -> Option<LLType<'ctx>> {
+        self.param_pointee_types.get(index).copied().flatten()
+    }
+
+    /// Return function parameters with tracked pointer metadata where known.
+    #[must_use]
+    pub fn args(&self) -> Vec<LLValue<'ctx>> {
+        self.function
+            .get_param_iter()
+            .enumerate()
+            .map(|(index, param)| match param {
+                BasicValueEnum::IntValue(v) => LLValue::Int(v),
+                BasicValueEnum::FloatValue(v) => LLValue::Float(v),
+                BasicValueEnum::PointerValue(v) => {
+                    LLValue::Pointer(LLPointerValue::new(v, self.param_pointee_type(index)))
+                }
+                BasicValueEnum::ArrayValue(v) => LLValue::Array(v),
+                _ => panic!("Unsupported parameter type"),
+            })
+            .collect()
     }
 
     /// Append a basic block to this function (mirrors llvmlite's `func.append_basic_block`)
@@ -475,6 +719,38 @@ impl<'ctx> LLFunction<'ctx> {
 // ============================================================================
 // IRBuilder wrapper
 // ============================================================================
+
+pub struct LLCallable<'ctx> {
+    function: FunctionValue<'ctx>,
+    ret_pointee_type: Option<LLType<'ctx>>,
+}
+
+impl<'ctx> From<FunctionValue<'ctx>> for LLCallable<'ctx> {
+    fn from(function: FunctionValue<'ctx>) -> Self {
+        Self {
+            function,
+            ret_pointee_type: None,
+        }
+    }
+}
+
+impl<'ctx> From<LLFunction<'ctx>> for LLCallable<'ctx> {
+    fn from(function: LLFunction<'ctx>) -> Self {
+        Self {
+            function: function.get(),
+            ret_pointee_type: function.ret_pointee_type(),
+        }
+    }
+}
+
+impl<'ctx> From<&LLFunction<'ctx>> for LLCallable<'ctx> {
+    fn from(function: &LLFunction<'ctx>) -> Self {
+        Self {
+            function: function.get(),
+            ret_pointee_type: function.ret_pointee_type(),
+        }
+    }
+}
 
 /// Wrapper around inkwell's Builder that mirrors llvmlite's ir.IRBuilder
 pub struct LLIRBuilder<'ctx> {
@@ -671,22 +947,28 @@ impl<'ctx> LLIRBuilder<'ctx> {
     // Function calls
     // ========================================================================
 
-    pub fn call(
+    pub fn call<F>(
         &self,
-        function: FunctionValue<'ctx>,
+        function: F,
         args: &[LLValue<'ctx>],
         name: &str,
-    ) -> LLResult<Option<LLValue<'ctx>>> {
+    ) -> LLResult<Option<LLValue<'ctx>>>
+    where
+        F: Into<LLCallable<'ctx>>,
+    {
+        let function = function.into();
         let arg_values: Vec<_> = args.iter().map(|v| v.to_basic_value().into()).collect();
 
         let call_site = self
             .builder
-            .build_call(function, &arg_values, name)
+            .build_call(function.function, &arg_values, name)
             .map_err(|e| PecosError::Generic(format!("Failed to build call: {e}")))?;
 
         Ok(call_site.try_as_basic_value().basic().map(|v| match v {
             BasicValueEnum::IntValue(i) => LLValue::Int(i),
-            BasicValueEnum::PointerValue(p) => LLValue::Pointer(p),
+            BasicValueEnum::PointerValue(p) => {
+                LLValue::Pointer(LLPointerValue::new(p, function.ret_pointee_type))
+            }
             _ => panic!("Unsupported return value type"),
         }))
     }
@@ -740,13 +1022,28 @@ impl<'ctx> LLIRBuilder<'ctx> {
         name: &str,
     ) -> LLResult<LLValue<'ctx>> {
         let idx_values: Vec<_> = indices.iter().map(LLValue::as_int_value).collect();
+        let pointee_type = ptr
+            .pointer_pointee_type()
+            .ok_or_else(|| PecosError::Generic("gep: pointer pointee type is unknown".into()))?;
+        let basic_pointee_type = pointee_type
+            .to_basic_metadata_type()
+            .ok_or_else(|| PecosError::Generic("gep: pointer to void is not supported".into()))?;
+        let result_pointee_type = gep_result_pointee_type(pointee_type, &idx_values);
 
         unsafe {
             let result = self
                 .builder
-                .build_gep(ptr.as_pointer_value(), &idx_values, name)
+                .build_gep(
+                    basic_pointee_type,
+                    ptr.as_pointer_value(),
+                    &idx_values,
+                    name,
+                )
                 .map_err(|e| PecosError::Generic(format!("Failed to build gep: {e}")))?;
-            Ok(LLValue::Pointer(result))
+            Ok(LLValue::Pointer(LLPointerValue::new(
+                result,
+                result_pointee_type,
+            )))
         }
     }
 
@@ -764,19 +1061,25 @@ impl<'ctx> LLIRBuilder<'ctx> {
             .builder
             .build_alloca(basic_ty, name)
             .map_err(|e| PecosError::Generic(format!("Failed to build alloca: {e}")))?;
-        Ok(LLValue::Pointer(result))
+        Ok(LLValue::Pointer(LLPointerValue::new(result, Some(ll_type))))
     }
 
-    /// `load` (LLVM-14 typed pointer: pointee inferred from `ptr`).
+    /// `load` (LLVM opaque-pointer API requires an explicit pointee type).
     pub fn load(&self, ptr: LLValue<'ctx>, name: &str) -> LLResult<LLValue<'ctx>> {
+        let pointee_type = ptr
+            .pointer_pointee_type()
+            .ok_or_else(|| PecosError::Generic("load: pointer pointee type is unknown".into()))?;
+        let basic_pointee_type = pointee_type
+            .to_basic_metadata_type()
+            .ok_or_else(|| PecosError::Generic("load: pointer to void is not supported".into()))?;
         let result = self
             .builder
-            .build_load(ptr.as_pointer_value(), name)
+            .build_load(basic_pointee_type, ptr.as_pointer_value(), name)
             .map_err(|e| PecosError::Generic(format!("Failed to build load: {e}")))?;
         Ok(match result {
             BasicValueEnum::IntValue(v) => LLValue::Int(v),
             BasicValueEnum::FloatValue(v) => LLValue::Float(v),
-            BasicValueEnum::PointerValue(v) => LLValue::Pointer(v),
+            BasicValueEnum::PointerValue(v) => LLValue::Pointer(LLPointerValue::new(v, None)),
             BasicValueEnum::ArrayValue(v) => LLValue::Array(v),
             other => {
                 return Err(PecosError::Generic(format!(
@@ -905,11 +1208,118 @@ impl LLConstant {
         match ll_type {
             LLType::Int(t) => Ok(LLValue::Int(t.const_zero())),
             LLType::Float(t) => Ok(LLValue::Float(t.const_zero())),
-            LLType::Pointer(t) => Ok(LLValue::Pointer(t.const_zero())),
+            LLType::Pointer(t) | LLType::TypedPointer(t, _) => Ok(LLValue::Pointer(
+                LLPointerValue::new(t.const_zero(), ll_type.pointer_pointee_type()),
+            )),
             LLType::Array(t) => Ok(LLValue::Array(t.const_zero())),
             LLType::Void | LLType::Struct(_) => Err(PecosError::Generic(
                 "Cannot create a zero constant for void/struct type".to_string(),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn call_preserves_pointer_return_pointee_type_for_load() {
+        let context = Context::create();
+        let mut module = LLModule::new(&context, "call_pointer_return");
+        let i32_type = LLType::int(&context, 32);
+        let i32_ptr_type = i32_type.as_pointer(&context);
+
+        let callee_type = LLFunctionType::new(i32_ptr_type, &[], false);
+        let callee = module.add_function("get_i32_ptr", callee_type);
+
+        let caller_type = LLFunctionType::new_with_context(&context, LLType::Void, &[], false);
+        let caller = module.add_function("caller", caller_type);
+        let block = caller.append_basic_block(&context, "entry");
+        let builder = LLIRBuilder::new(&context, block);
+
+        let ptr = builder
+            .call(&callee, &[], "ptr")
+            .expect("call should build")
+            .expect("callee returns a pointer");
+        let loaded = builder
+            .load(ptr, "loaded")
+            .expect("call result should keep pointee metadata");
+        assert!(matches!(loaded, LLValue::Int(_)));
+        builder.ret_void().expect("return should build");
+    }
+
+    #[test]
+    fn raw_function_value_call_has_unknown_pointer_pointee_type() {
+        let context = Context::create();
+        let mut module = LLModule::new(&context, "raw_call_pointer_return");
+        let i32_type = LLType::int(&context, 32);
+        let i32_ptr_type = i32_type.as_pointer(&context);
+
+        let callee_type = LLFunctionType::new(i32_ptr_type, &[], false);
+        let callee = module.add_function("get_i32_ptr", callee_type);
+
+        let caller_type = LLFunctionType::new_with_context(&context, LLType::Void, &[], false);
+        let caller = module.add_function("caller", caller_type);
+        let block = caller.append_basic_block(&context, "entry");
+        let builder = LLIRBuilder::new(&context, block);
+
+        let ptr = builder
+            .call(callee.get(), &[], "ptr")
+            .expect("call should build")
+            .expect("callee returns a pointer");
+        let Err(err) = builder.load(ptr, "loaded") else {
+            panic!("raw FunctionValue should not carry pointee metadata");
+        };
+        assert!(err.to_string().contains("pointer pointee type is unknown"));
+        builder.ret_void().expect("return should build");
+    }
+
+    #[test]
+    fn as_pointer_on_typed_pointer_models_pointer_to_pointer() {
+        let context = Context::create();
+        let mut module = LLModule::new(&context, "double_pointer_return");
+        let i32_type = LLType::int(&context, 32);
+        let i32_ptr_type = i32_type.as_pointer(&context);
+        let i32_ptr_ptr_type = i32_ptr_type.as_pointer(&context);
+
+        let callee_type = LLFunctionType::new(i32_ptr_ptr_type, &[], false);
+        let callee = module.add_function("get_i32_ptr_ptr", callee_type);
+
+        let caller_type = LLFunctionType::new_with_context(&context, LLType::Void, &[], false);
+        let caller = module.add_function("caller", caller_type);
+        let block = caller.append_basic_block(&context, "entry");
+        let builder = LLIRBuilder::new(&context, block);
+
+        let ptr_to_ptr = builder
+            .call(&callee, &[], "ptr_to_ptr")
+            .expect("call should build")
+            .expect("callee returns a pointer");
+        let loaded_ptr = builder
+            .load(ptr_to_ptr, "loaded_ptr")
+            .expect("double pointer load should load a pointer");
+        assert!(matches!(loaded_ptr, LLValue::Pointer(_)));
+        builder.ret_void().expect("return should build");
+    }
+
+    #[test]
+    fn function_args_preserve_pointer_pointee_type_for_load() {
+        let context = Context::create();
+        let mut module = LLModule::new(&context, "pointer_arg");
+        let i32_type = LLType::int(&context, 32);
+        let i32_ptr_type = i32_type.as_pointer(&context);
+
+        let function_type =
+            LLFunctionType::new_with_context(&context, LLType::Void, &[i32_ptr_type], false);
+        let function = module.add_function("takes_i32_ptr", function_type);
+        let block = function.append_basic_block(&context, "entry");
+        let builder = LLIRBuilder::new(&context, block);
+
+        let args = function.args();
+        let loaded = builder
+            .load(args[0], "loaded")
+            .expect("pointer arg should keep pointee metadata");
+        assert!(matches!(loaded, LLValue::Int(_)));
+        builder.ret_void().expect("return should build");
     }
 }

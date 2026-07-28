@@ -25,7 +25,7 @@
 
 use pecos_neo::noise::prelude::*;
 use pecos_neo::prelude::*;
-use pecos_neo::tool::sim_neo;
+use pecos_neo::tool::{monte_carlo, sim_neo};
 use pecos_simulators::SparseStab;
 
 fn main() {
@@ -86,8 +86,9 @@ fn recipe_sim_neo_integration() {
 
     // Method 1: Pass pre-built pattern directly to .noise()
     let results = sim_neo(circuit.clone())
+        .auto()
         .noise(depolarizing_with_measurement(0.01, 0.05, 0.02))
-        .shots(1000)
+        .sampling(monte_carlo(1000))
         .seed(42)
         .build()
         .run();
@@ -102,8 +103,9 @@ fn recipe_sim_neo_integration() {
 
     // Method 2: Use the convenience .depolarizing() method
     let results = sim_neo(circuit.clone())
+        .auto()
         .depolarizing(0.01)
-        .shots(1000)
+        .sampling(monte_carlo(1000))
         .seed(42)
         .build()
         .run();
@@ -121,13 +123,14 @@ fn recipe_sim_neo_integration() {
 
     // Method 3: Pass NoiseModelBuilder (auto-converts via Into<ComposableNoiseModel>)
     let results = sim_neo(circuit.clone())
+        .auto()
         .noise(
             NoiseModelBuilder::new()
                 .with_depolarizing(0.01, 0.05)
                 .with_measurement_error(0.02)
                 .build(),
         )
-        .shots(1000)
+        .sampling(monte_carlo(1000))
         .seed(42)
         .build()
         .run();
@@ -142,13 +145,14 @@ fn recipe_sim_neo_integration() {
 
     // Method 4: Reusable simulation with noise
     let mut sim = sim_neo(circuit)
+        .auto()
         .noise(realistic_device_noise(
             &DeviceNoiseParams::new()
                 .with_p1(0.001)
                 .with_p2(0.01)
                 .with_measurement_error(0.02),
         ))
-        .shots(500)
+        .sampling(monte_carlo(500))
         .build();
 
     // Run multiple times with different seeds

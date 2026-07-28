@@ -33,10 +33,11 @@
 use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, DemOutputMetadata};
 use super::propagator::types::{DetectorId, MeasurementId};
 use super::propagator::{DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply_gate};
+use super::symbolic_replay::{Dispatch, apply_unitary_clifford};
 use pecos_core::QubitId;
 use pecos_simulators::{PauliProp, SymbolicSparseStab};
 use smallvec::SmallVec;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeSet, BinaryHeap};
 
 struct ObservablePropagationWork<'a> {
     recorder: &'a mut CompoundRecorder,
@@ -250,7 +251,7 @@ impl<'a> InfluenceBuilder<'a> {
     }
 
     /// Run symbolic simulation to get measurement correlations.
-    fn run_symbolic_simulation(&self) -> MeasurementInfo {
+    pub(crate) fn run_symbolic_simulation(&self) -> MeasurementInfo {
         let topo_order = self.dag.topological_order();
 
         // Determine number of qubits from the circuit
@@ -275,75 +276,20 @@ impl<'a> InfluenceBuilder<'a> {
             if let Some(op) = self.dag.gate(node) {
                 let qubits: Vec<usize> = op.qubits.iter().map(pecos_core::QubitId::index).collect();
 
+                // A malformed gate here means the DAG itself is wrong, and
+                // this path has no error channel, so report it loudly.
+                let dispatch = apply_unitary_clifford(&mut sim, op.gate_type, &qubits)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "symbolic simulation got malformed gate {:?} at node {node}: {err:?}",
+                            op.gate_type
+                        )
+                    });
+                if dispatch == Dispatch::Applied {
+                    continue;
+                }
+
                 match op.gate_type {
-                    pecos_quantum::GateType::H => {
-                        sim.h(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::F => {
-                        sim.sx(&[qubits[0]]);
-                        sim.sz(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::Fdg => {
-                        sim.szdg(&[qubits[0]]);
-                        sim.sxdg(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SX => {
-                        sim.sx(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SXdg => {
-                        sim.sxdg(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SY => {
-                        sim.sy(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SYdg => {
-                        sim.sydg(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SZ => {
-                        sim.sz(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::SZdg => {
-                        sim.szdg(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::X => {
-                        sim.x(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::Y => {
-                        sim.y(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::Z => {
-                        sim.z(&[qubits[0]]);
-                    }
-                    pecos_quantum::GateType::CX => {
-                        sim.cx(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::CY => {
-                        sim.cy(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::CZ => {
-                        sim.cz(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SXX => {
-                        sim.sxx(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SXXdg => {
-                        sim.sxxdg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SYY => {
-                        sim.syy(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SYYdg => {
-                        sim.syydg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SZZ => {
-                        sim.szz(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SZZdg => {
-                        sim.szzdg(&[(qubits[0], qubits[1])]);
-                    }
-                    pecos_quantum::GateType::SWAP => {
-                        sim.swap(&[(qubits[0], qubits[1])]);
-                    }
                     pecos_quantum::GateType::MZ | pecos_quantum::GateType::MeasureFree => {
                         sim.mz(&[qubits[0]]);
                         node_to_meas_idx[node] = Some(meas_idx);
@@ -479,6 +425,7 @@ impl<'a> InfluenceBuilder<'a> {
     /// Extract fault locations from the propagator.
     fn extract_locations(propagator: &DagPropagator<'_>) -> Vec<DagSpacetimeLocation> {
         let mut locations = Vec::new();
+        let mut prepared_qubits: BTreeSet<QubitId> = BTreeSet::new();
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
@@ -497,18 +444,33 @@ impl<'a> InfluenceBuilder<'a> {
                 // Standard circuit noise model: one fault location per gate.
                 //   Measurement: before. All others: after.
                 let before = is_measurement;
-                for &q in &qubits {
-                    // idle_duration() returns a non-negative integer stored as f64;
-                    // truncation and sign loss are not a concern.
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let idle_duration = gate.idle_duration() as u64;
+                let location_qubits: Vec<QubitId> =
+                    if gate.gate_type == pecos_quantum::GateType::MeasCrosstalkGlobalPayload {
+                        qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.remove(&q);
+                        });
+                        let victims = prepared_qubits.iter().copied().collect();
+                        qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.insert(q);
+                        });
+                        victims
+                    } else {
+                        qubits.clone()
+                    };
+                for q in location_qubits {
                     locations.push(DagSpacetimeLocation {
                         node,
                         qubits: vec![q],
                         before,
                         gate_type: gate.gate_type,
-                        idle_duration,
+                        idle_duration: gate.idle_duration(),
                     });
+                }
+                if matches!(
+                    gate.gate_type,
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                ) {
+                    prepared_qubits.extend(qubits.iter().copied());
                 }
             }
         }
@@ -803,6 +765,7 @@ impl<'a> InfluenceBuilder<'a> {
         let mut map: std::collections::HashMap<(usize, bool), Vec<(usize, usize)>> =
             std::collections::HashMap::new();
         let mut loc_idx = 0;
+        let mut prepared_qubits: BTreeSet<QubitId> = BTreeSet::new();
 
         for &node in propagator.topo_order() {
             if let Some(gate) = propagator.gate(node) {
@@ -816,10 +779,29 @@ impl<'a> InfluenceBuilder<'a> {
                 );
 
                 let before = is_measurement;
-                for q in &gate.qubits {
+                let location_qubits: Vec<QubitId> =
+                    if gate.gate_type == pecos_quantum::GateType::MeasCrosstalkGlobalPayload {
+                        gate.qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.remove(&q);
+                        });
+                        let victims = prepared_qubits.iter().copied().collect();
+                        gate.qubits.iter().copied().for_each(|q| {
+                            prepared_qubits.insert(q);
+                        });
+                        victims
+                    } else {
+                        gate.qubits.to_vec()
+                    };
+                for q in &location_qubits {
                     let qi = q.index();
                     map.entry((node, before)).or_default().push((qi, loc_idx));
                     loc_idx += 1;
+                }
+                if matches!(
+                    gate.gate_type,
+                    pecos_quantum::GateType::PZ | pecos_quantum::GateType::QAlloc
+                ) {
+                    prepared_qubits.extend(gate.qubits.iter().copied());
                 }
             }
         }
@@ -866,11 +848,11 @@ impl<'a> InfluenceBuilder<'a> {
 }
 
 /// Information about measurements from symbolic simulation.
-struct MeasurementInfo {
-    history: pecos_simulators::symbolic_sparse_stab::MeasurementHistory,
-    node_to_meas_idx: Vec<Option<usize>>,
+pub(crate) struct MeasurementInfo {
+    pub(crate) history: pecos_simulators::symbolic_sparse_stab::MeasurementHistory,
+    pub(crate) node_to_meas_idx: Vec<Option<usize>>,
     #[allow(dead_code)]
-    num_measurements: usize,
+    pub(crate) num_measurements: usize,
 }
 
 /// Definition of a detector as XOR of measurements.
@@ -1268,5 +1250,60 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod batched_node_tests {
+    use super::InfluenceBuilder;
+    use pecos_core::gates::Gate;
+    use pecos_quantum::DagCircuit;
+
+    /// A `DagCircuit` node may carry several gate instances -- `gate_count`
+    /// counts them individually, and `Gate::h(&[0, 1])` builds exactly that.
+    /// The symbolic simulation used to apply only `qubits[0]` and silently drop
+    /// the rest, which disagreed with `DagFaultAnalyzer`'s `apply_gate` (it
+    /// passes the whole slice) inside the very same `build_dem_from_circuit`
+    /// call. Both now apply every instance.
+    #[test]
+    fn batched_gate_nodes_apply_to_every_instance() {
+        let mut batched = DagCircuit::new();
+        batched.pz(&[0, 1]);
+        batched.add_gate_auto_wire(Gate::h(&[0usize, 1usize]));
+        let _ = batched.mz(&[0, 1]);
+
+        let mut split = DagCircuit::new();
+        split.pz(&[0, 1]);
+        split.h(&[0, 1]);
+        let _ = split.mz(&[0, 1]);
+
+        assert_eq!(
+            batched.gate_count(),
+            split.gate_count(),
+            "the two circuits must describe the same gate count"
+        );
+
+        let batched_det: Vec<bool> = InfluenceBuilder::new(&batched)
+            .run_symbolic_simulation()
+            .history
+            .iter()
+            .map(|result| result.is_deterministic)
+            .collect();
+        let split_det: Vec<bool> = InfluenceBuilder::new(&split)
+            .run_symbolic_simulation()
+            .history
+            .iter()
+            .map(|result| result.is_deterministic)
+            .collect();
+
+        assert_eq!(
+            batched_det, split_det,
+            "a batched gate node must replay like the same gates split across nodes"
+        );
+        assert!(
+            batched_det.iter().all(|deterministic| !deterministic),
+            "H on both qubits makes both Z measurements random; a deterministic \
+             outcome means an instance of the batched gate was dropped"
+        );
     }
 }

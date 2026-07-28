@@ -15,6 +15,9 @@ members = [
   "crates/pecos*",
   "crates/benchmarks",
   "exp/pecos*",
+  "exp/zlup",
+  "exp/guppy-zlup",
+  "exp/zluppy",
 ]
 
 [workspace.package]
@@ -41,7 +44,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ron = "0.12"
 toml = "1"
-toml_edit = "0.22"
+toml_edit = "0.25"
 
 # --- CLI ---
 clap = { version = "4", features = ["derive"] }
@@ -65,18 +68,14 @@ libc = "0.2"
 libloading = "0.9"
 
 # --- LLVM ---
-inkwell = "0.8"
+inkwell = { version = "0.9", features = ["llvm21-1-prefer-dynamic"] }
 
 # --- HUGR / tket ---
-tket = { version = "0.17", default-features = false }
-tket-qsystem = { version = "0.23", default-features = false }
-# Pin hugr-core to 0.25.6: hugr-core 0.25.7 widened strum to >=0.27.2,<0.29 which lets the
-# resolver pick strum 0.28, conflicting with tket 0.17 (requires strum ^0.27).
-# Remove this pin once tket-qsystem releases a version compatible with tket 0.18.
-hugr-core = "=0.25.6"
+tket = { version = "0.19", default-features = false }
+tket-qsystem = { version = "0.25", default-features = false }
 
 # --- WebAssembly ---
-wasmtime = { version = "44", default-features = false, features = [
+wasmtime = { version = "46", default-features = false, features = [
   "cranelift",
   "runtime",
   "wat",
@@ -90,8 +89,11 @@ pest_derive = "2"
 regex = "1"
 
 # --- Numerical computing ---
-nalgebra = "0.34"
+libm = "0.2"
+nalgebra = "0.35"
 num = "0.4"
+# Dev-only differential oracle for special-function tests (see design/jeffreys-pecos-num.md)
+puruspe = "0.4"
 num-complex = "0.4"
 num-traits = "0.2"
 num-bigint = { version = "0.4", features = ["serde"] }
@@ -103,14 +105,13 @@ fastrand = "2"
 rand = "0.10"
 rand_core = "0.10"
 rand_xoshiro = "0.8"
-rapidhash = { version = "4", features = ["rng"] }
+rapidrand = { version = "0.1", features = ["rand"] }
 
 # --- Data structures ---
 bitflags = "2"
 bitvec = { version = "1", features = ["serde"] }
 bytemuck = { version = "1", features = ["derive"] }
 dyn-clone = "1"
-itertools = "0.14"
 smallvec = "1"
 
 # --- Concurrency ---
@@ -124,12 +125,21 @@ pollster = "0.4"
 
 # --- Graph algorithms ---
 petgraph = "0.8"
-rustworkx-core = "0.17"
+rustworkx-core = "0.18"
 
 # --- Networking & archive handling ---
+# Use rustls WITHOUT its default aws-lc-rs crypto provider: aws-lc-sys ships
+# hand-written assembly whose .eh_frame rustc's bundled rust-lld mis-links
+# ("invalid CIE reference"), breaking build-script links on some toolchains.
+# We install the `ring` provider at runtime instead (see pecos-build download).
 reqwest = { version = "0.13", default-features = false, features = [
   "blocking",
-  "rustls",
+  "rustls-no-provider",
+] }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
 ] }
 flate2 = "1"
 sha2 = "0.11"
@@ -137,7 +147,8 @@ tar = "0.4"
 xz2 = "0.1"
 bzip2 = "0.6"
 sevenz-rust = "0.6"
-zip = { version = "2.4", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+zstd = "0.13"
 
 # --- Logging ---
 log = "0.4"
@@ -213,6 +224,7 @@ pecos-qis-ffi-types = { version = "0.2.0-dev.0", path = "crates/pecos-qis-ffi-ty
 pecos-quantum = { version = "0.2.0-dev.0", path = "crates/pecos-quantum" }
 pecos-random = { version = "0.2.0-dev.0", path = "crates/pecos-random" }
 pecos-relay-bp = { version = "0.2.0-dev.0", path = "crates/pecos-relay-bp" }
+pecos-results = { version = "0.2.0-dev.0", path = "crates/pecos-results" }
 pecos-rslib = { version = "0.2.0-dev.0", path = "python/pecos-rslib" }
 pecos-rslib-llvm = { version = "0.2.0-dev.0", path = "python/pecos-rslib-llvm" }
 pecos-simulators = { version = "0.2.0-dev.0", path = "crates/pecos-simulators" }
@@ -266,3 +278,26 @@ multiple-crate-versions = "allow"
 similar-names = "allow"
 many-single-char-names = "allow"
 too-many-lines = "allow"         # ~114 hits across 11 crates -- sim algorithms, tests, benchmarks
+
+# Simulation-heavy crates run at opt-level 2 even in dev/test builds:
+# statistical validation tests (e.g. the surface-code LER equivalence
+# gate) need tens of thousands of simulated shots and are unusably slow
+# unoptimized (>10 min vs ~2 min). Debug assertions remain enabled.
+[profile.dev.package.pecos-core]
+opt-level = 2
+[profile.dev.package.pecos-random]
+opt-level = 2
+[profile.dev.package.pecos-simulators]
+opt-level = 2
+[profile.dev.package.pecos-engines]
+opt-level = 2
+[profile.dev.package.pecos-neo]
+opt-level = 2
+[profile.dev.package.pecos-qasm]
+opt-level = 2
+[profile.dev.package.pecos-qec]
+opt-level = 2
+[profile.dev.package.pecos-fusion-blossom]
+opt-level = 2
+[profile.dev.package.fusion-blossom]
+opt-level = 2

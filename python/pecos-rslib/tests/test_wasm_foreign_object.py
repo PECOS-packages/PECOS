@@ -35,7 +35,7 @@ def test_div_by_zero() -> None:
     wasm = _wasm_from_wat(wat)
     wasm.init()
 
-    with pytest.raises(WasmError, match="[Dd]ivision by zero"):
+    with pytest.raises(WasmError, match=r"[Dd]ivision by zero"):
         wasm.exec("div_by_zero", [])
 
 

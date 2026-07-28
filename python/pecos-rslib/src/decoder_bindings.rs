@@ -321,7 +321,7 @@ impl PyCheckMatrix {
 /// H = [[1, 1, 0], [0, 1, 1]]
 /// decoder = PyMatchingDecoder.from_check_matrix(CheckMatrix.from_dense(H))
 ///
-/// # From Stim detector error model
+/// # From detector error model
 /// decoder = PyMatchingDecoder.from_dem(dem_string)
 ///
 /// # Manual graph construction (like PyMatching's add_edge)
@@ -420,7 +420,7 @@ impl PyPyMatchingDecoder {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
-    /// Create decoder from a Stim Detector Error Model.
+    /// Create decoder from a Detector Error Model.
     ///
     /// This mirrors `PyMatching`'s `Matching.from_detector_error_model()`.
     ///
@@ -437,6 +437,18 @@ impl PyPyMatchingDecoder {
     #[staticmethod]
     fn from_dem(dem: &str) -> PyResult<Self> {
         RustPyMatchingDecoder::from_dem(dem)
+            .map(|inner| Self { inner })
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    /// Create decoder from a Detector Error Model with correlation support.
+    ///
+    /// When enabled, PyMatching preserves DEM decomposition correlations while
+    /// constructing and decoding the matching graph.
+    #[staticmethod]
+    #[pyo3(signature = (dem, enable_correlations=true))]
+    fn from_dem_with_correlations(dem: &str, enable_correlations: bool) -> PyResult<Self> {
+        RustPyMatchingDecoder::from_dem_with_correlations(dem, enable_correlations)
             .map(|inner| Self { inner })
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }

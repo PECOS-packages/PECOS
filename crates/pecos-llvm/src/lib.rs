@@ -25,6 +25,6 @@ pub mod prelude;
 
 // Re-export main types at crate root for convenience
 pub use llvm_compat::{
-    LLConstant, LLContext, LLFunction, LLFunctionType, LLIRBuilder, LLModule, LLResult, LLType,
-    LLValue,
+    LLConstant, LLContext, LLFunction, LLFunctionType, LLIRBuilder, LLModule, LLPointerValue,
+    LLResult, LLType, LLValue, gep_result_pointee_type,
 };

@@ -1,0 +1,229 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Zlup",
+    "scopeName": "source.zlup",
+    "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        { "include": "#keywords" },
+        { "include": "#types" },
+        { "include": "#gates" },
+        { "include": "#builtins" },
+        { "include": "#operators" },
+        { "include": "#punctuation" }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.double-slash.zlup",
+                    "match": "//.*$"
+                },
+                {
+                    "name": "comment.block.zlup",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                },
+                {
+                    "name": "comment.line.documentation.zlup",
+                    "match": "///.*$"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.zlup",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.zlup",
+                            "match": "\\\\."
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.single.zlup",
+                    "begin": "'",
+                    "end": "'",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.zlup",
+                            "match": "\\\\."
+                        }
+                    ]
+                }
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.hex.zlup",
+                    "match": "\\b0x[0-9a-fA-F_]+\\b"
+                },
+                {
+                    "name": "constant.numeric.binary.zlup",
+                    "match": "\\b0b[01_]+\\b"
+                },
+                {
+                    "name": "constant.numeric.octal.zlup",
+                    "match": "\\b0o[0-7_]+\\b"
+                },
+                {
+                    "name": "constant.numeric.float.zlup",
+                    "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9_]+)?\\b"
+                },
+                {
+                    "name": "constant.numeric.integer.zlup",
+                    "match": "\\b[0-9][0-9_]*\\b"
+                },
+                {
+                    "name": "constant.numeric.angle.zlup",
+                    "match": "\\b[0-9][0-9_]*\\.?[0-9_]*(deg|rad|turn)\\b"
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.zlup",
+                    "match": "\\b(if|else|while|for|return|break|continue|tick|barrier)\\b"
+                },
+                {
+                    "name": "keyword.declaration.zlup",
+                    "match": "\\b(fn|const|struct|enum|union|error|type|fault)\\b"
+                },
+                {
+                    "name": "keyword.modifier.zlup",
+                    "match": "\\b(pub|mut|comptime|inline|packed|extern)\\b"
+                },
+                {
+                    "name": "keyword.error-handling.zlup",
+                    "match": "\\b(try|catch|orelse|defer|errdefer)\\b"
+                },
+                {
+                    "name": "keyword.operator.logical.zlup",
+                    "match": "\\b(and|or|not)\\b"
+                },
+                {
+                    "name": "keyword.other.zlup",
+                    "match": "\\b(in|var)\\b"
+                },
+                {
+                    "name": "constant.language.zlup",
+                    "match": "\\b(true|false|null|undefined|unit)\\b"
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "name": "storage.type.integer.zlup",
+                    "match": "\\b(u1|u2|u4|u8|u16|u32|u64|u128|i8|i16|i32|i64|i128|usize|isize)\\b"
+                },
+                {
+                    "name": "storage.type.float.zlup",
+                    "match": "\\b(f16|f32|f64|f128)\\b"
+                },
+                {
+                    "name": "storage.type.angle.zlup",
+                    "match": "\\b(a64)\\b"
+                },
+                {
+                    "name": "storage.type.quantum.zlup",
+                    "match": "\\b(qubit|bit|qalloc)\\b"
+                },
+                {
+                    "name": "storage.type.primitive.zlup",
+                    "match": "\\b(bool|void)\\b"
+                },
+                {
+                    "name": "storage.type.special.zlup",
+                    "match": "\\b(type|anytype|anyerror|anyfault)\\b"
+                }
+            ]
+        },
+        "gates": {
+            "patterns": [
+                {
+                    "name": "entity.name.function.gate.single.zlup",
+                    "match": "\\b(h|x|y|z|s|sdg|t|tdg|sx|sxdg|sy|sydg|sz|szdg|f|fdg|f4|f4dg)\\b"
+                },
+                {
+                    "name": "entity.name.function.gate.rotation.zlup",
+                    "match": "\\b(rx|ry|rz)\\b"
+                },
+                {
+                    "name": "entity.name.function.gate.two-qubit.zlup",
+                    "match": "\\b(cx|cy|cz|ch|swap|iswap|sxx|sxxdg|syy|syydg|szz|szzdg|rzz)\\b"
+                },
+                {
+                    "name": "entity.name.function.gate.three-qubit.zlup",
+                    "match": "\\b(ccx)\\b"
+                },
+                {
+                    "name": "entity.name.function.measurement.zlup",
+                    "match": "\\b(mz|mx|my)\\b"
+                },
+                {
+                    "name": "entity.name.function.preparation.zlup",
+                    "match": "\\b(pz|px|py)\\b"
+                }
+            ]
+        },
+        "builtins": {
+            "patterns": [
+                {
+                    "name": "support.function.builtin.zlup",
+                    "match": "@(import|sizeof|alignof|typeOf|intCast|floatCast|truncate|bitCast|ptrCast|min|max|clamp|sqrt|sin|cos|tan|log|log2|log10|exp|floor|ceil|round|abs|mod|divFloor|divTrunc)\\b"
+                }
+            ]
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.assignment.zlup",
+                    "match": ":=|="
+                },
+                {
+                    "name": "keyword.operator.comparison.zlup",
+                    "match": "==|!=|<=|>=|<|>"
+                },
+                {
+                    "name": "keyword.operator.arithmetic.zlup",
+                    "match": "\\+|-|\\*|/|%"
+                },
+                {
+                    "name": "keyword.operator.bitwise.zlup",
+                    "match": "&|\\||\\^|~|<<|>>"
+                },
+                {
+                    "name": "keyword.operator.arrow.zlup",
+                    "match": "->"
+                },
+                {
+                    "name": "keyword.operator.optional.zlup",
+                    "match": "\\?|\\!"
+                }
+            ]
+        },
+        "punctuation": {
+            "patterns": [
+                {
+                    "name": "punctuation.separator.zlup",
+                    "match": ",|;|:"
+                },
+                {
+                    "name": "punctuation.accessor.zlup",
+                    "match": "\\."
+                },
+                {
+                    "name": "punctuation.bracket.zlup",
+                    "match": "[\\[\\]\\{\\}\\(\\)]"
+                }
+            ]
+        }
+    }
+}

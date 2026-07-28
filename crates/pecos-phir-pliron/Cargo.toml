@@ -1,0 +1,28 @@
+# Parallel, non-default QIS-LLVM-IR -> pliron-PHIR path (the strangler crate, scoped to the covered
+# QIS-LLVM subset). Lowers to a pliron `qec` dialect and runs through the UNCHANGED pecos-engines
+# seam. pliron comes from crates.io, pinned by Cargo.lock.
+# See pecos-docs design/slr-phir-pliron-strangler-scope.md + slr-phir-vision.md.
+[package]
+name = "pecos-phir-pliron"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+pecos-engines.workspace = true
+pecos-core.workspace = true
+pliron = "0.15"
+# Not used directly: constrains resolution only. pliron 0.15's own bound on its
+# derive crate is loose enough to admit 0.16, which is API-incompatible with
+# pliron 0.15 (broke a lock refresh). Keep the pair coherent; drop this when
+# bumping pliron itself.
+pliron-derive = "0.15, <0.16"
+awint = "0.18"
+
+[dev-dependencies]
+# The existing QIS->PHIR->sim path, for the strangler differential (compare this port against it).
+pecos-phir.workspace = true

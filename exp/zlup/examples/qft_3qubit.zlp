@@ -1,0 +1,46 @@
+/// Quantum Fourier Transform: 3 Qubits
+/// Implements the QFT circuit, a key component of many quantum algorithms
+/// including Shor's factoring algorithm and quantum phase estimation.
+///
+/// QFT transforms computational basis states to frequency basis.
+
+// Angle constants
+pi_2: a64 = 1.5707963267948966;
+pi_4: a64 = 0.7853981633974483;
+
+pub fn main() -> unit {
+    q := qalloc(3);
+    pz q;
+
+    // Prepare an input state (e.g., |101⟩)
+    x q[0];
+    x q[2];
+
+    // === QFT Circuit ===
+    // Process qubits from most significant to least significant
+
+    // Qubit 0 (MSB)
+    h q[0];
+    // Controlled rotations from q[1] and q[2]
+    // CR(pi/2) controlled by q[1]
+    crz(pi_2) (q[1], q[0]);
+    // CR(pi/4) controlled by q[2]
+    crz(pi_4) (q[2], q[0]);
+
+    // Qubit 1
+    h q[1];
+    // CR(pi/2) controlled by q[2]
+    crz(pi_2) (q[2], q[1]);
+
+    // Qubit 2 (LSB)
+    h q[2];
+
+    // Swap qubits to get correct bit ordering
+    // QFT produces output in reversed order
+    swap (q[0], q[2]);
+
+    // Measure in Fourier basis
+    results: [3]u1 = mz([3]u1) [q[0], q[1], q[2]];
+
+    return unit;
+}

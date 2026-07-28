@@ -145,12 +145,13 @@ impl TelemetryDecoder {
 }
 
 impl ObservableDecoder for TelemetryDecoder {
-    fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
         let syndrome_weight = syndrome.iter().filter(|&&v| v != 0).count() as u64;
         let start = Instant::now();
-        let obs = self.inner.decode_to_observables(syndrome)?;
+        let obs = self.inner.decode_obs(syndrome)?;
         let elapsed_ns = start.elapsed().as_nanos() as u64;
-        self.stats.record(elapsed_ns, syndrome_weight, obs != 0);
+        self.stats
+            .record(elapsed_ns, syndrome_weight, !obs.is_zero());
         Ok(obs)
     }
 }
@@ -161,8 +162,8 @@ mod tests {
 
     struct FixedDecoder(u64);
     impl ObservableDecoder for FixedDecoder {
-        fn decode_to_observables(&mut self, _: &[u8]) -> Result<u64, DecoderError> {
-            Ok(self.0)
+        fn decode_obs(&mut self, _: &[u8]) -> Result<crate::obs_mask::ObsMask, DecoderError> {
+            Ok(crate::obs_mask::ObsMask::from_u64(self.0))
         }
     }
 

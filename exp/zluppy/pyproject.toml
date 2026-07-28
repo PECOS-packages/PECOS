@@ -1,0 +1,62 @@
+[project]
+name = "zluppy"
+version = "0.1.0"
+description = "Python bindings for Zluppy quantum programming language"
+authors = [
+    {name = "The PECOS Developers"},
+]
+maintainers =[
+    {name = "Ciaran Ryan-Anderson", email = "ciaranra@gmail.com"},
+]
+dependencies = []
+readme = "README.md"
+requires-python = ">= 3.10"
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
+]
+
+[build-system]
+requires = ["maturin>=1.2,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "zluppy._zluppy"
+python-source = "python"
+
+[dependency-groups]
+dev = [
+    "patchelf; platform_system != 'Windows'",
+    "pytest>=9.0.2",
+    "quantum-pecos",
+]
+test = [
+    "pytest>=7.0",
+    "quantum-pecos",
+]
+
+[tool.uv.sources]
+zluppy = { workspace = true }
+quantum-pecos = { path = "../../python/quantum-pecos", editable = true }
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.ruff]
+lint.extend-select = ["S", "B", "PT"]
+lint.ignore = ["S101"]

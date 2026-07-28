@@ -25,7 +25,7 @@
 //! let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 //!
 //! // Create simulation with importance sampling
-//! let mut sim = sim_neo(circuit)
+//! let mut sim = sim_neo(circuit).auto()
 //!     .depolarizing(0.001)  // True error rate
 //!     .build();
 //!

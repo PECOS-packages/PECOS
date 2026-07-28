@@ -76,6 +76,9 @@ use crate::dag_circuit::{AnnotationKind, DagCircuit, PauliAnnotation};
 use std::fmt;
 use std::ops::{Deref, Index};
 
+/// Gate metadata key for explicitly zero-duration physical frame updates.
+pub const PHYSICAL_DURATION_META_KEY: &str = "_physical_duration";
+
 fn meta_json_array(circuit: &TickCircuit, key: &str) -> Result<Vec<serde_json::Value>, String> {
     let Some(attr) = circuit.get_meta(key) else {
         return Ok(Vec::new());
@@ -612,6 +615,14 @@ impl<'a> GateInstanceRef<'a> {
             meas_ids: self.meas_ids.iter().copied().collect::<GateMeasIds>(),
             channel: self.batch.gate.channel.clone(),
         }
+    }
+}
+
+fn gate_batch_has_zero_physical_duration(gate: GateBatchRef<'_>) -> bool {
+    match gate.get_attr(PHYSICAL_DURATION_META_KEY) {
+        Some(Attribute::Float(duration)) => *duration == 0.0,
+        Some(Attribute::Int(duration)) => *duration == 0,
+        _ => false,
     }
 }
 
@@ -2229,6 +2240,7 @@ impl TickCircuit {
     pub fn tracked_pauli(&mut self, mut pauli: pecos_core::PauliString) -> usize {
         pauli.set_phase(pecos_core::QuarterPhase::PlusOne);
         let idx = self.annotations.len();
+        self.insert_pauli_meta_tick(&pauli);
         self.annotations.push(PauliAnnotation {
             pauli,
             kind: AnnotationKind::TrackedPauli,
@@ -2244,6 +2256,13 @@ impl TickCircuit {
         idx
     }
 
+    /// Insert a `TrackedPauliMeta` batch in its own tick at the current point.
+    fn insert_pauli_meta_tick(&mut self, pauli: &pecos_core::PauliString) {
+        let qubits: Vec<QubitId> = pauli.qubits().into_iter().map(QubitId::from).collect();
+        let gate = Gate::simple(GateType::TrackedPauliMeta, qubits);
+        self.tick().add_gate(gate);
+    }
+
     /// Get all annotations.
     #[must_use]
     pub fn annotations(&self) -> &[PauliAnnotation] {
@@ -2251,6 +2270,14 @@ impl TickCircuit {
     }
 
     // ==================== Idle ====================
+
+    /// Insert Idle gates after each two-qubit gate on both of its qubits.
+    ///
+    /// Delegates to `InsertIdleAfterTwoQubitGates` pass. See [`crate::pass`].
+    pub fn insert_idle_after_two_qubit_gates(&mut self, duration: f64) {
+        use crate::pass::{CircuitPass, InsertIdleAfterTwoQubitGates};
+        InsertIdleAfterTwoQubitGates(duration).apply_tick(self);
+    }
 
     /// Insert identity gates for qubits not operated on during each tick.
     ///
@@ -2261,6 +2288,17 @@ impl TickCircuit {
     ///
     /// This is separate from `GateType::Idle` which represents explicit
     /// wait operations with duration-dependent `p_idle` noise.
+    ///
+    /// Metadata-only ticks (all batches `GateType::is_meta`) are zero
+    /// physical duration and receive no idle gates.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a tick mixes meta and physical gate batches: such a tick has
+    /// physical duration, but per-tick qubit exclusivity makes idle insertion
+    /// on meta-occupied qubits impossible, so the accounting would be
+    /// silently wrong. Emit meta batches in their own tick (as
+    /// `tracked_pauli` does).
     ///
     /// # Example
     ///
@@ -2274,14 +2312,6 @@ impl TickCircuit {
     ///
     /// circuit.fill_idle_gates();
     /// ```
-    /// Insert Idle gates after each two-qubit gate on both of its qubits.
-    ///
-    /// Delegates to `InsertIdleAfterTwoQubitGates` pass. See [`crate::pass`].
-    pub fn insert_idle_after_two_qubit_gates(&mut self, duration: f64) {
-        use crate::pass::{CircuitPass, InsertIdleAfterTwoQubitGates};
-        InsertIdleAfterTwoQubitGates(duration).apply_tick(self);
-    }
-
     pub fn fill_idle_gates(&mut self) {
         let all_qubits = self.all_qubits();
         if all_qubits.is_empty() {
@@ -2289,6 +2319,37 @@ impl TickCircuit {
         }
 
         for tick in &mut self.ticks {
+            // Metadata-only and explicitly zero-duration ticks preserve
+            // ordering but must not create physical idle periods.
+            let batch_count = tick.gate_batches().len();
+            let meta_batches = tick
+                .iter_gate_batches()
+                .filter(|gate| gate.as_gate().gate_type.is_meta())
+                .count();
+            let zero_duration_batches = tick
+                .iter_gate_batches()
+                .filter(|gate| gate_batch_has_zero_physical_duration(*gate))
+                .count();
+            if !tick.is_empty() && meta_batches + zero_duration_batches == batch_count {
+                continue;
+            }
+            // A tick that mixes meta and physical gates has ambiguous idle
+            // accounting: the tick has physical duration, but per-tick qubit
+            // exclusivity makes it impossible to insert an Idle on a qubit a
+            // meta gate already occupies. Meta batches belong in their own
+            // tick (as `tracked_pauli` emits them).
+            assert!(
+                meta_batches == 0,
+                "fill_idle_gates: tick mixes meta and physical gates; emit meta \
+                 batches in their own tick so idle-duration accounting stays \
+                 unambiguous"
+            );
+            assert!(
+                zero_duration_batches == 0,
+                "fill_idle_gates: tick mixes zero-duration and physical gates; emit \
+                 zero-duration frame updates in their own tick so idle-duration \
+                 accounting stays unambiguous"
+            );
             let active = tick.active_qubits();
             for &q in &all_qubits {
                 if !active.contains(&q) {
@@ -3395,11 +3456,16 @@ impl From<&TickCircuit> for DagCircuit {
                 }
                 AnnotationKind::TrackedPauli => AnnotationKind::TrackedPauli,
             };
-            dag.add_annotation(PauliAnnotation {
+            let remapped_annotation = PauliAnnotation {
                 pauli: ann.pauli.clone(),
                 kind: remapped_kind,
                 label: ann.label.clone(),
-            });
+            };
+            if matches!(remapped_annotation.kind, AnnotationKind::TrackedPauli) {
+                dag.add_annotation_without_meta_gate(remapped_annotation);
+            } else {
+                dag.add_annotation(remapped_annotation);
+            }
         }
 
         dag
@@ -6124,6 +6190,79 @@ mod tests {
 
         // Tick 0: qubit 1 was idle, should get an idle gate
         assert!(count_after > count_before, "Should have added idle gates");
+    }
+
+    #[test]
+    fn test_fill_idle_gates_skips_tracked_pauli_meta_ticks() {
+        use pecos_core::pauli::X;
+
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0, 1]);
+        tc.tracked_pauli_labeled("frame_marker", X(0));
+        tc.tick().h(&[0, 1]);
+
+        tc.fill_idle_gates();
+
+        let meta_tick = tc
+            .ticks()
+            .iter()
+            .find(|tick| {
+                tick.gate_batches()
+                    .iter()
+                    .any(|gate| gate.gate_type == GateType::TrackedPauliMeta)
+            })
+            .expect("tracked-Pauli meta tick");
+
+        assert_eq!(meta_tick.len(), 1);
+        assert!(meta_tick.gate_batches()[0].gate_type.is_meta());
+    }
+
+    #[test]
+    fn test_fill_idle_gates_skips_zero_duration_ticks() {
+        let mut tc = TickCircuit::new();
+        tc.tick().h(&[0, 1]);
+        tc.tick()
+            .z(&[0])
+            .meta(PHYSICAL_DURATION_META_KEY, Attribute::Float(0.0));
+        tc.tick().h(&[0, 1]);
+
+        tc.fill_idle_gates();
+
+        let zero_duration_tick = tc.get_tick(1).expect("zero-duration tick");
+        assert_eq!(zero_duration_tick.gate_count(), 1);
+        assert_eq!(zero_duration_tick.gate_batches()[0].gate_type, GateType::Z);
+        assert_eq!(
+            zero_duration_tick.get_gate_attr(0, PHYSICAL_DURATION_META_KEY),
+            Some(&Attribute::Float(0.0))
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "tick mixes meta and physical gates")]
+    fn test_fill_idle_gates_rejects_mixed_meta_and_physical_tick() {
+        let mut tc = TickCircuit::new();
+        let mut tick = tc.tick();
+        tick.h(&[0]);
+        tick.try_add_gate(Gate::simple(
+            GateType::TrackedPauliMeta,
+            vec![QubitId::from(1)],
+        ))
+        .map(|_| ())
+        .expect("meta gate on a free qubit must be addable");
+
+        tc.fill_idle_gates();
+    }
+
+    #[test]
+    #[should_panic(expected = "tick mixes zero-duration and physical gates")]
+    fn test_fill_idle_gates_rejects_mixed_zero_duration_and_physical_tick() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .h(&[0])
+            .z(&[1])
+            .meta(PHYSICAL_DURATION_META_KEY, Attribute::Float(0.0));
+
+        tc.fill_idle_gates();
     }
 
     #[test]

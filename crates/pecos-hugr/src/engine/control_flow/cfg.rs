@@ -39,12 +39,15 @@ use tket::hugr::ops::OpType;
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, PortIndex};
 
 use crate::engine::HugrEngine;
-use crate::engine::analysis::{
-    all_predecessors_ready, find_extension_ops_in_block, find_input_node, find_output_node,
-};
+use crate::engine::activation::{ContainerActivation, QueuePolicy};
+use crate::engine::analysis::{find_extension_ops_in_block, find_input_node, find_output_node};
 use crate::engine::types::ClassicalValue;
 
 impl HugrEngine {
+    /// Block-transition ceiling for CFGs (loop-iteration bound: guppy loops
+    /// are CFG cycles; a loop that never breaks must error, not hang).
+    const MAX_CFG_TRANSITIONS: u64 = 10_000_000;
+
     /// Try to resolve the branch value for a CFG `DataflowBlock`.
     /// Returns `Some(branch_index)` if the Sum tag value is known, None otherwise.
     #[allow(clippy::too_many_lines)]
@@ -84,15 +87,16 @@ impl HugrEngine {
                     hugr.single_linked_output(src_node, tag_input_port)
                 {
                     let tag_src_wire = (tag_src_node, tag_src_port.index());
-                    if let Some(input_value) = self.wire_state.classical_values.get(&tag_src_wire)
-                        && let Some(v) = input_value.to_u32()
-                    {
+                    if self.wire_state.classical_values.contains_key(&tag_src_wire) {
+                        // A Tag node ALWAYS produces its own variant: the
+                        // branch is the tag, not the wrapped value. (The
+                        // executed-value path above returns the Sum's tag
+                        // for exactly the same reason; this structural
+                        // fallback must agree with it.)
                         debug!(
-                            "CFG block {block_node:?} resolved via Tag: tag={tag_value}, input={v}"
+                            "CFG block {block_node:?} resolved via Tag with known input: tag={tag_value}"
                         );
-                        // For booleans converted to Sum: input_value determines the branch
-                        // The Tag wraps the value - we use the input value as the branch
-                        return Some(v as usize);
+                        return Some(tag_value);
                     }
                 }
 
@@ -135,78 +139,12 @@ impl HugrEngine {
                 }
             }
 
-            // Check if the source is a Conditional node (inside the block)
-            // The Conditional's output is a Sum type - we need to trace its control input
-            if matches!(src_op, OpType::Conditional(_)) {
-                debug!(
-                    "[TRACE] Block {block_node:?} output from Conditional {src_node:?}, tracing control input"
-                );
-                // Conditional's control input is port 0
-                let control_port = IncomingPort::from(0);
-                if let Some((ctrl_src_node, ctrl_src_port)) =
-                    hugr.single_linked_output(src_node, control_port)
-                {
-                    // The control input might be from tket.bool.read
-                    let ctrl_op = hugr.get_optype(ctrl_src_node);
-                    if let Some(ext_op) = ctrl_op.as_extension_op() {
-                        let ext_id = ext_op.extension_id();
-                        let op_name = ext_op.unqualified_id();
-                        if ext_id.as_ref() as &str == "tket.bool" && op_name == "read" {
-                            // Trace the bool input to tket.bool.read
-                            let bool_input_port = IncomingPort::from(0);
-                            if let Some((bool_src_node, bool_src_port)) =
-                                hugr.single_linked_output(ctrl_src_node, bool_input_port)
-                            {
-                                let bool_wire = (bool_src_node, bool_src_port.index());
-                                debug!(
-                                    "[TRACE] tket.bool.read input comes from {bool_wire:?}, checking classical_values"
-                                );
-
-                                // First check if we have a classical value for this wire
-                                if let Some(bool_value) =
-                                    self.wire_state.classical_values.get(&bool_wire)
-                                    && let Some(v) = bool_value.to_u32()
-                                {
-                                    debug!(
-                                        "[TRACE] Found classical value {v} for Conditional control"
-                                    );
-                                    // The bool value (0 or 1) determines which Case
-                                    // Case 0 = false, Case 1 = true
-                                    // Each Case outputs a Tag that determines the successor
-                                    // For while loop: false -> Case 0 -> Tag 0 -> continue
-                                    //                 true -> Case 1 -> Tag 1 -> exit
-                                    return Some(v as usize);
-                                }
-
-                                // Try to resolve constant bool
-                                if let Some(const_value) =
-                                    Self::try_resolve_const_bool(hugr, bool_src_node)
-                                {
-                                    debug!(
-                                        "CFG block {block_node:?} Conditional control resolved from const: {const_value}"
-                                    );
-                                    return Some(usize::from(const_value));
-                                }
-
-                                debug!(
-                                    "[TRACE] Could not resolve bool value for wire {bool_wire:?}"
-                                );
-                            }
-                        }
-                    }
-
-                    // Check classical_values for the control wire
-                    let ctrl_wire = (ctrl_src_node, ctrl_src_port.index());
-                    if let Some(ctrl_value) = self.wire_state.classical_values.get(&ctrl_wire)
-                        && let Some(v) = ctrl_value.to_u32()
-                    {
-                        debug!(
-                            "CFG block {block_node:?} Conditional control from classical value: {v}"
-                        );
-                        return Some(v as usize);
-                    }
-                }
-            }
+            // A branch Sum produced by a Conditional resolves through the
+            // VALUE path above once the selected case completes and
+            // propagates its outputs -- the case's branch Tag need not equal
+            // the condition, so shortcutting to the Conditional's CONTROL
+            // value here routed to the wrong successor. Wait for the real
+            // Sum instead.
         }
 
         None
@@ -263,6 +201,9 @@ impl HugrEngine {
 
     /// Try to resolve pending CFG blocks that were waiting for measurement results.
     pub(crate) fn try_resolve_pending_cfg_branches(&mut self) {
+        if self.pending_cfg_branches.is_empty() {
+            return;
+        }
         let hugr = match &self.hugr {
             Some(h) => h.clone(),
             None => return,
@@ -296,12 +237,13 @@ impl HugrEngine {
                 );
                 self.transition_to_cfg_successor(&hugr, cfg_node, block_node, next_block);
             } else {
-                debug!(
-                    "[TRACE] Resolving pending: {block_node:?} branch {branch_idx} out of range, using first"
-                );
-                if !successors.is_empty() {
-                    self.transition_to_cfg_successor(&hugr, cfg_node, block_node, successors[0]);
-                }
+                // Out-of-range tag = upstream Sum/tag propagation bug;
+                // taking an arbitrary successor would mask it.
+                self.execution_error = Some(format!(
+                    "CFG {cfg_node:?} block {block_node:?}: pending branch tag {branch_idx} \
+                     out of range ({} successors)",
+                    successors.len()
+                ));
             }
         }
     }
@@ -320,71 +262,37 @@ impl HugrEngine {
 
             // Check the current block
             if let Some(block_info) = cfg_info.blocks.get(&active_cfg.current_block) {
-                // Check if this block has operations that drive completion.
-                // Quantum, calls, conditionals, bool, extension, and tailloops
-                // complete explicitly. Classical_ops complete when their inputs are ready.
-                let has_completion_driving_ops = !block_info.quantum_ops.is_empty()
-                    || !block_info.call_nodes.is_empty()
-                    || !block_info.conditional_nodes.is_empty()
-                    || !block_info.bool_ops.is_empty()
-                    || !block_info.extension_ops.is_empty()
-                    || !block_info.tailloop_nodes.is_empty();
-
-                // Check if the processed node is in this block
-                let is_in_block = if has_completion_driving_ops {
-                    block_info.quantum_ops.contains(&processed_node)
-                        || block_info.call_nodes.contains(&processed_node)
-                        || block_info.conditional_nodes.contains(&processed_node)
-                        || block_info.bool_ops.contains(&processed_node)
-                        || block_info.extension_ops.contains(&processed_node)
-                        || block_info.tailloop_nodes.contains(&processed_node)
-                } else {
-                    // Block has only classical ops - track those for completion
-                    block_info.classical_ops.contains(&processed_node)
-                };
+                // A block is complete only when EVERY tracked op set in it has
+                // been processed -- including classical ops. Transitioning
+                // while a classical op is still pending would propagate
+                // missing block outputs (e.g. a partially-built loop-state
+                // tuple) and silently starve everything downstream.
+                let is_in_block = block_info.quantum_ops.contains(&processed_node)
+                    || block_info.call_nodes.contains(&processed_node)
+                    || block_info.conditional_nodes.contains(&processed_node)
+                    || block_info.bool_ops.contains(&processed_node)
+                    || block_info.extension_ops.contains(&processed_node)
+                    || block_info.tailloop_nodes.contains(&processed_node)
+                    || block_info.classical_ops.contains(&processed_node)
+                    || block_info.load_constants.contains(&processed_node);
 
                 if is_in_block {
-                    // Check completion based on block type
-                    let block_complete = if has_completion_driving_ops {
-                        // Block with completion-driving ops: wait for all such op types.
-                        let all_quantum_done = block_info
-                            .quantum_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op));
-                        let all_calls_done = block_info
-                            .call_nodes
-                            .iter()
-                            .all(|call| self.processed.contains(call));
-                        let all_conditionals_done = block_info
-                            .conditional_nodes
-                            .iter()
-                            .all(|cond| self.processed.contains(cond));
-                        let all_bools_done = block_info
-                            .bool_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op));
-                        let all_extensions_done = block_info
-                            .extension_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op));
-                        let all_tailloops_done = block_info
-                            .tailloop_nodes
-                            .iter()
-                            .all(|tl| self.processed.contains(tl));
-
-                        all_quantum_done
-                            && all_calls_done
-                            && all_conditionals_done
-                            && all_bools_done
-                            && all_extensions_done
-                            && all_tailloops_done
-                    } else {
-                        // Classical-only block: wait for classical ops
-                        block_info
-                            .classical_ops
-                            .iter()
-                            .all(|op| self.processed.contains(op))
+                    // node_settled, not bare `processed`: several container
+                    // ops are marked processed while their results are still
+                    // in flight (a Conditional at EXPANSION, a Call/TailLoop
+                    // while its frame is active) -- transitioning then would
+                    // copy missing values.
+                    let all_done = |set: &std::collections::BTreeSet<Node>| {
+                        set.iter().all(|op| self.node_settled(*op))
                     };
+                    let block_complete = all_done(&block_info.quantum_ops)
+                        && all_done(&block_info.call_nodes)
+                        && all_done(&block_info.conditional_nodes)
+                        && all_done(&block_info.bool_ops)
+                        && all_done(&block_info.extension_ops)
+                        && all_done(&block_info.tailloop_nodes)
+                        && all_done(&block_info.classical_ops)
+                        && all_done(&block_info.load_constants);
 
                     if block_complete {
                         block_completions.push((
@@ -433,19 +341,14 @@ impl HugrEngine {
                             next_block,
                         );
                     } else {
-                        debug!(
-                            "CFG {:?} block {:?}: branch {} out of range ({}), defaulting to first",
-                            cfg_node,
-                            completed_block,
-                            branch_idx,
+                        // An out-of-range tag means a Sum/tag propagation
+                        // bug upstream; routing to an arbitrary successor
+                        // would mask it as plausible control flow.
+                        self.execution_error = Some(format!(
+                            "CFG {cfg_node:?} block {completed_block:?}: branch tag {branch_idx} \
+                             out of range ({} successors)",
                             successors.len()
-                        );
-                        self.transition_to_cfg_successor(
-                            hugr,
-                            cfg_node,
-                            completed_block,
-                            successors[0],
-                        );
+                        ));
                     }
                 } else {
                     // Branch value not yet known - store as pending
@@ -473,378 +376,286 @@ impl HugrEngine {
             return;
         };
 
-        // If to_block is the ExitBlock, complete the CFG.
-        // ExitBlock has no operations - it's just a marker node. The from_block (a DataflowBlock)
-        // should have already executed any result operations before this transition.
-        if to_block == cfg_info.exit_block {
-            debug!("CFG {cfg_node:?}: transitioning to exit block {to_block:?}");
-            self.complete_cfg_execution(hugr, cfg_node, from_block);
-            return;
-        }
+        // ITERATIVE transition: a chain of empty blocks re-enters this
+        // logic once per hop. Recursing here overflowed the stack around
+        // ~10^5 hops -- an abort, not the clean MAX_CFG_TRANSITIONS error.
+        // Every hop inside this invocation shares one cascade id.
+        self.cfg_transition_cascade += 1;
+        let cascade = self.cfg_transition_cascade;
+        let mut from_block = from_block;
+        let mut to_block = to_block;
+        'transition: loop {
+            // If to_block is the ExitBlock, complete the CFG.
+            // ExitBlock has no operations - it's just a marker node. The from_block (a DataflowBlock)
+            // should have already executed any result operations before this transition.
+            if to_block == cfg_info.exit_block {
+                debug!("CFG {cfg_node:?}: transitioning to exit block {to_block:?}");
+                self.complete_cfg_execution(hugr, cfg_node, from_block);
+                return;
+            }
 
-        debug!("CFG {cfg_node:?}: transitioning from block {from_block:?} to {to_block:?}");
+            debug!("CFG {cfg_node:?}: transitioning from block {from_block:?} to {to_block:?}");
 
-        // Propagate wire mappings from completed block to successor block
-        self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
+            // Propagate wire mappings from completed block to successor block
+            self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
 
-        // Record this propagation for re-propagation after measurement results
-        // are available (measurement results may not be stored yet when we transition)
-        self.pending_measurement_propagations
-            .push((cfg_node, from_block, to_block));
+            // Record this propagation for re-propagation after measurement results
+            // are available (measurement results may not be stored yet when we
+            // transition). Retention is PURGE-ON-REACTIVATION: entering
+            // to_block supersedes any previously recorded edge INTO it (the
+            // previous loop iteration's), while edges into other blocks of
+            // the same chain survive -- a multi-hop transition through an
+            // empty block records EVERY hop, so replay can walk the chain
+            // and carry a late measurement value across it. (The old
+            // latest-edge-only policy amputated chains: the A->empty hop
+            // was dropped and the value never reached the consumer.)
+            // A revisit WITHIN this cascade must not purge the older hop
+            // into the same block (that hop is part of the chain a late
+            // value walks); a re-entry in a LATER cascade supersedes it.
+            self.pending_measurement_propagations
+                .retain(|(cfg, _, to, c)| *cfg != cfg_node || *to != to_block || *c == cascade);
+            self.pending_measurement_propagations
+                .push((cfg_node, from_block, to_block, cascade));
 
-        // Update active CFG state
-        if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
-            active_cfg.completed_blocks.insert(from_block);
-            active_cfg.current_block = to_block;
-        }
-
-        // Activate successor block's quantum ops and Call nodes
-        if let Some(block_info) = cfg_info.blocks.get(&to_block) {
-            // Clear stale classical values for all operations in this block.
-            // This is critical for loops: without this, nodes like tket.bool.read
-            // retain values from the previous iteration. Since Conditionals are
-            // added to the work queue before bool_ops, the Conditional would read
-            // the stale value and select the wrong branch.
-            let block_input_node = find_input_node(hugr, to_block);
-            for child in hugr.children(to_block) {
-                // Don't clear the Input node - it has fresh values from propagation
-                if Some(child) == block_input_node {
-                    continue;
-                }
-                let num_outputs = hugr.num_outputs(child);
-                for port_idx in 0..num_outputs {
-                    self.wire_state.classical_values.remove(&(child, port_idx));
+            // Update active CFG state. Guppy loops lower to CFG cycles, so the
+            // transition count doubles as the loop-iteration ceiling: a
+            // never-breaking classical loop would otherwise spin the processing
+            // loop forever with no yield.
+            if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
+                active_cfg.completed_blocks.insert(from_block);
+                active_cfg.current_block = to_block;
+                active_cfg.transitions += 1;
+                if active_cfg.transitions > Self::MAX_CFG_TRANSITIONS {
+                    self.execution_error = Some(format!(
+                        "CFG {cfg_node:?} exceeded {} block transitions without exiting",
+                        Self::MAX_CFG_TRANSITIONS
+                    ));
+                    return;
                 }
             }
 
-            // Clear processed state for quantum ops first so they can be re-executed in loops
-            for &op_node in &block_info.quantum_ops {
-                self.processed.remove(&op_node);
-            }
-            for &op_node in &block_info.quantum_ops {
-                self.nodes_inside_cfg_blocks.remove(&op_node);
-                // Skip ops inside TailLoops - they'll be added when the loop expands
-                if self.nodes_inside_tailloops.contains(&op_node) {
-                    continue;
-                }
-                if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node) {
-                    self.work_queue.push_back(op_node);
-                }
-            }
-            // Also activate Call nodes in this block
-            for &call_node in &block_info.call_nodes {
-                self.nodes_inside_cfg_blocks.remove(&call_node);
-                // Skip Call nodes inside TailLoops
-                if self.nodes_inside_tailloops.contains(&call_node) {
-                    continue;
-                }
-                if !self.work_queue.contains(&call_node)
-                    && !self.processed.contains(&call_node)
-                    && all_predecessors_ready(
-                        hugr,
-                        call_node,
-                        &self.quantum_ops,
-                        &self.conditionals,
-                        &self.cfgs,
-                        &self.processed,
-                    )
-                {
-                    self.work_queue.push_back(call_node);
-                }
-            }
-
-            // Also activate Conditional nodes in this block
-            // Clear processed state first so they can be re-executed in loops
-            for &cond_node in &block_info.conditional_nodes {
-                self.processed.remove(&cond_node);
-            }
-            for &cond_node in &block_info.conditional_nodes {
-                self.nodes_inside_cfg_blocks.remove(&cond_node);
-                // Skip Conditional nodes inside TailLoops
-                if self.nodes_inside_tailloops.contains(&cond_node) {
-                    continue;
-                }
-                if !self.work_queue.contains(&cond_node) && !self.processed.contains(&cond_node) {
-                    self.work_queue.push_back(cond_node);
-                }
-            }
-
-            // Also activate other extension ops in this block (like tket.result)
-            // IMPORTANT: Process extension/classical ops FIRST so their results are available for bool_ops
-            // Find all extension ops that are children of this block
-            let extension_ops: Vec<Node> = find_extension_ops_in_block(hugr, to_block);
-            for &op_node in &extension_ops {
-                self.processed.remove(&op_node);
-                self.nodes_inside_cfg_blocks.remove(&op_node);
-                // Skip extension ops inside TailLoops
-                if self.nodes_inside_tailloops.contains(&op_node) {
-                    continue;
-                }
-                if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node) {
-                    self.work_queue.push_back(op_node);
-                }
-            }
-
-            // Also activate LoadConstant and classical ops in this block
-            for child in hugr.children(to_block) {
-                let op = hugr.get_optype(child);
-                if matches!(op, OpType::LoadConstant(_)) {
-                    self.processed.remove(&child);
-                    self.nodes_inside_cfg_blocks.remove(&child);
-                    // Skip nodes inside TailLoops
-                    if self.nodes_inside_tailloops.contains(&child) {
-                        continue;
-                    }
-                    if !self.work_queue.contains(&child) && !self.processed.contains(&child) {
-                        self.work_queue.push_back(child);
-                    }
-                }
-                // Check for classical ops
-                if self.classical_ops.contains_key(&child) {
-                    self.processed.remove(&child);
-                    self.nodes_inside_cfg_blocks.remove(&child);
-                    // Skip nodes inside TailLoops
-                    if self.nodes_inside_tailloops.contains(&child) {
-                        continue;
-                    }
-                    if !self.work_queue.contains(&child)
-                        && !self.processed.contains(&child)
-                        && all_predecessors_ready(
-                            hugr,
-                            child,
-                            &self.quantum_ops,
-                            &self.conditionals,
-                            &self.cfgs,
-                            &self.processed,
-                        )
-                    {
-                        self.work_queue.push_back(child);
-                    }
-                }
-            }
-
-            // Now activate bool ops in this block
-            // Clear processed state first so they can be re-executed in loops
-            for &op_node in &block_info.bool_ops {
-                self.processed.remove(&op_node);
-            }
-            for &op_node in &block_info.bool_ops {
-                self.nodes_inside_cfg_blocks.remove(&op_node);
-                // Skip bool ops inside TailLoops
-                if self.nodes_inside_tailloops.contains(&op_node) {
-                    continue;
-                }
-                if !self.work_queue.contains(&op_node) && !self.processed.contains(&op_node) {
-                    self.work_queue.push_back(op_node);
-                }
-            }
-
-            // Also activate TailLoop nodes in this block
-            for &tl_node in &block_info.tailloop_nodes {
-                self.processed.remove(&tl_node);
-                self.nodes_inside_cfg_blocks.remove(&tl_node);
-                if !self.work_queue.contains(&tl_node) && !self.processed.contains(&tl_node) {
-                    self.work_queue.push_back(tl_node);
-                }
-            }
-
-            let num_ops = block_info.quantum_ops.len();
-            let num_calls = block_info.call_nodes.len();
-            let num_conditionals = block_info.conditional_nodes.len();
-            let num_bool_ops = block_info.bool_ops.len();
-            let num_tailloops = block_info.tailloop_nodes.len();
-            debug!(
-                "[TRACE] Activated block {to_block:?} with {num_ops} ops, {num_calls} calls, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops"
-            );
-
-            // Handle blocks with no operations - immediately complete and transition
-            // IMPORTANT: Also check for extension_ops and classical_ops, not just quantum/bool/conditional
-            let has_extension_ops = !extension_ops.is_empty();
-            let has_classical_ops = !block_info.classical_ops.is_empty();
-            let has_tailloops = !block_info.tailloop_nodes.is_empty();
-
-            if num_ops == 0
-                && num_calls == 0
-                && num_conditionals == 0
-                && num_bool_ops == 0
-                && !has_extension_ops
-                && !has_classical_ops
-                && !has_tailloops
+            // Activate successor block's quantum ops and Call nodes
+            let Some(block_info) = cfg_info.blocks.get(&to_block) else {
+                // A successor that is not a known DataflowBlock (invalid
+                // HUGR, or a stale pending branch racing CFG completion)
+                // must fault: falling through here used to re-run the loop
+                // with unchanged state -- a 10M-hop spin at best, unbounded
+                // if the active entry was already gone.
+                self.execution_error = Some(format!(
+                    "CFG {cfg_node:?}: successor {to_block:?} is not a known DataflowBlock"
+                ));
+                return;
+            };
             {
+                self.executed_containers.insert(to_block, "DataflowBlock");
+                // Re-activate the block through the shared two-phase mechanism.
+                // Stale wires clear for every child except the Input node (it
+                // holds fresh values from propagation): without this, nodes
+                // like tket.bool.read retain values from the previous loop
+                // iteration and a Conditional queued before the bool op reads
+                // the stale value and selects the wrong branch. Processed flags
+                // clear for EVERY op category before ANY readiness check:
+                // interleaving clear-and-queue per category let a Call pass
+                // readiness against the PREVIOUS iteration's flags of a
+                // not-yet-cleared producer and re-execute the same iteration
+                // forever. Ops inside TailLoops leave the block gate but queue
+                // only when their loop expands.
+                let block_input_node = find_input_node(hugr, to_block);
+                let extension_ops: Vec<Node> = find_extension_ops_in_block(hugr, to_block);
+
+                // DFG interiors FLATTEN into the global op maps, so no
+                // container machinery owns their re-activation -- without
+                // resetting them here, an interior op (e.g. a Tag over
+                // loop-carried values) keeps its previous-iteration wire
+                // forever, and the tracing layer serves that frozen value
+                // SILENTLY. Collect them and treat them like direct
+                // children. (Nested Conditionals/TailLoops own their own
+                // frames; only DFG chains are descended.)
+                let mut dfg_interior: Vec<Node> = Vec::new();
+                let mut dfg_stack: Vec<Node> = hugr
+                    .children(to_block)
+                    .filter(|c| matches!(hugr.get_optype(*c), OpType::DFG(_)))
+                    .collect();
+                while let Some(dfg) = dfg_stack.pop() {
+                    for child in hugr.children(dfg) {
+                        dfg_interior.push(child);
+                        if matches!(hugr.get_optype(child), OpType::DFG(_)) {
+                            dfg_stack.push(child);
+                        }
+                    }
+                }
+
+                let mut act = ContainerActivation::new();
+                for child in hugr.children(to_block) {
+                    act.reset_wires(child);
+                }
+                for &child in &dfg_interior {
+                    act.reset_wires(child);
+                }
+                if let Some(input) = block_input_node {
+                    act.keep_wires(input);
+                }
+                for &op_node in block_info
+                    .quantum_ops
+                    .iter()
+                    .chain(&block_info.call_nodes)
+                    .chain(&block_info.conditional_nodes)
+                    .chain(&block_info.bool_ops)
+                    .chain(&block_info.tailloop_nodes)
+                    .chain(&extension_ops)
+                {
+                    act.reset_processed(op_node);
+                }
+                for child in hugr.children(to_block).chain(dfg_interior.iter().copied()) {
+                    if matches!(hugr.get_optype(child), OpType::LoadConstant(_))
+                        || self.classical_ops.contains_key(&child)
+                    {
+                        act.reset_processed(child);
+                    }
+                }
+                // Queue order preserves the historical activation order
+                // (extension/classical before bool ops so their results are
+                // available; each loop iteration must re-run Calls). Policies:
+                // Calls and classical ops copy inputs at fire time, so they
+                // wait for readiness; the rest defer internally or are static.
+                let submit = |act: &mut ContainerActivation, node: Node, policy: QueuePolicy| {
+                    if self.nodes_inside_tailloops.contains(&node) {
+                        // Skip ops inside TailLoops - they'll be added when the
+                        // loop expands
+                        act.ungate_block_only(node);
+                    } else {
+                        act.queue(node, policy);
+                    }
+                };
+                for &op_node in &block_info.quantum_ops {
+                    submit(&mut act, op_node, QueuePolicy::Always);
+                }
+                for &call_node in &block_info.call_nodes {
+                    submit(&mut act, call_node, QueuePolicy::IfReady);
+                }
+                for &cond_node in &block_info.conditional_nodes {
+                    submit(&mut act, cond_node, QueuePolicy::Always);
+                }
+                for &op_node in &extension_ops {
+                    submit(&mut act, op_node, QueuePolicy::Always);
+                }
+                for child in hugr.children(to_block).chain(dfg_interior.iter().copied()) {
+                    if matches!(hugr.get_optype(child), OpType::LoadConstant(_)) {
+                        submit(&mut act, child, QueuePolicy::Always);
+                    }
+                    if self.classical_ops.contains_key(&child) {
+                        submit(&mut act, child, QueuePolicy::IfReady);
+                    }
+                }
+                for &op_node in &block_info.bool_ops {
+                    submit(&mut act, op_node, QueuePolicy::Always);
+                }
+                // TailLoop nodes queue even when nested inside another loop's
+                // body tracking: they defer internally until their inputs are
+                // ready.
+                for &tl_node in &block_info.tailloop_nodes {
+                    act.queue(tl_node, QueuePolicy::Always);
+                }
+                self.run_activation(hugr, &act);
+
+                let num_ops = block_info.quantum_ops.len();
+                let num_calls = block_info.call_nodes.len();
+                let num_conditionals = block_info.conditional_nodes.len();
+                let num_bool_ops = block_info.bool_ops.len();
+                let num_tailloops = block_info.tailloop_nodes.len();
                 debug!(
-                    "[TRACE] Block {to_block:?} has 0 ops and 0 calls, trying to resolve branch"
+                    "[TRACE] Activated block {to_block:?} with {num_ops} ops, {num_calls} calls, {num_conditionals} conditionals, {num_bool_ops} bool_ops, {num_tailloops} tailloops"
                 );
-                debug!("[TRACE] Block {to_block:?} has no quantum ops, checking for successors");
-                // Mark this block as complete in the active CFG
-                if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
-                    active_cfg.completed_blocks.insert(to_block);
-                }
 
-                // Get successors for this block
-                let successors = block_info.successors.clone();
-                if successors.is_empty() {
-                    // No successors - exit block
-                    self.complete_cfg_execution(hugr, cfg_node, to_block);
-                } else if successors.len() == 1 {
-                    // Single successor - transition immediately
-                    let next_block = successors[0];
-                    // Check if successor is exit block
-                    if next_block == cfg_info.exit_block {
-                        self.complete_cfg_execution(hugr, cfg_node, to_block);
-                    } else {
-                        debug!(
-                            "[TRACE] Empty block {to_block:?} transitioning to single successor {next_block:?}"
-                        );
-                        self.propagate_block_outputs_to_successor(hugr, to_block, next_block);
+                // Handle blocks with no operations - immediately complete and transition
+                // IMPORTANT: Also check for extension_ops and classical_ops, not just quantum/bool/conditional
+                let has_extension_ops = !extension_ops.is_empty();
+                let has_classical_ops = !block_info.classical_ops.is_empty();
+                let has_tailloops = !block_info.tailloop_nodes.is_empty();
+                let has_load_consts = !block_info.load_constants.is_empty();
 
-                        // Update current block
-                        if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
-                            active_cfg.current_block = next_block;
-                        }
-
-                        // Recursively activate the next block - add all ops to work queue
-                        let next_block_info = cfg_info.blocks.get(&next_block).cloned();
-                        if let Some(next_info) = next_block_info {
-                            // Quantum ops
-                            for &op_node in &next_info.quantum_ops {
-                                self.nodes_inside_cfg_blocks.remove(&op_node);
-                                if !self.work_queue.contains(&op_node)
-                                    && !self.processed.contains(&op_node)
-                                {
-                                    self.work_queue.push_back(op_node);
-                                }
-                            }
-                            // Bool ops
-                            for &op_node in &next_info.bool_ops {
-                                self.processed.remove(&op_node);
-                                self.nodes_inside_cfg_blocks.remove(&op_node);
-                                if !self.work_queue.contains(&op_node)
-                                    && !self.processed.contains(&op_node)
-                                {
-                                    self.work_queue.push_back(op_node);
-                                }
-                            }
-                            // Conditional nodes
-                            for &cond_node in &next_info.conditional_nodes {
-                                self.processed.remove(&cond_node);
-                                self.nodes_inside_cfg_blocks.remove(&cond_node);
-                                if !self.work_queue.contains(&cond_node)
-                                    && !self.processed.contains(&cond_node)
-                                {
-                                    self.work_queue.push_back(cond_node);
-                                }
-                            }
-                            // TailLoop nodes
-                            for &tl_node in &next_info.tailloop_nodes {
-                                self.processed.remove(&tl_node);
-                                self.nodes_inside_cfg_blocks.remove(&tl_node);
-                                if !self.work_queue.contains(&tl_node)
-                                    && !self.processed.contains(&tl_node)
-                                {
-                                    self.work_queue.push_back(tl_node);
-                                }
-                            }
-                            // Call nodes
-                            for &call_node in &next_info.call_nodes {
-                                self.processed.remove(&call_node);
-                                self.nodes_inside_cfg_blocks.remove(&call_node);
-                                if !self.work_queue.contains(&call_node)
-                                    && !self.processed.contains(&call_node)
-                                    && all_predecessors_ready(
-                                        hugr,
-                                        call_node,
-                                        &self.quantum_ops,
-                                        &self.conditionals,
-                                        &self.cfgs,
-                                        &self.processed,
-                                    )
-                                {
-                                    self.work_queue.push_back(call_node);
-                                }
-                            }
-                            // Also find and add classical ops and extension ops
-                            for child in hugr.children(next_block) {
-                                let op = hugr.get_optype(child);
-                                if matches!(op, OpType::LoadConstant(_))
-                                    || self.classical_ops.contains_key(&child)
-                                    || op.as_extension_op().is_some()
-                                {
-                                    self.processed.remove(&child);
-                                    self.nodes_inside_cfg_blocks.remove(&child);
-                                    if !self.work_queue.contains(&child)
-                                        && !self.processed.contains(&child)
-                                    {
-                                        self.work_queue.push_back(child);
-                                    }
-                                }
-                            }
-                            debug!(
-                                "[TRACE] Activated next block {:?} with {} quantum ops, {} bool_ops",
-                                next_block,
-                                next_info.quantum_ops.len(),
-                                next_info.bool_ops.len()
-                            );
-
-                            // Check if the next block is also empty - if so, we need to handle it recursively
-                            // Find extension ops in this block
-                            let next_extension_ops: Vec<Node> =
-                                find_extension_ops_in_block(hugr, next_block);
-                            let next_has_extension_ops = !next_extension_ops.is_empty();
-                            let next_has_classical_ops = !next_info.classical_ops.is_empty();
-
-                            if next_info.quantum_ops.is_empty()
-                                && next_info.call_nodes.is_empty()
-                                && next_info.conditional_nodes.is_empty()
-                                && next_info.bool_ops.is_empty()
-                                && !next_has_extension_ops
-                                && !next_has_classical_ops
-                                && next_info.tailloop_nodes.is_empty()
-                            {
-                                // Next block is also empty - need to continue transitioning
-                                let next_successors = next_info.successors.clone();
-                                if next_successors.len() == 1 {
-                                    let next_next_block = next_successors[0];
-                                    if next_next_block == cfg_info.exit_block {
-                                        self.complete_cfg_execution(hugr, cfg_node, next_block);
-                                    } else {
-                                        // Recursively transition
-                                        self.transition_to_cfg_successor(
-                                            hugr,
-                                            cfg_node,
-                                            next_block,
-                                            next_next_block,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Multiple successors - need to resolve branch
+                if num_ops == 0
+                    && num_calls == 0
+                    && num_conditionals == 0
+                    && num_bool_ops == 0
+                    && !has_extension_ops
+                    && !has_classical_ops
+                    && !has_tailloops
+                    && !has_load_consts
+                {
                     debug!(
-                        "[TRACE] Block {:?} has {} successors, resolving branch",
-                        to_block,
-                        successors.len()
+                        "[TRACE] Block {to_block:?} has 0 ops and 0 calls, trying to resolve branch"
                     );
-                    if let Some(branch_idx) = self.try_resolve_cfg_block_branch(hugr, to_block) {
-                        debug!("[TRACE] Branch resolved to {branch_idx} for block {to_block:?}");
-                        if branch_idx < successors.len() {
-                            let next_block = successors[branch_idx];
+                    debug!(
+                        "[TRACE] Block {to_block:?} has no quantum ops, checking for successors"
+                    );
+                    // Mark this block as complete in the active CFG
+                    if let Some(active_cfg) = self.active_cfgs.get_mut(&cfg_node) {
+                        active_cfg.completed_blocks.insert(to_block);
+                    }
+
+                    // Get successors for this block
+                    let successors = block_info.successors.clone();
+                    if successors.is_empty() {
+                        // No successors - exit block
+                        self.complete_cfg_execution(hugr, cfg_node, to_block);
+                    } else if successors.len() == 1 {
+                        // Single successor - transition immediately. Recurse into
+                        // the canonical transition path (same as the resolved
+                        // multi-successor case below) so the successor gets the
+                        // full two-phase activation: a hand-rolled copy here used
+                        // to skip the stale-value clearing and check Call
+                        // readiness against uncleared producer flags, reviving
+                        // the loop-iteration freeze through empty blocks.
+                        let next_block = successors[0];
+                        if next_block == cfg_info.exit_block {
+                            self.complete_cfg_execution(hugr, cfg_node, to_block);
+                        } else {
                             debug!(
-                                "[TRACE] Empty block {to_block:?} resolved branch {branch_idx} to {next_block:?}"
+                                "[TRACE] Empty block {to_block:?} transitioning to single successor {next_block:?}"
                             );
-                            // Recursively transition
-                            self.transition_to_cfg_successor(hugr, cfg_node, to_block, next_block);
+                            from_block = to_block;
+                            to_block = next_block;
+                            continue 'transition;
                         }
                     } else {
+                        // Multiple successors - need to resolve branch
                         debug!(
-                            "[TRACE] Branch NOT resolved for block {to_block:?}, adding to pending"
+                            "[TRACE] Block {:?} has {} successors, resolving branch",
+                            to_block,
+                            successors.len()
                         );
-                        // Branch not resolved - add to pending
-                        let block_key = (cfg_node, to_block);
-                        self.pending_cfg_branches.insert(block_key, successors);
+                        if let Some(branch_idx) = self.try_resolve_cfg_block_branch(hugr, to_block)
+                        {
+                            debug!(
+                                "[TRACE] Branch resolved to {branch_idx} for block {to_block:?}"
+                            );
+                            if branch_idx < successors.len() {
+                                let next_block = successors[branch_idx];
+                                debug!(
+                                    "[TRACE] Empty block {to_block:?} resolved branch {branch_idx} to {next_block:?}"
+                                );
+                                from_block = to_block;
+                                to_block = next_block;
+                                continue 'transition;
+                            }
+                            // Out-of-range tag = upstream Sum/tag bug.
+                            self.execution_error = Some(format!(
+                                "CFG {cfg_node:?} empty block {to_block:?}: branch tag \
+                                 {branch_idx} out of range ({} successors)",
+                                successors.len()
+                            ));
+                        } else {
+                            debug!(
+                                "[TRACE] Branch NOT resolved for block {to_block:?}, adding to pending"
+                            );
+                            // Branch not resolved - add to pending
+                            let block_key = (cfg_node, to_block);
+                            self.pending_cfg_branches.insert(block_key, successors);
+                        }
                     }
                 }
+                return;
             }
         }
     }
@@ -864,6 +675,53 @@ impl HugrEngine {
         // Mark CFG as processed
         self.processed.insert(cfg_node);
         self.active_cfgs.remove(&cfg_node);
+        // Recorded edges must not outlive their CFG walk: a later
+        // re-invocation (next Call / scan element) starts a fresh chain
+        // against reset frame state.
+        self.pending_measurement_propagations
+            .retain(|(cfg, _, _, _)| *cfg != cfg_node);
+
+        // The ENTRYPOINT's CFG completing means main returned: capture its
+        // classical return values so pure-classical programs surface them.
+        // The entrypoint is taken from the HUGR itself when it names a
+        // FuncDefn; the not-called-not-scanned fallback covers graphs
+        // whose entrypoint is the module root.
+        let parent_is_entry_func = hugr.get_parent(cfg_node).is_some_and(|fd| {
+            matches!(hugr.get_optype(fd), OpType::FuncDefn(_))
+                && if matches!(hugr.get_optype(hugr.entrypoint()), OpType::FuncDefn(_)) {
+                    fd == hugr.entrypoint()
+                } else {
+                    hugr.get_parent(fd) == Some(hugr.module_root())
+                        && !self.call_targets.values().any(|&target| target == fd)
+                        && !self
+                            .active_scans
+                            .values()
+                            .any(|scan| scan.func_defn_node == fd)
+                }
+        });
+        if parent_is_entry_func {
+            // Positional capture: entry i holds port i's value or None.
+            // Compacting present values would silently relabel every later
+            // port (and make a 2-port return with port 0 missing surface
+            // port 1 under "return"). Arity comes from the dataflow
+            // SIGNATURE -- the portgraph count includes the order port.
+            use tket::hugr::ops::OpTrait;
+            let arity = hugr
+                .get_optype(cfg_node)
+                .dataflow_signature()
+                .map_or(0, |sig| sig.output_count());
+            let values: Vec<Option<ClassicalValue>> = (0..arity)
+                .map(|port| {
+                    self.wire_state
+                        .classical_values
+                        .get(&(cfg_node, port))
+                        .cloned()
+                })
+                .collect();
+            if values.iter().any(Option::is_some) {
+                self.return_values = values;
+            }
+        }
 
         // Check if this CFG is inside a FuncDefn that's being called
         self.complete_func_call_if_needed(hugr, cfg_node);
@@ -895,25 +753,26 @@ impl HugrEngine {
                 is_relevant,
                 is_extension,
                 self.processed.contains(&succ_node),
-                self.work_queue.contains(&succ_node)
+                self.work_queue.contains(succ_node)
             );
 
             if (is_relevant || is_extension)
                 && !self.processed.contains(&succ_node)
-                && !self.work_queue.contains(&succ_node)
-                && all_predecessors_ready(
-                    hugr,
-                    succ_node,
-                    &self.quantum_ops,
-                    &self.conditionals,
-                    &self.cfgs,
-                    &self.processed,
-                )
+                && !self.work_queue.contains(succ_node)
+                && self.all_predecessors_ready(hugr, succ_node)
             {
                 debug!("CFG complete: adding successor {succ_node:?} to work queue");
                 self.work_queue.push_back(succ_node);
             }
         }
+
+        // A nested CFG may be the last op of an enclosing case or loop
+        // body -- run the container completion hooks (mirrors
+        // complete_tailloop). Block completion needs no hook: blocks do
+        // not track nested CFG children.
+        self.check_scan_frame_completion(hugr, cfg_node);
+        self.check_case_completion(hugr, cfg_node);
+        self.check_tailloop_body_completion(hugr, cfg_node);
     }
 
     /// Propagate wire mappings from a completed block to a successor block.
@@ -923,6 +782,24 @@ impl HugrEngine {
         hugr: &Hugr,
         from_block: Node,
         to_block: Node,
+    ) {
+        self.propagate_block_outputs(hugr, from_block, to_block, false);
+    }
+
+    /// Copy a completed block's outputs onto the successor's Input node.
+    ///
+    /// Transition mode (`fill_only == false`) clears every successor Input
+    /// port first so a port this propagation cannot source starves loudly
+    /// instead of keeping the previous iteration's value. Measurement
+    /// replay (`fill_only == true`) runs against LIVE state whose sources
+    /// a later activation may have legitimately consumed: it never clears
+    /// and writes only ports that are currently missing.
+    pub(crate) fn propagate_block_outputs(
+        &mut self,
+        hugr: &Hugr,
+        from_block: Node,
+        to_block: Node,
+        fill_only: bool,
     ) {
         debug!("[TRACE] propagate_block_outputs_to_successor: from {from_block:?} to {to_block:?}");
         let from_output = find_output_node(hugr, from_block);
@@ -937,49 +814,105 @@ impl HugrEngine {
         // Block Output ports: [Sum (port 0), data1, data2, ...]
         // For CFG blocks with branching, the successor Input ports are:
         //   [payload from Sum (if any), other_outputs...]
-        // So we need to:
-        // 1. Check if port 0's source is a Conditional/Tag with payload
-        // 2. Extract payload values and map them to successor Input ports 0..payload_len-1
-        // 3. Map other_outputs (port 1+) to successor Input ports payload_len+
-
+        //
+        // The payload ARITY is a TYPE-level fact: the successor's input row
+        // is fixed, so every branch into it carries exactly
+        // (successor inputs - other outputs) payload values. Deriving the
+        // offset from the runtime value's length mis-laid the data ports
+        // whenever the Sum resolved structurally (bare tag, no payload).
         let num_output_ports = hugr.num_inputs(from_output);
+        let target_num_outputs = hugr.num_outputs(to_input);
+        let num_data_outputs = num_output_ports.saturating_sub(1);
+        let expected_payload_len = target_num_outputs.saturating_sub(num_data_outputs);
+
+        // Clear EVERY successor Input port before writing: the transition
+        // batch exempts the Input node from wire clearing (keep_wires) so
+        // fresh values survive, which means any port this propagation
+        // cannot source would otherwise keep the PREVIOUS iteration's
+        // value. Missing sources must starve loudly instead. Replay
+        // (fill_only) must NOT clear -- it runs against live state.
+        if !fill_only {
+            for port_idx in 0..target_num_outputs {
+                self.wire_state
+                    .classical_values
+                    .remove(&(to_input, port_idx));
+                self.wire_state.wire_to_qubit.remove(&(to_input, port_idx));
+            }
+        }
 
         // First, check if port 0 (Sum) has payload values from a Conditional
         let sum_port = IncomingPort::from(0);
         let mut payload_len = 0;
 
-        if let Some((sum_src_node, _)) = hugr.single_linked_output(from_output, sum_port) {
+        if let Some((sum_src_node, sum_src_port)) = hugr.single_linked_output(from_output, sum_port)
+        {
             let sum_src_op = hugr.get_optype(sum_src_node);
+            let sum_wire = (sum_src_node, sum_src_port.index());
 
-            // Check if it's a Conditional - extract payload from virtual output ports
-            if matches!(sum_src_op, OpType::Conditional(_)) {
-                // Look for payload values at virtual output ports (1, 2, ...)
-                let mut idx = 1;
-                while let Some(value) = self
+            // If the branch Sum has an executed VALUE (e.g. built by a Tag
+            // over classical values, like a loop's carried state), its
+            // payload elements are the successor's first inputs. Traced
+            // read: the Sum may be produced inside a flattened DFG.
+            if let Some(ClassicalValue::Sum { values, .. }) =
+                self.get_input_value(hugr, from_output, 0)
+            {
+                payload_len = values.len();
+                for (i, value) in values.into_iter().enumerate().take(expected_payload_len) {
+                    if fill_only
+                        && self
+                            .wire_state
+                            .classical_values
+                            .contains_key(&(to_input, i))
+                    {
+                        continue;
+                    }
+                    debug!(
+                        "[TRACE] Block transition: propagated branch payload {value:?} to {to_input:?}:{i}"
+                    );
+                    if let ClassicalValue::QubitRef(qubit_id) = &value {
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((to_input, i), *qubit_id);
+                    }
+                    self.wire_state
+                        .classical_values
+                        .insert((to_input, i), value);
+                }
+            }
+            // Check if it's a Conditional -- read the payload recorded for
+            // the EXACT output port feeding this block's Sum (the payload
+            // map is keyed by (conditional, output port); the old scheme
+            // stored payloads at "virtual" classical-value ports, which
+            // aliased real output ports AND was read from index 1
+            // regardless of which output the Tag fed).
+            else if matches!(sum_src_op, OpType::Conditional(_)) {
+                let payload = self
                     .wire_state
-                    .classical_values
-                    .get(&(sum_src_node, idx))
+                    .conditional_payloads
+                    .get(&sum_wire)
                     .cloned()
-                {
-                    let to_wire = (to_input, idx - 1);
-                    self.wire_state.classical_values.insert(to_wire, value);
+                    .unwrap_or_default();
+                for (idx, value) in payload.into_iter().enumerate() {
+                    let to_wire = (to_input, idx);
+                    if !(fill_only && self.wire_state.classical_values.contains_key(&to_wire)) {
+                        self.wire_state.classical_values.insert(to_wire, value);
+                    }
                     payload_len += 1;
-                    idx += 1;
                 }
             }
         }
 
-        // Now map other_outputs (port 1+) to successor Input ports
-        // Check if the target Input node has enough outputs to accommodate the payload offset
-        let target_num_outputs = hugr.num_outputs(to_input);
-        let num_data_outputs = num_output_ports.saturating_sub(1);
-        // Only apply payload offset if the target has enough outputs
-        // This handles exit blocks which don't expect payloads
-        let effective_payload_len = if payload_len + num_data_outputs <= target_num_outputs {
-            payload_len
-        } else {
-            0 // Target doesn't have room for payloads, don't offset
-        };
+        // Now map other_outputs (port 1+) to successor Input ports at the
+        // TYPE-derived offset. A runtime payload arity that disagrees with
+        // the type row means upstream variant extraction is suspect -- warn,
+        // but the offset stays type-correct either way.
+        if payload_len != expected_payload_len {
+            debug!(
+                "WARNING: block transition {from_block:?} -> {to_block:?}: runtime payload \
+                 arity ({payload_len}) != type arity ({expected_payload_len})"
+            );
+        }
+        let effective_payload_len = expected_payload_len;
         debug!("[TRACE] num_data_outputs={num_data_outputs}");
         debug!(
             "[TRACE] propagate_block_outputs: from_block={from_block:?}, to_block={to_block:?}, num_data_outputs={num_data_outputs}"
@@ -1000,7 +933,13 @@ impl HugrEngine {
                 );
                 let src_wire = (src_node, src_port.index());
 
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
+                if let Some(qubit_id) = self.get_input_qubit(hugr, from_output, port_idx + 1)
+                    && !(fill_only
+                        && self
+                            .wire_state
+                            .wire_to_qubit
+                            .contains_key(&(to_input, to_port_idx)))
+                {
                     self.wire_state
                         .wire_to_qubit
                         .insert((to_input, to_port_idx), qubit_id);
@@ -1014,8 +953,16 @@ impl HugrEngine {
                     );
                 }
 
+                let target_filled = fill_only
+                    && self
+                        .wire_state
+                        .classical_values
+                        .contains_key(&(to_input, to_port_idx));
+
                 // Also propagate classical values
-                if let Some(value) = self.wire_state.classical_values.get(&src_wire).cloned() {
+                if target_filled {
+                    // Fill-only replay never overwrites a live value.
+                } else if let Some(value) = self.get_input_value(hugr, from_output, port_idx + 1) {
                     let to_wire = (to_input, to_port_idx);
                     debug!(
                         "[TRACE] Block transition: propagated classical value {value:?} from {src_wire:?} to {to_wire:?}"
@@ -1056,10 +1003,12 @@ impl HugrEngine {
                     if let Some(value) = self.wire_state.classical_values.get(&input_wire).cloned()
                     {
                         let to_wire = (to_input, to_port_idx);
-                        debug!(
-                            "[TRACE] Fallback: propagating {value:?} from input {input_wire:?} to {to_wire:?}"
-                        );
-                        self.wire_state.classical_values.insert(to_wire, value);
+                        if !(fill_only && self.wire_state.classical_values.contains_key(&to_wire)) {
+                            debug!(
+                                "[TRACE] Fallback: propagating {value:?} from input {input_wire:?} to {to_wire:?}"
+                            );
+                            self.wire_state.classical_values.insert(to_wire, value);
+                        }
                     }
                 }
             }
@@ -1072,36 +1021,128 @@ impl HugrEngine {
     /// happens before measurement results are available. This function re-propagates
     /// values after measurement results are stored.
     pub(crate) fn repropagate_measurement_values(&mut self, hugr: &Hugr) {
-        // Take ownership of the pending list to avoid borrow issues
-        let pending: Vec<_> = std::mem::take(&mut self.pending_measurement_propagations);
-
-        for (_cfg_node, from_block, to_block) in pending {
-            self.propagate_block_outputs_to_successor(hugr, from_block, to_block);
+        // Replay every recorded edge IN ORDER, FILL-ONLY: writes land only
+        // on ports that are currently missing, and nothing is cleared.
+        // Fill-only is what makes replay safe against live state -- a full
+        // re-propagation cleared the successor's inputs and re-read source
+        // wires that a later activation may have legitimately destroyed
+        // (self-loop blocks corrupted an in-flight iteration this way).
+        // Ordered chain replay is what carries a late measurement value
+        // across empty-block hops. Edges stay recorded (fill-only is
+        // idempotent); they are purged when their target re-activates or
+        // their CFG completes.
+        // Only each CFG's LATEST cascade replays: older cascades' edges
+        // point at sources a later iteration may have rewritten, and
+        // fill-only stops overwrites but not wrong FILLS of legitimately
+        // missing ports.
+        let mut latest: std::collections::BTreeMap<Node, u64> = std::collections::BTreeMap::new();
+        for (cfg_node, _, _, cascade) in &self.pending_measurement_propagations {
+            let entry = latest.entry(*cfg_node).or_insert(*cascade);
+            *entry = (*entry).max(*cascade);
+        }
+        let pending = self.pending_measurement_propagations.clone();
+        for (cfg_node, from_block, to_block, cascade) in pending {
+            if self.active_cfgs.contains_key(&cfg_node) && latest.get(&cfg_node) == Some(&cascade) {
+                self.propagate_block_outputs(hugr, from_block, to_block, true);
+            }
         }
     }
 
     /// Propagate wire mappings from final block to CFG outputs.
     pub(crate) fn propagate_cfg_outputs(&mut self, hugr: &Hugr, cfg_node: Node, final_block: Node) {
+        use tket::hugr::ops::OpTrait;
+
         let Some(output_node) = find_output_node(hugr, final_block) else {
             debug!("No Output node found in final block {final_block:?}");
             return;
         };
 
-        // Block Output: port 0 = Sum (control), ports 1+ = data
-        // CFG outputs correspond to data ports (skip the Sum)
+        // Block Output: port 0 = Sum (control), ports 1+ = data.
+        // When the Sum is built by a Tag, its inputs are the PAYLOAD carried
+        // into the exit variant -- these become the first CFG outputs (e.g. a
+        // called function's return value rides in the Tag payload, not on the
+        // data ports). The payload ARITY is type-level: CFG outputs minus
+        // the final block's data ports (a bare-tag structural resolution
+        // must not collapse the offset to zero).
         let num_data_outputs = hugr.num_inputs(output_node).saturating_sub(1);
+        let expected_payload_len = hugr
+            .get_optype(cfg_node)
+            .dataflow_signature()
+            .map_or(0, |sig| sig.output_count())
+            .saturating_sub(num_data_outputs);
+        let mut payload_len = 0;
+        if let Some((sum_src, sum_src_port)) =
+            hugr.single_linked_output(output_node, IncomingPort::from(0))
+        {
+            // Prefer the executed Sum VALUE regardless of what built it (a
+            // direct Tag, or a Sum routed through a Conditional's output):
+            // its payload elements are the CFG outputs (a called function's
+            // return value rides here).
+            let _sum_wire = (sum_src, sum_src_port.index());
+            if let Some(ClassicalValue::Sum { values, .. }) =
+                self.get_input_value(hugr, output_node, 0)
+            {
+                payload_len = values.len();
+                for (i, value) in values.into_iter().enumerate().take(expected_payload_len) {
+                    debug!("CFG {cfg_node:?} output {i}: mapped payload value {value:?}");
+                    if let ClassicalValue::QubitRef(qubit_id) = &value {
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((cfg_node, i), *qubit_id);
+                    }
+                    self.wire_state
+                        .classical_values
+                        .insert((cfg_node, i), value);
+                }
+            } else if matches!(hugr.get_optype(sum_src), OpType::Tag(_)) {
+                // Structural fallback (e.g. linear payloads: Tags over qubits
+                // do not execute as classical ops).
+                let num_payload = hugr
+                    .get_optype(sum_src)
+                    .dataflow_signature()
+                    .map_or(0, |sig| sig.input_count());
+                for i in 0..num_payload {
+                    if let Some(qubit_id) = self.get_input_qubit(hugr, sum_src, i) {
+                        self.wire_state
+                            .wire_to_qubit
+                            .insert((cfg_node, i), qubit_id);
+                        debug!("CFG {cfg_node:?} output {i}: mapped payload qubit {qubit_id:?}");
+                    }
+                    if let Some(value) = self.get_input_value(hugr, sum_src, i) {
+                        debug!("CFG {cfg_node:?} output {i}: mapped payload value {value:?}");
+                        self.wire_state
+                            .classical_values
+                            .insert((cfg_node, i), value);
+                    }
+                }
+                payload_len = num_payload;
+            }
+        }
 
+        // CFG outputs after the payload correspond to the data ports, at
+        // the TYPE-derived offset.
+        if payload_len != expected_payload_len {
+            debug!(
+                "WARNING: CFG {cfg_node:?} exit: runtime payload arity ({payload_len}) != \
+                 type arity ({expected_payload_len})"
+            );
+        }
         for port_idx in 0..num_data_outputs {
             let block_port = IncomingPort::from(port_idx + 1); // Skip Sum port
+            let cfg_out_idx = expected_payload_len + port_idx;
 
-            if let Some((src_node, src_port)) = hugr.single_linked_output(output_node, block_port) {
-                let src_wire = (src_node, src_port.index());
-
-                if let Some(&qubit_id) = self.wire_state.wire_to_qubit.get(&src_wire) {
+            if hugr.single_linked_output(output_node, block_port).is_some() {
+                if let Some(qubit_id) = self.get_input_qubit(hugr, output_node, port_idx + 1) {
                     self.wire_state
                         .wire_to_qubit
-                        .insert((cfg_node, port_idx), qubit_id);
-                    debug!("CFG {cfg_node:?} output {port_idx}: mapped qubit {qubit_id:?}");
+                        .insert((cfg_node, cfg_out_idx), qubit_id);
+                    debug!("CFG {cfg_node:?} output {cfg_out_idx}: mapped qubit {qubit_id:?}");
+                }
+                if let Some(value) = self.get_input_value(hugr, output_node, port_idx + 1) {
+                    debug!("CFG {cfg_node:?} output {cfg_out_idx}: mapped value {value:?}");
+                    self.wire_state
+                        .classical_values
+                        .insert((cfg_node, cfg_out_idx), value);
                 }
             }
         }

@@ -53,10 +53,11 @@ pub(crate) enum ArityError {
 /// Apply `gate_type` to `sim` if it is a unitary Clifford.
 ///
 /// `qubits` is the gate's full qubit list: single-qubit gates apply to every
-/// entry, two-qubit gates to every consecutive pair. `DagCircuit` splits gate
-/// batches into one node per gate instance, so in practice these slices hold a
-/// single application, but accepting the batched form keeps the table usable
-/// for callers that have not been through that split.
+/// entry, two-qubit gates to every consecutive pair. A `DagCircuit` node may
+/// genuinely carry several gate instances -- `DagCircuit::gate_count` counts
+/// them individually -- so applying only the first would silently drop gates.
+/// Only `DagCircuit::from(&TickCircuit)` and the `DagCircuit` builder helpers
+/// split batches; `add_gate_auto_wire` stores a batched `Gate` unchanged.
 ///
 /// # Errors
 ///

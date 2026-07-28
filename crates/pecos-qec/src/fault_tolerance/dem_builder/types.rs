@@ -5085,16 +5085,35 @@ impl DetectorErrorModel {
         self.observables.push(observable);
     }
 
+    /// Merge a second definition of an already-declared observable.
+    ///
+    /// Records combine by parity, but the label and Pauli identify the
+    /// observable rather than accumulate, so two definitions disagreeing about
+    /// either describe different observables sharing an id. That is malformed
+    /// input -- typically metadata JSON and a circuit annotation contradicting
+    /// each other -- and there is no defensible way to pick a winner.
+    ///
+    /// These checks deliberately fire in every build. They were
+    /// `debug_assert_eq!`, which meant release builds silently kept whichever
+    /// definition arrived first and discarded the other, so a contradiction
+    /// produced a quietly wrong DEM rather than a diagnostic.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `incoming` disagrees with `existing` about the label or the
+    /// Pauli.
     fn merge_observable_definition(existing: &mut DemOutput, incoming: DemOutput) {
         existing.kind = Some(DemOutputKind::Observable);
         merge_record_parity(&mut existing.records, incoming.records);
 
         if let Some(incoming_pauli) = incoming.pauli {
             if let Some(existing_pauli) = &existing.pauli {
-                debug_assert_eq!(
+                assert_eq!(
                     existing_pauli, &incoming_pauli,
-                    "conflicting Pauli metadata for observable L{}",
-                    existing.id
+                    "conflicting Pauli metadata for observable L{}: already declared as {:?}, \
+                     redeclared as {incoming_pauli:?}. Two definitions sharing an observable id \
+                     must agree; supply the Pauli from one source only, or give them distinct ids",
+                    existing.id, existing_pauli
                 );
             } else {
                 existing.pauli = Some(incoming_pauli);
@@ -5103,9 +5122,11 @@ impl DetectorErrorModel {
 
         if let Some(incoming_label) = incoming.label {
             if let Some(existing_label) = &existing.label {
-                debug_assert_eq!(
+                assert_eq!(
                     existing_label, &incoming_label,
-                    "conflicting labels for observable L{}",
+                    "conflicting labels for observable L{}: already labelled {existing_label:?}, \
+                     relabelled {incoming_label:?}. Two definitions sharing an observable id must \
+                     agree; supply the label from one source only, or give them distinct ids",
                     existing.id
                 );
             } else {
@@ -6525,7 +6546,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
     #[should_panic(expected = "conflicting labels for observable L0")]
     fn test_duplicate_observable_definitions_reject_conflicting_labels() {
         let mut dem = DetectorErrorModel::new();
@@ -6534,7 +6554,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
     #[should_panic(expected = "conflicting Pauli metadata for observable L0")]
     fn test_duplicate_observable_definitions_reject_conflicting_paulis() {
         use pecos_core::pauli::{X, Z};

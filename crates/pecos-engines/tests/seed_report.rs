@@ -57,7 +57,7 @@ fn seed_report_from_json_str_parses_valid_report() {
     "#;
     let report = SeedReport::from_json_str(json).unwrap();
     assert_eq!(report.root_seed, 42);
-    assert_eq!(report.base_seed, 123456789);
+    assert_eq!(report.base_seed, 123_456_789);
     assert_eq!(report.num_shots, 10);
     assert_eq!(report.num_workers, 2);
     assert_eq!(report.workers.len(), 2);

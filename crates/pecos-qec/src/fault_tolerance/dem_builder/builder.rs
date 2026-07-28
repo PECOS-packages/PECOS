@@ -3205,14 +3205,10 @@ fn build_dem_from_circuit(
     use crate::fault_tolerance::propagator::DagFaultAnalyzer;
     use pecos_num::graph::Attribute;
 
-    let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
-    let annotated_observable_records = observable_records_from_annotations(circuit, &influence_map);
-    let annotation_map = InfluenceBuilder::new(circuit)
-        .with_circuit_annotations(circuit)
-        .build();
-    influence_map.merge_dem_outputs_from(&annotation_map);
-
-    // Extract metadata before building (to avoid borrow issues)
+    // Metadata is read BEFORE annotations are collected: when the caller
+    // supplies observables JSON, that declaration wins, and an observable
+    // annotation describing the same output must not be installed into the
+    // influence map where it would silently override it (issue #377).
     let det_json = circuit.get_attr("detectors").and_then(|a| {
         if let Attribute::String(s) = a {
             Some(s.clone())
@@ -3234,6 +3230,19 @@ fn build_dem_from_circuit(
             None
         }
     });
+
+    let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
+    let annotated_observable_records = observable_records_from_annotations(circuit, &influence_map);
+    let annotations = InfluenceBuilder::new(circuit);
+    // Tracked-Pauli annotations have no metadata equivalent, so they are
+    // collected either way.
+    let annotation_map = if obs_json.is_some() {
+        annotations.with_circuit_annotations_excluding_observables(circuit)
+    } else {
+        annotations.with_circuit_annotations(circuit)
+    }
+    .build();
+    influence_map.merge_dem_outputs_from(&annotation_map);
 
     let builder = DemBuilder::new(&influence_map)
         .with_noise_config(noise)
@@ -5189,6 +5198,76 @@ mod tests {
             dem(&["f"], &["szdg", "sxdg"], true),
             dem(&["sy"], &["szdg", "sxdg"], true),
             "X-basis variant must distinguish F from SY (the Z-blind pair)"
+        );
+    }
+
+    /// Issue #377: an observable annotation must not override the observable
+    /// declared in metadata JSON.
+    ///
+    /// The two sources are made to disagree on purpose -- metadata covers both
+    /// measurements, the annotation covers only the first -- and the resulting
+    /// probability says which definition was used. With `p_meas = 0.25` and two
+    /// independent measurements, an observable over both flips on an odd number
+    /// of errors (`2 * 0.25 * 0.75 = 0.375`), while an observable over only the
+    /// first flips at `0.25`. The asymmetry matters: with one measurement per
+    /// qubit and a symmetric observable the two definitions produce identical
+    /// DEMs and the test would prove nothing.
+    #[test]
+    fn test_observable_metadata_wins_over_observable_annotation() {
+        use pecos_num::graph::Attribute;
+        use pecos_quantum::DagCircuit;
+
+        fn dem_string(with_annotation: bool) -> String {
+            let mut circuit = DagCircuit::new();
+            circuit.pz(&[0]);
+            let m0 = circuit.mz(&[0]);
+            circuit.pz(&[1]);
+            let _m1 = circuit.mz(&[1]);
+            if with_annotation {
+                circuit.observable_labeled("obs_ann", &[m0[0]]);
+            }
+            circuit.set_attr("num_measurements", Attribute::String("2".to_string()));
+            circuit.set_attr(
+                "observables",
+                Attribute::String(r#"[{"id":0,"records":[-2,-1]}]"#.to_string()),
+            );
+            circuit.set_attr("detectors", Attribute::String("[]".to_string()));
+            DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.25, 0.0).to_string()
+        }
+
+        let with_annotation = dem_string(true);
+        assert_eq!(
+            with_annotation,
+            dem_string(false),
+            "an observable annotation must not change a DEM whose observables \
+             come from metadata"
+        );
+        assert!(
+            with_annotation.contains("error(0.375) L0"),
+            "metadata declares L0 over BOTH measurements, so it must flip on an \
+             odd number of the two independent p_meas errors; got:\n{with_annotation}"
+        );
+    }
+
+    /// The annotation is still the source when metadata supplies no observables.
+    #[test]
+    fn test_observable_annotation_used_when_metadata_absent() {
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let m0 = circuit.mz(&[0]);
+        circuit.pz(&[1]);
+        let _m1 = circuit.mz(&[1]);
+        circuit.observable_labeled("obs_ann", &[m0[0]]);
+
+        let dem = DemBuilder::from_circuit(&circuit, 0.0, 0.0, 0.25, 0.0);
+        assert_eq!(dem.num_observables(), 1);
+        assert!(
+            dem.to_string().contains("error(0.25) L0"),
+            "with no observables metadata the annotation defines L0 over m0 \
+             alone, so it flips at p_meas; got:\n{}",
+            dem.to_string()
         );
     }
 }

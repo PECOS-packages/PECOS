@@ -185,7 +185,32 @@ impl<'a> InfluenceBuilder<'a> {
     /// by `DemSamplerBuilder::with_circuit_annotations` which maps them
     /// to auto-detected detectors.
     #[must_use]
-    pub fn with_circuit_annotations(mut self, circuit: &pecos_quantum::DagCircuit) -> Self {
+    pub fn with_circuit_annotations(self, circuit: &pecos_quantum::DagCircuit) -> Self {
+        self.with_circuit_annotations_inner(circuit, true)
+    }
+
+    /// Same as [`Self::with_circuit_annotations`] but skipping `Observable`
+    /// annotations.
+    ///
+    /// When a circuit supplies detector/observable metadata JSON, that metadata
+    /// is the caller's explicit declaration and must win. An observable
+    /// annotation describing the same `L0` would otherwise be installed into the
+    /// influence map first and silently override it (issue #377).
+    /// Tracked-Pauli annotations have no metadata equivalent, so they are still
+    /// collected.
+    #[must_use]
+    pub(crate) fn with_circuit_annotations_excluding_observables(
+        self,
+        circuit: &pecos_quantum::DagCircuit,
+    ) -> Self {
+        self.with_circuit_annotations_inner(circuit, false)
+    }
+
+    fn with_circuit_annotations_inner(
+        mut self,
+        circuit: &pecos_quantum::DagCircuit,
+        include_observables: bool,
+    ) -> Self {
         // Find TrackedPauliMeta nodes in topological order.
         // The nth meta-gate corresponds to the nth tracked-Pauli annotation.
         let meta_nodes: Vec<usize> = circuit
@@ -197,7 +222,9 @@ impl<'a> InfluenceBuilder<'a> {
         let mut operator_idx = 0;
         for ann in circuit.annotations() {
             match &ann.kind {
-                pecos_quantum::AnnotationKind::Observable { measurement_nodes } => {
+                pecos_quantum::AnnotationKind::Observable { measurement_nodes }
+                    if include_observables =>
+                {
                     let mut terms = Vec::new();
                     for &meas_node in measurement_nodes {
                         if let Some(gate) = circuit.gate(meas_node) {
@@ -223,6 +250,9 @@ impl<'a> InfluenceBuilder<'a> {
                             .with_optional_label(ann.label.clone()),
                         meta_node,
                     );
+                }
+                pecos_quantum::AnnotationKind::Observable { .. } => {
+                    // Excluded: metadata JSON declares the observables.
                 }
                 pecos_quantum::AnnotationKind::Detector { .. } => {
                     // Detectors handled separately by DemSamplerBuilder

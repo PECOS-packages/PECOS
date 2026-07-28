@@ -20,6 +20,7 @@ use pecos_core::gate_type::GateType;
 use pecos_core::{half_turn_decomposition, try_simplify_r1xy, try_simplify_rotation};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
+use smallvec::SmallVec;
 
 // ============================================================================
 // Direction and Unified Propagation
@@ -44,9 +45,13 @@ pub enum Direction {
 /// `(qubits[0], qubits[1])` while `CX`/`CY`/`CZ`/`SWAP` took all pairs, which
 /// made backward propagation disagree with forward symbolic simulation on
 /// batched nodes.
+///
+/// Returns a `SmallVec` sized for the overwhelmingly common single-pair node,
+/// so routing the six non-self-adjoint arms through this helper does not put a
+/// heap allocation on the analyzer's traversal path.
 fn consecutive_pairs(
     qubits: &[pecos_core::QubitId],
-) -> Vec<(pecos_core::QubitId, pecos_core::QubitId)> {
+) -> SmallVec<[(pecos_core::QubitId, pecos_core::QubitId); 1]> {
     qubits
         .chunks_exact(2)
         .map(|pair| (pair[0], pair[1]))
@@ -474,12 +479,37 @@ mod batched_pair_tests {
     use pecos_quantum::GateType;
     use pecos_simulators::PauliProp;
 
+    /// Seed the tracked Pauli on qubits 0 and 2, one per pair.
+    ///
+    /// The seed must ANTICOMMUTE with the gate on at least one pair, or the
+    /// comparison is vacuous: `Z` alone is fixed by `CX`/`CY`/`CZ`/`SZZ`/
+    /// `SZZdg`, and `X` alone is fixed by `SXX`. Sweeping X, Z and Y gives
+    /// every gate below at least one seed it actually moves.
+    fn seeded(seed: (bool, bool)) -> PauliProp {
+        let mut prop = PauliProp::new();
+        let (track_x, track_z) = seed;
+        if track_x {
+            prop.track_x(&[0, 2]);
+        }
+        if track_z {
+            prop.track_z(&[0, 2]);
+        }
+        prop
+    }
+
+    fn signature(prop: &PauliProp) -> Vec<(bool, bool)> {
+        (0..4)
+            .map(|q| (prop.contains_x(q), prop.contains_z(q)))
+            .collect()
+    }
+
     /// A batched two-qubit node must propagate through every pair. `SXX`/`SYY`/
     /// `SZZ` and their adjoints once took only `(qubits[0], qubits[1])` while
     /// `CX`/`CY`/`CZ`/`SWAP` took all pairs, so backward propagation silently
     /// disagreed with forward symbolic simulation on batched nodes.
     #[test]
     fn batched_two_qubit_gates_propagate_through_every_pair() {
+        const SEEDS: [(bool, bool); 3] = [(true, false), (false, true), (true, true)];
         for gate_type in [
             GateType::SXX,
             GateType::SXXdg,
@@ -493,33 +523,62 @@ mod batched_pair_tests {
             GateType::SWAP,
         ] {
             for direction in [Direction::Forward, Direction::Backward] {
-                let batched = {
-                    let mut prop = PauliProp::new();
-                    prop.track_z(&[0, 2]);
-                    let gate =
-                        Gate::simple(gate_type, vec![0.into(), 1.into(), 2.into(), 3.into()]);
-                    apply_gate(&mut prop, &gate, direction);
-                    (0..4)
-                        .map(|q| (prop.contains_x(q), prop.contains_z(q)))
-                        .collect::<Vec<_>>()
-                };
-                let split = {
-                    let mut prop = PauliProp::new();
-                    prop.track_z(&[0, 2]);
-                    for pair in [[0usize, 1], [2, 3]] {
-                        let gate = Gate::simple(gate_type, vec![pair[0].into(), pair[1].into()]);
+                for seed in SEEDS {
+                    let batched = {
+                        let mut prop = seeded(seed);
+                        let gate =
+                            Gate::simple(gate_type, vec![0.into(), 1.into(), 2.into(), 3.into()]);
                         apply_gate(&mut prop, &gate, direction);
-                    }
-                    (0..4)
-                        .map(|q| (prop.contains_x(q), prop.contains_z(q)))
-                        .collect::<Vec<_>>()
-                };
-                assert_eq!(
-                    batched, split,
-                    "{gate_type:?} ({direction:?}): a batched node must propagate \
-                     like the same pairs split across nodes"
-                );
+                        signature(&prop)
+                    };
+                    let split = {
+                        let mut prop = seeded(seed);
+                        for pair in [[0usize, 1], [2, 3]] {
+                            let gate =
+                                Gate::simple(gate_type, vec![pair[0].into(), pair[1].into()]);
+                            apply_gate(&mut prop, &gate, direction);
+                        }
+                        signature(&prop)
+                    };
+                    assert_eq!(
+                        batched, split,
+                        "{gate_type:?} ({direction:?}, seed {seed:?}): a batched node must \
+                         propagate like the same pairs split across nodes"
+                    );
+                }
             }
+        }
+    }
+
+    /// Guards the guard: every gate above must be moved by at least one seed,
+    /// otherwise the comparison could pass while an arm drops the second pair.
+    #[test]
+    fn every_seed_sweep_actually_moves_each_gate() {
+        const SEEDS: [(bool, bool); 3] = [(true, false), (false, true), (true, true)];
+        for gate_type in [
+            GateType::SXX,
+            GateType::SXXdg,
+            GateType::SYY,
+            GateType::SYYdg,
+            GateType::SZZ,
+            GateType::SZZdg,
+            GateType::CX,
+            GateType::CY,
+            GateType::CZ,
+            GateType::SWAP,
+        ] {
+            let moves_second_pair = SEEDS.iter().any(|&seed| {
+                let mut prop = seeded(seed);
+                let before = signature(&prop);
+                let gate = Gate::simple(gate_type, vec![2.into(), 3.into()]);
+                apply_gate(&mut prop, &gate, Direction::Forward);
+                signature(&prop) != before
+            });
+            assert!(
+                moves_second_pair,
+                "{gate_type:?}: no seed changes the second pair, so the batched \
+                 comparison would be vacuous for this gate"
+            );
         }
     }
 }

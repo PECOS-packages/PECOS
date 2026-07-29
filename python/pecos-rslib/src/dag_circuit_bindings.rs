@@ -2968,7 +2968,7 @@ impl PyTickCircuit {
         measurements: &Bound<'_, pyo3::types::PyList>,
         label: Option<String>,
     ) -> PyResult<usize> {
-        let refs = extract_tick_meas_refs(measurements)?;
+        let refs = extract_tick_meas_refs(&self.inner, measurements)?;
         let idx = if let Some(l) = label {
             self.inner.detector_labeled(&l, &refs)
         } else {
@@ -2984,7 +2984,7 @@ impl PyTickCircuit {
         measurements: &Bound<'_, pyo3::types::PyList>,
         label: Option<String>,
     ) -> PyResult<usize> {
-        let refs = extract_tick_meas_refs(measurements)?;
+        let refs = extract_tick_meas_refs(&self.inner, measurements)?;
         let idx = if let Some(l) = label {
             self.inner.observable_labeled(&l, &refs)
         } else {
@@ -3031,6 +3031,7 @@ impl PyTickCircuit {
 
 /// Extract `TickMeasRef` from Python list of `(tick, gate_idx, qubit)` tuples.
 fn extract_tick_meas_refs(
+    circuit: &pecos_quantum::TickCircuit,
     list: &Bound<'_, pyo3::types::PyList>,
 ) -> PyResult<Vec<pecos_quantum::TickMeasRef>> {
     list.iter()
@@ -3040,12 +3041,17 @@ fn extract_tick_meas_refs(
                     "measurements must be (tick, gate_idx, qubit) tuples from mz()",
                 )
             })?;
-            Ok(pecos_quantum::TickMeasRef {
-                tick,
-                gate_idx,
-                qubit: pecos_core::QubitId::from(qubit),
-                record_idx: 0, // Populated by TickCircuit; placeholder for external construction
-                meas_id: pecos_core::MeasId(0), // Placeholder
+            let qubit = pecos_core::QubitId::from(qubit);
+            // Resolve against the circuit rather than fabricating the record
+            // index. `TickCircuit::detector`/`observable` read `record_idx`
+            // immediately, so a placeholder collapsed every reference onto
+            // record 0 and silently corrupted the annotation (issue #382).
+            circuit.meas_ref(tick, gate_idx, qubit).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "measurement ref (tick={tick}, gate_idx={gate_idx}, qubit={}) does not \
+                     identify a measurement in this circuit; pass refs returned by mz()",
+                    qubit.index()
+                ))
             })
         })
         .collect()

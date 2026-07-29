@@ -3439,19 +3439,34 @@ impl From<&TickCircuit> for DagCircuit {
                     let node = dag.add_gate(split_gate.clone());
                     split_nodes.push(node);
 
-                    // Every measurement consumes a record, `MeasureFree`
-                    // included -- `TickHandle::mz_free` advances
-                    // `next_meas_record` exactly like `mz`. Counting only `MZ`
-                    // here left later records unmappable, so annotations
-                    // referencing them silently resolved to nothing.
+                    // Key the map on the `MeasId` each measurement was given at
+                    // allocation time, not on a counter over stored batches.
+                    // Storage order is not allocation order: a later
+                    // measurement can be appended to an earlier compatible
+                    // batch, and `tick_at` fills ticks out of sequence. A
+                    // positional counter therefore bound annotations to the
+                    // wrong measurement -- an observable over one qubit's `MZ`
+                    // resolving to a `MeasureFree` on another.
+                    //
+                    // This matches what `TickCircuit::meas_ref` reads and what
+                    // the reverse conversion writes. Gates carrying no ids are
+                    // externally constructed; they fall back to the positional
+                    // counter, which is the best available for them.
                     //
                     // `MeasureLeaked` is a measurement too and is still
                     // excluded here; that inconsistency is tracked in #387
                     // along with the remaining silent drops below.
                     if matches!(split_gate.gate_type, GateType::MZ | GateType::MeasureFree) {
-                        for _q in &split_gate.qubits {
-                            meas_record_to_node.insert(meas_record_idx, node);
-                            meas_record_idx += 1;
+                        if split_gate.meas_ids.is_empty() {
+                            for _q in &split_gate.qubits {
+                                meas_record_to_node.insert(meas_record_idx, node);
+                                meas_record_idx += 1;
+                            }
+                        } else {
+                            for meas_id in &split_gate.meas_ids {
+                                meas_record_to_node.insert(meas_id.index(), node);
+                                meas_record_idx = meas_record_idx.max(meas_id.index() + 1);
+                            }
                         }
                     }
 
@@ -6762,6 +6777,58 @@ mod tests {
                 expected.qubit
             );
         }
+    }
+
+    /// An annotation must reach the measurement it names, even when stored
+    /// order differs from allocation order.
+    ///
+    /// A later measurement can merge into an earlier compatible batch, and
+    /// `tick_at` fills ticks out of sequence. Keying the conversion's record
+    /// map on a positional counter bound annotations to the wrong measurement:
+    /// an observable over qubit 2's `MZ` resolved to a `MeasureFree` on
+    /// qubit 1, silently and with the wrong gate type.
+    #[test]
+    fn annotation_reaches_the_named_measurement_regardless_of_storage_order() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2]);
+        let first = circuit.tick().mz(&[0]);
+        let freed = circuit.tick_at(1).mz_free(&[1]);
+        // Merges into the batch holding `first`, so stored order is q0, q2, q1.
+        let third = circuit.tick_at(1).mz(&[2]);
+        assert_eq!(
+            (
+                first[0].record_idx,
+                freed[0].record_idx,
+                third[0].record_idx
+            ),
+            (0, 1, 2),
+            "records are allocated in call order"
+        );
+
+        circuit.observable(&third);
+        let dag = crate::DagCircuit::from(&circuit);
+        let targets: Vec<(GateType, Vec<usize>)> = dag
+            .annotations()
+            .iter()
+            .filter_map(|ann| match &ann.kind {
+                AnnotationKind::Observable { measurement_nodes } => Some(measurement_nodes),
+                _ => None,
+            })
+            .flatten()
+            .map(|&node| {
+                let gate = dag.gate(node).expect("annotation node exists");
+                (
+                    gate.gate_type,
+                    gate.qubits.iter().map(QubitId::index).collect(),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            targets,
+            vec![(GateType::MZ, vec![2])],
+            "the observable names qubit 2's MZ and must resolve to exactly that"
+        );
     }
 
     /// `MeasureFree` consumes a measurement record exactly like `MZ`, so a

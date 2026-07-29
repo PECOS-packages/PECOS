@@ -2055,6 +2055,21 @@ impl DemOutput {
     }
 }
 
+/// Compare two Pauli strings ignoring global phase.
+///
+/// A DEM output flip is an anticommutation property, so global phase carries no
+/// meaning -- [`DemOutput::with_pauli`] strips it for exactly that reason. The
+/// `pauli` field is public and can be set without going through that
+/// constructor, so an equality check must not treat `-X` and `+X` as different
+/// observables.
+fn pauli_eq_ignoring_phase(left: &PauliString, right: &PauliString) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    left.set_phase(pecos_core::QuarterPhase::PlusOne);
+    right.set_phase(pecos_core::QuarterPhase::PlusOne);
+    left == right
+}
+
 fn merge_record_parity(existing: &mut SmallVec<[i32; 4]>, incoming: SmallVec<[i32; 4]>) {
     for record in incoming {
         toggle_dem_output_record(existing, record);
@@ -5085,32 +5100,56 @@ impl DetectorErrorModel {
         self.observables.push(observable);
     }
 
+    /// Merge a second definition of an already-declared observable.
+    ///
+    /// Records combine by parity, but the label and Pauli identify the
+    /// observable rather than accumulate, so two definitions disagreeing about
+    /// either describe different observables sharing an id. That is malformed
+    /// input -- typically metadata JSON and a circuit annotation contradicting
+    /// each other -- and there is no defensible way to pick a winner.
+    ///
+    /// These checks deliberately fire in every build. They were
+    /// `debug_assert_eq!`, which meant release builds silently kept whichever
+    /// definition arrived first and discarded the other, so a contradiction
+    /// produced a quietly wrong DEM rather than a diagnostic.
+    ///
+    /// Both are checked before anything is mutated, and the Pauli comparison
+    /// ignores global phase, which carries no DEM meaning.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `incoming` disagrees with `existing` about the label, or
+    /// about the Pauli up to global phase.
     fn merge_observable_definition(existing: &mut DemOutput, incoming: DemOutput) {
-        existing.kind = Some(DemOutputKind::Observable);
-        merge_record_parity(&mut existing.records, incoming.records);
-
-        if let Some(incoming_pauli) = incoming.pauli {
-            if let Some(existing_pauli) = &existing.pauli {
-                debug_assert_eq!(
-                    existing_pauli, &incoming_pauli,
-                    "conflicting Pauli metadata for observable L{}",
-                    existing.id
-                );
-            } else {
-                existing.pauli = Some(incoming_pauli);
-            }
+        // Validate before mutating anything: a caught panic must not leave a
+        // half-merged output behind.
+        if let (Some(existing_pauli), Some(incoming_pauli)) = (&existing.pauli, &incoming.pauli) {
+            assert!(
+                pauli_eq_ignoring_phase(existing_pauli, incoming_pauli),
+                "conflicting Pauli metadata for observable L{}: already declared as \
+                 {existing_pauli:?}, redeclared as {incoming_pauli:?}. Two definitions sharing \
+                 an observable id must agree; supply the Pauli from one source only, or give \
+                 them distinct ids",
+                existing.id
+            );
+        }
+        if let (Some(existing_label), Some(incoming_label)) = (&existing.label, &incoming.label) {
+            assert_eq!(
+                existing_label, incoming_label,
+                "conflicting labels for observable L{}: already labelled {existing_label:?}, \
+                 relabelled {incoming_label:?}. Two definitions sharing an observable id must \
+                 agree; supply the label from one source only, or give them distinct ids",
+                existing.id
+            );
         }
 
-        if let Some(incoming_label) = incoming.label {
-            if let Some(existing_label) = &existing.label {
-                debug_assert_eq!(
-                    existing_label, &incoming_label,
-                    "conflicting labels for observable L{}",
-                    existing.id
-                );
-            } else {
-                existing.label = Some(incoming_label);
-            }
+        existing.kind = Some(DemOutputKind::Observable);
+        merge_record_parity(&mut existing.records, incoming.records);
+        if existing.pauli.is_none() {
+            existing.pauli = incoming.pauli;
+        }
+        if existing.label.is_none() {
+            existing.label = incoming.label;
         }
     }
 
@@ -6525,17 +6564,60 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "conflicting labels for observable L0")]
+    #[should_panic(expected = "already labelled \"first\", relabelled \"second\"")]
     fn test_duplicate_observable_definitions_reject_conflicting_labels() {
         let mut dem = DetectorErrorModel::new();
         dem.add_observable(DemOutput::new(0).with_label("first"));
         dem.add_observable(DemOutput::new(0).with_label("second"));
     }
 
+    /// Global phase carries no DEM meaning, so `-X` and `+X` describe the same
+    /// observable. `with_pauli` strips phase, but `pauli` is a public field and
+    /// can be set directly, so the conflict check must compare phase-free
+    /// rather than rejecting a legitimate redeclaration.
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "conflicting Pauli metadata for observable L0")]
+    fn duplicate_observable_definitions_ignore_global_phase() {
+        use pecos_core::pauli::X;
+
+        let mut plus = X(0);
+        plus.set_phase(pecos_core::QuarterPhase::PlusOne);
+        let mut minus = X(0);
+        minus.set_phase(pecos_core::QuarterPhase::MinusOne);
+
+        let mut dem = DetectorErrorModel::new();
+        let mut first = DemOutput::new(0);
+        first.pauli = Some(plus);
+        let mut second = DemOutput::new(0);
+        second.pauli = Some(minus);
+
+        dem.add_observable(first);
+        dem.add_observable(second); // must not panic
+        assert_eq!(dem.num_observables(), 1);
+    }
+
+    /// The merge must not mutate before it validates -- a caught panic should
+    /// leave the existing definition intact.
+    #[test]
+    fn conflicting_definitions_do_not_mutate_before_panicking() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_observable(DemOutput::new(0).with_records([-1]).with_label("first"));
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dem.add_observable(DemOutput::new(0).with_records([-2]).with_label("second"));
+        }));
+        assert!(outcome.is_err(), "conflicting labels must panic");
+
+        let observable = dem.observables().next().expect("observable survives");
+        assert_eq!(observable.label.as_deref(), Some("first"));
+        assert_eq!(
+            observable.records.as_slice(),
+            &[-1],
+            "records must not have been merged before the conflict was detected"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "conflicting Pauli metadata for observable L0: already declared as")]
     fn test_duplicate_observable_definitions_reject_conflicting_paulis() {
         use pecos_core::pauli::{X, Z};
 

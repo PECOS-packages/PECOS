@@ -443,6 +443,11 @@ pub struct DagCircuit {
     /// measurement had to fall back on node ids -- which cannot distinguish
     /// measurements inside one batched gate (issue #387).
     next_meas_id: usize,
+    /// Every [`MeasId`] this circuit has minted or accepted.
+    ///
+    /// `next_meas_id` alone cannot reject a supplied id that sits *below* the
+    /// counter, so duplicates need their own record.
+    used_meas_ids: BTreeSet<usize>,
 }
 
 impl DagCircuit {
@@ -457,6 +462,7 @@ impl DagCircuit {
             last_node: None,
             max_qubit: 0,
             next_meas_id: 0,
+            used_meas_ids: BTreeSet::new(),
             annotations: Vec::new(),
             measurement_labels: BTreeMap::new(),
         }
@@ -479,6 +485,7 @@ impl DagCircuit {
             last_node: None,
             max_qubit: 0,
             next_meas_id: 0,
+            used_meas_ids: BTreeSet::new(),
             annotations: Vec::new(),
             measurement_labels: BTreeMap::new(),
         }
@@ -498,8 +505,9 @@ impl DagCircuit {
     ///
     /// # Panics
     ///
-    /// Panics if [`Gate::validate`] rejects the gate payload. Use
-    /// [`try_add_gate`](Self::try_add_gate) for fallible insertion.
+    /// Panics if [`Gate::validate`] rejects the gate payload, or if the gate
+    /// carries a [`MeasId`] that another measurement in this circuit already
+    /// holds. Use [`try_add_gate`](Self::try_add_gate) for fallible insertion.
     pub fn add_gate(&mut self, gate: Gate) -> usize {
         self.try_add_gate(gate)
             .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
@@ -509,9 +517,12 @@ impl DagCircuit {
     ///
     /// # Errors
     ///
-    /// Returns an error if [`Gate::validate`] rejects the gate payload.
-    pub fn try_add_gate(&mut self, gate: Gate) -> Result<usize, String> {
+    /// Returns an error if [`Gate::validate`] rejects the gate payload, or if
+    /// the gate carries a [`MeasId`] that another measurement in this circuit
+    /// already holds.
+    pub fn try_add_gate(&mut self, mut gate: Gate) -> Result<usize, String> {
         gate.validate()?;
+        self.assign_measurement_ids(&mut gate)?;
         Ok(self.add_gate_unchecked(gate))
     }
 
@@ -525,35 +536,64 @@ impl DagCircuit {
         self.next_meas_id
     }
 
-    /// Give a measurement gate a [`MeasId`] per measured qubit, or make room
-    /// for the ids it already carries.
+    /// Give a measurement gate a [`MeasId`] per measured qubit, or reserve the
+    /// ids it already carries.
     ///
     /// Every gate reaches the circuit through here, so this is the one place
     /// that has to be right. Gates arriving with ids keep them -- they came
     /// from a `TickCircuit` conversion or an external source that owns the
-    /// numbering -- and the counter is advanced past them so a later minted id
-    /// cannot collide.
-    fn assign_measurement_ids(&mut self, gate: &mut Gate) {
-        if !matches!(
-            gate.gate_type,
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-        ) {
-            return;
-        }
-        if gate.meas_ids.is_empty() {
-            for _ in &gate.qubits {
-                gate.meas_ids.push(MeasId(self.next_meas_id));
-                self.next_meas_id += 1;
-            }
-        } else {
+    /// numbering -- and those ids are reserved so a later minted id cannot
+    /// collide.
+    ///
+    /// Ids are minted only for the gate types the rest of the codebase treats
+    /// as consuming a measurement record, `MZ | MeasureFree`. `MeasureLeaked`
+    /// is a measurement by `Gate::validate` and by `DagCircuit -> TickCircuit`,
+    /// but 46 other sites exclude it; minting here would stamp ids that the
+    /// `TickCircuit` side does not allocate records for, producing duplicates
+    /// at the boundary. Admitting `MeasureLeaked` is a repo-wide sweep tracked
+    /// in #387, not a decision for this one function. Ids supplied on a
+    /// `MeasureLeaked` are still reserved, so the sweep only has to change
+    /// which types get minted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a supplied id repeats one already in the circuit, or
+    /// if a supplied id is [`usize::MAX`] and so leaves no room for a successor.
+    fn assign_measurement_ids(&mut self, gate: &mut Gate) -> Result<(), String> {
+        if !gate.meas_ids.is_empty() {
             for id in &gate.meas_ids {
-                self.next_meas_id = self.next_meas_id.max(id.index() + 1);
+                if !self.used_meas_ids.insert(id.index()) {
+                    return Err(format!(
+                        "Measurement gate {:?} reuses MeasId({}), which another measurement in \
+                         this circuit already holds; measurement ids must be unique",
+                        gate.gate_type,
+                        id.index()
+                    ));
+                }
+                let successor = id.index().checked_add(1).ok_or_else(|| {
+                    format!(
+                        "Measurement gate {:?} carries MeasId({}), leaving no room to mint further ids",
+                        gate.gate_type,
+                        id.index()
+                    )
+                })?;
+                self.next_meas_id = self.next_meas_id.max(successor);
             }
+            return Ok(());
         }
+
+        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
+            return Ok(());
+        }
+        for _ in &gate.qubits {
+            gate.meas_ids.push(MeasId(self.next_meas_id));
+            self.used_meas_ids.insert(self.next_meas_id);
+            self.next_meas_id += 1;
+        }
+        Ok(())
     }
 
-    fn add_gate_unchecked(&mut self, mut gate: Gate) -> usize {
-        self.assign_measurement_ids(&mut gate);
+    fn add_gate_unchecked(&mut self, gate: Gate) -> usize {
         let node_idx = self.dag.add_node();
         // Ensure gates vector is large enough
         if node_idx >= self.gates.len() {
@@ -3051,5 +3091,114 @@ mod measurement_id_tests {
         let node = circuit.add_gate_auto_wire(Gate::h(&[0usize]));
         assert!(circuit.gate(node).unwrap().meas_ids.is_empty());
         assert_eq!(circuit.num_measurement_ids(), 0);
+    }
+
+    /// `MeasureLeaked` is a measurement to `Gate::validate`, but the 46 sites
+    /// that decide which gates consume a measurement record exclude it. Minting
+    /// here would hand out ids that `TickCircuit` allocates no record for, so
+    /// the two sides would disagree about which id belongs to which
+    /// measurement. Admitting it is the repo-wide sweep in #387.
+    #[test]
+    fn measure_leaked_is_not_minted_an_id() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let leaked = circuit.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
+        let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        assert!(
+            circuit.gate(leaked).unwrap().meas_ids.is_empty(),
+            "MeasureLeaked must not be minted an id while the record-bearing \
+             predicate elsewhere excludes it"
+        );
+        assert_eq!(
+            circuit.gate(measured).unwrap().meas_ids[0],
+            MeasId(0),
+            "and it must not consume an id that a real measurement needs"
+        );
+        assert_eq!(circuit.num_measurement_ids(), 1);
+    }
+
+    /// An id supplied on a `MeasureLeaked` is still reserved, so the #387 sweep
+    /// only has to change which gate types are minted for.
+    #[test]
+    fn a_supplied_measure_leaked_id_is_still_reserved() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let mut leaked = Gate::measure_leaked(&[0usize]);
+        leaked.meas_ids = smallvec::smallvec![MeasId(0)];
+        circuit.add_gate_auto_wire(leaked);
+        let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        assert_eq!(
+            circuit.gate(measured).unwrap().meas_ids[0],
+            MeasId(1),
+            "minting must not reuse an id a MeasureLeaked already holds"
+        );
+    }
+
+    /// The counter cannot reject a supplied id that sits *below* it, so
+    /// duplicates need their own record. Mint 0..=2, then hand back `MeasId(1)`.
+    #[test]
+    fn a_supplied_id_below_the_counter_is_rejected() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2, 3]);
+        circuit.mz(&[0, 1, 2]);
+
+        let mut duplicate = Gate::mz(&[3usize]);
+        duplicate.meas_ids = smallvec::smallvec![MeasId(1)];
+        let err = circuit
+            .try_add_gate(duplicate)
+            .expect_err("MeasId(1) is already held by the earlier batch");
+        assert!(
+            err.contains("MeasId(1)") && err.contains("unique"),
+            "the error must name the duplicated id: {err}"
+        );
+    }
+
+    /// Two gates supplying the same id collide even when neither was minted.
+    #[test]
+    fn two_gates_supplying_the_same_id_are_rejected() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let mut first = Gate::mz(&[0usize]);
+        first.meas_ids = smallvec::smallvec![MeasId(7)];
+        circuit.add_gate_auto_wire(first);
+
+        let mut second = Gate::mz(&[1usize]);
+        second.meas_ids = smallvec::smallvec![MeasId(7)];
+        assert!(
+            circuit.try_add_gate(second).is_err(),
+            "a repeated supplied id must be rejected, not silently shadow the first"
+        );
+    }
+
+    /// A duplicate inside one batched gate is caught too.
+    #[test]
+    fn a_batch_repeating_an_id_is_rejected() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let mut batch = Gate::mz(&[0usize, 1]);
+        batch.meas_ids = smallvec::smallvec![MeasId(3), MeasId(3)];
+        assert!(
+            circuit.try_add_gate(batch).is_err(),
+            "a batch cannot name the same measurement twice"
+        );
+    }
+
+    /// `usize::MAX` leaves no successor to mint, so it is refused rather than
+    /// overflowing the counter.
+    #[test]
+    fn a_saturating_supplied_id_is_rejected() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let mut saturated = Gate::mz(&[0usize]);
+        saturated.meas_ids = smallvec::smallvec![MeasId(usize::MAX)];
+        let err = circuit
+            .try_add_gate(saturated)
+            .expect_err("usize::MAX leaves no room for a successor id");
+        assert!(
+            err.contains("no room"),
+            "the error must explain why the id is refused: {err}"
+        );
     }
 }

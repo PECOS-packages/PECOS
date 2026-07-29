@@ -2555,6 +2555,41 @@ mod tests {
     // Helper Functions
     // =========================================================================
 
+    /// Measurement extraction orders by `MeasId`, which is insertion order --
+    /// the order the program writes the measurements in.
+    ///
+    /// Before every `DagCircuit` measurement carried an id, id-less circuits
+    /// fell back to topological position, so the two orderings could disagree
+    /// for circuits whose wiring does not follow insertion order. Program order
+    /// is what a measurement record means, so it is the one that survives.
+    #[test]
+    fn measurements_extract_in_insertion_order_not_topological_order() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        // q0 is measured first in program order but sits behind a longer chain,
+        // so a topological sweep reaches q1's measurement first.
+        dag.h(&[0]);
+        dag.h(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
+
+        let analyzer = DagFaultAnalyzer::new(&dag);
+        let (measurements, meas_ids) = analyzer.extract_measurements();
+
+        let qubits: Vec<usize> = measurements.iter().map(|&(_, q, _)| q).collect();
+        assert_eq!(
+            qubits,
+            vec![0, 1],
+            "extraction must follow the order the measurements were written"
+        );
+        assert_eq!(
+            meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
+            vec![0, 1],
+            "and the ids must agree with it"
+        );
+    }
+
     /// Simple Z-stabilizer measurement circuit: measures Z0 Z1 parity
     fn simple_syndrome_circuit() -> DagCircuit {
         let mut dag = DagCircuit::new();

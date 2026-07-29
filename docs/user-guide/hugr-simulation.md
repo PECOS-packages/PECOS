@@ -254,6 +254,13 @@ complete, and contains runtime-lowered operations before replaying it. The
 result is a normal `pecos.quantum.TickCircuit`; detector and observable
 metadata are not attached automatically.
 
+If the selected runtime emits explicit lowered `Idle` operations, replay
+preserves them as `Idle` gates in the `TickCircuit`. Runtime durations are
+reported in seconds and converted to integer PECOS `TimeUnits` using the
+current convention `1 TimeUnit = 1 ns`. PECOS does not synthesize missing
+idles in this API: a runtime that does not emit them produces no traced idle
+gates.
+
 Tracing records one execution path. It is useful for inspection and replay of
 dynamic programs, but one measurement-dependent path must not be treated as a
 complete static circuit model covering every possible execution.

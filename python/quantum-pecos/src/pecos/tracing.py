@@ -115,7 +115,8 @@ def qis_operation_trace_to_tick_circuit(
 
     Returns:
         A runtime-lowered ``TickCircuit``. Detector and observable metadata are
-        not attached automatically.
+        not attached automatically. Runtime-emitted ``Idle`` durations are
+        preserved as integer nanosecond :class:`pecos.TimeUnits`.
 
     Raises:
         TypeError: If trace framing, operation counts, or measurement metadata
@@ -196,7 +197,8 @@ def trace_program_to_tick_circuit(
 
     Returns:
         A runtime-lowered ``TickCircuit``. Detector and observable metadata are
-        not attached automatically.
+        not attached automatically. Runtime-emitted ``Idle`` durations are
+        preserved as integer nanosecond :class:`pecos.TimeUnits`.
 
     Note:
         This represents one execution path. For static circuit analysis, do

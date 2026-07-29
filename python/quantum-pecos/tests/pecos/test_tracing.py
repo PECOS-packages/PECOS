@@ -20,12 +20,14 @@ def _completed_trace() -> list[dict]:
             "operations": [
                 {"AllocateQubit": {"id": 0}},
                 {"Quantum": {"H": 0}},
+                {"Quantum": {"Idle": [20e-9, 0]}},
                 {"Quantum": {"Measure": [0, 7]}},
             ],
-            "num_operations": 3,
+            "num_operations": 4,
             "lowered_quantum_ops": [
                 {"gate_type": "PZ", "qubits": [0], "angles": [], "params": []},
                 {"gate_type": "H", "qubits": [0], "angles": [], "params": []},
+                {"gate_type": "Idle", "qubits": [0], "angles": [], "params": [20e-9]},
                 {
                     "gate_type": "MZ",
                     "qubits": [0],
@@ -55,6 +57,15 @@ def _gate_names(circuit: TickCircuit) -> list[str]:
         batch.gate_type.name
         for tick_index in range(circuit.num_ticks())
         for batch in circuit.get_tick(tick_index).gate_batches()
+    ]
+
+
+def _idle_gates(circuit: TickCircuit) -> list[tuple[list[int], float]]:
+    dag = circuit.to_dag_circuit()
+    return [
+        (list(gate.qubits), float(gate.params[0]))
+        for node_id in dag.nodes()
+        if (gate := dag.gate(node_id)) is not None and gate.gate_type.name == "Idle"
     ]
 
 
@@ -91,6 +102,7 @@ def test_qis_operation_trace_can_be_replayed_or_captured_as_a_tick_circuit(
     assert isinstance(replayed, TickCircuit)
     assert _gate_names(replayed) == _gate_names(captured)
     assert "MZ" in _gate_names(replayed)
+    assert _idle_gates(replayed) == [([0], 20.0)]
     assert replayed.get_meta("qis_source_measurement_ids") == "[7]"
 
 

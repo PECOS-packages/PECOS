@@ -31,6 +31,7 @@ use pecos_quantum::{
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
+use std::collections::BTreeSet;
 
 type PyMixedPauliTerm = (f64, Vec<(String, usize)>);
 
@@ -2692,10 +2693,28 @@ impl PyTickCircuit {
     ///
     /// Returns:
     ///     A new `DagCircuit` with the same gates and qubit wire connections.
-    fn to_dag_circuit(&self) -> PyDagCircuit {
-        PyDagCircuit {
-            inner: DagCircuit::from(&self.inner),
+    ///
+    /// Raises:
+    ///     ValueError: Two measurements share a `MeasId`, so the ids cannot
+    ///         name them apart.
+    fn to_dag_circuit(&self) -> PyResult<PyDagCircuit> {
+        // `DagCircuit` enforces id uniqueness by panicking, which Python cannot
+        // catch as an ordinary exception. Check here, where the error can still
+        // be raised as one.
+        let mut seen = BTreeSet::new();
+        for batch in self.inner.iter_gate_batches() {
+            for id in &batch.as_gate().meas_ids {
+                if !seen.insert(id.index()) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "two measurements share MeasId({}); each measurement needs a unique id",
+                        id.index()
+                    )));
+                }
+            }
         }
+        Ok(PyDagCircuit {
+            inner: DagCircuit::from(&self.inner),
+        })
     }
 
     /// Lower Clifford-angle rotations to named Clifford gates.
@@ -3812,6 +3831,18 @@ impl PyTickHandle {
                 meas_ids.len(),
                 qubits.len()
             )));
+        }
+        // A `MeasId` names one measurement, so a repeat inside a single call is
+        // never meaningful: stamped-id resolution would bind to whichever
+        // occurrence came first. Duplicates spread across calls are caught
+        // later, when the circuit is converted to a `DagCircuit`.
+        let mut seen = BTreeSet::new();
+        for &mid in &meas_ids {
+            if !seen.insert(mid) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "meas_ids repeats MeasId({mid}); each measurement needs a unique id"
+                )));
+            }
         }
         let mut handle = slf.borrow_mut(py);
         let mut gate = Gate::mz(&qubits);

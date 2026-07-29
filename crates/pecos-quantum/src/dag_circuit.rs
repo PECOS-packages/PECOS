@@ -438,10 +438,8 @@ pub struct DagCircuit {
     measurement_labels: BTreeMap<usize, String>,
     /// Next [`MeasId`] to hand out when a measurement arrives without one.
     ///
-    /// `DagCircuit`'s builders previously created measurements carrying no
-    /// identity at all, so anything downstream that needs to name a specific
-    /// measurement had to fall back on node ids -- which cannot distinguish
-    /// measurements inside one batched gate (issue #387).
+    /// An id names one measurement. Node ids cannot: a batched measurement gate
+    /// is a single node covering several measurements.
     next_meas_id: usize,
     /// Every [`MeasId`] this circuit has minted or accepted.
     ///
@@ -528,9 +526,9 @@ impl DagCircuit {
 
     /// Number of measurement records this circuit has allocated.
     ///
-    /// Equivalently, the next [`MeasId`] that would be minted. With ids
-    /// supplied externally this is `max(id) + 1` rather than a count, which is
-    /// why it must not be used as one -- see #387.
+    /// Equivalently, the next [`MeasId`] that would be minted. This is not a
+    /// count of measurements: externally supplied ids may be sparse, in which
+    /// case it is `max(id) + 1`.
     #[must_use]
     pub fn num_measurement_ids(&self) -> usize {
         self.next_meas_id
@@ -545,15 +543,12 @@ impl DagCircuit {
     /// numbering -- and those ids are reserved so a later minted id cannot
     /// collide.
     ///
-    /// Ids are minted only for the gate types the rest of the codebase treats
-    /// as consuming a measurement record, `MZ | MeasureFree`. `MeasureLeaked`
-    /// is a measurement by `Gate::validate` and by `DagCircuit -> TickCircuit`,
-    /// but 46 other sites exclude it; minting here would stamp ids that the
-    /// `TickCircuit` side does not allocate records for, producing duplicates
-    /// at the boundary. Admitting `MeasureLeaked` is a repo-wide sweep tracked
-    /// in #387, not a decision for this one function. Ids supplied on a
-    /// `MeasureLeaked` are still reserved, so the sweep only has to change
-    /// which types get minted.
+    /// Ids are minted only for `MZ | MeasureFree`, the gate types that consume
+    /// a measurement record elsewhere in the codebase. `MeasureLeaked` is a
+    /// measurement to `Gate::validate`, but `TickCircuit` allocates it no
+    /// record, so minting one here would give it an id the two representations
+    /// disagree about. Ids *supplied* on a `MeasureLeaked` are still reserved,
+    /// so admitting it later means changing only which types are minted for.
     ///
     /// # Errors
     ///
@@ -3097,7 +3092,7 @@ mod measurement_id_tests {
     /// that decide which gates consume a measurement record exclude it. Minting
     /// here would hand out ids that `TickCircuit` allocates no record for, so
     /// the two sides would disagree about which id belongs to which
-    /// measurement. Admitting it is the repo-wide sweep in #387.
+    /// measurement.
     #[test]
     fn measure_leaked_is_not_minted_an_id() {
         let mut circuit = DagCircuit::new();
@@ -3118,8 +3113,8 @@ mod measurement_id_tests {
         assert_eq!(circuit.num_measurement_ids(), 1);
     }
 
-    /// An id supplied on a `MeasureLeaked` is still reserved, so the #387 sweep
-    /// only has to change which gate types are minted for.
+    /// An id supplied on a `MeasureLeaked` is still reserved, so admitting the
+    /// type later means changing only which gate types are minted for.
     #[test]
     fn a_supplied_measure_leaked_id_is_still_reserved() {
         let mut circuit = DagCircuit::new();

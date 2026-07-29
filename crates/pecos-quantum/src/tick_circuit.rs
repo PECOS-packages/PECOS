@@ -1470,8 +1470,7 @@ impl TickCircuit {
         // Limitation: `mz_with_ids` lets callers supply external stable ids
         // (Guppy result ids) that are not positional, and for those the record
         // index and the id genuinely differ. `TickCircuit` does not store the
-        // positional ordinal separately, so that case cannot be resolved here;
-        // it is tracked in #387 along with the reverse-conversion conflation.
+        // positional ordinal separately, so that case cannot be resolved here.
         let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
         let gate = batch.as_gate();
         if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
@@ -3445,9 +3444,9 @@ impl From<&TickCircuit> for DagCircuit {
                     // here left later records unmappable, so annotations
                     // referencing them silently resolved to nothing.
                     //
-                    // `MeasureLeaked` is a measurement too and is still
-                    // excluded here; that inconsistency is tracked in #387
-                    // along with the remaining silent drops below.
+                    // `MeasureLeaked` is a measurement too but is excluded
+                    // here, matching every other site that decides which gates
+                    // consume a record.
                     if matches!(split_gate.gate_type, GateType::MZ | GateType::MeasureFree) {
                         for _q in &split_gate.qubits {
                             meas_record_to_node.insert(meas_record_idx, node);

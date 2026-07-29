@@ -300,24 +300,26 @@ def test_dem_sampler_builder_rejects_inconsistent_measurement_order() -> None:
         builder.build()
 
 
-def test_dem_sampler_builder_rejects_duplicate_stamped_meas_ids() -> None:
-    """Duplicate stable MeasIds make stamped-id resolution ambiguous (bind to
-    the first occurrence). DemBuilder rejects them; the sampler JSON path must
-    too, rather than silently binding."""
-    from pecos_rslib.qec import DemSamplerBuilder
+def test_mz_with_ids_rejects_a_repeated_id_in_one_call() -> None:
+    """Duplicate stable MeasIds make stamped-id resolution ambiguous (it binds
+    to the first occurrence). A repeat within one call is caught where the ids
+    are supplied, so it never reaches the circuit."""
     from pecos_rslib.quantum import TickCircuit
 
     tc = TickCircuit()
     tc.tick().pz([0, 1])
-    tc.tick().mz_with_ids([0, 1], [7, 7])  # duplicate stamped id 7
-    im = DagFaultAnalyzer(tc.to_dag_circuit()).build_influence_map()
+    with pytest.raises(ValueError, match=r"repeats MeasId\(7\)"):
+        tc.tick().mz_with_ids([0, 1], [7, 7])
 
-    builder = (
-        DemSamplerBuilder(im)
-        .with_noise(**_NOISE)
-        .with_detectors_json(
-            '[{"id": 0, "meas_ids": [7]}]',
-        )
-    )
-    with pytest.raises(ValueError, match=r"duplicate stable MeasId"):
-        builder.build()
+
+def test_duplicate_ids_across_calls_fail_at_dag_conversion() -> None:
+    """A duplicate spread across two calls is invisible to either call, so it is
+    caught when the circuit is converted."""
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().pz([0, 1])
+    tc.tick().mz_with_ids([0], [7])
+    tc.tick().mz_with_ids([1], [7])
+    with pytest.raises(ValueError, match=r"share MeasId\(7\)"):
+        tc.to_dag_circuit()

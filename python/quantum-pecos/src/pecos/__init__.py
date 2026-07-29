@@ -223,6 +223,7 @@ from pecos import (
     quantum,  # Quantum types (DagCircuit, Gate, Pauli, etc.)
     simulators,
     testing,  # Testing utilities (like numpy.testing)
+    tracing,  # Guppy/HUGR runtime operation tracing
 )
 
 # pecos.tools is deprecated (renamed to pecos.analysis).
@@ -280,6 +281,11 @@ from pecos.exceptions import WasmError
 # Import program wrappers from programs submodule for convenience
 # These can also be accessed via pecos.programs.Qasm, etc.
 from pecos.programs import Guppy, Hugr, PhirJson, ProgramWrapper, Qasm, Qis, Wasm, Wat
+from pecos.tracing import (
+    capture_qis_operation_trace,
+    qis_operation_trace_to_tick_circuit,
+    trace_program_to_tick_circuit,
+)
 
 # Re-export noise and quantum engine builders from pecos_rslib
 # These don't need wrappers since they don't take program types
@@ -372,6 +378,7 @@ __all__ = [
     "benchmarks",
     "biased_depolarizing_noise",
     "brentq",
+    "capture_qis_operation_trace",
     "ceil",
     "circuit_converters",
     "circuit_runners",
@@ -431,6 +438,7 @@ __all__ = [
     "qec",
     "qeccs",
     "qis_engine",
+    "qis_operation_trace_to_tick_circuit",
     "quantum",
     "random",
     "round",
@@ -451,6 +459,8 @@ __all__ = [
     "tanh",
     "testing",
     "tools",
+    "trace_program_to_tick_circuit",
+    "tracing",
     "typing",
     "u8",
     "u16",

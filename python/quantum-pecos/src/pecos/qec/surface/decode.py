@@ -43,7 +43,6 @@ For circuit-level decoding with MWPM:
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -55,6 +54,11 @@ import numpy as np
 
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 from pecos.quantum import validate_hosted_operations
+from pecos.tracing import (
+    capture_guppy_operation_trace,  # noqa: F401
+    trace_guppy_into_tick_circuit,  # noqa: F401
+    trace_guppy_into_tick_circuit_with_result_traces,
+)
 
 if TYPE_CHECKING:
     import stim
@@ -1513,129 +1517,6 @@ def source_measurement_ids_from_operation_trace(chunks: list[dict[str, Any]]) ->
         msg = "raw QIS operation trace contains duplicate measurement result ids"
         raise ValueError(msg)
     return ids
-
-
-def capture_guppy_operation_trace(
-    program: Any,
-    num_qubits: int,
-    *,
-    seed: int = 0,
-    runtime: object | None = None,
-) -> list[dict[str, Any]]:
-    """Capture a Guppy/QIS program's Selene operation trace chunks."""
-    import pecos_rslib
-
-    import pecos
-
-    # Trace capture records the runtime-lowered QIS operations and result tags;
-    # DEM validation/fault propagation happens after replay.  Use a permissive
-    # trace backend instead of asking stabilizer evolution to validate every
-    # runtime-emitted rotation while we are only collecting provenance.
-    sim_builder = (
-        pecos.sim(program)
-        .classical(pecos.selene_engine(runtime))
-        .quantum(pecos_rslib.coin_toss())
-        .qubits(num_qubits)
-        .seed(seed)
-    )
-    return list(sim_builder.capture_operation_trace())
-
-
-def trace_guppy_into_tick_circuit_with_result_traces(
-    program: Any,
-    num_qubits: int,
-    *,
-    seed: int = 0,
-    runtime: object | None = None,
-    measurement_crosstalk_topology: str | None = None,
-    require_hosted_operation_order: bool = False,
-    max_hosted_tick_separation: int | None = None,
-    allow_raw_measurement_id_fallback: bool = False,
-) -> tuple[Any, list[dict[str, Any]]]:
-    """Trace a Guppy/QIS program into a ``TickCircuit`` plus result-tag provenance."""
-    chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
-        chunks,
-        measurement_crosstalk_topology=measurement_crosstalk_topology,
-        allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
-    )
-    tick_circuit.set_meta(
-        "guppy_source_measurement_ids",
-        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
-    )
-    _validate_trace_hosted_operations_if_requested(
-        tick_circuit,
-        require_hosted_operation_order=require_hosted_operation_order,
-        max_hosted_tick_separation=max_hosted_tick_separation,
-        context="trace_guppy_into_tick_circuit_with_result_traces",
-    )
-    return tick_circuit, named_result_traces_from_operation_trace(chunks)
-
-
-def trace_guppy_into_tick_circuit(
-    program: Any,
-    num_qubits: int,
-    *,
-    seed: int = 0,
-    runtime: object | None = None,
-    measurement_crosstalk_topology: str | None = None,
-    require_hosted_operation_order: bool = False,
-    max_hosted_tick_separation: int | None = None,
-) -> Any:
-    """Trace a Guppy/QIS program's lowered Selene op stream into a ``TickCircuit``.
-
-    Runs ``program`` under the Selene QIS engine with operation tracing enabled
-    and replays the captured (lowered) gate stream into a PECOS ``TickCircuit``.
-    This is the generic core shared by the surface traced-QIS path and the
-    general ``DetectorErrorModel.from_guppy`` entry point.
-
-    Note: this traces ONE ideal execution. Measurement-dependent (dynamic)
-    control flow is therefore *unsupported / undefined* for DEM construction --
-    a single sampled branch is not a static circuit. No reliable runtime-trace
-    heuristic distinguishes that from statically-scheduled post-measurement
-    gates (the surface code legitimately has those), so no guard is attempted;
-    callers must pass straight-line programs.
-
-    Args:
-        program: Anything ``pecos.sim`` accepts -- a ``@guppy`` function, a
-            compiled Guppy program, or a program wrapper.
-        num_qubits: Number of qubits to allocate. QIS/HUGR programs require an
-            explicit qubit count for trace capture.
-        seed: Seed for the (ideal) trace run.
-        runtime: Optional Selene runtime selector/plugin. ``None`` selects the
-            default Selene runtime. Runtime plugin objects are passed through to
-            ``pecos.selene_engine(runtime)``.
-        measurement_crosstalk_topology: Optional measurement-crosstalk replay
-            mode for stamping global measurement-crosstalk payload markers.
-        require_hosted_operation_order: If true, validate generic hosted-operation
-            metadata after trace replay. A gate with ``local_role`` metadata
-            must bind to a later same-``host_id`` host gate sharing a qubit.
-            This catches runtime/compiler lowering that reorders hosted local
-            pulses after the operation they semantically prepare.
-        max_hosted_tick_separation: Optional maximum absolute signed tick
-            separation accepted by the hosted-operation validator.
-
-    Returns:
-        A ``TickCircuit`` with no detector/observable metadata attached; the
-        caller supplies that.
-    """
-    chunks = capture_guppy_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
-    tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
-        chunks,
-        measurement_crosstalk_topology=measurement_crosstalk_topology,
-        allow_raw_measurement_id_fallback=False,
-    )
-    tick_circuit.set_meta(
-        "guppy_source_measurement_ids",
-        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
-    )
-    _validate_trace_hosted_operations_if_requested(
-        tick_circuit,
-        require_hosted_operation_order=require_hosted_operation_order,
-        max_hosted_tick_separation=max_hosted_tick_separation,
-        context="trace_guppy_into_tick_circuit",
-    )
-    return tick_circuit
 
 
 def _validate_trace_hosted_operations_if_requested(

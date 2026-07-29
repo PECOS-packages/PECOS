@@ -207,6 +207,57 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
     println!("Circuit uses {} qubits", engine.num_qubits());
     ```
 
+## Capturing the Runtime QIS Operation Trace
+
+PECOS can expose the QIS operations produced while a Guppy, HUGR, or QIS
+program runs through a Selene-compatible runtime. The trace contains both the
+source QIS operations and the operations after runtime scheduling and
+lowering. Future language frontends can use the same APIs when they lower into
+this QIS execution path:
+
+```python
+from guppylang import guppy
+from guppylang.std.quantum import h, measure, qubit
+from pecos import (
+    capture_qis_operation_trace,
+    qis_operation_trace_to_tick_circuit,
+    trace_program_to_tick_circuit,
+)
+
+
+@guppy
+def traced_coin_flip() -> None:
+    q = qubit()
+    h(q)
+    _ = measure(q)
+
+
+# Keep the structured trace for inspection, storage, or custom processing.
+trace = capture_qis_operation_trace(traced_coin_flip, num_qubits=1, seed=0)
+assert trace[-1]["stage"] == "trace_complete"
+
+# Replay that same trace without executing the program again.
+circuit = qis_operation_trace_to_tick_circuit(trace)
+
+# Or capture and convert in one call.
+same_circuit = trace_program_to_tick_circuit(
+    traced_coin_flip,
+    num_qubits=1,
+    seed=0,
+)
+
+assert circuit.num_ticks() == same_circuit.num_ticks()
+```
+
+`qis_operation_trace_to_tick_circuit` validates that the trace is framed,
+complete, and contains runtime-lowered operations before replaying it. The
+result is a normal `pecos.quantum.TickCircuit`; detector and observable
+metadata are not attached automatically.
+
+Tracing records one execution path. It is useful for inspection and replay of
+dynamic programs, but one measurement-dependent path must not be treated as a
+complete static circuit model covering every possible execution.
+
 ## Measurement-Based Control Flow
 
 One of HUGR's key advantages is native support for control flow based on measurement results. This is natural in Guppy:

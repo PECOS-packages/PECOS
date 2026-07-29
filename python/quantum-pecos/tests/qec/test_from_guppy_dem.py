@@ -10,6 +10,12 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import barrier, owned, result
 from guppylang.std.quantum import h, measure, qubit, x
+from pecos._qis_trace_replay import (
+    _reject_partially_lowered_trace,
+    _replay_lowered_qis_trace_into_tick_circuit,
+    _replay_qis_trace_into_tick_circuit,
+    named_result_traces_from_operation_trace,
+)
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseModel, SurfacePatch
@@ -22,15 +28,11 @@ from pecos.qec.surface.decode import (
     _copy_surface_tick_circuit_metadata,
     _extract_measurement_meas_ids,
     _measurement_index_remap_for_orders,
-    _reject_partially_lowered_trace,
     _remap_surface_record_metadata_json,
-    _replay_lowered_qis_trace_into_tick_circuit,
-    _replay_qis_trace_into_tick_circuit,
     _surface_runtime_measurement_remap_from_result_traces,
     _validate_result_tag_remap_against_traced_measurements,
     capture_guppy_operation_trace,
     generate_circuit_level_dem_from_builder,
-    named_result_traces_from_operation_trace,
     trace_guppy_into_tick_circuit_with_result_traces,
 )
 

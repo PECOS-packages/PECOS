@@ -179,7 +179,7 @@ def test_capture_operation_trace_returns_in_memory_batches() -> None:
 def test_capture_operation_trace_includes_named_result_provenance() -> None:
     """Trace capture must preserve result(...) -> measurement-id provenance."""
     import pecos
-    from pecos.qec.surface.decode import named_result_traces_from_operation_trace
+    from pecos._qis_trace_replay import named_result_traces_from_operation_trace
 
     _require_selene_runtime()
 

@@ -12,6 +12,10 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos._qis_trace_replay import (
+    _replay_qis_trace_chunks_into_tick_circuit,
+    _validate_audited_trace_stream,
+)
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import (
     Detector,
@@ -23,10 +27,6 @@ from pecos.qec import (
 )
 from pecos.qec.dem import _generator_certified_result_traces
 from pecos.qec.dem_spec import GuppyDemBuild, _resolve_dem_specs
-from pecos.qec.surface.decode import (
-    _replay_qis_trace_chunks_into_tick_circuit,
-    _validate_audited_trace_stream,
-)
 from pecos_rslib.quantum import TickCircuit
 
 

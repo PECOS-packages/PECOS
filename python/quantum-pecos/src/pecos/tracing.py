@@ -14,6 +14,13 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from pecos._qis_trace_replay import (
+    _replay_qis_trace_chunks_into_tick_circuit,
+    _validate_trace_hosted_operations_if_requested,
+    named_result_traces_from_operation_trace,
+    source_measurement_ids_from_operation_trace,
+)
+
 if TYPE_CHECKING:
     from pecos.quantum import TickCircuit
 
@@ -70,12 +77,6 @@ def _qis_operation_trace_to_tick_circuit(
     context: str,
 ) -> TickCircuit:
     """Replay captured QIS operation-trace chunks into a ``TickCircuit``."""
-    from pecos.qec.surface.decode import (  # noqa: PLC0415
-        _replay_qis_trace_chunks_into_tick_circuit,
-        _validate_trace_hosted_operations_if_requested,
-        source_measurement_ids_from_operation_trace,
-    )
-
     tick_circuit = _replay_qis_trace_chunks_into_tick_circuit(
         chunks,
         measurement_crosstalk_topology=measurement_crosstalk_topology,
@@ -150,8 +151,6 @@ def _trace_program_to_tick_circuit_with_result_traces(
     :func:`trace_program_to_tick_circuit`. The second return value contains
     runtime ``result(...)`` records captured during the traced shot.
     """
-    from pecos.qec.surface.decode import named_result_traces_from_operation_trace  # noqa: PLC0415
-
     chunks = capture_qis_operation_trace(program, num_qubits, seed=seed, runtime=runtime)
     tick_circuit = _qis_operation_trace_to_tick_circuit(
         chunks,

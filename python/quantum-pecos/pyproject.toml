@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quantum-pecos"
-version = "0.9.0.dev2"
+version = "0.9.1.dev2"
 authors = [
     {name = "The PECOS Developers"},
 ]

@@ -3269,7 +3269,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "pecos-workspace"
-version = "0.9.0.dev2"
+version = "0.9.1.dev2"
 source = { virtual = "." }
 
 [package.optional-dependencies]
@@ -4211,7 +4211,7 @@ wheels = [
 
 [[package]]
 name = "quantum-pecos"
-version = "0.9.0.dev2"
+version = "0.9.1.dev2"
 source = { editable = "python/quantum-pecos" }
 dependencies = [
     { name = "guppylang" },

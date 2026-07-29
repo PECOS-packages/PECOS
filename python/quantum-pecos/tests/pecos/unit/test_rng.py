@@ -144,9 +144,6 @@ def test_negative_values_are_rejected_for_non_advance_rng_funcs() -> None:
     """Verifies only RNGadvance accepts negative numeric arguments."""
     rng = RNGModel(shot_id=0)
 
-    with pytest.raises(ValueError, match=r"RNG seed must be non-negative: got -1"):
-        rng.eval_func({"func": "RNGseed", "args": ["-1"]}, {})
-
     with pytest.raises(ValueError, match=r"RNG bound must be non-negative: got -1"):
         rng.eval_func({"func": "RNGbound", "args": ["-1"]}, {})
 

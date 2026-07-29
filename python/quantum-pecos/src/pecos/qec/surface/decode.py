@@ -52,6 +52,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+from pecos._traced_circuit import (
+    measurement_ids_in_execution_order,
+    normalize_traced_tick_circuit,
+)
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
 from pecos.tracing import (
     capture_guppy_operation_trace,  # noqa: F401
@@ -901,29 +905,6 @@ def _surface_abstract_measurement_result_refs(abstract_tc: Any) -> list[tuple[st
     return refs
 
 
-def _extract_measurement_meas_ids(tc: Any) -> list[int]:
-    """Return stable measurement ids in TickCircuit execution order."""
-    ids: list[int] = []
-    for tick_idx in range(tc.num_ticks()):
-        tick = tc.get_tick(tick_idx)
-        if tick is None:
-            continue
-        for gate in tick.gate_batches():
-            gate_type = str(getattr(gate, "gate_type", "")).rsplit(".", maxsplit=1)[-1]
-            if gate_type not in {"MZ", "MeasureFree"}:
-                continue
-            qubits = list(getattr(gate, "qubits", []))
-            meas_ids = list(getattr(gate, "meas_ids", []))
-            if len(meas_ids) != len(qubits):
-                msg = (
-                    f"traced measurement gate {gate_type} in tick {tick_idx} carries "
-                    f"{len(meas_ids)} MeasId(s) for {len(qubits)} qubit(s)"
-                )
-                raise ValueError(msg)
-            ids.extend(int(meas_id) for meas_id in meas_ids)
-    return ids
-
-
 def _validate_result_tag_remap_against_traced_measurements(
     traced_tc: Any,
     measurement_index_remap: Mapping[int, int],
@@ -941,7 +922,7 @@ def _validate_result_tag_remap_against_traced_measurements(
         )
         raise ValueError(msg)
 
-    traced_meas_ids = _extract_measurement_meas_ids(traced_tc)
+    traced_meas_ids = measurement_ids_in_execution_order(traced_tc)
     if len(traced_meas_ids) != expected_measurements:
         msg = (
             "traced circuit contains "
@@ -1472,7 +1453,6 @@ def _surface_native_topology(
         _extract_measurement_order,
         _metadata_record_offsets,
         _metadata_uses_record_offsets,
-        normalize_traced_qis_tick_circuit,
     )
 
     resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis, check_plan=check_plan)
@@ -1502,7 +1482,7 @@ def _surface_native_topology(
         # Keep this surface helper aligned with DetectorErrorModel.from_guppy:
         # traced QIS emits parameterized Clifford rotations, while DEM
         # replacement-branch approximations operate on named Clifford gates.
-        normalize_traced_qis_tick_circuit(tc, context="surface traced-QIS native topology")
+        normalize_traced_tick_circuit(tc, context="surface traced-QIS native topology")
     if include_idle_gates:
         # Insert idle gates only when the requested noise model includes a
         # dedicated idle channel. Otherwise inserted idle gates receive ordinary

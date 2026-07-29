@@ -16,17 +16,19 @@ from pecos._qis_trace_replay import (
     _replay_qis_trace_into_tick_circuit,
     named_result_traces_from_operation_trace,
 )
+from pecos._traced_circuit import (
+    measurement_ids_in_execution_order,
+    normalize_traced_tick_circuit,
+)
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import RUNTIME_IDLE_TIME_UNITS_PER_SECOND, NoiseModel, SurfacePatch
 from pecos.qec.surface.circuit_builder import (
     generate_tick_circuit_from_patch,
-    normalize_traced_qis_tick_circuit,
 )
 from pecos.qec.surface.decode import (
     _build_surface_tick_circuit_for_native_model,
     _copy_surface_tick_circuit_metadata,
-    _extract_measurement_meas_ids,
     _measurement_index_remap_for_orders,
     _remap_surface_record_metadata_json,
     _surface_runtime_measurement_remap_from_result_traces,
@@ -746,7 +748,7 @@ def test_from_guppy_surface_code_is_byte_identical_to_reference() -> None:
             basis,
             circuit_source="traced_qis",
         )
-        normalize_traced_qis_tick_circuit(ref, context="from_guppy surface reference")
+        normalize_traced_tick_circuit(ref, context="from_guppy surface reference")
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(distance=3, num_rounds=3, basis=basis),
@@ -772,7 +774,7 @@ def test_from_guppy_szz_surface_code_is_byte_identical_to_reference(distance: in
             circuit_source="traced_qis",
             interaction_basis="szz",
         )
-        normalize_traced_qis_tick_circuit(ref, context="from_guppy SZZ surface reference")
+        normalize_traced_tick_circuit(ref, context="from_guppy SZZ surface reference")
         ref_dem = DetectorErrorModel.from_circuit(ref, **p).to_string()
         got = DetectorErrorModel.from_guppy(
             make_surface_code(
@@ -853,7 +855,7 @@ def _constrained_surface_via_guppy(*, d, basis, rounds, budget, noise, check_pla
         circuit_source="traced_qis",
         check_plan=check_plan,
     )
-    normalize_traced_qis_tick_circuit(ref, context="from_guppy constrained surface reference")
+    normalize_traced_tick_circuit(ref, context="from_guppy constrained surface reference")
     ref_dem = DetectorErrorModel.from_circuit(ref, **noise).to_string()
 
     got = DetectorErrorModel.from_guppy(
@@ -1349,7 +1351,7 @@ def test_runtime_result_tags_bind_metadata_when_lowered_measurements_reorder() -
         [9, 4, 8, 5, 12, 7, 11, 10, 6],
     )
 
-    assert _extract_measurement_meas_ids(traced_tc) != list(range(13))
+    assert measurement_ids_in_execution_order(traced_tc) != list(range(13))
     _validate_result_tag_remap_against_traced_measurements(
         traced_tc,
         remap,
@@ -1378,7 +1380,7 @@ def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
 
     remap = {0: 3, 1: 10}
 
-    assert _extract_measurement_meas_ids(tc) == [10, 3]
+    assert measurement_ids_in_execution_order(tc) == [10, 3]
     _validate_result_tag_remap_against_traced_measurements(
         tc,
         remap,

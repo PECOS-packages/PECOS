@@ -10,6 +10,7 @@ import numpy as np
 import pecos as pc
 import pytest
 import stim
+from pecos._traced_circuit import normalize_traced_tick_circuit
 from pecos.qec.surface import NoiseModel, SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     OpType,
@@ -860,7 +861,6 @@ def test_szz_native_dem_rejects_traced_qis_idle_noise() -> None:
 
 @pytest.mark.parametrize("basis", ["Z", "X"])
 def test_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
-    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
     patch = SurfacePatch.create(distance=3)
@@ -871,7 +871,7 @@ def test_szz_traced_qis_native_dem_matches_stim_for_p1(basis: str) -> None:
         circuit_source="traced_qis",
         interaction_basis="szz",
     )
-    normalize_traced_qis_tick_circuit(tick_circuit, context="SZZ traced-QIS p1 test")
+    normalize_traced_tick_circuit(tick_circuit, context="SZZ traced-QIS p1 test")
     noise_args = {
         "p1": 0.001,
         "p2": 0.0,
@@ -920,7 +920,6 @@ def test_round_order_szz_traced_qis_native_dem_matches_stim_for_p1(
     basis: str,
     check_plan: str,
 ) -> None:
-    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
     patch = SurfacePatch.create(distance=3)
@@ -932,7 +931,7 @@ def test_round_order_szz_traced_qis_native_dem_matches_stim_for_p1(
         circuit_source="traced_qis",
         check_plan=check_plan,
     )
-    normalize_traced_qis_tick_circuit(tick_circuit, context="round-order SZZ traced-QIS p1 test")
+    normalize_traced_tick_circuit(tick_circuit, context="round-order SZZ traced-QIS p1 test")
     noise_args = {
         "p1": 0.001,
         "p2": 0.0,
@@ -985,7 +984,6 @@ def test_szz_public_native_dem_accepts_traced_qis_p1() -> None:
 
 @pytest.mark.parametrize("basis", ["Z", "X"])
 def test_szz_public_traced_qis_dem_matches_stim_with_z_frame_p1_free(basis: str) -> None:
-    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
     from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 
     patch = SurfacePatch.create(distance=3)
@@ -996,7 +994,7 @@ def test_szz_public_traced_qis_dem_matches_stim_with_z_frame_p1_free(basis: str)
         circuit_source="traced_qis",
         interaction_basis="szz",
     )
-    normalize_traced_qis_tick_circuit(tick_circuit, context="SZZ public traced-QIS p1 test")
+    normalize_traced_tick_circuit(tick_circuit, context="SZZ public traced-QIS p1 test")
     noise = NoiseModel(p1=0.001)
 
     native_errors = _raw_dem_errors(

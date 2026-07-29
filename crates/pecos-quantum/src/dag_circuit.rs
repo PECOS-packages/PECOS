@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, QubitId, TimeUnits};
+use pecos_core::{Angle64, Gate, MeasId, QubitId, TimeUnits};
 use pecos_num::dag::{DAG, DagWouldCycleError};
 
 use crate::circuit::{Circuit, CircuitMut, GateHandle, GateView};
@@ -436,6 +436,13 @@ pub struct DagCircuit {
     annotations: Vec<PauliAnnotation>,
     /// Measurement labels (`node_index` → label).
     measurement_labels: BTreeMap<usize, String>,
+    /// Next [`MeasId`] to hand out when a measurement arrives without one.
+    ///
+    /// `DagCircuit`'s builders previously created measurements carrying no
+    /// identity at all, so anything downstream that needs to name a specific
+    /// measurement had to fall back on node ids -- which cannot distinguish
+    /// measurements inside one batched gate (issue #387).
+    next_meas_id: usize,
 }
 
 impl DagCircuit {
@@ -449,6 +456,7 @@ impl DagCircuit {
             qubit_heads: BTreeMap::new(),
             last_node: None,
             max_qubit: 0,
+            next_meas_id: 0,
             annotations: Vec::new(),
             measurement_labels: BTreeMap::new(),
         }
@@ -470,6 +478,7 @@ impl DagCircuit {
             qubit_heads: BTreeMap::new(),
             last_node: None,
             max_qubit: 0,
+            next_meas_id: 0,
             annotations: Vec::new(),
             measurement_labels: BTreeMap::new(),
         }
@@ -506,7 +515,45 @@ impl DagCircuit {
         Ok(self.add_gate_unchecked(gate))
     }
 
-    fn add_gate_unchecked(&mut self, gate: Gate) -> usize {
+    /// Number of measurement records this circuit has allocated.
+    ///
+    /// Equivalently, the next [`MeasId`] that would be minted. With ids
+    /// supplied externally this is `max(id) + 1` rather than a count, which is
+    /// why it must not be used as one -- see #387.
+    #[must_use]
+    pub fn num_measurement_ids(&self) -> usize {
+        self.next_meas_id
+    }
+
+    /// Give a measurement gate a [`MeasId`] per measured qubit, or make room
+    /// for the ids it already carries.
+    ///
+    /// Every gate reaches the circuit through here, so this is the one place
+    /// that has to be right. Gates arriving with ids keep them -- they came
+    /// from a `TickCircuit` conversion or an external source that owns the
+    /// numbering -- and the counter is advanced past them so a later minted id
+    /// cannot collide.
+    fn assign_measurement_ids(&mut self, gate: &mut Gate) {
+        if !matches!(
+            gate.gate_type,
+            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+        ) {
+            return;
+        }
+        if gate.meas_ids.is_empty() {
+            for _ in &gate.qubits {
+                gate.meas_ids.push(MeasId(self.next_meas_id));
+                self.next_meas_id += 1;
+            }
+        } else {
+            for id in &gate.meas_ids {
+                self.next_meas_id = self.next_meas_id.max(id.index() + 1);
+            }
+        }
+    }
+
+    fn add_gate_unchecked(&mut self, mut gate: Gate) -> usize {
+        self.assign_measurement_ids(&mut gate);
         let node_idx = self.dag.add_node();
         // Ensure gates vector is large enough
         if node_idx >= self.gates.len() {
@@ -2917,5 +2964,92 @@ mod tests {
     fn test_add_gate_panics_on_invalid_gate_payload() {
         let mut circuit = DagCircuit::new();
         circuit.add_gate(Gate::cx(&[(0, 0)]));
+    }
+}
+
+#[cfg(test)]
+mod measurement_id_tests {
+    use super::*;
+
+    /// `DagCircuit`'s own builders created measurements with no identity at
+    /// all, so nothing downstream could name one measurement inside a batched
+    /// gate. Every measurement now carries a distinct `MeasId`.
+    #[test]
+    fn builders_mint_a_distinct_id_per_measurement() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2]);
+        let kept = circuit.mz(&[0, 1]);
+        circuit.mz_free(&[2]);
+
+        let ids: Vec<usize> = circuit
+            .gates
+            .iter()
+            .flatten()
+            .filter(|g| {
+                matches!(
+                    g.gate_type,
+                    GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
+                )
+            })
+            .flat_map(|g| g.meas_ids.iter().map(|id| id.index()))
+            .collect();
+
+        assert_eq!(ids, vec![0, 1, 2], "ids are minted in creation order");
+        assert_eq!(circuit.num_measurement_ids(), 3);
+        assert_eq!(kept.len(), 2);
+    }
+
+    /// A batched measurement gate gets one id per measured qubit, so the
+    /// instances inside it are individually nameable.
+    #[test]
+    fn a_batched_measurement_gets_one_id_per_qubit() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2]);
+        let node = circuit.add_gate_auto_wire(Gate::mz(&[0usize, 1, 2]));
+
+        let gate = circuit.gate(node).expect("gate exists");
+        assert_eq!(gate.qubits.len(), 3);
+        assert_eq!(
+            gate.meas_ids
+                .iter()
+                .map(|id| id.index())
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2],
+            "each measured qubit in a batch needs its own id"
+        );
+    }
+
+    /// Gates arriving with ids own their numbering; the counter must move past
+    /// them so a later minted id cannot collide.
+    #[test]
+    fn supplied_ids_are_kept_and_do_not_collide_with_minted_ones() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let mut supplied = Gate::mz(&[0usize]);
+        supplied.meas_ids = smallvec::smallvec![MeasId(10)];
+        let supplied_node = circuit.add_gate_auto_wire(supplied);
+        let minted_node = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        assert_eq!(
+            circuit.gate(supplied_node).unwrap().meas_ids[0],
+            MeasId(10),
+            "a supplied id must be preserved"
+        );
+        let minted = circuit.gate(minted_node).unwrap().meas_ids[0];
+        assert_eq!(
+            minted,
+            MeasId(11),
+            "the counter must advance past supplied ids, not reuse 0"
+        );
+        assert_ne!(minted, MeasId(10), "minted ids must not collide");
+    }
+
+    /// Non-measurement gates are untouched.
+    #[test]
+    fn non_measurement_gates_get_no_ids() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.add_gate_auto_wire(Gate::h(&[0usize]));
+        assert!(circuit.gate(node).unwrap().meas_ids.is_empty());
+        assert_eq!(circuit.num_measurement_ids(), 0);
     }
 }

@@ -200,6 +200,15 @@ impl<'a> DemBuilder<'a> {
     /// # Errors
     ///
     /// Returns an error if detector or observable metadata is malformed.
+    ///
+    /// # Panics
+    ///
+    /// Malformed *metadata* is reported as an error, but a circuit whose
+    /// metadata and annotations **contradict each other** is not a parse
+    /// failure and is not reported that way: two definitions of one observable
+    /// disagreeing about the label or the Pauli panic inside
+    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
+    /// sources must agree, or only one should supply the field.
     pub fn try_from_circuit(
         circuit: &pecos_quantum::DagCircuit,
         p1: f64,
@@ -219,6 +228,15 @@ impl<'a> DemBuilder<'a> {
     /// # Errors
     ///
     /// Returns an error if detector or observable metadata is malformed.
+    ///
+    /// # Panics
+    ///
+    /// Malformed *metadata* is reported as an error, but a circuit whose
+    /// metadata and annotations **contradict each other** is not a parse
+    /// failure and is not reported that way: two definitions of one observable
+    /// disagreeing about the label or the Pauli panic inside
+    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
+    /// sources must agree, or only one should supply the field.
     pub fn try_from_circuit_with_noise_config(
         circuit: &pecos_quantum::DagCircuit,
         noise: NoiseConfig,
@@ -254,6 +272,15 @@ impl<'a> DemBuilder<'a> {
     /// # Errors
     ///
     /// Returns an error if detector or observable metadata is malformed.
+    ///
+    /// # Panics
+    ///
+    /// Malformed *metadata* is reported as an error, but a circuit whose
+    /// metadata and annotations **contradict each other** is not a parse
+    /// failure and is not reported that way: two definitions of one observable
+    /// disagreeing about the label or the Pauli panic inside
+    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
+    /// sources must agree, or only one should supply the field.
     pub fn try_from_tick_circuit(
         circuit: &pecos_quantum::TickCircuit,
         p1: f64,
@@ -274,6 +301,15 @@ impl<'a> DemBuilder<'a> {
     /// # Errors
     ///
     /// Returns an error if detector or observable metadata is malformed.
+    ///
+    /// # Panics
+    ///
+    /// Malformed *metadata* is reported as an error, but a circuit whose
+    /// metadata and annotations **contradict each other** is not a parse
+    /// failure and is not reported that way: two definitions of one observable
+    /// disagreeing about the label or the Pauli panic inside
+    /// [`DetectorErrorModel::add_observable`] rather than returning here. Both
+    /// sources must agree, or only one should supply the field.
     pub fn try_from_tick_circuit_with_noise_config(
         circuit: &pecos_quantum::TickCircuit,
         noise: NoiseConfig,

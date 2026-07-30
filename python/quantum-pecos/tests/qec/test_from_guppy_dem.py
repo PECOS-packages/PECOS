@@ -696,7 +696,7 @@ def test_from_guppy_rejects_entirely_raw_runtime_trace(monkeypatch: pytest.Monke
             ],
         },
     ]
-    monkeypatch.setattr("pecos.qec.surface.decode.capture_guppy_operation_trace", lambda *_args, **_kwargs: chunks)
+    monkeypatch.setattr("pecos.tracing.capture_qis_operation_trace", lambda *_args, **_kwargs: chunks)
 
     with pytest.raises(ValueError, match="does not contain lowered_quantum_ops"):
         DetectorErrorModel.from_guppy(

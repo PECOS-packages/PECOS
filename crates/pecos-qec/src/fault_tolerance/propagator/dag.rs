@@ -2555,15 +2555,20 @@ mod tests {
     // Helper Functions
     // =========================================================================
 
-    /// Measurement extraction orders by `MeasId`, which is insertion order --
-    /// the order the program writes the measurements in.
+    /// Measurement extraction orders by `MeasId`, never by topological position.
     ///
-    /// Before every `DagCircuit` measurement carried an id, id-less circuits
-    /// fell back to topological position, so the two orderings could disagree
-    /// for circuits whose wiring does not follow insertion order. Program order
-    /// is what a measurement record means, so it is the one that survives.
+    /// Id-less circuits used to fall back to topological position, so the two
+    /// orderings disagreed for circuits whose wiring does not follow the order
+    /// the measurements were written. The id is what names a measurement, so it
+    /// is what orders them.
+    ///
+    /// For minted ids that comes out as the order the program writes its
+    /// measurements, which is what this case covers. It is a *consequence* of
+    /// minting being sequential, not the rule -- see
+    /// `extraction_follows_supplied_ids_not_the_order_they_were_added` for the
+    /// case where the two differ.
     #[test]
-    fn measurements_extract_in_insertion_order_not_topological_order() {
+    fn minted_ids_extract_in_the_order_the_measurements_were_written() {
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1]);
         // q0 is measured first in program order but sits behind a longer chain,
@@ -2587,6 +2592,40 @@ mod tests {
             meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
             vec![0, 1],
             "and the ids must agree with it"
+        );
+    }
+
+    /// Supplied ids own the numbering, so extraction follows them even when they
+    /// run counter to the order the measurements were added.
+    ///
+    /// `mz_with_ids` accepts external ids -- Guppy result ids, where the number
+    /// is the result index -- and those need not arrive in ascending order. So
+    /// "id order" is the rule; matching the order of addition is not.
+    #[test]
+    fn extraction_follows_supplied_ids_not_the_order_they_were_added() {
+        use pecos_core::MeasId;
+        use pecos_quantum::Gate;
+
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let mut later_id = Gate::mz(&[0usize]);
+        later_id.meas_ids = smallvec::smallvec![MeasId(9)];
+        dag.add_gate_auto_wire(later_id);
+        let mut earlier_id = Gate::mz(&[1usize]);
+        earlier_id.meas_ids = smallvec::smallvec![MeasId(4)];
+        dag.add_gate_auto_wire(earlier_id);
+
+        let analyzer = DagFaultAnalyzer::new(&dag);
+        let (measurements, meas_ids) = analyzer.extract_measurements();
+
+        assert_eq!(
+            measurements.iter().map(|&(_, q, _)| q).collect::<Vec<_>>(),
+            vec![1, 0],
+            "qubit 1 holds the lower id, so it comes first despite being added second"
+        );
+        assert_eq!(
+            meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
+            vec![4, 9]
         );
     }
 

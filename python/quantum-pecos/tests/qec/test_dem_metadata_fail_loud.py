@@ -312,6 +312,34 @@ def test_mz_with_ids_rejects_a_repeated_id_in_one_call() -> None:
         tc.tick().mz_with_ids([0, 1], [7, 7])
 
 
+def test_mz_with_ids_rejects_an_id_with_no_room_for_a_successor() -> None:
+    """The largest representable id leaves the record counter nowhere to go. It
+    is refused as a ValueError rather than overflowing."""
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().pz([0])
+    with pytest.raises(ValueError, match=r"no room for a later id"):
+        tc.tick().mz_with_ids([0], [2**64 - 1])
+
+
+def test_a_high_supplied_id_does_not_let_a_later_measurement_overflow() -> None:
+    """A legal id just below the ceiling pushes the record counter onto it, so the
+    next measurement has nowhere to go. It is refused as a ValueError rather than
+    overflowing the counter into an uncatchable panic.
+
+    The last representable id is never handed out: the counter must always have a
+    valid successor.
+    """
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().pz([0, 1])
+    tc.tick().mz_with_ids([0], [2**64 - 2])
+    with pytest.raises(ValueError, match=r"remain below usize::MAX"):
+        tc.tick().mz([1])
+
+
 def test_duplicate_ids_across_calls_fail_at_dag_conversion() -> None:
     """A duplicate spread across two calls is invisible to either call, so it is
     caught when the circuit is converted."""

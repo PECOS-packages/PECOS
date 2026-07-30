@@ -412,10 +412,11 @@ fn measurement_records_by_node(
         let Some(gate) = dag.gate(node) else {
             continue;
         };
-        if !matches!(
-            gate.gate_type,
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-        ) {
+        // `MeasureLeaked` consumes no measurement record. Including it here
+        // numbered it positionally while real measurements were numbered by
+        // their `MeasId`, so a leaked measurement and a real one could claim the
+        // same record.
+        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
             continue;
         }
         if !gate.meas_ids.is_empty() && gate.meas_ids.len() != gate.qubits.len() {
@@ -553,5 +554,39 @@ fn clear_qubit(prop: &mut PauliProp, qubit: usize) {
     }
     if prop.contains_z(qubit) {
         prop.track_z(&[qubit]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_quantum::Gate;
+
+    /// `MeasureLeaked` must not consume a measurement record here.
+    ///
+    /// It used to, and because `DagCircuit` mints no id for it, it took the
+    /// positional branch and claimed record 0 -- the same record the first real
+    /// measurement holds by its `MeasId`. Two different measurements then mapped
+    /// to one record.
+    #[test]
+    fn measure_leaked_does_not_claim_a_measurement_record() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let leaked = dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
+        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        let (by_node, num_measurements) =
+            measurement_records_by_node(&dag).expect("mapping succeeds");
+
+        assert!(
+            !by_node.contains_key(&leaked),
+            "a leaked measurement holds no record"
+        );
+        assert_eq!(
+            by_node.get(&measured).map(Vec::as_slice),
+            Some([(1usize, 0usize)].as_slice()),
+            "the real measurement keeps record 0"
+        );
+        assert_eq!(num_measurements, 1);
     }
 }

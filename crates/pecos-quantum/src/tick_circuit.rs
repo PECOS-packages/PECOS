@@ -1384,8 +1384,35 @@ impl TickCircuit {
     }
 
     /// Advance the measurement counter by `n` (for external MZ gate construction).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the counter would run past [`usize::MAX`]. Use
+    /// [`try_advance_meas_counter`](Self::try_advance_meas_counter) to report
+    /// that instead.
     pub fn advance_meas_counter(&mut self, n: usize) {
-        self.next_meas_record += n;
+        self.try_advance_meas_counter(n)
+            .unwrap_or_else(|err| panic!("{err}"));
+    }
+
+    /// Reserve `n` measurement records, returning the first.
+    ///
+    /// Every record allocation goes through here so the counter has one place to
+    /// be checked. An unchecked `+=` here reached Python as an uncatchable panic
+    /// once a caller supplied an id near [`usize::MAX`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `n` records do not fit below [`usize::MAX`].
+    pub fn try_advance_meas_counter(&mut self, n: usize) -> Result<usize, String> {
+        let base = self.next_meas_record;
+        self.next_meas_record = base.checked_add(n).ok_or_else(|| {
+            format!(
+                "cannot reserve {n} more measurement records; only {} remain below usize::MAX",
+                usize::MAX - base
+            )
+        })?;
+        Ok(base)
     }
 
     /// Get the total number of individual gate applications across all ticks.
@@ -3063,13 +3090,20 @@ impl<'a> TickHandle<'a> {
     /// circuit.tick().mz(&[0]);           // Single qubit
     /// circuit.tick().mz(&[1, 2, 3]);     // Multiple qubits
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit has no measurement records left below
+    /// [`usize::MAX`].
     pub fn mz(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<TickMeasRef> {
         let mut gate = Gate::mz(qubits);
         let mut refs = Vec::with_capacity(qubits.len());
         for &q in qubits {
             let tick_idx = self.tick_idx;
-            let record_idx = self.circuit.next_meas_record;
-            self.circuit.next_meas_record += 1;
+            let record_idx = self
+                .circuit
+                .try_advance_meas_counter(1)
+                .unwrap_or_else(|err| panic!("{err}"));
             let mr = MeasId(record_idx);
             gate.meas_ids.push(mr);
             refs.push(TickMeasRef {
@@ -3104,13 +3138,20 @@ impl<'a> TickHandle<'a> {
     /// let mut circuit = TickCircuit::new();
     /// circuit.tick().mz_free(&[0, 1]);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the circuit has no measurement records left below
+    /// [`usize::MAX`].
     pub fn mz_free(mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<TickMeasRef> {
         let mut gate = Gate::mz_free(qubits);
         let mut refs = Vec::with_capacity(qubits.len());
         for &q in qubits {
             let tick_idx = self.tick_idx;
-            let record_idx = self.circuit.next_meas_record;
-            self.circuit.next_meas_record += 1;
+            let record_idx = self
+                .circuit
+                .try_advance_meas_counter(1)
+                .unwrap_or_else(|err| panic!("{err}"));
             let mr = MeasId(record_idx);
             gate.meas_ids.push(mr);
             refs.push(TickMeasRef {
@@ -3258,10 +3299,13 @@ impl From<&DagCircuit> for TickCircuit {
             for node_id in layer {
                 if let Some(gate) = dag.gate(node_id) {
                     let mut gate = gate.clone();
-                    if matches!(
-                        gate.gate_type,
-                        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-                    ) {
+                    // `MeasureLeaked` is excluded. Minting for it here while
+                    // `DagCircuit` does not gave an id-less `MeasureLeaked` the
+                    // same id as a real measurement. Every site that numbers
+                    // measurement records -- both conversions, `meas_ref`,
+                    // `AssignMissingMeasIds`, the fault extractors and the Pauli
+                    // frame lookup -- excludes it.
+                    if matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
                         if gate.meas_ids.is_empty() {
                             let mut records = Vec::with_capacity(gate.qubits.len());
                             for _ in &gate.qubits {
@@ -3535,6 +3579,36 @@ impl From<TickCircuit> for DagCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `MeasureLeaked` must not be minted a `MeasId` on the way to a
+    /// `TickCircuit` when `DagCircuit` does not mint one on the way in. It was,
+    /// so an id-less `MeasureLeaked` took the id a real measurement already
+    /// held, and converting back reported two measurements sharing an id.
+    #[test]
+    fn measure_leaked_survives_a_dag_tick_dag_round_trip() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
+        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+        assert_eq!(dag.gate(measured).unwrap().meas_ids[0], MeasId(0));
+
+        let tc = TickCircuit::from(&dag);
+        let ids: Vec<usize> = tc
+            .iter_gate_batches()
+            .flat_map(|batch| {
+                batch
+                    .as_gate()
+                    .meas_ids
+                    .iter()
+                    .map(|id| id.index())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(ids, vec![0], "only the MZ carries an id");
+
+        let round_tripped = DagCircuit::from(&tc);
+        assert_eq!(round_tripped.num_measurement_ids(), 1);
+    }
 
     #[test]
     fn test_basic_tick_circuit() {

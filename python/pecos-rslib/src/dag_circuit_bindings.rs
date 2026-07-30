@@ -2698,9 +2698,11 @@ impl PyTickCircuit {
     ///     ValueError: Two measurements share a `MeasId`, so the ids cannot
     ///         name them apart.
     fn to_dag_circuit(&self) -> PyResult<PyDagCircuit> {
-        // `DagCircuit` enforces id uniqueness by panicking, which Python cannot
-        // catch as an ordinary exception. Check here, where the error can still
-        // be raised as one.
+        // `DagCircuit` rejects duplicate ids by panicking, which Python cannot
+        // catch as an ordinary exception, and no single `mz_with_ids` call can
+        // see a duplicate spread across calls. Check here, where the error can
+        // still be raised as one. Keep in step with `assign_measurement_ids`
+        // until the conversion itself can report failure.
         let mut seen = BTreeSet::new();
         for batch in self.inner.iter_gate_batches() {
             for id in &batch.as_gate().meas_ids {
@@ -3801,12 +3803,13 @@ impl PyTickHandle {
         // Assign MeasId values (SSA identity for each measurement)
         {
             let mut circuit = handle.circuit.borrow_mut(py);
-            let base = circuit.inner.num_measurements();
+            let base = circuit
+                .inner
+                .try_advance_meas_counter(qubits.len())
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
             for (i, _) in qubits.iter().enumerate() {
                 gate.meas_ids.push(pecos_core::MeasId(base + i));
             }
-            // Increment the measurement counter
-            circuit.inner.advance_meas_counter(qubits.len());
         }
         let gate_idx = handle.add_gate_get_idx(py, gate)?;
         let tick_idx = handle.tick_idx;
@@ -3844,6 +3847,19 @@ impl PyTickHandle {
                 )));
             }
         }
+        // The highest id has to leave room for a successor, or the record
+        // counter cannot advance past it.
+        let past_highest = meas_ids
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "meas_ids contains the largest representable id, leaving no room for a later id",
+                )
+            })?;
         let mut handle = slf.borrow_mut(py);
         let mut gate = Gate::mz(&qubits);
         for &mid in &meas_ids {
@@ -3852,10 +3868,12 @@ impl PyTickHandle {
         {
             let mut circuit = handle.circuit.borrow_mut(py);
             // Advance counter to at least past the highest ID we're assigning
-            let max_id = meas_ids.iter().copied().max().unwrap_or(0);
             let current = circuit.inner.num_measurements();
-            if max_id >= current {
-                circuit.inner.advance_meas_counter(max_id + 1 - current);
+            if past_highest > current {
+                circuit
+                    .inner
+                    .try_advance_meas_counter(past_highest - current)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
             }
         }
         let gate_idx = handle.add_gate_get_idx(py, gate)?;
@@ -3877,11 +3895,13 @@ impl PyTickHandle {
         let mut gate = Gate::mz_free(&qubits);
         {
             let mut circuit = handle.circuit.borrow_mut(py);
-            let base = circuit.inner.num_measurements();
+            let base = circuit
+                .inner
+                .try_advance_meas_counter(qubits.len())
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
             for (i, _) in qubits.iter().enumerate() {
                 gate.meas_ids.push(pecos_core::MeasId(base + i));
             }
-            circuit.inner.advance_meas_counter(qubits.len());
         }
         let gate_idx = handle.add_gate_get_idx(py, gate)?;
         let tick_idx = handle.tick_idx;

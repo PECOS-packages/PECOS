@@ -543,48 +543,69 @@ impl DagCircuit {
     /// numbering -- and those ids are reserved so a later minted id cannot
     /// collide.
     ///
-    /// Ids are minted only for `MZ | MeasureFree`, the gate types that consume
-    /// a measurement record elsewhere in the codebase. `MeasureLeaked` is a
-    /// measurement to `Gate::validate`, but `TickCircuit` allocates it no
-    /// record, so minting one here would give it an id the two representations
-    /// disagree about. Ids *supplied* on a `MeasureLeaked` are still reserved,
-    /// so admitting it later means changing only which types are minted for.
+    /// Ids are minted only for `MZ | MeasureFree`, matching every site that
+    /// decides which gates consume a measurement record, `TickCircuit`
+    /// conversion in both directions included. Ids *supplied* on a
+    /// `MeasureLeaked` are still reserved, so admitting the type later means
+    /// changing only which types are minted for.
+    ///
+    /// Nothing is reserved until the whole gate has been checked: a rejected
+    /// gate must not leave its ids burned, or a later legitimate use of the same
+    /// id would be refused for a measurement that was never added.
     ///
     /// # Errors
     ///
-    /// Returns an error if a supplied id repeats one already in the circuit, or
-    /// if a supplied id is [`usize::MAX`] and so leaves no room for a successor.
+    /// Returns an error if a supplied id repeats one already in the circuit or
+    /// another in the same gate, or if the ids needed would run past
+    /// [`usize::MAX`].
     fn assign_measurement_ids(&mut self, gate: &mut Gate) -> Result<(), String> {
         if !gate.meas_ids.is_empty() {
+            let mut incoming = BTreeSet::new();
+            let mut highest_successor = 0;
             for id in &gate.meas_ids {
-                if !self.used_meas_ids.insert(id.index()) {
+                if self.used_meas_ids.contains(&id.index()) || !incoming.insert(id.index()) {
                     return Err(format!(
-                        "Measurement gate {:?} reuses MeasId({}), which another measurement in \
-                         this circuit already holds; measurement ids must be unique",
+                        "Measurement gate {:?} reuses MeasId({}), which another measurement \
+                         already holds; measurement ids must be unique",
                         gate.gate_type,
                         id.index()
                     ));
                 }
                 let successor = id.index().checked_add(1).ok_or_else(|| {
                     format!(
-                        "Measurement gate {:?} carries MeasId({}), leaving no room to mint further ids",
+                        "Measurement gate {:?} carries MeasId({}), leaving no room for a later id",
                         gate.gate_type,
                         id.index()
                     )
                 })?;
-                self.next_meas_id = self.next_meas_id.max(successor);
+                highest_successor = highest_successor.max(successor);
             }
+            self.used_meas_ids.append(&mut incoming);
+            self.next_meas_id = self.next_meas_id.max(highest_successor);
             return Ok(());
         }
 
         if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
             return Ok(());
         }
-        for _ in &gate.qubits {
-            gate.meas_ids.push(MeasId(self.next_meas_id));
-            self.used_meas_ids.insert(self.next_meas_id);
-            self.next_meas_id += 1;
+        // Check the whole run fits before minting any of it. Minted ids are
+        // always above every reserved id, so they cannot collide.
+        let after_last = self
+            .next_meas_id
+            .checked_add(gate.qubits.len())
+            .ok_or_else(|| {
+                format!(
+                    "Measurement gate {:?} needs {} ids but only {} remain below usize::MAX",
+                    gate.gate_type,
+                    gate.qubits.len(),
+                    usize::MAX - self.next_meas_id
+                )
+            })?;
+        for id in self.next_meas_id..after_last {
+            gate.meas_ids.push(MeasId(id));
+            self.used_meas_ids.insert(id);
         }
+        self.next_meas_id = after_last;
         Ok(())
     }
 
@@ -605,6 +626,10 @@ impl DagCircuit {
     /// Removes a gate from the circuit.
     ///
     /// Also removes all qubit wires connected to this gate.
+    ///
+    /// A removed measurement's [`MeasId`] stays reserved: an id names one
+    /// measurement for the life of the circuit, so handing it to a different one
+    /// later would make earlier references ambiguous.
     ///
     /// # Returns
     ///
@@ -632,6 +657,11 @@ impl DagCircuit {
     }
 
     /// Gets a mutable reference to the gate at the given node index.
+    ///
+    /// Editing `meas_ids` through this reference bypasses the uniqueness
+    /// bookkeeping in [`try_add_gate`](Self::try_add_gate), as editing `qubits`
+    /// bypasses [`max_qubit`](Self::max_qubit). Use it to change what a gate
+    /// does, not what it is identified by.
     pub fn gate_mut(&mut self, node: usize) -> Option<&mut Gate> {
         self.gates.get_mut(node).and_then(|g| g.as_mut())
     }
@@ -3177,6 +3207,102 @@ mod measurement_id_tests {
         assert!(
             circuit.try_add_gate(batch).is_err(),
             "a batch cannot name the same measurement twice"
+        );
+    }
+
+    /// A rejected gate must leave no trace. Reserving ids as they are checked
+    /// burned the first id of a batch whose second id was a duplicate, so a
+    /// later legitimate measurement could not use it.
+    #[test]
+    fn a_rejected_gate_reserves_nothing() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2]);
+        let mut clashing = Gate::mz(&[0usize, 1]);
+        clashing.meas_ids = smallvec::smallvec![MeasId(3), MeasId(3)];
+        assert!(circuit.try_add_gate(clashing).is_err());
+
+        let mut later = Gate::mz(&[2usize]);
+        later.meas_ids = smallvec::smallvec![MeasId(3)];
+        assert!(
+            circuit.try_add_gate(later).is_ok(),
+            "MeasId(3) never reached the circuit, so it must still be available"
+        );
+    }
+
+    /// The same applies to the id that triggered an overflow rejection.
+    #[test]
+    fn an_overflow_rejection_reserves_nothing() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let mut saturated = Gate::mz(&[0usize, 1]);
+        saturated.meas_ids = smallvec::smallvec![MeasId(4), MeasId(usize::MAX)];
+        assert!(circuit.try_add_gate(saturated).is_err());
+
+        let mut later = Gate::mz(&[0usize]);
+        later.meas_ids = smallvec::smallvec![MeasId(4)];
+        assert!(
+            circuit.try_add_gate(later).is_ok(),
+            "MeasId(4) shared a rejected gate, so it must still be available"
+        );
+    }
+
+    /// Minting must not run past `usize::MAX`. A supplied `usize::MAX - 1` puts
+    /// the counter one below the ceiling, so the next mint has no room.
+    #[test]
+    fn minting_past_the_ceiling_is_rejected_not_wrapped() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let mut near_max = Gate::mz(&[0usize]);
+        near_max.meas_ids = smallvec::smallvec![MeasId(usize::MAX - 1)];
+        circuit.add_gate_auto_wire(near_max);
+
+        let err = circuit
+            .try_add_gate(Gate::mz(&[1usize]))
+            .expect_err("the counter sits at usize::MAX, so nothing can be minted");
+        assert!(
+            err.contains("remain below usize::MAX"),
+            "the error must explain the exhaustion: {err}"
+        );
+    }
+
+    /// A batch must not be part-minted when it does not fit entirely.
+    #[test]
+    fn a_batch_that_does_not_fit_mints_nothing() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2]);
+        let mut near_max = Gate::mz(&[0usize]);
+        near_max.meas_ids = smallvec::smallvec![MeasId(usize::MAX - 2)];
+        circuit.add_gate_auto_wire(near_max);
+
+        assert!(
+            circuit.try_add_gate(Gate::mz(&[1usize, 2])).is_err(),
+            "two ids do not fit below usize::MAX, so neither may be minted"
+        );
+        assert_eq!(
+            circuit.num_measurement_ids(),
+            usize::MAX - 1,
+            "a rejected batch must not move the counter"
+        );
+    }
+
+    /// The counter only ever moves forward. A supplied id below it must not drag
+    /// it back, or a later mint would collide with an id already in use.
+    #[test]
+    fn a_lower_supplied_id_does_not_rewind_the_counter() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2]);
+        let mut high = Gate::mz(&[0usize]);
+        high.meas_ids = smallvec::smallvec![MeasId(10)];
+        circuit.add_gate_auto_wire(high);
+        let mut low = Gate::mz(&[1usize]);
+        low.meas_ids = smallvec::smallvec![MeasId(3)];
+        circuit.add_gate_auto_wire(low);
+
+        let minted = circuit.add_gate_auto_wire(Gate::mz(&[2usize]));
+        assert_eq!(
+            circuit.gate(minted).unwrap().meas_ids[0],
+            MeasId(11),
+            "the counter must stay past the highest supplied id, not follow the latest"
         );
     }
 

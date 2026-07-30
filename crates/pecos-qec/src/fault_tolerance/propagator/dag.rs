@@ -1918,21 +1918,19 @@ impl<'a> DagFaultAnalyzer<'a> {
         map
     }
 
-    /// Extracts all measurements from the circuit in a deterministic order.
+    /// Extracts all measurements from the circuit, ordered by [`MeasId`].
     ///
-    /// Measurements are sorted by:
-    /// 1. Topological position (to respect causal dependencies)
-    /// 2. Qubit index (to break ties for concurrent/independent measurements)
+    /// The id is what names a measurement, so it is what orders them; qubit index
+    /// breaks ties. Measurements carrying no id fall back to topological
+    /// position, which only happens for circuits built outside `DagCircuit`'s
+    /// builders.
     ///
-    /// This gives deterministic measurement ordering where measurements on
-    /// lower-indexed qubits appear first when they are in the same "layer" of
-    /// the circuit.
+    /// Returns `(measurements, meas_ids)` where `measurements` is
+    /// `Vec<(node, qubit, basis)>` and `meas_ids` is empty for circuits whose
+    /// measurements carry no ids.
+    ///
+    /// [`MeasId`]: pecos_core::MeasId
     #[must_use]
-    /// Extract measurements with optional `MeasId` IDs.
-    ///
-    /// Returns `(measurements, meas_ids)` where:
-    /// - `measurements` is `Vec<(node, qubit, basis)>` in `MeasId` order
-    /// - `meas_ids` is `Vec<MeasId>` (empty for legacy circuits)
     pub fn extract_measurements(&self) -> (Vec<(usize, usize, u8)>, Vec<pecos_core::MeasId>) {
         let mut entries = Vec::new(); // (sort_key, qubit, node, basis, Option<MeasId>)
 
@@ -2606,26 +2604,40 @@ mod tests {
         use pecos_core::MeasId;
         use pecos_quantum::Gate;
 
+        // Three measurements whose insertion order, topological depth and id
+        // order are pairwise different, so passing this test means following the
+        // ids and nothing else:
+        //   insertion   q0, q1, q2
+        //   topological q1, q2, q0  (by chain depth)
+        //   id order    q2, q0, q1  (ids 1, 5, 9)
         let mut dag = DagCircuit::new();
-        dag.pz(&[0, 1]);
-        let mut later_id = Gate::mz(&[0usize]);
-        later_id.meas_ids = smallvec::smallvec![MeasId(9)];
-        dag.add_gate_auto_wire(later_id);
-        let mut earlier_id = Gate::mz(&[1usize]);
-        earlier_id.meas_ids = smallvec::smallvec![MeasId(4)];
-        dag.add_gate_auto_wire(earlier_id);
+        dag.pz(&[0, 1, 2]);
+        dag.h(&[0]);
+        dag.h(&[0]);
+        let mut deep = Gate::mz(&[0usize]);
+        deep.meas_ids = smallvec::smallvec![MeasId(5)];
+        dag.add_gate_auto_wire(deep);
+
+        let mut shallow = Gate::mz(&[1usize]);
+        shallow.meas_ids = smallvec::smallvec![MeasId(9)];
+        dag.add_gate_auto_wire(shallow);
+
+        dag.h(&[2]);
+        let mut middle = Gate::mz(&[2usize]);
+        middle.meas_ids = smallvec::smallvec![MeasId(1)];
+        dag.add_gate_auto_wire(middle);
 
         let analyzer = DagFaultAnalyzer::new(&dag);
         let (measurements, meas_ids) = analyzer.extract_measurements();
 
         assert_eq!(
             measurements.iter().map(|&(_, q, _)| q).collect::<Vec<_>>(),
-            vec![1, 0],
-            "qubit 1 holds the lower id, so it comes first despite being added second"
+            vec![2, 0, 1],
+            "extraction must follow the supplied ids, not insertion or topological order"
         );
         assert_eq!(
             meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
-            vec![4, 9]
+            vec![1, 5, 9]
         );
     }
 

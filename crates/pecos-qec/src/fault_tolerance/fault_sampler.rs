@@ -271,7 +271,7 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
                 .iter()
                 .map(pecos_core::QubitId::index)
                 .collect();
-            if is_supported_measurement_gate(gate.gate_type()) {
+            if gate.gate_type().consumes_measurement_record() {
                 meas_positions.insert(gates.len(), meas_count);
                 meas_count += 1;
             }

@@ -416,7 +416,7 @@ fn measurement_records_by_node(
         // numbered it positionally while real measurements were numbered by
         // their `MeasId`, so a leaked measurement and a real one could claim the
         // same record.
-        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
+        if !gate.gate_type.consumes_measurement_record() {
             continue;
         }
         if !gate.meas_ids.is_empty() && gate.meas_ids.len() != gate.qubits.len() {
@@ -498,8 +498,13 @@ fn propagate_tracked_pauli_forward(
                         if prop.contains_x(qubit) {
                             affected_measurements.insert(record);
                         }
-                        clear_qubit(&mut prop, qubit);
                     }
+                }
+                // Every measurement collapses the qubit, including one that
+                // consumes no record. Clearing used to sit inside the record
+                // lookup above, so a `MeasureLeaked` let the Pauli propagate on.
+                for qubit in &gate.qubits {
+                    clear_qubit(&mut prop, qubit.index());
                 }
             }
             GateType::PZ | GateType::QAlloc => {
@@ -561,6 +566,28 @@ fn clear_qubit(prop: &mut PauliProp, qubit: usize) {
 mod tests {
     use super::*;
     use pecos_quantum::Gate;
+
+    /// `MeasureFree` does consume a record, so it must be numbered here.
+    #[test]
+    fn measure_free_claims_a_measurement_record() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let freed = dag.add_gate_auto_wire(Gate::mz_free(&[0usize]));
+        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        let (by_node, num_measurements) =
+            measurement_records_by_node(&dag).expect("mapping succeeds");
+
+        assert_eq!(
+            by_node.get(&freed).map(Vec::as_slice),
+            Some([(0usize, 0usize)].as_slice())
+        );
+        assert_eq!(
+            by_node.get(&measured).map(Vec::as_slice),
+            Some([(1usize, 1usize)].as_slice())
+        );
+        assert_eq!(num_measurements, 2);
+    }
 
     /// `MeasureLeaked` must not consume a measurement record here.
     ///

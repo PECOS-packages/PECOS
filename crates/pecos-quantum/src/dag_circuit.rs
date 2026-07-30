@@ -585,7 +585,7 @@ impl DagCircuit {
             return Ok(());
         }
 
-        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
+        if !gate.gate_type.consumes_measurement_record() {
             return Ok(());
         }
         // Check the whole run fits before minting any of it. Minted ids are
@@ -1184,9 +1184,25 @@ impl DagCircuit {
     // - All methods return `&mut Self` for chaining
 
     /// Adds a gate and auto-wires it to previous gates on the same qubits.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the gate is rejected -- see the `try_` variant for fallible
+    /// insertion.
     pub fn add_gate_auto_wire(&mut self, gate: Gate) -> usize {
+        self.try_add_gate_auto_wire(gate)
+            .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
+    }
+
+    /// Adds a gate and wires it to the previous gate on each of its qubits,
+    /// reporting rejection instead of panicking.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if [`try_add_gate`](Self::try_add_gate) rejects the gate.
+    pub fn try_add_gate_auto_wire(&mut self, gate: Gate) -> Result<usize, String> {
         let qubits = gate.qubits.clone();
-        let node = self.add_gate(gate);
+        let node = self.try_add_gate(gate)?;
 
         // Connect to previous gates on each qubit
         for qubit in &qubits {
@@ -1201,7 +1217,7 @@ impl DagCircuit {
         // Track last added node for .meta() calls
         self.last_node = Some(node);
 
-        node
+        Ok(node)
     }
 
     /// Add metadata to the last added gate.
@@ -1705,13 +1721,28 @@ impl DagCircuit {
     /// let nodes = circuit.mz(&[0, 1]);
     /// assert_eq!(nodes.len(), 2);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the gate is rejected -- see the `try_` variant for fallible
+    /// insertion.
     pub fn mz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<MeasRef> {
+        self.try_mz(qubits)
+            .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
+    }
+
+    /// Measure qubits in the Z basis, reporting rejection instead of panicking.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the circuit has no measurement ids left to mint.
+    pub fn try_mz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Result<Vec<MeasRef>, String> {
         qubits
             .iter()
             .map(|&q| {
                 let qubit = q.into();
-                let node = self.add_gate_auto_wire(Gate::mz(&[qubit]));
-                MeasRef { node, qubit }
+                let node = self.try_add_gate_auto_wire(Gate::mz(&[qubit]))?;
+                Ok(MeasRef { node, qubit })
             })
             .collect()
     }
@@ -1744,11 +1775,27 @@ impl DagCircuit {
     }
 
     /// Measure and free qubit(s) (destructive measurement).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the gate is rejected -- see the `try_` variant for fallible
+    /// insertion.
     pub fn mz_free(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
-        for &q in qubits {
-            self.add_gate_auto_wire(Gate::mz_free(&[q]));
-        }
+        self.try_mz_free(qubits)
+            .unwrap_or_else(|err| panic!("Invalid gate: {err}"));
         self
+    }
+
+    /// Measure and free qubits, reporting rejection instead of panicking.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the circuit has no measurement ids left to mint.
+    pub fn try_mz_free(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Result<(), String> {
+        for &q in qubits {
+            self.try_add_gate_auto_wire(Gate::mz_free(&[q]))?;
+        }
+        Ok(())
     }
 
     // ========================================================================
@@ -3303,6 +3350,42 @@ mod measurement_id_tests {
             circuit.gate(minted).unwrap().meas_ids[0],
             MeasId(11),
             "the counter must stay past the highest supplied id, not follow the latest"
+        );
+    }
+
+    /// Within one gate the counter must clear the *highest* id supplied, not the
+    /// last one. A batch of `[10, 3]` left the counter at 4, and the seventh
+    /// later mint silently re-issued `MeasId(10)`.
+    #[test]
+    fn a_batch_with_descending_ids_leaves_the_counter_past_the_highest() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2]);
+        let mut descending = Gate::mz(&[0usize, 1]);
+        descending.meas_ids = smallvec::smallvec![MeasId(10), MeasId(3)];
+        circuit.add_gate_auto_wire(descending);
+
+        assert_eq!(circuit.num_measurement_ids(), 11);
+        let minted = circuit.add_gate_auto_wire(Gate::mz(&[2usize]));
+        assert_eq!(
+            circuit.gate(minted).unwrap().meas_ids[0],
+            MeasId(11),
+            "the next mint must clear the highest id in the batch, not the last"
+        );
+    }
+
+    /// `MeasureFree` consumes a record, so it is minted for like `MZ`.
+    #[test]
+    fn measure_free_is_minted_an_id() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let freed = circuit.add_gate_auto_wire(Gate::mz_free(&[0usize]));
+        let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        assert_eq!(circuit.gate(freed).unwrap().meas_ids[0], MeasId(0));
+        assert_eq!(
+            circuit.gate(measured).unwrap().meas_ids[0],
+            MeasId(1),
+            "a MeasureFree consumes a record, so the next measurement follows it"
         );
     }
 

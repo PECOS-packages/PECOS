@@ -244,6 +244,8 @@ def test_capture_qis_operation_trace_configures_the_trace_builder(
 
 
 def test_surface_module_legacy_names_remain_compatible() -> None:
+    from pecos._traced_circuit import normalize_traced_tick_circuit
+    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
     from pecos.qec.surface.decode import (
         capture_guppy_operation_trace,
         trace_guppy_into_tick_circuit,
@@ -251,3 +253,4 @@ def test_surface_module_legacy_names_remain_compatible() -> None:
 
     assert capture_guppy_operation_trace is pecos.capture_qis_operation_trace
     assert trace_guppy_into_tick_circuit is pecos.trace_program_to_tick_circuit
+    assert normalize_traced_qis_tick_circuit is normalize_traced_tick_circuit

@@ -52,16 +52,12 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
+import pecos.tracing as _tracing
 from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
 from pecos.qec.surface._check_plan import require_current_surface_check_plan_renderer, resolve_surface_check_plan
-from pecos.tracing import (
-    capture_guppy_operation_trace,  # noqa: F401
-    trace_guppy_into_tick_circuit,  # noqa: F401
-    trace_guppy_into_tick_circuit_with_result_traces,
-)
 
 if TYPE_CHECKING:
     import stim
@@ -69,6 +65,12 @@ if TYPE_CHECKING:
 
     from pecos.qec.surface._twirl_config import TwirlConfig
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
+
+
+# Compatibility re-exports for the original surface-code tracing entry points.
+capture_guppy_operation_trace = _tracing.capture_guppy_operation_trace
+trace_guppy_into_tick_circuit = _tracing.trace_guppy_into_tick_circuit
+trace_guppy_into_tick_circuit_with_result_traces = _tracing.trace_guppy_into_tick_circuit_with_result_traces
 
 
 P1Weights = Mapping[str, float] | Sequence[tuple[str, float]]

@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, TypedDict
 
+import pecos._traced_circuit as _traced_circuit
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -69,6 +71,10 @@ if TYPE_CHECKING:
         SurfacePatchDescriptor,
     )
     from pecos.quantum import DagCircuit, TickCircuit, TickHandle
+
+
+# Compatibility re-export for callers of the former surface-specific helper.
+normalize_traced_qis_tick_circuit = _traced_circuit.normalize_traced_tick_circuit
 
 
 class SurfaceDetectorDescriptor(TypedDict):

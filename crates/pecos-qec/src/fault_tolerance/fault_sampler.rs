@@ -1495,6 +1495,7 @@ pub fn symbolic_measurement_history(
         .unwrap_or(0);
 
     let mut sim = SymbolicSparseStab::new(num_qubits);
+    let mut recorded = pecos_simulators::MeasurementHistory::new();
 
     for (tick_idx, tick) in tc.iter_ticks() {
         for gate in tick.iter_gate_batches() {
@@ -1577,7 +1578,16 @@ pub fn symbolic_measurement_history(
                     sim.swap(&symbolic_pairs(&qs));
                 }
                 GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
-                    sim.mz(&qs);
+                    // Every measurement collapses its qubit, so all three run on
+                    // the simulator. Only the record-bearing ones get a history
+                    // column, so the columns line up with the record indices
+                    // detectors reference.
+                    let results = sim.mz(&qs);
+                    if gate.gate_type.consumes_measurement_record() {
+                        for result in results {
+                            recorded.push(result);
+                        }
+                    }
                 }
                 GateType::I
                 | GateType::Idle
@@ -1597,7 +1607,7 @@ pub fn symbolic_measurement_history(
         }
     }
 
-    Ok(sim.measurement_history().clone())
+    Ok(recorded)
 }
 
 fn symbolic_pairs(qs: &[usize]) -> Vec<(usize, usize)> {
@@ -2397,6 +2407,57 @@ mod tests {
         assert_eq!(err.tick, 1, "T is in tick 1");
         assert_eq!(err.gate_in_tick, 0, "T is gate 0 within that tick");
         assert_eq!(err.qubits, vec![0], "full original qubit list");
+    }
+
+    /// The fault catalogue numbers measurements by record, so a `MeasureLeaked`
+    /// must not take a position. It used to, which put every later measurement's
+    /// faults one column off from the detector metadata.
+    #[test]
+    fn flatten_gives_no_record_position_to_measure_leaked() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().mz(&[1]);
+
+        let (gates, meas_positions) = flatten_tick_circuit(&tc);
+
+        assert_eq!(
+            meas_positions.len(),
+            1,
+            "only the MZ consumes a record position"
+        );
+        let (&loc_idx, &record) = meas_positions.iter().next().expect("one entry");
+        assert_eq!(record, 0, "the MZ holds record 0, not record 1");
+        assert_eq!(
+            gates[loc_idx].gate_type,
+            pecos_core::gate_type::GateType::MZ,
+            "the recorded position must belong to the MZ, not the leaked measurement"
+        );
+    }
+
+    /// The symbolic history must have one column per measurement *record*, so it
+    /// lines up with the record indices detectors reference. `MeasureLeaked`
+    /// still runs on the simulator -- it collapses its qubit -- but consumes no
+    /// record, so it must not occupy a column. It used to, leaving the history
+    /// one column longer than the fault mechanisms' record space and writing
+    /// faults into the wrong detector.
+    #[test]
+    fn measure_leaked_collapses_its_qubit_without_taking_a_history_column() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick()
+            .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
+            .expect("gate is valid");
+        tc.tick().mz(&[1]);
+
+        let history = symbolic_measurement_history(&tc).expect("supported gates");
+        assert_eq!(
+            history.len(),
+            1,
+            "only the MZ consumes a record, so only it gets a column"
+        );
     }
 
     // ---- symbolic_measurement_history tests ----

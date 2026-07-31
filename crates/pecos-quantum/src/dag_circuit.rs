@@ -534,6 +534,22 @@ impl DagCircuit {
         self.next_meas_id
     }
 
+    /// Check that `count` ids can still be minted, without minting them.
+    ///
+    /// Batch builders insert one gate per qubit, so without this a batch could
+    /// fail half way and leave the circuit partly mutated.
+    fn reserve_room_for_mints(&self, count: usize) -> Result<(), String> {
+        self.next_meas_id
+            .checked_add(count)
+            .map(|_| ())
+            .ok_or_else(|| {
+                format!(
+                    "measurement needs {count} ids but only {} remain below usize::MAX",
+                    usize::MAX - self.next_meas_id
+                )
+            })
+    }
+
     /// Give a measurement gate a [`MeasId`] per measured qubit, or reserve the
     /// ids it already carries.
     ///
@@ -1737,6 +1753,10 @@ impl DagCircuit {
     ///
     /// Returns an error if the circuit has no measurement ids left to mint.
     pub fn try_mz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Result<Vec<MeasRef>, String> {
+        // Each qubit becomes its own gate, so check the whole batch fits before
+        // inserting any of it. Failing part way would leave the circuit holding
+        // measurements the caller was told it did not get.
+        self.reserve_room_for_mints(qubits.len())?;
         qubits
             .iter()
             .map(|&q| {
@@ -1792,6 +1812,7 @@ impl DagCircuit {
     ///
     /// Returns an error if the circuit has no measurement ids left to mint.
     pub fn try_mz_free(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Result<(), String> {
+        self.reserve_room_for_mints(qubits.len())?;
         for &q in qubits {
             self.try_add_gate_auto_wire(Gate::mz_free(&[q]))?;
         }
@@ -3386,6 +3407,37 @@ mod measurement_id_tests {
             circuit.gate(measured).unwrap().meas_ids[0],
             MeasId(1),
             "a MeasureFree consumes a record, so the next measurement follows it"
+        );
+    }
+
+    /// A batch builder inserts one gate per qubit. If the batch cannot fit
+    /// entirely it must insert none of it, or the caller is told the
+    /// measurement failed while the circuit holds part of it.
+    #[test]
+    fn a_batch_measurement_that_cannot_fit_inserts_nothing() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let gates_before = circuit.gate_count();
+        let mut near_max = Gate::mz(&[0usize]);
+        near_max.meas_ids = smallvec::smallvec![MeasId(usize::MAX - 2)];
+        circuit.add_gate_auto_wire(near_max);
+        let gates_after_setup = circuit.gate_count();
+        assert_eq!(gates_after_setup, gates_before + 1);
+
+        // One id slot remains; the batch needs two.
+        assert!(
+            circuit.try_mz(&[0usize, 1]).is_err(),
+            "two ids do not fit below usize::MAX"
+        );
+        assert_eq!(
+            circuit.gate_count(),
+            gates_after_setup,
+            "a rejected batch must leave no measurement behind"
+        );
+        assert_eq!(
+            circuit.num_measurement_ids(),
+            usize::MAX - 1,
+            "and must not move the counter"
         );
     }
 

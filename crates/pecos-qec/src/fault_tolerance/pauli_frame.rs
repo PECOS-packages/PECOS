@@ -567,6 +567,62 @@ mod tests {
     use super::*;
     use pecos_quantum::Gate;
 
+    /// A `MeasureLeaked` must affect a propagating Pauli exactly as an `MZ`
+    /// does. Clearing used to sit inside the record lookup, so once
+    /// `MeasureLeaked` stopped consuming a record it also stopped touching the
+    /// Pauli, and an X propagated straight through it to flip a later
+    /// measurement that an `MZ` in the same position would have shielded.
+    ///
+    /// This pins the two against each other rather than against an absolute,
+    /// because whether a non-destructive measurement should clear at all is a
+    /// separate question -- see the collapse-semantics issue.
+    #[test]
+    fn measure_leaked_affects_a_propagating_pauli_like_an_mz() {
+        fn later_measurement_flipped(leading: GateType) -> bool {
+            let mut dag = DagCircuit::new();
+            dag.pz(&[0]);
+            let start = dag.add_gate_auto_wire(Gate::simple(
+                GateType::TrackedPauliMeta,
+                vec![pecos_quantum::QubitId::from(0usize)],
+            ));
+            let leading_gate = match leading {
+                GateType::MeasureLeaked => Gate::measure_leaked(&[0usize]),
+                _ => Gate::mz(&[0usize]),
+            };
+            dag.add_gate_auto_wire(leading_gate);
+            let later = dag.add_gate_auto_wire(Gate::mz(&[0usize]));
+
+            let topo_order = dag.topological_order();
+            let start_pos = topo_order
+                .iter()
+                .position(|&n| n == start)
+                .expect("meta node is in the order");
+            let (records, _) = measurement_records_by_node(&dag).expect("mapping succeeds");
+            let affected = propagate_tracked_pauli_forward(
+                &dag,
+                &topo_order,
+                &records,
+                start_pos,
+                &PauliString::xs(&[0usize]),
+            );
+            // Only the *later* measurement matters: with a leading MZ the first
+            // one is legitimately flipped, so a bare "anything affected" check
+            // would compare different things.
+            let later_record = records
+                .get(&later)
+                .and_then(|entries| entries.first())
+                .map(|&(_, record)| record)
+                .expect("the later MZ holds a record");
+            affected.contains(&later_record)
+        }
+
+        assert_eq!(
+            later_measurement_flipped(GateType::MeasureLeaked),
+            later_measurement_flipped(GateType::MZ),
+            "a leaked measurement must not let a Pauli through that an MZ stops"
+        );
+    }
+
     /// `MeasureFree` does consume a record, so it must be numbered here.
     #[test]
     fn measure_free_claims_a_measurement_record() {

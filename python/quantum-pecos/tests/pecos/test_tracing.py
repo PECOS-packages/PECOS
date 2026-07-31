@@ -119,6 +119,62 @@ def test_qis_operation_trace_conversion_rejects_mismatched_measurement_provenanc
         pecos.qis_operation_trace_to_tick_circuit(trace)
 
 
+def test_qis_operation_trace_conversion_rejects_non_object_chunks() -> None:
+    with pytest.raises(TypeError, match="trace chunks must be objects"):
+        pecos.qis_operation_trace_to_tick_circuit([None])  # type: ignore[list-item]
+
+
+def test_qis_operation_trace_conversion_rejects_malformed_lowered_gate_fields() -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"][0]["qubits"] = "0"
+
+    with pytest.raises(TypeError, match="field 'qubits' must be a list"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
+def test_qis_operation_trace_conversion_rejects_boolean_measurement_ids() -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"][-1]["measurement_result_ids"] = [True]
+
+    with pytest.raises(TypeError, match="field 'measurement_result_ids' must contain integers"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
+@pytest.mark.parametrize("bad_value", [float("nan"), 10**1_000], ids=["nan", "overflow"])
+def test_qis_operation_trace_conversion_rejects_non_finite_gate_values(bad_value: float) -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"][1] = {
+        "gate_type": "RX",
+        "qubits": [0],
+        "angles": [bad_value],
+        "params": [],
+    }
+
+    with pytest.raises(ValueError, match="field 'angles' must contain finite values"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
+def test_qis_operation_trace_conversion_does_not_coerce_gate_values() -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"][1] = {
+        "gate_type": "RX",
+        "qubits": [0],
+        "angles": ["0.5"],
+        "params": [],
+    }
+
+    with pytest.raises(TypeError, match="field 'angles' must contain numbers"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
+def test_qis_operation_trace_conversion_rejects_boolean_framing_counts() -> None:
+    trace = _completed_trace()
+    trace[0]["num_operations"] = True
+
+    with pytest.raises(TypeError, match="invalid num_operations"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
 @pytest.mark.parametrize(
     ("gate_type", "angles"),
     [

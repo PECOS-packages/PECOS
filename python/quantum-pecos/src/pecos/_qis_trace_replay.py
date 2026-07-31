@@ -26,7 +26,11 @@ def _runtime_idle_seconds_to_time_units(duration_seconds: float) -> TimeUnits:
         msg = f"Idle duration must be finite and non-negative, got {duration_seconds!r}"
         raise ValueError(msg)
 
-    units = round(duration_seconds * 1_000_000_000.0)
+    duration_nanoseconds = duration_seconds * 1_000_000_000.0
+    if not math.isfinite(duration_nanoseconds):
+        msg = f"Idle duration is too large to represent in nanoseconds, got {duration_seconds!r}"
+        raise ValueError(msg)
+    units = round(duration_nanoseconds)
     if duration_seconds > 0.0:
         units = max(1, units)
     return TimeUnits(units)
@@ -248,6 +252,45 @@ def _require_gate_angles(angles: list[float], gate_type: str, arity: int) -> tup
     return tuple(angles)
 
 
+def _trace_gate_float_list(gate: Mapping[str, Any], field: str, gate_type: str) -> list[float]:
+    """Return a finite floating-point list from a lowered trace gate."""
+    values = gate.get(field, [])
+    if not isinstance(values, list):
+        msg = f"Lowered gate {gate_type!r} field {field!r} must be a list, got {values!r}"
+        raise TypeError(msg)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
+        msg = f"Lowered gate {gate_type!r} field {field!r} must contain numbers, got {values!r}"
+        raise TypeError(msg)
+    try:
+        converted = [float(value) for value in values]
+    except OverflowError as exc:
+        msg = f"Lowered gate {gate_type!r} field {field!r} must contain finite values, got {values!r}"
+        raise ValueError(msg) from exc
+    if not all(math.isfinite(value) for value in converted):
+        msg = f"Lowered gate {gate_type!r} field {field!r} must contain finite values, got {values!r}"
+        raise ValueError(msg)
+    return converted
+
+
+def _trace_gate_nonnegative_int_list(
+    gate: Mapping[str, Any],
+    field: str,
+    gate_type: str,
+) -> list[int]:
+    """Return a non-negative integer list from a lowered trace gate."""
+    values = gate.get(field, [])
+    if not isinstance(values, list):
+        msg = f"Lowered gate {gate_type!r} field {field!r} must be a list, got {values!r}"
+        raise TypeError(msg)
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+        msg = f"Lowered gate {gate_type!r} field {field!r} must contain integers, got {values!r}"
+        raise TypeError(msg)
+    if any(value < 0 for value in values):
+        msg = f"Lowered gate {gate_type!r} field {field!r} must contain non-negative values, got {values!r}"
+        raise ValueError(msg)
+    return values
+
+
 def _lowered_gate_metadata(gate: Mapping[str, Any]) -> dict[str, Any]:
     """Return validated runtime/source metadata for a lowered trace gate."""
     metadata = gate.get("metadata")
@@ -287,12 +330,22 @@ def _replay_lowered_qis_trace_into_tick_circuit(
     )
     tick_circuit = TickCircuit()
 
-    for chunk in chunks:
-        for gate in chunk.get("lowered_quantum_ops") or []:
-            gate_type = str(gate["gate_type"])
-            qubits = [int(q) for q in gate.get("qubits", [])]
-            angles = [float(theta) for theta in gate.get("angles", [])]
-            params = [float(param) for param in gate.get("params", [])]
+    for chunk_index, chunk in enumerate(chunks):
+        lowered_quantum_ops = chunk.get("lowered_quantum_ops")
+        if not isinstance(lowered_quantum_ops, list):
+            msg = f"Traced chunk {chunk_index} lowered_quantum_ops must be a list"
+            raise TypeError(msg)
+        for gate_index, gate in enumerate(lowered_quantum_ops):
+            if not isinstance(gate, Mapping):
+                msg = f"Lowered gate {gate_index} in traced chunk {chunk_index} must be an object"
+                raise TypeError(msg)
+            gate_type = gate.get("gate_type")
+            if not isinstance(gate_type, str) or not gate_type:
+                msg = f"Lowered gate {gate_index} in traced chunk {chunk_index} is missing a valid gate_type"
+                raise TypeError(msg)
+            qubits = _trace_gate_nonnegative_int_list(gate, "qubits", gate_type)
+            angles = _trace_gate_float_list(gate, "angles", gate_type)
+            params = _trace_gate_float_list(gate, "params", gate_type)
             metadata = _lowered_gate_metadata(gate)
             tick = tick_circuit.tick()
 
@@ -320,8 +373,7 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                     raise ValueError(msg)
                 tick.idle(_runtime_idle_seconds_to_time_units(params[0]), qubits)
             elif gate_type == "MZ":
-                meas_ids = gate.get("measurement_result_ids")
-                if not isinstance(meas_ids, list):
+                if not isinstance(gate.get("measurement_result_ids"), list):
                     msg = (
                         "Lowered MZ trace is missing measurement_result_ids; "
                         "rebuild PECOS so runtime-lowered measurements carry "
@@ -329,6 +381,11 @@ def _replay_lowered_qis_trace_into_tick_circuit(
                         "operation-order inference."
                     )
                     raise ValueError(msg)
+                meas_ids = _trace_gate_nonnegative_int_list(
+                    gate,
+                    "measurement_result_ids",
+                    gate_type,
+                )
                 if len(meas_ids) != len(qubits):
                     msg = f"Lowered MZ gate carries {len(meas_ids)} measurement_result_ids for {len(qubits)} qubit(s)"
                     raise ValueError(msg)
@@ -453,6 +510,12 @@ def _replay_qis_trace_chunks_into_tick_circuit(
     allow_raw_measurement_id_fallback: bool = False,
 ) -> TickCircuit:
     """Replay captured QIS operation trace chunks into a ``TickCircuit``."""
+    if not isinstance(chunks, list):
+        msg = f"QIS operation trace must be a list of chunks, got {type(chunks).__name__}"
+        raise TypeError(msg)
+    if any(not isinstance(chunk, Mapping) for chunk in chunks):
+        msg = "QIS operation trace chunks must be objects"
+        raise TypeError(msg)
     measurement_crosstalk_topology = _validate_measurement_crosstalk_topology(
         measurement_crosstalk_topology,
     )
@@ -510,9 +573,15 @@ def _validate_audited_trace_stream(chunks: list[dict[str, Any]]) -> None:
     if isinstance(engine_trace_id, bool) or not isinstance(engine_trace_id, int):
         msg = "audited runtime trace is missing a valid engine_trace_id"
         raise TypeError(msg)
+    if engine_trace_id < 0:
+        msg = "audited runtime trace engine_trace_id must be non-negative"
+        raise ValueError(msg)
     if isinstance(shot_index, bool) or not isinstance(shot_index, int):
         msg = "audited runtime trace is missing a valid shot_index"
         raise TypeError(msg)
+    if shot_index < 0:
+        msg = "audited runtime trace shot_index must be non-negative"
+        raise ValueError(msg)
     for expected_index, chunk in enumerate(chunks):
         if chunk.get("format") != "pecos_qis_operation_trace_v1":
             msg = f"audited runtime trace chunk {expected_index} has an unsupported format"
@@ -520,14 +589,25 @@ def _validate_audited_trace_stream(chunks: list[dict[str, Any]]) -> None:
         if chunk.get("engine_trace_id") != engine_trace_id or chunk.get("shot_index") != shot_index:
             msg = "audited runtime trace mixes engine or shot identities"
             raise ValueError(msg)
-        if chunk.get("chunk_index") != expected_index:
+        chunk_index = chunk.get("chunk_index")
+        if isinstance(chunk_index, bool) or not isinstance(chunk_index, int):
+            msg = f"audited runtime trace chunk {expected_index} has an invalid chunk_index"
+            raise TypeError(msg)
+        if chunk_index != expected_index:
             msg = (
                 f"audited runtime trace chunk indices must be contiguous; expected {expected_index}, "
-                f"got {chunk.get('chunk_index')!r}"
+                f"got {chunk_index!r}"
             )
             raise ValueError(msg)
         operations = chunk.get("operations")
-        if not isinstance(operations, list) or chunk.get("num_operations") != len(operations):
+        if not isinstance(operations, list):
+            msg = f"audited runtime trace chunk {expected_index} operations must be a list"
+            raise TypeError(msg)
+        num_operations = chunk.get("num_operations")
+        if isinstance(num_operations, bool) or not isinstance(num_operations, int):
+            msg = f"audited runtime trace chunk {expected_index} has an invalid num_operations"
+            raise TypeError(msg)
+        if num_operations < 0 or num_operations != len(operations):
             msg = f"audited runtime trace chunk {expected_index} has an invalid operation count"
             raise ValueError(msg)
     terminal_positions = [index for index, chunk in enumerate(chunks) if chunk.get("stage") == "trace_complete"]
@@ -567,7 +647,14 @@ def source_measurement_ids_from_operation_trace(chunks: list[dict[str, Any]]) ->
             measure = quantum.get("Measure")
             if not isinstance(measure, Sequence) or isinstance(measure, (str, bytes)) or len(measure) != 2:
                 continue
-            ids.append(int(measure[1]))
+            result_id = measure[1]
+            if isinstance(result_id, bool) or not isinstance(result_id, int):
+                msg = f"raw QIS measurement result id must be an integer, got {result_id!r}"
+                raise TypeError(msg)
+            if result_id < 0:
+                msg = f"raw QIS measurement result id must be non-negative, got {result_id!r}"
+                raise ValueError(msg)
+            ids.append(result_id)
     if len(ids) != len(set(ids)):
         msg = "raw QIS operation trace contains duplicate measurement result ids"
         raise ValueError(msg)

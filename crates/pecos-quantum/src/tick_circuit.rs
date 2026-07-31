@@ -1441,6 +1441,53 @@ impl TickCircuit {
         self.ticks[..tick_idx].iter().map(Tick::len).sum::<usize>() + gate_idx
     }
 
+    /// Recover the [`TickMeasRef`] for a measurement identified by its tick,
+    /// gate-batch index and qubit.
+    ///
+    /// Callers that hold only `(tick, gate_idx, qubit)` -- notably the Python
+    /// bindings, whose measurement handles are plain tuples -- need the record
+    /// index and [`MeasId`] that `mz()` assigned. Fabricating a `TickMeasRef`
+    /// with placeholder values instead silently collapses every reference onto
+    /// record 0, which corrupts detector and observable annotations built from
+    /// them (issue #382).
+    ///
+    /// `gate_idx` indexes gate *batches* within the tick, and a batch may
+    /// accumulate qubits from several `mz()` calls, so the qubit selects the
+    /// entry within the batch.
+    ///
+    /// Returns `None` when the tick or batch does not exist, when the batch is
+    /// not a measurement, when it carries no measurement ids, or when the qubit
+    /// was not measured by it.
+    #[must_use]
+    pub fn meas_ref(&self, tick: usize, gate_idx: usize, qubit: QubitId) -> Option<TickMeasRef> {
+        // The `MeasId` stored alongside each measured qubit is what `mz` /
+        // `mz_free` assigned at call time, so reading it back recovers the
+        // record index directly. Reconstructing the ordinal by walking stored
+        // ticks and batches instead is wrong: a later measurement can be
+        // appended to an earlier compatible batch, and `tick_at` allows filling
+        // ticks out of order, so storage order is not allocation order.
+        //
+        // Limitation: `mz_with_ids` lets callers supply external stable ids
+        // (Guppy result ids) that are not positional, and for those the record
+        // index and the id genuinely differ. `TickCircuit` does not store the
+        // positional ordinal separately, so that case cannot be resolved here;
+        // it is tracked in #387 along with the reverse-conversion conflation.
+        let batch = self.get_tick(tick)?.iter_gate_batches().nth(gate_idx)?;
+        let gate = batch.as_gate();
+        if !matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree) {
+            return None;
+        }
+        let position = gate.qubits.iter().position(|&q| q == qubit)?;
+        let meas_id = gate.meas_ids.get(position).copied()?;
+        Some(TickMeasRef {
+            tick,
+            gate_idx,
+            qubit,
+            record_idx: meas_id.index(),
+            meas_id,
+        })
+    }
+
     /// Get a tick by index.
     #[must_use]
     pub fn get_tick(&self, idx: usize) -> Option<&Tick> {
@@ -3392,8 +3439,16 @@ impl From<&TickCircuit> for DagCircuit {
                     let node = dag.add_gate(split_gate.clone());
                     split_nodes.push(node);
 
-                    // For MZ gates, map each qubit's record to this node
-                    if split_gate.gate_type == GateType::MZ {
+                    // Every measurement consumes a record, `MeasureFree`
+                    // included -- `TickHandle::mz_free` advances
+                    // `next_meas_record` exactly like `mz`. Counting only `MZ`
+                    // here left later records unmappable, so annotations
+                    // referencing them silently resolved to nothing.
+                    //
+                    // `MeasureLeaked` is a measurement too and is still
+                    // excluded here; that inconsistency is tracked in #387
+                    // along with the remaining silent drops below.
+                    if matches!(split_gate.gate_type, GateType::MZ | GateType::MeasureFree) {
                         for _q in &split_gate.qubits {
                             meas_record_to_node.insert(meas_record_idx, node);
                             meas_record_idx += 1;
@@ -6620,5 +6675,153 @@ mod tests {
             }
             _ => panic!("Expected detector"),
         }
+    }
+
+    /// `meas_ref` must recover exactly what `mz()` handed out, because the
+    /// Python bindings hold only `(tick, gate_idx, qubit)` and rebuild the ref
+    /// from it. Fabricating the record index there collapsed every annotation
+    /// reference onto record 0 (issue #382).
+    #[test]
+    fn meas_ref_recovers_what_mz_returned() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2]);
+        let first = circuit.tick().mz(&[0, 1, 2]);
+        let second = circuit.tick().mz(&[1]);
+
+        for expected in first.iter().chain(&second) {
+            let recovered = circuit
+                .meas_ref(expected.tick, expected.gate_idx, expected.qubit)
+                .expect("mz() refs must resolve");
+            assert_eq!(
+                recovered.record_idx, expected.record_idx,
+                "record index for qubit {:?}",
+                expected.qubit
+            );
+            assert_eq!(recovered.meas_id, expected.meas_id);
+        }
+
+        let records: Vec<usize> = first.iter().map(|r| r.record_idx).collect();
+        assert_eq!(
+            records,
+            vec![0, 1, 2],
+            "a batched mz must hand out distinct record indices"
+        );
+        assert_eq!(second[0].record_idx, 3);
+    }
+
+    #[test]
+    fn meas_ref_rejects_refs_that_name_no_measurement() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0]);
+        let refs = circuit.tick().mz(&[0]);
+        let good = refs[0];
+
+        assert!(
+            circuit
+                .meas_ref(good.tick, good.gate_idx, QubitId(7))
+                .is_none()
+        );
+        assert!(circuit.meas_ref(good.tick, 99, good.qubit).is_none());
+        assert!(circuit.meas_ref(99, good.gate_idx, good.qubit).is_none());
+        // tick 0 holds the prep, not a measurement
+        assert!(circuit.meas_ref(0, 0, QubitId(0)).is_none());
+    }
+
+    /// Storage order is not allocation order, so `meas_ref` must not
+    /// reconstruct the record index by walking ticks and batches.
+    ///
+    /// A later measurement can be appended to an earlier compatible batch, and
+    /// `tick_at` allows filling ticks out of sequence. Reading the `MeasId`
+    /// that `mz`/`mz_free` stored alongside the qubit is order-independent;
+    /// counting stored batches silently returned another measurement's index.
+    #[test]
+    fn meas_ref_is_independent_of_batch_and_tick_storage_order() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2]);
+        // Interleave so the third measurement merges into the first batch.
+        let first = circuit.tick().mz(&[0]);
+        let freed = circuit.tick_at(1).mz_free(&[1]);
+        let third = circuit.tick_at(1).mz(&[2]);
+        assert_eq!(
+            (
+                first[0].record_idx,
+                freed[0].record_idx,
+                third[0].record_idx
+            ),
+            (0, 1, 2),
+            "records are allocated in call order"
+        );
+
+        for expected in [first[0], freed[0], third[0]] {
+            let recovered = circuit
+                .meas_ref(expected.tick, expected.gate_idx, expected.qubit)
+                .expect("every ref mz() handed out must resolve");
+            assert_eq!(
+                recovered.record_idx, expected.record_idx,
+                "qubit {:?} must recover the record it was allocated",
+                expected.qubit
+            );
+        }
+    }
+
+    /// `MeasureFree` consumes a measurement record exactly like `MZ`, so a
+    /// later `MZ` must not be renumbered as though the free measurements never
+    /// happened.
+    #[test]
+    fn measure_free_consumes_a_record_ordinal() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2]);
+        let freed = circuit.tick().mz_free(&[0, 1]);
+        let kept = circuit.tick().mz(&[2]);
+
+        assert_eq!(freed[0].record_idx, 0);
+        assert_eq!(freed[1].record_idx, 1);
+        assert_eq!(
+            kept[0].record_idx, 2,
+            "MZ after two MeasureFree is record 2"
+        );
+
+        let recovered = circuit
+            .meas_ref(kept[0].tick, kept[0].gate_idx, kept[0].qubit)
+            .expect("ref must resolve");
+        assert_eq!(recovered.record_idx, 2);
+    }
+
+    /// A measurement record that `mz()` handed out must still resolve after the
+    /// DAG conversion. `MeasureFree` consumes a record, so counting only `MZ`
+    /// during conversion left later records unmappable and the annotation
+    /// resolved to nothing at all.
+    #[test]
+    fn annotation_records_survive_conversion_across_measure_free() {
+        let mut circuit = TickCircuit::new();
+        circuit.tick().pz(&[0, 1, 2, 3]);
+        let _freed = circuit.tick().mz_free(&[0, 1]);
+        let kept = circuit.tick().mz(&[2, 3]);
+        assert_eq!(
+            kept[0].record_idx, 2,
+            "MZ after two MeasureFree is record 2"
+        );
+        circuit.observable(&kept);
+
+        let dag = crate::DagCircuit::from(&circuit);
+        let nodes: Vec<Vec<usize>> = dag
+            .annotations()
+            .iter()
+            .filter_map(|ann| match &ann.kind {
+                AnnotationKind::Observable { measurement_nodes } => Some(measurement_nodes.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].len(),
+            2,
+            "both records must resolve; an empty annotation silently drops the observable"
+        );
+        assert_ne!(
+            nodes[0][0], nodes[0][1],
+            "records must map to distinct nodes"
+        );
     }
 }

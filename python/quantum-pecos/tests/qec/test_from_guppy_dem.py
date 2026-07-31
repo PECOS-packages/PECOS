@@ -1385,14 +1385,28 @@ def test_result_tag_remap_validation_accepts_exact_traced_meas_ids() -> None:
 
 
 def test_result_tag_remap_validation_rejects_duplicate_traced_meas_ids() -> None:
-    from pecos_rslib.quantum import TickCircuit
+    # `mz_with_ids` rejects a repeated id, so a duplicate has to be supplied
+    # directly to reach this validator.
+    class FakeGate:
+        gate_type = "MZ"
+        qubits: ClassVar[list[int]] = [0, 1]
+        meas_ids: ClassVar[list[int]] = [7, 7]
 
-    tc = TickCircuit()
-    tc.tick().mz_with_ids([0, 1], [7, 7])
+    class FakeTick:
+        def gate_batches(self):
+            return [FakeGate()]
+
+    class FakeCircuit:
+        def num_ticks(self) -> int:
+            return 1
+
+        def get_tick(self, tick_idx: int):
+            assert tick_idx == 0
+            return FakeTick()
 
     with pytest.raises(ValueError, match="duplicate measured MeasId"):
         _validate_result_tag_remap_against_traced_measurements(
-            tc,
+            FakeCircuit(),
             {0: 7, 1: 8},
             expected_measurements=2,
         )

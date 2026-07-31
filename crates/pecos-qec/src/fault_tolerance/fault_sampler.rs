@@ -1690,10 +1690,11 @@ fn remap_history_onto_records(
             if let Some(&dependency_column) = column_of.get(&dependency) {
                 outcome.insert(dependency_column);
             } else {
-                let (tick, qubits) = leaked_sites
-                    .get(&dependency)
-                    .cloned()
-                    .unwrap_or((usize::MAX, Vec::new()));
+                let (tick, qubits) = leaked_sites.get(&dependency).cloned().expect(
+                    "every simulator measurement index is either a record column or a \
+                     leaked site, so a dependency outside both means the two maps were \
+                     not built from the same walk",
+                );
                 return Err(MeasurementHistoryError::LeakedMeasurementNotRepresentable {
                     tick,
                     qubits,

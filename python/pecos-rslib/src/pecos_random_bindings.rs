@@ -63,7 +63,7 @@ fn normalize_seed(seq: i128) -> PyResult<u64> {
             pyo3::exceptions::PyOverflowError::new_err("srandom seed out of 64-bit range")
         })
     } else {
-        i64::try_from(seq).map(|signed| signed as u64).map_err(|_| {
+        i64::try_from(seq).map(i64::cast_unsigned).map_err(|_| {
             pyo3::exceptions::PyOverflowError::new_err("srandom seed out of 64-bit range")
         })
     }

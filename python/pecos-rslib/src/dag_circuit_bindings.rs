@@ -31,6 +31,7 @@ use pecos_quantum::{
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList};
+use std::collections::BTreeSet;
 
 type PyMixedPauliTerm = (f64, Vec<(String, usize)>);
 
@@ -1399,15 +1400,22 @@ impl PyDagCircuit {
     ///     >>> dag = `DagCircuit()`
     ///     >>> ms = dag.mz([0, 1])
     ///     >>> dag.detector(ms)
-    fn mz(slf: &Bound<'_, Self>, qubits: Vec<usize>) -> Vec<(usize, usize)> {
-        let refs = slf.borrow_mut().inner.mz(&qubits);
-        refs.iter().map(|r| (r.node, r.qubit.index())).collect()
+    fn mz(slf: &Bound<'_, Self>, qubits: Vec<usize>) -> PyResult<Vec<(usize, usize)>> {
+        let refs = slf
+            .borrow_mut()
+            .inner
+            .try_mz(&qubits)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(refs.iter().map(|r| (r.node, r.qubit.index())).collect())
     }
 
     /// Measure and free qubits (destructive measurement).
-    fn mz_free(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> Py<Self> {
-        slf.borrow_mut(py).inner.mz_free(&qubits);
-        slf
+    fn mz_free(slf: Py<Self>, py: Python<'_>, qubits: Vec<usize>) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .inner
+            .try_mz_free(&qubits)
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok(slf)
     }
 
     /// Prepare qubits in the |0> state (Z-basis preparation).
@@ -2692,10 +2700,30 @@ impl PyTickCircuit {
     ///
     /// Returns:
     ///     A new `DagCircuit` with the same gates and qubit wire connections.
-    fn to_dag_circuit(&self) -> PyDagCircuit {
-        PyDagCircuit {
-            inner: DagCircuit::from(&self.inner),
+    ///
+    /// Raises:
+    ///     ValueError: Two measurements share a `MeasId`, so the ids cannot
+    ///         name them apart.
+    fn to_dag_circuit(&self) -> PyResult<PyDagCircuit> {
+        // `DagCircuit` rejects duplicate ids by panicking, which Python cannot
+        // catch as an ordinary exception, and no single `mz_with_ids` call can
+        // see a duplicate spread across calls. Check here, where the error can
+        // still be raised as one. Keep in step with `assign_measurement_ids`
+        // until the conversion itself can report failure.
+        let mut seen = BTreeSet::new();
+        for batch in self.inner.iter_gate_batches() {
+            for id in &batch.as_gate().meas_ids {
+                if !seen.insert(id.index()) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "two measurements share MeasId({}); each measurement needs a unique id",
+                        id.index()
+                    )));
+                }
+            }
         }
+        Ok(PyDagCircuit {
+            inner: DagCircuit::from(&self.inner),
+        })
     }
 
     /// Lower Clifford-angle rotations to named Clifford gates.
@@ -3779,17 +3807,32 @@ impl PyTickHandle {
     ) -> PyResult<Vec<(usize, usize, usize)>> {
         let mut handle = slf.borrow_mut(py);
         let mut gate = Gate::mz(&qubits);
-        // Assign MeasId values (SSA identity for each measurement)
-        {
-            let mut circuit = handle.circuit.borrow_mut(py);
+        // Number the measurements from the current counter but do not commit the
+        // reservation until the gate is actually in: adding it can fail on a
+        // qubit conflict, and a caller that catches that must not be left with
+        // records consumed by a measurement the circuit never got.
+        let base = {
+            let circuit = handle.circuit.borrow(py);
             let base = circuit.inner.num_measurements();
-            for (i, _) in qubits.iter().enumerate() {
-                gate.meas_ids.push(pecos_core::MeasId(base + i));
-            }
-            // Increment the measurement counter
-            circuit.inner.advance_meas_counter(qubits.len());
+            base.checked_add(qubits.len()).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "cannot reserve {} more measurement records; only {} remain below usize::MAX",
+                    qubits.len(),
+                    usize::MAX - base
+                ))
+            })?;
+            base
+        };
+        for (i, _) in qubits.iter().enumerate() {
+            gate.meas_ids.push(pecos_core::MeasId(base + i));
         }
         let gate_idx = handle.add_gate_get_idx(py, gate)?;
+        handle
+            .circuit
+            .borrow_mut(py)
+            .inner
+            .try_advance_meas_counter(qubits.len())
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
         let tick_idx = handle.tick_idx;
         Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
     }
@@ -3813,21 +3856,48 @@ impl PyTickHandle {
                 qubits.len()
             )));
         }
+        // A `MeasId` names one measurement, so a repeat inside a single call is
+        // never meaningful: stamped-id resolution would bind to whichever
+        // occurrence came first. Duplicates spread across calls are caught
+        // later, when the circuit is converted to a `DagCircuit`.
+        let mut seen = BTreeSet::new();
+        for &mid in &meas_ids {
+            if !seen.insert(mid) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "meas_ids repeats MeasId({mid}); each measurement needs a unique id"
+                )));
+            }
+        }
+        // The highest id has to leave room for a successor, or the record counter
+        // cannot advance past it. With no ids there is nothing to make room for --
+        // treating an empty list as id 0 reserved a record for a measurement that
+        // does not exist.
+        let past_highest = match meas_ids.iter().copied().max() {
+            Some(highest) => Some(highest.checked_add(1).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "meas_ids contains the largest representable id, leaving no room for a later id",
+                )
+            })?),
+            None => None,
+        };
         let mut handle = slf.borrow_mut(py);
         let mut gate = Gate::mz(&qubits);
         for &mid in &meas_ids {
             gate.meas_ids.push(pecos_core::MeasId(mid));
         }
-        {
+        let gate_idx = handle.add_gate_get_idx(py, gate)?;
+        // Committed only once the gate is in, so a failed add leaves the counter
+        // where it was.
+        if let Some(past_highest) = past_highest {
             let mut circuit = handle.circuit.borrow_mut(py);
-            // Advance counter to at least past the highest ID we're assigning
-            let max_id = meas_ids.iter().copied().max().unwrap_or(0);
             let current = circuit.inner.num_measurements();
-            if max_id >= current {
-                circuit.inner.advance_meas_counter(max_id + 1 - current);
+            if past_highest > current {
+                circuit
+                    .inner
+                    .try_advance_meas_counter(past_highest - current)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
             }
         }
-        let gate_idx = handle.add_gate_get_idx(py, gate)?;
         let tick_idx = handle.tick_idx;
         Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
     }
@@ -3844,15 +3914,32 @@ impl PyTickHandle {
     ) -> PyResult<Vec<(usize, usize, usize)>> {
         let mut handle = slf.borrow_mut(py);
         let mut gate = Gate::mz_free(&qubits);
-        {
-            let mut circuit = handle.circuit.borrow_mut(py);
+        // Number the measurements from the current counter but do not commit the
+        // reservation until the gate is actually in: adding it can fail on a
+        // qubit conflict, and a caller that catches that must not be left with
+        // records consumed by a measurement the circuit never got.
+        let base = {
+            let circuit = handle.circuit.borrow(py);
             let base = circuit.inner.num_measurements();
-            for (i, _) in qubits.iter().enumerate() {
-                gate.meas_ids.push(pecos_core::MeasId(base + i));
-            }
-            circuit.inner.advance_meas_counter(qubits.len());
+            base.checked_add(qubits.len()).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "cannot reserve {} more measurement records; only {} remain below usize::MAX",
+                    qubits.len(),
+                    usize::MAX - base
+                ))
+            })?;
+            base
+        };
+        for (i, _) in qubits.iter().enumerate() {
+            gate.meas_ids.push(pecos_core::MeasId(base + i));
         }
         let gate_idx = handle.add_gate_get_idx(py, gate)?;
+        handle
+            .circuit
+            .borrow_mut(py)
+            .inner
+            .try_advance_meas_counter(qubits.len())
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
         let tick_idx = handle.tick_idx;
         Ok(qubits.iter().map(|&q| (tick_idx, gate_idx, q)).collect())
     }

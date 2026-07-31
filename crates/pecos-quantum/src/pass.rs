@@ -1501,13 +1501,31 @@ pub struct AssignMissingMeasIds;
 
 impl CircuitPass for AssignMissingMeasIds {
     fn apply_tick(&self, circuit: &mut TickCircuit) {
-        let mut next_id = circuit.num_measurements();
+        // Count what needs an id and reserve the whole run before touching any
+        // gate, so an exhausted counter is reported rather than overflowing part
+        // way through the assignment.
+        let missing: usize = circuit
+            .iter_gate_batches()
+            .map(|batch| {
+                let gate = batch.as_gate();
+                if gate.gate_type.consumes_measurement_record() && gate.meas_ids.is_empty() {
+                    gate.qubits.len()
+                } else {
+                    0
+                }
+            })
+            .sum();
+        if missing == 0 {
+            return;
+        }
+        let mut next_id = circuit
+            .try_advance_meas_counter(missing)
+            .unwrap_or_else(|err| panic!("{err}"));
+
         for tick in circuit.ticks_mut() {
             for gate_idx in 0..tick.len() {
                 tick.update_gate_batch(gate_idx, |gate| {
-                    let is_measurement =
-                        matches!(gate.gate_type, GateType::MZ | GateType::MeasureFree);
-                    if is_measurement && gate.meas_ids.is_empty() {
+                    if gate.gate_type.consumes_measurement_record() && gate.meas_ids.is_empty() {
                         for _ in &gate.qubits {
                             gate.meas_ids.push(pecos_core::MeasId(next_id));
                             next_id += 1;
@@ -1516,10 +1534,6 @@ impl CircuitPass for AssignMissingMeasIds {
                 })
                 .unwrap_or_else(|err| panic!("{err}"));
             }
-        }
-        let added = next_id - circuit.num_measurements();
-        if added > 0 {
-            circuit.advance_meas_counter(added);
         }
     }
 
@@ -3784,5 +3798,46 @@ mod tests {
         // X(0) can't merge with PZ (qubit 0 busy) or MZ (qubit 0 busy).
         assert_eq!(tc.num_ticks(), 3);
         assert_eq!(count_gate_batches(&tc), 3);
+    }
+
+    /// `AssignMissingMeasIds` fills in ids for measurements that arrived without
+    /// them, numbering from the circuit's current record counter.
+    #[test]
+    fn assign_missing_meas_ids_numbers_from_the_current_counter() {
+        let mut tc = TickCircuit::new();
+        let mut idless = Gate::mz(&[0usize, 1]);
+        idless.meas_ids.clear();
+        tc.tick().try_add_gate(idless).expect("gate is valid");
+
+        assign_missing_meas_ids(&mut tc);
+
+        let ids: Vec<usize> = tc
+            .iter_gate_batches()
+            .flat_map(|batch| {
+                batch
+                    .as_gate()
+                    .meas_ids
+                    .iter()
+                    .map(|id| id.index())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(ids, vec![0, 1]);
+        assert_eq!(tc.num_measurements(), 2);
+    }
+
+    /// The pass reserves the whole run before touching any gate, so an exhausted
+    /// counter is reported rather than overflowing part way through.
+    #[test]
+    #[should_panic(expected = "remain below usize::MAX")]
+    fn assign_missing_meas_ids_reports_an_exhausted_counter() {
+        let mut tc = TickCircuit::new();
+        tc.advance_meas_counter(usize::MAX);
+
+        let mut idless = Gate::mz(&[0usize]);
+        idless.meas_ids.clear();
+        tc.tick().try_add_gate(idless).expect("gate is valid");
+
+        assign_missing_meas_ids(&mut tc);
     }
 }

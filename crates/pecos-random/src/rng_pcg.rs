@@ -78,7 +78,7 @@ impl PCGRandom {
         rng.state = 0_u64;
         rng.inc = (initseq << 1_u64) | 1_u64;
         PCGRandom::pcg_setseq_64_step_r(rng);
-        rng.state += initstate;
+        rng.state = rng.state.wrapping_add(initstate);
         PCGRandom::pcg_setseq_64_step_r(rng);
     }
 

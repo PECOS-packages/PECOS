@@ -412,10 +412,11 @@ fn measurement_records_by_node(
         let Some(gate) = dag.gate(node) else {
             continue;
         };
-        if !matches!(
-            gate.gate_type,
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked
-        ) {
+        // `MeasureLeaked` consumes no measurement record. Including it here
+        // numbered it positionally while real measurements were numbered by
+        // their `MeasId`, so a leaked measurement and a real one could claim the
+        // same record.
+        if !gate.gate_type.consumes_measurement_record() {
             continue;
         }
         if !gate.meas_ids.is_empty() && gate.meas_ids.len() != gate.qubits.len() {
@@ -497,8 +498,13 @@ fn propagate_tracked_pauli_forward(
                         if prop.contains_x(qubit) {
                             affected_measurements.insert(record);
                         }
-                        clear_qubit(&mut prop, qubit);
                     }
+                }
+                // Every measurement collapses the qubit, including one that
+                // consumes no record. Clearing used to sit inside the record
+                // lookup above, so a `MeasureLeaked` let the Pauli propagate on.
+                for qubit in &gate.qubits {
+                    clear_qubit(&mut prop, qubit.index());
                 }
             }
             GateType::PZ | GateType::QAlloc => {
@@ -553,5 +559,117 @@ fn clear_qubit(prop: &mut PauliProp, qubit: usize) {
     }
     if prop.contains_z(qubit) {
         prop.track_z(&[qubit]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_quantum::Gate;
+
+    /// A `MeasureLeaked` must affect a propagating Pauli exactly as an `MZ`
+    /// does. Clearing used to sit inside the record lookup, so once
+    /// `MeasureLeaked` stopped consuming a record it also stopped touching the
+    /// Pauli, and an X propagated straight through it to flip a later
+    /// measurement that an `MZ` in the same position would have shielded.
+    ///
+    /// This pins the two against each other rather than against an absolute,
+    /// because whether a non-destructive measurement should clear at all is a
+    /// separate question -- see the collapse-semantics issue.
+    #[test]
+    fn measure_leaked_affects_a_propagating_pauli_like_an_mz() {
+        fn later_measurement_flipped(leading: GateType) -> bool {
+            let mut dag = DagCircuit::new();
+            dag.pz(&[0]);
+            let start = dag.add_gate_auto_wire(Gate::simple(
+                GateType::TrackedPauliMeta,
+                vec![pecos_quantum::QubitId::from(0usize)],
+            ));
+            let leading_gate = match leading {
+                GateType::MeasureLeaked => Gate::measure_leaked(&[0usize]),
+                _ => Gate::mz(&[0usize]),
+            };
+            dag.add_gate_auto_wire(leading_gate);
+            let later = dag.add_gate_auto_wire(Gate::mz(&[0usize]));
+
+            let topo_order = dag.topological_order();
+            let start_pos = topo_order
+                .iter()
+                .position(|&n| n == start)
+                .expect("meta node is in the order");
+            let (records, _) = measurement_records_by_node(&dag).expect("mapping succeeds");
+            let affected = propagate_tracked_pauli_forward(
+                &dag,
+                &topo_order,
+                &records,
+                start_pos,
+                &PauliString::xs(&[0usize]),
+            );
+            // Only the *later* measurement matters: with a leading MZ the first
+            // one is legitimately flipped, so a bare "anything affected" check
+            // would compare different things.
+            let later_record = records
+                .get(&later)
+                .and_then(|entries| entries.first())
+                .map(|&(_, record)| record)
+                .expect("the later MZ holds a record");
+            affected.contains(&later_record)
+        }
+
+        assert_eq!(
+            later_measurement_flipped(GateType::MeasureLeaked),
+            later_measurement_flipped(GateType::MZ),
+            "a leaked measurement must not let a Pauli through that an MZ stops"
+        );
+    }
+
+    /// `MeasureFree` does consume a record, so it must be numbered here.
+    #[test]
+    fn measure_free_claims_a_measurement_record() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let freed = dag.add_gate_auto_wire(Gate::mz_free(&[0usize]));
+        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        let (by_node, num_measurements) =
+            measurement_records_by_node(&dag).expect("mapping succeeds");
+
+        assert_eq!(
+            by_node.get(&freed).map(Vec::as_slice),
+            Some([(0usize, 0usize)].as_slice())
+        );
+        assert_eq!(
+            by_node.get(&measured).map(Vec::as_slice),
+            Some([(1usize, 1usize)].as_slice())
+        );
+        assert_eq!(num_measurements, 2);
+    }
+
+    /// `MeasureLeaked` must not consume a measurement record here.
+    ///
+    /// It used to, and because `DagCircuit` mints no id for it, it took the
+    /// positional branch and claimed record 0 -- the same record the first real
+    /// measurement holds by its `MeasId`. Two different measurements then mapped
+    /// to one record.
+    #[test]
+    fn measure_leaked_does_not_claim_a_measurement_record() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        let leaked = dag.add_gate_auto_wire(Gate::measure_leaked(&[0usize]));
+        let measured = dag.add_gate_auto_wire(Gate::mz(&[1usize]));
+
+        let (by_node, num_measurements) =
+            measurement_records_by_node(&dag).expect("mapping succeeds");
+
+        assert!(
+            !by_node.contains_key(&leaked),
+            "a leaked measurement holds no record"
+        );
+        assert_eq!(
+            by_node.get(&measured).map(Vec::as_slice),
+            Some([(1usize, 0usize)].as_slice()),
+            "the real measurement keeps record 0"
+        );
+        assert_eq!(num_measurements, 1);
     }
 }

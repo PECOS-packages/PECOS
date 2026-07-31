@@ -59,7 +59,7 @@ def test_observable_over_two_measurements_uses_both() -> None:
 # takes detectors from the `detectors` metadata JSON, and
 # `InfluenceBuilder::with_circuit_annotations` routes detector annotations to the
 # sampler path instead. The binding fix corrects that path too, but exercising it
-# needs a sampler-level test; tracked with the rest of the annotation work in #387.
+# needs a sampler-level test.
 
 
 def test_measurement_ref_from_another_circuit_is_rejected() -> None:

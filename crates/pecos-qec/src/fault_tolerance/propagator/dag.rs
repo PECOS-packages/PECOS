@@ -1918,21 +1918,19 @@ impl<'a> DagFaultAnalyzer<'a> {
         map
     }
 
-    /// Extracts all measurements from the circuit in a deterministic order.
+    /// Extracts all measurements from the circuit, ordered by [`MeasId`].
     ///
-    /// Measurements are sorted by:
-    /// 1. Topological position (to respect causal dependencies)
-    /// 2. Qubit index (to break ties for concurrent/independent measurements)
+    /// The id is what names a measurement, so it is what orders them; qubit index
+    /// breaks ties. Measurements carrying no id fall back to topological
+    /// position, which only happens for circuits built outside `DagCircuit`'s
+    /// builders.
     ///
-    /// This gives deterministic measurement ordering where measurements on
-    /// lower-indexed qubits appear first when they are in the same "layer" of
-    /// the circuit.
+    /// Returns `(measurements, meas_ids)` where `measurements` is
+    /// `Vec<(node, qubit, basis)>` and `meas_ids` is empty for circuits whose
+    /// measurements carry no ids.
+    ///
+    /// [`MeasId`]: pecos_core::MeasId
     #[must_use]
-    /// Extract measurements with optional `MeasId` IDs.
-    ///
-    /// Returns `(measurements, meas_ids)` where:
-    /// - `measurements` is `Vec<(node, qubit, basis)>` in `MeasId` order
-    /// - `meas_ids` is `Vec<MeasId>` (empty for legacy circuits)
     pub fn extract_measurements(&self) -> (Vec<(usize, usize, u8)>, Vec<pecos_core::MeasId>) {
         let mut entries = Vec::new(); // (sort_key, qubit, node, basis, Option<MeasId>)
 
@@ -2554,6 +2552,94 @@ mod tests {
     // =========================================================================
     // Helper Functions
     // =========================================================================
+
+    /// Measurement extraction orders by `MeasId`, never by topological position.
+    ///
+    /// Id-less circuits used to fall back to topological position, so the two
+    /// orderings disagreed for circuits whose wiring does not follow the order
+    /// the measurements were written. The id is what names a measurement, so it
+    /// is what orders them.
+    ///
+    /// For minted ids that comes out as the order the program writes its
+    /// measurements, which is what this case covers. It is a *consequence* of
+    /// minting being sequential, not the rule -- see
+    /// `extraction_follows_supplied_ids_not_the_order_they_were_added` for the
+    /// case where the two differ.
+    #[test]
+    fn minted_ids_extract_in_the_order_the_measurements_were_written() {
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1]);
+        // q0 is measured first in program order but sits behind a longer chain,
+        // so a topological sweep reaches q1's measurement first.
+        dag.h(&[0]);
+        dag.h(&[0]);
+        dag.h(&[0]);
+        dag.mz(&[0]);
+        dag.mz(&[1]);
+
+        let analyzer = DagFaultAnalyzer::new(&dag);
+        let (measurements, meas_ids) = analyzer.extract_measurements();
+
+        let qubits: Vec<usize> = measurements.iter().map(|&(_, q, _)| q).collect();
+        assert_eq!(
+            qubits,
+            vec![0, 1],
+            "extraction must follow the order the measurements were written"
+        );
+        assert_eq!(
+            meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
+            vec![0, 1],
+            "and the ids must agree with it"
+        );
+    }
+
+    /// Supplied ids own the numbering, so extraction follows them even when they
+    /// run counter to the order the measurements were added.
+    ///
+    /// `mz_with_ids` accepts external ids -- Guppy result ids, where the number
+    /// is the result index -- and those need not arrive in ascending order. So
+    /// "id order" is the rule; matching the order of addition is not.
+    #[test]
+    fn extraction_follows_supplied_ids_not_the_order_they_were_added() {
+        use pecos_core::MeasId;
+        use pecos_quantum::Gate;
+
+        // Three measurements whose insertion order, topological depth and id
+        // order are pairwise different, so passing this test means following the
+        // ids and nothing else:
+        //   insertion   q0, q1, q2
+        //   topological q1, q2, q0  (by chain depth)
+        //   id order    q2, q0, q1  (ids 1, 5, 9)
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1, 2]);
+        dag.h(&[0]);
+        dag.h(&[0]);
+        let mut deep = Gate::mz(&[0usize]);
+        deep.meas_ids = smallvec::smallvec![MeasId(5)];
+        dag.add_gate_auto_wire(deep);
+
+        let mut shallow = Gate::mz(&[1usize]);
+        shallow.meas_ids = smallvec::smallvec![MeasId(9)];
+        dag.add_gate_auto_wire(shallow);
+
+        dag.h(&[2]);
+        let mut middle = Gate::mz(&[2usize]);
+        middle.meas_ids = smallvec::smallvec![MeasId(1)];
+        dag.add_gate_auto_wire(middle);
+
+        let analyzer = DagFaultAnalyzer::new(&dag);
+        let (measurements, meas_ids) = analyzer.extract_measurements();
+
+        assert_eq!(
+            measurements.iter().map(|&(_, q, _)| q).collect::<Vec<_>>(),
+            vec![2, 0, 1],
+            "extraction must follow the supplied ids, not insertion or topological order"
+        );
+        assert_eq!(
+            meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
+            vec![1, 5, 9]
+        );
+    }
 
     /// Simple Z-stabilizer measurement circuit: measures Z0 Z1 parity
     fn simple_syndrome_circuit() -> DagCircuit {

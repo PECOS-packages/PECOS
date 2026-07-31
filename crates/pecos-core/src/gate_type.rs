@@ -204,6 +204,22 @@ impl GateType {
         matches!(self, GateType::TrackedPauliMeta)
     }
 
+    /// Returns true if this gate consumes a measurement record.
+    ///
+    /// A measurement record is a slot in the classical result stream, named by a
+    /// [`MeasId`](crate::MeasId). Every site that allocates, counts, or resolves
+    /// records must agree on which gates get one, or two different measurements
+    /// end up sharing a record. Use this predicate rather than spelling the gate
+    /// types out, so there is one place to change.
+    ///
+    /// `MeasureLeaked` is a measurement to `Gate::validate` and collapses the
+    /// qubit, but it produces no classical result and so consumes no record.
+    /// Deciding otherwise means changing this function and nothing else.
+    #[must_use]
+    pub const fn consumes_measurement_record(self) -> bool {
+        matches!(self, GateType::MZ | GateType::MeasureFree)
+    }
+
     /// Returns the number of angle parameters this gate type requires
     ///
     /// # Returns

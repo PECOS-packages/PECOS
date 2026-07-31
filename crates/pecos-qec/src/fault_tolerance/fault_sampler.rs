@@ -1464,6 +1464,42 @@ fn toggle_sorted(values: &mut Vec<usize>, value: usize) {
     }
 }
 
+/// Why a circuit cannot be turned into a record-aligned measurement history.
+#[derive(Debug, Clone)]
+pub enum MeasurementHistoryError {
+    /// A gate outside the supported Clifford/prep/measurement/metadata set.
+    UnsupportedGate(UnsupportedGateError),
+    /// The circuit contains a `MeasureLeaked`.
+    ///
+    /// It collapses its qubit and later outcomes can depend on the result, but
+    /// it consumes no measurement record, so it has no column in a
+    /// record-aligned history and its dependencies cannot be expressed without
+    /// one.
+    LeakedMeasurementNotRepresentable { tick: usize, qubits: Vec<usize> },
+}
+
+impl fmt::Display for MeasurementHistoryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedGate(err) => write!(f, "{err}"),
+            Self::LeakedMeasurementNotRepresentable { tick, qubits } => write!(
+                f,
+                "MeasureLeaked at tick {tick} on qubits {qubits:?} consumes no measurement \
+                 record, so it cannot appear in a record-aligned measurement history; \
+                 remove it or use a path that does not require record alignment"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MeasurementHistoryError {}
+
+impl From<UnsupportedGateError> for MeasurementHistoryError {
+    fn from(err: UnsupportedGateError) -> Self {
+        Self::UnsupportedGate(err)
+    }
+}
+
 // ============================================================================
 // Shared symbolic simulation helper
 // ============================================================================
@@ -1484,7 +1520,7 @@ fn toggle_sorted(values: &mut Vec<usize>, value: usize) {
 /// the supported Clifford/prep/measurement/metadata set.
 pub fn symbolic_measurement_history(
     tc: &TickCircuit,
-) -> Result<MeasurementHistory, UnsupportedGateError> {
+) -> Result<MeasurementHistory, MeasurementHistoryError> {
     use pecos_simulators::SymbolicSparseStab;
 
     let num_qubits = tc
@@ -1495,7 +1531,6 @@ pub fn symbolic_measurement_history(
         .unwrap_or(0);
 
     let mut sim = SymbolicSparseStab::new(num_qubits);
-    let mut recorded = pecos_simulators::MeasurementHistory::new();
 
     for (tick_idx, tick) in tc.iter_ticks() {
         for gate in tick.iter_gate_batches() {
@@ -1577,17 +1612,22 @@ pub fn symbolic_measurement_history(
                 GateType::SWAP => {
                     sim.swap(&symbolic_pairs(&qs));
                 }
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
-                    // Every measurement collapses its qubit, so all three run on
-                    // the simulator. Only the record-bearing ones get a history
-                    // column, so the columns line up with the record indices
-                    // detectors reference.
-                    let results = sim.mz(&qs);
-                    if gate.gate_type.consumes_measurement_record() {
-                        for result in results {
-                            recorded.push(result);
-                        }
-                    }
+                // `MeasureLeaked` consumes no measurement record, so it has no
+                // place in a record-aligned history -- but it does collapse its
+                // qubit, and later outcomes can depend on the result. A symbolic
+                // result carries its dependencies as indices into the
+                // simulator's own numbering, so dropping the column would strand
+                // every reference to it. Representing that needs a notion of a
+                // hidden random source this history does not have, so say so
+                // rather than return a history whose dependencies dangle.
+                GateType::MeasureLeaked => {
+                    return Err(MeasurementHistoryError::LeakedMeasurementNotRepresentable {
+                        tick: tick_idx,
+                        qubits: qs,
+                    });
+                }
+                GateType::MZ | GateType::MeasureFree => {
+                    sim.mz(&qs);
                 }
                 GateType::I
                 | GateType::Idle
@@ -1596,18 +1636,20 @@ pub fn symbolic_measurement_history(
                 | GateType::MeasCrosstalkLocalPayload
                 | GateType::TrackedPauliMeta => {}
                 other => {
-                    return Err(UnsupportedGateError {
-                        gate_type: other,
-                        tick: tick_idx,
-                        gate_in_tick: gate_idx,
-                        qubits: qs,
-                    });
+                    return Err(MeasurementHistoryError::UnsupportedGate(
+                        UnsupportedGateError {
+                            gate_type: other,
+                            tick: tick_idx,
+                            gate_in_tick: gate_idx,
+                            qubits: qs,
+                        },
+                    ));
                 }
             }
         }
     }
 
-    Ok(recorded)
+    Ok(sim.measurement_history().clone())
 }
 
 fn symbolic_pairs(qs: &[usize]) -> Vec<(usize, usize)> {
@@ -2437,27 +2479,45 @@ mod tests {
         );
     }
 
-    /// The symbolic history must have one column per measurement *record*, so it
-    /// lines up with the record indices detectors reference. `MeasureLeaked`
-    /// still runs on the simulator -- it collapses its qubit -- but consumes no
-    /// record, so it must not occupy a column. It used to, leaving the history
-    /// one column longer than the fault mechanisms' record space and writing
-    /// faults into the wrong detector.
+    /// A record-aligned history cannot represent a `MeasureLeaked`: it consumes
+    /// no record, so it has no column, but later outcomes can depend on its
+    /// result and those dependencies are carried as indices into the
+    /// simulator's own numbering. Dropping the column strands them, so the
+    /// circuit is refused instead.
     #[test]
-    fn measure_leaked_collapses_its_qubit_without_taking_a_history_column() {
+    fn measure_leaked_is_refused_rather_than_dropped_from_the_history() {
         let mut tc = TickCircuit::new();
         tc.tick().pz(&[0, 1]);
+        tc.tick().h(&[0]);
+        tc.tick().cx(&[(0, 1)]);
         tc.tick()
             .try_add_gate(pecos_core::Gate::measure_leaked(&[0usize]))
             .expect("gate is valid");
         tc.tick().mz(&[1]);
 
-        let history = symbolic_measurement_history(&tc).expect("supported gates");
-        assert_eq!(
-            history.len(),
-            1,
-            "only the MZ consumes a record, so only it gets a column"
+        let err = symbolic_measurement_history(&tc)
+            .expect_err("a leaked measurement has no place in a record-aligned history");
+        assert!(
+            matches!(
+                err,
+                MeasurementHistoryError::LeakedMeasurementNotRepresentable { .. }
+            ),
+            "expected the leaked-measurement refusal, got: {err}"
         );
+    }
+
+    /// The same circuit without the leaked measurement is fine, so the refusal
+    /// is about the leaked measurement and not the surrounding gates.
+    #[test]
+    fn the_same_circuit_without_a_leaked_measurement_is_accepted() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        tc.tick().h(&[0]);
+        tc.tick().cx(&[(0, 1)]);
+        tc.tick().mz(&[1]);
+
+        let history = symbolic_measurement_history(&tc).expect("supported gates");
+        assert_eq!(history.len(), 1);
     }
 
     // ---- symbolic_measurement_history tests ----
@@ -2471,10 +2531,16 @@ mod tests {
 
         let result = symbolic_measurement_history(&tc);
         assert!(result.is_err(), "T should be rejected");
-        let err = result.unwrap_err();
-        assert_eq!(err.gate_type, GateType::T);
-        assert_eq!(err.tick, 1);
-        assert_eq!(err.qubits, vec![0]);
+        match result.unwrap_err() {
+            MeasurementHistoryError::UnsupportedGate(err) => {
+                assert_eq!(err.gate_type, GateType::T);
+                assert_eq!(err.tick, 1);
+                assert_eq!(err.qubits, vec![0]);
+            }
+            other @ MeasurementHistoryError::LeakedMeasurementNotRepresentable { .. } => {
+                panic!("expected an unsupported-gate error, got: {other}")
+            }
+        }
     }
 
     #[test]

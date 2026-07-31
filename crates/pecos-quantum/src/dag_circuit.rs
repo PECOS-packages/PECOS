@@ -3424,21 +3424,28 @@ mod measurement_id_tests {
         let gates_after_setup = circuit.gate_count();
         assert_eq!(gates_after_setup, gates_before + 1);
 
-        // One id slot remains; the batch needs two.
-        assert!(
-            circuit.try_mz(&[0usize, 1]).is_err(),
-            "two ids do not fit below usize::MAX"
-        );
-        assert_eq!(
-            circuit.gate_count(),
-            gates_after_setup,
-            "a rejected batch must leave no measurement behind"
-        );
-        assert_eq!(
-            circuit.num_measurement_ids(),
-            usize::MAX - 1,
-            "and must not move the counter"
-        );
+        // One id slot remains; each batch below needs two.
+        for label in ["try_mz", "try_mz_free"] {
+            let rejected = if label == "try_mz" {
+                circuit.try_mz(&[0usize, 1]).map(|_| ())
+            } else {
+                circuit.try_mz_free(&[0usize, 1])
+            };
+            assert!(
+                rejected.is_err(),
+                "{label}: two ids do not fit below usize::MAX"
+            );
+            assert_eq!(
+                circuit.gate_count(),
+                gates_after_setup,
+                "{label}: a rejected batch must leave no measurement behind"
+            );
+            assert_eq!(
+                circuit.num_measurement_ids(),
+                usize::MAX - 1,
+                "{label}: and must not move the counter"
+            );
+        }
     }
 
     /// `usize::MAX` leaves no successor to mint, so it is refused rather than

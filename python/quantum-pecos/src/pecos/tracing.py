@@ -12,6 +12,7 @@ either the structured operation trace or the corresponding runtime-lowered
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from pecos._qis_trace_replay import (
@@ -20,6 +21,7 @@ from pecos._qis_trace_replay import (
     named_result_traces_from_operation_trace,
     source_measurement_ids_from_operation_trace,
 )
+from pecos._traced_circuit import measurement_ids_in_execution_order
 
 if TYPE_CHECKING:
     from pecos.quantum import TickCircuit
@@ -82,9 +84,26 @@ def _qis_operation_trace_to_tick_circuit(
         measurement_crosstalk_topology=measurement_crosstalk_topology,
         allow_raw_measurement_id_fallback=allow_raw_measurement_id_fallback,
     )
+    source_measurement_ids = source_measurement_ids_from_operation_trace(chunks)
+    runtime_measurement_ids = measurement_ids_in_execution_order(tick_circuit)
+    duplicate_runtime_ids = sorted(
+        measurement_id for measurement_id, count in Counter(runtime_measurement_ids).items() if count > 1
+    )
+    if duplicate_runtime_ids:
+        msg = f"runtime-lowered trace contains duplicate measurement result ids: {duplicate_runtime_ids[:8]}"
+        raise ValueError(msg)
+    if set(source_measurement_ids) != set(runtime_measurement_ids):
+        source_ids = set(source_measurement_ids)
+        runtime_ids = set(runtime_measurement_ids)
+        msg = (
+            "source and runtime-lowered measurement identities do not match; "
+            f"missing={sorted(source_ids - runtime_ids)[:8]}, "
+            f"extra={sorted(runtime_ids - source_ids)[:8]}"
+        )
+        raise ValueError(msg)
     tick_circuit.set_meta(
         "qis_source_measurement_ids",
-        json.dumps(source_measurement_ids_from_operation_trace(chunks), separators=(",", ":")),
+        json.dumps(source_measurement_ids, separators=(",", ":")),
     )
     _validate_trace_hosted_operations_if_requested(
         tick_circuit,

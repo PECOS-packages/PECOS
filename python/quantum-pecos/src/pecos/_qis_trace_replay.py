@@ -240,6 +240,14 @@ def _gate_triples(qubits: list[int], gate_type: str) -> list[tuple[int, int, int
     return [(qubits[i], qubits[i + 1], qubits[i + 2]) for i in range(0, len(qubits), 3)]
 
 
+def _require_gate_angles(angles: list[float], gate_type: str, arity: int) -> tuple[float, ...]:
+    """Return a gate's angles after validating its trace-format arity."""
+    if len(angles) != arity:
+        msg = f"Lowered gate {gate_type!r} expected {arity} angle(s), got {angles!r}"
+        raise ValueError(msg)
+    return tuple(angles)
+
+
 def _lowered_gate_metadata(gate: Mapping[str, Any]) -> dict[str, Any]:
     """Return validated runtime/source metadata for a lowered trace gate."""
     metadata = gate.get("metadata")
@@ -340,13 +348,17 @@ def _replay_lowered_qis_trace_into_tick_circuit(
             elif gate_type == "MeasCrosstalkLocalPayload":
                 tick.add_gate("MeasCrosstalkLocalPayload", qubits)
             elif gate_type == "RX":
-                tick.rx(angles[0], qubits)
+                (theta,) = _require_gate_angles(angles, gate_type, 1)
+                tick.rx(theta, qubits)
             elif gate_type == "RY":
-                tick.ry(angles[0], qubits)
+                (theta,) = _require_gate_angles(angles, gate_type, 1)
+                tick.ry(theta, qubits)
             elif gate_type == "RZ":
-                tick.rz(angles[0], qubits)
+                (theta,) = _require_gate_angles(angles, gate_type, 1)
+                tick.rz(theta, qubits)
             elif gate_type == "R1XY":
-                tick.r1xy(angles[0], angles[1], qubits)
+                theta, phi = _require_gate_angles(angles, gate_type, 2)
+                tick.r1xy(theta, phi, qubits)
             elif gate_type == "CX":
                 tick.cx(_gate_pairs(qubits, gate_type))
             elif gate_type == "CY":
@@ -356,13 +368,15 @@ def _replay_lowered_qis_trace_into_tick_circuit(
             elif gate_type == "CH":
                 tick.ch(_gate_pairs(qubits, gate_type))
             elif gate_type == "CRZ":
-                tick.crz(angles[0], _gate_pairs(qubits, gate_type))
+                (theta,) = _require_gate_angles(angles, gate_type, 1)
+                tick.crz(theta, _gate_pairs(qubits, gate_type))
             elif gate_type == "SZZ":
                 tick.szz(_gate_pairs(qubits, gate_type))
             elif gate_type == "SZZdg":
                 tick.szzdg(_gate_pairs(qubits, gate_type))
             elif gate_type == "RZZ":
-                tick.rzz(angles[0], _gate_pairs(qubits, gate_type))
+                (theta,) = _require_gate_angles(angles, gate_type, 1)
+                tick.rzz(theta, _gate_pairs(qubits, gate_type))
             elif gate_type == "CCX":
                 tick.ccx(_gate_triples(qubits, gate_type))
             else:

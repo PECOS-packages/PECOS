@@ -111,6 +111,41 @@ def test_qis_operation_trace_conversion_rejects_an_incomplete_trace() -> None:
         pecos.qis_operation_trace_to_tick_circuit(_completed_trace()[:-1])
 
 
+def test_qis_operation_trace_conversion_rejects_mismatched_measurement_provenance() -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"][-1]["measurement_result_ids"] = [8]
+
+    with pytest.raises(ValueError, match="source and runtime-lowered measurement identities do not match"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
+@pytest.mark.parametrize(
+    ("gate_type", "angles"),
+    [
+        ("RX", []),
+        ("RY", [0.5, 0.25]),
+        ("RZ", []),
+        ("R1XY", [0.5]),
+        ("CRZ", []),
+        ("RZZ", []),
+    ],
+)
+def test_qis_operation_trace_conversion_rejects_invalid_angle_arity(
+    gate_type: str,
+    angles: list[float],
+) -> None:
+    trace = _completed_trace()
+    trace[0]["lowered_quantum_ops"][1] = {
+        "gate_type": gate_type,
+        "qubits": [0, 1] if gate_type in {"CRZ", "RZZ"} else [0],
+        "angles": angles,
+        "params": [],
+    }
+
+    with pytest.raises(ValueError, match=rf"Lowered gate '{gate_type}' expected"):
+        pecos.qis_operation_trace_to_tick_circuit(trace)
+
+
 def test_capture_qis_operation_trace_configures_the_trace_builder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

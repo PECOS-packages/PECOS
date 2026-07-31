@@ -232,3 +232,5 @@ different DEM.
 - **[Decoders](decoders.md)** - Decode syndromes sampled from a DEM
 - **[HUGR & Guppy Simulation](hugr-simulation.md)** - Running Guppy programs
   with noise
+- **[Runtime QIS Tracing](runtime-qis-tracing.md)** - Capture, inspect, store,
+  and replay the runtime-lowered circuit directly

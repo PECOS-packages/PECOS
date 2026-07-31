@@ -2702,28 +2702,12 @@ impl PyTickCircuit {
     ///     A new `DagCircuit` with the same gates and qubit wire connections.
     ///
     /// Raises:
-    ///     ValueError: Two measurements share a `MeasId`, so the ids cannot
-    ///         name them apart.
+    ///     ValueError: The circuit cannot be converted -- in practice, two
+    ///         measurements sharing a `MeasId`.
     fn to_dag_circuit(&self) -> PyResult<PyDagCircuit> {
-        // `DagCircuit` rejects duplicate ids by panicking, which Python cannot
-        // catch as an ordinary exception, and no single `mz_with_ids` call can
-        // see a duplicate spread across calls. Check here, where the error can
-        // still be raised as one. Keep in step with `assign_measurement_ids`
-        // until the conversion itself can report failure.
-        let mut seen = BTreeSet::new();
-        for batch in self.inner.iter_gate_batches() {
-            for id in &batch.as_gate().meas_ids {
-                if !seen.insert(id.index()) {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "two measurements share MeasId({}); each measurement needs a unique id",
-                        id.index()
-                    )));
-                }
-            }
-        }
-        Ok(PyDagCircuit {
-            inner: DagCircuit::from(&self.inner),
-        })
+        let inner = DagCircuit::try_from(&self.inner)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        Ok(PyDagCircuit { inner })
     }
 
     /// Lower Clifford-angle rotations to named Clifford gates.

@@ -401,7 +401,11 @@ impl DemSampler {
         circuit: &pecos_quantum::TickCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
-        let dag = pecos_quantum::DagCircuit::from(circuit);
+        let dag = pecos_quantum::DagCircuit::try_from(circuit).map_err(|err| {
+            DetectorValidationError::InvalidMetadata {
+                message: err.to_string(),
+            }
+        })?;
         Self::from_circuit(&dag, noise)
     }
 

@@ -383,6 +383,25 @@ def test_dag_circuit_measurement_reports_exhaustion_as_a_value_error() -> None:
         dag.mz([1])
 
 
+def test_an_idless_and_a_stamped_measurement_collide_loudly() -> None:
+    """The generic ``add_gate`` reserves no measurement record, so its MZ is
+    id-less until conversion mints one -- which then collides with a measurement
+    that already holds that id.
+
+    A pre-conversion scan cannot catch this: it sees only *supplied* ids, and the
+    colliding id does not exist until the conversion runs. Only the conversion
+    itself can report it.
+    """
+    from pecos_rslib.quantum import TickCircuit
+
+    tc = TickCircuit()
+    tc.tick().add_gate("MZ", [0])
+    tc.tick().mz([1])
+
+    with pytest.raises(ValueError, match=r"reuses MeasId"):
+        tc.to_dag_circuit()
+
+
 def test_duplicate_ids_across_calls_fail_at_dag_conversion() -> None:
     """A duplicate spread across two calls is invisible to either call, so it is
     caught when the circuit is converted."""
@@ -392,5 +411,5 @@ def test_duplicate_ids_across_calls_fail_at_dag_conversion() -> None:
     tc.tick().pz([0, 1])
     tc.tick().mz_with_ids([0], [7])
     tc.tick().mz_with_ids([1], [7])
-    with pytest.raises(ValueError, match=r"share MeasId\(7\)"):
+    with pytest.raises(ValueError, match=r"reuses MeasId\(7\)"):
         tc.to_dag_circuit()

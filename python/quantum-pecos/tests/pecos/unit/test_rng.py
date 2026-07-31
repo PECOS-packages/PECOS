@@ -140,8 +140,8 @@ def test_relative_advance_keeps_count_consistent_after_draws() -> None:
     assert rng.rng_random() == draw_at_index(42, 4)
 
 
-def test_negative_values_are_rejected_for_non_advance_rng_funcs() -> None:
-    """Verifies only RNGadvance accepts negative numeric arguments."""
+def test_negative_values_are_rejected_for_bound_and_index_rng_funcs() -> None:
+    """Verifies RNGbound and RNGindex reject negative numeric arguments."""
     rng = RNGModel(shot_id=0)
 
     with pytest.raises(ValueError, match=r"RNG bound must be non-negative: got -1"):
@@ -149,6 +149,35 @@ def test_negative_values_are_rejected_for_non_advance_rng_funcs() -> None:
 
     with pytest.raises(ValueError, match=r"RNG index must be non-negative: got -1"):
         rng.eval_func({"func": "RNGindex", "args": ["-1"]}, {})
+
+
+def test_negative_seed_matches_twos_complement_unsigned_seed() -> None:
+    """Verifies RNGseed accepts negative seeds as the two's-complement u64 value."""
+    rng_negative = RNGModel(shot_id=0)
+    rng_negative.eval_func({"func": "RNGseed", "args": ["-1"]}, {})
+
+    rng_unsigned = RNGModel(shot_id=0)
+    rng_unsigned.set_seed(2**64 - 1)
+
+    negative_draws = [rng_negative.rng_random() for _ in range(5)]
+    unsigned_draws = [rng_unsigned.rng_random() for _ in range(5)]
+    assert negative_draws == unsigned_draws
+
+
+def test_seed_accepts_full_64_bit_range() -> None:
+    """Verifies seeds at the signed and unsigned 64-bit extremes are accepted."""
+    for seed in (-(2**63), 2**63, 2**64 - 1):
+        rng = RNGModel(shot_id=0)
+        rng.set_seed(seed)
+        rng.rng_random()
+
+
+def test_seed_outside_64_bit_range_raises() -> None:
+    """Verifies seeds outside both the i64 and u64 ranges raise OverflowError."""
+    rng = RNGModel(shot_id=0)
+    for seed in (2**64, -(2**63) - 1):
+        with pytest.raises(OverflowError):
+            rng.set_seed(seed)
 
 
 def test_relative_advance_backward_replays_historical_bounds() -> None:

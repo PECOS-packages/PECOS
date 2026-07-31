@@ -363,13 +363,11 @@ pub struct MeasRef {
     pub node: usize,
     /// Qubit that was measured.
     pub qubit: QubitId,
-}
-
-impl std::ops::Deref for MeasRef {
-    type Target = usize;
-    fn deref(&self) -> &usize {
-        &self.node
-    }
+    /// Stable identity of the measurement result.
+    ///
+    /// A node cannot name a measurement: a batched measurement gate is one node
+    /// covering several. This is what identifies the individual measurement.
+    pub meas_id: MeasId,
 }
 
 impl From<MeasRef> for usize {
@@ -1762,7 +1760,12 @@ impl DagCircuit {
             .map(|&q| {
                 let qubit = q.into();
                 let node = self.try_add_gate_auto_wire(Gate::mz(&[qubit]))?;
-                Ok(MeasRef { node, qubit })
+                let meas_id = self.minted_meas_id(node);
+                Ok(MeasRef {
+                    node,
+                    qubit,
+                    meas_id,
+                })
             })
             .collect()
     }
@@ -1776,11 +1779,26 @@ impl DagCircuit {
             .map(|&(q, label)| {
                 let qubit = q.into();
                 let node = self.add_gate_auto_wire(Gate::mz(&[qubit]));
-                let mref = MeasRef { node, qubit };
+                let mref = MeasRef {
+                    node,
+                    qubit,
+                    meas_id: self.minted_meas_id(node),
+                };
                 self.set_measurement_label(node, label);
                 mref
             })
             .collect()
+    }
+
+    /// The id minted for a single-qubit measurement node just inserted.
+    ///
+    /// Every measurement reaches the circuit through `try_add_gate`, which mints
+    /// one id per measured qubit, so a node created here always carries exactly
+    /// one.
+    fn minted_meas_id(&self, node: usize) -> MeasId {
+        self.gate(node)
+            .and_then(|gate| gate.meas_ids.first().copied())
+            .expect("a measurement node inserted here always carries a minted id")
     }
 
     /// Set a label on a measurement node.
@@ -3184,6 +3202,36 @@ mod measurement_id_tests {
         let node = circuit.add_gate_auto_wire(Gate::h(&[0usize]));
         assert!(circuit.gate(node).unwrap().meas_ids.is_empty());
         assert_eq!(circuit.num_measurement_ids(), 0);
+    }
+
+    /// A `MeasRef` carries the identity of the measurement, not just its node.
+    ///
+    /// The fixture keeps node index and `MeasId` deliberately different -- the
+    /// preps occupy the low node numbers -- so wiring `meas_id` to the node
+    /// would fail rather than coincide.
+    #[test]
+    fn a_measurement_ref_carries_the_id_the_gate_holds() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2]);
+        let refs = circuit.mz(&[0, 1]);
+
+        assert_eq!(refs.len(), 2);
+        for (offset, mref) in refs.iter().enumerate() {
+            assert_eq!(
+                mref.meas_id,
+                MeasId(offset),
+                "ids are minted in order from zero"
+            );
+            assert_ne!(
+                mref.node, offset,
+                "node and id must not coincide, or this test proves nothing"
+            );
+            assert_eq!(
+                circuit.gate(mref.node).unwrap().meas_ids[0],
+                mref.meas_id,
+                "the ref must carry the id the gate actually holds"
+            );
+        }
     }
 
     /// `MeasureLeaked` is a measurement to `Gate::validate`, but the 46 sites

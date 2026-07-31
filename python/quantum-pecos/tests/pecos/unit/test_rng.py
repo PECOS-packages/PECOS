@@ -151,6 +151,21 @@ def test_negative_values_are_rejected_for_bound_and_index_rng_funcs() -> None:
         rng.eval_func({"func": "RNGindex", "args": ["-1"]}, {})
 
 
+# Expected draws computed with an independent Python implementation of the
+# PCG32 (setseq/XSH-RR) reference algorithm, seeded as pcg32_srandom_r(initstate=42,
+# initseq=<seed>) to match the RngPcg.srandom convention.
+PCG32_DRAWS_SEED_42 = [1085446021, 176895750, 789123591]
+PCG32_DRAWS_SEED_U64_MAX = [2319459346, 4005295529, 1617625013]
+PCG32_DRAWS_SEED_2_63 = [565663470, 3244226384, 2504567229]
+
+
+def test_positive_seed_stream_matches_pcg32_reference() -> None:
+    """Verifies existing positive seeds still produce the PCG32 reference stream."""
+    rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+    assert [rng.rng_random() for _ in range(3)] == PCG32_DRAWS_SEED_42
+
+
 def test_negative_seed_matches_twos_complement_unsigned_seed() -> None:
     """Verifies RNGseed accepts negative seeds as the two's-complement u64 value."""
     rng_negative = RNGModel(shot_id=0)
@@ -159,25 +174,38 @@ def test_negative_seed_matches_twos_complement_unsigned_seed() -> None:
     rng_unsigned = RNGModel(shot_id=0)
     rng_unsigned.set_seed(2**64 - 1)
 
-    negative_draws = [rng_negative.rng_random() for _ in range(5)]
-    unsigned_draws = [rng_unsigned.rng_random() for _ in range(5)]
+    negative_draws = [rng_negative.rng_random() for _ in range(3)]
+    unsigned_draws = [rng_unsigned.rng_random() for _ in range(3)]
     assert negative_draws == unsigned_draws
+    assert negative_draws == PCG32_DRAWS_SEED_U64_MAX
 
 
 def test_seed_accepts_full_64_bit_range() -> None:
-    """Verifies seeds at the signed and unsigned 64-bit extremes are accepted."""
-    for seed in (-(2**63), 2**63, 2**64 - 1):
+    """Verifies seeds at the signed and unsigned 64-bit extremes map to the reference stream."""
+    for seed, expected_draws in [
+        (2**63, PCG32_DRAWS_SEED_2_63),
+        (-(2**63), PCG32_DRAWS_SEED_2_63),
+        (2**64 - 1, PCG32_DRAWS_SEED_U64_MAX),
+    ]:
         rng = RNGModel(shot_id=0)
         rng.set_seed(seed)
-        rng.rng_random()
+        assert [rng.rng_random() for _ in range(3)] == expected_draws
 
 
-def test_seed_outside_64_bit_range_raises() -> None:
-    """Verifies seeds outside both the i64 and u64 ranges raise OverflowError."""
+def test_seed_outside_64_bit_range_raises_and_preserves_state() -> None:
+    """Verifies out-of-range seeds raise OverflowError without corrupting the model state."""
     rng = RNGModel(shot_id=0)
+    rng.set_seed(42)
+    first_draw = rng.rng_random()
+    assert first_draw == PCG32_DRAWS_SEED_42[0]
+
     for seed in (2**64, -(2**63) - 1):
         with pytest.raises(OverflowError):
             rng.set_seed(seed)
+
+    assert rng.seed == 42
+    assert rng.count == 1
+    assert rng.rng_random() == PCG32_DRAWS_SEED_42[1]
 
 
 def test_relative_advance_backward_replays_historical_bounds() -> None:

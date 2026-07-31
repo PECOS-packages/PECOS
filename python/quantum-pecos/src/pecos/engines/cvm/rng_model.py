@@ -37,8 +37,8 @@ class RNGModel:
 
     def set_seed(self, seed: int) -> None:
         """Setting the seed for generating random numbers."""
-        self.seed = seed
         self.pcg.srandom(seed)
+        self.seed = seed
         self.count = 0
         self._draw_bound_runs = []
         self._replay_base_pcg = self.pcg.clone()

@@ -117,10 +117,11 @@ the id forever, `dag_circuit.rs:646`, so this is unambiguous), or may name a
 measurement that consumes **no record** -- a `MeasureLeaked` carrying a supplied
 id is accepted and reserved today. Each needs its own error.
 
-Validation must also reject a record-consuming gate where
-`meas_ids.len() != qubits.len()` and non-empty: the batch merge machinery permits
-it, and position-based lookup (`tick_circuit.rs:1511`) then pairs the wrong id
-with the wrong qubit silently.
+(An earlier draft claimed batch merging permits a gate where
+`meas_ids.len() != qubits.len()`. That is false: `Gate::validate` rejects it and
+`gates.rs:153` refuses to merge such gates. The claim came from a reviewer
+finding explicitly labelled as reasoned rather than verified, and was written in
+without checking.)
 
 **4. Silent drops become errors** at `tick_circuit.rs:3548`/`:3558`,
 `dem_builder/builder.rs:3376`, `dem_builder/sampler.rs:1151`, and
@@ -137,7 +138,12 @@ it in the old space mid-migration.
 
 ## Migration order
 
-1. `MeasRef` gains `meas_id`, drops `Deref`; `TickMeasRef` drops `record_idx`.
+1. `MeasRef` gains `meas_id`, drops `Deref`. **Done, PR #397.**
+   `TickMeasRef` cannot drop `record_idx` here, as an earlier draft said it
+   could: `TickCircuit::detector` stores that field into
+   `measurement_nodes: Vec<usize>`, so removing it before the field changes type
+   would force storing `meas_id.index()` as a bare `usize` -- the exact
+   conflation this change removes. It moves into the pivot (step 4).
 2. Remove `From<&TickCircuit> for DagCircuit`, add `TryFrom`; bindings route
    through it; delete the pre-scan.
 3. **Pre-land the id-resolution helpers, tested, alongside the existing
@@ -160,7 +166,7 @@ silently re-conflates. Remove `From<usize> for MeasId`, keep an explicit
 constructor, and rely on the de-aliased tests below rather than on the compiler.
 
 Scope cut, stated explicitly: the DEM builder's id plumbing stays untyped --
-`influence_map.meas_ids: Vec<usize>`, `resolve_result_tags(&[usize], &[usize])`
+`resolve_result_tags(&[usize], &[usize])`
 (`builder.rs:3413`), JSON `meas_ids: Vec<usize>`. Conflation can persist there
 and the tests must cover it.
 
@@ -194,6 +200,33 @@ drift in this subsystem.
 Nothing to migrate on disk: no serde derives on `PauliAnnotation`,
 `AnnotationKind`, or `MeasId`, and the detectors/observables JSON already speaks
 both `records` and `meas_ids` with a consistency check.
+
+## Unresolved, deliberately
+
+Two questions did not settle on paper because they are about code that does not
+exist yet, and a third is a separate defect:
+
+- **How far to close the `MeasId` forgery seam.** Removing `From<usize>` does not
+  close it -- `MeasId(x)` and `.0` stay public. Closing it properly means private
+  fields, an opaque `MeasRef`, and an opaque Python reference object instead of
+  integer tuples. Whether that is worth its churn is a judgement to make against
+  the pivot, not before it.
+- **The resolver's error taxonomy.** The design wants unknown, removed, and
+  record-less to be distinct errors, but `find_measurement -> Option<MeasRef>`
+  cannot distinguish unknown from removed; only the circuit's private
+  `used_meas_ids` knows. Several consumer APIs also have no error channel at all
+  (`InfluenceBuilder::with_circuit_annotations` and the sampler equivalent both
+  return `Self`). The resolver must be result-bearing and those APIs fallible
+  before the pivot, or the pivot is not mechanical.
+- **`InfluenceBuilder::run_symbolic_simulation` measures only `qubits[0]` of a
+  batched gate** and maps a node to one measurement index. That is a live defect
+  independent of this design and is filed as #398; the identity pivot does not
+  fix it, contrary to what an earlier draft implied.
+
+Also carried forward: removing `From<&TickCircuit> for DagCircuit` must remove
+the owned `From<TickCircuit>` at `tick_circuit.rs:3582` too, and
+`From<&DagCircuit> for TickCircuit` is not proven infallible -- `gate_mut` can
+desync invariants the conversion then unwraps on.
 
 ## Out of scope
 

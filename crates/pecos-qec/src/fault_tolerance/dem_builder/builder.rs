@@ -271,7 +271,9 @@ impl<'a> DemBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if detector or observable metadata is malformed.
+    /// Returns an error if detector or observable metadata is malformed, or
+    /// if the `TickCircuit` cannot be converted to a `DagCircuit` (two
+    /// measurements sharing a `MeasId`).
     ///
     /// # Panics
     ///
@@ -301,7 +303,9 @@ impl<'a> DemBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if detector or observable metadata is malformed.
+    /// Returns an error if detector or observable metadata is malformed, or
+    /// if the `TickCircuit` cannot be converted to a `DagCircuit` (two
+    /// measurements sharing a `MeasId`).
     ///
     /// # Panics
     ///

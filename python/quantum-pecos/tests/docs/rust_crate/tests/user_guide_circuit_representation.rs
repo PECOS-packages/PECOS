@@ -218,12 +218,14 @@ fn test_user_guide_circuit_representation_rust_9() {
     use pecos::digraph::DiGraph;
     use pecos::quantum::{Attribute, DagCircuit, TickCircuit};
 
-// TickCircuit -> DagCircuit
+// TickCircuit -> DagCircuit. Fallible: a TickCircuit can hold
+// measurement ids that DagCircuit refuses (duplicates), so the
+// conversion reports that instead of panicking.
 let mut tick_circuit = TickCircuit::new();
 tick_circuit.tick().h(&[0, 1]);
 tick_circuit.tick().cx(&[(0, 1)]);
 
-let dag_circuit = DagCircuit::from(tick_circuit);
+let dag_circuit = DagCircuit::try_from(tick_circuit).expect("no duplicate measurement ids");
 
 // DagCircuit -> TickCircuit
 let tick_circuit2 = TickCircuit::from(dag_circuit);

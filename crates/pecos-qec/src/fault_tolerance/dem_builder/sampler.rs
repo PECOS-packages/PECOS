@@ -375,6 +375,8 @@ impl DemSampler {
     ///
     /// Returns [`DetectorValidationError`] if any detector references a
     /// non-deterministic measurement or the detectors are linearly dependent.
+    /// Also returned when the `TickCircuit` cannot be converted to a
+    /// `DagCircuit` (two measurements sharing a `MeasId`).
     ///
     /// # Example
     ///

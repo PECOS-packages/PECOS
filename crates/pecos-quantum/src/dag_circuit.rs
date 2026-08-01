@@ -781,7 +781,7 @@ impl DagCircuit {
                 )
             })?;
         for id in self.next_meas_id..after_last {
-            gate.meas_ids.push(MeasId(id));
+            gate.meas_ids.push(MeasId::from_raw(id));
             self.used_meas_ids.insert(id);
         }
         self.next_meas_id = after_last;
@@ -3348,22 +3348,22 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut supplied = Gate::mz(&[0usize]);
-        supplied.meas_ids = smallvec::smallvec![MeasId(10)];
+        supplied.meas_ids = smallvec::smallvec![MeasId::from_raw(10)];
         let supplied_node = circuit.add_gate_auto_wire(supplied);
         let minted_node = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
 
         assert_eq!(
             circuit.gate(supplied_node).unwrap().meas_ids[0],
-            MeasId(10),
+            MeasId::from_raw(10),
             "a supplied id must be preserved"
         );
         let minted = circuit.gate(minted_node).unwrap().meas_ids[0];
         assert_eq!(
             minted,
-            MeasId(11),
+            MeasId::from_raw(11),
             "the counter must advance past supplied ids, not reuse 0"
         );
-        assert_ne!(minted, MeasId(10), "minted ids must not collide");
+        assert_ne!(minted, MeasId::from_raw(10), "minted ids must not collide");
     }
 
     /// Non-measurement gates are untouched.
@@ -3384,10 +3384,10 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let node = circuit.mz(&[0])[0].node;
-        circuit.gate_mut(node).unwrap().meas_ids[0] = MeasId(7);
+        circuit.gate_mut(node).unwrap().meas_ids[0] = MeasId::from_raw(7);
         assert_eq!(
-            circuit.find_measurement(MeasId(7)),
-            Err(MeasResolveError::Inconsistent(MeasId(7))),
+            circuit.find_measurement(MeasId::from_raw(7)),
+            Err(MeasResolveError::Inconsistent(MeasId::from_raw(7))),
             "a forged id must not resolve to a real measurement"
         );
 
@@ -3430,7 +3430,7 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let held = circuit.mz(&[0]);
-        circuit.gate_mut(held[0].node).unwrap().meas_ids[0] = MeasId(50);
+        circuit.gate_mut(held[0].node).unwrap().meas_ids[0] = MeasId::from_raw(50);
 
         assert_eq!(
             circuit.find_measurement(held[0].meas_id),
@@ -3446,9 +3446,9 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut batch = Gate::mz(&[0usize, 1]);
-        batch.meas_ids = smallvec::smallvec![MeasId(8), MeasId(2)];
+        batch.meas_ids = smallvec::smallvec![MeasId::from_raw(8), MeasId::from_raw(2)];
         let node = circuit.add_gate_auto_wire(batch);
-        let dup = MeasId(8);
+        let dup = MeasId::from_raw(8);
         circuit.gate_mut(node).unwrap().meas_ids[1] = dup;
 
         assert_eq!(
@@ -3468,17 +3468,19 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut batch = Gate::mz(&[0usize, 1]);
-        batch.meas_ids = smallvec::smallvec![MeasId(9), MeasId(4)];
+        batch.meas_ids = smallvec::smallvec![MeasId::from_raw(9), MeasId::from_raw(4)];
         let node = circuit.add_gate_auto_wire(batch);
 
-        let mref = circuit.find_measurement(MeasId(4)).expect("id 4 exists");
+        let mref = circuit
+            .find_measurement(MeasId::from_raw(4))
+            .expect("id 4 exists");
         assert_eq!(mref.node, node);
         assert_eq!(
             mref.qubit.index(),
             1,
             "MeasId(4) is the batch's second measurement, so qubit 1"
         );
-        assert_eq!(mref.meas_id, MeasId(4));
+        assert_eq!(mref.meas_id, MeasId::from_raw(4));
     }
 
     /// The three failure cases are distinct errors, because they mean different
@@ -3490,19 +3492,19 @@ mod measurement_id_tests {
         circuit.pz(&[0, 1, 2]);
         let refs = circuit.mz(&[0]);
         let mut leaked = Gate::measure_leaked(&[1usize]);
-        leaked.meas_ids = smallvec::smallvec![MeasId(7)];
+        leaked.meas_ids = smallvec::smallvec![MeasId::from_raw(7)];
         let leaked_node = circuit.add_gate_auto_wire(leaked);
 
         assert_eq!(
-            circuit.find_measurement(MeasId(999)),
-            Err(MeasResolveError::Unknown(MeasId(999))),
+            circuit.find_measurement(MeasId::from_raw(999)),
+            Err(MeasResolveError::Unknown(MeasId::from_raw(999))),
             "an id never minted or supplied is Unknown"
         );
 
         assert_eq!(
-            circuit.find_measurement(MeasId(7)),
+            circuit.find_measurement(MeasId::from_raw(7)),
             Err(MeasResolveError::RecordLess {
-                id: MeasId(7),
+                id: MeasId::from_raw(7),
                 node: leaked_node,
             }),
             "a MeasureLeaked's supplied id names a real but record-less measurement"
@@ -3532,7 +3534,7 @@ mod measurement_id_tests {
         for (offset, mref) in refs.iter().enumerate() {
             assert_eq!(
                 mref.meas_id,
-                MeasId(offset),
+                MeasId::from_raw(offset),
                 "ids are minted in order from zero"
             );
             assert_ne!(
@@ -3566,7 +3568,7 @@ mod measurement_id_tests {
         );
         assert_eq!(
             circuit.gate(measured).unwrap().meas_ids[0],
-            MeasId(0),
+            MeasId::from_raw(0),
             "and it must not consume an id that a real measurement needs"
         );
         assert_eq!(circuit.num_measurement_ids(), 1);
@@ -3579,13 +3581,13 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut leaked = Gate::measure_leaked(&[0usize]);
-        leaked.meas_ids = smallvec::smallvec![MeasId(0)];
+        leaked.meas_ids = smallvec::smallvec![MeasId::from_raw(0)];
         circuit.add_gate_auto_wire(leaked);
         let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
 
         assert_eq!(
             circuit.gate(measured).unwrap().meas_ids[0],
-            MeasId(1),
+            MeasId::from_raw(1),
             "minting must not reuse an id a MeasureLeaked already holds"
         );
     }
@@ -3599,7 +3601,7 @@ mod measurement_id_tests {
         circuit.mz(&[0, 1, 2]);
 
         let mut duplicate = Gate::mz(&[3usize]);
-        duplicate.meas_ids = smallvec::smallvec![MeasId(1)];
+        duplicate.meas_ids = smallvec::smallvec![MeasId::from_raw(1)];
         let err = circuit
             .try_add_gate(duplicate)
             .expect_err("MeasId(1) is already held by the earlier batch");
@@ -3615,11 +3617,11 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut first = Gate::mz(&[0usize]);
-        first.meas_ids = smallvec::smallvec![MeasId(7)];
+        first.meas_ids = smallvec::smallvec![MeasId::from_raw(7)];
         circuit.add_gate_auto_wire(first);
 
         let mut second = Gate::mz(&[1usize]);
-        second.meas_ids = smallvec::smallvec![MeasId(7)];
+        second.meas_ids = smallvec::smallvec![MeasId::from_raw(7)];
         assert!(
             circuit.try_add_gate(second).is_err(),
             "a repeated supplied id must be rejected, not silently shadow the first"
@@ -3632,7 +3634,7 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut batch = Gate::mz(&[0usize, 1]);
-        batch.meas_ids = smallvec::smallvec![MeasId(3), MeasId(3)];
+        batch.meas_ids = smallvec::smallvec![MeasId::from_raw(3), MeasId::from_raw(3)];
         assert!(
             circuit.try_add_gate(batch).is_err(),
             "a batch cannot name the same measurement twice"
@@ -3647,11 +3649,11 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1, 2]);
         let mut clashing = Gate::mz(&[0usize, 1]);
-        clashing.meas_ids = smallvec::smallvec![MeasId(3), MeasId(3)];
+        clashing.meas_ids = smallvec::smallvec![MeasId::from_raw(3), MeasId::from_raw(3)];
         assert!(circuit.try_add_gate(clashing).is_err());
 
         let mut later = Gate::mz(&[2usize]);
-        later.meas_ids = smallvec::smallvec![MeasId(3)];
+        later.meas_ids = smallvec::smallvec![MeasId::from_raw(3)];
         assert!(
             circuit.try_add_gate(later).is_ok(),
             "MeasId(3) never reached the circuit, so it must still be available"
@@ -3664,11 +3666,11 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut saturated = Gate::mz(&[0usize, 1]);
-        saturated.meas_ids = smallvec::smallvec![MeasId(4), MeasId(usize::MAX)];
+        saturated.meas_ids = smallvec::smallvec![MeasId::from_raw(4), MeasId::from_raw(usize::MAX)];
         assert!(circuit.try_add_gate(saturated).is_err());
 
         let mut later = Gate::mz(&[0usize]);
-        later.meas_ids = smallvec::smallvec![MeasId(4)];
+        later.meas_ids = smallvec::smallvec![MeasId::from_raw(4)];
         assert!(
             circuit.try_add_gate(later).is_ok(),
             "MeasId(4) shared a rejected gate, so it must still be available"
@@ -3682,7 +3684,7 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut near_max = Gate::mz(&[0usize]);
-        near_max.meas_ids = smallvec::smallvec![MeasId(usize::MAX - 1)];
+        near_max.meas_ids = smallvec::smallvec![MeasId::from_raw(usize::MAX - 1)];
         circuit.add_gate_auto_wire(near_max);
 
         let err = circuit
@@ -3700,7 +3702,7 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1, 2]);
         let mut near_max = Gate::mz(&[0usize]);
-        near_max.meas_ids = smallvec::smallvec![MeasId(usize::MAX - 2)];
+        near_max.meas_ids = smallvec::smallvec![MeasId::from_raw(usize::MAX - 2)];
         circuit.add_gate_auto_wire(near_max);
 
         assert!(
@@ -3721,16 +3723,16 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1, 2]);
         let mut high = Gate::mz(&[0usize]);
-        high.meas_ids = smallvec::smallvec![MeasId(10)];
+        high.meas_ids = smallvec::smallvec![MeasId::from_raw(10)];
         circuit.add_gate_auto_wire(high);
         let mut low = Gate::mz(&[1usize]);
-        low.meas_ids = smallvec::smallvec![MeasId(3)];
+        low.meas_ids = smallvec::smallvec![MeasId::from_raw(3)];
         circuit.add_gate_auto_wire(low);
 
         let minted = circuit.add_gate_auto_wire(Gate::mz(&[2usize]));
         assert_eq!(
             circuit.gate(minted).unwrap().meas_ids[0],
-            MeasId(11),
+            MeasId::from_raw(11),
             "the counter must stay past the highest supplied id, not follow the latest"
         );
     }
@@ -3743,14 +3745,14 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1, 2]);
         let mut descending = Gate::mz(&[0usize, 1]);
-        descending.meas_ids = smallvec::smallvec![MeasId(10), MeasId(3)];
+        descending.meas_ids = smallvec::smallvec![MeasId::from_raw(10), MeasId::from_raw(3)];
         circuit.add_gate_auto_wire(descending);
 
         assert_eq!(circuit.num_measurement_ids(), 11);
         let minted = circuit.add_gate_auto_wire(Gate::mz(&[2usize]));
         assert_eq!(
             circuit.gate(minted).unwrap().meas_ids[0],
-            MeasId(11),
+            MeasId::from_raw(11),
             "the next mint must clear the highest id in the batch, not the last"
         );
     }
@@ -3763,10 +3765,13 @@ mod measurement_id_tests {
         let freed = circuit.add_gate_auto_wire(Gate::mz_free(&[0usize]));
         let measured = circuit.add_gate_auto_wire(Gate::mz(&[1usize]));
 
-        assert_eq!(circuit.gate(freed).unwrap().meas_ids[0], MeasId(0));
+        assert_eq!(
+            circuit.gate(freed).unwrap().meas_ids[0],
+            MeasId::from_raw(0)
+        );
         assert_eq!(
             circuit.gate(measured).unwrap().meas_ids[0],
-            MeasId(1),
+            MeasId::from_raw(1),
             "a MeasureFree consumes a record, so the next measurement follows it"
         );
     }
@@ -3780,7 +3785,7 @@ mod measurement_id_tests {
         circuit.pz(&[0, 1]);
         let gates_before = circuit.gate_count();
         let mut near_max = Gate::mz(&[0usize]);
-        near_max.meas_ids = smallvec::smallvec![MeasId(usize::MAX - 2)];
+        near_max.meas_ids = smallvec::smallvec![MeasId::from_raw(usize::MAX - 2)];
         circuit.add_gate_auto_wire(near_max);
         let gates_after_setup = circuit.gate_count();
         assert_eq!(gates_after_setup, gates_before + 1);
@@ -3816,7 +3821,7 @@ mod measurement_id_tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let mut saturated = Gate::mz(&[0usize]);
-        saturated.meas_ids = smallvec::smallvec![MeasId(usize::MAX)];
+        saturated.meas_ids = smallvec::smallvec![MeasId::from_raw(usize::MAX)];
         let err = circuit
             .try_add_gate(saturated)
             .expect_err("usize::MAX leaves no room for a successor id");

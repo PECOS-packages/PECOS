@@ -512,7 +512,7 @@ impl<'a> InfluenceBuilder<'a> {
         let meas_ids = if has_meas_ids {
             entries
                 .iter()
-                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId(usize::MAX)))
+                .map(|(_, _, _, _, mr)| mr.unwrap_or(pecos_core::MeasId::from_raw(usize::MAX)))
                 .collect()
         } else {
             Vec::new()

@@ -34,20 +34,34 @@ use std::fmt;
 ///
 /// use std::collections::BTreeMap;
 ///
-/// let m0 = MeasId(0);
-/// let m1 = MeasId(1);
+/// let m0 = MeasId::from_raw(0);
+/// let m1 = MeasId::from_raw(1);
 /// assert_ne!(m0, m1);
 ///
 /// // Resolve through a map, never by the numeric value: externally supplied
-/// // ids (e.g. MeasId(9000)) are legal and would index out of bounds.
+/// // ids (e.g. MeasId::from_raw(9000)) are legal and would index out of bounds.
 /// let ordinal: BTreeMap<MeasId, usize> = [(m0, 0), (m1, 1)].into();
 /// let mut outcomes = vec![false; ordinal.len()];
 /// outcomes[ordinal[&m0]] = true;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MeasId(pub usize);
+pub struct MeasId(usize);
 
 impl MeasId {
+    /// Construct an id from a raw integer.
+    ///
+    /// This is the ONLY route from an integer to a `MeasId`, so every use is
+    /// auditable: it belongs at boundaries where a numbering genuinely enters
+    /// the system -- circuit allocators minting fresh ids, bindings accepting
+    /// externally supplied (e.g. Guppy) ids, and test fixtures. Reaching for it
+    /// inside consumer logic to convert an ordinal back into an id is the
+    /// conflation this type exists to prevent.
+    #[inline]
+    #[must_use]
+    pub const fn from_raw(raw: usize) -> Self {
+        Self(raw)
+    }
+
     /// The underlying index.
     #[inline]
     #[must_use]
@@ -59,17 +73,5 @@ impl MeasId {
 impl fmt::Display for MeasId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "m{}", self.0)
-    }
-}
-
-impl From<usize> for MeasId {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-
-impl From<MeasId> for usize {
-    fn from(m: MeasId) -> Self {
-        m.0
     }
 }

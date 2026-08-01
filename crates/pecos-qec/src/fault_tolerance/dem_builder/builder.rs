@@ -271,7 +271,9 @@ impl<'a> DemBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if detector or observable metadata is malformed.
+    /// Returns an error if detector or observable metadata is malformed, or
+    /// if the `TickCircuit` cannot be converted to a `DagCircuit` (two
+    /// measurements sharing a `MeasId`).
     ///
     /// # Panics
     ///
@@ -288,7 +290,8 @@ impl<'a> DemBuilder<'a> {
         p_meas: f64,
         p_prep: f64,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
-        let dag = pecos_quantum::DagCircuit::from(circuit);
+        let dag = pecos_quantum::DagCircuit::try_from(circuit)
+            .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         build_dem_from_circuit(&dag, NoiseConfig::new(p1, p2, p_meas, p_prep))
     }
 
@@ -300,7 +303,9 @@ impl<'a> DemBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if detector or observable metadata is malformed.
+    /// Returns an error if detector or observable metadata is malformed, or
+    /// if the `TickCircuit` cannot be converted to a `DagCircuit` (two
+    /// measurements sharing a `MeasId`).
     ///
     /// # Panics
     ///
@@ -314,7 +319,8 @@ impl<'a> DemBuilder<'a> {
         circuit: &pecos_quantum::TickCircuit,
         noise: NoiseConfig,
     ) -> Result<DetectorErrorModel, DemBuilderError> {
-        let dag = pecos_quantum::DagCircuit::from(circuit);
+        let dag = pecos_quantum::DagCircuit::try_from(circuit)
+            .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
         build_dem_from_circuit(&dag, noise)
     }
 
@@ -3772,7 +3778,8 @@ mod tests {
         circuit
             .add_observable_metadata(&[-1], Some(0), Some("L0"))
             .unwrap();
-        let round_tripped = TickCircuit::from(&DagCircuit::from(&circuit));
+        let round_tripped =
+            TickCircuit::from(&DagCircuit::try_from(&circuit).expect("valid circuit"));
         let dem = DemBuilder::from_tick_circuit(&round_tripped, 0.03, 0.0, 0.02, 0.0);
 
         assert_eq!(dem.num_detectors(), 1);

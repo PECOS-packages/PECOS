@@ -56,7 +56,7 @@ pub(crate) enum ArityError {
 /// entry, two-qubit gates to every consecutive pair. A `DagCircuit` node may
 /// genuinely carry several gate instances -- `DagCircuit::gate_count` counts
 /// them individually -- so applying only the first would silently drop gates.
-/// Only `DagCircuit::from(&TickCircuit)` and the `DagCircuit` builder helpers
+/// Only `DagCircuit::try_from(&TickCircuit)` and the `DagCircuit` builder helpers
 /// split batches; `add_gate_auto_wire` stores a batched `Gate` unchanged.
 ///
 /// # Errors

@@ -238,6 +238,7 @@ make the DEM comparisons that validate this change impossible to interpret.
 
 ## Related
 
-`measurement-id-system.md` in the pecos-docs vault (`~/Repos/pecos-docs/design/`)
-is the origin of the identity-over-ordering direction. It is not in this repo;
-an earlier draft cited it as though it were.
+[`measurement-id-system.md`](measurement-id-system.md) is the origin of the
+identity-over-ordering direction. Originally written in an external notes vault
+and cited from there by an earlier draft of this document; now ported into this
+directory so the citation chain is complete.

@@ -403,6 +403,14 @@ pub enum MeasResolveError {
         /// The node holding the record-less measurement.
         node: usize,
     },
+    /// The circuit's id bookkeeping disagrees with its gates: the id is held by
+    /// a gate but was never reserved, or is held by more than one gate.
+    ///
+    /// Insertion validation makes both states unrepresentable, so reaching this
+    /// means a [`gate_mut`](DagCircuit::gate_mut) edit desynced the circuit.
+    /// Nothing resolved through such a circuit can be trusted; the only safe
+    /// reaction is to stop.
+    Inconsistent(MeasId),
 }
 
 impl fmt::Display for MeasResolveError {
@@ -422,6 +430,12 @@ impl fmt::Display for MeasResolveError {
                 f,
                 "MeasId({}) names a measurement at node {node} that consumes no \
                  measurement record",
+                id.index()
+            ),
+            Self::Inconsistent(id) => write!(
+                f,
+                "MeasId({})'s bookkeeping is inconsistent -- held but unreserved, or \
+                 held by more than one gate; a gate_mut edit has desynced this circuit",
                 id.index()
             ),
         }
@@ -596,10 +610,18 @@ impl DagCircuit {
     /// # Errors
     ///
     /// - [`MeasResolveError::Unknown`] -- the id was never minted or supplied
-    ///   here. A reference from a different circuit lands in this case.
+    ///   here. A bare id carries no provenance, so a reference from a
+    ///   *different* circuit is NOT reliably detected: ids are circuit-local
+    ///   numbers, and a foreign id that collides with a local one resolves to
+    ///   the local measurement. Rejecting foreign references needs validation
+    ///   at the point a reference enters a circuit, not here.
     /// - [`MeasResolveError::Removed`] -- the id was reserved but no gate holds
-    ///   it; its measurement was removed. Ids stay reserved for the life of the
-    ///   circuit, so this cannot be confused with `Unknown`.
+    ///   it. Usually its measurement was removed; a `gate_mut` edit that
+    ///   overwrote the id leaves the same state, and the two cannot be told
+    ///   apart without tombstones.
+    /// - [`MeasResolveError::Inconsistent`] -- the id is held but unreserved,
+    ///   or held twice. Only reachable through `gate_mut` desync; stop trusting
+    ///   the circuit.
     /// - [`MeasResolveError::RecordLess`] -- the id names a measurement that
     ///   consumes no measurement record (`MeasureLeaked` carrying a supplied
     ///   id). It is a real measurement, but nothing that reads records can
@@ -611,29 +633,45 @@ impl DagCircuit {
     /// that unrepresentable through every insertion path, so reaching it means
     /// a [`gate_mut`](Self::gate_mut) edit desynced the gate.
     pub fn find_measurement(&self, id: MeasId) -> Result<MeasRef, MeasResolveError> {
+        // Scan the whole circuit rather than stopping at the first hit, so a
+        // duplicate holder is reported instead of silently winning.
+        let mut found: Option<(usize, usize)> = None;
         for (node, gate) in self.gates.iter().enumerate() {
             let Some(gate) = gate.as_ref() else { continue };
-            let Some(position) = gate.meas_ids.iter().position(|&held| held == id) else {
-                continue;
-            };
-            if !gate.gate_type.consumes_measurement_record() {
-                return Err(MeasResolveError::RecordLess { id, node });
+            for (position, &held) in gate.meas_ids.iter().enumerate() {
+                if held != id {
+                    continue;
+                }
+                if found.is_some() {
+                    return Err(MeasResolveError::Inconsistent(id));
+                }
+                found = Some((node, position));
             }
-            let qubit = *gate
-                .qubits
-                .get(position)
-                .expect("a validated measurement carries one id per qubit");
-            return Ok(MeasRef {
-                node,
-                qubit,
-                meas_id: id,
-            });
         }
-        if self.used_meas_ids.contains(&id.index()) {
-            Err(MeasResolveError::Removed(id))
-        } else {
-            Err(MeasResolveError::Unknown(id))
+        let Some((node, position)) = found else {
+            return if self.used_meas_ids.contains(&id.index()) {
+                Err(MeasResolveError::Removed(id))
+            } else {
+                Err(MeasResolveError::Unknown(id))
+            };
+        };
+        if !self.used_meas_ids.contains(&id.index()) {
+            // Held but never reserved: a forged id written in through gate_mut.
+            return Err(MeasResolveError::Inconsistent(id));
         }
+        let gate = self.gates[node].as_ref().expect("found above");
+        if !gate.gate_type.consumes_measurement_record() {
+            return Err(MeasResolveError::RecordLess { id, node });
+        }
+        let qubit = *gate
+            .qubits
+            .get(position)
+            .expect("a validated measurement carries one id per qubit");
+        Ok(MeasRef {
+            node,
+            qubit,
+            meas_id: id,
+        })
     }
 
     /// Check that `count` ids can still be minted, without minting them.
@@ -3306,6 +3344,35 @@ mod measurement_id_tests {
         let node = circuit.add_gate_auto_wire(Gate::h(&[0usize]));
         assert!(circuit.gate(node).unwrap().meas_ids.is_empty());
         assert_eq!(circuit.num_measurement_ids(), 0);
+    }
+
+    /// A `gate_mut` edit can hold an id the circuit never reserved, or hold
+    /// one id twice. Both are `Inconsistent` -- the one variant whose only
+    /// safe reaction is to stop -- not a successful resolution.
+    #[test]
+    fn find_measurement_reports_desynced_circuits_as_inconsistent() {
+        // Forged: a held id that was never reserved.
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let node = circuit.mz(&[0])[0].node;
+        circuit.gate_mut(node).unwrap().meas_ids[0] = MeasId(7);
+        assert_eq!(
+            circuit.find_measurement(MeasId(7)),
+            Err(MeasResolveError::Inconsistent(MeasId(7))),
+            "a forged id must not resolve to a real measurement"
+        );
+
+        // Duplicated: one id held by two gates.
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let refs = circuit.mz(&[0, 1]);
+        let stolen = refs[0].meas_id;
+        circuit.gate_mut(refs[1].node).unwrap().meas_ids[0] = stolen;
+        assert_eq!(
+            circuit.find_measurement(stolen),
+            Err(MeasResolveError::Inconsistent(stolen)),
+            "a duplicated id must not silently resolve to whichever gate scans first"
+        );
     }
 
     /// `find_measurement` resolves an id to the exact measurement inside a

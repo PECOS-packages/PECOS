@@ -648,6 +648,13 @@ impl DagFaultInfluenceMap {
     /// once and build their own map.
     #[must_use]
     pub fn meas_index_of(&self, id: pecos_core::MeasId) -> Option<usize> {
+        // `extract_measurements` fills id-less entries of a mixed map with
+        // `MeasId(usize::MAX)` as a sentinel. No real gate can hold that id --
+        // insertion rejects it -- so a lookup for it must not "succeed" against
+        // the sentinel.
+        if id == pecos_core::MeasId(usize::MAX) {
+            return None;
+        }
         self.meas_ids.iter().position(|&held| held == id)
     }
 
@@ -2661,9 +2668,12 @@ mod tests {
         use pecos_core::MeasId;
         use pecos_quantum::Gate;
 
+        // Ids (7, 9, 4) on measurement nodes (3, 4, 5): no id equals its node,
+        // and no id equals its rank (sorted [4, 7, 9] -> ranks 0, 1, 2), so all
+        // three spaces are pairwise distinct for every entry.
         let mut dag = DagCircuit::new();
         dag.pz(&[0, 1, 2]);
-        for (qubit, id) in [(0usize, 9usize), (1, 1), (2, 5)] {
+        for (qubit, id) in [(0usize, 7usize), (1, 9), (2, 4)] {
             let mut gate = Gate::mz(&[qubit]);
             gate.meas_ids = smallvec::smallvec![MeasId(id)];
             dag.add_gate_auto_wire(gate);
@@ -2671,12 +2681,33 @@ mod tests {
 
         let map = DagFaultAnalyzer::new(&dag).build_influence_map();
         assert_eq!(
-            map.meas_index_of(MeasId(5)),
+            map.meas_index_of(MeasId(7)),
             Some(1),
-            "id-rank order is [1, 5, 9], so MeasId(5) is index 1"
+            "id-rank order is [4, 7, 9], so MeasId(7) is index 1"
         );
         assert_eq!(map.meas_index_of(MeasId(9)), Some(2));
+        assert_eq!(map.meas_index_of(MeasId(4)), Some(0));
         assert_eq!(map.meas_index_of(MeasId(2)), None, "absent id is None");
+    }
+
+    /// A mixed map -- some entries stamped, some id-less -- fills the id-less
+    /// slots with `MeasId(usize::MAX)` as a sentinel. Looking that value up
+    /// must not "find" the sentinel: no real gate can hold it.
+    #[test]
+    fn the_id_less_sentinel_never_resolves_as_a_held_id() {
+        use pecos_core::MeasId;
+        let mut map = DagFaultInfluenceMap::with_capacity(0);
+        map.meas_ids = vec![MeasId(4), MeasId(usize::MAX)];
+        assert_eq!(
+            map.meas_index_of(MeasId(usize::MAX)),
+            None,
+            "the sentinel occupies index 1, but it is not a held id"
+        );
+        assert_eq!(
+            map.meas_index_of(MeasId(4)),
+            Some(0),
+            "real ids still resolve"
+        );
     }
 
     /// Simple Z-stabilizer measurement circuit: measures Z0 Z1 parity

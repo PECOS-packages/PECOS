@@ -1,9 +1,9 @@
 # Annotations should reference measurements by identity
 
-Status: proposed, revised after two adversarial design reviews (both
-NEEDS-ADJUSTMENT; core claim upheld, plan corrected). Step 3 of #387. Depends on
-#391 (merged as `cdfddba1b`), which made every `DagCircuit` measurement carry a
-unique `MeasId`.
+Status: in progress. Revised after three adversarial design reviews (core
+claim upheld, plan corrected twice). Step 3 of #387. Depends on #391 (merged as
+`cdfddba1b`), which made every `DagCircuit` measurement carry a unique `MeasId`.
+Steps 1 and 2 below are merged (#397, #401); the pivot itself is not started.
 
 ## The defect
 
@@ -145,7 +145,9 @@ it in the old space mid-migration.
    would force storing `meas_id.index()` as a bare `usize` -- the exact
    conflation this change removes. It moves into the pivot (step 4).
 2. Remove `From<&TickCircuit> for DagCircuit`, add `TryFrom`; bindings route
-   through it; delete the pre-scan.
+   through it; delete the pre-scan. **Done, PR #401.** The owned
+   `From<TickCircuit>` went with it, and all three production callers already
+   returned `Result`, so no public signature changed.
 3. **Pre-land the id-resolution helpers, tested, alongside the existing
    node-based paths**: `DagCircuit::find_measurement(MeasId) -> Option<MeasRef>`
    (an O(gates) scan, deliberately *not* a maintained index, which `gate_mut`

@@ -639,6 +639,18 @@ pub struct DagFaultInfluenceMap {
 }
 
 impl DagFaultInfluenceMap {
+    /// Index into `measurements` of the measurement holding `id`.
+    ///
+    /// This is the influence map's private ordinal (id-rank order). `None`
+    /// means the id is absent from this map -- the map cannot distinguish why;
+    /// resolve against the circuit with `DagCircuit::find_measurement` when the
+    /// reason matters. Callers resolving many ids should iterate `meas_ids`
+    /// once and build their own map.
+    #[must_use]
+    pub fn meas_index_of(&self, id: pecos_core::MeasId) -> Option<usize> {
+        self.meas_ids.iter().position(|&held| held == id)
+    }
+
     /// Creates a new `SoA` map with capacity for the given number of locations.
     #[must_use]
     pub fn with_capacity(num_locations: usize) -> Self {
@@ -2639,6 +2651,32 @@ mod tests {
             meas_ids.iter().map(|id| id.index()).collect::<Vec<_>>(),
             vec![1, 5, 9]
         );
+    }
+
+    /// `meas_index_of` resolves an id to the map's own ordinal (id-rank
+    /// order), which the scrambled supplied ids keep distinct from both the
+    /// id values and insertion order.
+    #[test]
+    fn meas_index_of_resolves_against_the_maps_own_ordering() {
+        use pecos_core::MeasId;
+        use pecos_quantum::Gate;
+
+        let mut dag = DagCircuit::new();
+        dag.pz(&[0, 1, 2]);
+        for (qubit, id) in [(0usize, 9usize), (1, 1), (2, 5)] {
+            let mut gate = Gate::mz(&[qubit]);
+            gate.meas_ids = smallvec::smallvec![MeasId(id)];
+            dag.add_gate_auto_wire(gate);
+        }
+
+        let map = DagFaultAnalyzer::new(&dag).build_influence_map();
+        assert_eq!(
+            map.meas_index_of(MeasId(5)),
+            Some(1),
+            "id-rank order is [1, 5, 9], so MeasId(5) is index 1"
+        );
+        assert_eq!(map.meas_index_of(MeasId(9)), Some(2));
+        assert_eq!(map.meas_index_of(MeasId(2)), None, "absent id is None");
     }
 
     /// Simple Z-stabilizer measurement circuit: measures Z0 Z1 parity

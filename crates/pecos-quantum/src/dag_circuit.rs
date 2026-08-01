@@ -21,6 +21,7 @@
 //! flowing between gates, not just abstract dependencies.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, Gate, MeasId, QubitId, TimeUnits};
@@ -376,6 +377,59 @@ impl From<MeasRef> for usize {
     }
 }
 
+/// Why a [`MeasId`] failed to resolve to a measurement.
+///
+/// The three cases mean different things and need different reactions, so
+/// callers must be able to tell them apart -- an `Option` cannot:
+///
+/// - an **unknown** id points at a caller bug (or a reference from a different
+///   circuit);
+/// - a **removed** id was real once, so the annotation that carries it went
+///   stale rather than being wrong from the start;
+/// - a **record-less** id names a measurement that exists but produces no
+///   classical result (`MeasureLeaked` with a supplied id), so nothing that
+///   reads records can use it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MeasResolveError {
+    /// The id was never minted or supplied in this circuit.
+    Unknown(MeasId),
+    /// The id was reserved, but no gate holds it any more -- its measurement
+    /// was removed. Removed ids stay reserved forever, so this is unambiguous.
+    Removed(MeasId),
+    /// The id names a measurement that consumes no measurement record.
+    RecordLess {
+        /// The id in question.
+        id: MeasId,
+        /// The node holding the record-less measurement.
+        node: usize,
+    },
+}
+
+impl fmt::Display for MeasResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown(id) => write!(
+                f,
+                "MeasId({}) does not name a measurement in this circuit",
+                id.index()
+            ),
+            Self::Removed(id) => write!(
+                f,
+                "MeasId({})'s measurement was removed from this circuit",
+                id.index()
+            ),
+            Self::RecordLess { id, node } => write!(
+                f,
+                "MeasId({}) names a measurement at node {node} that consumes no \
+                 measurement record",
+                id.index()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MeasResolveError {}
+
 /// The role of a Pauli annotation in the circuit.
 ///
 /// All three kinds track the same thing -- whether a Pauli string flips due to
@@ -530,6 +584,56 @@ impl DagCircuit {
     #[must_use]
     pub fn num_measurement_ids(&self) -> usize {
         self.next_meas_id
+    }
+
+    /// Resolve a [`MeasId`] to the measurement that holds it.
+    ///
+    /// A deliberate O(gates) scan rather than a maintained index: an index
+    /// would silently desync under [`gate_mut`](Self::gate_mut) edits, and
+    /// consumers that resolve many ids build their own map from one pass over
+    /// the circuit.
+    ///
+    /// # Errors
+    ///
+    /// - [`MeasResolveError::Unknown`] -- the id was never minted or supplied
+    ///   here. A reference from a different circuit lands in this case.
+    /// - [`MeasResolveError::Removed`] -- the id was reserved but no gate holds
+    ///   it; its measurement was removed. Ids stay reserved for the life of the
+    ///   circuit, so this cannot be confused with `Unknown`.
+    /// - [`MeasResolveError::RecordLess`] -- the id names a measurement that
+    ///   consumes no measurement record (`MeasureLeaked` carrying a supplied
+    ///   id). It is a real measurement, but nothing that reads records can
+    ///   resolve through it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a gate holds more ids than qubits. [`Gate::validate`] makes
+    /// that unrepresentable through every insertion path, so reaching it means
+    /// a [`gate_mut`](Self::gate_mut) edit desynced the gate.
+    pub fn find_measurement(&self, id: MeasId) -> Result<MeasRef, MeasResolveError> {
+        for (node, gate) in self.gates.iter().enumerate() {
+            let Some(gate) = gate.as_ref() else { continue };
+            let Some(position) = gate.meas_ids.iter().position(|&held| held == id) else {
+                continue;
+            };
+            if !gate.gate_type.consumes_measurement_record() {
+                return Err(MeasResolveError::RecordLess { id, node });
+            }
+            let qubit = *gate
+                .qubits
+                .get(position)
+                .expect("a validated measurement carries one id per qubit");
+            return Ok(MeasRef {
+                node,
+                qubit,
+                meas_id: id,
+            });
+        }
+        if self.used_meas_ids.contains(&id.index()) {
+            Err(MeasResolveError::Removed(id))
+        } else {
+            Err(MeasResolveError::Unknown(id))
+        }
     }
 
     /// Check that `count` ids can still be minted, without minting them.
@@ -3202,6 +3306,65 @@ mod measurement_id_tests {
         let node = circuit.add_gate_auto_wire(Gate::h(&[0usize]));
         assert!(circuit.gate(node).unwrap().meas_ids.is_empty());
         assert_eq!(circuit.num_measurement_ids(), 0);
+    }
+
+    /// `find_measurement` resolves an id to the exact measurement inside a
+    /// batched node -- the thing a node index cannot express.
+    ///
+    /// De-aliased on purpose: supplied ids (9, 4) match neither node indices
+    /// nor qubit positions, so resolving by anything except the id fails.
+    #[test]
+    fn find_measurement_names_one_measurement_inside_a_batch() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let mut batch = Gate::mz(&[0usize, 1]);
+        batch.meas_ids = smallvec::smallvec![MeasId(9), MeasId(4)];
+        let node = circuit.add_gate_auto_wire(batch);
+
+        let mref = circuit.find_measurement(MeasId(4)).expect("id 4 exists");
+        assert_eq!(mref.node, node);
+        assert_eq!(
+            mref.qubit.index(),
+            1,
+            "MeasId(4) is the batch's second measurement, so qubit 1"
+        );
+        assert_eq!(mref.meas_id, MeasId(4));
+    }
+
+    /// The three failure cases are distinct errors, because they mean different
+    /// things: a caller bug, a stale annotation, and a measurement with no
+    /// classical result.
+    #[test]
+    fn find_measurement_distinguishes_unknown_removed_and_record_less() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1, 2]);
+        let refs = circuit.mz(&[0]);
+        let mut leaked = Gate::measure_leaked(&[1usize]);
+        leaked.meas_ids = smallvec::smallvec![MeasId(7)];
+        let leaked_node = circuit.add_gate_auto_wire(leaked);
+
+        assert_eq!(
+            circuit.find_measurement(MeasId(999)),
+            Err(MeasResolveError::Unknown(MeasId(999))),
+            "an id never minted or supplied is Unknown"
+        );
+
+        assert_eq!(
+            circuit.find_measurement(MeasId(7)),
+            Err(MeasResolveError::RecordLess {
+                id: MeasId(7),
+                node: leaked_node,
+            }),
+            "a MeasureLeaked's supplied id names a real but record-less measurement"
+        );
+
+        let held = refs[0].meas_id;
+        circuit.remove_gate(refs[0].node);
+        assert_eq!(
+            circuit.find_measurement(held),
+            Err(MeasResolveError::Removed(held)),
+            "a reserved id whose gate is gone is Removed, not Unknown"
+        );
     }
 
     /// A `MeasRef` carries the identity of the measurement, not just its node.

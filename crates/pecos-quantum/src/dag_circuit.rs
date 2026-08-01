@@ -379,22 +379,27 @@ impl From<MeasRef> for usize {
 
 /// Why a [`MeasId`] failed to resolve to a measurement.
 ///
-/// The three cases mean different things and need different reactions, so
+/// The four cases mean different things and need different reactions, so
 /// callers must be able to tell them apart -- an `Option` cannot:
 ///
 /// - an **unknown** id points at a caller bug (or a reference from a different
-///   circuit);
+///   circuit, though a colliding foreign id cannot be detected as foreign);
 /// - a **removed** id was real once, so the annotation that carries it went
-///   stale rather than being wrong from the start;
+///   stale rather than being wrong from the start. Removal is tracked with
+///   tombstones, so this genuinely means `remove_gate` ran;
 /// - a **record-less** id names a measurement that exists but produces no
 ///   classical result (`MeasureLeaked` with a supplied id), so nothing that
-///   reads records can use it.
+///   reads records can use it;
+/// - an **inconsistent** id means the circuit's bookkeeping and its gates
+///   disagree -- only reachable through `gate_mut` desync -- and the only safe
+///   reaction is to stop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MeasResolveError {
     /// The id was never minted or supplied in this circuit.
     Unknown(MeasId),
-    /// The id was reserved, but no gate holds it any more -- its measurement
-    /// was removed. Removed ids stay reserved forever, so this is unambiguous.
+    /// The id's measurement was removed via `remove_gate`. Tracked with a
+    /// tombstone, so this cannot be confused with a `gate_mut` edit that
+    /// merely overwrote the id -- that is [`Inconsistent`](Self::Inconsistent).
     Removed(MeasId),
     /// The id names a measurement that consumes no measurement record.
     RecordLess {
@@ -403,8 +408,10 @@ pub enum MeasResolveError {
         /// The node holding the record-less measurement.
         node: usize,
     },
-    /// The circuit's id bookkeeping disagrees with its gates: the id is held by
-    /// a gate but was never reserved, or is held by more than one gate.
+    /// The circuit's id bookkeeping disagrees with its gates: the id is held
+    /// but was never reserved, held more than once (across gates or within one
+    /// batch), held despite its measurement having been removed, or reserved
+    /// yet erased from every gate without a removal.
     ///
     /// Insertion validation makes both states unrepresentable, so reaching this
     /// means a [`gate_mut`](DagCircuit::gate_mut) edit desynced the circuit.
@@ -512,6 +519,13 @@ pub struct DagCircuit {
     /// `next_meas_id` alone cannot reject a supplied id that sits *below* the
     /// counter, so duplicates need their own record.
     used_meas_ids: BTreeSet<usize>,
+    /// Ids whose measurement was removed via [`remove_gate`](Self::remove_gate).
+    ///
+    /// A tombstone makes `Removed` mean what it says: without one, "reserved
+    /// but unheld" cannot distinguish a genuine removal from a `gate_mut` edit
+    /// that overwrote the id -- and a removed id forged onto a live gate would
+    /// resolve as if nothing happened.
+    removed_meas_ids: BTreeSet<usize>,
 }
 
 impl DagCircuit {
@@ -527,6 +541,7 @@ impl DagCircuit {
             max_qubit: 0,
             next_meas_id: 0,
             used_meas_ids: BTreeSet::new(),
+            removed_meas_ids: BTreeSet::new(),
             annotations: Vec::new(),
             measurement_labels: BTreeMap::new(),
         }
@@ -550,6 +565,7 @@ impl DagCircuit {
             max_qubit: 0,
             next_meas_id: 0,
             used_meas_ids: BTreeSet::new(),
+            removed_meas_ids: BTreeSet::new(),
             annotations: Vec::new(),
             measurement_labels: BTreeMap::new(),
         }
@@ -615,10 +631,9 @@ impl DagCircuit {
     ///   numbers, and a foreign id that collides with a local one resolves to
     ///   the local measurement. Rejecting foreign references needs validation
     ///   at the point a reference enters a circuit, not here.
-    /// - [`MeasResolveError::Removed`] -- the id was reserved but no gate holds
-    ///   it. Usually its measurement was removed; a `gate_mut` edit that
-    ///   overwrote the id leaves the same state, and the two cannot be told
-    ///   apart without tombstones.
+    /// - [`MeasResolveError::Removed`] -- the id's measurement was removed via
+    ///   [`remove_gate`](Self::remove_gate), tracked with a tombstone. An id
+    ///   erased by a `gate_mut` edit is *not* this; it is `Inconsistent`.
     /// - [`MeasResolveError::Inconsistent`] -- the id is held but unreserved,
     ///   or held twice. Only reachable through `gate_mut` desync; stop trusting
     ///   the circuit.
@@ -649,14 +664,22 @@ impl DagCircuit {
             }
         }
         let Some((node, position)) = found else {
-            return if self.used_meas_ids.contains(&id.index()) {
+            return if self.removed_meas_ids.contains(&id.index()) {
                 Err(MeasResolveError::Removed(id))
+            } else if self.used_meas_ids.contains(&id.index()) {
+                // Reserved, never removed, yet no gate holds it: a gate_mut
+                // edit erased the id. Not a removal, so not `Removed`.
+                Err(MeasResolveError::Inconsistent(id))
             } else {
                 Err(MeasResolveError::Unknown(id))
             };
         };
-        if !self.used_meas_ids.contains(&id.index()) {
-            // Held but never reserved: a forged id written in through gate_mut.
+        if !self.used_meas_ids.contains(&id.index()) || self.removed_meas_ids.contains(&id.index())
+        {
+            // Held but never reserved (forged in through gate_mut), or held
+            // despite its measurement having been removed (a removed id forged
+            // onto a live gate). Either way the holder cannot legitimately own
+            // this id.
             return Err(MeasResolveError::Inconsistent(id));
         }
         let gate = self.gates[node].as_ref().expect("found above");
@@ -800,7 +823,13 @@ impl DagCircuit {
 
         self.dag.remove_node(node);
         if node < self.gates.len() {
-            self.gates[node].take()
+            let removed = self.gates[node].take();
+            if let Some(gate) = &removed {
+                for id in &gate.meas_ids {
+                    self.removed_meas_ids.insert(id.index());
+                }
+            }
+            removed
         } else {
             None
         }
@@ -3372,6 +3401,60 @@ mod measurement_id_tests {
             circuit.find_measurement(stolen),
             Err(MeasResolveError::Inconsistent(stolen)),
             "a duplicated id must not silently resolve to whichever gate scans first"
+        );
+    }
+
+    /// A removed id forged onto a live gate must not resolve: `used_meas_ids`
+    /// proves only that an id was reserved *once*, so without tombstones this
+    /// laundered a stale annotation onto a different measurement.
+    #[test]
+    fn a_removed_id_reassigned_by_gate_mut_does_not_resolve() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let refs = circuit.mz(&[0, 1]);
+        let dead = refs[0].meas_id;
+        circuit.remove_gate(refs[0].node);
+        circuit.gate_mut(refs[1].node).unwrap().meas_ids[0] = dead;
+
+        assert_eq!(
+            circuit.find_measurement(dead),
+            Err(MeasResolveError::Inconsistent(dead)),
+            "a removed id on a live gate is laundering, not a resolution"
+        );
+    }
+
+    /// An id erased from every gate without a removal is `Inconsistent`, not
+    /// `Removed` -- `Removed` now genuinely means `remove_gate` ran.
+    #[test]
+    fn an_id_erased_without_removal_is_inconsistent_not_removed() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let held = circuit.mz(&[0]);
+        circuit.gate_mut(held[0].node).unwrap().meas_ids[0] = MeasId(50);
+
+        assert_eq!(
+            circuit.find_measurement(held[0].meas_id),
+            Err(MeasResolveError::Inconsistent(held[0].meas_id)),
+            "the id vanished without remove_gate, so nothing about it can be trusted"
+        );
+    }
+
+    /// A duplicate *within one batched gate* is caught too, not only across
+    /// gates -- nothing previously pinned the per-position inner loop.
+    #[test]
+    fn a_duplicate_within_one_batch_is_inconsistent() {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        let mut batch = Gate::mz(&[0usize, 1]);
+        batch.meas_ids = smallvec::smallvec![MeasId(8), MeasId(2)];
+        let node = circuit.add_gate_auto_wire(batch);
+        let dup = MeasId(8);
+        circuit.gate_mut(node).unwrap().meas_ids[1] = dup;
+
+        assert_eq!(
+            circuit.find_measurement(dup),
+            Err(MeasResolveError::Inconsistent(dup)),
+            "one gate holding an id twice must not resolve to either position"
         );
     }
 

@@ -23,11 +23,11 @@ from pathlib import Path
 from typing import Any
 
 from dem_decomposition_diagnostics import compare_raw_dems, dem_stats
+from pecos._traced_circuit import normalize_traced_tick_circuit
 from pecos.qec.surface import NoiseModel, OpType, SurfacePatch, build_surface_code_circuit
 from pecos.qec.surface.circuit_builder import (
     _analyze_szz_forward_flow,
     generate_dem_from_tick_circuit_via_stim,
-    normalize_traced_qis_tick_circuit,
 )
 from pecos.qec.surface.decode import (
     _build_surface_tick_circuit_for_native_model,
@@ -301,7 +301,7 @@ def _build_tick_view(
         ),
     )
     if source == "traced_qis":
-        normalize_traced_qis_tick_circuit(tick_circuit, context="SZZ circuit quality report")
+        normalize_traced_tick_circuit(tick_circuit, context="SZZ circuit quality report")
     return tick_circuit, elapsed
 
 

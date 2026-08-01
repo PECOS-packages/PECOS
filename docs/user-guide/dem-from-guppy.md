@@ -215,9 +215,11 @@ different DEM.
   source instead.
 - **`num_qubits` is required** for HUGR-bytes programs; use
   `get_num_qubits(...)` for the built-in generators.
-- **Idle noise needs idle gates.** Selene runtimes do not emit idle gates,
-  so the idle/T1/T2 noise parameters only apply where idle gates are
-  present in the traced circuit.
+- **Idle noise needs idle gates.** The default simple runtime does not emit
+  explicit idles, while other compatible runtimes may emit scheduled idle
+  durations. Runtime-emitted idles are preserved in the traced circuit as
+  nanosecond `TimeUnits`; idle/T1/T2 noise parameters apply only where those
+  gates are present.
 - **Hand-authored tracked-Pauli observables are rejected** in
   `observables_json`; tracked Paulis come from circuit annotations only.
 
@@ -230,3 +232,5 @@ different DEM.
 - **[Decoders](decoders.md)** - Decode syndromes sampled from a DEM
 - **[HUGR & Guppy Simulation](hugr-simulation.md)** - Running Guppy programs
   with noise
+- **[Runtime QIS Tracing](runtime-qis-tracing.md)** - Capture, inspect, store,
+  and replay the runtime-lowered circuit directly

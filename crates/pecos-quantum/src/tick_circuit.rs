@@ -3442,7 +3442,33 @@ impl From<DagCircuit> for TickCircuit {
     }
 }
 
-impl From<&TickCircuit> for DagCircuit {
+/// Error converting a [`TickCircuit`] into a [`DagCircuit`].
+///
+/// The conversion inserts every gate into a `DagCircuit`, which enforces
+/// measurement-id uniqueness. A `TickCircuit` can hold ids that violate it --
+/// nothing on that side checks -- so the conversion has to be able to say so
+/// rather than panic partway through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickToDagError {
+    /// Tick the rejected gate came from.
+    pub tick: usize,
+    /// Why `DagCircuit` refused it.
+    pub reason: String,
+}
+
+impl fmt::Display for TickToDagError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "cannot convert TickCircuit to DagCircuit: gate at tick {} was rejected: {}",
+            self.tick, self.reason
+        )
+    }
+}
+
+impl std::error::Error for TickToDagError {}
+
+impl TryFrom<&TickCircuit> for DagCircuit {
     /// Convert a `TickCircuit` to a `DagCircuit`.
     ///
     /// Gates are added in tick order, with qubit wires connecting
@@ -3457,11 +3483,19 @@ impl From<&TickCircuit> for DagCircuit {
     /// tc.tick().h(&[0]);
     /// tc.tick().cx(&[(0, 1)]);
     ///
-    /// let dag = DagCircuit::from(&tc);
+    /// let dag = DagCircuit::try_from(&tc).expect("valid circuit");
     /// assert_eq!(dag.gate_count(), 2);
     /// assert_eq!(dag.wire_count(), 1); // H->CX on qubit 0
     /// ```
-    fn from(tc: &TickCircuit) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TickToDagError`] if `DagCircuit` refuses a gate -- in practice,
+    /// two measurements sharing a [`MeasId`], which nothing on the `TickCircuit`
+    /// side prevents.
+    type Error = TickToDagError;
+
+    fn try_from(tc: &TickCircuit) -> Result<Self, Self::Error> {
         let mut dag = DagCircuit::new();
 
         // Track the last node for each qubit to connect wires
@@ -3488,7 +3522,12 @@ impl From<&TickCircuit> for DagCircuit {
 
                 let mut split_nodes = Vec::with_capacity(split_gates.len());
                 for split_gate in &split_gates {
-                    let node = dag.add_gate(split_gate.clone());
+                    let node =
+                        dag.try_add_gate(split_gate.clone())
+                            .map_err(|reason| TickToDagError {
+                                tick: tick_idx,
+                                reason,
+                            })?;
                     split_nodes.push(node);
 
                     // Every measurement consumes a record, `MeasureFree`
@@ -3575,19 +3614,48 @@ impl From<&TickCircuit> for DagCircuit {
             }
         }
 
-        dag
+        Ok(dag)
     }
 }
 
-impl From<TickCircuit> for DagCircuit {
-    fn from(tc: TickCircuit) -> Self {
-        DagCircuit::from(&tc)
+impl TryFrom<TickCircuit> for DagCircuit {
+    type Error = TickToDagError;
+
+    fn try_from(tc: TickCircuit) -> Result<Self, Self::Error> {
+        DagCircuit::try_from(&tc)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Conversion reports a circuit it cannot represent instead of panicking
+    /// partway through building the DAG. `TickCircuit` does not enforce
+    /// measurement-id uniqueness, so it can hold ids `DagCircuit` refuses.
+    #[test]
+    fn converting_a_circuit_with_duplicate_ids_reports_the_tick() {
+        let mut tc = TickCircuit::new();
+        tc.tick().pz(&[0, 1]);
+        let mut first = Gate::mz(&[0usize]);
+        first.meas_ids = smallvec::smallvec![MeasId(4)];
+        tc.tick().try_add_gate(first).expect("gate is valid");
+        let mut second = Gate::mz(&[1usize]);
+        second.meas_ids = smallvec::smallvec![MeasId(4)];
+        tc.tick().try_add_gate(second).expect("gate is valid");
+
+        let err = DagCircuit::try_from(&tc)
+            .expect_err("two measurements share MeasId(4), which DagCircuit refuses");
+        assert_eq!(
+            err.tick, 2,
+            "the error must name the tick that was rejected"
+        );
+        assert!(
+            err.reason.contains("MeasId(4)"),
+            "and carry the reason: {}",
+            err.reason
+        );
+    }
 
     /// A batch reserves its records in one step. Reserving one per qubit left the
     /// counter advanced for the qubits handled before it ran out, so a caller who
@@ -3635,7 +3703,7 @@ mod tests {
             .collect();
         assert_eq!(ids, vec![0], "only the MZ carries an id");
 
-        let round_tripped = DagCircuit::from(&tc);
+        let round_tripped = DagCircuit::try_from(&tc).expect("valid circuit");
         assert_eq!(round_tripped.num_measurement_ids(), 1);
     }
 
@@ -3998,7 +4066,7 @@ mod tests {
         assert_eq!(tc1.gate_count(), 3);
         assert_eq!(tc1.gate_batch_count(), 2);
 
-        let dag = DagCircuit::from(&tc1);
+        let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         assert_eq!(dag.gate_count(), 3);
         assert_eq!(dag.gate_node_count(), 3);
         assert_eq!(dag.gate_type_count(GateType::RZ), 3);
@@ -4151,7 +4219,7 @@ mod tests {
         tc.tick().cx(&[(0, 1)]); // Tick 1: CX
         tc.tick().h(&[0]); // Tick 2: H
 
-        let dag = DagCircuit::from(&tc);
+        let dag = DagCircuit::try_from(&tc).expect("valid circuit");
 
         // Check gate counts
         assert_eq!(dag.gate_count(), 4);
@@ -4226,7 +4294,7 @@ mod tests {
                 let mut tc = TickCircuit::new();
                 add_gate(&mut tc, gate_type, &pairs);
 
-                let dag = DagCircuit::from(&tc);
+                let dag = DagCircuit::try_from(&tc).expect("valid circuit");
                 let gates: Vec<_> = dag.iter_gates().map(|(_, gate)| gate).collect();
                 assert_eq!(gates.len(), 2, "{gate_type:?} {pairs:?}");
                 assert!(
@@ -4290,7 +4358,7 @@ mod tests {
         tc1.tick().h(&[1]);
 
         // Convert to DAG and back
-        let dag = DagCircuit::from(&tc1);
+        let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         let tc2 = TickCircuit::from(&dag);
 
         // Should have same structure
@@ -4323,7 +4391,7 @@ mod tests {
         assert_eq!(ms[0].meas_id, MeasId(0));
         assert_eq!(ms[1].meas_id, MeasId(1));
 
-        let dag = DagCircuit::from(&tc1);
+        let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         assert_eq!(dag.gate_count(), 6);
         assert_eq!(dag.gate_node_count(), 6);
         assert_eq!(dag.gate_type_count(GateType::H), 2);
@@ -4438,7 +4506,7 @@ mod tests {
             Attribute::String("Z".into()),
         );
 
-        let dag = DagCircuit::from(&tc1);
+        let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         assert_eq!(dag.gate_count(), 2);
         assert_eq!(dag.gate_node_count(), 2);
         for (node, gate) in dag.iter_gates() {
@@ -4486,7 +4554,7 @@ mod tests {
             &[QubitId::from(0), QubitId::from(1)]
         );
 
-        let dag = DagCircuit::from(&tc1);
+        let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         assert_eq!(dag.gate_count(), 1);
         assert_eq!(dag.gate_node_count(), 1);
         let (_, gate) = dag.iter_gates().next().unwrap();
@@ -4514,7 +4582,7 @@ mod tests {
         tc1.detector_labeled("det01", &ms);
         tc1.observable_labeled("obs1", &[ms[1]]);
 
-        let dag = DagCircuit::from(&tc1);
+        let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         let tc2 = TickCircuit::from(&dag);
 
         assert_eq!(tc2.num_measurements(), 2);
@@ -4610,7 +4678,7 @@ mod tests {
         tc1.observable_labeled("observable", &[ms[1]]);
         tc1.tracked_pauli_labeled("tracked", X(0) & Z(2));
 
-        let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
+        let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
         assert_eq!(tc2.annotations().len(), 3);
 
         assert_eq!(tc2.annotations()[0].label.as_deref(), Some("detector"));
@@ -4693,7 +4761,7 @@ mod tests {
                 tc1.observable_labeled("obs", &ms);
             }
 
-            let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
+            let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
             assert_eq!(tc2.gate_count(), tc1.gate_count());
             assert_eq!(tc2.num_measurements(), tc1.num_measurements());
             assert_eq!(tc2.gate_counts_by_type(), tc1.gate_counts_by_type());
@@ -4753,7 +4821,7 @@ mod tests {
             tc1.observable_labeled(&format!("obs-{case_idx}"), &observable_records);
             tc1.tracked_pauli_labeled(&format!("track-{case_idx}"), tracked.clone());
 
-            let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
+            let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
             assert_eq!(tc2.gate_count(), tc1.gate_count(), "case {case_idx}");
             assert_eq!(
                 tc2.num_measurements(),
@@ -4865,7 +4933,7 @@ mod tests {
         tc1.observable_labeled("obs-all-gates", &[ms[1]]);
         tc1.tracked_pauli_labeled("tracked-all-gates", X(70) & Z(71));
 
-        let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
+        let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
 
         assert_eq!(tc2.gate_count(), tc1.gate_count());
         assert_eq!(tc2.num_measurements(), tc1.num_measurements());
@@ -5068,7 +5136,7 @@ mod tests {
             };
             tc1.tracked_pauli_labeled(&format!("tracked-{case_idx}"), tracked.clone());
 
-            let tc2 = TickCircuit::from(&DagCircuit::from(&tc1));
+            let tc2 = TickCircuit::from(&DagCircuit::try_from(&tc1).expect("valid circuit"));
 
             assert_eq!(
                 tc2.get_meta("case"),
@@ -5185,7 +5253,7 @@ mod tests {
         tc1.tick().meta("round", Attribute::Int(1)).cx(&[(0, 1)]);
 
         // Convert to DAG
-        let dag = DagCircuit::from(&tc1);
+        let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
 
         // Check tick-level attrs are stored with prefix
         assert_eq!(dag.get_attr("tick[0].round"), Some(&Attribute::Int(0)));
@@ -5643,7 +5711,7 @@ mod tests {
         ));
         tc.tick().mz(&[0]);
 
-        let dag = DagCircuit::from(&tc);
+        let dag = DagCircuit::try_from(&tc).expect("valid circuit");
 
         assert_eq!(
             dag.gate_count(),
@@ -6251,7 +6319,7 @@ mod tests {
         tc.observable_labeled("obs0", &ms);
         tc.tracked_pauli_labeled("op0", Z(0) & Z(1));
 
-        let dag = DagCircuit::from(&tc);
+        let dag = DagCircuit::try_from(&tc).expect("valid circuit");
 
         // Annotations should transfer
         assert_eq!(dag.annotations().len(), 3);
@@ -6310,7 +6378,7 @@ mod tests {
         tc1.tracked_pauli_labeled("log_X", X(0) & X(1));
 
         // TickCircuit -> DagCircuit -> TickCircuit
-        let dag = DagCircuit::from(&tc1);
+        let dag = DagCircuit::try_from(&tc1).expect("valid circuit");
         let tc2 = TickCircuit::from(&dag);
 
         // Annotation count and labels preserved
@@ -6905,7 +6973,7 @@ mod tests {
         );
         circuit.observable(&kept);
 
-        let dag = crate::DagCircuit::from(&circuit);
+        let dag = crate::DagCircuit::try_from(&circuit).expect("valid circuit");
         let nodes: Vec<Vec<usize>> = dag
             .annotations()
             .iter()

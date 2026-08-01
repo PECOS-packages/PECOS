@@ -102,10 +102,10 @@ def build_case(
     seed: int,
     variants: list[str],
 ) -> BenchmarkResult:
+    from pecos._traced_circuit import normalize_traced_tick_circuit
     from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
     from pecos.qec.surface.circuit_builder import (
         generate_dem_from_tick_circuit_via_stim,
-        normalize_traced_qis_tick_circuit,
     )
     from pecos.qec.surface.decode import (
         _build_surface_tick_circuit_for_native_model,
@@ -138,7 +138,7 @@ def build_case(
         ),
     )
     setup_timings.append(TimedValue("build_traced_qis_tick_circuit", elapsed))
-    normalize_traced_qis_tick_circuit(tick_circuit, context="graphlike DEM projection benchmark")
+    normalize_traced_tick_circuit(tick_circuit, context="graphlike DEM projection benchmark")
 
     native_raw, elapsed = timed(
         "build native raw DEM",

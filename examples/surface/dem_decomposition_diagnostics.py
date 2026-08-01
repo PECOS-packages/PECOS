@@ -531,10 +531,10 @@ def run_case(
     pair_analysis: bool,
     pair_analysis_max_effects: int,
 ) -> CaseResult:
+    from pecos._traced_circuit import normalize_traced_tick_circuit
     from pecos.qec.surface import NoiseModel, SurfacePatch, build_native_sampler
     from pecos.qec.surface.circuit_builder import (
         generate_dem_from_tick_circuit_via_stim,
-        normalize_traced_qis_tick_circuit,
     )
     from pecos.qec.surface.decode import (
         _build_surface_tick_circuit_for_native_model,
@@ -558,7 +558,7 @@ def run_case(
         circuit_source="traced_qis",
         interaction_basis=interaction_basis,
     )
-    normalize_traced_qis_tick_circuit(tick_circuit, context="DEM decomposition diagnostics")
+    normalize_traced_tick_circuit(tick_circuit, context="DEM decomposition diagnostics")
 
     native_raw = generate_circuit_level_dem_from_builder(
         patch,

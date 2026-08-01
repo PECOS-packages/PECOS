@@ -43,6 +43,10 @@ from typing import TYPE_CHECKING, Any
 
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
 
+from pecos._traced_circuit import (
+    measurement_ids_in_execution_order,
+    normalize_traced_tick_circuit,
+)
 from pecos.qec.dem_spec import GuppyDemBuild, ResultRef, _resolve_dem_specs
 
 if TYPE_CHECKING:
@@ -368,8 +372,7 @@ class _DetectorErrorModelMixin:
             scalar ``result(tag, measure(q))`` in straight-line programs; the
             runtime-loop case (per-occurrence binding) remains deferred.
         """
-        from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
-        from pecos.qec.surface.decode import trace_guppy_into_tick_circuit
+        from pecos.tracing import trace_program_to_tick_circuit
 
         # Tag-referenced detectors require the compiled HUGR (to recover the
         # sound, reorder-immune Guppy `result(tag, ...)` -> measurement
@@ -417,7 +420,7 @@ class _DetectorErrorModelMixin:
         # diverge (and pays a second compile for nothing).
         from pecos.programs import Hugr as _HugrProgram
 
-        tc = trace_guppy_into_tick_circuit(
+        tc = trace_program_to_tick_circuit(
             _HugrProgram(hugr_bytes),
             num_qubits,
             seed=seed,
@@ -430,7 +433,7 @@ class _DetectorErrorModelMixin:
         # analysis: normalize parameterized Clifford rotations to named gates,
         # stamp stable MeasIds onto measurement gates, and fail loudly if raw
         # traced-QIS rotations survived normalization.
-        normalize_traced_qis_tick_circuit(tc, context="DetectorErrorModel.from_guppy")
+        normalize_traced_tick_circuit(tc, context="DetectorErrorModel.from_guppy")
 
         # Resolve `result_tags` -> record offsets via Rust (sound HUGR
         # extraction + runtime-loop guard via static-vs-traced measurement
@@ -439,9 +442,7 @@ class _DetectorErrorModelMixin:
         if needs_tags:
             from pecos_rslib import resolve_result_tags_for_guppy
 
-            from pecos.qec.surface.decode import _extract_measurement_meas_ids
-
-            source_ids_json = tc.get_meta("guppy_source_measurement_ids")
+            source_ids_json = tc.get_meta("qis_source_measurement_ids") or tc.get_meta("guppy_source_measurement_ids")
             source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
 
             detectors_json, observables_json = resolve_result_tags_for_guppy(
@@ -449,7 +450,7 @@ class _DetectorErrorModelMixin:
                 observables_json,
                 hugr_bytes,
                 source_measurement_ids,
-                _extract_measurement_meas_ids(tc),
+                measurement_ids_in_execution_order(tc),
             )
 
         # Hand the caller's metadata to the Rust builder verbatim; it owns all
@@ -499,7 +500,9 @@ def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
 
 def _validated_source_measurement_ids(circuit: Any) -> list[int]:
     """Return source IDs after proving they match the lowered runtime identities."""
-    source_ids_json = circuit.get_meta("guppy_source_measurement_ids")
+    source_ids_json = circuit.get_meta("qis_source_measurement_ids") or circuit.get_meta(
+        "guppy_source_measurement_ids",
+    )
     source_measurement_ids = json.loads(source_ids_json) if source_ids_json else list(range(circuit.num_measurements()))
     if not isinstance(source_measurement_ids, list) or any(
         isinstance(meas_id, bool) or not isinstance(meas_id, int) or meas_id < 0 for meas_id in source_measurement_ids
@@ -507,9 +510,7 @@ def _validated_source_measurement_ids(circuit: Any) -> list[int]:
         msg = "source measurement identities must be a list of non-negative integers"
         raise ValueError(msg)
 
-    from pecos.qec.surface.decode import _extract_measurement_meas_ids
-
-    runtime_measurement_ids = _extract_measurement_meas_ids(circuit)
+    runtime_measurement_ids = measurement_ids_in_execution_order(circuit)
     if (
         len(source_measurement_ids) != len(set(source_measurement_ids))
         or len(runtime_measurement_ids) != len(set(runtime_measurement_ids))
@@ -809,8 +810,7 @@ def build_dem_from_guppy(
     Measurement-dependent quantum control remains unsupported because one
     captured execution is not a static circuit model.
     """
-    from pecos.qec.surface.circuit_builder import normalize_traced_qis_tick_circuit
-    from pecos.qec.surface.decode import trace_guppy_into_tick_circuit_with_result_traces
+    from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
     referenced_tags = sorted(
         {ref.tag for item in (*detectors, *observables) for ref in item.refs if isinstance(ref, ResultRef)},
@@ -825,7 +825,7 @@ def build_dem_from_guppy(
     # pays a second compile for nothing).
     from pecos.programs import Hugr as _HugrProgram
 
-    circuit, result_traces = trace_guppy_into_tick_circuit_with_result_traces(
+    circuit, result_traces = _trace_program_to_tick_circuit_with_result_traces(
         _HugrProgram(hugr_bytes),
         num_qubits,
         seed=seed,
@@ -834,7 +834,7 @@ def build_dem_from_guppy(
         max_hosted_tick_separation=max_hosted_tick_separation,
         allow_raw_measurement_id_fallback=False,
     )
-    normalize_traced_qis_tick_circuit(circuit, context="build_dem_from_guppy")
+    normalize_traced_tick_circuit(circuit, context="build_dem_from_guppy")
     result_traces = _compiler_certified_result_traces(
         generator_layout,
         hugr_bytes,

@@ -625,10 +625,10 @@ class TestDemGeneration:
         DEM built fresh from the corresponding TickCircuit, for both the
         ``abstract`` and ``traced_qis`` sources -- pinning that caching is
         sound for constrained budgets, not just unconstrained ones."""
+        from pecos._traced_circuit import normalize_traced_tick_circuit
         from pecos.qec.surface.circuit_builder import (
             generate_dem_from_tick_circuit,
             generate_tick_circuit_from_patch,
-            normalize_traced_qis_tick_circuit,
         )
         from pecos.qec.surface.decode import (
             _build_surface_tick_circuit_for_native_model,
@@ -662,7 +662,7 @@ class TestDemGeneration:
         # The native topology path normalizes traced-QIS circuits (Clifford-rotation
         # lowering + single-qubit Clifford-chain simplification) before DEM
         # construction; the fresh comparison must apply the same normalization.
-        normalize_traced_qis_tick_circuit(traced_tc, context="constrained budget cache test")
+        normalize_traced_tick_circuit(traced_tc, context="constrained budget cache test")
         cached_traced = generate_circuit_level_dem_from_builder(
             patch,
             num_rounds=2,

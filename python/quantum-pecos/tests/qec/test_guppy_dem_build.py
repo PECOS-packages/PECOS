@@ -12,6 +12,10 @@ import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
+from pecos._qis_trace_replay import (
+    _replay_qis_trace_chunks_into_tick_circuit,
+    _validate_audited_trace_stream,
+)
 from pecos.guppy import get_num_qubits, make_surface_code
 from pecos.qec import (
     Detector,
@@ -23,10 +27,6 @@ from pecos.qec import (
 )
 from pecos.qec.dem import _generator_certified_result_traces
 from pecos.qec.dem_spec import GuppyDemBuild, _resolve_dem_specs
-from pecos.qec.surface.decode import (
-    _replay_qis_trace_chunks_into_tick_circuit,
-    _validate_audited_trace_stream,
-)
 from pecos_rslib.quantum import TickCircuit
 
 
@@ -143,7 +143,7 @@ def test_trace_once_build_evaluates_runtime_and_rejects_uncertified_named_result
         return _reordered_trace()
 
     monkeypatch.setattr(
-        "pecos.qec.surface.decode.trace_guppy_into_tick_circuit_with_result_traces",
+        "pecos.tracing._trace_program_to_tick_circuit_with_result_traces",
         fake_trace,
     )
     build = build_dem_from_guppy(
@@ -386,7 +386,7 @@ def test_dynamic_control_is_rejected_before_any_trace_executes(
         raise AssertionError(msg)
 
     monkeypatch.setattr(
-        "pecos.qec.surface.decode.trace_guppy_into_tick_circuit_with_result_traces",
+        "pecos.tracing._trace_program_to_tick_circuit_with_result_traces",
         _trace_must_not_run,
     )
     with pytest.raises(ValueError, match="branching or looping control flow"):
@@ -573,7 +573,7 @@ def test_audited_build_disables_raw_measurement_id_fallback(monkeypatch: pytest.
         return _reordered_trace()
 
     monkeypatch.setattr(
-        "pecos.qec.surface.decode.trace_guppy_into_tick_circuit_with_result_traces",
+        "pecos.tracing._trace_program_to_tick_circuit_with_result_traces",
         fake_trace,
     )
     build_dem_from_guppy(

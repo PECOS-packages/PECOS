@@ -207,6 +207,15 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
     println!("Circuit uses {} qubits", engine.num_qubits());
     ```
 
+## Capturing the Runtime QIS Operation Trace
+
+PECOS can capture both the source operations and the runtime-scheduled,
+lowered operations produced while Guppy, HUGR, or QIS executes through a
+Selene-compatible runtime. See the
+[Runtime QIS Tracing tutorial](runtime-qis-tracing.md) for trace inspection,
+JSON persistence, replay into a `TickCircuit`, runtime-emitted idle gates, and
+the limitations of tracing a single execution path.
+
 ## Measurement-Based Control Flow
 
 One of HUGR's key advantages is native support for control flow based on measurement results. This is natural in Guppy:

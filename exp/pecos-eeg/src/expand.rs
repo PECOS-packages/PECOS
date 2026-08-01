@@ -29,6 +29,23 @@ pub struct ExpandedCircuit {
     /// original_measured_qubit[k] = the qubit in the original circuit that
     /// the k-th MZ gate acted on.
     pub original_measured_qubit: Vec<usize>,
+    /// Expansion rank of each stamped measurement id.
+    ///
+    /// `meas_id_rank[&id] = k` means the measurement holding `id` is the k-th
+    /// one this expansion recorded -- an index into `measurement_qubit` and
+    /// `original_measured_qubit`.
+    ///
+    /// **`MZ` only.** The expansion walk handles no other measurement type, so
+    /// a stamped `MeasureFree` -- record-bearing and valid -- does not appear
+    /// here, exactly as its measurement does not appear in `measurement_qubit`.
+    /// An absent id is therefore ambiguous between "unknown" and "unsupported
+    /// measurement type"; resolving that needs an error channel on the eeg
+    /// builder, tracked in #387. Id-less legacy circuits yield an empty map.
+    ///
+    /// This is eeg's private ordinal. It is expansion order, not id-rank order
+    /// and not any other component's ordering; resolve ids through this map
+    /// rather than assuming an id's numeric value indexes anything.
+    pub meas_id_rank: std::collections::BTreeMap<pecos_core::MeasId, usize>,
 }
 
 /// Expand a circuit by deferring mid-circuit measurements.
@@ -52,6 +69,7 @@ pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
     let mut next_aux = num_original;
 
     let mut expanded = Vec::with_capacity(gates.len() * 2);
+    let mut meas_id_rank = std::collections::BTreeMap::new();
     let mut measurement_qubit = Vec::new();
     let mut original_measured_qubit = Vec::new();
 
@@ -89,8 +107,11 @@ pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
         match gate.gate_type {
             GateType::MZ => {
                 // For each qubit in this MZ gate, create CX to auxiliary
-                for q in &gate.qubits {
+                for (position, q) in gate.qubits.iter().enumerate() {
                     let q_idx = q.index();
+                    if let Some(&id) = gate.meas_ids.get(position) {
+                        meas_id_rank.insert(id, measurement_qubit.len());
+                    }
                     let aux = next_aux;
                     next_aux += 1;
 
@@ -144,6 +165,7 @@ pub fn expand_circuit(gates: &[Gate]) -> ExpandedCircuit {
         num_original_qubits: num_original,
         measurement_qubit,
         original_measured_qubit,
+        meas_id_rank,
     }
 }
 
@@ -265,6 +287,42 @@ pub fn make_gate(gt: GateType, qubits: &[usize]) -> Gate {
 
 #[cfg(test)]
 mod tests {
+    /// `meas_id_rank` records expansion order, keyed by the id the gate holds.
+    ///
+    /// De-aliased: the ids arrive in descending order (9 before 3), so
+    /// expansion rank disagrees with numeric id order and with the id values
+    /// themselves -- ranking by anything except the walk fails.
+    #[test]
+    fn meas_id_rank_follows_expansion_order_not_id_order() {
+        use pecos_core::MeasId;
+        // One BATCHED MZ: two measurements inside a single gate, ids scrambled
+        // (9 then 3) so rank disagrees with id order, and id values (9, 3)
+        // coincide with no gate index (0..=1) or rank (0..=1). Ranking by the
+        // first id, by id value, or by anything except the per-position walk
+        // fails.
+        let mut batch = super::make_gate(super::GateType::MZ, &[0, 1]);
+        batch.meas_ids.push(MeasId(9));
+        batch.meas_ids.push(MeasId(3));
+        let gates = vec![
+            super::make_gate(super::GateType::PZ, &[0]),
+            super::make_gate(super::GateType::PZ, &[1]),
+            batch,
+        ];
+
+        let expanded = super::expand_circuit(&gates);
+        assert_eq!(
+            expanded.meas_id_rank.get(&MeasId(9)),
+            Some(&0),
+            "first batch member is expansion rank 0"
+        );
+        assert_eq!(
+            expanded.meas_id_rank.get(&MeasId(3)),
+            Some(&1),
+            "second batch member is rank 1 -- per-position, not first-id"
+        );
+        assert_eq!(expanded.meas_id_rank.len(), 2);
+    }
+
     use super::*;
 
     fn gate(gt: GateType, qubits: &[usize]) -> Gate {

@@ -203,23 +203,44 @@ Nothing to migrate on disk: no serde derives on `PauliAnnotation`,
 `AnnotationKind`, or `MeasId`, and the detectors/observables JSON already speaks
 both `records` and `meas_ids` with a consistency check.
 
+## Resolved by the helper round (PR #403 review)
+
+- **The error taxonomy** is now code: `MeasResolveError::{Unknown, Removed,
+  RecordLess, Inconsistent}`. `Inconsistent` was added by the review -- a
+  `gate_mut` edit can leave an id held-but-unreserved or held twice, and a
+  resolver that silently returned the first holder would launder the desync.
+  Honesty limits are documented on the resolver: a bare id cannot detect a
+  reference from a *different* circuit (ids are circuit-local numbers; a
+  colliding foreign id resolves to the local measurement), and `Removed`
+  cannot be told apart from an id overwritten via `gate_mut`. Rejecting
+  foreign references needs validation where a reference *enters* a circuit.
+- **The forgery seam: close it.** The review's verdict, judged against the
+  helpers rather than on paper: they make forgery **more** dangerous, because a
+  forged `MeasId(x)` that collides with a real id now resolves to a real
+  `MeasRef`. Resolution rejects absent numbers but silently accepts the common
+  collision case, so the seam cannot be left open. Closing it -- private tuple
+  field, constructor-controlled creation, opaque Python references instead of
+  integer tuples -- is a **pivot prerequisite**, done as its own change (it
+  touches every `MeasId(x)` constructor in the tree).
+
+## Pivot API consequences (from the same review)
+
+- Annotation construction and the DEM builder must reject all four resolver
+  variants loudly, wrapped with annotation label/index context.
+- `DemSampler::with_circuit_annotations` returns `Self`; it must become
+  fallible or hold a pending error for `build`.
+- `InfluenceBuilder::with_circuit_annotations` and `build` are infallible and
+  need an error channel. Its separate circuit argument should also go, so
+  annotations cannot come from a circuit other than `self.dag`.
+- eeg needs its own `UnsupportedMeasurementKind`-style error: its expansion is
+  `MZ`-only, so an absent id is ambiguous between unknown and unsupported until
+  `build`/`build_dem_string`/`summary` can report.
+- The influence map's mixed-stamping sentinel (`MeasId(usize::MAX)` for id-less
+  entries) is guarded at `meas_index_of`, but the representation itself should
+  become explicit (`Option<MeasId>`) when the pivot touches those types.
+
 ## Unresolved, deliberately
 
-Two questions did not settle on paper because they are about code that does not
-exist yet, and a third is a separate defect:
-
-- **How far to close the `MeasId` forgery seam.** Removing `From<usize>` does not
-  close it -- `MeasId(x)` and `.0` stay public. Closing it properly means private
-  fields, an opaque `MeasRef`, and an opaque Python reference object instead of
-  integer tuples. Whether that is worth its churn is a judgement to make against
-  the pivot, not before it.
-- **The resolver's error taxonomy.** The design wants unknown, removed, and
-  record-less to be distinct errors, but `find_measurement -> Option<MeasRef>`
-  cannot distinguish unknown from removed; only the circuit's private
-  `used_meas_ids` knows. Several consumer APIs also have no error channel at all
-  (`InfluenceBuilder::with_circuit_annotations` and the sampler equivalent both
-  return `Self`). The resolver must be result-bearing and those APIs fallible
-  before the pivot, or the pivot is not mechanical.
 - **`InfluenceBuilder::run_symbolic_simulation` measures only `qubits[0]` of a
   batched gate** and maps a node to one measurement index. That is a live defect
   independent of this design and is filed as #398; the identity pivot does not

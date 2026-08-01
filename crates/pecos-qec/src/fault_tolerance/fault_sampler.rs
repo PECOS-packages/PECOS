@@ -3159,7 +3159,8 @@ mod tests {
             .unwrap();
         tc.tracked_pauli_labeled("tracked_z1", PauliString::z(1));
 
-        let round_tripped = TickCircuit::from(&pecos_quantum::DagCircuit::from(&tc));
+        let round_tripped =
+            TickCircuit::from(&pecos_quantum::DagCircuit::try_from(&tc).expect("valid circuit"));
         assert_eq!(round_tripped.annotations().len(), 1);
         assert!(matches!(
             round_tripped.annotations()[0].kind,

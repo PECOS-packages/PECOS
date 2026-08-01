@@ -375,6 +375,8 @@ impl DemSampler {
     ///
     /// Returns [`DetectorValidationError`] if any detector references a
     /// non-deterministic measurement or the detectors are linearly dependent.
+    /// Also returned when the `TickCircuit` cannot be converted to a
+    /// `DagCircuit` (two measurements sharing a `MeasId`).
     ///
     /// # Example
     ///
@@ -401,7 +403,11 @@ impl DemSampler {
         circuit: &pecos_quantum::TickCircuit,
         noise: &super::types::NoiseConfig,
     ) -> Result<Self, DetectorValidationError> {
-        let dag = pecos_quantum::DagCircuit::from(circuit);
+        let dag = pecos_quantum::DagCircuit::try_from(circuit).map_err(|err| {
+            DetectorValidationError::InvalidMetadata {
+                message: err.to_string(),
+            }
+        })?;
         Self::from_circuit(&dag, noise)
     }
 
